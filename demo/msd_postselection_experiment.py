@@ -58,6 +58,7 @@ EVAL_SHOTS = 1_000_000
 MLD_TRAIN_SHOTS = 10_000_000
 MLD_BATCH_SIZE = None
 SIM_TYPE = "clifft"
+RANDOM_SEED = 10
 
 MSD_VALID_FACTORY_TARGETS = np.array([[1, 0, 1, 1]], dtype=np.uint8)
 INJECTED_VALID_FACTORY_TARGETS = np.zeros((1, 0), dtype=np.uint8)
@@ -92,6 +93,7 @@ def build_msd_mld_experiment() -> PostSelectionExperiment:
         {
             "num_shots": MLD_TRAIN_SHOTS,
             "step_size": MLD_BATCH_SIZE,
+            "seed": RANDOM_SEED,
         },
     )
 
@@ -115,6 +117,7 @@ def build_injected_mld_experiment() -> PostSelectionExperiment:
         {
             "num_shots": MLD_TRAIN_SHOTS,
             "step_size": MLD_BATCH_SIZE,
+            "seed": RANDOM_SEED,
         },
     )
 
@@ -146,7 +149,12 @@ def prepare_experiment(
     exp.dems()
     exp.initialize_decoders()
     exp.make_tasks(device=GeminiLogicalSimulator())
-    exp.get_samples(num_shots=eval_shots, chunk_size=None, sim_type=SIM_TYPE)
+    exp.get_samples(
+        num_shots=eval_shots,
+        chunk_size=None,
+        sim_type=SIM_TYPE,
+        seed=RANDOM_SEED,
+    )
     exp.decode_and_postselect(decoder_name=decoder_name)
     return exp
 

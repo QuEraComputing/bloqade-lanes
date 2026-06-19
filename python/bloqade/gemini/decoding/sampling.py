@@ -22,6 +22,7 @@ def run_task(
     with_noise: bool = True,
     chunk_size: int | None = None,
     sim_type: str = "tsim",
+    seed: int | None = None,
 ) -> BasisDataset:
     """Sample detector/observable arrays from a demo task."""
 
@@ -38,16 +39,20 @@ def run_task(
     detector_chunks: list[np.ndarray] = []
     observable_chunks: list[np.ndarray] = []
     remaining = int(shots)
+    chunk_index = 0
     while remaining > 0:
         batch = min(int(chunk_size), remaining)
+        batch_seed = None if seed is None else int(seed) + chunk_index
         detectors, observables = task.sample_detector_observables(
             batch,
             with_noise=with_noise,
             sim_type=sim_type,
+            seed=batch_seed,
         )
         detector_chunks.append(detectors)
         observable_chunks.append(observables)
         remaining -= batch
+        chunk_index += 1
 
     if not detector_chunks:
         return BasisDataset(

@@ -360,6 +360,7 @@ class PostSelectionExperiment:
         *,
         chunk_size: int | None = None,
         sim_type: str = "tsim",
+        seed: int | None = None,
     ) -> dict[str, BasisDataset]:
         # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
         actual_tasks = self.postselection_exp_cache.hardware_tasks
@@ -373,8 +374,9 @@ class PostSelectionExperiment:
                 with_noise=True,
                 chunk_size=chunk_size,
                 sim_type=sim_type,
+                seed=None if seed is None else int(seed) + basis_index,
             )
-            for basis, task in actual_tasks.items()
+            for basis_index, (basis, task) in enumerate(actual_tasks.items())
         }
         self.postselection_exp_cache.raw_results = actual_data
         return actual_data

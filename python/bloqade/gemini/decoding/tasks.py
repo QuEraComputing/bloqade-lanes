@@ -103,6 +103,8 @@ class DemoTask:
         if sim_type != "tsim":
             raise ValueError("sim_type must be either 'tsim' or 'clifft'.")
 
+        # GeminiLogicalSimulatorTask.run currently has no seed argument, so
+        # seed is intentionally a no-op on the tsim path.
         result = self.task.run(shots, with_noise=with_noise, run_detectors=True)
         return (
             np.asarray(result.detectors, dtype=np.uint8),
