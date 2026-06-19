@@ -1,66 +1,38 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import matplotlib
 import numpy as np
-import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-matplotlib.use("Agg")
-
-from demo.msd_utils import (  # noqa: E402
-    DecoderAdapter,
+from bloqade.gemini.decoding import (
+    ConfidenceDecoder,
     TableDecoderWithConfidence,
     TomographyResult,
-    plot_decoder_curves,
-)
-from demo.msd_utils.application.experiments import (  # noqa: E402
     empty_logical_circuit,
+    plot_decoder_curves,
     single_qubit_state_tomography,
 )
-from demo.msd_utils.domain.confidence import ConfidenceDecoder  # noqa: E402
+from bloqade.gemini.decoding.kernels import _DecoderPrimitiveSet
+from bloqade.gemini.decoding.msd import _build_decoder_kernel_bundle
 
-from bloqade.gemini.decoding.kernels import DecoderPrimitiveSet  # noqa: E402
-from bloqade.gemini.decoding.msd import build_decoder_kernel_bundle  # noqa: E402
+matplotlib.use("Agg")
 
 
 def test_public_facade_exports_simplified_decoder_and_tomography_types():
     assert issubclass(TableDecoderWithConfidence, ConfidenceDecoder)
-    assert TomographyResult(
-        np.array([1, 1, 1]),
-        np.array([1, 1, 1]),
-    ).density_matrix.shape == (2, 2)
-
-
-def test_decoder_adapter_accepts_array_callables_without_score_mode():
-    def decode_factory(bits: np.ndarray) -> tuple[np.ndarray, float]:
-        return bits.astype(np.uint8), 0.25
-
-    def decode_full(bits: np.ndarray) -> np.ndarray:
-        return np.array([int(np.any(bits))], dtype=np.uint8)
-
-    adapter = DecoderAdapter(
-        decode_factory=decode_factory,
-        decode_full=decode_full,
+    result = TomographyResult(
+        {
+            "X": np.array([[0], [0]], dtype=np.uint8),
+            "Y": np.array([[0], [1]], dtype=np.uint8),
+            "Z": np.array([[0], [1]], dtype=np.uint8),
+        }
     )
-
-    assert not hasattr(adapter, "factory_score_mode")
-    correction, score = adapter.decode_factory(np.array([1, 0], dtype=np.uint8))
-    np.testing.assert_array_equal(correction, np.array([1, 0], dtype=np.uint8))
-    assert score == pytest.approx(0.25)
-    np.testing.assert_array_equal(
-        adapter.decode_full(np.array([0, 1], dtype=np.uint8)),
-        np.array([1], dtype=np.uint8),
-    )
+    assert result.density_matrix.shape == (2, 2)
 
 
-def test_build_decoder_kernel_bundle_contains_actual_tomography_kernels_only():
+def test_build_decoder_kernel_bundle_contains_basis_tomography_kernels():
     tomography_kernels = single_qubit_state_tomography()
-    bundle = build_decoder_kernel_bundle(
-        DecoderPrimitiveSet(
+    kernels = _build_decoder_kernel_bundle(
+        _DecoderPrimitiveSet(
             state_injection_circuit=empty_logical_circuit(),
             logical_circuit=empty_logical_circuit(),
         ),
@@ -68,8 +40,7 @@ def test_build_decoder_kernel_bundle_contains_actual_tomography_kernels_only():
         tomography_kernels=tomography_kernels,
     )
 
-    assert set(bundle.actual) == {"X", "Y", "Z"}
-    assert not hasattr(bundle, "_special")
+    assert set(kernels) == {"X", "Y", "Z"}
 
 
 def test_plot_decoder_curves_handles_curves_without_uncertainty_bands():

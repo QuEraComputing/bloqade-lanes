@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 from .tasks import DemoTask
-from .types import KirinKernel, MeasurementMap, TsimCircuit
+from .types import TsimCircuit
 
 _NONUNITARY_PREFIXES = (
     "M",
@@ -38,14 +39,18 @@ def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
     return len(circuit)
 
 
-def apply_special_tsim_circuit_strategy(
-    task_map: Mapping[str, DemoTask],
-) -> dict[str, DemoTask]:
+def _task_impl(task: object) -> Any:
+    return task.task if isinstance(task, DemoTask) else task
+
+
+def _apply_special_tsim_circuit_strategy(
+    task_map: Mapping[str, object],
+) -> dict[str, object]:
     """Prepend the inverse compiled unitary prefix to each task's circuits."""
 
     transformed = dict(task_map)
-    for demo_task in transformed.values():
-        task = demo_task.task
+    for wrapped_task in transformed.values():
+        task = _task_impl(wrapped_task)
         compiled_prefix = task.tsim_circuit[
             : _first_nonunitary_instruction_index(task.tsim_circuit)
         ]
@@ -58,26 +63,4 @@ def apply_special_tsim_circuit_strategy(
     return transformed
 
 
-def build_task_map(
-    simulator,
-    kernel_map: Mapping[str, KirinKernel],
-    *,
-    m2dets: MeasurementMap | None,
-    m2obs: MeasurementMap | None,
-    append_measurements: bool = True,
-) -> dict[str, DemoTask]:
-    """Build demo tasks for each basis kernel in a kernel map."""
-
-    return {
-        basis: DemoTask(
-            task=simulator.task(
-                kernel.similar(),
-                m2dets if append_measurements else None,
-                m2obs if append_measurements else None,
-            )
-        )
-        for basis, kernel in kernel_map.items()
-    }
-
-
-__all__ = ["apply_special_tsim_circuit_strategy", "build_task_map"]
+__all__ = ["_apply_special_tsim_circuit_strategy"]

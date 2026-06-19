@@ -48,7 +48,7 @@ def _dem_target(key: _TargetKey) -> stim.DemTarget:
     return stim.target_logical_observable_id(index)
 
 
-def sub_detector_error_model(
+def _sub_detector_error_model(
     dem: stim.DetectorErrorModel,
     detector_indices: Sequence[int],
     observable_indices: Sequence[int],
@@ -130,5 +130,5 @@ def sub_detector_error_model(
 
 
 __all__ = [
-    "sub_detector_error_model",
+    "_sub_detector_error_model",
 ]

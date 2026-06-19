@@ -1,25 +1,20 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
-import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-from demo.msd_utils.application.experiments import (  # noqa: E402
+from bloqade.gemini.decoding.confidence import ConfidenceDecoder
+from bloqade.gemini.decoding.experiments import (
     PostSelectionExperiment,
-    PostSelectionExperimentCache,
+    _PostSelectionExperimentCache,
 )
-from demo.msd_utils.standard.tomography import TomographyResult  # noqa: E402
-
-from bloqade.gemini.decoding.postselection import (  # noqa: E402
-    DecoderAdapter,
+from bloqade.gemini.decoding.postselection import (
+    DecodedPostselectionResult,
     _build_generic_threshold_tables,
     _evaluate_cached_threshold_curve,
+    _shots_at_accepted_fraction,
 )
-from bloqade.gemini.decoding.sampling import BasisDataset  # noqa: E402
+from bloqade.gemini.decoding.sampling import BasisDataset
+from bloqade.gemini.decoding.tomography import TomographyResult
 
 
 def _dataset() -> BasisDataset:
@@ -45,37 +40,46 @@ def _dataset() -> BasisDataset:
     )
 
 
-def _adapter() -> DecoderAdapter:
-    def decode_factory(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
-        factory_bit = int(syndrome[0]) if len(syndrome) else 0
-        return np.array([factory_bit], dtype=np.uint8), 0.9 if factory_bit == 0 else 0.1
+class _FactoryDecoder(ConfidenceDecoder):
+    def decode_with_confidence(
+        self,
+        detector_bits: np.ndarray,
+    ) -> tuple[np.ndarray, np.float64]:
+        factory_bit = int(detector_bits[0]) if len(detector_bits) else 0
+        return (
+            (
+                np.array([factory_bit], dtype=np.bool_)
+                if len(detector_bits)
+                else np.zeros(0, dtype=np.bool_)
+            ),
+            np.float64(0.9 if factory_bit == 0 else 0.1),
+        )
 
-    def decode_full(_syndrome: np.ndarray) -> np.ndarray:
-        return np.array([0], dtype=np.uint8)
 
-    return DecoderAdapter(
-        decode_factory=decode_factory,
-        decode_full=decode_full,
-    )
+class _FullDecoder:
+    def decode(self, _detector_bits: np.ndarray) -> np.ndarray:
+        return np.array([0], dtype=np.bool_)
 
 
-def test_build_generic_threshold_tables_groups_counts_by_confidence_score():
+def _decoder_pair() -> tuple[ConfidenceDecoder, _FullDecoder]:
+    return _FactoryDecoder(), _FullDecoder()
+
+
+def test_build_generic_threshold_tables_returns_decoded_shots_with_confidence():
     data = {basis: _dataset() for basis in ("X", "Y", "Z")}
-    decoders = {basis: _adapter() for basis in ("X", "Y", "Z")}
+    decoders = {basis: _decoder_pair() for basis in ("X", "Y", "Z")}
 
-    per_basis, scores, weights, total_shots = _build_generic_threshold_tables(
+    decoded = _build_generic_threshold_tables(
         data,
         decoders,
         targets=np.array([[0]], dtype=np.uint8),
         basis_labels=("X", "Y", "Z"),
     )
 
-    assert total_shots == 12
-    np.testing.assert_array_equal(scores, np.array([0.1, 0.9]))
-    np.testing.assert_array_equal(weights, np.array([3, 6]))
-    np.testing.assert_array_equal(per_basis["X"][0], np.array([0.1, 0.9]))
-    np.testing.assert_array_equal(per_basis["X"][1], np.array([1, 1]))
-    np.testing.assert_array_equal(per_basis["X"][2], np.array([0, 1]))
+    assert decoded["X"].observables.shape == (3, 1)
+    assert decoded["X"].confidence.shape == (3,)
+    np.testing.assert_array_equal(decoded["X"].observables[:, 0], np.array([0, 1, 0]))
+    np.testing.assert_allclose(decoded["X"].confidence, np.array([0.9, 0.9, 0.1]))
 
 
 def test_build_generic_threshold_tables_supports_empty_factory_postselection():
@@ -91,55 +95,36 @@ def test_build_generic_threshold_tables_supports_empty_factory_postselection():
         observables=np.array([[0], [1], [0]], dtype=np.uint8),
     )
 
-    def decode_factory(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
-        assert syndrome.shape == (0,)
-        return np.zeros(0, dtype=np.uint8), 1.0
-
-    def decode_full(_syndrome: np.ndarray) -> np.ndarray:
-        return np.array([0], dtype=np.uint8)
-
     data = {basis: dataset for basis in ("X", "Y", "Z")}
-    decoders = {
-        basis: DecoderAdapter(
-            decode_factory=decode_factory,
-            decode_full=decode_full,
-        )
-        for basis in ("X", "Y", "Z")
-    }
+    decoders = {basis: _decoder_pair() for basis in ("X", "Y", "Z")}
 
-    per_basis, scores, weights, total_shots = _build_generic_threshold_tables(
+    decoded = _build_generic_threshold_tables(
         data,
         decoders,
         targets=np.zeros((1, 0), dtype=np.uint8),
         basis_labels=("X", "Y", "Z"),
     )
 
-    assert total_shots == 9
-    np.testing.assert_array_equal(scores, np.array([1.0]))
-    np.testing.assert_array_equal(weights, np.array([9]))
-    np.testing.assert_array_equal(per_basis["X"][1], np.array([2]))
-    np.testing.assert_array_equal(per_basis["X"][2], np.array([1]))
+    assert decoded["X"].observables.shape == (3, 1)
+    np.testing.assert_array_equal(decoded["X"].observables[:, 0], np.array([0, 1, 0]))
 
 
 def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
-    per_basis = {
-        basis: (
-            np.array([0.1, 0.9], dtype=np.float64),
-            np.array([1, 10], dtype=np.int64),
-            np.array([0, 0], dtype=np.int64),
+    decoded = {
+        basis: DecodedPostselectionResult(
+            observables=np.array([[0], [0], [1]], dtype=np.uint8),
+            confidence=np.array([0.9, 0.8, 0.1], dtype=np.float64),
         )
         for basis in ("X", "Y", "Z")
     }
 
     curve = _evaluate_cached_threshold_curve(
-        per_basis,
-        np.array([0.1, 0.9], dtype=np.float64),
-        score_weights=np.array([3, 30], dtype=np.int64),
-        threshold_points=2,
+        decoded,
+        threshold_points=3,
         target_bloch=np.ones(3) / np.sqrt(3.0),
         basis_labels=("X", "Y", "Z"),
         min_accepted_per_basis=1,
-        total_shots=300,
+        total_shots=30,
     )
 
     assert set(curve) == {"accepted_fraction", "fidelity", "point_fidelity"}
@@ -150,64 +135,36 @@ def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
 def test_postselection_experiment_decode_and_tomography_result_with_cached_data():
     exp = object.__new__(PostSelectionExperiment)
     exp.postselection_condition = np.array([[0]], dtype=np.uint8)
-    exp.postselection_exp_cache = PostSelectionExperimentCache()
-    exp.postselection_exp_cache.raw_results = {
+    exp._postselection_exp_cache = _PostSelectionExperimentCache()
+    exp._postselection_exp_cache.raw_results = {
         basis: _dataset() for basis in ("X", "Y", "Z")
     }
-    exp.postselection_exp_cache.decoders_with_confidence = {
-        basis: _adapter() for basis in ("X", "Y", "Z")
+    exp._postselection_exp_cache.decoders_with_confidence = {
+        basis: _decoder_pair() for basis in ("X", "Y", "Z")
     }
+    exp._postselection_exp_cache.decoded_results = None
 
     decoded = exp.decode_and_postselect(decoder_name=None)
-    assert decoded[3] == 12
+    assert decoded["X"].observables.shape == (3, 1)
 
     result = exp.tomography_result(accepted_fraction=0.5)
     assert isinstance(result, TomographyResult)
     assert result.density_matrix.shape == (2, 2)
 
 
-def test_postselection_experiment_tomography_fraction_is_all_sampled_shots():
-    exp = object.__new__(PostSelectionExperiment)
-    exp.postselection_exp_cache = PostSelectionExperimentCache()
-    exp.postselection_exp_cache.decoded_results = (
-        {
-            basis: (
-                np.array([0.5], dtype=np.float64),
-                np.array([10], dtype=np.int64),
-                np.array([0], dtype=np.int64),
-            )
-            for basis in ("X", "Y", "Z")
-        },
-        np.array([0.5], dtype=np.float64),
-        np.array([30], dtype=np.int64),
-        300,
+def test_shots_at_accepted_fraction_is_relative_to_postselected_shots():
+    decoded = {
+        basis: DecodedPostselectionResult(
+            observables=np.array([[0], [1], [0]], dtype=np.uint8),
+            confidence=np.array([0.9, 0.8, 0.1], dtype=np.float64),
+        )
+        for basis in ("X", "Y", "Z")
+    }
+
+    accepted = _shots_at_accepted_fraction(
+        decoded,
+        1 / 3,
+        basis_labels=("X", "Y", "Z"),
     )
 
-    result = exp.tomography_result(accepted_fraction=0.1)
-
-    assert result.fidelity_bloch(np.ones(3) / np.sqrt(3.0))["point"] == pytest.approx(
-        (1.0 + np.sqrt(3.0)) / 2.0
-    )
-
-
-def test_postselection_experiment_tomography_fraction_saturates_after_available_counts():
-    exp = object.__new__(PostSelectionExperiment)
-    exp.postselection_exp_cache = PostSelectionExperimentCache()
-    exp.postselection_exp_cache.decoded_results = (
-        {
-            basis: (
-                np.array([0.5], dtype=np.float64),
-                np.array([5], dtype=np.int64),
-                np.array([0], dtype=np.int64),
-            )
-            for basis in ("X", "Y", "Z")
-        },
-        np.array([0.5], dtype=np.float64),
-        np.array([15], dtype=np.int64),
-        300,
-    )
-
-    saturated = exp.tomography_result(accepted_fraction=1.0)
-    available = exp.tomography_result(accepted_fraction=0.05)
-
-    np.testing.assert_allclose(saturated.density_matrix, available.density_matrix)
+    assert sum(shots.shape[0] for shots in accepted.values()) == 3

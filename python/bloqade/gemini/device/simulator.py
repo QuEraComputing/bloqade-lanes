@@ -475,13 +475,17 @@ class GeminiLogicalSimulator:
 
     noise_model: LogicalNoiseModelABC = field(default_factory=_default_noise_model)
     """The noise model used for simulation. Defaults to :func:`generate_logical_noise_model`."""
+    backend: str = "tsim"
+    """Sampling backend for tasks created by this simulator."""
+    seed: int | None = None
+    """Optional backend seed for task sampling."""
 
     def task(
         self,
         logical_kernel: Union[ir.Method[[], RetType], Callable[..., Any]],
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
-    ) -> GeminiLogicalSimulatorTask[RetType]:
+    ) -> GeminiLogicalSimulatorTask[RetType] | Any:
         """Create a simulation task for the given kernel.
 
         Eagerly compiles the kernel through squin-to-move and extracts post-processing.
@@ -509,14 +513,20 @@ class GeminiLogicalSimulator:
             post_processing,
         ) = compile_task(logical_kernel, m2dets, m2obs)
 
-        # TODO: wrap with an if statement and check with Phil if we can refactor it properly.
-        return GeminiLogicalSimulatorTask(
+        sim_task = GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
             physical_arch_spec,
             physical_move_kernel,
             post_processing,
         )
+        if self.backend == "clifft":
+            from bloqade.gemini.decoding.tasks import DemoTask
+
+            return DemoTask(sim_task, seed=self.seed)
+        if self.backend != "tsim":
+            raise ValueError("backend must be either 'tsim' or 'clifft'.")
+        return sim_task
 
     @overload
     def run(

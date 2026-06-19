@@ -42,7 +42,6 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
     def __init__(
         self,
         dem: stim.DetectorErrorModel,
-        det_obs_counts: np.ndarray | None = None,
         *,
         num_shots: int = 10**8,
         seed: int | None = None,
@@ -55,19 +54,16 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
                 "exceeds 64 bits and cannot be packed into int64."
             )
 
-        should_train_from_dem = det_obs_counts is None
-        counts_table = (
-            np.zeros(2**data_len, dtype=_COUNT_DTYPE)
-            if det_obs_counts is None
-            else _as_uint32_count_table(det_obs_counts)
-        )
+        counts_table = np.zeros(2**data_len, dtype=_COUNT_DTYPE)
 
         super().__init__(dem=dem, det_obs_counts=counts_table)
         self._det_obs_counts = _as_uint32_count_table(self._det_obs_counts)
         self._correction_confidence: np.ndarray | None = None
 
-        if should_train_from_dem:
-            self._train_from_dem(num_shots=num_shots, seed=seed, step_size=step_size)
+        if data_len == 0:
+            self._det_obs_counts[0] = max(1, min(int(num_shots), _COUNT_MAX))
+            return
+        self._train_from_dem(num_shots=num_shots, seed=seed, step_size=step_size)
 
     def _train_from_dem(
         self,
@@ -99,12 +95,11 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
                 shots=next_shots,
                 bit_packed=False,
             )[:2]
-            self.update_det_obs_counts(
+            self._update_det_obs_counts(
                 np.concatenate([det_samples, obs_samples], axis=1)
             )
 
-    # TODO: Make private?
-    def update_det_obs_counts(self, det_obs_shots: np.ndarray) -> None:
+    def _update_det_obs_counts(self, det_obs_shots: np.ndarray) -> None:
         shots = np.asarray(det_obs_shots, dtype=np.uint8)
         expected_width = self.num_detectors + self.num_observables
         if shots.ndim != 2 or shots.shape[1] != expected_width:
@@ -123,8 +118,12 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
         self._is_cached_correction = False
         self._correction_confidence = None
 
-    # TODO: make private
     def cache_correction(self) -> None:
+        # TableDecoder.decode dispatches to this method name, so keep the
+        # override while routing the implementation through the private helper.
+        self._cache_correction()
+
+    def _cache_correction(self) -> None:
         """Cache maximum-likelihood corrections and their empirical confidence."""
 
         if self._is_cached_correction and self._correction_confidence is not None:
@@ -163,7 +162,6 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
                 "decode_with_confidence expects a single detector shot (1D array)."
             )
         correction = np.asarray(self.decode(detector_bits), dtype=np.bool_)
-        self.cache_correction()
         assert self._correction_confidence is not None
         packed = int(
             pack_boolean_array(

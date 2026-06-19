@@ -13,7 +13,7 @@ from .types import KirinKernel, SquinKernel
 # BUT, right now, the kernels are written in the gemini logical dialect.
 # Can maybe move this code to bloqade-core.
 @dataclass(frozen=True)
-class DecoderPrimitiveSet:
+class _DecoderPrimitiveSet:
     """Primitive Squin kernels needed to build MSD decoder tasks.
 
     Attributes:
@@ -47,14 +47,10 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
         return
 
     # TODO: stick to X, Y, Z for now. Work with pauli strings by default.
-    return {
-        "tomography_x": tomography_x,
-        "tomography_y": tomography_y,
-        "tomography_z": tomography_z,
-    }
+    return {"X": tomography_x, "Y": tomography_y, "Z": tomography_z}
 
 
-def produce_tomography_kernels(
+def _produce_tomography_kernels(
     num_qubits: int,
     logical_kernel: KirinKernel,
     tomography_kernels: Mapping[str, SquinKernel],
@@ -106,9 +102,9 @@ def produce_tomography_kernels(
         return gemini_logical.kernel(aggressive_unroll=True)(alloc_kernel)
 
     return {
-        f"{kernel_name}_{tomog_kernel_key.split('_')[-1]}": make_kernel(
+        tomog_kernel_key: make_kernel(
             tomog_kernel,
-            f"{kernel_name}_{tomog_kernel_key.split('_')[-1]}",
+            f"{kernel_name}_{tomog_kernel_key.lower()}",
         )
         for tomog_kernel_key, tomog_kernel in tomography_kernels.items()
     }

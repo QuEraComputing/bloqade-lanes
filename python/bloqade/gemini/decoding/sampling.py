@@ -16,52 +16,29 @@ class BasisDataset:
 
 
 def run_task(
-    task: DemoTask,
+    task: object,
     shots: int,
     *,
     with_noise: bool = True,
-    chunk_size: int | None = None,
-    sim_type: str = "tsim",
-    seed: int | None = None,
 ) -> BasisDataset:
     """Sample detector/observable arrays from a demo task."""
 
-    # TODO: This is a wrapper to support both GeminiLogicalSimulatorTask and DemoTask.
-    # Ideally, we can substitute this with something that better allows the user to
-    # swap either using tsim or clifft as simulator backends.
     if shots < 0:
         raise ValueError("shots must be non-negative.")
-    if chunk_size is None:
-        chunk_size = shots
-    if chunk_size <= 0 and shots > 0:
-        raise ValueError("chunk_size must be positive when provided.")
-
-    detector_chunks: list[np.ndarray] = []
-    observable_chunks: list[np.ndarray] = []
-    remaining = int(shots)
-    chunk_index = 0
-    while remaining > 0:
-        batch = min(int(chunk_size), remaining)
-        batch_seed = None if seed is None else int(seed) + chunk_index
+    if isinstance(task, DemoTask):
         detectors, observables = task.sample_detector_observables(
-            batch,
+            shots,
             with_noise=with_noise,
-            sim_type=sim_type,
-            seed=batch_seed,
         )
-        detector_chunks.append(detectors)
-        observable_chunks.append(observables)
-        remaining -= batch
-        chunk_index += 1
-
-    if not detector_chunks:
         return BasisDataset(
-            detectors=np.zeros((0, 0), dtype=np.uint8),
-            observables=np.zeros((0, 0), dtype=np.uint8),
+            detectors=detectors,
+            observables=observables,
         )
+
+    result = task.run(shots, with_noise=with_noise, run_detectors=True)  # type: ignore[attr-defined]
     return BasisDataset(
-        detectors=np.concatenate(detector_chunks, axis=0),
-        observables=np.concatenate(observable_chunks, axis=0),
+        detectors=np.asarray(result.detectors, dtype=np.uint8),
+        observables=np.asarray(result.observables, dtype=np.uint8),
     )
 
 

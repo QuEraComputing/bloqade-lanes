@@ -1,34 +1,30 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 import stim
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-from demo.msd_utils.application.table_decoders import (  # noqa: E402
-    TableDecoderWithConfidence,
-)
-from demo.msd_utils.domain.confidence import (  # noqa: E402
-    ConfidenceDecoder,
-    ConfidenceGurobiDecoder,
-)
-from demo.msd_utils.standard.bit_packing import (  # noqa: E402
+from bloqade.gemini.decoding.bit_packing import (
     pack_boolean_array,
     shots_to_counts,
     unpack_packed_bits,
 )
-from demo.msd_utils.standard.dem import sub_detector_error_model  # noqa: E402
-from demo.msd_utils.standard.tomography import TomographyResult  # noqa: E402
+from bloqade.gemini.decoding.confidence import (
+    ConfidenceDecoder,
+    GurobiDecoderWithConfidence,
+)
+from bloqade.gemini.decoding.dem import _sub_detector_error_model
+from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
+from bloqade.gemini.decoding.tomography import TomographyResult
 
 
 def test_tomography_result_builds_density_matrix_and_point_fidelity():
     result = TomographyResult(
-        zero_counts=np.array([10, 5, 5], dtype=np.int64),
-        one_counts=np.array([0, 5, 5], dtype=np.int64),
+        {
+            "X": np.array([[0], [0]], dtype=np.uint8),
+            "Y": np.array([[0], [1]], dtype=np.uint8),
+            "Z": np.array([[0], [1]], dtype=np.uint8),
+        }
     )
 
     assert result.density_matrix.shape == (2, 2)
@@ -65,7 +61,7 @@ def test_sub_detector_error_model_composes_duplicate_projected_errors():
         error(0.3) D1
         """)
 
-    projected = sub_detector_error_model(
+    projected = _sub_detector_error_model(
         dem,
         detector_indices=[0],
         observable_indices=[0],
@@ -94,7 +90,8 @@ def test_table_decoder_with_confidence_decodes_and_scores_detector_patterns():
         ],
         dtype=np.uint8,
     )
-    decoder = TableDecoderWithConfidence(dem, det_obs_counts=shots_to_counts(shots))
+    decoder = TableDecoderWithConfidence(dem, num_shots=0)
+    decoder._update_det_obs_counts(shots)
 
     correction0, confidence0 = decoder.decode_with_confidence(
         np.array([0], dtype=np.uint8)
@@ -121,16 +118,16 @@ def test_table_decoder_with_confidence_allows_empty_dem_and_step_size_none():
     correction, confidence = decoder.decode_with_confidence(np.zeros(0, dtype=np.uint8))
 
     assert correction.shape == (0,)
-    assert np.isnan(confidence)
+    assert confidence == pytest.approx(1.0)
 
 
-def test_confidence_gurobi_decoder_reports_gap_to_best_other_logical_solution():
+def test_gurobi_decoder_with_confidence_reports_gap_to_best_other_logical_solution():
     pytest.importorskip("gurobipy")
     dem = stim.DetectorErrorModel("""
         error(0.1) D0
         error(0.01) D0 L0
         """)
-    decoder = ConfidenceGurobiDecoder(dem)
+    decoder = GurobiDecoderWithConfidence(dem)
 
     correction, logical_gap = decoder.decode_with_confidence(
         np.array([1], dtype=np.bool_)
@@ -139,3 +136,11 @@ def test_confidence_gurobi_decoder_reports_gap_to_best_other_logical_solution():
     np.testing.assert_array_equal(correction, np.array([False]))
     expected_gap = np.log(0.1 / 0.9) - np.log(0.01 / 0.99)
     assert logical_gap == pytest.approx(expected_gap)
+
+
+def test_shots_to_counts_uses_little_endian_packing():
+    shots = np.array([[0, 0], [1, 0], [1, 0], [0, 1]], dtype=np.uint8)
+
+    counts = shots_to_counts(shots)
+
+    np.testing.assert_array_equal(counts, np.array([1, 2, 1, 0]))

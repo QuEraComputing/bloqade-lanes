@@ -12,7 +12,6 @@ authors = [
 ]
 dependencies = [
     "bloqade-circuit[qasm2]~=0.14.1",
-    "bloqade-decoders~=0.6.0",
     "bloqade-core~=0.6.4",
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.6",
@@ -22,7 +21,7 @@ dependencies = [
     "scipy>=1.15.3",
 ]
 license = { file = "LICENSE" }
-requires-python = ">= 3.12"
+requires-python = ">= 3.10"
 
 [project.optional-dependencies]
 cudaq = [
@@ -40,7 +39,11 @@ visualization = [
     "pyqt5>=5.15.11;  sys_platform == 'linux'",
 ]
 msd-reprod = [
-    "clifft",
+    # TODO: bloqade-circuit should depend on a bloqade-decoders range that
+    # includes 0.6.0. Until that lands upstream, keep the decoder dependency
+    # here for the MSD reproduction workflow.
+    "bloqade-decoders~=0.6.0",
+    "clifft; python_version >= '3.12'",
     "gurobipy",
     "ipywidgets"
 ]
@@ -97,7 +100,7 @@ src_paths = ["python/bloqade"]
 line-length = 88
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py310"
 exclude = [
     ".bzr",
     ".direnv",

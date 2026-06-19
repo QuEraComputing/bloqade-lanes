@@ -25,7 +25,7 @@ class ConfidenceDecoder(ABC):
         """Decode one detector syndrome and return a confidence score."""
 
 
-class ConfidenceGurobiDecoder(GurobiDecoder, ConfidenceDecoder):
+class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
     """Gurobi MLE decoder with logical-gap confidence."""
 
     _env: ClassVar[object | None] = None
@@ -213,5 +213,5 @@ class ConfidenceGurobiDecoder(GurobiDecoder, ConfidenceDecoder):
 
 __all__ = [
     "ConfidenceDecoder",
-    "ConfidenceGurobiDecoder",
+    "GurobiDecoderWithConfidence",
 ]

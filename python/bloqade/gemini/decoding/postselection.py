@@ -1,179 +1,60 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
-from .bit_packing import (
-    pack_boolean_array,
-    packed_pattern_targets,
-    unpack_packed_bits,
-)
+from .bit_packing import pack_boolean_array, packed_pattern_targets
+from .confidence import ConfidenceDecoder
 from .constants import DEFAULT_BASIS_LABELS
 from .layout import DEFAULT_SYNDROME_LAYOUT, split_factory_bits
 from .sampling import BasisDataset
 from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 
-
-@dataclass(frozen=True)
-class DecoderAdapter:
-    """Factory and full-syndrome decoder callables."""
-
-    # NOTE: full_decoder and factory_decoder fields might not be strictly needed; can maybe remove them (and core functionality is preserved.)
-    decode_factory: Callable[[np.ndarray], tuple[np.ndarray, float]]
-    decode_full: Callable[[np.ndarray], np.ndarray]
+DecoderPair = tuple[ConfidenceDecoder, Any]
 
 
 @dataclass(frozen=True)
-class _PackedThresholdDataset:
-    anc_det: np.ndarray
-    packed_full_det: np.ndarray
-    packed_anc_det: np.ndarray
-    packed_anc_obs: np.ndarray
-    output_bits: np.ndarray
+class DecodedPostselectionResult:
+    """Decoded output observables and one factory confidence per accepted shot."""
+
+    observables: np.ndarray
+    confidence: np.ndarray
+
+    def __post_init__(self) -> None:
+        observables = np.asarray(self.observables, dtype=np.uint8)
+        confidence = np.asarray(self.confidence, dtype=np.float64).reshape(-1)
+        if observables.ndim != 2:
+            raise ValueError("observables must have shape (shots, num_observables).")
+        if confidence.shape != (observables.shape[0],):
+            raise ValueError("confidence must have one entry per shot.")
+        object.__setattr__(self, "observables", observables)
+        object.__setattr__(self, "confidence", confidence)
 
 
-def _weighted_quantiles_from_counts(
-    values: np.ndarray,
-    weights: np.ndarray,
-    quantiles: np.ndarray,
-) -> np.ndarray:
-    # TODO: refactor this; probably reused logic from quantile logic in
-    # bayesian_tomography.py? Can continue here on 05/11
-    # not sure if this is really repeated logic..
-    values = np.asarray(values, dtype=np.float64).reshape(-1)
-    weights = np.asarray(weights, dtype=np.int64).reshape(-1)
-    keep = weights > 0
-    values = values[keep]
-    weights = weights[keep]
-    if len(values) == 0:
-        return np.array([], dtype=np.float64)
-
-    order = np.argsort(values)
-    values = values[order]
-    weights = weights[order]
-    cumulative_end = np.cumsum(weights) - 1
-    total = int(np.sum(weights))
-    if total <= 1:
-        return np.full_like(quantiles, values[0], dtype=np.float64)
-
-    out = np.empty_like(quantiles, dtype=np.float64)
-    for i, q in enumerate(np.asarray(quantiles, dtype=np.float64).reshape(-1)):
-        rank = float(np.clip(q, 0.0, 1.0)) * (total - 1)
-        lo = int(np.floor(rank))
-        hi = int(np.ceil(rank))
-        frac = rank - lo
-        lo_idx = int(np.searchsorted(cumulative_end, lo, side="left"))
-        hi_idx = int(np.searchsorted(cumulative_end, hi, side="left"))
-        out[i] = (1.0 - frac) * float(values[lo_idx]) + frac * float(values[hi_idx])
-    return out
-
-
-def _pack_threshold_dataset(dataset: BasisDataset) -> _PackedThresholdDataset:
-    anc_det, anc_obs = split_factory_bits(
-        dataset.detectors,
-        dataset.observables,
-        layout=DEFAULT_SYNDROME_LAYOUT,
-    )
-    return _PackedThresholdDataset(
-        anc_det=anc_det,
-        # NOTE: anc_obs is not used elsewhere in the code...
-        packed_full_det=pack_boolean_array(dataset.detectors).astype(np.uint64),
-        packed_anc_det=pack_boolean_array(anc_det).astype(np.uint64),
-        packed_anc_obs=pack_boolean_array(anc_obs).astype(np.uint64),
-        output_bits=np.asarray(dataset.observables[:, 0], dtype=np.uint64),
-    )
-
-
-def _decode_factory_patterns(
-    decoder: DecoderAdapter,
-    packed_anc_det: np.ndarray,
-    *,
-    syndrome_length: int,
-    progress_update: Callable[[int], None] | None,
-) -> dict[int, tuple[int, float]]:
-    # TODO: can modify the arguments here; don't need the whole DecoderAdapter; can
-    # just take in the decode_factory.
-    unique_anc_det, shot_counts = np.unique(packed_anc_det, return_counts=True)
-    decoded: dict[int, tuple[int, float]] = {}
-    for packed, shot_count in zip(unique_anc_det.tolist(), shot_counts, strict=True):
-        syndrome = unpack_packed_bits(int(packed), syndrome_length).astype(np.bool_)
-        correction, score = decoder.decode_factory(syndrome)
-        correction_bits = np.asarray(correction, dtype=np.uint8)
-        decoded[int(packed)] = (
-            int(pack_boolean_array(correction_bits)[0]) if len(correction_bits) else 0,
-            float(score),
-        )
-        if progress_update is not None:
-            progress_update(int(shot_count))
-    return decoded
-
-
-def _decode_full_patterns(
-    decoder: DecoderAdapter,
-    packed_full_det: np.ndarray,
-    shot_counts: np.ndarray,
-    *,
-    syndrome_length: int,
-    progress_update: Callable[[int], None] | None,
-) -> dict[int, int]:
-    # TODO: can modify the arguments here; don't need the whole DecoderAdapter; can
-    # just take in the decode_full.
-    decoded: dict[int, int] = {}
-    for packed, shot_count in zip(
-        np.asarray(packed_full_det, dtype=np.uint64).tolist(),
-        np.asarray(shot_counts, dtype=np.int64),
-        strict=True,
-    ):
-        syndrome = unpack_packed_bits(int(packed), syndrome_length).astype(np.bool_)
-        correction = np.asarray(decoder.decode_full(syndrome), dtype=np.uint8)
-        decoded[int(packed)] = int(correction[0]) if len(correction) else 0
-        if progress_update is not None:
-            progress_update(int(shot_count))
-    return decoded
-
-
-def _score_count_dict_to_arrays(
-    score_to_counts: Mapping[float, np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if not score_to_counts:
-        return (
-            np.array([], dtype=np.float64),
-            np.array([], dtype=np.int64),
-            np.array([], dtype=np.int64),
-        )
-    scores = np.array(sorted(score_to_counts), dtype=np.float64)
-    return (
-        scores,
-        np.array([int(score_to_counts[score][0]) for score in scores], dtype=np.int64),
-        np.array([int(score_to_counts[score][1]) for score in scores], dtype=np.int64),
-    )
+def _pack_row(bits: np.ndarray) -> int:
+    return int(pack_boolean_array(np.asarray(bits, dtype=np.uint8).reshape(1, -1))[0])
 
 
 def _build_generic_threshold_tables(
     actual_data: Mapping[str, BasisDataset],
-    decoder_map: Mapping[str, DecoderAdapter],
+    decoder_map: Mapping[str, DecoderPair],
     *,
     targets: np.ndarray,
     basis_labels: Sequence[str],
     progress_label: str | None = None,
-) -> tuple[
-    dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
-    np.ndarray,
-    np.ndarray,
-    int,
-]:
-    """Decode, postselect, and compress shots into score-indexed counts."""
+) -> dict[str, DecodedPostselectionResult]:
+    """Decode, factory-postselect, and keep output bits with confidence.
 
-    # NOTE: in principle this is pretty generic (just depends on you having scores
-    # for your counts), but because the fn's it depend on are application-level, i
-    # think this should also be application-level.
+    Each basis result stores decoded output observable shots with shape
+    ``(shots, output_observables)`` and a separate confidence vector with shape
+    ``(shots,)``.
+    """
+
     packed_targets = packed_pattern_targets(np.asarray(targets, dtype=np.uint8))
-    per_basis_tables: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
-    global_score_weights: defaultdict[float, int] = defaultdict(int)
-    total_shots = 0
+    decoded_results: dict[str, DecodedPostselectionResult] = {}
     progress_bars = {}
 
     if progress_label is not None:
@@ -182,7 +63,7 @@ def _build_generic_threshold_tables(
         progress_bars = {
             basis: tqdm(
                 total=len(actual_data[basis].observables),
-                desc=f"{progress_label} {basis}: factory decode",
+                desc=f"{progress_label} {basis}: decoded",
                 unit="shots",
                 position=index,
                 leave=True,
@@ -193,156 +74,187 @@ def _build_generic_threshold_tables(
     try:
         for basis in basis_labels:
             dataset = actual_data[basis]
-            total_shots += len(dataset.observables)
-            packed_dataset = _pack_threshold_dataset(dataset)
+            factory_decoder, full_decoder = decoder_map[basis]
+            anc_det, anc_obs = split_factory_bits(
+                dataset.detectors,
+                dataset.observables,
+                layout=DEFAULT_SYNDROME_LAYOUT,
+            )
+            factory_cache: dict[int, tuple[np.ndarray, float]] = {}
+            full_cache: dict[int, np.ndarray] = {}
+            observable_rows: list[np.ndarray] = []
+            confidence_rows: list[float] = []
             progress_bar = progress_bars.get(basis)
 
-            def update_progress(advance: int) -> None:
+            for shot_index in range(dataset.detectors.shape[0]):
+                anc_detector_bits = anc_det[shot_index]
+                packed_anc_det = _pack_row(anc_detector_bits)
+                factory_result = factory_cache.get(packed_anc_det)
+                if factory_result is None:
+                    correction, confidence = factory_decoder.decode_with_confidence(
+                        anc_detector_bits.astype(np.bool_)
+                    )
+                    factory_result = (
+                        np.asarray(correction, dtype=np.uint8).reshape(-1),
+                        float(np.float64(confidence)),
+                    )
+                    factory_cache[packed_anc_det] = factory_result
+
+                anc_correction, confidence = factory_result
+                if not np.isfinite(confidence):
+                    if progress_bar is not None:
+                        progress_bar.update(1)
+                    continue
+
+                corrected_factory = _pack_row(anc_obs[shot_index]) ^ _pack_row(
+                    anc_correction
+                )
+                if corrected_factory not in packed_targets:
+                    if progress_bar is not None:
+                        progress_bar.update(1)
+                    continue
+
+                detector_bits = dataset.detectors[shot_index]
+                packed_full_det = _pack_row(detector_bits)
+                full_correction = full_cache.get(packed_full_det)
+                if full_correction is None:
+                    full_correction = np.asarray(
+                        full_decoder.decode(detector_bits.astype(np.bool_)),
+                        dtype=np.uint8,
+                    ).reshape(-1)
+                    full_cache[packed_full_det] = full_correction
+
+                output_bits = np.asarray(
+                    dataset.observables[shot_index, :1], dtype=np.uint8
+                )
+                correction_bits = np.asarray(
+                    full_correction[: len(output_bits)], dtype=np.uint8
+                )
+                decoded_output = output_bits ^ correction_bits
+                observable_rows.append(decoded_output.astype(np.uint8, copy=False))
+                confidence_rows.append(confidence)
                 if progress_bar is not None:
-                    progress_bar.update(advance)
+                    progress_bar.update(1)
 
-            factory_cache = _decode_factory_patterns(
-                decoder_map[basis],
-                packed_dataset.packed_anc_det,
-                syndrome_length=packed_dataset.anc_det.shape[1],
-                progress_update=update_progress,
-            )
-            unique_groups, group_counts = np.unique(
-                np.column_stack(
-                    [
-                        packed_dataset.packed_anc_det,
-                        packed_dataset.packed_anc_obs,
-                        packed_dataset.packed_full_det,
-                        packed_dataset.output_bits,
-                    ]
+            decoded_results[basis] = DecodedPostselectionResult(
+                observables=(
+                    np.stack(observable_rows, axis=0)
+                    if observable_rows
+                    else np.zeros((0, 1), dtype=np.uint8)
                 ),
-                axis=0,
-                return_counts=True,
+                confidence=np.asarray(confidence_rows, dtype=np.float64),
             )
-
-            accepted_groups: list[tuple[float, int, int, int]] = []
-            full_decode_weights: defaultdict[int, int] = defaultdict(int)
-            for row, count in zip(unique_groups, group_counts, strict=True):
-                packed_a_det = int(row[0])
-                packed_a_obs = int(row[1])
-                packed_det = int(row[2])
-                output_bit = int(row[3])
-
-                anc_flip_packed, score = factory_cache[packed_a_det]
-                if not np.isfinite(score):
-                    continue
-                if packed_a_obs ^ anc_flip_packed not in packed_targets:
-                    continue
-
-                accepted_groups.append(
-                    (float(score), packed_det, output_bit, int(count))
-                )
-                full_decode_weights[packed_det] += int(count)
-
-            if progress_bar is not None:
-                accepted_shots = int(sum(full_decode_weights.values()))
-                progress_bar.set_description_str(
-                    f"{progress_label} {basis}: full decode"
-                )
-                progress_bar.total = len(dataset.observables) + accepted_shots
-                progress_bar.refresh()
-
-            full_cache = _decode_full_patterns(
-                decoder_map[basis],
-                np.fromiter(full_decode_weights.keys(), dtype=np.uint64),
-                np.fromiter(full_decode_weights.values(), dtype=np.int64),
-                syndrome_length=dataset.detectors.shape[1],
-                progress_update=update_progress,
-            )
-
-            score_to_counts: defaultdict[float, np.ndarray] = defaultdict(
-                lambda: np.zeros(2, dtype=np.int64)
-            )
-            for score, packed_det, output_bit, count in accepted_groups:
-                corrected_output_bit = output_bit ^ full_cache[packed_det]
-                score_to_counts[score][corrected_output_bit] += count
-                global_score_weights[score] += count
-
-            if progress_bar is not None:
-                progress_bar.set_description_str(f"{progress_label} {basis}: decoded")
-                progress_bar.refresh()
-
-            per_basis_tables[basis] = _score_count_dict_to_arrays(score_to_counts)
     finally:
         for progress_bar in progress_bars.values():
             progress_bar.close()
 
-    global_scores = np.array(sorted(global_score_weights), dtype=np.float64)
-    global_weights = np.array(
-        [int(global_score_weights[score]) for score in global_scores],
-        dtype=np.int64,
+    return decoded_results
+
+
+def _shots_at_accepted_fraction(
+    decoded_results: Mapping[str, DecodedPostselectionResult],
+    accepted_fraction: float,
+    *,
+    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+) -> dict[str, np.ndarray]:
+    """Return decoded observable shots after a global confidence top-k cut."""
+
+    if not 0.0 <= accepted_fraction <= 1.0:
+        raise ValueError("accepted_fraction must be between 0 and 1.")
+
+    total_postselected = sum(
+        int(decoded_results[basis].observables.shape[0]) for basis in basis_labels
     )
-    return per_basis_tables, global_scores, global_weights, total_shots
+    empty = {
+        basis: np.zeros(
+            (0, decoded_results[basis].observables.shape[1]), dtype=np.uint8
+        )
+        for basis in basis_labels
+    }
+    if total_postselected == 0 or accepted_fraction == 0.0:
+        return empty
 
+    target_count = min(
+        total_postselected,
+        max(1, int(np.ceil(float(accepted_fraction) * total_postselected))),
+    )
+    confidences: list[np.ndarray] = []
+    basis_ids: list[np.ndarray] = []
+    shot_ids: list[np.ndarray] = []
+    for basis_index, basis in enumerate(basis_labels):
+        basis_results = decoded_results[basis]
+        count = basis_results.observables.shape[0]
+        confidences.append(basis_results.confidence)
+        basis_ids.append(np.full(count, basis_index, dtype=np.int64))
+        shot_ids.append(np.arange(count, dtype=np.int64))
 
-def _counts_for_threshold(
-    scores: np.ndarray,
-    zero_counts: np.ndarray,
-    one_counts: np.ndarray,
-    threshold: float,
-) -> tuple[int, int]:
-    idx = int(np.searchsorted(scores, threshold, side="left"))
-    if idx >= len(scores):
-        return 0, 0
-    return int(np.sum(zero_counts[idx:])), int(np.sum(one_counts[idx:]))
+    all_confidences = np.concatenate(confidences)
+    all_basis_ids = np.concatenate(basis_ids)
+    all_shot_ids = np.concatenate(shot_ids)
+    order = np.argsort(-all_confidences, kind="stable")[:target_count]
+
+    selected: dict[str, list[np.ndarray]] = {basis: [] for basis in basis_labels}
+    for flat_index in order:
+        basis = basis_labels[int(all_basis_ids[flat_index])]
+        shot_index = int(all_shot_ids[flat_index])
+        selected[basis].append(decoded_results[basis].observables[shot_index])
+
+    return {
+        basis: (
+            np.asarray(selected[basis], dtype=np.uint8)
+            if selected[basis]
+            else np.zeros(
+                (0, decoded_results[basis].observables.shape[1]), dtype=np.uint8
+            )
+        )
+        for basis in basis_labels
+    }
 
 
 def _evaluate_cached_threshold_curve(
-    per_basis_tables: Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
-    score_array: np.ndarray,
+    decoded_results: Mapping[str, DecodedPostselectionResult],
     *,
-    score_weights: np.ndarray,
+    total_shots: int,
     threshold_points: int = 64,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
-    total_shots: int,
 ) -> dict[str, np.ndarray]:
-    """Evaluate a point-fidelity curve from precomputed score/count tables."""
+    """Evaluate a point-fidelity curve from decoded shots and confidences."""
 
-    if len(score_array) == 0:
+    confidence_arrays = [
+        decoded_results[basis].confidence
+        for basis in basis_labels
+        if decoded_results[basis].observables.shape[0] > 0
+    ]
+    if not confidence_arrays:
         raise RuntimeError("No factory-accepted shots found for threshold sweep.")
-
-    thresholds = np.unique(
-        _weighted_quantiles_from_counts(
-            score_array,
-            score_weights,
-            np.linspace(0.0, 1.0, threshold_points),
-        )
-    )
+    confidences = np.sort(np.concatenate(confidence_arrays))
+    threshold_indices = np.rint(
+        np.linspace(0, len(confidences) - 1, threshold_points)
+    ).astype(np.int64)
+    thresholds = np.unique(confidences[threshold_indices])
 
     accepted_fractions: list[float] = []
     fidelities: list[float] = []
     for threshold in thresholds:
-        counts_by_basis = {
-            basis: _counts_for_threshold(*per_basis_tables[basis], float(threshold))
-            for basis in basis_labels
-        }
+        shots_by_basis: dict[str, np.ndarray] = {}
+        accepted_count = 0
+        for basis in basis_labels:
+            basis_results = decoded_results[basis]
+            keep = basis_results.confidence >= float(threshold)
+            shots = basis_results.observables[keep].astype(np.uint8, copy=False)
+            shots_by_basis[basis] = shots
+            accepted_count += int(shots.shape[0])
+
         if (
-            min(sum(counts_by_basis[basis]) for basis in basis_labels)
+            min(shots_by_basis[basis].shape[0] for basis in basis_labels)
             < min_accepted_per_basis
         ):
             continue
 
-        zero_counts = np.array(
-            [counts_by_basis[basis][0] for basis in basis_labels],
-            dtype=np.int64,
-        )
-        one_counts = np.array(
-            [counts_by_basis[basis][1] for basis in basis_labels],
-            dtype=np.int64,
-        )
-        point = TomographyResult(zero_counts, one_counts).fidelity_bloch(target_bloch)[
-            "point"
-        ]
-        accepted_fractions.append(
-            sum(sum(counts_by_basis[basis]) for basis in basis_labels) / total_shots
-        )
+        point = TomographyResult(shots_by_basis).fidelity_bloch(target_bloch)["point"]
+        accepted_fractions.append(accepted_count / total_shots)
         fidelities.append(point)
 
     order = np.argsort(accepted_fractions)
@@ -356,7 +268,8 @@ def _evaluate_cached_threshold_curve(
 
 
 __all__ = [
-    "DecoderAdapter",
+    "DecodedPostselectionResult",
     "_build_generic_threshold_tables",
     "_evaluate_cached_threshold_curve",
+    "_shots_at_accepted_fraction",
 ]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -37,14 +37,21 @@ class TomographyResult:
 
     def __init__(
         self,
-        zero_counts: np.ndarray | Sequence[int],
-        one_counts: np.ndarray | Sequence[int],
+        shots_by_basis: Mapping[str, np.ndarray],
     ) -> None:
-        zero_arr = np.asarray(zero_counts, dtype=np.int64).reshape(-1)
-        one_arr = np.asarray(one_counts, dtype=np.int64).reshape(-1)
-        if zero_arr.shape != (3,) or one_arr.shape != (3,):
-            raise ValueError("zero_counts and one_counts must be length-3 arrays.")
+        zero_counts: list[int] = []
+        one_counts: list[int] = []
+        for basis in ("X", "Y", "Z"):
+            shots = np.asarray(shots_by_basis[basis], dtype=np.uint8)
+            if shots.ndim != 2 or shots.shape[1] != 1:
+                raise ValueError(
+                    "TomographyResult expects each basis to have shape (shots, 1)."
+                )
+            zero_counts.append(int(np.count_nonzero(shots[:, 0] == 0)))
+            one_counts.append(int(np.count_nonzero(shots[:, 0] == 1)))
 
+        zero_arr = np.asarray(zero_counts, dtype=np.int64)
+        one_arr = np.asarray(one_counts, dtype=np.int64)
         totals = np.maximum(zero_arr + one_arr, 1)
         bloch = ((zero_arr - one_arr) / totals).astype(np.float64)
         object.__setattr__(self, "density_matrix", _density_matrix_from_bloch(bloch))

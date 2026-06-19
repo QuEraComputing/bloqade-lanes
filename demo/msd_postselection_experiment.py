@@ -20,32 +20,19 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 
-from bloqade.lanes import GeminiLogicalSimulator
-
-try:
-    REPO_ROOT = Path(__file__).resolve().parents[1]
-except NameError:
-    REPO_ROOT = Path.cwd()
-if REPO_ROOT.name == "demo":
-    REPO_ROOT = REPO_ROOT.parent
-sys.path.insert(0, str(REPO_ROOT))
-
-from demo.msd_utils.application.experiments import (
+from bloqade.gemini.decoding import (
+    DEFAULT_TARGET_BLOCH,
+    GurobiDecoderWithConfidence,
     PostSelectionExperiment,
+    TableDecoderWithConfidence,
     empty_logical_circuit,
     magic_state_dist_steane,
+    plot_decoder_curves,
     single_qubit_state_tomography,
 )
-from demo.msd_utils.application.table_decoders import TableDecoderWithConfidence
-from demo.msd_utils.domain.confidence import ConfidenceGurobiDecoder
-from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH
-
-from bloqade.gemini.decoding.workflow import plot_decoder_curves
+from bloqade.lanes import GeminiLogicalSimulator
 
 # ## Configuration
 #
@@ -71,7 +58,7 @@ INJECTED_VALID_FACTORY_TARGETS = np.zeros((1, 0), dtype=np.uint8)
 # In[3]:
 
 
-primitive_set = magic_state_dist_steane()
+primitive_set = magic_state_dist_steane(theta_offset=0.30)
 noncliff_prefix = primitive_set.state_injection_circuit
 main_cliff_circ = primitive_set.logical_circuit
 tomo_circs = single_qubit_state_tomography()
@@ -84,47 +71,37 @@ tomo_circs = single_qubit_state_tomography()
 # In[4]:
 
 
-def build_msd_mld_experiment() -> PostSelectionExperiment:
-    return PostSelectionExperiment(
-        noncliff_prefix,
-        main_cliff_circ,
-        MSD_VALID_FACTORY_TARGETS,
-        TableDecoderWithConfidence,
-        {
-            "num_shots": MLD_TRAIN_SHOTS,
-            "step_size": MLD_BATCH_SIZE,
-            "seed": RANDOM_SEED,
-        },
-    )
-
-
-def build_msd_mle_experiment() -> PostSelectionExperiment:
-    return PostSelectionExperiment(
-        noncliff_prefix,
-        main_cliff_circ,
-        MSD_VALID_FACTORY_TARGETS,
-        ConfidenceGurobiDecoder,
-        {},
-    )
-
-
-def build_injected_mld_experiment() -> PostSelectionExperiment:
-    return PostSelectionExperiment(
-        noncliff_prefix,
-        empty_logical_circuit(),
-        INJECTED_VALID_FACTORY_TARGETS,
-        TableDecoderWithConfidence,
-        {
-            "num_shots": MLD_TRAIN_SHOTS,
-            "step_size": MLD_BATCH_SIZE,
-            "seed": RANDOM_SEED,
-        },
-    )
-
-
-msd_mld_exp = build_msd_mld_experiment()
-msd_mle_exp = build_msd_mle_experiment()
-injected_mld_exp = build_injected_mld_experiment()
+msd_mld_exp = PostSelectionExperiment(
+    noncliff_prefix,
+    main_cliff_circ,
+    MSD_VALID_FACTORY_TARGETS,
+    TableDecoderWithConfidence,
+    tomo_circs,
+    {
+        "num_shots": MLD_TRAIN_SHOTS,
+        "step_size": MLD_BATCH_SIZE,
+        "seed": RANDOM_SEED,
+    },
+)
+msd_mle_exp = PostSelectionExperiment(
+    noncliff_prefix,
+    main_cliff_circ,
+    MSD_VALID_FACTORY_TARGETS,
+    GurobiDecoderWithConfidence,
+    tomo_circs,
+)
+injected_mld_exp = PostSelectionExperiment(
+    noncliff_prefix,
+    empty_logical_circuit(),
+    INJECTED_VALID_FACTORY_TARGETS,
+    TableDecoderWithConfidence,
+    tomo_circs,
+    {
+        "num_shots": MLD_TRAIN_SHOTS,
+        "step_size": MLD_BATCH_SIZE,
+        "seed": RANDOM_SEED,
+    },
+)
 
 
 # ## End-to-end runner
@@ -134,52 +111,39 @@ injected_mld_exp = build_injected_mld_experiment()
 # In[ ]:
 
 
-def prepare_experiment(
-    exp: PostSelectionExperiment,
-    *,
-    decoder_name: str,
-    num_logical_qubits: int,
-    eval_shots: int = EVAL_SHOTS,
-) -> PostSelectionExperiment:
-    exp.kernels(
-        num_logical_qubits=num_logical_qubits,
-        tomography_kernels=tomo_circs,
-    )
-    exp.dem_circuits()
-    exp.dems()
-    exp.initialize_decoders()
-    exp.make_tasks(device=GeminiLogicalSimulator())
-    exp.get_samples(
-        num_shots=eval_shots,
-        chunk_size=None,
-        sim_type=SIM_TYPE,
-        seed=RANDOM_SEED,
-    )
-    exp.decode_and_postselect(decoder_name=decoder_name)
-    return exp
-
-
-msd_mld_exp = prepare_experiment(
-    msd_mld_exp,
-    decoder_name="MLD",
-    num_logical_qubits=5,
+msd_mld_exp.kernels(num_logical_qubits=5)
+msd_mld_exp.dem_circuits()
+msd_mld_exp.dems()
+msd_mld_exp.initialize_decoders()
+msd_mld_exp.make_tasks(
+    device=GeminiLogicalSimulator(backend=SIM_TYPE, seed=RANDOM_SEED)
 )
+msd_mld_exp.get_samples(num_shots=EVAL_SHOTS)
+msd_mld_exp.decode_and_postselect(decoder_name="MLD")
 
 try:
-    msd_mle_exp = prepare_experiment(
-        msd_mle_exp,
-        decoder_name="MLE",
-        num_logical_qubits=5,
+    msd_mle_exp.kernels(num_logical_qubits=5)
+    msd_mle_exp.dem_circuits()
+    msd_mle_exp.dems()
+    msd_mle_exp.initialize_decoders()
+    msd_mle_exp.make_tasks(
+        device=GeminiLogicalSimulator(backend=SIM_TYPE, seed=RANDOM_SEED)
     )
+    msd_mle_exp.get_samples(num_shots=EVAL_SHOTS)
+    msd_mle_exp.decode_and_postselect(decoder_name="MLE")
 except Exception as exc:
     print(f"Skipping MLE experiment because decoder construction failed: {exc!r}")
     msd_mle_exp = None
 
-injected_mld_exp = prepare_experiment(
-    injected_mld_exp,
-    decoder_name="Injected MLD",
-    num_logical_qubits=1,
+injected_mld_exp.kernels(num_logical_qubits=1)
+injected_mld_exp.dem_circuits()
+injected_mld_exp.dems()
+injected_mld_exp.initialize_decoders()
+injected_mld_exp.make_tasks(
+    device=GeminiLogicalSimulator(backend=SIM_TYPE, seed=RANDOM_SEED)
 )
+injected_mld_exp.get_samples(num_shots=EVAL_SHOTS)
+injected_mld_exp.decode_and_postselect(decoder_name="Injected MLD")
 
 
 # ## Tomography result API
@@ -266,75 +230,3 @@ ax.set_xscale("linear")
 ax.set_xlabel("Total accepted fraction")
 ax.set_ylabel("Magic state fidelity")
 ax.legend()
-
-
-# # debug
-
-# In[ ]:
-
-
-def summarize_curve(name, curve):
-    print(f"\n{name}")
-    print("keys:", curve.keys())
-
-    for key in [
-        "accepted_fraction",
-        "fidelity",
-        "point",
-    ]:
-        if key not in curve:
-            continue
-        arr = np.asarray(curve[key])
-        print(
-            key,
-            "shape=",
-            arr.shape,
-            "dtype=",
-            arr.dtype,
-            "min=",
-            np.nanmin(arr) if arr.size else None,
-            "max=",
-            np.nanmax(arr) if arr.size else None,
-        )
-
-
-summarize_curve("MLD", msd_mld_curve)
-
-if msd_mle_curve is not None:
-    summarize_curve("MLE", msd_mle_curve)
-
-print("\ninjected_summary")
-print(injected_summary)
-
-
-# In[ ]:
-
-
-fig, ax = plot_decoder_curves(
-    curves,
-    injected_summary=injected_summary,
-    min_accepted_fraction=0.001,
-    title="debug",
-)
-print("ylim:", ax.get_ylim())
-
-for i, collection in enumerate(ax.collections):
-    try:
-        paths = collection.get_paths()
-        ys = np.concatenate(
-            [
-                np.asarray(p.vertices, dtype=float)[:, 1]
-                for p in paths
-                if np.asarray(p.vertices).size
-            ]
-        )
-        print("collection", i, "y min/max:", np.nanmin(ys), np.nanmax(ys))
-    except Exception as exc:
-        print("collection", i, "could not inspect:", exc)
-
-for i, line in enumerate(ax.lines):
-    y = np.asarray(line.get_ydata(), dtype=float)
-    print("line", i, line.get_label(), "y min/max:", np.nanmin(y), np.nanmax(y))
-
-
-# In[ ]:

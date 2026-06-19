@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 
 from kirin.dialects import ilist
 
 from bloqade import squin
 
 from .kernels import (
-    DecoderPrimitiveSet,
     _build_tomography_primitives,
-    _kernels_by_tomography_basis,
-    produce_tomography_kernels,
+    _DecoderPrimitiveSet,
+    _produce_tomography_kernels,
 )
 from .types import KirinKernel
 
@@ -22,27 +20,15 @@ def _default_post_processing():
     return default_post_processing
 
 
-@dataclass(frozen=True)
-class TomographyKernels:
-    """Basis-labeled tomography kernels.
-
-    Attributes:
-        actual: Basis-labeled kernels for the full noisy/input-prepared logical
-            circuit.
-    """
-
-    actual: dict[str, KirinKernel]
-
-
 # NOTE: this is basically what the user would "instantiate" for this specific
 # MSD experiment
-def build_msd_primitives(
+def _build_msd_primitives(
     theta: float,
     phi: float,
     lam: float,
     *,
     log: bool = True,
-) -> DecoderPrimitiveSet:
+) -> _DecoderPrimitiveSet:
     """Build the state-preparation and logical-circuit primitives for MSD.
 
     Args:
@@ -72,17 +58,17 @@ def build_msd_primitives(
         squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
         squin.broadcast.sqrt_x_adj(reg)
 
-    return DecoderPrimitiveSet(
+    return _DecoderPrimitiveSet(
         state_injection_circuit=msd_magic_prep,
         logical_circuit=msd_forward,
     )
 
 
-def build_decoder_kernel_bundle(
-    primitive_set: DecoderPrimitiveSet,
+def _build_decoder_kernel_bundle(
+    primitive_set: _DecoderPrimitiveSet,
     num_logical_qubits: int = 5,
     tomography_kernels: Mapping[str, KirinKernel] | None = None,
-) -> TomographyKernels:
+) -> dict[str, KirinKernel]:
     """Build basis-labeled MSD tomography kernels.
 
     Args:
@@ -91,7 +77,7 @@ def build_decoder_kernel_bundle(
         tomography_kernels: Optional tomography operations keyed by basis.
 
     Returns:
-        A ``TomographyKernels`` containing basis-labeled kernel maps.
+        Basis-labeled tomography kernels.
     """
 
     tomography_primitives = (
@@ -108,7 +94,7 @@ def build_decoder_kernel_bundle(
         logical_circuit(reg)
 
     default_post_processing = _default_post_processing()
-    actual_kernels = produce_tomography_kernels(
+    actual_kernels = _produce_tomography_kernels(
         num_logical_qubits,
         actual_logical_kernel,
         tomography_primitives,
@@ -116,4 +102,4 @@ def build_decoder_kernel_bundle(
         "msd_actual",
     )
 
-    return TomographyKernels(actual=_kernels_by_tomography_basis(actual_kernels))
+    return dict(actual_kernels)

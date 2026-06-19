@@ -1,110 +1,54 @@
+from __future__ import annotations
+
 import math
-from collections.abc import Callable
-from typing import Any, Mapping, Sequence, cast
+from collections.abc import Mapping, Sequence
+from typing import Any, Callable, cast
 
 import numpy as np
 import stim
-import tsim
 from bloqade.decoders import BaseDecoder
 
 from bloqade.gemini.device import GeminiLogicalSimulator
 
 from .confidence import ConfidenceDecoder
 from .constants import DEFAULT_BASIS_LABELS
-from .dem import sub_detector_error_model
-from .kernels import DecoderPrimitiveSet, _build_tomography_primitives
+from .dem import _sub_detector_error_model
+from .kernels import _build_tomography_primitives, _DecoderPrimitiveSet
 from .layout import DEFAULT_SYNDROME_LAYOUT
-from .msd import (
-    TomographyKernels,
-    build_decoder_kernel_bundle,
-    build_msd_primitives,
-)
+from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
 from .postselection import (
-    DecoderAdapter,
+    DecodedPostselectionResult,
+    DecoderPair,
     _build_generic_threshold_tables,
     _evaluate_cached_threshold_curve,
+    _shots_at_accepted_fraction,
 )
-from .sampling import BasisDataset, run_task
-from .special_tasks import (
-    apply_special_tsim_circuit_strategy,
-    build_task_map,
-)
+from .sampling import BasisDataset
+from .special_tasks import _apply_special_tsim_circuit_strategy
 from .tasks import DemoTask
 from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
-from .types import SquinKernel
+from .types import KirinKernel, SquinKernel
 from .workflow import plot_decoder_curves
 
 DecoderConstructor = Callable[..., BaseDecoder]
 
 
-def _counts_at_accepted_fraction(
-    per_basis_tables: Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
-    total_shots: int,
-    accepted_fraction: float,
-    *,
-    basis_labels: Sequence[str],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Accumulate score-sorted counts until the all-shot fraction is reached."""
-
-    if not 0.0 <= accepted_fraction <= 1.0:
-        raise ValueError("accepted_fraction must be between 0 and 1.")
-
-    zero_counts = np.zeros(len(basis_labels), dtype=np.int64)
-    one_counts = np.zeros(len(basis_labels), dtype=np.int64)
-    if total_shots <= 0 or accepted_fraction == 0.0:
-        return zero_counts, one_counts
-
-    target_count = max(1, int(math.ceil(float(accepted_fraction) * total_shots)))
-    basis_tables: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-    table_indices: list[int] = []
-    for basis in basis_labels:
-        scores, zeros, ones = per_basis_tables[basis]
-        basis_tables.append((scores, zeros, ones))
-        table_indices.append(len(scores) - 1)
-
-    kept = 0
-    while kept < target_count:
-        best_basis = -1
-        best_score = -np.inf
-        for basis_index, idx in enumerate(table_indices):
-            scores = basis_tables[basis_index][0]
-            if idx >= 0 and float(scores[idx]) > best_score:
-                best_basis = basis_index
-                best_score = float(scores[idx])
-
-        if best_basis < 0:
-            break
-
-        idx = table_indices[best_basis]
-        _scores, zeros, ones = basis_tables[best_basis]
-        zero = int(zeros[idx])
-        one = int(ones[idx])
-        zero_counts[best_basis] += zero
-        one_counts[best_basis] += one
-        kept += zero + one
-        table_indices[best_basis] = idx - 1
-
-    return zero_counts, one_counts
-
-
 # TODO: fix the type-checks on this file; the type-checks aren't working for some reason
-def magic_state_dist_steane() -> DecoderPrimitiveSet:
-    # TODO: make it more precise-- keep the actual computation
-    ideal_theta = 0.3041 * math.pi
+def magic_state_dist_steane(
+    *,
+    theta_offset: float = 0.0,
+    phi_offset: float = 0.0,
+    lam_offset: float = 0.0,
+) -> _DecoderPrimitiveSet:
+    ideal_theta = math.acos(1 / math.sqrt(3))
     ideal_phi = 0.25 * math.pi
     ideal_lam = 0.0
-
-    # TODO: have offsets as parameters? -- defaults set to 0.
-    theta_offset = 0.30
-    phi_offset = 0.0
-    lam_offset = 0.0
 
     theta = ideal_theta + theta_offset
     phi = ideal_phi + phi_offset
     lam = ideal_lam + lam_offset
 
-    msd_kernels = build_msd_primitives(theta, phi, lam)
-    return msd_kernels
+    return _build_msd_primitives(theta, phi, lam)
 
 
 def single_qubit_state_tomography() -> dict[str, SquinKernel]:
@@ -126,40 +70,21 @@ def empty_logical_circuit() -> SquinKernel:
 
 
 # TODO: make this "cache" class abstract as well?
-class PostSelectionExperimentCache:
+class _PostSelectionExperimentCache:
     # Going to add the kernels here for consistency.
-    # NOTE: I know the TomographyKernels are dictionaries keyed by basis so is slightly inconsistent with the rest of the code.
-    # Can think about either converting this to a datastructure containing two tuples, OR convert all other instances into dict's.
-    # ^ so this comes to whether we use tuples of the things OR we do mappings. Let's just do mappings; it's more flexible.
-    # Maybe it doesn't need to be this flexible (we can use tuples of a certain length), but right now the lower-level code uses mappings
-    # so it's easier to implement for now.
-    dem_kernels: TomographyKernels | None
-    dem_circuits: Mapping[str, tsim.Circuit] | None
+    # NOTE: basis-labeled dictionaries are slightly inconsistent with tuple
+    # based representations, but mappings are more flexible and match the
+    # lower-level code.
+    dem_kernels: dict[str, KirinKernel] | None
+    dem_circuits: Mapping[str, object] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
-    decoders_with_confidence: Mapping[str, DecoderAdapter] | None
-    # NOTE: not using fields initialized_decoders_postselection and initialized_decoders_final directly for this implementation
-    # Q: should the decoders enforce the shape of the input?
-    # initialized_decoders_postselection: Mapping[str, ConfidenceDecoder] | None
-    # initialized_decoders_final: Mapping[str, BaseDecoder] | None
-    # Can think more carefully about the datatype and the shape of the following arrays.
+    decoders_with_confidence: Mapping[str, DecoderPair] | None
     raw_results: Mapping[str, BasisDataset] | None
-    # In this workflow, decoding is kind of coupled to postselection. The workflow is decoding ancilla -> check ancillae match postselection condition
-    # -> decode output qubit. In other words, we don't always decode the output qubit (this is for speed). I guess we can return the decoded observables on the
-    # ancillae qubits only..? OR, we can separate out the ancilla qubits decoded results and the observable qubit observable results. Might opt
-    # for the latter, for now -- BUT, decoding is NOT coupled to confidence score I don't think
-    # decoded_results: Mapping[str, tuple[np.ndarray, np.ndarray]] | None
-    # the specific type of decoded_results is specified by the return type of _build_generic_threshold_tables.
-    decoded_results: (
-        tuple[
-            Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
-            np.ndarray,
-            np.ndarray,
-            int,
-        ]
-        | None
-    )
+    # decoded_results maps each basis to decoded output observable shots plus
+    # one confidence score per accepted shot.
+    decoded_results: Mapping[str, DecodedPostselectionResult] | None
     thresholded_data: Mapping[str, np.ndarray] | None
-    hardware_tasks: Mapping[str, DemoTask] | None
+    hardware_tasks: Mapping[str, object] | None
 
     def __init__(self):
         self.dem_kernels = None
@@ -172,6 +97,19 @@ class PostSelectionExperimentCache:
         self.hardware_tasks = None
 
 
+def _task_impl(task: object) -> object:
+    return task.task if isinstance(task, DemoTask) else task
+
+
+def _basis_dataset_from_task_result(result: object) -> BasisDataset:
+    if isinstance(result, BasisDataset):
+        return result
+    return BasisDataset(
+        detectors=np.asarray(result.detectors, dtype=np.uint8),  # type: ignore[attr-defined]
+        observables=np.asarray(result.observables, dtype=np.uint8),  # type: ignore[attr-defined]
+    )
+
+
 # TODO: should inherit from some "abstract" experiment workflow class?
 # ^^ what methods should this "abstract" experiment workflow class have???
 class PostSelectionExperiment:
@@ -181,10 +119,13 @@ class PostSelectionExperiment:
         self,
         noncliff_prefix: SquinKernel,
         main_cliff_circ: SquinKernel,
-        # NOTE: again, I'm kind of cheating here because we can't really specify the shape of the numpy array in the dtype.
-        # But this should be a 2D numpy array, where I have a list/array of possible valid postselection conditions.
+        # NOTE: again, I'm kind of cheating here because we can't really specify
+        # the shape of the numpy array in the dtype. But this should be a 2D
+        # numpy array, where I have a list/array of possible valid
+        # postselection conditions.
         postselection_condition: np.ndarray,
         decoder: DecoderConstructor,
+        tomography_kernels: Mapping[str, SquinKernel],
         # specifying these as a dictionary is reasonable? Use a mapping instead?
         decoder_init_args: dict[str, Any] | None = None,
     ):
@@ -192,102 +133,82 @@ class PostSelectionExperiment:
         self.main_cliff_circ = main_cliff_circ
         self.postselection_condition = postselection_condition
         self.decoder = decoder
+        self.tomography_kernels = dict(tomography_kernels)
         self.decoder_init_args = {} if decoder_init_args is None else decoder_init_args
 
-        self.postselection_exp_cache = PostSelectionExperimentCache()
-        # NOTE: hardcoding this for now (I guess) to support having some interface for adding noise to the circuit and compiling it down?
-        # ^ maybe in the future, a user could specify their own simulator to use; specifically, what specific compilation pass to apply?
-        # NOTE: there are two uses of a simulator object. One is the case where we actually need a simulator object to sample shots to do the decoding
-        # (TableDecoder). The other is, we need to define some kind of compilation pipeline for our kernels down to tasks. This definition of the
-        # simulator object is for the latter.
-        # ^ Actually, for the former, the simulation is kind of hard-coded to be tsim in the current pipeline, which generates tsim circuits. However,
-        # it might be nice to allow the user to specify the simulator backend (to use a different backend than tsim, for example), in decoder_init_args.
-        self.simulator = GeminiLogicalSimulator()
+        self._postselection_exp_cache = _PostSelectionExperimentCache()
+        # NOTE: hardcoding this for now (I guess) to support having some
+        # interface for adding noise to the circuit and compiling it down.
+        self._simulator = GeminiLogicalSimulator()
 
     # TODO: implement a pass to infer the number of qubits and the output qubit from a kernel?
     # for the device.
     def kernels(
         self,
         num_logical_qubits: int = 5,
-        *,
-        tomography_kernels: Mapping[str, SquinKernel],
-    ) -> TomographyKernels:
-        # TODO: change the name of DecoderPrimitiveSet --> whole_circuit
-        decoder_primitive_set = DecoderPrimitiveSet(
+    ) -> dict[str, KirinKernel]:
+        # TODO: change the name of _DecoderPrimitiveSet --> whole_circuit
+        decoder_primitive_set = _DecoderPrimitiveSet(
             state_injection_circuit=self.noncliff_prefix,
             logical_circuit=self.main_cliff_circ,
         )
-        kernel_bundle = build_decoder_kernel_bundle(
+        dem_kernels = _build_decoder_kernel_bundle(
             decoder_primitive_set,
             num_logical_qubits,
-            tomography_kernels=tomography_kernels,
+            tomography_kernels=self.tomography_kernels,
         )
-        self.postselection_exp_cache.dem_kernels = kernel_bundle
+        self._postselection_exp_cache.dem_kernels = dem_kernels
         # Assumes that there is some way of getting the num_logical_qubits.
-        return kernel_bundle
+        return dem_kernels
 
     # TODO: split up the kernels and DEM kernels functions
-    # NOTE: both to construct the kernels, AND to actually get the tasks, we need to call SPECIAL_KERNEL_STRATEGY.
-    # TODO: make this function larger to support the compilation of the kernels down with the special_kernel_strategy.
-    # ^ split up dem_circuits functions to expose the kernels or the circuits or both?-- play with it?
-    def dem_circuits(
-        self,
-    ) -> dict[str, tsim.Circuit]:
-        tomography_kernels = self.postselection_exp_cache.dem_kernels
+    def dem_circuits(self) -> dict[str, object]:
+        tomography_kernels = self._postselection_exp_cache.dem_kernels
         if tomography_kernels is None:
             raise RuntimeError("kernels must be called before dem_circuits.")
-        dem_tasks = build_task_map(
-            self.simulator,
-            tomography_kernels.actual,
-            m2dets=None,
-            m2obs=None,
-            append_measurements=False,
-        )
-        dem_tasks = apply_special_tsim_circuit_strategy(dem_tasks)
-        special_tsim_circuits: dict[str, tsim.Circuit] = {
-            basis: cast(tsim.Circuit, task.tsim_circuit)
+        dem_tasks = {
+            basis: self._simulator.task(kernel.similar(), None, None)
+            for basis, kernel in tomography_kernels.items()
+        }
+        dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)
+        special_tsim_circuits = {
+            basis: _task_impl(task).tsim_circuit  # type: ignore[attr-defined]
             for basis, task in dem_tasks.items()
         }
-        self.postselection_exp_cache.dem_circuits = special_tsim_circuits
-        # again, check that values are returned in-order
+        self._postselection_exp_cache.dem_circuits = special_tsim_circuits
         return special_tsim_circuits
 
-    def dems(
-        self,
-    ) -> dict[str, stim.DetectorErrorModel]:
-        # Note that this depends on the state and so arguably it's unclear to the user the exact inputs to this function.
-        dem_circuits = self.postselection_exp_cache.dem_circuits
+    def dems(self) -> dict[str, stim.DetectorErrorModel]:
+        # Note that this depends on the state and so arguably it's unclear to
+        # the user the exact inputs to this function.
+        dem_circuits = self._postselection_exp_cache.dem_circuits
         if dem_circuits is None:
             raise RuntimeError("dem_circuits must be called before dems.")
         dems = {
-            basis: circ.detector_error_model(approximate_disjoint_errors=True)
+            basis: circ.detector_error_model(approximate_disjoint_errors=True)  # type: ignore[attr-defined]
             for basis, circ in dem_circuits.items()
         }
-        self.postselection_exp_cache.dems = dems
+        self._postselection_exp_cache.dems = dems
         return dems
 
     # TODO: where do we pass in shot counts, etc. for training the decoder?
-    # NOTE: could probably split this up into separate functions; one that outputs just the decoders, and another
-    # that outputs the decoders with confidences
-    def initialize_decoders(
-        self,
-    ) -> dict[str, DecoderAdapter]:
-        dems_bases = self.postselection_exp_cache.dems
+    def initialize_decoders(self) -> dict[str, DecoderPair]:
+        dems_bases = self._postselection_exp_cache.dems
         if dems_bases is None:
             raise RuntimeError("dems must be called before initialize_decoders.")
-        decoders_bases: dict[str, DecoderAdapter] = {}
-        # NOTE: there is a question of if we want to support multi-qubit tomography in this experiment. For now, probably not; if we did, we
-        # would have to specify the number of output qubits and their locations and use that information to construct a custom SyndromeLayout.
-        # Not sure what else would change if we had to support multi-qubit tomography. But tbh this experiment is pretty coupled to single qubit tomography atm
-        # anyways.
+        decoders_bases: dict[str, DecoderPair] = {}
+        # NOTE: there is a question of if we want to support multi-qubit
+        # tomography in this experiment. For now, probably not; if we did, we
+        # would have to specify the number of output qubits and their locations
+        # and use that information to construct a custom SyndromeLayout.
         layout = DEFAULT_SYNDROME_LAYOUT
         for basis_label, dem_base in dems_bases.items():
-            full_dem = sub_detector_error_model(
+            full_dem = _sub_detector_error_model(
                 dem_base,
                 detector_indices=range(dem_base.num_detectors),
                 observable_indices=range(layout.output_observable_count),
             )
-            factory_dem = sub_detector_error_model(
+            factory_dem = _sub_detector_error_model(
                 dem_base,
                 detector_indices=range(
                     layout.output_detector_count, dem_base.num_detectors
@@ -297,98 +218,50 @@ class PostSelectionExperiment:
                     dem_base.num_observables,
                 ),
             )
-            # NOTE: this is important. We are sampling 2x to build the 2 decoders (not once); I think it is OK (so long as they approximate
-            # the same table? but it IS more expensive)
+            # NOTE: this is important. We are sampling 2x to build the 2 decoders
+            # (not once); I think it is OK (so long as they approximate the same
+            # table? but it IS more expensive)
             full_decoder = self.decoder(full_dem, **self.decoder_init_args)
             factory_decoder = cast(
                 ConfidenceDecoder,
                 self.decoder(factory_dem, **self.decoder_init_args),
             )
-
-            def make_decode_factory(
-                factory: ConfidenceDecoder,
-            ) -> Callable[[np.ndarray], tuple[np.ndarray, float]]:
-                def decode_factory(
-                    syndrome: np.ndarray,
-                ) -> tuple[np.ndarray, float]:
-                    correction, confidence = factory.decode_with_confidence(
-                        syndrome.astype(bool)
-                    )
-                    return np.asarray(correction, dtype=np.uint8), float(
-                        np.float64(confidence)
-                    )
-
-                return decode_factory
-
-            def make_decode_full(
-                decoder: BaseDecoder,
-            ) -> Callable[[np.ndarray], np.ndarray]:
-                def decode_full(syndrome: np.ndarray) -> np.ndarray:
-                    return np.asarray(
-                        decoder.decode(syndrome.astype(bool)),
-                        dtype=np.uint8,
-                    )
-
-                return decode_full
-
-            adapter = DecoderAdapter(
-                decode_factory=make_decode_factory(factory_decoder),
-                decode_full=make_decode_full(full_decoder),
-            )
-            decoders_bases[basis_label] = adapter
-        self.postselection_exp_cache.decoders_with_confidence = decoders_bases
+            decoders_bases[basis_label] = (factory_decoder, full_decoder)
+        self._postselection_exp_cache.decoders_with_confidence = decoders_bases
         return decoders_bases
 
-    def make_tasks(self, device: GeminiLogicalSimulator) -> dict[str, DemoTask]:
-        tomography_kernels = self.postselection_exp_cache.dem_kernels
+    def make_tasks(self, device: GeminiLogicalSimulator) -> dict[str, object]:
+        tomography_kernels = self._postselection_exp_cache.dem_kernels
         if tomography_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
-        actual_tasks = build_task_map(
-            device,
-            tomography_kernels.actual,
-            m2dets=None,
-            m2obs=None,
-            append_measurements=False,
-        )
-        self.postselection_exp_cache.hardware_tasks = actual_tasks
+        actual_tasks: dict[str, object] = {
+            basis: device.task(kernel.similar())
+            for basis, kernel in tomography_kernels.items()
+        }
+        self._postselection_exp_cache.hardware_tasks = actual_tasks
         return actual_tasks
 
     # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
     def get_samples(
         self,
         num_shots: int,
-        *,
-        chunk_size: int | None = None,
-        sim_type: str = "tsim",
-        seed: int | None = None,
     ) -> dict[str, BasisDataset]:
-        # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
-        actual_tasks = self.postselection_exp_cache.hardware_tasks
+        actual_tasks = self._postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
-        # TODO: make CliffTTask unexportable by the * export; not exported by default.
         actual_data = {
-            basis: run_task(
-                task,
-                num_shots,
-                with_noise=True,
-                chunk_size=chunk_size,
-                sim_type=sim_type,
-                seed=None if seed is None else int(seed) + basis_index,
-            )
-            for basis_index, (basis, task) in enumerate(actual_tasks.items())
+            basis: _basis_dataset_from_task_result(task.run(num_shots))  # type: ignore[attr-defined]
+            for basis, task in actual_tasks.items()
         }
-        self.postselection_exp_cache.raw_results = actual_data
+        self._postselection_exp_cache.raw_results = actual_data
         return actual_data
 
-    def decode_and_postselect(self, decoder_name: str | None = "decoder") -> tuple[
-        Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
-        np.ndarray,
-        np.ndarray,
-        int,
-    ]:
-        actual_data = self.postselection_exp_cache.raw_results
-        decoder_map = self.postselection_exp_cache.decoders_with_confidence
+    def decode_and_postselect(
+        self,
+        decoder_name: str | None = "decoder",
+    ) -> dict[str, DecodedPostselectionResult]:
+        actual_data = self._postselection_exp_cache.raw_results
+        decoder_map = self._postselection_exp_cache.decoders_with_confidence
         if actual_data is None:
             raise RuntimeError("get_samples must be called before decoding.")
         if decoder_map is None:
@@ -397,17 +270,15 @@ class PostSelectionExperiment:
         if targets.ndim != 2:
             raise ValueError("postselection_condition must be a 2D array.")
         basis_labels = list(decoder_map.keys())
-        progress_label = decoder_name
-        # decode per shot and store a simpler result.
-        decoded_results_tuple = _build_generic_threshold_tables(
+        decoded_results = _build_generic_threshold_tables(
             actual_data,
             decoder_map,
             targets=targets,
             basis_labels=basis_labels,
-            progress_label=progress_label,
+            progress_label=decoder_name,
         )
-        self.postselection_exp_cache.decoded_results = decoded_results_tuple
-        return decoded_results_tuple
+        self._postselection_exp_cache.decoded_results = decoded_results
+        return decoded_results
 
     def analysis_f_vs_fraction(
         self,
@@ -417,25 +288,22 @@ class PostSelectionExperiment:
         threshold_points: int = 64,
         min_accepted_per_basis: int = 50,
     ) -> dict[str, np.ndarray]:
-        if self.postselection_exp_cache.decoded_results is None:
+        decoded_results = self._postselection_exp_cache.decoded_results
+        actual_data = self._postselection_exp_cache.raw_results
+        if decoded_results is None:
             raise RuntimeError("decode_and_postselect must be called before analysis.")
-        (
-            per_basis_tables,
-            score_array,
-            score_weights,
-            total_shots,
-        ) = self.postselection_exp_cache.decoded_results
+        if actual_data is None:
+            raise RuntimeError("get_samples must be called before analysis.")
+        total_shots = sum(len(dataset.observables) for dataset in actual_data.values())
         threshold_curve = _evaluate_cached_threshold_curve(
-            per_basis_tables,
-            score_array,
-            score_weights=score_weights,
+            decoded_results,
             threshold_points=threshold_points,
             target_bloch=target_bloch,
             basis_labels=basis_labels,
             min_accepted_per_basis=min_accepted_per_basis,
             total_shots=total_shots,
         )
-        self.postselection_exp_cache.thresholded_data = threshold_curve
+        self._postselection_exp_cache.thresholded_data = threshold_curve
         return threshold_curve
 
     # NOTE: the maximum number of shots that you can "accept" is equal to the
@@ -445,79 +313,36 @@ class PostSelectionExperiment:
     # decoder on the output observable for ALL shots which is more expensive.
     def tomography_result(
         self,
-        # TODO: accepted fraction of shots after postselection.
         accepted_fraction: float,
         *,
         basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     ) -> TomographyResult:
-        """Return tomography counts after confidence-ranked postselection.
+        """Return tomography shots after confidence-ranked postselection.
 
-        ``accepted_fraction`` is interpreted relative to all sampled shots,
-        matching the x-axis convention used by ``analysis_f_vs_fraction``.
-        Because counts are grouped by confidence score, the returned result may
-        keep slightly more than the requested fraction.
+        ``accepted_fraction`` is interpreted relative to the shots that already
+        passed factory postselection.
         """
 
-        if self.postselection_exp_cache.decoded_results is None:
+        decoded_results = self._postselection_exp_cache.decoded_results
+        if decoded_results is None:
             decoded_results = self.decode_and_postselect()
-        else:
-            decoded_results = self.postselection_exp_cache.decoded_results
 
-        (
-            per_basis_tables,
-            _score_array,
-            _score_weights,
-            total_shots,
-        ) = decoded_results
-        zero_counts, one_counts = _counts_at_accepted_fraction(
-            per_basis_tables,
-            total_shots,
+        shots_by_basis = _shots_at_accepted_fraction(
+            decoded_results,
             accepted_fraction,
             basis_labels=basis_labels,
         )
-        return TomographyResult(
-            zero_counts=zero_counts,
-            one_counts=one_counts,
-        )
+        return TomographyResult(shots_by_basis)
 
     def analysis_visualization(
         self, min_accepted_fraction: float = 0.04, title: str | None = None
     ):
-        if self.postselection_exp_cache.thresholded_data is None:
+        if self._postselection_exp_cache.thresholded_data is None:
             raise RuntimeError(
                 "analysis_f_vs_fraction must be called before visualization."
             )
         return plot_decoder_curves(
-            {"decoder": self.postselection_exp_cache.thresholded_data},
+            {"decoder": self._postselection_exp_cache.thresholded_data},
             min_accepted_fraction=min_accepted_fraction,
             title=title,
         )
-
-
-# def plot_decoder_curves(
-#     curves: Mapping[str, Mapping[str, np.ndarray]],
-#     *,
-#     injected_summary: FidelitySummary | None = None,
-#     min_accepted_fraction: float = 0.04,
-#     ax: "Axes | None" = None,
-#     title: str | None = None,
-#     log: bool = True,
-# ) -> tuple["Figure", "Axes"]:
-
-
-# Rough plan for initializing decoders:
-# 1. Define a "from_dem()" method on TableDecoder
-# 2. User defines a closure for a method that takes in a DEM and outputs the trained TableDecoder. This closure is basically used to mirror the "constructor interface"
-# to construct a Decoder object. meth(dem) -> Decoder will be our rough interface
-# 3. Within that closure, for the TableDecoder, we can call our "from_dem()" method which will use the TableDecoder's __init__ constructor.
-
-# Rough plan for initialize_decoders():
-# 1. Construct decoders for each basis using DEM from each basis
-# ^ have to be slightly careful because we have to create factory and full.
-# can't figure out how to "subset the full table" for shots cleanly, so for now, do
-# construct full with subset DEM (assumes sim cost isn't the primary bottleneck) -- NOTE: this is why decoupling sampling data from decoder construction is helpful; so we can
-# sample once and take views of the shot data (instead of views of the whole table)
-# 2. Use those decoders and feed into "decoders_postselection" argument to construct the ConfidenceDecoders for each basis
-# 3. Once you have that, then we can just wrap things into DecoderAdapter's for each basis.
-
-# TODO: implement the workflow for the "injected_baseline" workflow too, and think about all the details.
