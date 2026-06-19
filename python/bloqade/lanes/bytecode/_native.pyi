@@ -991,6 +991,7 @@ class EntropyOptions:
         max_goal_candidates: int = 3,
         w_t: float = 0.05,
         collect_entropy_trace: bool = False,
+        seed: int = 0,
     ) -> None: ...
     @property
     def max_movesets_per_group(self) -> int: ...
@@ -1000,6 +1001,8 @@ class EntropyOptions:
     def w_t(self) -> float: ...
     @property
     def collect_entropy_trace(self) -> bool: ...
+    @property
+    def seed(self) -> int: ...
     def __repr__(self) -> str: ...
 
 @final
@@ -1511,6 +1514,252 @@ class MultiSolveResult:
     @property
     def deadlocks(self) -> int:
         """Deadlocks from the winning candidate."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+# ── New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers ──
+
+@final
+class SearchEngine:
+    """Precomputed search engine bound to an architecture.
+
+    Holds the lane index and any cached data reused across solves.
+    Construct once per architecture; share across multiple solvers.
+    """
+
+    @staticmethod
+    def from_arch_spec(arch: ArchSpec) -> SearchEngine:
+        """Create a ``SearchEngine`` from a native ``ArchSpec`` object."""
+        ...
+
+    @staticmethod
+    def from_json(arch_spec_json: str) -> SearchEngine:
+        """Create a ``SearchEngine`` from an ArchSpec JSON string."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class MoveSearch:
+    """Search algorithm configuration bundle.
+
+    Combine a strategy (entropy, A*, IDS, …) with its tuning options.
+    Build via the factory class methods, then pass to ``TargetSolver`` or
+    the ``CzPlacement`` constructors.
+    """
+
+    @staticmethod
+    def entropy(
+        options: Optional[SolveOptions] = None,
+        entropy_options: Optional[EntropyOptions] = None,
+    ) -> MoveSearch:
+        """Entropy-guided search. Strategy is always forced to entropy."""
+        ...
+
+    @staticmethod
+    def astar(
+        weight: float = 1.0,
+        options: Optional[SolveOptions] = None,
+    ) -> MoveSearch:
+        """Weighted A* search. ``weight`` always overrides ``options.weight``."""
+        ...
+
+    @staticmethod
+    def ids(options: Optional[SolveOptions] = None) -> MoveSearch:
+        """Iterative-deepening search. Strategy is always forced to IDS."""
+        ...
+
+    @staticmethod
+    def cascade_ids(options: Optional[SolveOptions] = None) -> MoveSearch:
+        """Cascade: IDS followed by entropy refinement."""
+        ...
+
+    @staticmethod
+    def cascade_dfs(options: Optional[SolveOptions] = None) -> MoveSearch:
+        """Cascade: DFS followed by entropy refinement."""
+        ...
+
+    @staticmethod
+    def cascade_entropy(
+        options: Optional[SolveOptions] = None,
+        entropy_options: Optional[EntropyOptions] = None,
+    ) -> MoveSearch:
+        """Cascade: entropy followed by a second entropy pass."""
+        ...
+
+    def with_options(self, options: SolveOptions) -> MoveSearch:
+        """Return a copy with replaced ``SolveOptions``."""
+        ...
+
+    def with_entropy_options(self, entropy_options: EntropyOptions) -> MoveSearch:
+        """Return a copy with replaced ``EntropyOptions``."""
+        ...
+
+    @property
+    def strategy(self) -> SearchStrategy:
+        """The search strategy enum value."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class TargetSolver:
+    """Single-target fixed-placement solver.
+
+    Takes a ``SearchEngine`` and a ``MoveSearch``. Call ``solve()`` to
+    route atoms from an initial to a target configuration.
+    """
+
+    def __init__(self, engine: SearchEngine, search: MoveSearch) -> None: ...
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        target: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve a fixed-target routing problem."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class SingleHeuristicCzPlacement:
+    """CZ placement via a target generator + single-heuristic routing.
+
+    Generates candidate target configurations with ``DefaultTargetGenerator``,
+    validates each, then routes from ``initial`` to the first valid candidate
+    within the shared expansion budget.
+    """
+
+    def __init__(self, solver: TargetSolver) -> None: ...
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve and return the best result across all candidates."""
+        ...
+
+    def solve_with_attempts(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> MultiSolveResult:
+        """Solve and return per-candidate attempt details."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class LooseGoalCzPlacement:
+    """CZ placement via loose-goal routing.
+
+    Simultaneously discovers the entangling placement and the routing path.
+    """
+
+    def __init__(
+        self,
+        engine: SearchEngine,
+        search: MoveSearch,
+        entangling_options: EntanglingOptions | None = None,
+    ) -> None: ...
+    def solve_pairs(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Solve using CZ pair constraints (with optional future-layer lookahead)."""
+        ...
+
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve using explicit control/target qubit lists."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class RecedingHorizonCzPlacement:
+    """CZ placement via receding-horizon (MPC-style) loose-goal routing."""
+
+    def __init__(
+        self,
+        engine: SearchEngine,
+        search: MoveSearch,
+        entangling_options: EntanglingOptions | None = None,
+        rh_options: RecedingHorizonOptions | None = None,
+    ) -> None: ...
+    def solve_pairs(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Solve via receding-horizon MPC (with optional future-layer lookahead)."""
+        ...
+
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve using explicit control/target qubit lists."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class NoHomeCzPlacement:
+    """Two-phase no-home CZ placement."""
+
+    def __init__(
+        self,
+        engine: SearchEngine,
+        search: MoveSearch,
+        nohome_options: NoHomeOptions | None = None,
+    ) -> None: ...
+    def solve_pairs(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Solve via two-phase no-home placement (with optional future-layer lookahead)."""
+        ...
+
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve using explicit control/target qubit lists."""
         ...
 
     def __repr__(self) -> str: ...

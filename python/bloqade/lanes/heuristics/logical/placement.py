@@ -19,7 +19,7 @@ from bloqade.lanes.analysis.placement.strategy import (
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.path import PathFinder
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode._native import SearchEngine
 from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
@@ -66,12 +66,12 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 @dataclass
 class LogicalPlacementMethods:
     arch_spec: ArchSpec
-    _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
+    _engine: SearchEngine | None = field(default=None, init=False, repr=False)
 
-    def _get_rust_solver(self) -> MoveSolver:
-        if self._rust_solver is None:
-            self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
-        return self._rust_solver
+    def _get_engine(self) -> SearchEngine:
+        if self._engine is None:
+            self._engine = SearchEngine.from_arch_spec(self.arch_spec._inner)
+        return self._engine
 
     def desired_cz_layout(
         self,
@@ -182,7 +182,7 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
         self, state_before: ConcreteState, state_after: ConcreteState
     ) -> tuple[tuple[LaneAddress, ...], ...]:
         return compute_move_layers(
-            self.arch_spec, state_before, state_after, solver=self._get_rust_solver()
+            self.arch_spec, state_before, state_after, engine=self._get_engine()
         )
 
 
@@ -645,7 +645,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                 self.arch_spec,
                 state_before,
                 mid_state,
-                solver=self._get_rust_solver(),
+                engine=self._get_engine(),
             )
             return_time = self._estimate_layers_time(left_move_layers)
             objective = return_time
@@ -659,7 +659,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         self, state_before: ConcreteState, state_after: ConcreteState
     ) -> tuple[tuple[LaneAddress, ...], ...]:
         return compute_move_layers(
-            self.arch_spec, state_before, state_after, solver=self._get_rust_solver()
+            self.arch_spec, state_before, state_after, engine=self._get_engine()
         )
 
     def choose_return_layout(

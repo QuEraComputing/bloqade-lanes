@@ -7,9 +7,22 @@
 //! a path resolved relative to the fixture file, allowing one ArchSpec
 //! JSON to back many fixtures.
 
+use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+/// Decode the `[zone, word, site]` triple shape used inside fixture JSON
+/// into a typed [`LocationAddr`]. Negative coordinates wrap via `as u32`
+/// — the fixture schema doesn't enforce sign, by convention all callers
+/// supply non-negative integers.
+fn triple_to_location(t: &[i32; 3]) -> LocationAddr {
+    LocationAddr {
+        zone_id: t[0] as u32,
+        word_id: t[1] as u32,
+        site_id: t[2] as u32,
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FixtureError {
@@ -62,6 +75,29 @@ pub struct MoveProblem {
     pub policy_params: serde_json::Value,
 }
 
+impl MoveProblem {
+    /// Decode `initial` into typed `(qubit_id, LocationAddr)` pairs.
+    pub fn initial_locations(&self) -> Vec<(u32, LocationAddr)> {
+        self.initial
+            .iter()
+            .map(|(q, t)| (*q, triple_to_location(t)))
+            .collect()
+    }
+
+    /// Decode `target` into typed `(qubit_id, LocationAddr)` pairs.
+    pub fn target_locations(&self) -> Vec<(u32, LocationAddr)> {
+        self.target
+            .iter()
+            .map(|(q, t)| (*q, triple_to_location(t)))
+            .collect()
+    }
+
+    /// Decode `blocked` into typed `LocationAddr`s.
+    pub fn blocked_locations(&self) -> Vec<LocationAddr> {
+        self.blocked.iter().map(triple_to_location).collect()
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct TargetProblem {
     pub v: u32,
@@ -75,6 +111,16 @@ pub struct TargetProblem {
     pub cz_stage_index: u32,
     #[serde(default)]
     pub policy_params: serde_json::Value,
+}
+
+impl TargetProblem {
+    /// Decode `current_placement` into typed `(qubit_id, LocationAddr)` pairs.
+    pub fn current_placement_locations(&self) -> Vec<(u32, LocationAddr)> {
+        self.current_placement
+            .iter()
+            .map(|(q, t)| (*q, triple_to_location(t)))
+            .collect()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

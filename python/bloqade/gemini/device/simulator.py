@@ -15,14 +15,13 @@ from typing import (
 )
 
 import numpy as np
-import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
 from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
-from bloqade import tsim
-
 if TYPE_CHECKING:
+    import tsim as tsim_backend  # type: ignore[reportMissingImports]
+
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
@@ -34,6 +33,18 @@ def _default_noise_model() -> "LogicalNoiseModelABC":
     from bloqade.lanes.noise_model import generate_logical_noise_model
 
     return generate_logical_noise_model()
+
+
+def _tsim():
+    try:
+        from bloqade import tsim
+    except ImportError as exc:
+        raise ImportError(
+            "Gemini logical simulation requires the optional `tsim` extra. "
+            "Install it with `bloqade-lanes[tsim]` or `uv sync --extra tsim`."
+        ) from exc
+
+    return tsim
 
 
 def _prepend_zero_noise_channel(
@@ -228,7 +239,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
         physical_squin_kernel = self.physical_squin_kernel.similar()
         rewrite.Walk(RemoveReturn()).rewrite(physical_squin_kernel.code)
-        return tsim.Circuit(physical_squin_kernel)
+        return _tsim().Circuit(physical_squin_kernel)
 
     @cached_property
     def noiseless_tsim_circuit(self) -> tsim_backend.Circuit:
@@ -237,7 +248,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
         noiseless_kernel = self.noiseless_physical_squin_kernel.similar()
         rewrite.Walk(RemoveReturn()).rewrite(noiseless_kernel.code)
-        return _prepend_zero_noise_channel(tsim.Circuit(noiseless_kernel))
+        return _prepend_zero_noise_channel(_tsim().Circuit(noiseless_kernel))
 
     @cached_property
     def measurement_sampler(self):

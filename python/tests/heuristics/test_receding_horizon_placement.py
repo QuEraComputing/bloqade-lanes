@@ -47,12 +47,11 @@ def test_receding_horizon_default_construction():
 
 
 def test_receding_horizon_cz_placements_smoke():
-    """End-to-end: solve_entangling_rh dispatches and returns ExecuteCZ.
+    """End-to-end: RecedingHorizonCzPlacement dispatches and returns ExecuteCZ.
 
     Initial state is already entangling-feasible (the two qubits sit on a
     valid CZ pair location), so the trajectory terminates immediately with
-    no committed move layers — but the full dispatch path still runs:
-    options construction, solve_entangling_rh invocation, result decoding.
+    no committed move layers — but the full dispatch path still runs.
     """
     strategy = RecedingHorizonNoReturnPlacementStrategy(
         arch_spec=logical.get_arch_spec(),

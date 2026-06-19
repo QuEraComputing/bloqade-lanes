@@ -69,6 +69,15 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyDefaultTargetGenerator>()?;
     m.add_class::<search_python::PyMultiSolveResult>()?;
 
+    // New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers
+    m.add_class::<search_python::PySearchEngine>()?;
+    m.add_class::<search_python::PyMoveSearch>()?;
+    m.add_class::<search_python::PyTargetSolver>()?;
+    m.add_class::<search_python::PySingleHeuristicCzPlacement>()?;
+    m.add_class::<search_python::PyLooseGoalCzPlacement>()?;
+    m.add_class::<search_python::PyRecedingHorizonCzPlacement>()?;
+    m.add_class::<search_python::PyNoHomeCzPlacement>()?;
+
     // Move Policy DSL (sidecar to MoveSolver — Plan A of #597)
     m.add_class::<policy_runner_python::PyPolicyRunner>()?;
     m.add_class::<policy_runner_python::PyPolicySolveResult>()?;

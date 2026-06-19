@@ -17,7 +17,10 @@ from bloqade.lanes.rewrite.move2squin import base, gates
 
 @squin.kernel
 def initialize(
-    theta: float, phi: float, lam: float, qubits: ilist.IList[bloqade_types.Qubit, Any]
+    theta: ilist.IList[float, Any],
+    phi: ilist.IList[float, Any],
+    lam: ilist.IList[float, Any],
+    qubits: ilist.IList[ilist.IList[bloqade_types.Qubit, Any], Any],
 ):
     return
 
@@ -403,20 +406,25 @@ def test_gate_rewrite_physical_initialize():
     expected_block = ir.Block(
         [
             tau := py.Constant(math.tau),
-            theta_rad := py.Mult(tau.result, theta),
-            phi_rad := py.Mult(tau.result, phi),
-            lam_rad := py.Mult(tau.result, lam),
+            theta_rad_0 := py.Mult(tau.result, theta),
+            phi_rad_0 := py.Mult(tau.result, phi),
+            lam_rad_0 := py.Mult(tau.result, lam),
             zero_reg := ilist.New((zero,)),
-            func.Invoke(
-                (theta_rad.result, phi_rad.result, lam_rad.result, zero_reg.result),
-                callee=initialize,
-            ),
-            theta_rad := py.Mult(tau.result, theta),
-            phi_rad := py.Mult(tau.result, phi),
-            lam_rad := py.Mult(tau.result, lam),
+            theta_rad_1 := py.Mult(tau.result, theta),
+            phi_rad_1 := py.Mult(tau.result, phi),
+            lam_rad_1 := py.Mult(tau.result, lam),
             one_reg := ilist.New((one,)),
+            thetas_reg := ilist.New((theta_rad_0.result, theta_rad_1.result)),
+            phis_reg := ilist.New((phi_rad_0.result, phi_rad_1.result)),
+            lams_reg := ilist.New((lam_rad_0.result, lam_rad_1.result)),
+            qubits_reg := ilist.New((zero_reg.result, one_reg.result)),
             func.Invoke(
-                (theta_rad.result, phi_rad.result, lam_rad.result, one_reg.result),
+                (
+                    thetas_reg.result,
+                    phis_reg.result,
+                    lams_reg.result,
+                    qubits_reg.result,
+                ),
                 callee=initialize,
             ),
             gate_node,

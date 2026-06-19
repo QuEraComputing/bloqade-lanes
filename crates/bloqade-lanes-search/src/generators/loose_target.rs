@@ -22,12 +22,12 @@ use std::sync::Arc;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::Config;
-use crate::context::{MoveCandidate, SearchContext, SearchState};
-use crate::entangling;
 use crate::generators::heuristic::HeuristicGenerator;
-use crate::graph::NodeId;
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
+use crate::ops::entangling;
+use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::graph::NodeId;
+use crate::primitives::lane_index::LaneIndex;
 use crate::traits::MoveGenerator;
 
 /// Move generator that wraps a [`HeuristicGenerator`] and overrides
@@ -249,8 +249,8 @@ mod tests {
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     use super::*;
-    use crate::heuristic::DistanceTable;
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::distance::DistanceTable;
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
 
     fn make_index() -> LaneIndex {

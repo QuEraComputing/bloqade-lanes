@@ -34,6 +34,7 @@ python/tests/demo/test_qet_utils.py
 debug/
 Thumbs.db
 .claude/worktrees
+.claire/worktrees
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -232,6 +233,8 @@ cython_debug/
 .claude/skills/writing-skills
 .superpowers/
 *.png
+# To include the images used in the "logical_dialect_demo.ipynb" and "star_logical_demo.ipynb" notebooks
+!demo/star_demo_imgs/*.png
 scripts/visualize_arch.py
 .superpowers/
 bench/

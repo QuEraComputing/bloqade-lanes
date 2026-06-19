@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import cirq
 import numpy as np
+import pytest
 from benchmarks.utils.qasm_to_squin_kernel import (
     _load_qasm_circuit,
     _qubit_sort_key,
@@ -32,6 +32,8 @@ def test_strip_qasm_barriers_handles_global_and_explicit_statements():
 
 
 def test_load_qasm_circuit_accepts_barrier_forms():
+    pytest.importorskip("cirq")
+
     qasm = "\n".join(
         [
             "OPENQASM 2.0;",
@@ -51,12 +53,16 @@ def test_load_qasm_circuit_accepts_barrier_forms():
 
 
 def test_qubit_sort_key_orders_line_qubits_numerically():
+    cirq = pytest.importorskip("cirq")
+
     qubits = [cirq.LineQubit(10), cirq.LineQubit(2)]
     ordered = sorted(qubits, key=_qubit_sort_key)
     assert ordered == [cirq.LineQubit(2), cirq.LineQubit(10)]
 
 
 def test_circuit_to_squin_decorator_source_is_deterministic_within_moment():
+    cirq = pytest.importorskip("cirq")
+
     q0, q1, q2 = cirq.LineQubit.range(3)
     circuit1 = cirq.Circuit(cirq.Moment([cirq.Z(q2), cirq.X(q1), cirq.Y(q0)]))
     circuit2 = cirq.Circuit(cirq.Moment([cirq.Y(q0), cirq.Z(q2), cirq.X(q1)]))

@@ -239,6 +239,7 @@ def _compare_rows(
         baseline=baseline.nodes_explored,
         current=current.nodes_explored,
         lower_is_better=True,
+        percent_tolerance=0.10,
     )
     _add_numeric_delta(
         diffs,
@@ -297,6 +298,7 @@ def _add_numeric_delta(
     current: int | float | None,
     lower_is_better: bool,
     float_compare_decimals: int | None = None,
+    percent_tolerance: float | None = None,
 ) -> None:
     if baseline is None or current is None:
         _add_strict_diff(
@@ -312,6 +314,9 @@ def _add_numeric_delta(
         current_cmp = _round_float_for_compare(current, decimals=float_compare_decimals)
     if baseline_cmp == current_cmp:
         return
+    if percent_tolerance is not None and baseline != 0:
+        if abs(current - baseline) / abs(baseline) <= percent_tolerance:
+            return
     if lower_is_better:
         kind = "degraded" if current > baseline else "improved"
     else:

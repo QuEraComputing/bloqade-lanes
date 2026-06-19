@@ -6,11 +6,10 @@ the input of the next. The Rust solver decides the per-layer target layout
 itself (via Hungarian, K-candidate rollouts, or two-phase assignment) rather
 than receiving an externally computed target dict.
 
-Subclasses implement :meth:`NoReturnStrategyBase._invoke_solver` to call
-their specific Rust entry point (``solve_entangling`` / ``solve_nohome`` /
-``solve_entangling_rh``). The base owns:
+Subclasses implement :meth:`NoReturnStrategyBase._invoke_placement` to call
+their specific CzPlacement entry point. The base owns:
 
-* solver caching (`_get_solver`)
+* engine caching (`_get_engine`)
 * the shared :class:`SolveOptions` construction (`_build_solve_options`)
 * the :meth:`cz_placements` request/response plumbing
 * the standard single-zone `sq_placements` / `measure_placements` paths
@@ -33,7 +32,8 @@ from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import (
     DeadlockPolicy,
-    MoveSolver,
+    MoveSearch,
+    SearchEngine,
     SearchStrategy,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
@@ -77,7 +77,7 @@ class NoReturnStrategyBase(PlacementStrategyABC):
     Subclasses are expected to be :func:`dataclasses.dataclass`-decorated,
     add their strategy-specific options as additional fields (with
     defaults so the inherited ``arch_spec`` field stays the only required
-    init argument), and implement :meth:`_invoke_solver`.
+    init argument), and implement :meth:`_invoke_placement`.
     """
 
     strategy: SearchStrategy = field(default_factory=lambda: SearchStrategy.IDS)
@@ -88,7 +88,7 @@ class NoReturnStrategyBase(PlacementStrategyABC):
     )
     top_c: int | None = None
 
-    _solver: MoveSolver | None = field(default=None, init=False, repr=False)
+    _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -103,10 +103,10 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         """
         return self._rust_nodes_expanded_total
 
-    def _get_solver(self) -> MoveSolver:
-        if self._solver is None:
-            self._solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
-        return self._solver
+    def _get_engine(self) -> SearchEngine:
+        if self._engine is None:
+            self._engine = SearchEngine.from_arch_spec(self.arch_spec._inner)
+        return self._engine
 
     def _build_solve_options(self) -> _native.SolveOptions:
         """Build the shared :class:`SolveOptions` from the base fields.
@@ -123,24 +123,26 @@ class NoReturnStrategyBase(PlacementStrategyABC):
             top_c=self.top_c,
         )
 
+    def _build_move_search(self) -> MoveSearch:
+        """Build a :class:`MoveSearch` from the base solve-option fields."""
+        return MoveSearch.ids().with_options(self._build_solve_options())
+
     @abc.abstractmethod
-    def _invoke_solver(
+    def _invoke_placement(
         self,
-        solver: MoveSolver,
+        engine: SearchEngine,
+        move_search: MoveSearch,
         initial: dict[int, "_native.LocationAddress"],
         cz_pairs: list[tuple[int, int]],
         blocked: list["_native.LocationAddress"],
         future_cz_layers: list[list[tuple[int, int]]] | None,
     ) -> "_native.SolveResult":
-        """Call the strategy-specific Rust entry point.
+        """Call the strategy-specific CzPlacement entry point.
 
-        Implementations should build any strategy-specific option struct
-        (e.g. :class:`_native.EntanglingOptions`,
-        :class:`_native.NoHomeOptions`,
-        :class:`_native.RecedingHorizonOptions`) and call the matching
-        :meth:`MoveSolver.solve_*` method. The base
-        :meth:`_build_solve_options` provides the shared
-        :class:`SolveOptions`.
+        Implementations should build the appropriate typed placement object
+        (e.g. :class:`LooseGoalCzPlacement`, :class:`NoHomeCzPlacement`,
+        :class:`RecedingHorizonCzPlacement`) from ``engine`` and
+        ``move_search``, then delegate to its ``solve_pairs`` method.
         """
 
     def validate_initial_layout(
@@ -164,7 +166,8 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
-        solver = self._get_solver()
+        engine = self._get_engine()
+        move_search = self._build_move_search()
         initial = {qid: state.layout[qid]._inner for qid in range(len(state.layout))}
         cz_pairs = list(zip(controls, targets))
         blocked = [loc._inner for loc in state.occupied]
@@ -175,7 +178,9 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         if len(lookahead_cz_layers) > 1:
             future = [list(zip(c, t)) for c, t in lookahead_cz_layers[1:]]
 
-        result = self._invoke_solver(solver, initial, cz_pairs, blocked, future)
+        result = self._invoke_placement(
+            engine, move_search, initial, cz_pairs, blocked, future
+        )
         self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
         if result.status != "solved":

@@ -23,13 +23,13 @@ use starlark::values::list::{AllocList, ListRef};
 use starlark::values::tuple::AllocTuple;
 use starlark::values::{Heap, NoSerialize, ProvidesStaticType, StarlarkValue, UnpackValue, Value};
 
-use crate::config::Config;
 use crate::dsl::pipeline::{
     PackedCandidate, ScoredLane, group_by_triplet as pipeline_group_by_triplet,
     pack_aod_rectangles as pipeline_pack_aod_rectangles,
 };
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
+use crate::primitives::config::Config;
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::lane_index::LaneIndex;
 
 // ── StarlarkConfig ─────────────────────────────────────────────────────
 
@@ -642,8 +642,8 @@ fn mk_error(msg: impl Into<String>) -> starlark::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::graph::MoveSet;
+    use crate::primitives::config::Config;
+    use crate::primitives::graph::MoveSet;
     use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
     #[test]

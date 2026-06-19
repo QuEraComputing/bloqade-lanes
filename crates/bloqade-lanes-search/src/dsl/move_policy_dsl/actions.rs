@@ -13,7 +13,7 @@ use starlark::values::Value;
 use starlark::values::dict::AllocDict;
 use starlark::values::list::{AllocList, ListRef};
 
-use crate::graph::{MoveSet, NodeId};
+use crate::primitives::graph::{MoveSet, NodeId};
 
 /// One verb the policy issues per `step()`. The kernel applies these
 /// in returned order, atomically per tick.
