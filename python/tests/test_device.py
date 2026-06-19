@@ -205,14 +205,12 @@ def test_result_property_caching():
     assert return_values_first is return_values_second
 
 
-def test_noiseless_tsim_circuit_has_zero_noise_sentinel():
+def test_noiseless_tsim_circuit_compiles_samplers():
     sim = GeminiLogicalSimulator()
     task = sim.task(main)
 
     noiseless = task.noiseless_tsim_circuit
-    noiseless_text = str(noiseless)
 
-    assert "DEPOLARIZE1(0)" in noiseless_text
     assert noiseless.compile_sampler() is not None
     assert noiseless.compile_detector_sampler() is not None
 

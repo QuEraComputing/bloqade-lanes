@@ -47,22 +47,6 @@ def _tsim():
     return tsim
 
 
-def _prepend_zero_noise_channel(
-    circuit: tsim_backend.Circuit,
-) -> tsim_backend.Circuit:
-    """Ensure noiseless tsim circuits still contain a no-op noise instruction.
-
-    Some tsim sampling paths behave incorrectly on completely noise-free circuits.
-    To avoid that edge case while preserving semantics, prepend a zero-probability
-    depolarizing channel on every qubit.
-    """
-    if circuit.num_qubits == 0:
-        return circuit
-
-    qubits = " ".join(str(q) for q in range(circuit.num_qubits))
-    return tsim_backend.Circuit(f"DEPOLARIZE1(0) {qubits}") + circuit
-
-
 @dataclass(frozen=True)
 class DetectorResult:
     """Result from the detector sampler containing only detector and observable outcomes."""
@@ -248,7 +232,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
         noiseless_kernel = self.noiseless_physical_squin_kernel.similar()
         rewrite.Walk(RemoveReturn()).rewrite(noiseless_kernel.code)
-        return _prepend_zero_noise_channel(_tsim().Circuit(noiseless_kernel))
+        return _tsim().Circuit(noiseless_kernel)
 
     @cached_property
     def measurement_sampler(self):
