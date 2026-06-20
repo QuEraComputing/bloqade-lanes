@@ -4,9 +4,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from bloqade import qubit, squin
+from kirin import ir
 
-from .types import KirinKernel, SquinKernel
+from bloqade import qubit, squin
 
 
 # TODO: in principle, these tomography kernels aren't gemini-specific.
@@ -22,15 +22,13 @@ class _DecoderPrimitiveSet:
         logical_circuit: Squin kernel for the logical circuit under test.
     """
 
-    state_injection_circuit: SquinKernel
-    logical_circuit: SquinKernel
-
-    # TODO: remove "__getitem__" -- have one standard interface -- can delete this for first PR.
-    def __getitem__(self, key: str) -> SquinKernel:
-        return getattr(self, key)
+    state_injection_circuit: ir.Method[..., Any]
+    logical_circuit: ir.Method[..., Any]
 
 
-def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]:
+def _build_tomography_primitives(
+    *, output_qubit: int
+) -> dict[str, ir.Method[..., Any]]:
     """Build X/Y/Z tomography-basis Squin kernels for one output qubit."""
 
     @squin.kernel
@@ -52,13 +50,13 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
 
 def _produce_tomography_kernels(
     num_qubits: int,
-    logical_kernel: KirinKernel,
-    tomography_kernels: Mapping[str, SquinKernel],
-    return_val_fn: KirinKernel | Callable[[Any], Any],
+    logical_kernel: ir.Method[..., Any],
+    tomography_kernels: Mapping[str, ir.Method[..., Any]],
+    return_val_fn: ir.Method[..., Any] | Callable[[Any], Any],
     kernel_name: str,
     *,
     supply_reg: bool = True,
-) -> Mapping[str, KirinKernel]:
+) -> Mapping[str, ir.Method[..., Any]]:
     """Compose logical and tomography kernels into labeled tomography kernels.
 
     Args:
@@ -78,7 +76,10 @@ def _produce_tomography_kernels(
     """
 
     # TODO: remove the current customization.
-    def make_kernel(tomog_kernel: SquinKernel, generated_name: str) -> KirinKernel:
+    def make_kernel(
+        tomog_kernel: ir.Method[..., Any],
+        generated_name: str,
+    ) -> ir.Method[..., Any]:
         def inner_tomog_kernel(reg):
             logical_kernel(reg)
             tomog_kernel(reg)
@@ -113,8 +114,8 @@ def _produce_tomography_kernels(
 # This is to give us a dictionary of form {"X": ..., "Y": ..., "Z": ...} for
 # downstream consumption.
 def _kernels_by_tomography_basis(
-    kernels: Mapping[str, KirinKernel],
-) -> dict[str, KirinKernel]:
+    kernels: Mapping[str, ir.Method[..., Any]],
+) -> dict[str, ir.Method[..., Any]]:
     """Rekey generated tomography kernels by basis label."""
 
     return {

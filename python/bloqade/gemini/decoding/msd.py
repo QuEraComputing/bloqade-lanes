@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
+from kirin import ir
 from kirin.dialects import ilist
 
 from bloqade import squin
@@ -11,7 +13,6 @@ from .kernels import (
     _DecoderPrimitiveSet,
     _produce_tomography_kernels,
 )
-from .types import KirinKernel
 
 
 def _default_post_processing():
@@ -67,8 +68,8 @@ def _build_msd_primitives(
 def _build_decoder_kernel_bundle(
     primitive_set: _DecoderPrimitiveSet,
     num_logical_qubits: int = 5,
-    tomography_kernels: Mapping[str, KirinKernel] | None = None,
-) -> dict[str, KirinKernel]:
+    tomography_kernels: Mapping[str, ir.Method[..., Any]] | None = None,
+) -> dict[str, ir.Method[..., Any]]:
     """Build basis-labeled MSD tomography kernels.
 
     Args:

@@ -7,6 +7,7 @@ from typing import Any, Callable, cast
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder
+from kirin import ir
 
 from bloqade.gemini.device import GeminiLogicalSimulator
 
@@ -27,7 +28,6 @@ from .sampling import BasisDataset
 from .special_tasks import _apply_special_tsim_circuit_strategy
 from .tasks import DemoTask
 from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
-from .types import KirinKernel, SquinKernel
 from .workflow import plot_decoder_curves
 
 DecoderConstructor = Callable[..., BaseDecoder]
@@ -51,13 +51,13 @@ def magic_state_dist_steane(
     return _build_msd_primitives(theta, phi, lam)
 
 
-def single_qubit_state_tomography() -> dict[str, SquinKernel]:
+def single_qubit_state_tomography() -> dict[str, ir.Method[..., Any]]:
     # return a list?
     # should return (X, Y, Z) in order, but can check this.
     return _build_tomography_primitives(output_qubit=0)
 
 
-def empty_logical_circuit() -> SquinKernel:
+def empty_logical_circuit() -> ir.Method[..., Any]:
     """Return a no-op logical Squin kernel for injected-state tomography."""
 
     from bloqade import squin
@@ -75,7 +75,7 @@ class _PostSelectionExperimentCache:
     # NOTE: basis-labeled dictionaries are slightly inconsistent with tuple
     # based representations, but mappings are more flexible and match the
     # lower-level code.
-    dem_kernels: dict[str, KirinKernel] | None
+    dem_kernels: dict[str, ir.Method[..., Any]] | None
     dem_circuits: Mapping[str, object] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
     decoders_with_confidence: Mapping[str, DecoderPair] | None
@@ -117,15 +117,15 @@ class PostSelectionExperiment:
     # in a kernel because then it makes it hard to compose kernels (e.g., for tomography)
     def __init__(
         self,
-        noncliff_prefix: SquinKernel,
-        main_cliff_circ: SquinKernel,
+        noncliff_prefix: ir.Method[..., Any],
+        main_cliff_circ: ir.Method[..., Any],
         # NOTE: again, I'm kind of cheating here because we can't really specify
         # the shape of the numpy array in the dtype. But this should be a 2D
         # numpy array, where I have a list/array of possible valid
         # postselection conditions.
         postselection_condition: np.ndarray,
         decoder: DecoderConstructor,
-        tomography_kernels: Mapping[str, SquinKernel],
+        tomography_kernels: Mapping[str, ir.Method[..., Any]],
         # specifying these as a dictionary is reasonable? Use a mapping instead?
         decoder_init_args: dict[str, Any] | None = None,
     ):
@@ -146,7 +146,7 @@ class PostSelectionExperiment:
     def kernels(
         self,
         num_logical_qubits: int = 5,
-    ) -> dict[str, KirinKernel]:
+    ) -> dict[str, ir.Method[..., Any]]:
         # TODO: change the name of _DecoderPrimitiveSet --> whole_circuit
         decoder_primitive_set = _DecoderPrimitiveSet(
             state_injection_circuit=self.noncliff_prefix,
