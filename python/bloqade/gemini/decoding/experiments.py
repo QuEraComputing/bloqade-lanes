@@ -26,7 +26,6 @@ from .postselection import (
 )
 from .sampling import BasisDataset
 from .special_tasks import _apply_special_tsim_circuit_strategy
-from .tasks import DemoTask
 from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 from .workflow import plot_decoder_curves
 
@@ -95,10 +94,6 @@ class _PostSelectionExperimentCache:
         self.decoded_results = None
         self.thresholded_data = None
         self.hardware_tasks = None
-
-
-def _task_impl(task: object) -> object:
-    return task.task if isinstance(task, DemoTask) else task
 
 
 def _basis_dataset_from_task_result(result: object) -> BasisDataset:
@@ -172,7 +167,7 @@ class PostSelectionExperiment:
         }
         dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)
         special_tsim_circuits = {
-            basis: _task_impl(task).tsim_circuit  # type: ignore[attr-defined]
+            basis: task.tsim_circuit  # type: ignore[attr-defined]
             for basis, task in dem_tasks.items()
         }
         self._postselection_exp_cache.dem_circuits = special_tsim_circuits

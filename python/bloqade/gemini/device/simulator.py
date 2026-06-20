@@ -513,20 +513,26 @@ class GeminiLogicalSimulator:
             post_processing,
         ) = compile_task(logical_kernel, m2dets, m2obs)
 
-        sim_task = GeminiLogicalSimulatorTask(
+        if self.backend == "clifft":
+            from bloqade.gemini.decoding.tasks import _CliffTSimulatorTask
+
+            return _CliffTSimulatorTask(
+                logical_squin_kernel,
+                self.noise_model,
+                physical_arch_spec,
+                physical_move_kernel,
+                post_processing,
+                seed=self.seed,
+            )
+        if self.backend != "tsim":
+            raise ValueError("backend must be either 'tsim' or 'clifft'.")
+        return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
             physical_arch_spec,
             physical_move_kernel,
             post_processing,
         )
-        if self.backend == "clifft":
-            from bloqade.gemini.decoding.tasks import DemoTask
-
-            return DemoTask(sim_task, seed=self.seed)
-        if self.backend != "tsim":
-            raise ValueError("backend must be either 'tsim' or 'clifft'.")
-        return sim_task
 
     @overload
     def run(

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .tasks import DemoTask
+from .tasks import _CliffTSimulatorTask
 
 
 @dataclass(frozen=True)
@@ -25,8 +25,8 @@ def run_task(
 
     if shots < 0:
         raise ValueError("shots must be non-negative.")
-    if isinstance(task, DemoTask):
-        detectors, observables = task.sample_detector_observables(
+    if isinstance(task, _CliffTSimulatorTask):
+        detectors, observables = task._sample_detector_observables(
             shots,
             with_noise=with_noise,
         )

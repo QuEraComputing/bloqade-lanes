@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .tasks import DemoTask
 from .types import TsimCircuit
 
 _NONUNITARY_PREFIXES = (
@@ -39,18 +38,13 @@ def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
     return len(circuit)
 
 
-def _task_impl(task: object) -> Any:
-    return task.task if isinstance(task, DemoTask) else task
-
-
 def _apply_special_tsim_circuit_strategy(
-    task_map: Mapping[str, object],
-) -> dict[str, object]:
+    task_map: Mapping[str, Any],
+) -> dict[str, Any]:
     """Prepend the inverse compiled unitary prefix to each task's circuits."""
 
     transformed = dict(task_map)
-    for wrapped_task in transformed.values():
-        task = _task_impl(wrapped_task)
+    for task in transformed.values():
         compiled_prefix = task.tsim_circuit[
             : _first_nonunitary_instruction_index(task.tsim_circuit)
         ]
