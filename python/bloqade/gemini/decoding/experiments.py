@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder
 from kirin import ir
 
-from bloqade.gemini.device import GeminiLogicalSimulator
+from bloqade.gemini.device import (
+    GeminiLogicalSimulator,
+    GeminiLogicalSimulatorTask,
+    Result,
+)
 
 from .confidence import ConfidenceDecoder
 from .constants import DEFAULT_BASIS_LABELS
@@ -18,9 +22,9 @@ from .kernels import _build_tomography_primitives, _DecoderPrimitiveSet
 from .layout import DEFAULT_SYNDROME_LAYOUT
 from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
 from .postselection import (
-    DecodedPostselectionResult,
     DecoderPair,
     _build_generic_threshold_tables,
+    _DecodedPostselectionResult,
     _evaluate_cached_threshold_curve,
     _shots_at_accepted_fraction,
 )
@@ -29,7 +33,8 @@ from .special_tasks import _apply_special_tsim_circuit_strategy
 from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 from .workflow import plot_decoder_curves
 
-DecoderConstructor = Callable[..., BaseDecoder]
+if TYPE_CHECKING:
+    import tsim as tsim_backend
 
 
 # TODO: fix the type-checks on this file; the type-checks aren't working for some reason
@@ -75,15 +80,15 @@ class _PostSelectionExperimentCache:
     # based representations, but mappings are more flexible and match the
     # lower-level code.
     dem_kernels: dict[str, ir.Method[..., Any]] | None
-    dem_circuits: Mapping[str, object] | None
+    dem_circuits: Mapping[str, tsim_backend.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
     decoders_with_confidence: Mapping[str, DecoderPair] | None
     raw_results: Mapping[str, BasisDataset] | None
     # decoded_results maps each basis to decoded output observable shots plus
     # one confidence score per accepted shot.
-    decoded_results: Mapping[str, DecodedPostselectionResult] | None
+    decoded_results: Mapping[str, _DecodedPostselectionResult] | None
     thresholded_data: Mapping[str, np.ndarray] | None
-    hardware_tasks: Mapping[str, object] | None
+    hardware_tasks: Mapping[str, GeminiLogicalSimulatorTask[Any]] | None
 
     def __init__(self):
         self.dem_kernels = None
@@ -96,12 +101,12 @@ class _PostSelectionExperimentCache:
         self.hardware_tasks = None
 
 
-def _basis_dataset_from_task_result(result: object) -> BasisDataset:
+def _basis_dataset_from_task_result(result: BasisDataset | Result[Any]) -> BasisDataset:
     if isinstance(result, BasisDataset):
         return result
     return BasisDataset(
-        detectors=np.asarray(result.detectors, dtype=np.uint8),  # type: ignore[attr-defined]
-        observables=np.asarray(result.observables, dtype=np.uint8),  # type: ignore[attr-defined]
+        detectors=np.asarray(result.detectors, dtype=np.uint8),
+        observables=np.asarray(result.observables, dtype=np.uint8),
     )
 
 
@@ -119,7 +124,7 @@ class PostSelectionExperiment:
         # numpy array, where I have a list/array of possible valid
         # postselection conditions.
         postselection_condition: np.ndarray,
-        decoder: DecoderConstructor,
+        decoder: type[ConfidenceDecoder],
         tomography_kernels: Mapping[str, ir.Method[..., Any]],
         # specifying these as a dictionary is reasonable? Use a mapping instead?
         decoder_init_args: dict[str, Any] | None = None,
@@ -157,7 +162,7 @@ class PostSelectionExperiment:
         return dem_kernels
 
     # TODO: split up the kernels and DEM kernels functions
-    def dem_circuits(self) -> dict[str, object]:
+    def dem_circuits(self) -> dict[str, tsim_backend.Circuit]:
         tomography_kernels = self._postselection_exp_cache.dem_kernels
         if tomography_kernels is None:
             raise RuntimeError("kernels must be called before dem_circuits.")
@@ -166,9 +171,8 @@ class PostSelectionExperiment:
             for basis, kernel in tomography_kernels.items()
         }
         dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)
-        special_tsim_circuits = {
-            basis: task.tsim_circuit  # type: ignore[attr-defined]
-            for basis, task in dem_tasks.items()
+        special_tsim_circuits: dict[str, tsim_backend.Circuit] = {
+            basis: task.tsim_circuit for basis, task in dem_tasks.items()
         }
         self._postselection_exp_cache.dem_circuits = special_tsim_circuits
         return special_tsim_circuits
@@ -216,20 +220,28 @@ class PostSelectionExperiment:
             # NOTE: this is important. We are sampling 2x to build the 2 decoders
             # (not once); I think it is OK (so long as they approximate the same
             # table? but it IS more expensive)
-            full_decoder = self.decoder(full_dem, **self.decoder_init_args)
-            factory_decoder = cast(
-                ConfidenceDecoder,
-                self.decoder(factory_dem, **self.decoder_init_args),
+            # TODO: this is because the current API does NOT support decoder(dem, **kwargs) for the constructor so we have to
+            # do a cast. We would want to decide on the decoder __init__ API to be able to avoid such a cast
+            decoder_constructor = cast(Callable[..., ConfidenceDecoder], self.decoder)
+            full_decoder = cast(
+                BaseDecoder,
+                decoder_constructor(full_dem, **self.decoder_init_args),
             )
+            factory_decoder = decoder_constructor(factory_dem, **self.decoder_init_args)
             decoders_bases[basis_label] = (factory_decoder, full_decoder)
         self._postselection_exp_cache.decoders_with_confidence = decoders_bases
         return decoders_bases
 
-    def make_tasks(self, device: GeminiLogicalSimulator) -> dict[str, object]:
+    def make_tasks(
+        self,
+        device: GeminiLogicalSimulator,
+        # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
+        # TaskABC[GeminiLogicalFuture]
+    ) -> dict[str, GeminiLogicalSimulatorTask[Any]]:
         tomography_kernels = self._postselection_exp_cache.dem_kernels
         if tomography_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
-        actual_tasks: dict[str, object] = {
+        actual_tasks: dict[str, GeminiLogicalSimulatorTask[Any]] = {
             basis: device.task(kernel.similar())
             for basis, kernel in tomography_kernels.items()
         }
@@ -245,7 +257,7 @@ class PostSelectionExperiment:
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
         actual_data = {
-            basis: _basis_dataset_from_task_result(task.run(num_shots))  # type: ignore[attr-defined]
+            basis: _basis_dataset_from_task_result(task.run(num_shots))
             for basis, task in actual_tasks.items()
         }
         self._postselection_exp_cache.raw_results = actual_data
@@ -254,7 +266,7 @@ class PostSelectionExperiment:
     def decode_and_postselect(
         self,
         decoder_name: str | None = "decoder",
-    ) -> dict[str, DecodedPostselectionResult]:
+    ) -> dict[str, _DecodedPostselectionResult]:
         actual_data = self._postselection_exp_cache.raw_results
         decoder_map = self._postselection_exp_cache.decoders_with_confidence
         if actual_data is None:

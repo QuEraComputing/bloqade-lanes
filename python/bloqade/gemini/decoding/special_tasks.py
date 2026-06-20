@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from .types import TsimCircuit
+from bloqade.gemini.device import GeminiLogicalSimulatorTask
+
+if TYPE_CHECKING:
+    import tsim as tsim_backend
+
+_TaskT = TypeVar("_TaskT", bound=GeminiLogicalSimulatorTask[Any])
 
 _NONUNITARY_PREFIXES = (
     "M",
@@ -31,7 +36,7 @@ def _clear_task_tsim_artifacts(task: object) -> None:
         task.__dict__.pop(attr, None)
 
 
-def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
+def _first_nonunitary_instruction_index(circuit: tsim_backend.Circuit) -> int:
     for idx in range(len(circuit)):
         if str(circuit[idx]).startswith(_NONUNITARY_PREFIXES):
             return idx
@@ -39,8 +44,8 @@ def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
 
 
 def _apply_special_tsim_circuit_strategy(
-    task_map: Mapping[str, Any],
-) -> dict[str, Any]:
+    task_map: Mapping[str, _TaskT],
+) -> dict[str, _TaskT]:
     """Prepend the inverse compiled unitary prefix to each task's circuits."""
 
     transformed = dict(task_map)

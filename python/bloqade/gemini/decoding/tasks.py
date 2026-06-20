@@ -28,6 +28,7 @@ def _clifft_compatible_stim_text(circuit: Any) -> str:
 
 
 # TODO: inherits from GeminiLogicalSimulatorTask for now because a lot of fields used in the experiment are basically in GeminiLogicalSimulatorTask.
+# ^ these fields are primarily used in _apply_special_tsim_circuit_strategy where we need some way to modify the tsim_circuit associated w/ a task.
 # ^ can think of a better design later.
 @dataclass(frozen=True)
 class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):

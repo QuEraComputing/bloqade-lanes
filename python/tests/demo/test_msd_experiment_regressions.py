@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from bloqade.decoders import BaseDecoder
 
 from bloqade.gemini.decoding.confidence import ConfidenceDecoder
 from bloqade.gemini.decoding.experiments import (
@@ -8,8 +9,8 @@ from bloqade.gemini.decoding.experiments import (
     _PostSelectionExperimentCache,
 )
 from bloqade.gemini.decoding.postselection import (
-    DecodedPostselectionResult,
     _build_generic_threshold_tables,
+    _DecodedPostselectionResult,
     _evaluate_cached_threshold_curve,
     _shots_at_accepted_fraction,
 )
@@ -56,12 +57,16 @@ class _FactoryDecoder(ConfidenceDecoder):
         )
 
 
-class _FullDecoder:
-    def decode(self, _detector_bits: np.ndarray) -> np.ndarray:
+class _FullDecoder(BaseDecoder):
+    def __init__(self) -> None:
+        pass
+
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        _ = detector_bits
         return np.array([0], dtype=np.bool_)
 
 
-def _decoder_pair() -> tuple[ConfidenceDecoder, _FullDecoder]:
+def _decoder_pair() -> tuple[ConfidenceDecoder, BaseDecoder]:
     return _FactoryDecoder(), _FullDecoder()
 
 
@@ -109,9 +114,58 @@ def test_build_generic_threshold_tables_supports_empty_factory_postselection():
     np.testing.assert_array_equal(decoded["X"].observables[:, 0], np.array([0, 1, 0]))
 
 
+class _BatchFactoryDecoder(ConfidenceDecoder):
+    def __init__(self) -> None:
+        self.decode_with_confidence_calls = 0
+        self.decoded_rows: list[int] = []
+
+    def decode_with_confidence(
+        self,
+        detector_bits: np.ndarray,
+    ) -> tuple[np.ndarray, np.float64]:
+        self.decode_with_confidence_calls += 1
+        self.decoded_rows.append(detector_bits.shape[0])
+        return detector_bits[:1].astype(np.bool_), np.float64(1.0)
+
+
+class _BatchFullDecoder(BaseDecoder):
+    def __init__(self) -> None:
+        self.decode_calls = 0
+        self.decoded_rows: list[int] = []
+
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        _ = detector_bits
+        return np.array([0], dtype=np.bool_)
+
+    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        self.decode_calls += 1
+        self.decoded_rows.append(detector_bits.shape[0])
+        return np.zeros((detector_bits.shape[0], 1), dtype=np.bool_)
+
+
+def test_build_generic_threshold_tables_batch_decodes_unique_detector_patterns():
+    data = {basis: _dataset() for basis in ("X", "Y", "Z")}
+    factory = _BatchFactoryDecoder()
+    full = _BatchFullDecoder()
+    decoders = {basis: (factory, full) for basis in ("X", "Y", "Z")}
+
+    decoded = _build_generic_threshold_tables(
+        data,
+        decoders,
+        targets=np.array([[0]], dtype=np.uint8),
+        basis_labels=("X",),
+    )
+
+    assert decoded["X"].observables.shape == (3, 1)
+    assert factory.decode_with_confidence_calls == 2
+    assert factory.decoded_rows == [1, 1]
+    assert full.decode_calls == 1
+    assert full.decoded_rows == [2]
+
+
 def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
     decoded = {
-        basis: DecodedPostselectionResult(
+        basis: _DecodedPostselectionResult(
             observables=np.array([[0], [0], [1]], dtype=np.uint8),
             confidence=np.array([0.9, 0.8, 0.1], dtype=np.float64),
         )
@@ -154,7 +208,7 @@ def test_postselection_experiment_decode_and_tomography_result_with_cached_data(
 
 def test_shots_at_accepted_fraction_is_relative_to_postselected_shots():
     decoded = {
-        basis: DecodedPostselectionResult(
+        basis: _DecodedPostselectionResult(
             observables=np.array([[0], [1], [0]], dtype=np.uint8),
             confidence=np.array([0.9, 0.8, 0.1], dtype=np.float64),
         )

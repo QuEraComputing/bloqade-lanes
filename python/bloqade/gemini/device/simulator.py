@@ -485,7 +485,7 @@ class GeminiLogicalSimulator:
         logical_kernel: Union[ir.Method[[], RetType], Callable[..., Any]],
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
-    ) -> GeminiLogicalSimulatorTask[RetType] | Any:
+    ) -> GeminiLogicalSimulatorTask[RetType]:
         """Create a simulation task for the given kernel.
 
         Eagerly compiles the kernel through squin-to-move and extracts post-processing.

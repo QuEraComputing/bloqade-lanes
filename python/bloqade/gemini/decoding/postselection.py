@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
+from bloqade.decoders import BaseDecoder
 
 from .bit_packing import pack_boolean_array, packed_pattern_targets
 from .confidence import ConfidenceDecoder
@@ -13,29 +13,71 @@ from .layout import DEFAULT_SYNDROME_LAYOUT, split_factory_bits
 from .sampling import BasisDataset
 from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 
-DecoderPair = tuple[ConfidenceDecoder, Any]
+DecoderPair = tuple[ConfidenceDecoder, BaseDecoder]
 
 
 @dataclass(frozen=True)
-class DecodedPostselectionResult:
+class _DecodedPostselectionResult:
     """Decoded output observables and one factory confidence per accepted shot."""
 
     observables: np.ndarray
     confidence: np.ndarray
 
-    def __post_init__(self) -> None:
-        observables = np.asarray(self.observables, dtype=np.uint8)
-        confidence = np.asarray(self.confidence, dtype=np.float64).reshape(-1)
-        if observables.ndim != 2:
-            raise ValueError("observables must have shape (shots, num_observables).")
-        if confidence.shape != (observables.shape[0],):
-            raise ValueError("confidence must have one entry per shot.")
-        object.__setattr__(self, "observables", observables)
-        object.__setattr__(self, "confidence", confidence)
+
+def _decode_detector_batch(
+    decoder: BaseDecoder, detector_bits: np.ndarray
+) -> np.ndarray:
+    """Decode unique detector rows, falling back to row-wise decoding if needed."""
+
+    detector_bits = np.asarray(detector_bits, dtype=np.bool_)
+    if detector_bits.ndim != 2:
+        raise ValueError("detector_bits must have shape (shots, detectors).")
+    if detector_bits.shape[0] == 0:
+        return np.zeros(
+            (0, int(getattr(decoder, "num_observables", 0))),
+            dtype=np.uint8,
+        )
+
+    decoded = np.asarray(decoder.decode(detector_bits), dtype=np.uint8)
+    if decoded.ndim == 2 and decoded.shape[0] == detector_bits.shape[0]:
+        return decoded
+    if decoded.ndim == 1 and detector_bits.shape[0] == 1:
+        return decoded.reshape(1, -1)
+
+    # Some simple decoder test doubles and non-batched decoders interpret a 2D
+    # input as one object. Fall back to explicit row-wise calls in that case.
+    rows = [
+        np.asarray(decoder.decode(row), dtype=np.uint8).reshape(-1)
+        for row in detector_bits
+    ]
+    return np.stack(rows, axis=0) if rows else np.zeros((0, 0), dtype=np.uint8)
 
 
-def _pack_row(bits: np.ndarray) -> int:
-    return int(pack_boolean_array(np.asarray(bits, dtype=np.uint8).reshape(1, -1))[0])
+def _decode_confidence_batch(
+    decoder: ConfidenceDecoder,
+    detector_bits: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Decode unique factory detector rows and return corrections/confidences."""
+
+    detector_bits = np.asarray(detector_bits, dtype=np.bool_)
+    if detector_bits.ndim != 2:
+        raise ValueError("detector_bits must have shape (shots, detectors).")
+    if detector_bits.shape[0] == 0:
+        return np.zeros((0, 0), dtype=np.uint8), np.zeros(0, dtype=np.float64)
+
+    rows = [decoder.decode_with_confidence(row) for row in detector_bits]
+    corrections = [
+        np.asarray(correction, dtype=np.uint8).reshape(-1) for correction, _ in rows
+    ]
+    confidences = [float(np.float64(confidence)) for _, confidence in rows]
+    return (
+        (
+            np.stack(corrections, axis=0)
+            if corrections
+            else np.zeros((0, 0), dtype=np.uint8)
+        ),
+        np.asarray(confidences, dtype=np.float64),
+    )
 
 
 def _build_generic_threshold_tables(
@@ -45,7 +87,7 @@ def _build_generic_threshold_tables(
     targets: np.ndarray,
     basis_labels: Sequence[str],
     progress_label: str | None = None,
-) -> dict[str, DecodedPostselectionResult]:
+) -> dict[str, _DecodedPostselectionResult]:
     """Decode, factory-postselect, and keep output bits with confidence.
 
     Each basis result stores decoded output observable shots with shape
@@ -54,7 +96,7 @@ def _build_generic_threshold_tables(
     """
 
     packed_targets = packed_pattern_targets(np.asarray(targets, dtype=np.uint8))
-    decoded_results: dict[str, DecodedPostselectionResult] = {}
+    decoded_results: dict[str, _DecodedPostselectionResult] = {}
     progress_bars = {}
 
     if progress_label is not None:
@@ -80,70 +122,64 @@ def _build_generic_threshold_tables(
                 dataset.observables,
                 layout=DEFAULT_SYNDROME_LAYOUT,
             )
-            factory_cache: dict[int, tuple[np.ndarray, float]] = {}
-            full_cache: dict[int, np.ndarray] = {}
-            observable_rows: list[np.ndarray] = []
-            confidence_rows: list[float] = []
             progress_bar = progress_bars.get(basis)
 
-            for shot_index in range(dataset.detectors.shape[0]):
-                anc_detector_bits = anc_det[shot_index]
-                packed_anc_det = _pack_row(anc_detector_bits)
-                factory_result = factory_cache.get(packed_anc_det)
-                if factory_result is None:
-                    correction, confidence = factory_decoder.decode_with_confidence(
-                        anc_detector_bits.astype(np.bool_)
-                    )
-                    factory_result = (
-                        np.asarray(correction, dtype=np.uint8).reshape(-1),
-                        float(np.float64(confidence)),
-                    )
-                    factory_cache[packed_anc_det] = factory_result
+            _unique_anc_packed, unique_anc_indices, inverse_anc = np.unique(
+                pack_boolean_array(anc_det),
+                return_index=True,
+                return_inverse=True,
+            )
+            unique_anc_det = anc_det[unique_anc_indices]
+            unique_anc_corrections, unique_confidence = _decode_confidence_batch(
+                factory_decoder,
+                unique_anc_det,
+            )
 
-                anc_correction, confidence = factory_result
-                if not np.isfinite(confidence):
-                    if progress_bar is not None:
-                        progress_bar.update(1)
-                    continue
+            packed_anc_obs = pack_boolean_array(anc_obs)
+            packed_anc_correction = pack_boolean_array(unique_anc_corrections)
+            corrected_factory = packed_anc_obs ^ packed_anc_correction[inverse_anc]
+            accepted_mask = np.isfinite(unique_confidence[inverse_anc]) & np.isin(
+                corrected_factory,
+                list(packed_targets),
+            )
 
-                corrected_factory = _pack_row(anc_obs[shot_index]) ^ _pack_row(
-                    anc_correction
+            if not np.any(accepted_mask):
+                decoded_results[basis] = _DecodedPostselectionResult(
+                    observables=np.zeros((0, 1), dtype=np.uint8),
+                    confidence=np.zeros(0, dtype=np.float64),
                 )
-                if corrected_factory not in packed_targets:
-                    if progress_bar is not None:
-                        progress_bar.update(1)
-                    continue
-
-                detector_bits = dataset.detectors[shot_index]
-                packed_full_det = _pack_row(detector_bits)
-                full_correction = full_cache.get(packed_full_det)
-                if full_correction is None:
-                    full_correction = np.asarray(
-                        full_decoder.decode(detector_bits.astype(np.bool_)),
-                        dtype=np.uint8,
-                    ).reshape(-1)
-                    full_cache[packed_full_det] = full_correction
-
-                output_bits = np.asarray(
-                    dataset.observables[shot_index, :1], dtype=np.uint8
-                )
-                correction_bits = np.asarray(
-                    full_correction[: len(output_bits)], dtype=np.uint8
-                )
-                decoded_output = output_bits ^ correction_bits
-                observable_rows.append(decoded_output.astype(np.uint8, copy=False))
-                confidence_rows.append(confidence)
                 if progress_bar is not None:
-                    progress_bar.update(1)
+                    progress_bar.update(dataset.detectors.shape[0])
+                continue
 
-            decoded_results[basis] = DecodedPostselectionResult(
-                observables=(
-                    np.stack(observable_rows, axis=0)
-                    if observable_rows
-                    else np.zeros((0, 1), dtype=np.uint8)
-                ),
+            accepted_detectors = dataset.detectors[accepted_mask]
+            _unique_full_packed, unique_full_indices, inverse_full = np.unique(
+                pack_boolean_array(accepted_detectors),
+                return_index=True,
+                return_inverse=True,
+            )
+            unique_full_detectors = accepted_detectors[unique_full_indices]
+            unique_full_corrections = _decode_detector_batch(
+                full_decoder,
+                unique_full_detectors,
+            )
+
+            output_bits = np.asarray(
+                dataset.observables[accepted_mask, :1], dtype=np.uint8
+            )
+            correction_bits = np.asarray(
+                unique_full_corrections[inverse_full, : output_bits.shape[1]],
+                dtype=np.uint8,
+            )
+            decoded_output = output_bits ^ correction_bits
+            confidence_rows = unique_confidence[inverse_anc][accepted_mask]
+
+            decoded_results[basis] = _DecodedPostselectionResult(
+                observables=decoded_output.astype(np.uint8, copy=False),
                 confidence=np.asarray(confidence_rows, dtype=np.float64),
             )
+            if progress_bar is not None:
+                progress_bar.update(dataset.detectors.shape[0])
     finally:
         for progress_bar in progress_bars.values():
             progress_bar.close()
@@ -152,7 +188,7 @@ def _build_generic_threshold_tables(
 
 
 def _shots_at_accepted_fraction(
-    decoded_results: Mapping[str, DecodedPostselectionResult],
+    decoded_results: Mapping[str, _DecodedPostselectionResult],
     accepted_fraction: float,
     *,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
@@ -212,7 +248,7 @@ def _shots_at_accepted_fraction(
 
 
 def _evaluate_cached_threshold_curve(
-    decoded_results: Mapping[str, DecodedPostselectionResult],
+    decoded_results: Mapping[str, _DecodedPostselectionResult],
     *,
     total_shots: int,
     threshold_points: int = 64,
@@ -268,7 +304,6 @@ def _evaluate_cached_threshold_curve(
 
 
 __all__ = [
-    "DecodedPostselectionResult",
     "_build_generic_threshold_tables",
     "_evaluate_cached_threshold_curve",
     "_shots_at_accepted_fraction",
