@@ -166,8 +166,16 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
     enables palindrome moves; using the bare inner strategy disables them.
     """
 
-    def __init__(self, *, inner: PlacementStrategyABC) -> None:
+    def __init__(self, *, inner: PlacementStrategyABC, lookahead: int = 1) -> None:
         self.inner = inner
+        self.lookahead = lookahead
+        """Number of CZ layers forwarded to ``inner.cz_placements``.
+
+        Defaults to ``1`` (only the current CZ layer). Palindrome moves always
+        return atoms to the pre-CZ home before the next CZ, so future CZ layers
+        cannot inform the current placement — looking ahead only inflates the
+        inner solver's search without changing the (forced) home return. A
+        larger value forwards that many leading layers; ``0`` forwards none."""
 
     @property  # type: ignore[reportIncompatibleVariableOverride]
     def arch_spec(self) -> ArchSpec:  # type: ignore[reportIncompatibleVariableOverride]
@@ -196,7 +204,9 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
         home = self._unwrap(state)
-        result = self.inner.cz_placements(home, controls, targets, lookahead_cz_layers)
+        result = self.inner.cz_placements(
+            home, controls, targets, lookahead_cz_layers[: self.lookahead]
+        )
         if not isinstance(result, ExecuteCZ) or not isinstance(home, ConcreteState):
             return result
         return ExecuteCZReturn(
