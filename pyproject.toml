@@ -42,9 +42,8 @@ msd-reprod = [
     # TODO: bloqade-circuit should depend on a bloqade-decoders range that
     # includes 0.6.0. Until that lands upstream, keep the decoder dependency
     # here for the MSD reproduction workflow.
-    "bloqade-decoders~=0.6.0",
+    "bloqade-decoders[mle, mld]",
     "clifft; python_version >= '3.12'",
-    "gurobipy",
     "ipywidgets"
 ]
 
