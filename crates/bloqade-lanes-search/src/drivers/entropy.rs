@@ -289,7 +289,7 @@ pub struct EntropyParams {
     pub reversion_steps: u32,
     pub e_max: u32,
     pub max_goal_candidates: usize,
-    // Expander settings.
+    // Generator settings.
     pub max_movesets_per_group: usize,
     /// Enable 2-step lookahead scoring.
     pub lookahead: bool,
