@@ -228,28 +228,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> _native.TargetSolver:
         return _native.TargetSolver(self._get_engine(), move_search)
 
-    def compute_rearrangement(
-        self,
-        state_before: ConcreteState,
-        state_after: ConcreteState,
-    ) -> tuple[tuple[LaneAddress, ...], ...]:
-        """Compute move layers to route atoms from state_before to state_after.
-
-        Uses the same traversal config as cz_placements; max_expansions from
-        the traversal bounds the search.  Raises RuntimeError if unsolvable.
-        """
-        move_search = _move_search_from_traversal(self.traversal)
-        solver = self._make_target_solver(move_search)
-        initial = {qid: loc._inner for qid, loc in enumerate(state_before.layout)}
-        target = {qid: loc._inner for qid, loc in enumerate(state_after.layout)}
-        blocked = [loc._inner for loc in state_before.occupied]
-        result = solver.solve(initial, target, blocked, self.traversal.max_expansions)
-        if result.status != "solved":
-            raise RuntimeError(
-                f"compute_rearrangement failed: status={result.status!r}"
-            )
-        return convert_move_layers(result.move_layers)
-
     @property
     def rust_nodes_expanded_total(self) -> int:
         """Total Rust solver node expansions for this strategy instance."""
