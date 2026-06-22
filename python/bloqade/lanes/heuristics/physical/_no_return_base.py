@@ -25,7 +25,7 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
-    PlacementStrategyABC,
+    MoveToPlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
@@ -35,12 +35,12 @@ from bloqade.lanes.bytecode._native import (
     SearchEngine,
     SearchStrategy,
 )
-from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.heuristics.physical.movement import convert_move_layers
 
 
 @dataclass
-class NoReturnStrategyBase(PlacementStrategyABC):
+class NoReturnStrategyBase(MoveToPlacementStrategyABC):
     """Abstract base for Rust-solver-driven no-return placement strategies.
 
     Parameters
@@ -209,3 +209,27 @@ class NoReturnStrategyBase(PlacementStrategyABC):
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         return self._strip_user_moved(state)
+
+    def compute_moves(
+        self,
+        state_before: ConcreteState,
+        state_after: ConcreteState,
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
+        """Route atoms between two fixed layouts for user-directed ``MoveTo``.
+
+        Fixed-target routing (both layouts are given) is a different problem
+        from the no-return CZ solve, which generates the target layout itself.
+        We therefore delegate to the shared ``compute_move_layers`` primitive
+        (the same path :class:`LogicalPlacementStrategy` uses), reusing this
+        strategy's cached :class:`SearchEngine` so MoveTo routing shares the
+        per-arch lane index with ``cz_placements``.
+
+        The ``compute_move_layers`` import is deferred to call time: it pulls in
+        ``heuristics.move_synthesis``, which imports ``physical.movement`` and
+        would otherwise form an import cycle through ``physical/__init__``.
+        """
+        from bloqade.lanes.heuristics.move_synthesis import compute_move_layers
+
+        return compute_move_layers(
+            self.arch_spec, state_before, state_after, engine=self._get_engine()
+        )

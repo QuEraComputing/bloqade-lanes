@@ -7,6 +7,7 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
+    MoveToPlacementStrategyABC,
     PalindromePlacementStrategy,
     PlacementStrategyABC,
 )
@@ -118,7 +119,7 @@ def _move_search_from_traversal(
 
 
 @dataclass
-class PhysicalPlacementStrategy(PlacementStrategyABC):
+class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     """Physical placement strategy backed by the Rust ``TargetSolver``."""
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
@@ -360,6 +361,32 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         return self._strip_user_moved(state)
+
+    def compute_moves(
+        self,
+        state_before: ConcreteState,
+        state_after: ConcreteState,
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
+        """Route atoms between two fixed layouts for user-directed ``MoveTo``.
+
+        Delegates to the shared ``compute_move_layers`` primitive, passing this
+        strategy's own ``traversal`` and cached :class:`SearchEngine` so MoveTo
+        routing uses the same search configuration and per-arch lane index as
+        ``cz_placements`` (the docstring on ``compute_move_layers`` notes the two
+        callsites are meant to share a traversal).
+
+        The import is deferred to call time: ``heuristics.move_synthesis``
+        imports this module, so a top-level import would be a cycle.
+        """
+        from bloqade.lanes.heuristics.move_synthesis import compute_move_layers
+
+        return compute_move_layers(
+            self.arch_spec,
+            state_before,
+            state_after,
+            engine=self._get_engine(),
+            traversal=self.traversal,
+        )
 
 
 def make_physical_placement_strategy(

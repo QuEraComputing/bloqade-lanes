@@ -17,6 +17,8 @@ from bloqade.lanes.analysis.placement import (
     ConcreteState,
     ExecuteCZ,
     ExecuteMeasure,
+    MoveToPlacementStrategyABC,
+    UserMoved,
 )
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.bytecode.encoding import LocationAddress
@@ -153,3 +155,62 @@ def test_validate_initial_layout_is_noop():
     """Base implementation accepts any layout without raising."""
     strategy = _make_strategy()
     strategy.validate_initial_layout((LocationAddress(0, 0), LocationAddress(1, 0)))
+
+
+# ── MoveTo support (MoveToPlacementStrategyABC) ─────────────────────
+
+
+def test_is_move_to_placement_strategy():
+    """No-return strategies support user-directed movement, so the MoveTo
+    placement interpreter (which gates on ``MoveToPlacementStrategyABC``)
+    routes through them instead of returning bottom."""
+    assert isinstance(_make_strategy(), MoveToPlacementStrategyABC)
+
+
+def test_compute_moves_routes_between_layouts():
+    """``compute_moves`` synthesizes AOD move layers routing atoms from one
+    concrete layout to another (qubit 0: word 0 -> word 1 via word bus, with
+    qubit 1 parked at word 2 so the destination is free)."""
+    strategy = _make_strategy()
+    arch_spec = strategy.arch_spec
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(1, 0), LocationAddress(2, 0)),
+        move_count=(1, 0),
+    )
+    layers = strategy.compute_moves(state_before, state_after)
+    assert len(layers) > 0
+    for layer in layers:
+        for lane in layer:
+            assert not arch_spec.check_lane_group([lane])
+
+
+def test_compute_moves_no_diff_is_empty():
+    """Routing a layout to itself yields no move layers."""
+    strategy = _make_strategy()
+    state = _make_state()
+    assert strategy.compute_moves(state, state) == ()
+
+
+def test_move_to_placements_produces_user_moved():
+    """``move_to_placements`` (inherited from ``MoveToPlacementStrategyABC``)
+    places a qubit at a user-directed location, producing a ``UserMoved``
+    state whose move history is populated by ``compute_moves``."""
+    strategy = _make_strategy()
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    out = strategy.move_to_placements(
+        state, qubits=(0,), locations=(LocationAddress(1, 0),)
+    )
+    assert isinstance(out, UserMoved)
+    assert out.layout == (LocationAddress(1, 0), LocationAddress(2, 0))
+    assert out.accumulated_move_layers == out.move_layers
+    assert len(out.move_layers) > 0
