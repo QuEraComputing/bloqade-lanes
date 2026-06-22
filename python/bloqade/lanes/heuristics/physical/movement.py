@@ -404,18 +404,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )
 
-    def move_to_placements(
-        self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-        locations: tuple[LocationAddress, ...],
-    ) -> AtomState:
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support move_to / movement_kernel. "
-            "User-directed atom movement is only available with logical compilation "
-            "(LogicalPlacementStrategy or LogicalPlacementStrategyNoHome)."
-        )
-
 
 def make_physical_placement_strategy(
     *,

@@ -180,18 +180,6 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         # same no-op pattern used by :class:`PhysicalPlacementStrategy`.
         _ = initial_layout
 
-    def move_to_placements(
-        self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-        locations: tuple[LocationAddress, ...],
-    ) -> AtomState:
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support move_to / movement_kernel. "
-            "User-directed atom movement is only available with logical compilation "
-            "(LogicalPlacementStrategy or LogicalPlacementStrategyNoHome)."
-        )
-
     def cz_placements(
         self,
         state: AtomState,

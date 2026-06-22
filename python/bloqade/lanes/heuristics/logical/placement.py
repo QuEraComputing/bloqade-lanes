@@ -9,11 +9,11 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
+    MoveToPlacementStrategyABC,
     SingleZonePlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure, UserMoved
 from bloqade.lanes.analysis.placement.strategy import (
-    PlacementStrategyABC,
     assert_single_cz_zone,
 )
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -187,7 +187,9 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
 
 
 @dataclass
-class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
+class LogicalPlacementStrategyNoHome(
+    LogicalPlacementMethods, MoveToPlacementStrategyABC
+):
     arch_spec: ArchSpec = field(default_factory=get_arch_spec)
     H_lookahead: int = 4
     gamma: float = 0.85
@@ -739,53 +741,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             move_count=state_after.move_count,
             active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=(left_move_layers + final_move_layers),
-        )
-
-    def move_to_placements(
-        self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-        locations: tuple[LocationAddress, ...],
-    ) -> AtomState:
-        if state == AtomState.bottom():
-            return AtomState.bottom()
-        if not isinstance(state, ConcreteState):
-            return AtomState.top()
-
-        moved_set = set(qubits)
-        for dest in locations:
-            for idx, current_loc in enumerate(state.layout):
-                if current_loc == dest and idx not in moved_set:
-                    return AtomState.bottom()
-
-        new_layout = list(state.layout)
-        for qubit_idx, dest in zip(qubits, locations):
-            new_layout[qubit_idx] = dest
-        target_layout = tuple(new_layout)
-
-        target_state = ConcreteState(
-            occupied=state.occupied,
-            layout=target_layout,
-            move_count=state.move_count,
-        )
-
-        try:
-            new_layers = self.compute_moves(state, target_state)
-        except RuntimeError:
-            return AtomState.bottom()
-
-        if isinstance(state, UserMoved):
-            accumulated = state.accumulated_move_layers + new_layers
-            pre_user = state.pre_user_layout
-        else:
-            accumulated = new_layers
-            pre_user = state.layout
-
-        return UserMoved.from_concrete_state(
-            target_state,
-            move_layers=new_layers,
-            accumulated_move_layers=accumulated,
-            pre_user_layout=pre_user,
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:

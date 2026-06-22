@@ -12,6 +12,7 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
+    MoveToPlacementStrategyABC,
     PlacementAnalysis,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
@@ -285,12 +286,15 @@ class PlacementMethods(interp.MethodTable):
         frame: ForwardFrame[AtomState],
         stmt: MoveTo,
     ):
+        strategy = _interp.placement_strategy
+        if not isinstance(strategy, MoveToPlacementStrategyABC):
+            # Strategy does not support user-directed movement; mark the path
+            # infeasible rather than calling an unavailable interface.
+            return (AtomState.bottom(),)
         state = frame.get(stmt.state_before)
         if not isinstance(state, ConcreteState):
             return (state,)
-        new_state = _interp.placement_strategy.move_to_placements(
-            state, stmt.qubits, stmt.locations
-        )
+        new_state = strategy.move_to_placements(state, stmt.qubits, stmt.locations)
         return (new_state,)
 
     @interp.impl(Initialize)

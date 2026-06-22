@@ -10,6 +10,7 @@ from .lattice import (
     UserMoved as UserMoved,
 )
 from .strategy import (
+    MoveToPlacementStrategyABC as MoveToPlacementStrategyABC,
     PalindromePlacementStrategy as PalindromePlacementStrategy,
     PlacementStrategyABC as PlacementStrategyABC,
     SingleZonePlacementStrategyABC as SingleZonePlacementStrategyABC,
