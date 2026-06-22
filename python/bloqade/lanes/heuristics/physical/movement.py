@@ -77,6 +77,16 @@ class RustPlacementTraversal:
     lookahead: bool = False
     collect_entropy_trace: bool = False
     seed: int = 0
+    block_spectators: bool = True
+    """Scope each CZ solve to the participating qubits.
+
+    When ``True`` (default), qubits not in the CZ's ``controls``/``targets`` are
+    treated as blocked obstacles for that solve rather than free atoms to route.
+    This keeps the search effort independent of how many unrelated qubits share
+    the same merged ``StaticPlacement`` block (under ``always_merge`` every CZ
+    would otherwise search over all block qubits). Quality is unchanged — the
+    spectators do not move either way; this only prunes wasted exploration.
+    Set ``False`` to restore the previous all-qubits-per-CZ search."""
 
 
 def _move_search_from_traversal(
@@ -288,8 +298,23 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 loc for loc in state.occupied if loc not in active_locations
             )
 
-        initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
-        blocked_native = [loc._inner for loc in state.occupied]
+        # Scope the solve to the qubits participating in this CZ. Spectators
+        # (block qubits not in controls/targets) become blocked obstacles rather
+        # than free atoms, so the search effort doesn't scale with unrelated
+        # qubits sharing a merged StaticPlacement block. They don't move either
+        # way; the result reconstruction backfills their unchanged locations.
+        if self.traversal.block_spectators:
+            participants = set(controls) | set(targets)
+        else:
+            participants = set(ctx.placement)
+        spectator_native = [
+            loc._inner for qid, loc in ctx.placement.items() if qid not in participants
+        ]
+
+        initial_native = {
+            qid: loc._inner for qid, loc in ctx.placement.items() if qid in participants
+        }
+        blocked_native = [loc._inner for loc in state.occupied] + spectator_native
         move_search = _move_search_from_traversal(
             self.traversal,
             collect_entropy_trace=(
@@ -303,7 +328,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         for candidate in candidates:
             if remaining is not None and remaining <= 0:
                 break
-            target_native = {qid: loc._inner for qid, loc in candidate.items()}
+            target_native = {
+                qid: loc._inner for qid, loc in candidate.items() if qid in participants
+            }
             result = solver.solve(
                 initial_native,
                 target_native,
