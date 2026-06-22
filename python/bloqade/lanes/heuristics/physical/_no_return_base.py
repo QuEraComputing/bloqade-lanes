@@ -25,10 +25,8 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
-    ExecuteMeasure,
     PlacementStrategyABC,
 )
-from bloqade.lanes.analysis.placement.lattice import UserMoved
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import (
@@ -37,7 +35,7 @@ from bloqade.lanes.bytecode._native import (
     SearchEngine,
     SearchStrategy,
 )
-from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.movement import convert_move_layers
 
 
@@ -211,19 +209,3 @@ class NoReturnStrategyBase(PlacementStrategyABC):
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         return self._strip_user_moved(state)
-
-    def measure_placements(
-        self, state: AtomState, qubits: tuple[int, ...]
-    ) -> AtomState:
-        if isinstance(state, UserMoved):
-            return AtomState.bottom()  # move_to before measurement is invalid
-        if not isinstance(state, ConcreteState):
-            return state
-        if len(qubits) != len(state.layout):
-            return AtomState.bottom()
-        return ExecuteMeasure(
-            occupied=state.occupied,
-            layout=state.layout,
-            move_count=state.move_count,
-            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
-        )

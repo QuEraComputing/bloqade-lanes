@@ -12,7 +12,7 @@ from bloqade.lanes.analysis.placement import (
     MoveToPlacementStrategyABC,
     SingleZonePlacementStrategyABC,
 )
-from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure, UserMoved
+from bloqade.lanes.analysis.placement.lattice import UserMoved
 from bloqade.lanes.analysis.placement.strategy import (
     assert_single_cz_zone,
 )
@@ -25,7 +25,6 @@ from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    ZoneAddress,
 )
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
 
@@ -745,27 +744,3 @@ class LogicalPlacementStrategyNoHome(
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         return self._strip_user_moved(state)
-
-    def measure_placements(
-        self, state: AtomState, qubits: tuple[int, ...]
-    ) -> AtomState:
-        if isinstance(state, UserMoved):
-            return AtomState.bottom()  # move_to before measurement is invalid
-        if not isinstance(state, ConcreteState):
-            return state
-
-        if len(qubits) != len(state.layout):
-            return AtomState.bottom()
-
-        # Order layout/zone_maps/move_count by the measurement order ``qubits``
-        # so each emitted measurement result lines up with the location of the
-        # qubit it measures. ``qubits`` is identity for un-merged blocks but a
-        # permutation once StaticPlacement blocks are merged (always_merge),
-        # which remaps qubit indices; reading state.layout positionally would
-        # then pair a result with the wrong patch.
-        return ExecuteMeasure(
-            occupied=state.occupied,
-            layout=tuple(state.layout[i] for i in qubits),
-            move_count=tuple(state.move_count[i] for i in qubits),
-            zone_maps=tuple(ZoneAddress(state.layout[i].zone_id) for i in qubits),
-        )
