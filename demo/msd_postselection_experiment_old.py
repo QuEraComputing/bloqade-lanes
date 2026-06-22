@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH
 
-from bloqade.gemini.decoding.workflow import plot_decoder_curves
+from bloqade.gemini.decoding.workflow import _plot_decoder_curves
 from bloqade.lanes import GeminiLogicalSimulator
 
 try:
@@ -254,7 +254,7 @@ curves = {"Distilled (MLD)": msd_mld_curve}
 if msd_mle_curve is not None:
     curves = {"Distilled (MLE)": msd_mle_curve, **curves}
 
-fig, ax = plot_decoder_curves(
+fig, ax = _plot_decoder_curves(
     curves,
     injected_summary=injected_summary,
     min_accepted_fraction=0.001,

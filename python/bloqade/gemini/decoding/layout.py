@@ -6,7 +6,7 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class SyndromeLayout:
+class _SyndromeLayout:
     """Column layout describing output versus factory syndrome bits.
 
     Attributes:
@@ -20,14 +20,14 @@ class SyndromeLayout:
     output_observable_count: int = 1
 
 
-DEFAULT_SYNDROME_LAYOUT = SyndromeLayout()
+_DEFAULT_SYNDROME_LAYOUT = _SyndromeLayout()
 
 
-def split_factory_bits(
+def _split_factory_bits(
     detectors: np.ndarray,
     observables: np.ndarray,
     *,
-    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    layout: _SyndromeLayout = _DEFAULT_SYNDROME_LAYOUT,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return factory detector and observable bits after output columns.
 

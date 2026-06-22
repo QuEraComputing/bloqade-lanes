@@ -148,8 +148,7 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
             objective=objective_value,
         )
 
-    # TODO: make private
-    def decode_with_logical_gap(
+    def _decode_with_logical_gap(
         self,
         detector_bits: npt.NDArray[np.bool_],
         verbose: bool = False,
@@ -158,7 +157,7 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
 
         parent_decode_with_logical_gap = getattr(
             super(),
-            "decode_with_logical_gap",
+            "_decode_with_logical_gap",
             None,
         )
         if callable(parent_decode_with_logical_gap):
@@ -206,7 +205,7 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
             raise ValueError(
                 "decode_with_confidence expects a single detector shot (1D array)."
             )
-        decoded_obs, logical_gap = self.decode_with_logical_gap(detector_bits)
+        decoded_obs, logical_gap = self._decode_with_logical_gap(detector_bits)
         logical_gap_arr = np.asarray(logical_gap, dtype=np.float64).reshape(-1)
         return decoded_obs.astype(np.bool_), np.float64(logical_gap_arr[0])
 

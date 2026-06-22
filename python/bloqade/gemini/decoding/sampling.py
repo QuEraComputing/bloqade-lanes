@@ -8,19 +8,19 @@ from .tasks import _CliffTSimulatorTask
 
 
 @dataclass(frozen=True)
-class BasisDataset:
+class _BasisDataset:
     """Detector and observable samples for one tomography basis."""
 
     detectors: np.ndarray
     observables: np.ndarray
 
 
-def run_task(
+def _run_task(
     task: object,
     shots: int,
     *,
     with_noise: bool = True,
-) -> BasisDataset:
+) -> _BasisDataset:
     """Sample detector/observable arrays from a demo task."""
 
     if shots < 0:
@@ -30,16 +30,13 @@ def run_task(
             shots,
             with_noise=with_noise,
         )
-        return BasisDataset(
+        return _BasisDataset(
             detectors=detectors,
             observables=observables,
         )
 
     result = task.run(shots, with_noise=with_noise, run_detectors=True)  # type: ignore[attr-defined]
-    return BasisDataset(
+    return _BasisDataset(
         detectors=np.asarray(result.detectors, dtype=np.uint8),
         observables=np.asarray(result.observables, dtype=np.uint8),
     )
-
-
-__all__ = ["BasisDataset", "run_task"]

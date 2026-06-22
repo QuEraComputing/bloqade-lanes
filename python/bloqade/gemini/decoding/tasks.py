@@ -202,6 +202,3 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
             np.asarray(sample_result.detectors, dtype=np.uint8),
             np.asarray(sample_result.observables, dtype=np.uint8),
         )
-
-
-__all__: list[str] = []

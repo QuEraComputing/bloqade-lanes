@@ -14,12 +14,12 @@ from bloqade.gemini.decoding.postselection import (
     _evaluate_cached_threshold_curve,
     _shots_at_accepted_fraction,
 )
-from bloqade.gemini.decoding.sampling import BasisDataset
+from bloqade.gemini.decoding.sampling import _BasisDataset
 from bloqade.gemini.decoding.tomography import TomographyResult
 
 
-def _dataset() -> BasisDataset:
-    return BasisDataset(
+def _dataset() -> _BasisDataset:
+    return _BasisDataset(
         detectors=np.array(
             [
                 [0, 0, 0, 0],
@@ -88,7 +88,7 @@ def test_build_generic_threshold_tables_returns_decoded_shots_with_confidence():
 
 
 def test_build_generic_threshold_tables_supports_empty_factory_postselection():
-    dataset = BasisDataset(
+    dataset = _BasisDataset(
         detectors=np.array(
             [
                 [0, 0, 0],

@@ -69,11 +69,11 @@ from demo.msd_utils import (  # noqa: E402
     build_msd_tomography_tasks,
     evaluate_decoder_curves,
     evaluate_injected_baseline,
-    plot_decoder_curves,
     sample_actual_data,
 )
 from demo.msd_utils.domain.confidence import ConfidenceGurobiDecoder  # noqa: E402
 
+from bloqade.gemini.decoding.workflow import _plot_decoder_curves  # noqa: E402
 from bloqade.lanes import GeminiLogicalSimulator  # noqa: E402
 
 # %% [markdown]
@@ -191,7 +191,7 @@ injected_summary = evaluate_injected_baseline(
 
 # TODO: subset the curves so that things under the "min_accepted_fraction" just aren't plotted at all
 # on the curve
-fig, ax = plot_decoder_curves(
+fig, ax = _plot_decoder_curves(
     curves,
     injected_summary=injected_summary,
     title="MSD Decoder Postselection Curves",

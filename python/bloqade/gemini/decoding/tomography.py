@@ -4,18 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypedDict
 
 import numpy as np
 
-
-class SimpleFidelitySummary(TypedDict):
-    """Target-specific point fidelity summary."""
-
-    point: float
-
-
-DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
+_DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 
 def _density_matrix_from_bloch(bloch: np.ndarray) -> np.ndarray:
@@ -60,19 +52,16 @@ class TomographyResult:
     def fidelity_bloch(
         self,
         target_bloch: np.ndarray | Sequence[float],
-    ) -> SimpleFidelitySummary:
+    ) -> float:
         """Return the overlap with a pure target state from its Bloch vector."""
 
         target_density_matrix = _density_matrix_from_bloch(
             np.asarray(target_bloch, dtype=np.float64)
         )
         # NOTE: only works for pure states
-        point = float(np.real(np.trace(self.density_matrix @ target_density_matrix)))
-        return {"point": point}
+        return float(np.real(np.trace(self.density_matrix @ target_density_matrix)))
 
 
 __all__ = [
-    "DEFAULT_TARGET_BLOCH",
-    "SimpleFidelitySummary",
     "TomographyResult",
 ]

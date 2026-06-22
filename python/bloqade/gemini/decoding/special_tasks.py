@@ -60,6 +60,3 @@ def _apply_special_tsim_circuit_strategy(
             inverse_prefix + task.noiseless_tsim_circuit
         )
     return transformed
-
-
-__all__ = ["_apply_special_tsim_circuit_strategy"]

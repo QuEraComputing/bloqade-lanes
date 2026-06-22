@@ -16,22 +16,22 @@ from bloqade.gemini.device import (
 )
 
 from .confidence import ConfidenceDecoder
-from .constants import DEFAULT_BASIS_LABELS
+from .constants import _DEFAULT_BASIS_LABELS
 from .dem import _sub_detector_error_model
 from .kernels import _build_tomography_primitives, _DecoderPrimitiveSet
-from .layout import DEFAULT_SYNDROME_LAYOUT
+from .layout import _DEFAULT_SYNDROME_LAYOUT
 from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
 from .postselection import (
-    DecoderPair,
     _build_generic_threshold_tables,
     _DecodedPostselectionResult,
+    _DecoderPair,
     _evaluate_cached_threshold_curve,
     _shots_at_accepted_fraction,
 )
-from .sampling import BasisDataset
+from .sampling import _BasisDataset
 from .special_tasks import _apply_special_tsim_circuit_strategy
-from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
-from .workflow import plot_decoder_curves
+from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
+from .workflow import _plot_decoder_curves
 
 if TYPE_CHECKING:
     import tsim as tsim_backend
@@ -82,8 +82,8 @@ class _PostSelectionExperimentCache:
     dem_kernels: dict[str, ir.Method[..., Any]] | None
     dem_circuits: Mapping[str, tsim_backend.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
-    decoders_with_confidence: Mapping[str, DecoderPair] | None
-    raw_results: Mapping[str, BasisDataset] | None
+    decoders_with_confidence: Mapping[str, _DecoderPair] | None
+    raw_results: Mapping[str, _BasisDataset] | None
     # decoded_results maps each basis to decoded output observable shots plus
     # one confidence score per accepted shot.
     decoded_results: Mapping[str, _DecodedPostselectionResult] | None
@@ -101,10 +101,12 @@ class _PostSelectionExperimentCache:
         self.hardware_tasks = None
 
 
-def _basis_dataset_from_task_result(result: BasisDataset | Result[Any]) -> BasisDataset:
-    if isinstance(result, BasisDataset):
+def _basis_dataset_from_task_result(
+    result: _BasisDataset | Result[Any],
+) -> _BasisDataset:
+    if isinstance(result, _BasisDataset):
         return result
-    return BasisDataset(
+    return _BasisDataset(
         detectors=np.asarray(result.detectors, dtype=np.uint8),
         observables=np.asarray(result.observables, dtype=np.uint8),
     )
@@ -191,16 +193,16 @@ class PostSelectionExperiment:
         return dems
 
     # TODO: where do we pass in shot counts, etc. for training the decoder?
-    def initialize_decoders(self) -> dict[str, DecoderPair]:
+    def initialize_decoders(self) -> dict[str, _DecoderPair]:
         dems_bases = self._postselection_exp_cache.dems
         if dems_bases is None:
             raise RuntimeError("dems must be called before initialize_decoders.")
-        decoders_bases: dict[str, DecoderPair] = {}
+        decoders_bases: dict[str, _DecoderPair] = {}
         # NOTE: there is a question of if we want to support multi-qubit
         # tomography in this experiment. For now, probably not; if we did, we
         # would have to specify the number of output qubits and their locations
-        # and use that information to construct a custom SyndromeLayout.
-        layout = DEFAULT_SYNDROME_LAYOUT
+        # and use that information to construct a custom layout.
+        layout = _DEFAULT_SYNDROME_LAYOUT
         for basis_label, dem_base in dems_bases.items():
             full_dem = _sub_detector_error_model(
                 dem_base,
@@ -242,17 +244,19 @@ class PostSelectionExperiment:
         if tomography_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
         actual_tasks: dict[str, GeminiLogicalSimulatorTask[Any]] = {
-            basis: device.task(kernel.similar())
+            basis: cast(GeminiLogicalSimulatorTask[Any], device.task(kernel.similar()))
             for basis, kernel in tomography_kernels.items()
         }
         self._postselection_exp_cache.hardware_tasks = actual_tasks
         return actual_tasks
 
     # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
+    # NOTE: each experiment evaluates on a DIFFERENT set of 'hardware' samples. This might not be what we want (is expensive).
+    # ^ might want a way to reuse hardware samples across different "experiments".
     def get_samples(
         self,
         num_shots: int,
-    ) -> dict[str, BasisDataset]:
+    ) -> dict[str, _BasisDataset]:
         actual_tasks = self._postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
@@ -290,8 +294,8 @@ class PostSelectionExperiment:
     def analysis_f_vs_fraction(
         self,
         *,
-        target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
-        basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+        target_bloch: np.ndarray = _DEFAULT_TARGET_BLOCH,
+        basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
         threshold_points: int = 64,
         min_accepted_per_basis: int = 50,
     ) -> dict[str, np.ndarray]:
@@ -322,7 +326,7 @@ class PostSelectionExperiment:
         self,
         accepted_fraction: float,
         *,
-        basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+        basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
     ) -> TomographyResult:
         """Return tomography shots after confidence-ranked postselection.
 
@@ -348,7 +352,7 @@ class PostSelectionExperiment:
             raise RuntimeError(
                 "analysis_f_vs_fraction must be called before visualization."
             )
-        return plot_decoder_curves(
+        return _plot_decoder_curves(
             {"decoder": self._postselection_exp_cache.thresholded_data},
             min_accepted_fraction=min_accepted_fraction,
             title=title,

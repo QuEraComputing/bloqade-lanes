@@ -8,12 +8,12 @@ from bloqade.decoders import BaseDecoder
 
 from .bit_packing import pack_boolean_array, packed_pattern_targets
 from .confidence import ConfidenceDecoder
-from .constants import DEFAULT_BASIS_LABELS
-from .layout import DEFAULT_SYNDROME_LAYOUT, split_factory_bits
-from .sampling import BasisDataset
-from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
+from .constants import _DEFAULT_BASIS_LABELS
+from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
+from .sampling import _BasisDataset
+from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 
-DecoderPair = tuple[ConfidenceDecoder, BaseDecoder]
+_DecoderPair = tuple[ConfidenceDecoder, BaseDecoder]
 
 
 @dataclass(frozen=True)
@@ -81,8 +81,8 @@ def _decode_confidence_batch(
 
 
 def _build_generic_threshold_tables(
-    actual_data: Mapping[str, BasisDataset],
-    decoder_map: Mapping[str, DecoderPair],
+    actual_data: Mapping[str, _BasisDataset],
+    decoder_map: Mapping[str, _DecoderPair],
     *,
     targets: np.ndarray,
     basis_labels: Sequence[str],
@@ -117,10 +117,10 @@ def _build_generic_threshold_tables(
         for basis in basis_labels:
             dataset = actual_data[basis]
             factory_decoder, full_decoder = decoder_map[basis]
-            anc_det, anc_obs = split_factory_bits(
+            anc_det, anc_obs = _split_factory_bits(
                 dataset.detectors,
                 dataset.observables,
-                layout=DEFAULT_SYNDROME_LAYOUT,
+                layout=_DEFAULT_SYNDROME_LAYOUT,
             )
             progress_bar = progress_bars.get(basis)
 
@@ -191,7 +191,7 @@ def _shots_at_accepted_fraction(
     decoded_results: Mapping[str, _DecodedPostselectionResult],
     accepted_fraction: float,
     *,
-    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
 ) -> dict[str, np.ndarray]:
     """Return decoded observable shots after a global confidence top-k cut."""
 
@@ -252,8 +252,8 @@ def _evaluate_cached_threshold_curve(
     *,
     total_shots: int,
     threshold_points: int = 64,
-    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
-    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    target_bloch: np.ndarray = _DEFAULT_TARGET_BLOCH,
+    basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
 ) -> dict[str, np.ndarray]:
     """Evaluate a point-fidelity curve from decoded shots and confidences."""
@@ -289,7 +289,7 @@ def _evaluate_cached_threshold_curve(
         ):
             continue
 
-        point = TomographyResult(shots_by_basis).fidelity_bloch(target_bloch)["point"]
+        point = TomographyResult(shots_by_basis).fidelity_bloch(target_bloch)
         accepted_fractions.append(accepted_count / total_shots)
         fidelities.append(point)
 
@@ -301,10 +301,3 @@ def _evaluate_cached_threshold_curve(
         "fidelity": fidelity,
         "point_fidelity": fidelity.copy(),
     }
-
-
-__all__ = [
-    "_build_generic_threshold_tables",
-    "_evaluate_cached_threshold_curve",
-    "_shots_at_accepted_fraction",
-]

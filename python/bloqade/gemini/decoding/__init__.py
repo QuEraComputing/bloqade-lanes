@@ -13,18 +13,15 @@ from bloqade.gemini.decoding.experiments import (
     single_qubit_state_tomography,
 )
 from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
-from bloqade.gemini.decoding.tomography import DEFAULT_TARGET_BLOCH, TomographyResult
-from bloqade.gemini.decoding.workflow import plot_decoder_curves
+from bloqade.gemini.decoding.tomography import TomographyResult
 
 __all__ = [
     "ConfidenceDecoder",
-    "DEFAULT_TARGET_BLOCH",
     "GurobiDecoderWithConfidence",
     "PostSelectionExperiment",
     "TableDecoderWithConfidence",
     "TomographyResult",
     "empty_logical_circuit",
     "magic_state_dist_steane",
-    "plot_decoder_curves",
     "single_qubit_state_tomography",
 ]

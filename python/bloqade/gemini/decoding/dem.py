@@ -127,8 +127,3 @@ def _sub_detector_error_model(
         )
 
     return projected_dem
-
-
-__all__ = [
-    "_sub_detector_error_model",
-]

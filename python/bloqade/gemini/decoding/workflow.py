@@ -5,13 +5,11 @@ from typing import cast
 
 import numpy as np
 
-from .tomography import SimpleFidelitySummary
 
-
-def plot_decoder_curves(
+def _plot_decoder_curves(
     curves: Mapping[str, Mapping[str, np.ndarray]],
     *,
-    injected_summary: SimpleFidelitySummary | None = None,
+    injected_summary: float | None = None,
     min_accepted_fraction: float = 0.04,
     ax: object | None = None,
     title: str | None = None,
@@ -38,7 +36,7 @@ def plot_decoder_curves(
 
     if injected_summary is not None:
         ax.axhline(
-            float(injected_summary["point"]),
+            float(injected_summary),
             linestyle="--",
             linewidth=1.2,
             color="black",
@@ -54,6 +52,3 @@ def plot_decoder_curves(
     ax.grid(True, which="both", alpha=0.25)
     ax.legend()
     return fig, ax
-
-
-__all__ = ["plot_decoder_curves"]

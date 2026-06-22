@@ -23,15 +23,14 @@ from __future__ import annotations
 import numpy as np
 
 from bloqade.gemini.decoding import (
-    DEFAULT_TARGET_BLOCH,
     GurobiDecoderWithConfidence,
     PostSelectionExperiment,
     TableDecoderWithConfidence,
     empty_logical_circuit,
     magic_state_dist_steane,
-    plot_decoder_curves,
     single_qubit_state_tomography,
 )
+from bloqade.gemini.decoding.workflow import _plot_decoder_curves
 from bloqade.lanes import GeminiLogicalSimulator
 
 # ## Configuration
@@ -46,6 +45,7 @@ MLD_TRAIN_SHOTS = 10_000_000
 MLD_BATCH_SIZE = None
 SIM_TYPE = "clifft"
 RANDOM_SEED = 10
+TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 MSD_VALID_FACTORY_TARGETS = np.array([[1, 0, 1, 1]], dtype=np.uint8)
 INJECTED_VALID_FACTORY_TARGETS = np.zeros((1, 0), dtype=np.uint8)
@@ -156,7 +156,7 @@ injected_mld_exp.decode_and_postselect(decoder_name="Injected MLD")
 tomo_result = msd_mld_exp.tomography_result(
     0.05,
 )
-tomo_result.fidelity_bloch(DEFAULT_TARGET_BLOCH)
+tomo_result.fidelity_bloch(TARGET_BLOCH)
 
 
 # ## Curves
@@ -167,22 +167,22 @@ tomo_result.fidelity_bloch(DEFAULT_TARGET_BLOCH)
 
 
 msd_mld_curve = msd_mld_exp.analysis_f_vs_fraction(
-    target_bloch=DEFAULT_TARGET_BLOCH,
+    target_bloch=TARGET_BLOCH,
 )
 
 msd_mle_curve = None
 if msd_mle_exp is not None:
     msd_mle_curve = msd_mle_exp.analysis_f_vs_fraction(
-        target_bloch=DEFAULT_TARGET_BLOCH,
+        target_bloch=TARGET_BLOCH,
     )
 
 injected_curve = injected_mld_exp.analysis_f_vs_fraction(
-    target_bloch=DEFAULT_TARGET_BLOCH,
+    target_bloch=TARGET_BLOCH,
 )
 
 injected_summary = injected_mld_exp.tomography_result(
     1.0,
-).fidelity_bloch(DEFAULT_TARGET_BLOCH)
+).fidelity_bloch(TARGET_BLOCH)
 
 
 # ## Individual visualizations
@@ -220,7 +220,7 @@ curves = {"Distilled (MLD)": msd_mld_curve}
 if msd_mle_curve is not None:
     curves = {"Distilled (MLE)": msd_mle_curve, **curves}
 
-fig, ax = plot_decoder_curves(
+fig, ax = _plot_decoder_curves(
     curves,
     injected_summary=injected_summary,
     min_accepted_fraction=0.04,

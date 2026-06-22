@@ -28,9 +28,7 @@ def test_tomography_result_builds_density_matrix_and_point_fidelity():
     )
 
     assert result.density_matrix.shape == (2, 2)
-    assert result.fidelity_bloch(np.array([1.0, 0.0, 0.0]))["point"] == pytest.approx(
-        1.0
-    )
+    assert result.fidelity_bloch(np.array([1.0, 0.0, 0.0])) == pytest.approx(1.0)
 
 
 def test_bit_packing_helpers_round_trip_little_endian_bits():

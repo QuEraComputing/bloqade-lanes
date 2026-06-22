@@ -8,11 +8,11 @@ from bloqade.gemini.decoding import (
     TableDecoderWithConfidence,
     TomographyResult,
     empty_logical_circuit,
-    plot_decoder_curves,
     single_qubit_state_tomography,
 )
 from bloqade.gemini.decoding.kernels import _DecoderPrimitiveSet
 from bloqade.gemini.decoding.msd import _build_decoder_kernel_bundle
+from bloqade.gemini.decoding.workflow import _plot_decoder_curves
 
 matplotlib.use("Agg")
 
@@ -44,7 +44,7 @@ def test_build_decoder_kernel_bundle_contains_basis_tomography_kernels():
 
 
 def test_plot_decoder_curves_handles_curves_without_uncertainty_bands():
-    fig, ax = plot_decoder_curves(
+    fig, ax = _plot_decoder_curves(
         {
             "decoder": {
                 "accepted_fraction": np.array([0.05, 0.1]),
@@ -52,7 +52,7 @@ def test_plot_decoder_curves_handles_curves_without_uncertainty_bands():
                 "point_fidelity": np.array([0.99, 0.95]),
             }
         },
-        injected_summary={"point": 0.96},
+        injected_summary=0.96,
         log=False,
     )
 

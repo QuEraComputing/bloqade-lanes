@@ -40,7 +40,7 @@ from bloqade.gemini.decoding.msd import (
     build_decoder_kernel_bundle,
     build_injected_kernel_bundle,
 )
-from bloqade.gemini.decoding.sampling import _sample_task_raw, run_task
+from bloqade.gemini.decoding.sampling import _run_task, _sample_task_raw
 from bloqade.gemini.decoding.special_tasks import (
     apply_special_tsim_circuit_strategy,
     build_task_map,
@@ -139,7 +139,7 @@ def task_summary(task, *, shots: int = SHOTS) -> dict[str, object]:
         with_noise=False,
         sim_type=SIM_TYPE,
     )
-    normalized = run_task(
+    normalized = _run_task(
         task,
         shots,
         with_noise=False,
