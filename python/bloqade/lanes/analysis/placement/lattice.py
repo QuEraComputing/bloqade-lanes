@@ -215,19 +215,24 @@ class ExecuteCZReturn(ExecuteCZ):
     Included in return_move_layers to palindrome the full inter-CZ segment."""
 
     return_move_layers: tuple[tuple[LaneAddress, ...], ...] = field(init=False)
-    """Palindrome of move_layers + user_move_layers; computed at construction."""
+    """Strict palindrome of the combined forward sequence
+    ``user_move_layers + move_layers``; computed at construction."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        compiler_reverse = tuple(
+        # Forward order within an inter-CZ segment is user moves (emitted at the
+        # MoveTo sites) followed by compiler moves (emitted before the CZ), i.e.
+        # ``user_move_layers + move_layers``. The palindrome return is the strict
+        # reverse of that single combined sequence: layer order reversed and,
+        # within each layer, lane order reversed with each lane's direction
+        # flipped. Treating both halves uniformly yields
+        # ``reverse(move_layers) + reverse(user_move_layers)`` and avoids the
+        # within-layer-ordering mismatch that arises from reversing them apart.
+        forward_layers = self.user_move_layers + self.move_layers
+        self.return_move_layers = tuple(
             tuple(lane.reverse() for lane in reversed(layer))
-            for layer in reversed(self.move_layers)
+            for layer in reversed(forward_layers)
         )
-        user_reverse = tuple(
-            tuple(lane.reverse() for lane in layer)
-            for layer in reversed(self.user_move_layers)
-        )
-        self.return_move_layers = compiler_reverse + user_reverse
 
     def get_reverse_moves(self) -> tuple[tuple[LaneAddress, ...], ...]:
         return self.return_move_layers
