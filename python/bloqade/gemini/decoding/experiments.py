@@ -43,7 +43,7 @@ def magic_state_dist_steane(
     theta_offset: float = 0.0,
     phi_offset: float = 0.0,
     lam_offset: float = 0.0,
-) -> _DecoderPrimitiveSet:
+) -> tuple[ir.Method[..., Any], ir.Method[..., Any]]:
     ideal_theta = math.acos(1 / math.sqrt(3))
     ideal_phi = 0.25 * math.pi
     ideal_lam = 0.0
@@ -52,7 +52,9 @@ def magic_state_dist_steane(
     phi = ideal_phi + phi_offset
     lam = ideal_lam + lam_offset
 
-    return _build_msd_primitives(theta, phi, lam)
+    primitive_set = _build_msd_primitives(theta, phi, lam)
+
+    return primitive_set.state_injection_circuit, primitive_set.logical_circuit
 
 
 def single_qubit_state_tomography() -> dict[str, ir.Method[..., Any]]:
@@ -114,28 +116,24 @@ def _basis_dataset_from_task_result(
 
 # TODO: should inherit from some "abstract" experiment workflow class?
 # ^^ what methods should this "abstract" experiment workflow class have???
+# NOTE: given how "simple" this PostSelectionExperiment class is, it's still hard for me
+# to understand why we are doing this "wizard" API to give it so much state...
 class PostSelectionExperiment:
     # TODO: have to specify the number of logical qubits and number of output qubits here? We can't call put the number of qubits
     # in a kernel because then it makes it hard to compose kernels (e.g., for tomography)
     def __init__(
         self,
-        noncliff_prefix: ir.Method[..., Any],
-        main_cliff_circ: ir.Method[..., Any],
-        # NOTE: again, I'm kind of cheating here because we can't really specify
-        # the shape of the numpy array in the dtype. But this should be a 2D
-        # numpy array, where I have a list/array of possible valid
-        # postselection conditions.
-        postselection_condition: np.ndarray,
+        nonclifford_prefix: ir.Method[..., Any],
+        clifford_circuit: ir.Method[..., Any],
+        tomography_circuits: Mapping[str, ir.Method[..., Any]],
         decoder: type[ConfidenceDecoder],
-        tomography_kernels: Mapping[str, ir.Method[..., Any]],
         # specifying these as a dictionary is reasonable? Use a mapping instead?
         decoder_init_args: dict[str, Any] | None = None,
     ):
-        self.noncliff_prefix = noncliff_prefix
-        self.main_cliff_circ = main_cliff_circ
-        self.postselection_condition = postselection_condition
+        self.nonclifford_prefix = nonclifford_prefix
+        self.clifford_circuit = clifford_circuit
+        self.tomography_circuits = dict(tomography_circuits)
         self.decoder = decoder
-        self.tomography_kernels = dict(tomography_kernels)
         self.decoder_init_args = {} if decoder_init_args is None else decoder_init_args
 
         self._postselection_exp_cache = _PostSelectionExperimentCache()
@@ -151,13 +149,13 @@ class PostSelectionExperiment:
     ) -> dict[str, ir.Method[..., Any]]:
         # TODO: change the name of _DecoderPrimitiveSet --> whole_circuit
         decoder_primitive_set = _DecoderPrimitiveSet(
-            state_injection_circuit=self.noncliff_prefix,
-            logical_circuit=self.main_cliff_circ,
+            state_injection_circuit=self.nonclifford_prefix,
+            logical_circuit=self.clifford_circuit,
         )
         dem_kernels = _build_decoder_kernel_bundle(
             decoder_primitive_set,
             num_logical_qubits,
-            tomography_kernels=self.tomography_kernels,
+            tomography_kernels=self.tomography_circuits,
         )
         self._postselection_exp_cache.dem_kernels = dem_kernels
         # Assumes that there is some way of getting the num_logical_qubits.
@@ -165,12 +163,12 @@ class PostSelectionExperiment:
 
     # TODO: split up the kernels and DEM kernels functions
     def dem_circuits(self) -> dict[str, tsim_backend.Circuit]:
-        tomography_kernels = self._postselection_exp_cache.dem_kernels
-        if tomography_kernels is None:
+        dem_kernels = self._postselection_exp_cache.dem_kernels
+        if dem_kernels is None:
             raise RuntimeError("kernels must be called before dem_circuits.")
         dem_tasks = {
             basis: self._simulator.task(kernel.similar(), None, None)
-            for basis, kernel in tomography_kernels.items()
+            for basis, kernel in dem_kernels.items()
         }
         dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)
         special_tsim_circuits: dict[str, tsim_backend.Circuit] = {
@@ -240,12 +238,12 @@ class PostSelectionExperiment:
         # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
         # TaskABC[GeminiLogicalFuture]
     ) -> dict[str, GeminiLogicalSimulatorTask[Any]]:
-        tomography_kernels = self._postselection_exp_cache.dem_kernels
-        if tomography_kernels is None:
+        dem_kernels = self._postselection_exp_cache.dem_kernels
+        if dem_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
         actual_tasks: dict[str, GeminiLogicalSimulatorTask[Any]] = {
             basis: cast(GeminiLogicalSimulatorTask[Any], device.task(kernel.similar()))
-            for basis, kernel in tomography_kernels.items()
+            for basis, kernel in dem_kernels.items()
         }
         self._postselection_exp_cache.hardware_tasks = actual_tasks
         return actual_tasks
@@ -253,6 +251,8 @@ class PostSelectionExperiment:
     # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
     # NOTE: each experiment evaluates on a DIFFERENT set of 'hardware' samples. This might not be what we want (is expensive).
     # ^ might want a way to reuse hardware samples across different "experiments".
+    # NOTE: in the future, we may want to define a "get_samples_async" method that allows
+    # the user to get samples asynchronously. Because here it's basically a blocking implementation
     def get_samples(
         self,
         num_shots: int,
@@ -269,6 +269,7 @@ class PostSelectionExperiment:
 
     def decode_and_postselect(
         self,
+        postselection_condition: np.ndarray,
         decoder_name: str | None = "decoder",
     ) -> dict[str, _DecodedPostselectionResult]:
         actual_data = self._postselection_exp_cache.raw_results
@@ -277,7 +278,7 @@ class PostSelectionExperiment:
             raise RuntimeError("get_samples must be called before decoding.")
         if decoder_map is None:
             raise RuntimeError("initialize_decoders must be called before decoding.")
-        targets = np.asarray(self.postselection_condition, dtype=np.uint8)
+        targets = np.asarray(postselection_condition, dtype=np.uint8)
         if targets.ndim != 2:
             raise ValueError("postselection_condition must be a 2D array.")
         basis_labels = list(decoder_map.keys())
@@ -336,7 +337,9 @@ class PostSelectionExperiment:
 
         decoded_results = self._postselection_exp_cache.decoded_results
         if decoded_results is None:
-            decoded_results = self.decode_and_postselect()
+            raise RuntimeError(
+                "decode_and_postselect must be called before tomography_result."
+            )
 
         shots_by_basis = _shots_at_accepted_fraction(
             decoded_results,

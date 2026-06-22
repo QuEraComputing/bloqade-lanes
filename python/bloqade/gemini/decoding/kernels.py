@@ -48,6 +48,9 @@ def _build_tomography_primitives(
     return {"X": tomography_x, "Y": tomography_y, "Z": tomography_z}
 
 
+# TODO: validate that the tomography kernels ONLY contain clifford operations (and no non-clifford
+# operations). It's possible to construct a "tomography circuit" with non-clifford operations
+# and attempt to add nonclifford gates at the end of the circuit
 def _produce_tomography_kernels(
     num_qubits: int,
     logical_kernel: ir.Method[..., Any],

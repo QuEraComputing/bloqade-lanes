@@ -188,7 +188,6 @@ def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
 
 def test_postselection_experiment_decode_and_tomography_result_with_cached_data():
     exp = object.__new__(PostSelectionExperiment)
-    exp.postselection_condition = np.array([[0]], dtype=np.uint8)
     exp._postselection_exp_cache = _PostSelectionExperimentCache()
     exp._postselection_exp_cache.raw_results = {
         basis: _dataset() for basis in ("X", "Y", "Z")
@@ -198,7 +197,10 @@ def test_postselection_experiment_decode_and_tomography_result_with_cached_data(
     }
     exp._postselection_exp_cache.decoded_results = None
 
-    decoded = exp.decode_and_postselect(decoder_name=None)
+    decoded = exp.decode_and_postselect(
+        np.array([[0]], dtype=np.uint8),
+        decoder_name=None,
+    )
     assert decoded["X"].observables.shape == (3, 1)
 
     result = exp.tomography_result(accepted_fraction=0.5)

@@ -43,9 +43,9 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
         self,
         dem: stim.DetectorErrorModel,
         *,
-        num_shots: int = 10**8,
+        num_shots: int = 10**7,
         seed: int | None = None,
-        step_size: int | None = 65536,
+        step_size: int | None = None,
     ) -> None:
         data_len = dem.num_detectors + dem.num_observables
         if data_len > 64:
