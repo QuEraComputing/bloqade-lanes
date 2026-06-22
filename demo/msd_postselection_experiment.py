@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
-# %%
-
+# %% [markdown]
+#
 # # MSD Postselection Experiment
 #
 # This notebook wires together the experimental `PostSelectionExperiment`
@@ -13,8 +13,6 @@
 #
 # The default shot counts are intentionally small so the notebook can run as a
 # smoke test. Increase the constants below to approach the paper-scale curves.
-#
-#
 
 # %%
 
@@ -34,9 +32,8 @@ from bloqade.gemini.decoding import (
 from bloqade.gemini.decoding.workflow import _plot_decoder_curves
 from bloqade.lanes import GeminiLogicalSimulator
 
+# %% [markdown]
 # ## Configuration
-#
-#
 
 # %%
 
@@ -51,10 +48,8 @@ TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 MSD_VALID_FACTORY_TARGETS = np.array([[1, 0, 1, 1]], dtype=np.uint8)
 INJECTED_VALID_FACTORY_TARGETS = np.array([[]], dtype=np.uint8)
 
-
+# %% [markdown]
 # ## Shared kernels
-#
-#
 
 # %%
 
@@ -64,10 +59,8 @@ noncliff_prefix = primitive_set.state_injection_circuit
 main_cliff_circ = primitive_set.logical_circuit
 tomo_circs = single_qubit_state_tomography()
 
-
+# %% [markdown]
 # ## Experiment construction
-#
-#
 
 # %%
 
@@ -104,10 +97,9 @@ injected_mld_exp = PostSelectionExperiment(
     },
 )
 
-
+# %% [markdown]
+#
 # ## End-to-end runner
-#
-#
 
 # %%
 
@@ -148,10 +140,8 @@ injected_mld_exp.make_tasks(
 injected_mld_exp.get_samples(num_shots=EVAL_SHOTS)
 injected_mld_exp.decode_and_postselect(decoder_name="Injected MLD")
 
-
+# %% [markdown]
 # ## Tomography result API
-#
-#
 
 # %%
 
@@ -161,10 +151,8 @@ tomo_result = msd_mld_exp.tomography_result(
 )
 tomo_result.fidelity_bloch(TARGET_BLOCH)
 
-
+# %% [markdown]
 # ## Curves
-#
-#
 
 # %%
 
@@ -187,10 +175,8 @@ injected_summary = injected_mld_exp.tomography_result(
     1.0,
 ).fidelity_bloch(TARGET_BLOCH)
 
-
+# %% [markdown]
 # ## Individual visualizations
-#
-#
 
 # %%
 
@@ -211,10 +197,8 @@ fig_injected, ax_injected = injected_mld_exp.analysis_visualization(
     title="Injected-state baseline",
 )
 
-
+# %% [markdown]
 # ## Combined figure
-#
-#
 
 # %%
 
