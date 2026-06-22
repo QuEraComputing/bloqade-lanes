@@ -77,16 +77,19 @@ class RustPlacementTraversal:
     lookahead: bool = False
     collect_entropy_trace: bool = False
     seed: int = 0
-    block_spectators: bool = True
+    block_spectators: bool = False
     """Scope each CZ solve to the participating qubits.
 
-    When ``True`` (default), qubits not in the CZ's ``controls``/``targets`` are
-    treated as blocked obstacles for that solve rather than free atoms to route.
-    This keeps the search effort independent of how many unrelated qubits share
-    the same merged ``StaticPlacement`` block (under ``always_merge`` every CZ
-    would otherwise search over all block qubits). Quality is unchanged — the
-    spectators do not move either way; this only prunes wasted exploration.
-    Set ``False`` to restore the previous all-qubits-per-CZ search."""
+    When ``True``, qubits not in the CZ's ``controls``/``targets`` are treated as
+    blocked obstacles for that solve rather than free atoms to route. This keeps
+    the search effort independent of how many unrelated qubits share the same
+    merged ``StaticPlacement`` block (under ``always_merge`` every CZ otherwise
+    searches over all block qubits, inflating ``nodes_expanded``).
+
+    Defaults to ``False``: blocking spectators removes routing freedom and can
+    *increase* move counts for some strategies (e.g. DFS may relocate a spectator
+    to shorten a participant's path), so the node savings are not free. Enable it
+    only where the search-effort reduction is worth a possible move-count change."""
 
 
 def _move_search_from_traversal(
