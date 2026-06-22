@@ -854,6 +854,142 @@ mod tests {
         assert_eq!(fixed_snap, ent_snap, "fallback outputs diverged");
     }
 
+    /// Divergence test for the contested-destination penalty: the entangling
+    /// policy subtracts `1` from a positive-score move that routes a qubit onto
+    /// *another* qubit's still-unresolved target, while fixed-target applies no
+    /// penalty. Here that penalty zeroes the offending move's score, so the
+    /// `retain(score > 0)` step drops it — the two modes emit different sets.
+    ///
+    /// Scenario: q0 at (0,0) wants (0,5); q1 at (1,5) wants (0,0). Both have a
+    /// `+1` move available — q0 toward its own target (0,5), and q1 *also* onto
+    /// (0,5) (q0's contested target). Fixed mode keeps both; entangling
+    /// penalizes q1's contested move to `0` and prunes it.
+    #[test]
+    fn characterize_contested_penalty_diverges() {
+        let index = make_index();
+        let targets = [(0, loc(0, 5)), (1, loc(0, 0))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(1, 5))]).unwrap();
+        let te: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let generator = HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::Skip);
+
+        let ctx_fixed = make_ctx(&index, &table, &te, &blocked);
+        let mut out_fixed = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx_fixed,
+            &mut SearchState::default(),
+            &mut out_fixed,
+        );
+
+        let pairs = [(0u32, 1u32)];
+        let ctx_ent = make_ctx_pairs(&index, &table, &te, &blocked, &pairs);
+        let mut out_ent = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx_ent,
+            &mut SearchState::default(),
+            &mut out_ent,
+        );
+
+        let snap_fixed = snapshot(&out_fixed);
+        let snap_ent = snapshot(&out_ent);
+
+        // The two modes MUST diverge here (this is the whole point of the test).
+        assert_ne!(
+            snap_fixed, snap_ent,
+            "contested penalty must change the emitted set"
+        );
+        assert_eq!(out_fixed.len(), 2, "fixed-target keeps both +1 moves");
+        assert_eq!(out_ent.len(), 1, "entangling prunes the contested move");
+
+        // The candidate that routes q1 onto q0's contested target (0,5) appears
+        // only in fixed mode.
+        let contested_cfg = vec![(0, loc(0, 0).encode()), (1, loc(0, 5).encode())];
+        let routes_q1_onto_contested =
+            |snap: &[CandidateSnapshot]| snap.iter().any(|(_, cfg)| *cfg == contested_cfg);
+        assert!(
+            routes_q1_onto_contested(&snap_fixed),
+            "fixed mode should include the q1->(0,5) contested candidate"
+        );
+        assert!(
+            !routes_q1_onto_contested(&snap_ent),
+            "entangling mode must prune the q1->(0,5) contested candidate"
+        );
+        // The surviving entangling candidate is q0 reaching its own target.
+        let q0_to_target = vec![(0, loc(0, 5).encode()), (1, loc(1, 5).encode())];
+        assert_eq!(snap_ent[0].1, q0_to_target);
+    }
+
+    /// Divergence test for the fallback width: when NO candidate scores
+    /// positive, fixed-target keeps a single fallback branch (`truncate(1)`)
+    /// while entangling widens to 3, so the wider keep lets multiple qubits'
+    /// fallback moves coalesce into one AOD grid.
+    ///
+    /// Scenario: q0 at (0,5) wants (1,0); q1 at (1,5) wants (0,0). Neither has
+    /// an improving move (`has_positive == false` in both modes — the penalty
+    /// only lowers positive scores, so it cannot flip this), so the fallback
+    /// path fires identically except for the width. Fixed keeps 1 entry → a
+    /// single-lane moveset (one qubit moves); entangling keeps 3 → both qubits'
+    /// fallback lanes combine into a two-lane moveset.
+    #[test]
+    fn characterize_fallback_width_diverges() {
+        let index = make_index();
+        let targets = [(0, loc(1, 0)), (1, loc(0, 0))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
+        let te: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let generator = HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::Skip);
+
+        let ctx_fixed = make_ctx(&index, &table, &te, &blocked);
+        let mut out_fixed = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx_fixed,
+            &mut SearchState::default(),
+            &mut out_fixed,
+        );
+
+        let pairs = [(0u32, 1u32)];
+        let ctx_ent = make_ctx_pairs(&index, &table, &te, &blocked, &pairs);
+        let mut out_ent = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx_ent,
+            &mut SearchState::default(),
+            &mut out_ent,
+        );
+
+        let snap_fixed = snapshot(&out_fixed);
+        let snap_ent = snapshot(&out_ent);
+
+        assert_ne!(
+            snap_fixed, snap_ent,
+            "fallback width must change the emitted fallback branch"
+        );
+        // Both modes emit a single fallback candidate, but the kept-set width
+        // changes its shape: fixed keeps one lane (one qubit moves), entangling
+        // keeps both qubits' fallback lanes in a single grid.
+        assert_eq!(out_fixed.len(), 1);
+        assert_eq!(out_ent.len(), 1);
+        assert_eq!(
+            snap_fixed[0].0.len(),
+            1,
+            "fixed-target fallback (width 1) moves a single qubit"
+        );
+        assert_eq!(
+            snap_ent[0].0.len(),
+            2,
+            "entangling fallback (width 3) coalesces both qubits' moves"
+        );
+    }
+
     #[test]
     fn fewer_candidates_than_exhaustive() {
         use crate::generators::exhaustive::ExhaustiveGenerator;
