@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# %%
 
 # # MSD Postselection Experiment
 #
@@ -15,7 +16,7 @@
 #
 #
 
-# In[1]:
+# %%
 
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from bloqade.lanes import GeminiLogicalSimulator
 #
 #
 
-# In[2]:
+# %%
 
 
 EVAL_SHOTS = 1_000_000
@@ -48,14 +49,14 @@ RANDOM_SEED = 10
 TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 MSD_VALID_FACTORY_TARGETS = np.array([[1, 0, 1, 1]], dtype=np.uint8)
-INJECTED_VALID_FACTORY_TARGETS = np.zeros((1, 0), dtype=np.uint8)
+INJECTED_VALID_FACTORY_TARGETS = np.array([[]], dtype=np.uint8)
 
 
 # ## Shared kernels
 #
 #
 
-# In[3]:
+# %%
 
 
 primitive_set = magic_state_dist_steane(theta_offset=0.30)
@@ -68,7 +69,7 @@ tomo_circs = single_qubit_state_tomography()
 #
 #
 
-# In[4]:
+# %%
 
 
 msd_mld_exp = PostSelectionExperiment(
@@ -108,7 +109,7 @@ injected_mld_exp = PostSelectionExperiment(
 #
 #
 
-# In[ ]:
+# %%
 
 
 msd_mld_exp.kernels(num_logical_qubits=5)
@@ -121,6 +122,7 @@ msd_mld_exp.make_tasks(
 msd_mld_exp.get_samples(num_shots=EVAL_SHOTS)
 msd_mld_exp.decode_and_postselect(decoder_name="MLD")
 
+# %%
 try:
     msd_mle_exp.kernels(num_logical_qubits=5)
     msd_mle_exp.dem_circuits()
@@ -135,6 +137,7 @@ except Exception as exc:
     print(f"Skipping MLE experiment because decoder construction failed: {exc!r}")
     msd_mle_exp = None
 
+# %%
 injected_mld_exp.kernels(num_logical_qubits=1)
 injected_mld_exp.dem_circuits()
 injected_mld_exp.dems()
@@ -150,11 +153,11 @@ injected_mld_exp.decode_and_postselect(decoder_name="Injected MLD")
 #
 #
 
-# In[ ]:
+# %%
 
 
 tomo_result = msd_mld_exp.tomography_result(
-    0.05,
+    0.50,
 )
 tomo_result.fidelity_bloch(TARGET_BLOCH)
 
@@ -163,7 +166,7 @@ tomo_result.fidelity_bloch(TARGET_BLOCH)
 #
 #
 
-# In[ ]:
+# %%
 
 
 msd_mld_curve = msd_mld_exp.analysis_f_vs_fraction(
@@ -189,7 +192,7 @@ injected_summary = injected_mld_exp.tomography_result(
 #
 #
 
-# In[ ]:
+# %%
 
 
 fig_mld, ax_mld = msd_mld_exp.analysis_visualization(
@@ -213,7 +216,7 @@ fig_injected, ax_injected = injected_mld_exp.analysis_visualization(
 #
 #
 
-# In[ ]:
+# %%
 
 
 curves = {"Distilled (MLD)": msd_mld_curve}
