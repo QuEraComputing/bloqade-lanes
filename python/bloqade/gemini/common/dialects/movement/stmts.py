@@ -38,3 +38,33 @@ class MoveTo(ir.Statement):
         type=ilist.IListType[LocationAddressType, Len]
     )
     multi_move_warning: bool = info.attribute(default=True)
+
+
+@statement(dialect=dialect)
+class WordId(ir.Statement):
+    """Read the word_id of a LocationAddress (produced by the GetAttr rewrite)."""
+
+    name = "word_id"
+    traits = frozenset({ir.Pure()})
+    address: ir.SSAValue = info.argument(LocationAddressType)
+    result: ir.ResultValue = info.result(types.Int)
+
+
+@statement(dialect=dialect)
+class SiteId(ir.Statement):
+    """Read the site_id of a LocationAddress (produced by the GetAttr rewrite)."""
+
+    name = "site_id"
+    traits = frozenset({ir.Pure()})
+    address: ir.SSAValue = info.argument(LocationAddressType)
+    result: ir.ResultValue = info.result(types.Int)
+
+
+@statement(dialect=dialect)
+class ZoneId(ir.Statement):
+    """Read the zone_id of a LocationAddress (produced by the GetAttr rewrite)."""
+
+    name = "zone_id"
+    traits = frozenset({ir.Pure()})
+    address: ir.SSAValue = info.argument(LocationAddressType)
+    result: ir.ResultValue = info.result(types.Int)
