@@ -69,6 +69,28 @@ def test_param_word_id_rewrites_to_statement():
     assert isinstance(ret.value.owner, WordId)
 
 
+def test_param_site_id_rewrites_to_statement():
+    @movement_kernel(verify=False)
+    def k(a: LocationAddress):
+        return a.site_id
+
+    stmts = list(k.callable_region.walk())
+    assert not any(isinstance(s, py.GetAttr) for s in stmts)
+    ret = next(s for s in stmts if isinstance(s, func.Return))
+    assert isinstance(ret.value.owner, SiteId)
+
+
+def test_param_zone_id_rewrites_to_statement():
+    @movement_kernel(verify=False)
+    def k(a: LocationAddress):
+        return a.zone_id
+
+    stmts = list(k.callable_region.walk())
+    assert not any(isinstance(s, py.GetAttr) for s in stmts)
+    ret = next(s for s in stmts if isinstance(s, func.Return))
+    assert isinstance(ret.value.owner, ZoneId)
+
+
 # -- integration: a constant address folds the attribute read to a constant --
 
 
