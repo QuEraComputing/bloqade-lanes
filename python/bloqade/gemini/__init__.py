@@ -1,4 +1,4 @@
-from . import common as common, logical as logical
+from . import common as common, logical as logical, physical as physical
 from .device import (
     DetectorResult as DetectorResult,
     GeminiLogicalDevice as GeminiLogicalDevice,

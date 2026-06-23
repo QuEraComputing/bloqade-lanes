@@ -2,29 +2,26 @@ from typing import Annotated
 
 from bloqade.analysis import address
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
-from bloqade.decoders.dialects import annotate
 from bloqade.rewrite.passes import AggressiveUnroll
-from bloqade.squin import gate, qubit
 from bloqade.squin.rewrite import WrapAddressAnalysis
 from kirin import ir, rewrite
 from kirin.passes import Default
 from kirin.passes.inline import InlinePass
-from kirin.prelude import structural_no_opt
 from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
 from bloqade.gemini import common as gemini_common
+from bloqade.gemini.logical.group import kernel as logical_kernel
+from bloqade.lanes.arch.spec import ArchSpec
 
-from .dialects import operations
 
-
-@ir.dialect_group(
-    structural_no_opt.union(
-        [gate, qubit, operations, annotate, gemini_common.dialects.qubit]
-    )
-)
+@ir.dialect_group(logical_kernel.union([gemini_common.dialects.movement]))
 def kernel(self):
-    """Compile a function to a Gemini logical kernel."""
+    """Gemini kernel with user-directed atom movement.
+
+    Extends the logical ``kernel`` with the movement dialect; use this when
+    your kernel calls ``movement.move_to(...)``.
+    """
     address_analysis = address.AddressAnalysis(dialects=self)
 
     def run_pass(
@@ -52,9 +49,17 @@ def kernel(self):
         num_physical_qubits: Annotated[
             int, Doc("number of physical qubits per logical qubit")
         ] = 7,
+        arch_spec: Annotated[
+            ArchSpec | None, Doc("architecture spec for MoveToValidation")
+        ] = None,
     ) -> None:
         # stop circular import problems
-        from .rewrite.qubit_count import InsertQubitCount
+        from bloqade.gemini.logical.rewrite.qubit_count import InsertQubitCount
+
+        if arch_spec is None:
+            from bloqade.lanes.arch.gemini.logical import get_arch_spec
+
+            arch_spec = get_arch_spec()
 
         if inline and not aggressive_unroll:
             InlinePass(mt.dialects, no_raise=no_raise).fixpoint(mt)
@@ -89,13 +94,14 @@ def kernel(self):
 
         if verify:
             # stop circular import problems
-            from ..common.validation.duplicate_address import (
+            from bloqade.gemini.common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
-            from .validation.clifford.analysis import (
+            from bloqade.gemini.common.validation.move_to import MoveToValidation
+            from bloqade.gemini.logical.validation.clifford.analysis import (
                 GeminiLogicalValidation,
             )
-            from .validation.measurement.analysis import (
+            from bloqade.gemini.logical.validation.measurement.analysis import (
                 GeminiTerminalMeasurementValidation,
             )
 
@@ -109,6 +115,18 @@ def kernel(self):
             )
             validation_result = validator.validate(mt)
             validation_result.raise_if_invalid()
+
+            # MoveToValidation requires arch_spec at construction time and cannot
+            # be used as a bare class in ValidationSuite — run it separately.
+            _, move_to_errors = MoveToValidation(arch_spec=arch_spec).run(mt)
+            if move_to_errors:
+                from kirin.ir.exception import ValidationErrorGroup
+
+                raise ValidationErrorGroup(
+                    f"MoveToValidation failed with {len(move_to_errors)} error(s)",
+                    errors=move_to_errors,
+                )
+
             mt.verify()
 
     return run_pass

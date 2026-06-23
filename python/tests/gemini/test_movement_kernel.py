@@ -4,7 +4,8 @@ import bloqade.squin as squin
 import pytest
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical import loc, move_to, movement_kernel, terminal_measure
+from bloqade.gemini.logical import loc, move_to, terminal_measure
+from bloqade.gemini.physical import kernel as movement_kernel
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
 

@@ -2,7 +2,7 @@ from bloqade.gemini.common.dialects.movement import loc as loc, move_to as move_
 
 from . import dialects as dialects, impl as impl, validation as validation
 from .dialects.operations import terminal_measure as terminal_measure
-from .group import kernel as kernel, movement_kernel as movement_kernel
+from .group import kernel as kernel
 from .stdlib import (
     broadcast as broadcast,
     default_post_processing as default_post_processing,
