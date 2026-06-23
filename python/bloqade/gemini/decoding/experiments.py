@@ -435,6 +435,8 @@ class PostSelectionExperiment:
             raise RuntimeError("get_samples must be called before analysis.")
         basis_labels = tuple(decoded_results.keys())
         total_shots = sum(len(dataset.observables) for dataset in actual_data.values())
+        # NOTE: In the current implementation, it is possible to get less than "threshold" points if many of your confidence scores end up being the same.
+        # Exploring alternative implementations to identify confidence thresholds can be done in a future PR.
         threshold_curve = _evaluate_cached_threshold_curve(
             decoded_results,
             threshold_points=threshold_points,
