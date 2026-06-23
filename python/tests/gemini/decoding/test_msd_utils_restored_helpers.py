@@ -27,6 +27,19 @@ def test_tomography_result_builds_density_matrix_and_point_fidelity():
     assert result.fidelity_bloch(np.array([1.0, 0.0, 0.0])) == pytest.approx(1.0)
 
 
+def test_tomography_result_rejects_non_physical_target_bloch_vector():
+    result = TomographyResult(
+        {
+            "X": np.array([[0], [1]], dtype=np.uint8),
+            "Y": np.array([[0], [1]], dtype=np.uint8),
+            "Z": np.array([[0], [1]], dtype=np.uint8),
+        }
+    )
+
+    with pytest.raises(ValueError, match="squared norm <= 1"):
+        result.fidelity_bloch(np.array([2.0, 0.0, 0.0]))
+
+
 def test_bit_packing_helpers_pack_little_endian_bits():
     bits = np.array([[1, 0, 1], [0, 1, 1]], dtype=np.uint8)
 
@@ -113,6 +126,48 @@ def test_table_decoder_with_confidence_allows_empty_dem_and_step_size_none():
     assert confidence == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize(
+    "detector_bits",
+    [
+        np.zeros(0, dtype=np.uint8),
+        np.zeros(2, dtype=np.uint8),
+    ],
+    ids=["too_short", "too_long"],
+)
+def test_table_decoder_with_confidence_validates_decode_with_confidence_width(
+    detector_bits: np.ndarray,
+):
+    decoder = TableDecoderWithConfidence(
+        stim.DetectorErrorModel("error(0.1) D0 L0"),
+        num_shots=0,
+    )
+
+    with pytest.raises(ValueError, match="decode_with_confidence expects"):
+        decoder.decode_with_confidence(detector_bits)
+
+
+@pytest.mark.parametrize(
+    "detector_bits",
+    [
+        np.zeros(0, dtype=np.uint8),
+        np.zeros(2, dtype=np.uint8),
+        np.zeros((2, 0), dtype=np.uint8),
+        np.zeros((2, 2), dtype=np.uint8),
+    ],
+    ids=["single_too_short", "single_too_long", "batch_too_short", "batch_too_long"],
+)
+def test_table_decoder_with_confidence_validates_decode_width(
+    detector_bits: np.ndarray,
+):
+    decoder = TableDecoderWithConfidence(
+        stim.DetectorErrorModel("error(0.1) D0 L0"),
+        num_shots=0,
+    )
+
+    with pytest.raises(ValueError, match="decode expects"):
+        decoder.decode(detector_bits)
+
+
 def test_gurobi_decoder_with_confidence_reports_gap_to_best_other_logical_solution():
     pytest.importorskip("gurobipy")
     dem = stim.DetectorErrorModel("""
@@ -128,6 +183,44 @@ def test_gurobi_decoder_with_confidence_reports_gap_to_best_other_logical_soluti
     np.testing.assert_array_equal(correction, np.array([False]))
     expected_gap = np.log(0.1 / 0.9) - np.log(0.01 / 0.99)
     assert logical_gap == pytest.approx(expected_gap)
+
+
+@pytest.mark.parametrize(
+    "detector_bits",
+    [
+        np.zeros(0, dtype=np.bool_),
+        np.zeros(2, dtype=np.bool_),
+    ],
+    ids=["too_short", "too_long"],
+)
+def test_gurobi_decoder_with_confidence_validates_decode_with_confidence_width(
+    detector_bits: np.ndarray,
+):
+    pytest.importorskip("gurobipy")
+    decoder = GurobiDecoderWithConfidence(stim.DetectorErrorModel("error(0.1) D0 L0"))
+
+    with pytest.raises(ValueError, match="decode_with_confidence expects"):
+        decoder.decode_with_confidence(detector_bits)
+
+
+@pytest.mark.parametrize(
+    "detector_bits",
+    [
+        np.zeros(0, dtype=np.bool_),
+        np.zeros(2, dtype=np.bool_),
+        np.zeros((2, 0), dtype=np.bool_),
+        np.zeros((2, 2), dtype=np.bool_),
+    ],
+    ids=["single_too_short", "single_too_long", "batch_too_short", "batch_too_long"],
+)
+def test_gurobi_decoder_with_confidence_validates_decode_width(
+    detector_bits: np.ndarray,
+):
+    pytest.importorskip("gurobipy")
+    decoder = GurobiDecoderWithConfidence(stim.DetectorErrorModel("error(0.1) D0 L0"))
+
+    with pytest.raises(ValueError, match="decode expects"):
+        decoder.decode(detector_bits)
 
 
 def test_shots_to_counts_uses_little_endian_packing():

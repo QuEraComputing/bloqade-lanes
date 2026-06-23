@@ -9,7 +9,7 @@ import stim
 from bloqade.decoders import TableDecoder
 from bloqade.decoders._decoders.mld.utils import pack_boolean_array, shots_to_counts
 
-from .confidence import ConfidenceDecoder
+from .confidence import ConfidenceDecoder, _validate_detector_bits
 
 # NOTE: We will plan to move this code to bloqade-decoders.
 
@@ -120,6 +120,17 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
         self._is_cached_correction = False
         self._correction_confidence = None
 
+    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        """Decode detector bits after validating the detector-shot width."""
+
+        validated_bits = _validate_detector_bits(
+            detector_bits,
+            self.num_detectors,
+            allow_batch=True,
+            method_name="decode",
+        )
+        return super().decode(validated_bits)
+
     def cache_correction(self) -> None:
         # TableDecoder.decode dispatches to this method name, so keep the
         # override while routing the implementation through the private helper.
@@ -159,15 +170,17 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
     ) -> tuple[np.ndarray, np.float64]:
         """Decode one detector syndrome and return its empirical confidence."""
 
-        if detector_bits.ndim != 1:
-            raise ValueError(
-                "decode_with_confidence expects a single detector shot (1D array)."
-            )
-        correction = np.asarray(self.decode(detector_bits), dtype=np.bool_)
+        validated_bits = _validate_detector_bits(
+            detector_bits,
+            self.num_detectors,
+            allow_batch=False,
+            method_name="decode_with_confidence",
+        )
+        correction = np.asarray(self.decode(validated_bits), dtype=np.bool_)
         assert self._correction_confidence is not None
         packed = int(
             pack_boolean_array(
-                np.asarray(detector_bits, dtype=np.uint8).reshape(1, -1)
+                np.asarray(validated_bits, dtype=np.uint8).reshape(1, -1)
             )[0]
         )
         return correction, np.float64(self._correction_confidence[packed])

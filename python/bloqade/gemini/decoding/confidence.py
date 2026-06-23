@@ -10,6 +10,37 @@ import numpy.typing as npt
 from bloqade.decoders import GurobiDecoder
 
 
+def _validate_detector_bits(
+    detector_bits: npt.NDArray[np.bool_],
+    num_detectors: int,
+    *,
+    allow_batch: bool,
+    method_name: str,
+) -> npt.NDArray[np.bool_]:
+    bits = np.asarray(detector_bits, dtype=np.bool_)
+    if bits.ndim == 1:
+        if bits.shape[0] != num_detectors:
+            raise ValueError(
+                f"{method_name} expects detector_bits with shape "
+                f"({num_detectors},), got {bits.shape}."
+            )
+        return bits
+    if allow_batch and bits.ndim == 2:
+        if bits.shape[1] != num_detectors:
+            raise ValueError(
+                f"{method_name} expects detector_bits with shape "
+                f"(shots, {num_detectors}), got {bits.shape}."
+            )
+        return bits
+    expected = f"({num_detectors},)"
+    if allow_batch:
+        expected += f" or (shots, {num_detectors})"
+    raise ValueError(
+        f"{method_name} expects detector_bits with shape {expected}, "
+        f"got {bits.shape}."
+    )
+
+
 # NOTE: The code in this file should be moved t
 # TODO: this should inherit from BaseDecoder, but pyright fails on bloqade-decoders
 # main ver. because GurobiDecoder decode() method has return type that doesn't
@@ -35,6 +66,26 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
         error: np.ndarray
         logical: np.ndarray
         objective: float
+
+    def decode(
+        self,
+        detector_bits: npt.NDArray[np.bool_],
+        verbose: bool = False,
+        return_weights: bool = False,
+    ) -> npt.NDArray[np.bool_] | tuple[npt.NDArray[np.bool_], np.ndarray]:
+        """Decode detector bits after validating the detector-shot width."""
+
+        validated_bits = _validate_detector_bits(
+            detector_bits,
+            self.num_detectors,
+            allow_batch=True,
+            method_name="decode",
+        )
+        return super().decode(
+            validated_bits,
+            verbose=verbose,
+            return_weights=return_weights,
+        )
 
     @classmethod
     def _get_env(cls) -> object:
@@ -202,11 +253,13 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
     ) -> tuple[npt.NDArray[np.bool_], np.float64]:
         """Decode a single shot and return the logical-gap confidence."""
 
-        if detector_bits.ndim != 1:
-            raise ValueError(
-                "decode_with_confidence expects a single detector shot (1D array)."
-            )
-        decoded_obs, logical_gap = self._decode_with_logical_gap(detector_bits)
+        validated_bits = _validate_detector_bits(
+            detector_bits,
+            self.num_detectors,
+            allow_batch=False,
+            method_name="decode_with_confidence",
+        )
+        decoded_obs, logical_gap = self._decode_with_logical_gap(validated_bits)
         logical_gap_arr = np.asarray(logical_gap, dtype=np.float64).reshape(-1)
         return decoded_obs.astype(np.bool_), np.float64(logical_gap_arr[0])
 

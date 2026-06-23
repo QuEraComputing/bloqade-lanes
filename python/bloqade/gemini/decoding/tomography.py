@@ -43,6 +43,22 @@ def _bloch_mapping_from_sequence(
     }
 
 
+def _validate_single_qubit_bloch_vector(
+    bloch: np.ndarray | Sequence[float],
+    *,
+    tol: float,
+) -> dict[str, float]:
+    if tol < 0:
+        raise ValueError("tol must be non-negative.")
+    bloch_arr = np.asarray(bloch, dtype=np.float64)
+    if bloch_arr.shape != (3,):
+        raise ValueError("bloch must be a length-3 vector.")
+    bloch_norm_squared = float(np.dot(bloch_arr, bloch_arr))
+    if bloch_norm_squared > 1.0 + tol:
+        raise ValueError("Single-qubit Bloch vector must have squared norm <= 1.")
+    return _bloch_mapping_from_sequence(bloch_arr)
+
+
 def _single_qubit_fidelity(
     density_matrix: np.ndarray,
     target_density_matrix: np.ndarray,
@@ -92,11 +108,12 @@ class TomographyResult:
     def fidelity_bloch(
         self,
         target_bloch: np.ndarray | Sequence[float],
+        tol: float = 1e-10,
     ) -> float:
         """Return the fidelity to a target state from its Bloch vector."""
 
         target_density_matrix = _density_matrix_from_bloch(
-            _bloch_mapping_from_sequence(target_bloch)
+            _validate_single_qubit_bloch_vector(target_bloch, tol=tol)
         )
         return _single_qubit_fidelity(self.density_matrix, target_density_matrix)
 
