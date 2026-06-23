@@ -24,7 +24,6 @@ from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
 from .postselection import (
     _build_generic_threshold_tables,
     _DecodedPostselectionResult,
-    _DecoderPair,
     _evaluate_cached_threshold_curve,
     _shots_at_accepted_fraction,
 )
@@ -98,7 +97,7 @@ class _PostSelectionExperimentCache:
     dem_kernels: dict[str, ir.Method[..., Any]] | None
     dem_circuits: Mapping[str, tsim_backend.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
-    decoders_with_confidence: Mapping[str, _DecoderPair] | None
+    decoders_with_confidence: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]] | None
     raw_results: Mapping[str, _BasisDataset] | None
     decoded_results: Mapping[str, _DecodedPostselectionResult] | None
     thresholded_data: Mapping[str, np.ndarray] | None
@@ -166,7 +165,8 @@ class PostSelectionExperiment:
         self._postselection_exp_cache = _PostSelectionExperimentCache()
         # NOTE: hardcoding this for now (I guess) to support having some
         # interface for adding noise to the circuit and compiling it down.
-        # This simulator object is used for compiling down and adding noise to the DEM
+        # This simulator object is used for compiling down and adding noise to a circuit
+        # to construct a DEM for initializing the decoder.
         self._simulator = GeminiLogicalSimulator()
 
     # TODO: We have to specify the number of logical qubits and number of output qubits here because, given our kernels that take reg as an input, we
@@ -176,6 +176,16 @@ class PostSelectionExperiment:
         self,
         num_logical_qubits: int = 5,
     ) -> dict[str, ir.Method[..., Any]]:
+        """
+        Composes the nonclifford, clifford, and tomography kernels into a dictionary mapping each basis label to
+        the respective nonclifford + clifford + tomography kernel.
+
+        Args:
+            num_logical_qubits (int): An integer corresponding to the number of logical qubits allocated in the kernels.
+
+        Returns:
+            dict[str, ir.Method[..., Any]]: A dictionary mapping the tomography basis labels to the respective kernel used for tomography.
+        """
         # TODO: change the name of _DecoderPrimitiveSet --> whole_circuit
         decoder_primitive_set = _DecoderPrimitiveSet(
             state_injection_circuit=self.nonclifford_prefix,
@@ -187,11 +197,21 @@ class PostSelectionExperiment:
             tomography_kernels=self.tomography_circuits,
         )
         self._postselection_exp_cache.dem_kernels = dem_kernels
-        # Assumes that there is some way of getting the num_logical_qubits.
         return dem_kernels
 
-    # TODO: split up the kernels and DEM kernels functions
     def dem_circuits(self) -> dict[str, tsim_backend.Circuit]:
+        """
+        Constructs TSIM circuits annotated with error channels for each basis from the tomography kernels, which will later
+        be used to construct detector error models.
+
+        Note: this function depends on .kernels() being invoked.
+        Note: in the implementation of this function, to obtain a noiseless reference observable to later construct a DEM,
+        we take our whole circuit, strip away the noise, and prepend it to our circuit so that the noiseless behavior is U^dagU = I.
+
+        Returns:
+            dict[str, tsim_backend.Circuit]: A dictionary mapping each basis label to a compiled TSIM circuit with noise channels, where the observables
+            in noiseless simulation are all 0.
+        """
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before dem_circuits.")
@@ -207,8 +227,15 @@ class PostSelectionExperiment:
         return special_tsim_circuits
 
     def dems(self) -> dict[str, stim.DetectorErrorModel]:
-        # Note that this depends on the state and so arguably it's unclear to
-        # the user the exact inputs to this function.
+        """
+        Constructs detector error models from the noisy circuits in each basis. Defaults to approximating disjoint errors.
+
+        Note: this function depends on dem_circuits() being called.
+
+        Returns:
+            dict[str, stim.DetectorErrorModel]: A dictionary mapping each basis label to the detector error model for the tomography
+            circuit in that basis.
+        """
         dem_circuits = self._postselection_exp_cache.dem_circuits
         if dem_circuits is None:
             raise RuntimeError("dem_circuits must be called before dems.")
@@ -219,18 +246,34 @@ class PostSelectionExperiment:
         self._postselection_exp_cache.dems = dems
         return dems
 
-    # TODO: where do we pass in shot counts, etc. for training the decoder?
-    def initialize_decoders(self) -> dict[str, _DecoderPair]:
+    def initialize_decoders(self) -> dict[str, tuple[ConfidenceDecoder, BaseDecoder]]:
+        """
+        Initializes the decoders for the tomography circuits in each basis from the detector error models.
+        This function utilizes correlated decoding (https://arxiv.org/abs/2403.03272).
+        Because of this, this function initializes two decoders: one for the decoding the ancilla qubits, and one for decoding the output qubit.
+        The decoder that decodes the ancilla qubits decodes them jointly, taking in (num_ancillas * 3) detectors and outputting corrections for (num_ancillas) observables.
+            This decoder does not additionally take in the output qubit's detectors for the case that the output qubit might be used later in the computation.
+        The decoder that decodes the output qubit decodes it jointly with the ancilla qubits, taking in ((num_ancillas + 1) * 3) detectors and outputting corrections for 1 observable (on the output qubit).
+        This function assumes that the first qubit is the output qubit, and also assumes that we are using the [[7, 1, 3]] Steane code, which has three detectors per logical qubit.
+
+        Note: this function depends on dems() being called.
+
+        Returns:
+            dict[str, tuple[ConfidenceDecoder, BaseDecoder]]: A dictionary mapping each basis label to (factory_decoder, full_decoder), where factory_decoder
+            decodes the ancilla qubits jointly and full_decoder decodes the output qubit jointly with the information on all logical qubits.
+        """
         dems_bases = self._postselection_exp_cache.dems
         if dems_bases is None:
             raise RuntimeError("dems must be called before initialize_decoders.")
-        decoders_bases: dict[str, _DecoderPair] = {}
+        decoders_bases: dict[str, tuple[ConfidenceDecoder, BaseDecoder]] = {}
         # NOTE: there is a question of if we want to support multi-qubit
         # tomography in this experiment. For now, probably not; if we did, we
         # would have to specify the number of output qubits and their locations
         # and use that information to construct a custom layout.
         layout = _DEFAULT_SYNDROME_LAYOUT
         for basis_label, dem_base in dems_bases.items():
+            # We subset the detector error models for the "full" and "factory" decoders to
+            # extract only the detectors and observables that are used by the respective decoders.
             full_dem = _sub_detector_error_model(
                 dem_base,
                 detector_indices=range(dem_base.num_detectors),
@@ -246,11 +289,14 @@ class PostSelectionExperiment:
                     dem_base.num_observables,
                 ),
             )
-            # NOTE: this is important. We are sampling 2x to build the 2 decoders
-            # (not once); I think it is OK (so long as they approximate the same
-            # table? but it IS more expensive)
+            # NOTE: We are initializing the factory and full decoders twice. For the TableDecoder, this means that we are sampling two times for each basis
+            # to build the 2 decoders. It might be more efficient if, from the same sampled data, we constructed the factory and full decoders (so we just
+            # have to sample once per basis). But, the current TableDecoder does not support that API (as we assume that training happens during
+            # initialization of the TableDecoder).
             # TODO: this is because the current API does NOT support decoder(dem, **kwargs) for the constructor so we have to
-            # do a cast. We would want to decide on the decoder __init__ API to be able to avoid such a cast
+            # do a cast. We would want to decide on the decoder __init__ API to be able to avoid such a cast (e.g., to have **kwargs in the __init__ function
+            # in the abstract class)
+            # The reason why the factory decoder is a ConfidenceDecoder is that technically, we only need confidence scores when decoding the ancilla qubits.
             decoder_constructor = cast(Callable[..., ConfidenceDecoder], self.decoder)
             full_decoder = cast(
                 BaseDecoder,
@@ -265,7 +311,8 @@ class PostSelectionExperiment:
         self,
         device: GeminiLogicalSimulator,
         # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
-        # TaskABC[GeminiLogicalFuture]
+        # TaskABC[GeminiLogicalFuture]. However, currently, GeminiLogicalSimulatorTask does not inherit from the abstract "task" types in
+        # bloqade-core.
     ) -> dict[str, GeminiLogicalSimulatorTask[Any]]:
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:

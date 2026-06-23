@@ -13,8 +13,6 @@ from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
 from .sampling import _BasisDataset
 from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 
-_DecoderPair = tuple[ConfidenceDecoder, BaseDecoder]
-
 
 @dataclass(frozen=True)
 class _DecodedPostselectionResult:
@@ -82,7 +80,7 @@ def _decode_confidence_batch(
 
 def _build_generic_threshold_tables(
     actual_data: Mapping[str, _BasisDataset],
-    decoder_map: Mapping[str, _DecoderPair],
+    decoder_map: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]],
     *,
     targets: np.ndarray,
     basis_labels: Sequence[str],
