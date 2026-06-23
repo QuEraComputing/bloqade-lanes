@@ -1,6 +1,6 @@
 //! Arch-bound state shared by every solver entry point.
 //!
-//! [`SearchEngine`] is the data layer below `MoveSolver` / `MoveSearch` /
+//! [`SearchEngine`] is the data layer below `MoveSearch` /
 //! `TargetSolver` / the `CzPlacement` peers: it owns the [`LaneIndex`]
 //! and the lazy-initialized architecture-derived caches
 //! ([`EntanglingCache`] for Hungarian word-pair distances,
@@ -14,7 +14,6 @@ use std::sync::{Arc, OnceLock};
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::ops::entangling::{self, WordPairDistances};
-use crate::placement::nohome;
 use crate::primitives::distance::DistanceTable;
 use crate::primitives::lane_index::LaneIndex;
 
@@ -120,7 +119,7 @@ impl SearchEngine {
     pub(crate) fn nohome_cache(&self) -> &NoHomeCache {
         self.nohome_cache.get_or_init(|| {
             let arch = self.index.arch_spec();
-            let home_locs = nohome::home_sites(arch);
+            let home_locs = entangling::home_sites(arch);
             let home_set: HashSet<u64> = home_locs.iter().copied().collect();
             let dist_table = Arc::new(
                 DistanceTable::new(&home_locs, &self.index).with_time_distances(&self.index),

@@ -11,7 +11,6 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::ops::entangling;
 use crate::primitives::config::Config;
@@ -61,31 +60,6 @@ impl Default for NoHomeOptions {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-/// Enumerate all home-site locations (encoded) from the architecture.
-///
-/// A home site is any `(zone_id, word_id, site_id)` where `word_id` is
-/// in [`ArchSpec::left_cz_word_ids`].
-pub fn home_sites(arch: &ArchSpec) -> Vec<u64> {
-    let home_words = arch.left_cz_word_ids();
-    let word_zone = arch.word_zone_map();
-    let sites_per_word = arch.sites_per_word() as u32;
-    let mut result = Vec::new();
-    for &word_id in &home_words {
-        let zone_id = *word_zone.get(&word_id).unwrap_or(&0);
-        for site_id in 0..sites_per_word {
-            result.push(
-                LocationAddr {
-                    zone_id,
-                    word_id,
-                    site_id,
-                }
-                .encode(),
-            );
-        }
-    }
-    result
-}
 
 /// Compute gamma-decayed partner weights from future CZ layers.
 ///
@@ -477,9 +451,7 @@ impl CzPlacement for NoHomeCzPlacement {
     }
 }
 
-/// Shared implementation backing both [`NoHomeCzPlacement::solve_pairs`]
-/// and the legacy
-/// [`MoveSolver::solve_nohome`](crate::search::solve::MoveSolver::solve_nohome).
+/// Shared implementation backing [`NoHomeCzPlacement::solve_pairs`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_nohome(
     engine: &SearchEngine,
@@ -655,8 +627,9 @@ pub(crate) fn solve_nohome(
 mod tests {
     use super::*;
     use crate::primitives::lane_index::LaneIndex;
-    use crate::search::solve::MoveSolver;
+    use crate::search::result::SolveStatus;
     use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     fn make_parts() -> (ArchSpec, LaneIndex) {
         let json = example_arch_json();
@@ -668,7 +641,7 @@ mod tests {
     #[test]
     fn test_home_sites_nonempty() {
         let (arch, _) = make_parts();
-        let sites = home_sites(&arch);
+        let sites = entangling::home_sites(&arch);
         assert!(!sites.is_empty(), "should have at least one home site");
         let home_words: HashSet<u32> = arch.left_cz_word_ids().into_iter().collect();
         for &enc in &sites {
@@ -695,7 +668,7 @@ mod tests {
     #[test]
     fn test_nearest_home_assigns_all_returners() {
         let (arch, index) = make_parts();
-        let home_locs = home_sites(&arch);
+        let home_locs = entangling::home_sites(&arch);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at non-home locations (CZ staging).
@@ -734,7 +707,7 @@ mod tests {
     #[test]
     fn test_candidate_layouts_all_home_is_identity() {
         let (arch, index) = make_parts();
-        let home_locs = home_sites(&arch);
+        let home_locs = entangling::home_sites(&arch);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at home — should get identity layout back.
@@ -770,17 +743,17 @@ mod tests {
         }
     }
 
-    /// Parity: `NoHomeCzPlacement::solve_pairs` must produce a
-    /// byte-identical `SolveResult` to `MoveSolver::solve_nohome` for
-    /// the same problem and config.
+    /// End-to-end smoke: `NoHomeCzPlacement::solve_pairs` runs the full
+    /// two-phase pipeline (return assignment + entangling routing) and reaches
+    /// a deterministic terminal verdict without erroring. The toy
+    /// `example_arch_json` lacks the distinct home/staging zones the no-home
+    /// strategy targets, so this scenario is `Unsolvable`; real-arch solvable
+    /// coverage lives in the Python integration tests and benchmarks.
     #[test]
-    fn nohome_placement_matches_solve_nohome() {
+    fn nohome_placement_runs_two_phase_pipeline() {
         let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
-        let opts = SolveOptions::default();
-        let nh_opts = NoHomeOptions::default();
-        let search = MoveSearch::new(opts.clone(), Default::default());
-        let placement = NoHomeCzPlacement::new(engine.clone(), search, nh_opts.clone());
-        let legacy = MoveSolver::from_index(engine.index().clone());
+        let search = MoveSearch::new(SolveOptions::default(), Default::default());
+        let placement = NoHomeCzPlacement::new(engine, search, NoHomeOptions::default());
 
         // Initial: qubit 0 at a non-home position (forces the return phase),
         // qubit 1 already at home.
@@ -788,7 +761,7 @@ mod tests {
         let cz_pairs = [(0u32, 1u32)];
         let blocked: [LocationAddr; 0] = [];
 
-        let new_result = placement
+        let result = placement
             .solve_pairs(
                 initial.iter().copied(),
                 &cz_pairs,
@@ -797,31 +770,7 @@ mod tests {
                 &[],
             )
             .unwrap();
-        let legacy_result = legacy
-            .solve_nohome(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &opts,
-                &nh_opts,
-                &[],
-            )
-            .unwrap();
 
-        assert_eq!(new_result.status, legacy_result.status);
-        assert_eq!(new_result.cost.to_bits(), legacy_result.cost.to_bits());
-        assert_eq!(new_result.nodes_expanded, legacy_result.nodes_expanded);
-        let new_layers: Vec<Vec<u64>> = new_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        let legacy_layers: Vec<Vec<u64>> = legacy_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        assert_eq!(new_layers, legacy_layers);
+        assert_eq!(result.status, SolveStatus::Unsolvable);
     }
 }

@@ -1,6 +1,7 @@
-//! Move generator wrappers that implement [`MoveGenerator`] by delegating
-//! to the existing [`Expander`]-based implementations.
+//! Move generators implementing the [`crate::traits::MoveGenerator`] trait
+//! consumed by [`crate::drivers::frontier::run_search`].
 
+pub(crate) mod cz_coordination;
 pub mod entropy;
 pub mod exhaustive;
 pub mod greedy;

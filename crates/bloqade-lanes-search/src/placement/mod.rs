@@ -16,9 +16,9 @@
 //! - [`target_generator`] — fixed-target plugin trait + `DefaultTargetGenerator`,
 //!   consumed by `SingleHeuristicCzPlacement`.
 //!
-//! The legacy `MoveSolver::solve_entangling`, `solve_entangling_rh`, and
-//! `solve_nohome` entry points in [`crate::search::solve`] are kept until
-//! the Rust-side cleanup (tracked in issue #706) removes them.
+//! Each driver also exposes a free `solve_*` function ([`loose_goal::solve_loose_goal`],
+//! [`receding_horizon::solve_receding_horizon`], [`nohome::solve_nohome`],
+//! [`single_heuristic::solve_single_heuristic`]) sharing the same search core.
 
 pub mod cz_placement;
 pub mod loose_goal;

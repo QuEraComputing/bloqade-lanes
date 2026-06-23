@@ -60,7 +60,6 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyEntanglingOptions>()?;
     m.add_class::<search_python::PyNoHomeOptions>()?;
     m.add_class::<search_python::PyRecedingHorizonOptions>()?;
-    m.add_class::<search_python::PyMoveSolver>()?;
     m.add_class::<search_python::PySolveResult>()?;
     m.add_class::<search_python::PyEntropyTrace>()?;
     m.add_class::<search_python::PyEntropyTraceStep>()?;
@@ -78,7 +77,7 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyRecedingHorizonCzPlacement>()?;
     m.add_class::<search_python::PyNoHomeCzPlacement>()?;
 
-    // Move Policy DSL (sidecar to MoveSolver — Plan A of #597)
+    // Move Policy DSL (sidecar to the typed solver surface — Plan A of #597)
     m.add_class::<policy_runner_python::PyPolicyRunner>()?;
     m.add_class::<policy_runner_python::PyPolicySolveResult>()?;
 

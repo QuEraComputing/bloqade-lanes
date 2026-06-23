@@ -14,9 +14,8 @@
 //!   5. Commit the full path of a tier-0 winner, or only `m` layers of a
 //!      tier-1 winner; advance the state and re-plan.
 //!
-//! `MoveSolver::solve_entangling_rh` (the public entry, defined in
-//! [`crate::search::solve`]) wraps a parallel restart loop around
-//! [`solve_entangling_rh_single`].
+//! [`solve_receding_horizon`] (the public entry) wraps a parallel restart
+//! loop around [`solve_entangling_rh_single`].
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -38,7 +37,8 @@ use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
-use crate::search::solve::{EntanglingOptions, SolveOptions, SolveResult, SolveStatus};
+use crate::search::options::{EntanglingOptions, SolveOptions};
+use crate::search::result::{SolveResult, SolveStatus};
 use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
 use crate::ops::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
@@ -817,7 +817,7 @@ pub(crate) fn pick_best_branch<'a>(
 /// move layers plus the final state.
 ///
 /// The caller is responsible for parallelism (see
-/// `MoveSolver::solve_entangling_rh`'s rayon wrapper).
+/// [`solve_receding_horizon`]'s rayon wrapper).
 #[allow(clippy::too_many_arguments)]
 pub fn solve_entangling_rh_single(
     root: Config,
@@ -1220,9 +1220,7 @@ impl CzPlacement for RecedingHorizonCzPlacement {
     }
 }
 
-/// Shared implementation backing both [`RecedingHorizonCzPlacement::solve_pairs`]
-/// and the legacy
-/// [`MoveSolver::solve_entangling_rh`](crate::search::solve::MoveSolver::solve_entangling_rh).
+/// Shared implementation backing [`RecedingHorizonCzPlacement::solve_pairs`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_receding_horizon(
     engine: &SearchEngine,
@@ -1325,7 +1323,9 @@ pub(crate) fn solve_receding_horizon(
             .collect()
     };
 
-    Ok(crate::search::restarts::pick_best(results))
+    Ok(crate::search::restarts::pick_best(results).expect(
+        "results vec is either 1-element (restarts <= 1) or from (0..restarts) loop (restarts > 1)",
+    ))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -1334,7 +1334,7 @@ pub(crate) fn solve_receding_horizon(
 mod tests {
     use super::*;
     use crate::primitives::graph::SearchGraph;
-    use crate::search::solve::{MoveSolver, Strategy};
+    use crate::search::options::Strategy;
     use crate::test_utils::{example_arch_json, loc};
 
     // ── Trivial / structural ──
@@ -1437,9 +1437,9 @@ mod tests {
 
     #[test]
     fn hungarian_cost_at_leaf_empty_pairs_returns_zero() {
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let arch = solver.index().arch_spec().clone();
-        let lane_index = solver.index();
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let arch = engine.index().arch_spec().clone();
+        let lane_index = engine.index();
         let cz_pairs: Vec<(u32, u32)> = vec![(0, 1)];
         // Build a tiny dist table targeting entangling locations.
         let ent_locs = entangling::all_entangling_locations(&arch);
@@ -1475,8 +1475,8 @@ mod tests {
 
     #[test]
     fn apply_move_set_skips_empty_filler_lane_sources() {
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let index = solver.index();
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let index = engine.index();
         let move_set = MoveSet::new(vec![
             crate::test_utils::lane(0, 0, 0),
             crate::test_utils::lane(0, 1, 0),
@@ -1494,9 +1494,9 @@ mod tests {
 
     #[test]
     fn generate_k_candidates_caps_at_k() {
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let arch = solver.index().arch_spec().clone();
-        let lane_index = solver.index();
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let arch = engine.index().arch_spec().clone();
+        let lane_index = engine.index();
         let ent_locs = entangling::all_entangling_locations(&arch);
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
@@ -1536,9 +1536,9 @@ mod tests {
         // The plan's primary risk: different restart_seeds collapse to the
         // same candidate set. On a non-trivial instance, distinct seeds
         // should produce at least one distinct candidate signature.
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let arch = solver.index().arch_spec().clone();
-        let lane_index = solver.index();
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let arch = engine.index().arch_spec().clone();
+        let lane_index = engine.index();
         let ent_locs = entangling::all_entangling_locations(&arch);
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
@@ -1600,23 +1600,23 @@ mod tests {
     fn solve_entangling_rh_with_already_at_goal() {
         // Initial state already satisfies the constraint goal → trajectory
         // length 0, Solved, no move layers.
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let result = solver
-            .solve_entangling_rh(
-                [(0, loc(0, 0)), (1, loc(1, 0))],
-                &[(0, 1)],
-                std::iter::empty(),
-                Some(5000),
-                &SolveOptions {
-                    strategy: Strategy::Ids,
-                    restarts: 1,
-                    ..SolveOptions::default()
-                },
-                &EntanglingOptions::default(),
-                &RecedingHorizonOptions::default(),
-                &[],
-            )
-            .unwrap();
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let result = solve_receding_horizon(
+            &engine,
+            &SolveOptions {
+                strategy: Strategy::Ids,
+                restarts: 1,
+                ..SolveOptions::default()
+            },
+            &EntanglingOptions::default(),
+            &RecedingHorizonOptions::default(),
+            [(0, loc(0, 0)), (1, loc(1, 0))],
+            &[(0, 1)],
+            std::iter::empty(),
+            Some(5000),
+            &[],
+        )
+        .unwrap();
         assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.move_layers.len(), 0);
     }
@@ -1625,65 +1625,65 @@ mod tests {
     fn solve_entangling_rh_solves_nontrivial() {
         // Start with qubits at non-entangling positions; the orchestrator
         // must drive them to a feasible configuration.
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let result = solver
-            .solve_entangling_rh(
-                [(0, loc(0, 0)), (1, loc(1, 5))],
-                &[(0, 1)],
-                std::iter::empty(),
-                Some(5000),
-                &SolveOptions {
-                    strategy: Strategy::Ids,
-                    restarts: 1,
-                    ..SolveOptions::default()
-                },
-                &EntanglingOptions::default(),
-                &RecedingHorizonOptions {
-                    k_candidates: 3,
-                    rollout_horizon: 5,
-                    commit_depth: 1,
-                    ..RecedingHorizonOptions::default()
-                },
-                &[],
-            )
-            .unwrap();
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let result = solve_receding_horizon(
+            &engine,
+            &SolveOptions {
+                strategy: Strategy::Ids,
+                restarts: 1,
+                ..SolveOptions::default()
+            },
+            &EntanglingOptions::default(),
+            &RecedingHorizonOptions {
+                k_candidates: 3,
+                rollout_horizon: 5,
+                commit_depth: 1,
+                ..RecedingHorizonOptions::default()
+            },
+            [(0, loc(0, 0)), (1, loc(1, 5))],
+            &[(0, 1)],
+            std::iter::empty(),
+            Some(5000),
+            &[],
+        )
+        .unwrap();
         assert_eq!(result.status, SolveStatus::Solved);
     }
 
     #[test]
     fn solve_entangling_rh_with_restarts() {
         // restarts=2 engages the rayon wrapper and pick_best path.
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let result = solver
-            .solve_entangling_rh(
-                [(0, loc(0, 0)), (1, loc(1, 5))],
-                &[(0, 1)],
-                std::iter::empty(),
-                Some(5000),
-                &SolveOptions {
-                    strategy: Strategy::Ids,
-                    restarts: 2,
-                    ..SolveOptions::default()
-                },
-                &EntanglingOptions::default(),
-                &RecedingHorizonOptions {
-                    k_candidates: 3,
-                    rollout_horizon: 5,
-                    commit_depth: 1,
-                    branch_parallel: false, // give cores to restart parallelism
-                    ..RecedingHorizonOptions::default()
-                },
-                &[],
-            )
-            .unwrap();
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let result = solve_receding_horizon(
+            &engine,
+            &SolveOptions {
+                strategy: Strategy::Ids,
+                restarts: 2,
+                ..SolveOptions::default()
+            },
+            &EntanglingOptions::default(),
+            &RecedingHorizonOptions {
+                k_candidates: 3,
+                rollout_horizon: 5,
+                commit_depth: 1,
+                branch_parallel: false, // give cores to restart parallelism
+                ..RecedingHorizonOptions::default()
+            },
+            [(0, loc(0, 0)), (1, loc(1, 5))],
+            &[(0, 1)],
+            std::iter::empty(),
+            Some(5000),
+            &[],
+        )
+        .unwrap();
         assert_eq!(result.status, SolveStatus::Solved);
     }
 
-    /// Parity: `RecedingHorizonCzPlacement::solve_pairs` must produce a
-    /// byte-identical `SolveResult` to `MoveSolver::solve_entangling_rh`
-    /// for the same problem and config.
+    /// End-to-end: `RecedingHorizonCzPlacement::solve_pairs` drives qubits
+    /// from non-entangling positions to a feasible configuration via the
+    /// trait surface.
     #[test]
-    fn rh_placement_matches_solve_entangling_rh() {
+    fn rh_placement_solves_nontrivial() {
         let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
         let opts = SolveOptions {
             strategy: Strategy::Ids,
@@ -1697,20 +1697,14 @@ mod tests {
             branch_parallel: false,
             ..RecedingHorizonOptions::default()
         };
-        let search = MoveSearch::new(opts.clone(), Default::default());
-        let placement = RecedingHorizonCzPlacement::new(
-            engine.clone(),
-            search,
-            ent_opts.clone(),
-            rh_opts.clone(),
-        );
-        let legacy = MoveSolver::from_index(engine.index().clone());
+        let search = MoveSearch::new(opts, Default::default());
+        let placement = RecedingHorizonCzPlacement::new(engine, search, ent_opts, rh_opts);
 
         let initial = [(0u32, loc(0, 0)), (1u32, loc(1, 5))];
         let cz_pairs = [(0u32, 1u32)];
         let blocked: [LocationAddr; 0] = [];
 
-        let new_result = placement
+        let result = placement
             .solve_pairs(
                 initial.iter().copied(),
                 &cz_pairs,
@@ -1719,32 +1713,7 @@ mod tests {
                 &[],
             )
             .unwrap();
-        let legacy_result = legacy
-            .solve_entangling_rh(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &opts,
-                &ent_opts,
-                &rh_opts,
-                &[],
-            )
-            .unwrap();
 
-        assert_eq!(new_result.status, legacy_result.status);
-        assert_eq!(new_result.cost.to_bits(), legacy_result.cost.to_bits());
-        assert_eq!(new_result.nodes_expanded, legacy_result.nodes_expanded);
-        let new_layers: Vec<Vec<u64>> = new_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        let legacy_layers: Vec<Vec<u64>> = legacy_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        assert_eq!(new_layers, legacy_layers);
+        assert_eq!(result.status, SolveStatus::Solved);
     }
 }
