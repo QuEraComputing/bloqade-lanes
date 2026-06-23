@@ -23,7 +23,7 @@ class GeminiTaskMixin:
 
     program_language: str = "squin"
     future_cls: type[GeminiLogicalFuture] = GeminiLogicalFuture
-    context_name: str = "gemini-logical"
+    context_name: str = "gemini-squin-logical-10q"
 
     @property
     def program_language_version(self) -> str:
