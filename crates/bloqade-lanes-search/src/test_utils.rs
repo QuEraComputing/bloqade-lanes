@@ -11,18 +11,6 @@ pub fn loc(word: u32, site: u32) -> LocationAddr {
     }
 }
 
-/// Create a forward site-bus [`LaneAddr`] with the given bus_id.
-pub fn dummy_lane(id: u32) -> LaneAddr {
-    LaneAddr {
-        direction: Direction::Forward,
-        move_type: MoveType::SiteBus,
-        zone_id: 0,
-        word_id: 0,
-        site_id: id,
-        bus_id: 0,
-    }
-}
-
 /// Create a forward site-bus [`LaneAddr`] with specified word, site, and bus.
 pub fn lane(word: u32, site: u32, bus: u32) -> LaneAddr {
     LaneAddr {
