@@ -1,9 +1,9 @@
 //! PyO3 bindings for the Move Policy DSL kernel.
 //!
 //! Sidecar to [`crate::search_python`]. Exposes [`PyPolicyRunner`] and
-//! [`PyPolicySolveResult`] so Move Policy DSL solves never touch the
-//! `PyMoveSolver`/`PySolveResult` surface — keeping the existing strategy
-//! API stable and merge-friendly.
+//! [`PyPolicySolveResult`] so Move Policy DSL solves never touch the typed
+//! solver surface — keeping the existing strategy API stable and
+//! merge-friendly.
 //!
 //! Mirrors [`crate::target_generator_dsl_python`] for the Target Generator
 //! DSL.
@@ -210,7 +210,7 @@ impl PyPolicySolveResult {
 
 /// Reusable Move Policy DSL runner.
 ///
-/// Sidecar to [`crate::search_python::PyMoveSolver`]. Constructed once from
+/// Sidecar to [`crate::search_python::PyTargetSolver`]. Constructed once from
 /// an architecture spec (JSON string or `ArchSpec`), then call
 /// [`PyPolicyRunner::solve`] for each move synthesis problem with a `.star`
 /// policy.

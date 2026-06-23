@@ -63,9 +63,9 @@ pub struct SolveOptions {
     /// Per-qubit move-candidate pruning passed to
     /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator).
     /// `None` keeps all scored triples (default for the basic
-    /// [`MoveSolver::solve`](crate::search::solve::MoveSolver::solve)
+    /// [`TargetSolver::solve`](crate::search::target_solver::TargetSolver::solve)
     /// path); `Some(n)` keeps the top `n` bus options per qubit by score.
-    /// [`MoveSolver::solve_entangling`](crate::search::solve::MoveSolver::solve_entangling)
+    /// [`solve_loose_goal`](crate::placement::loose_goal::solve_loose_goal)
     /// defaults this to `Some(3)` when not set.
     pub top_c: Option<usize>,
 }
@@ -104,8 +104,8 @@ impl SolveOptions {
 ///
 /// Only consumed when [`SolveOptions::strategy`] is [`Strategy::Entropy`]
 /// (or a [`Strategy::Cascade`] variant whose inner is entropy). Pass via
-/// [`MoveSolver::solve`](crate::search::solve::MoveSolver::solve)'s
-/// optional `entropy_opts` argument; otherwise defaults are used.
+/// [`MoveSearch::with_entropy_options`](crate::search::move_search::MoveSearch::with_entropy_options);
+/// otherwise defaults are used.
 #[derive(Debug, Clone)]
 pub struct EntropyOptions {
     /// Max movesets generated per bus group.
@@ -140,10 +140,10 @@ impl Default for EntropyOptions {
 }
 
 /// Loose-goal entangling-search parameters consumed by
-/// [`MoveSolver::solve_entangling`](crate::search::solve::MoveSolver::solve_entangling).
+/// [`solve_loose_goal`](crate::placement::loose_goal::solve_loose_goal).
 ///
-/// Ignored by [`MoveSolver::solve`](crate::search::solve::MoveSolver::solve)
-/// and [`MoveSolver::solve_nohome`](crate::search::solve::MoveSolver::solve_nohome).
+/// Ignored by [`TargetSolver::solve`](crate::search::target_solver::TargetSolver::solve)
+/// and [`solve_nohome`](crate::placement::nohome::solve_nohome).
 #[derive(Debug, Clone)]
 pub struct EntanglingOptions {
     /// Congestion penalty weight for the entangling Hungarian assignment.
