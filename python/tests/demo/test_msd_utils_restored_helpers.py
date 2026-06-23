@@ -72,7 +72,10 @@ def test_sub_detector_error_model_composes_duplicate_projected_errors():
 
     assert len(error_instructions) == 1
     assert error_instructions[0].args_copy()[0] == pytest.approx(0.26)
-    assert str(projected).splitlines()[0] == "error(0.26) D0 L0"
+    assert [str(target) for target in error_instructions[0].targets_copy()] == [
+        "D0",
+        "L0",
+    ]
 
 
 def test_table_decoder_with_confidence_decodes_and_scores_detector_patterns():
