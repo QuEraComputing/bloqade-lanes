@@ -65,6 +65,12 @@ class TomographyResult:
         self,
         shots_by_basis: Mapping[str, np.ndarray],
     ) -> None:
+        """
+        Create a tomography result by computing the density matrix from the shots per basis.
+
+        Args:
+            shots_by_basis (Mapping[str, np.ndarray]): A mapping of each basis to an array of shots (0/1's) in each basis.
+        """
         zero_counts: dict[str, int] = {}
         one_counts: dict[str, int] = {}
         totals: dict[str, int] = {}

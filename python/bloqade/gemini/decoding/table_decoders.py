@@ -11,6 +11,8 @@ from bloqade.decoders._decoders.mld.utils import pack_boolean_array, shots_to_co
 
 from .confidence import ConfidenceDecoder
 
+# NOTE: We will plan to move this code to bloqade-decoders.
+
 logger = logging.getLogger(__name__)
 
 _COUNT_DTYPE = np.uint32
@@ -28,7 +30,7 @@ def _as_uint32_count_table(counts: np.ndarray) -> np.ndarray:
     return arr.astype(_COUNT_DTYPE, copy=False)
 
 
-# NOTE: when we migrate TableDecoderWithConfidence, we will add a shim import
+# NOTE: When we migrate TableDecoderWithConfidence, we will add a shim import
 # from bloqade.decoders import TableDecoderWithConfidence
 # as well as a deprecation warning saying that this is not the "preferred" import path and that users should import from bloqade.decoders.
 # NOTE (breaking change): for the TableDecoder constructor in bloqade.decoders, we expect a breaking change to not feed in det_obs_counts in the __init__ in TableDecoder.

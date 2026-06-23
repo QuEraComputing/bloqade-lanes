@@ -15,6 +15,8 @@ class _BasisDataset:
     observables: np.ndarray
 
 
+# NOTE: Although this function is currently unused, I am keeping it because it shows how one might sample more quickly from CliffT
+# if they don't have to convert the numpy arrays back to lists back to numpy arrays based on the current GeminiLogicalSimulatorTask Result return type.
 def _run_task(
     task: object,
     shots: int,

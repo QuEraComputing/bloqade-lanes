@@ -22,8 +22,8 @@ def _default_post_processing() -> ir.Method[..., _LogicalTomographyReturn]:
     return cast(ir.Method[..., _LogicalTomographyReturn], default_post_processing)
 
 
-# NOTE: this is basically what the user would "instantiate" for this specific
-# MSD experiment
+# NOTE: this is basically what the user would "instantiate" for the specific
+# MSD experiment in the "Experimental Demonstration of MSD" paper
 def _build_msd_primitives(
     theta: float,
     phi: float,

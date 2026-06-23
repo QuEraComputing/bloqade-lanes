@@ -17,7 +17,7 @@ _LogicalTomographyReturn = tuple[
 _ReturnT = TypeVar("_ReturnT")
 
 
-# TODO: in principle, these tomography kernels aren't gemini-specific.
+# TODO: In principle, these tomography kernels aren't gemini-specific.
 # BUT, right now, the kernels are written in the gemini logical dialect.
 # Can maybe move this code to bloqade-core.
 @dataclass(frozen=True)
@@ -86,7 +86,8 @@ def _produce_tomography_kernels(
         Mapping from generated kernel names to generated Kirin kernels.
     """
 
-    # TODO: remove the current customization.
+    # TODO: remove the current customization of allowing the user to supply a custom return_kernel.
+    # TODO: see if we can get rid of changing __name__ and __qualname__; see standard library functions in Kirin?
     def make_kernel(
         tomog_kernel: ir.Method[..., None],
         generated_name: str,

@@ -10,6 +10,7 @@ import numpy.typing as npt
 from bloqade.decoders import GurobiDecoder
 
 
+# NOTE: The code in this file should be moved t
 # TODO: this should inherit from BaseDecoder, but pyright fails on bloqade-decoders
 # main ver. because GurobiDecoder decode() method has return type that doesn't
 # match decode() signature on BaseDecoder (this is a problem with bloqade-decoders

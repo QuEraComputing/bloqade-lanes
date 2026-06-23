@@ -11,6 +11,7 @@ import stim
 _TargetKey = tuple[str, int]
 
 
+# NOTE: We may want to move this code to bloqade-decoders as standard library functions to support subsetting a detector error model.
 def _compose_independent_flip_probabilities(p_old: float, p_new: float) -> float:
     return p_old * (1.0 - p_new) + p_new * (1.0 - p_old)
 

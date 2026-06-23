@@ -513,6 +513,8 @@ class GeminiLogicalSimulator:
             post_processing,
         ) = compile_task(logical_kernel, m2dets, m2obs)
 
+        # TODO (Breaking): For the future, ideally we'd want to encode the simulator backend in the class itself or as a
+        # type parameter in the class. For now, we have a simple conditional to decide the simulator backend to use.
         if self.backend == "clifft":
             from bloqade.gemini.decoding.tasks import _CliffTSimulatorTask
 

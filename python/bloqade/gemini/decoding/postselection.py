@@ -7,10 +7,11 @@ import numpy as np
 from bloqade.decoders import BaseDecoder
 
 from .confidence import ConfidenceDecoder
-from .constants import _DEFAULT_BASIS_LABELS
 from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
 from .sampling import _BasisDataset
 from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
+
+_DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
 
 
 @dataclass(frozen=True)
@@ -268,6 +269,7 @@ def _shots_at_accepted_fraction(
     }
 
 
+# NOTE: We can consider moving this function to bloqade-core if it is "generic" enough.
 def _evaluate_cached_threshold_curve(
     decoded_results: Mapping[str, _DecodedPostselectionResult],
     *,
