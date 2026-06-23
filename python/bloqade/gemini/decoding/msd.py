@@ -28,7 +28,6 @@ def _build_msd_primitives(
     theta: float,
     phi: float,
     lam: float,
-    *,
     log: bool = True,
 ) -> _DecoderPrimitiveSet:
     """Build the state-preparation and logical-circuit primitives for MSD.
