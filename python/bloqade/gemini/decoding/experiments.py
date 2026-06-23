@@ -37,13 +37,25 @@ if TYPE_CHECKING:
     import tsim as tsim_backend
 
 
-# TODO: fix the type-checks on this file; the type-checks aren't working for some reason
 def magic_state_dist_steane(
     *,
     theta_offset: float = 0.0,
     phi_offset: float = 0.0,
     lam_offset: float = 0.0,
 ) -> tuple[ir.Method[..., Any], ir.Method[..., Any]]:
+    """
+    Returns the nonclifford prefix circuit and clifford logical circuit
+    used for magic state distillation. Note that the kernels take in the qubit register 'reg' as input.
+    This means that the kernels are technically agnostic to the number of input qubits.
+
+    Args:
+        theta_offset (float): An optional offset to theta to manually introduce rotation error in the nonclifford prefix. Defaults to 0.0.
+        phi_offset (float): An optional offset to phi to manually introduce rotation error in the nonclifford prefix. Defaults to 0.0.
+        lan_offset (float): An optional offset to lam to manually introduce rotation error in the nonclifford prefix. Defaults to 0.0.
+
+    Returns:
+        tuple[ir.Method[..., Any], ir.Method[..., Any]]: The (nonclifford_prefix, logical_circuit) pair.
+    """
     ideal_theta = math.acos(1 / math.sqrt(3))
     ideal_phi = 0.25 * math.pi
     ideal_lam = 0.0
@@ -58,6 +70,12 @@ def magic_state_dist_steane(
 
 
 def single_qubit_state_tomography() -> dict[str, ir.Method[..., Any]]:
+    """
+    Returns X, Y, and Z basis kernels used to perform single-qubit tomography. Note that the kernels take in the register as the input.
+
+    Returns:
+        dict[str, ir.Method[..., Any]]: A dictionary mapping "X", "Y", and "Z" to the respective tomography kernels.
+    """
     # return a list?
     # should return (X, Y, Z) in order, but can check this.
     return _build_tomography_primitives(output_qubit=0)
@@ -77,17 +95,11 @@ def empty_logical_circuit() -> ir.Method[..., Any]:
 
 # TODO: make this "cache" class abstract as well?
 class _PostSelectionExperimentCache:
-    # Going to add the kernels here for consistency.
-    # NOTE: basis-labeled dictionaries are slightly inconsistent with tuple
-    # based representations, but mappings are more flexible and match the
-    # lower-level code.
     dem_kernels: dict[str, ir.Method[..., Any]] | None
     dem_circuits: Mapping[str, tsim_backend.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
     decoders_with_confidence: Mapping[str, _DecoderPair] | None
     raw_results: Mapping[str, _BasisDataset] | None
-    # decoded_results maps each basis to decoded output observable shots plus
-    # one confidence score per accepted shot.
     decoded_results: Mapping[str, _DecodedPostselectionResult] | None
     thresholded_data: Mapping[str, np.ndarray] | None
     hardware_tasks: Mapping[str, GeminiLogicalSimulatorTask[Any]] | None
@@ -114,35 +126,52 @@ def _basis_dataset_from_task_result(
     )
 
 
-# TODO: should inherit from some "abstract" experiment workflow class?
-# ^^ what methods should this "abstract" experiment workflow class have???
-# NOTE: given how "simple" this PostSelectionExperiment class is, it's still hard for me
-# to understand why we are doing this "wizard" API to give it so much state...
+# TODO: should PostSelectionExperiment inherit from some "abstract" experiment workflow class?
+# ^ What methods should this "abstract" experiment workflow class have?
 class PostSelectionExperiment:
-    # TODO: have to specify the number of logical qubits and number of output qubits here? We can't call put the number of qubits
-    # in a kernel because then it makes it hard to compose kernels (e.g., for tomography)
+    """
+    A "wizard" class that orchestrates the steps of running a experiment to do tomography which obtains samples from the hardware
+    and runs decoding with postselection on your ancilla qubits.
+
+    It defines methods for creating noisy tomography circuits, creating decoders from the detector error models from those tomography circuits,
+    sampling from the hardware, and doing some analysis based on the confidence associated with each shot.
+
+    Attributes:
+        nonclifford_prefix (ir.Method[..., Any]): A SQuIN kernel consisting of a single layer of single-qubit gates applied to the physical qubits before the state-preparation circuit is applied.
+        clifford_circuit (ir.Method[..., Any]): A SQuIN kernel consisting of a Clifford circuit applied to the logical qubits (after logical encoding).
+        tomography_circuits (ir.Method[..., Any]): A mapping of basis strings to SQuIN kernels consisting of a clifford circuit applied to your logical qubits.
+        These kernels will be appended to your circuits in the following fashion, for each `basis_label in tomography_circuits`:
+            `nonclifford_prefix + clifford_circuit + tomography_circuits[basis_label]`
+            From these circuits in each basis, a DEM will be extracted to initialize decoders in each basis.
+        decoder (type[ConfidenceDecoder]): A type of ConfidenceDecoder used to initialize decoders.
+        decoder_init_args (Mapping[str, Any] | None): Optional arguments that can be passed in to initialize the decoder. Defaults to None.
+    """
+
     def __init__(
         self,
         nonclifford_prefix: ir.Method[..., Any],
         clifford_circuit: ir.Method[..., Any],
         tomography_circuits: Mapping[str, ir.Method[..., Any]],
         decoder: type[ConfidenceDecoder],
-        # specifying these as a dictionary is reasonable? Use a mapping instead?
-        decoder_init_args: dict[str, Any] | None = None,
+        decoder_init_args: Mapping[str, Any] | None = None,
     ):
         self.nonclifford_prefix = nonclifford_prefix
         self.clifford_circuit = clifford_circuit
         self.tomography_circuits = dict(tomography_circuits)
         self.decoder = decoder
-        self.decoder_init_args = {} if decoder_init_args is None else decoder_init_args
+        self.decoder_init_args = (
+            {} if decoder_init_args is None else dict(decoder_init_args)
+        )
 
         self._postselection_exp_cache = _PostSelectionExperimentCache()
         # NOTE: hardcoding this for now (I guess) to support having some
         # interface for adding noise to the circuit and compiling it down.
+        # This simulator object is used for compiling down and adding noise to the DEM
         self._simulator = GeminiLogicalSimulator()
 
-    # TODO: implement a pass to infer the number of qubits and the output qubit from a kernel?
-    # for the device.
+    # TODO: We have to specify the number of logical qubits and number of output qubits here because, given our kernels that take reg as an input, we
+    # don't know how many logical qubits that kernel has. -- we can try to implement a compiler pass to infer both the number of qubits and the
+    # output qubit from a kernel, however.
     def kernels(
         self,
         num_logical_qubits: int = 5,
