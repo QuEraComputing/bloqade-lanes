@@ -10,6 +10,7 @@ from bloqade.gemini.common.dialects.movement.stmts import (
     WordId,
     ZoneId,
 )
+from bloqade.gemini.logical import loc
 from bloqade.gemini.physical import kernel as movement_kernel
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
@@ -66,3 +67,42 @@ def test_param_word_id_rewrites_to_statement():
     assert not any(isinstance(s, py.GetAttr) for s in stmts)
     ret = next(s for s in stmts if isinstance(s, func.Return))
     assert isinstance(ret.value.owner, WordId)
+
+
+# -- integration: a constant address folds the attribute read to a constant --
+
+
+def test_constant_word_id_folds():
+    @movement_kernel(verify=False)
+    def k():
+        return loc(zone_id=2, word_id=3, site_id=5).word_id
+
+    stmts = list(k.callable_region.walk())
+    assert not any(isinstance(s, py.GetAttr) for s in stmts)
+    ret = next(s for s in stmts if isinstance(s, func.Return))
+    assert isinstance(ret.value.owner, py.Constant)
+    assert ret.value.owner.value.unwrap() == 3
+
+
+def test_constant_site_id_folds():
+    @movement_kernel(verify=False)
+    def k():
+        return loc(zone_id=2, word_id=3, site_id=5).site_id
+
+    stmts = list(k.callable_region.walk())
+    assert not any(isinstance(s, py.GetAttr) for s in stmts)
+    ret = next(s for s in stmts if isinstance(s, func.Return))
+    assert isinstance(ret.value.owner, py.Constant)
+    assert ret.value.owner.value.unwrap() == 5
+
+
+def test_constant_zone_id_folds():
+    @movement_kernel(verify=False)
+    def k():
+        return loc(zone_id=2, word_id=3, site_id=5).zone_id
+
+    stmts = list(k.callable_region.walk())
+    assert not any(isinstance(s, py.GetAttr) for s in stmts)
+    ret = next(s for s in stmts if isinstance(s, func.Return))
+    assert isinstance(ret.value.owner, py.Constant)
+    assert ret.value.owner.value.unwrap() == 2
