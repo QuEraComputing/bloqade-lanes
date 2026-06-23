@@ -2,11 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar, cast
 
+from bloqade.decoders.dialects.annotate.types import Detector, Observable
 from kirin import ir
+from kirin.dialects import ilist
 
 from bloqade import qubit, squin
+
+_LogicalTomographyReturn = tuple[
+    ilist.IList[Detector, Any],
+    ilist.IList[Observable, Any],
+]
+_ReturnT = TypeVar("_ReturnT")
 
 
 # TODO: in principle, these tomography kernels aren't gemini-specific.
@@ -22,13 +30,13 @@ class _DecoderPrimitiveSet:
         logical_circuit: Squin kernel for the logical circuit under test.
     """
 
-    state_injection_circuit: ir.Method[..., Any]
-    logical_circuit: ir.Method[..., Any]
+    state_injection_circuit: ir.Method[..., None]
+    logical_circuit: ir.Method[..., None]
 
 
 def _build_tomography_primitives(
     *, output_qubit: int
-) -> dict[str, ir.Method[..., Any]]:
+) -> dict[str, ir.Method[..., None]]:
     """Build X/Y/Z tomography-basis Squin kernels for one output qubit."""
 
     @squin.kernel
@@ -53,13 +61,13 @@ def _build_tomography_primitives(
 # and attempt to add nonclifford gates at the end of the circuit
 def _produce_tomography_kernels(
     num_qubits: int,
-    logical_kernel: ir.Method[..., Any],
-    tomography_kernels: Mapping[str, ir.Method[..., Any]],
-    return_val_fn: ir.Method[..., Any] | Callable[[Any], Any],
+    logical_kernel: ir.Method[..., None],
+    tomography_kernels: Mapping[str, ir.Method[..., None]],
+    return_val_fn: ir.Method[..., _ReturnT] | Callable[[object], _ReturnT],
     kernel_name: str,
     *,
     supply_reg: bool = True,
-) -> Mapping[str, ir.Method[..., Any]]:
+) -> Mapping[str, ir.Method[..., _ReturnT]]:
     """Compose logical and tomography kernels into labeled tomography kernels.
 
     Args:
@@ -80,9 +88,9 @@ def _produce_tomography_kernels(
 
     # TODO: remove the current customization.
     def make_kernel(
-        tomog_kernel: ir.Method[..., Any],
+        tomog_kernel: ir.Method[..., None],
         generated_name: str,
-    ) -> ir.Method[..., Any]:
+    ) -> ir.Method[..., _ReturnT]:
         def inner_tomog_kernel(reg):
             logical_kernel(reg)
             tomog_kernel(reg)
@@ -92,7 +100,7 @@ def _produce_tomography_kernels(
         inner_kernel = squin.kernel(inner_tomog_kernel)
 
         if not supply_reg:
-            return inner_kernel
+            return cast(ir.Method[..., _ReturnT], inner_kernel)
 
         def alloc_kernel():
             reg = qubit.qalloc(num_qubits)
@@ -103,7 +111,10 @@ def _produce_tomography_kernels(
         alloc_kernel.__qualname__ = generated_name
         from bloqade.gemini import logical as gemini_logical
 
-        return gemini_logical.kernel(aggressive_unroll=True)(alloc_kernel)
+        return cast(
+            ir.Method[..., _ReturnT],
+            gemini_logical.kernel(aggressive_unroll=True)(alloc_kernel),
+        )
 
     return {
         tomog_kernel_key: make_kernel(
@@ -111,17 +122,4 @@ def _produce_tomography_kernels(
             f"{kernel_name}_{tomog_kernel_key.lower()}",
         )
         for tomog_kernel_key, tomog_kernel in tomography_kernels.items()
-    }
-
-
-# This is to give us a dictionary of form {"X": ..., "Y": ..., "Z": ...} for
-# downstream consumption.
-def _kernels_by_tomography_basis(
-    kernels: Mapping[str, ir.Method[..., Any]],
-) -> dict[str, ir.Method[..., Any]]:
-    """Rekey generated tomography kernels by basis label."""
-
-    return {
-        kernel_name.split("_")[-1].upper(): kernel
-        for kernel_name, kernel in kernels.items()
     }

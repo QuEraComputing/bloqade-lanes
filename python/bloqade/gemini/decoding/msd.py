@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import cast
 
 from kirin import ir
 from kirin.dialects import ilist
@@ -11,14 +11,15 @@ from bloqade import squin
 from .kernels import (
     _build_tomography_primitives,
     _DecoderPrimitiveSet,
+    _LogicalTomographyReturn,
     _produce_tomography_kernels,
 )
 
 
-def _default_post_processing():
+def _default_post_processing() -> ir.Method[..., _LogicalTomographyReturn]:
     from bloqade.gemini.logical.stdlib import default_post_processing
 
-    return default_post_processing
+    return cast(ir.Method[..., _LogicalTomographyReturn], default_post_processing)
 
 
 # NOTE: this is basically what the user would "instantiate" for this specific
@@ -68,8 +69,8 @@ def _build_msd_primitives(
 def _build_decoder_kernel_bundle(
     primitive_set: _DecoderPrimitiveSet,
     num_logical_qubits: int = 5,
-    tomography_kernels: Mapping[str, ir.Method[..., Any]] | None = None,
-) -> dict[str, ir.Method[..., Any]]:
+    tomography_kernels: Mapping[str, ir.Method[..., None]] | None = None,
+) -> dict[str, ir.Method[..., _LogicalTomographyReturn]]:
     """Build basis-labeled MSD tomography kernels.
 
     Args:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Callable, cast
 
 import numpy as np
 import stim
@@ -18,7 +18,11 @@ from bloqade.gemini.device import (
 from .confidence import ConfidenceDecoder
 from .constants import _DEFAULT_BASIS_LABELS
 from .dem import _sub_detector_error_model
-from .kernels import _build_tomography_primitives, _DecoderPrimitiveSet
+from .kernels import (
+    _build_tomography_primitives,
+    _DecoderPrimitiveSet,
+    _LogicalTomographyReturn,
+)
 from .layout import _DEFAULT_SYNDROME_LAYOUT
 from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
 from .postselection import (
@@ -41,7 +45,7 @@ def magic_state_dist_steane(
     theta_offset: float = 0.0,
     phi_offset: float = 0.0,
     lam_offset: float = 0.0,
-) -> tuple[ir.Method[..., Any], ir.Method[..., Any]]:
+) -> tuple[ir.Method[..., None], ir.Method[..., None]]:
     """
     Returns the nonclifford prefix circuit and clifford logical circuit
     used for magic state distillation. Note that the kernels take in the qubit register 'reg' as input.
@@ -53,7 +57,7 @@ def magic_state_dist_steane(
         lan_offset (float): An optional offset to lam to manually introduce rotation error in the nonclifford prefix. Defaults to 0.0.
 
     Returns:
-        tuple[ir.Method[..., Any], ir.Method[..., Any]]: The (nonclifford_prefix, logical_circuit) pair.
+        tuple[ir.Method[..., None], ir.Method[..., None]]: The (nonclifford_prefix, logical_circuit) pair.
     """
     ideal_theta = math.acos(1 / math.sqrt(3))
     ideal_phi = 0.25 * math.pi
@@ -68,19 +72,19 @@ def magic_state_dist_steane(
     return primitive_set.state_injection_circuit, primitive_set.logical_circuit
 
 
-def single_qubit_state_tomography() -> dict[str, ir.Method[..., Any]]:
+def single_qubit_state_tomography() -> dict[str, ir.Method[..., None]]:
     """
     Returns X, Y, and Z basis kernels used to perform single-qubit tomography. Note that the kernels take in the register as the input.
 
     Returns:
-        dict[str, ir.Method[..., Any]]: A dictionary mapping "X", "Y", and "Z" to the respective tomography kernels.
+        dict[str, ir.Method[..., None]]: A dictionary mapping "X", "Y", and "Z" to the respective tomography kernels.
     """
     # return a list?
     # should return (X, Y, Z) in order, but can check this.
     return _build_tomography_primitives(output_qubit=0)
 
 
-def empty_logical_circuit() -> ir.Method[..., Any]:
+def empty_logical_circuit() -> ir.Method[..., None]:
     """Return a no-op logical Squin kernel for injected-state tomography."""
 
     from bloqade import squin
@@ -94,14 +98,16 @@ def empty_logical_circuit() -> ir.Method[..., Any]:
 
 # TODO: make this "cache" class abstract as well?
 class _PostSelectionExperimentCache:
-    dem_kernels: dict[str, ir.Method[..., Any]] | None
+    dem_kernels: dict[str, ir.Method[..., _LogicalTomographyReturn]] | None
     dem_circuits: Mapping[str, tsim_backend.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
     decoders_with_confidence: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]] | None
     raw_results: Mapping[str, _BasisDataset] | None
     decoded_results: Mapping[str, _DecodedPostselectionResult] | None
     thresholded_data: Mapping[str, np.ndarray] | None
-    hardware_tasks: Mapping[str, GeminiLogicalSimulatorTask[Any]] | None
+    hardware_tasks: (
+        Mapping[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]] | None
+    )
 
     def __init__(self):
         self.dem_kernels = None
@@ -115,7 +121,7 @@ class _PostSelectionExperimentCache:
 
 
 def _basis_dataset_from_task_result(
-    result: _BasisDataset | Result[Any],
+    result: _BasisDataset | Result[_LogicalTomographyReturn],
 ) -> _BasisDataset:
     if isinstance(result, _BasisDataset):
         return result
@@ -136,23 +142,23 @@ class PostSelectionExperiment:
     sampling from the hardware, and doing some analysis based on the confidence associated with each shot.
 
     Attributes:
-        nonclifford_prefix (ir.Method[..., Any]): A SQuIN kernel consisting of a single layer of single-qubit gates applied to the physical qubits before the state-preparation circuit is applied.
-        clifford_circuit (ir.Method[..., Any]): A SQuIN kernel consisting of a Clifford circuit applied to the logical qubits (after logical encoding).
-        tomography_circuits (ir.Method[..., Any]): A mapping of basis strings to SQuIN kernels consisting of a clifford circuit applied to your logical qubits.
+        nonclifford_prefix (ir.Method[..., None]): A SQuIN kernel consisting of a single layer of single-qubit gates applied to the physical qubits before the state-preparation circuit is applied.
+        clifford_circuit (ir.Method[..., None]): A SQuIN kernel consisting of a Clifford circuit applied to the logical qubits (after logical encoding).
+        tomography_circuits (ir.Method[..., None]): A mapping of basis strings to SQuIN kernels consisting of a clifford circuit applied to your logical qubits.
         These kernels will be appended to your circuits in the following fashion, for each `basis_label in tomography_circuits`:
             `nonclifford_prefix + clifford_circuit + tomography_circuits[basis_label]`
             From these circuits in each basis, a DEM will be extracted to initialize decoders in each basis.
         decoder (type[ConfidenceDecoder]): A type of ConfidenceDecoder used to initialize decoders.
-        decoder_init_args (Mapping[str, Any] | None): Optional arguments that can be passed in to initialize the decoder. Defaults to None.
+        decoder_init_args (Mapping[str, object] | None): Optional arguments that can be passed in to initialize the decoder. Defaults to None.
     """
 
     def __init__(
         self,
-        nonclifford_prefix: ir.Method[..., Any],
-        clifford_circuit: ir.Method[..., Any],
-        tomography_circuits: Mapping[str, ir.Method[..., Any]],
+        nonclifford_prefix: ir.Method[..., None],
+        clifford_circuit: ir.Method[..., None],
+        tomography_circuits: Mapping[str, ir.Method[..., None]],
         decoder: type[ConfidenceDecoder],
-        decoder_init_args: Mapping[str, Any] | None = None,
+        decoder_init_args: Mapping[str, object] | None = None,
     ):
         self.nonclifford_prefix = nonclifford_prefix
         self.clifford_circuit = clifford_circuit
@@ -175,7 +181,7 @@ class PostSelectionExperiment:
     def kernels(
         self,
         num_logical_qubits: int = 5,
-    ) -> dict[str, ir.Method[..., Any]]:
+    ) -> dict[str, ir.Method[..., _LogicalTomographyReturn]]:
         """
         Composes the nonclifford, clifford, and tomography kernels into a dictionary mapping each basis label to
         the respective nonclifford + clifford + tomography kernel.
@@ -184,7 +190,7 @@ class PostSelectionExperiment:
             num_logical_qubits (int): An integer corresponding to the number of logical qubits allocated in the kernels.
 
         Returns:
-            dict[str, ir.Method[..., Any]]: A dictionary mapping the tomography basis labels to the respective kernel used for tomography.
+            dict[str, ir.Method[..., _LogicalTomographyReturn]]: A dictionary mapping the tomography basis labels to the respective kernel used for tomography.
         """
         # TODO: change the name of _DecoderPrimitiveSet --> whole_circuit
         decoder_primitive_set = _DecoderPrimitiveSet(
@@ -313,12 +319,15 @@ class PostSelectionExperiment:
         # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
         # TaskABC[GeminiLogicalFuture]. However, currently, GeminiLogicalSimulatorTask does not inherit from the abstract "task" types in
         # bloqade-core.
-    ) -> dict[str, GeminiLogicalSimulatorTask[Any]]:
+    ) -> dict[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]]:
+        """ """
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
-        actual_tasks: dict[str, GeminiLogicalSimulatorTask[Any]] = {
-            basis: cast(GeminiLogicalSimulatorTask[Any], device.task(kernel.similar()))
+        actual_tasks: dict[
+            str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]
+        ] = {
+            basis: device.task(kernel.similar())
             for basis, kernel in dem_kernels.items()
         }
         self._postselection_exp_cache.hardware_tasks = actual_tasks
