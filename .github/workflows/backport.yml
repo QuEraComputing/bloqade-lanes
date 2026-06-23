@@ -160,7 +160,7 @@ jobs:
 
                 // Commit, push, and create PR
                 execSync(`git commit -m "Backport PR #${prNum} (${commit}) to ${branch}"`);
-                execSync(`git push origin ${backportBranch}`);
+                execSync(`git push --force-with-lease origin ${backportBranch}`);
                 const pr = await github.rest.pulls.create({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
