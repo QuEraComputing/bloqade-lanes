@@ -41,6 +41,22 @@ class MoveTo(ir.Statement):
 
 
 @statement(dialect=dialect)
+class Permute(ir.Statement):
+    """User-facing permute directive: move qubits into a permutation of their
+    own current locations. qubits[i] moves to the current location of
+    qubits[perm[i]].
+
+    Lowered from a Python call by FromPythonCall. RewritePlaceOperations rewrites
+    this to a StaticPlacement(place.Permute) after const-folding the perm ilist.
+    """
+
+    name = "permute"
+    traits = frozenset({lowering.FromPythonCall()})
+    qubits: ir.SSAValue = info.argument(type=ilist.IListType[QubitType, Len])
+    perm: ir.SSAValue = info.argument(type=ilist.IListType[types.Int, Len])
+
+
+@statement(dialect=dialect)
 class WordId(ir.Statement):
     """Read the word_id of a LocationAddress (produced by the GetAttr rewrite)."""
 
