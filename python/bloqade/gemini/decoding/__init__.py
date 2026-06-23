@@ -12,6 +12,7 @@ from bloqade.gemini.decoding.experiments import (
     magic_state_dist_steane,
     single_qubit_state_tomography,
 )
+from bloqade.gemini.decoding.postselection import PostselectionCurveData
 from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
 from bloqade.gemini.decoding.tomography import TomographyResult
 
@@ -19,6 +20,7 @@ __all__ = [
     "ConfidenceDecoder",
     "GurobiDecoderWithConfidence",
     "PostSelectionExperiment",
+    "PostselectionCurveData",
     "TableDecoderWithConfidence",
     "TomographyResult",
     "empty_logical_circuit",

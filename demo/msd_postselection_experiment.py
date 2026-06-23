@@ -83,7 +83,7 @@ msd_mld_exp.initialize_decoders()
 msd_mld_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 msd_mld_exp.get_samples(num_shots=1_000_000)
 msd_mld_exp.decode_and_postselect(
-    np.array([[1, 0, 1, 1]], dtype=np.uint8),
+    np.array([[1, 0, 1, 1]]),
     decoder_name="MLD",
 )
 
@@ -96,7 +96,7 @@ msd_mle_exp.initialize_decoders()
 msd_mle_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 msd_mle_exp.get_samples(num_shots=1_000_000)
 msd_mle_exp.decode_and_postselect(
-    np.array([[1, 0, 1, 1]], dtype=np.uint8),
+    np.array([[1, 0, 1, 1]]),
     decoder_name="MLE",
 )
 
@@ -110,7 +110,7 @@ injected_mld_exp.initialize_decoders()
 injected_mld_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 injected_mld_exp.get_samples(num_shots=1_000_000)
 injected_mld_exp.decode_and_postselect(
-    np.array([[]], dtype=np.uint8),
+    np.array([[]]),
     decoder_name="Injected MLD",
 )
 

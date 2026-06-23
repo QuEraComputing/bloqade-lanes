@@ -5,9 +5,11 @@ from typing import cast
 
 import numpy as np
 
+from .postselection import PostselectionCurveData
+
 
 def _plot_decoder_curves(
-    curves: Mapping[str, Mapping[str, np.ndarray]],
+    curves: Mapping[str, PostselectionCurveData],
     *,
     injected_summary: float | None = None,
     min_accepted_fraction: float = 0.04,
@@ -29,8 +31,8 @@ def _plot_decoder_curves(
     fig = ax.figure
 
     for label, curve in curves.items():
-        accepted = np.asarray(curve["accepted_fraction"], dtype=np.float64)
-        fidelity = np.asarray(curve["fidelity"], dtype=np.float64)
+        accepted = np.asarray(curve.accepted_fraction, dtype=np.float64)
+        fidelity = np.asarray(curve.fidelity, dtype=np.float64)
         if len(accepted) > 0:
             ax.plot(accepted, fidelity, marker="o", linewidth=1.5, label=label)
 

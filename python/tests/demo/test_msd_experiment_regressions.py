@@ -9,6 +9,7 @@ from bloqade.gemini.decoding.experiments import (
     _PostSelectionExperimentCache,
 )
 from bloqade.gemini.decoding.postselection import (
+    PostselectionCurveData,
     _build_generic_threshold_tables,
     _DecodedPostselectionResult,
     _evaluate_cached_threshold_curve,
@@ -181,9 +182,8 @@ def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
         total_shots=30,
     )
 
-    assert set(curve) == {"accepted_fraction", "fidelity", "point_fidelity"}
-    assert "credible" not in curve
-    assert np.all(curve["fidelity"] == curve["point_fidelity"])
+    assert isinstance(curve, PostselectionCurveData)
+    assert np.all(curve.fidelity == curve.point_fidelity)
 
 
 def test_postselection_experiment_decode_and_tomography_result_with_cached_data():

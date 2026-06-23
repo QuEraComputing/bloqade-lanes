@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Callable, cast
 
 import numpy as np
@@ -10,13 +10,13 @@ from bloqade.decoders import BaseDecoder
 from kirin import ir
 
 from bloqade.gemini.device import (
+    DetectorResult,
     GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask,
     Result,
 )
 
 from .confidence import ConfidenceDecoder
-from .constants import _DEFAULT_BASIS_LABELS
 from .dem import _sub_detector_error_model
 from .kernels import (
     _build_tomography_primitives,
@@ -26,6 +26,7 @@ from .kernels import (
 from .layout import _DEFAULT_SYNDROME_LAYOUT
 from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
 from .postselection import (
+    PostselectionCurveData,
     _build_generic_threshold_tables,
     _DecodedPostselectionResult,
     _evaluate_cached_threshold_curve,
@@ -104,7 +105,7 @@ class _PostSelectionExperimentCache:
     decoders_with_confidence: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]] | None
     raw_results: Mapping[str, _BasisDataset] | None
     decoded_results: Mapping[str, _DecodedPostselectionResult] | None
-    thresholded_data: Mapping[str, np.ndarray] | None
+    thresholded_data: PostselectionCurveData | None
     hardware_tasks: (
         Mapping[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]] | None
     )
@@ -121,7 +122,7 @@ class _PostSelectionExperimentCache:
 
 
 def _basis_dataset_from_task_result(
-    result: _BasisDataset | Result[_LogicalTomographyReturn],
+    result: _BasisDataset | DetectorResult | Result[_LogicalTomographyReturn],
 ) -> _BasisDataset:
     if isinstance(result, _BasisDataset):
         return result
@@ -315,12 +316,15 @@ class PostSelectionExperiment:
 
     def make_tasks(
         self,
+        # TODO: Ideally, we don't want to make the type of the device GeminiLogicalSimulator (this should be flexible to support the type representing
+        # the hardware). However, because GeminiLogicalSimulator currently doesn't obey any interface/inheritance for a generic hardware object,
+        # we can't really replace this with a more specific type without changing the design of GeminiLogicalSimulator.
         device: GeminiLogicalSimulator,
         # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
         # TaskABC[GeminiLogicalFuture]. However, currently, GeminiLogicalSimulatorTask does not inherit from the abstract "task" types in
         # bloqade-core.
     ) -> dict[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]]:
-        """ """
+        """Prepares tasks for submission to the hardware device."""
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
@@ -333,21 +337,28 @@ class PostSelectionExperiment:
         self._postselection_exp_cache.hardware_tasks = actual_tasks
         return actual_tasks
 
-    # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
-    # NOTE: each experiment evaluates on a DIFFERENT set of 'hardware' samples. This might not be what we want (is expensive).
-    # ^ might want a way to reuse hardware samples across different "experiments".
-    # NOTE: in the future, we may want to define a "get_samples_async" method that allows
-    # the user to get samples asynchronously. Because here it's basically a blocking implementation
+    # NOTE: This is NOT idempotent. Calling it multiple times WILL give you DIFFERENT sample data, because you will re-sample from the hardware.
+    # NOTE: Each experiment evaluates on a DIFFERENT set of 'hardware' samples. This might not be what we want (is expensive).
+    # ^ We might want a way to reuse hardware samples across different "experiments".
+    # NOTE: In the future, we may want to define a "get_samples_async" method that allows
+    # the user to get futures and later request to actually get the samples on their own time (a "non-blocking" implementation).
     def get_samples(
         self,
         num_shots: int,
     ) -> dict[str, _BasisDataset]:
+        """For each basis, samples num_shots from the hardware. Returns the detector and observable information for each task."""
         actual_tasks = self._postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
-        actual_data = {
-            basis: _basis_dataset_from_task_result(task.run(num_shots))
+        # In this implementation, we request samples for each basis in parallel, and then iteratively block
+        # on X, Y, and then Z being finished.
+        futures = {
+            basis: task.run_async(num_shots, run_detectors=True)
             for basis, task in actual_tasks.items()
+        }
+        actual_data = {
+            basis: _basis_dataset_from_task_result(future.result())
+            for basis, future in futures.items()
         }
         self._postselection_exp_cache.raw_results = actual_data
         return actual_data
@@ -355,8 +366,25 @@ class PostSelectionExperiment:
     def decode_and_postselect(
         self,
         postselection_condition: np.ndarray,
-        decoder_name: str | None = "decoder",
+        decoder_name: str | None = None,
     ) -> dict[str, _DecodedPostselectionResult]:
+        """
+        With the resulting shot data from the hardware samples, runs the following steps:
+        1. Decoding and correction on the ancilla qubits
+        2. Filtering shots whose corrected ancilla observable is a valid pattern in postselection_condition
+        3. Out of these filtered shots, decode and correct the output qubit
+        4. Returns the corrected observables as well as the confidence score associated with each observable.
+
+        Args:
+            postselection_condition (np.ndarray): A 2D numpy array of shape (num_conditions, num_ancillae) representing the valid ancilla patterns to postselect on.
+                Example: If postselection_condition = np.array([[1, 0, 1, 1]]), then we will only accept shots where the first ancilla is 1, the second ancilla is 0, the third ancilla is 1, and the fourth ancilla is 1
+                after those ancilla have been corrected by the decoder.
+            decoder_name (str | None): The name of the decoder, used for displaying the progress bar during decoding.
+                If None, no progress bar is displayed.
+
+        Returns:
+            dict[str, _DecodedPostselectionResult]: A dictionary that maps each basis to postselected observables and confidence scores per shot.
+        """
         actual_data = self._postselection_exp_cache.raw_results
         decoder_map = self._postselection_exp_cache.decoders_with_confidence
         if actual_data is None:
@@ -381,16 +409,31 @@ class PostSelectionExperiment:
         self,
         *,
         target_bloch: np.ndarray = _DEFAULT_TARGET_BLOCH,
-        basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
         threshold_points: int = 64,
         min_accepted_per_basis: int = 50,
-    ) -> dict[str, np.ndarray]:
+    ) -> PostselectionCurveData:
+        """
+        Analyzes the shot data to produce arrays for the fidelity to some target state as a function of the fraction of total accepted shots.
+        Produces various thresholds of accepted shots by thresholding on the confidence score associated with each shot.
+
+        Args:
+            target_bloch (np.ndarray): The bloch vector to which fidelity is computed. Defaults to np.array([1.0, 1.0, 1.0]) / np.sqrt(3).
+            threshold_points (int): The number of thresholds that we would like to compute. We get thresholds at evenly spaced quantiles on the array of
+            confidence scores across all shots in each basis. Defaults to 64.
+            min_accepted_per_basis (int): The minimum number of shots that we require per basis in order to do tomography. This is to prevent very
+            inaccurate estimates for the tomography due to shot count in a basis being very low. Defaults to 50.
+
+        Returns:
+            PostselectionCurveData: The accepted fractions and point fidelities
+            for the thresholded curve.
+        """
         decoded_results = self._postselection_exp_cache.decoded_results
         actual_data = self._postselection_exp_cache.raw_results
         if decoded_results is None:
             raise RuntimeError("decode_and_postselect must be called before analysis.")
         if actual_data is None:
             raise RuntimeError("get_samples must be called before analysis.")
+        basis_labels = tuple(decoded_results.keys())
         total_shots = sum(len(dataset.observables) for dataset in actual_data.values())
         threshold_curve = _evaluate_cached_threshold_curve(
             decoded_results,
@@ -403,21 +446,26 @@ class PostSelectionExperiment:
         self._postselection_exp_cache.thresholded_data = threshold_curve
         return threshold_curve
 
-    # NOTE: the maximum number of shots that you can "accept" is equal to the
+    # NOTE: The maximum number of shots that you can "accept" is equal to the
     # number of shots that pass decoding of the ancilla after all observables on ancilla
-    # are 0. If you wanted to truly have the ability to accept shots including those that
-    # DON'T pass ancilla postselection threshold, then you'd have to run your
-    # decoder on the output observable for ALL shots which is more expensive.
+    # are 0.
     def tomography_result(
         self,
         accepted_fraction: float,
-        *,
-        basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
     ) -> TomographyResult:
-        """Return tomography shots after confidence-ranked postselection.
+        """
+        Returns a TomographyResult after decoding and postselection with the option to manually specify the fraction
+        of shots accepted.
 
-        ``accepted_fraction`` is interpreted relative to the shots that already
-        passed factory postselection.
+        The implementation will find the minimum number of shots to accept where the fraction of accepted shots is >= accepted_fraction,
+        sorted by highest to lowest confidence.
+
+        Args:
+            accepted_fraction (float): The fraction of shots to accept out of shots that passed postselection. Note that if accepted_fraction == 1.0, this means
+            accepting all shots that passed postselection, not all shots used to perform the experiment.
+
+        Returns:
+            TomographyResult: The resulting shots in each basis based on the accepted_fraction provided.
         """
 
         decoded_results = self._postselection_exp_cache.decoded_results
@@ -426,6 +474,7 @@ class PostSelectionExperiment:
                 "decode_and_postselect must be called before tomography_result."
             )
 
+        basis_labels = tuple(decoded_results.keys())
         shots_by_basis = _shots_at_accepted_fraction(
             decoded_results,
             accepted_fraction,
@@ -436,6 +485,7 @@ class PostSelectionExperiment:
     def analysis_visualization(
         self, min_accepted_fraction: float = 0.04, title: str | None = None
     ):
+        """Plots the curve of the fidelity vs. accepted fraction, with a cutoff of min_accepted_fraction as well as a supplied title."""
         if self._postselection_exp_cache.thresholded_data is None:
             raise RuntimeError(
                 "analysis_f_vs_fraction must be called before visualization."

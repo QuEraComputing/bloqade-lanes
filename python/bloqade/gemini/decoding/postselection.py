@@ -22,6 +22,15 @@ class _DecodedPostselectionResult:
     confidence: np.ndarray
 
 
+@dataclass(frozen=True)
+class PostselectionCurveData:
+    """Point-estimate fidelity curve from thresholded postselection."""
+
+    accepted_fraction: np.ndarray
+    fidelity: np.ndarray
+    point_fidelity: np.ndarray
+
+
 def _decode_detector_batch(
     decoder: BaseDecoder, detector_bits: np.ndarray
 ) -> np.ndarray:
@@ -253,7 +262,7 @@ def _evaluate_cached_threshold_curve(
     target_bloch: np.ndarray = _DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
-) -> dict[str, np.ndarray]:
+) -> PostselectionCurveData:
     """Evaluate a point-fidelity curve from decoded shots and confidences."""
 
     confidence_arrays = [
@@ -294,8 +303,8 @@ def _evaluate_cached_threshold_curve(
     order = np.argsort(accepted_fractions)
     accepted = np.asarray(accepted_fractions, dtype=np.float64)[order]
     fidelity = np.asarray(fidelities, dtype=np.float64)[order]
-    return {
-        "accepted_fraction": accepted,
-        "fidelity": fidelity,
-        "point_fidelity": fidelity.copy(),
-    }
+    return PostselectionCurveData(
+        accepted_fraction=accepted,
+        fidelity=fidelity,
+        point_fidelity=fidelity.copy(),
+    )
