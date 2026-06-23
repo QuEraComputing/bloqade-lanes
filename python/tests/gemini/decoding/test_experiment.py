@@ -180,6 +180,145 @@ def test_postselection_experiment_kernels_sets_cache(msd_mld_exp, msd_mld_kernel
     assert msd_mld_exp._postselection_exp_cache.dem_kernels is msd_mld_kernels
 
 
+def _new_mld_experiment(msd_circuits, tomography_circuits) -> PostSelectionExperiment:
+    nonclifford_prefix, clifford_circuit = msd_circuits
+    return PostSelectionExperiment(
+        nonclifford_prefix,
+        clifford_circuit,
+        tomography_circuits,
+        TableDecoderWithConfidence,
+        {
+            "seed": 10,
+            "num_shots": 10,
+        },
+    )
+
+
+def test_postselection_experiment_dem_circuits_requires_kernels(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(
+        RuntimeError, match="kernels must be called before dem_circuits"
+    ):
+        exp.dem_circuits()
+
+
+def test_postselection_experiment_dems_requires_dem_circuits(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(RuntimeError, match="dem_circuits must be called before dems"):
+        exp.dems()
+
+
+def test_postselection_experiment_initialize_decoders_requires_dems(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(
+        RuntimeError, match="dems must be called before initialize_decoders"
+    ):
+        exp.initialize_decoders()
+
+
+def test_postselection_experiment_make_tasks_requires_kernels(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(RuntimeError, match="kernels must be called before make_tasks"):
+        exp.make_tasks(GeminiLogicalSimulator())
+
+
+def test_postselection_experiment_get_samples_requires_make_tasks(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(
+        RuntimeError, match="make_tasks must be called before get_samples"
+    ):
+        exp.get_samples(num_shots=10)
+
+
+def test_postselection_experiment_decode_requires_samples(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(
+        RuntimeError, match="get_samples must be called before decoding"
+    ):
+        exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
+
+
+def test_postselection_experiment_decode_requires_decoders_after_samples(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+    exp._postselection_exp_cache.raw_results = {
+        "X": _BasisDataset(
+            detectors=np.zeros((2, 15), dtype=np.uint8),
+            observables=np.zeros((2, 5), dtype=np.uint8),
+        )
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="initialize_decoders must be called before decoding",
+    ):
+        exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
+
+
+def test_postselection_experiment_analysis_requires_decode(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(
+        RuntimeError, match="decode_and_postselect must be called before analysis"
+    ):
+        exp.analysis_f_vs_fraction()
+
+
+def test_postselection_experiment_tomography_result_requires_decode(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(
+        RuntimeError,
+        match="decode_and_postselect must be called before tomography_result",
+    ):
+        exp.tomography_result(accepted_fraction=1.0)
+
+
+def test_postselection_experiment_visualization_requires_analysis(
+    msd_circuits,
+    tomography_circuits,
+):
+    exp = _new_mld_experiment(msd_circuits, tomography_circuits)
+
+    with pytest.raises(
+        RuntimeError,
+        match="analysis_f_vs_fraction must be called before visualization",
+    ):
+        exp.analysis_visualization()
+
+
 def test_postselection_experiment_kernels_basis_keys_and_tomography_suffix(
     msd_mld_kernels,
 ):
