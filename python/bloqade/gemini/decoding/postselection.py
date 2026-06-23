@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import numpy as np
 from bloqade.decoders import BaseDecoder
 
-from .bit_packing import pack_boolean_array, packed_pattern_targets
 from .confidence import ConfidenceDecoder
 from .constants import _DEFAULT_BASIS_LABELS
 from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
@@ -29,6 +28,19 @@ class PostselectionCurveData:
     accepted_fraction: np.ndarray
     fidelity: np.ndarray
     point_fidelity: np.ndarray
+
+
+def _pack_boolean_array(arr: np.ndarray) -> np.ndarray:
+    """Pack each bit row into a little-endian integer label."""
+
+    bits = np.asarray(arr, dtype=np.uint64)
+    if bits.ndim == 1:
+        bits = bits.reshape(1, -1)
+    if bits.ndim != 2:
+        raise ValueError("arr must be a 1D or 2D bit array.")
+    if bits.shape[1] > 64:
+        raise ValueError("Cannot pack more than 64 bits into uint64 values.")
+    return np.sum(bits << np.arange(bits.shape[1], dtype=np.uint64), axis=1)
 
 
 def _decode_detector_batch(
@@ -102,7 +114,9 @@ def _build_generic_threshold_tables(
     ``(shots,)``.
     """
 
-    packed_targets = packed_pattern_targets(np.asarray(targets, dtype=np.uint8))
+    packed_targets = {
+        int(x) for x in _pack_boolean_array(np.asarray(targets, dtype=np.uint8))
+    }
     decoded_results: dict[str, _DecodedPostselectionResult] = {}
     progress_bars = {}
 
@@ -132,7 +146,7 @@ def _build_generic_threshold_tables(
             progress_bar = progress_bars.get(basis)
 
             _unique_anc_packed, unique_anc_indices, inverse_anc = np.unique(
-                pack_boolean_array(anc_det),
+                _pack_boolean_array(anc_det),
                 return_index=True,
                 return_inverse=True,
             )
@@ -142,8 +156,8 @@ def _build_generic_threshold_tables(
                 unique_anc_det,
             )
 
-            packed_anc_obs = pack_boolean_array(anc_obs)
-            packed_anc_correction = pack_boolean_array(unique_anc_corrections)
+            packed_anc_obs = _pack_boolean_array(anc_obs)
+            packed_anc_correction = _pack_boolean_array(unique_anc_corrections)
             corrected_factory = packed_anc_obs ^ packed_anc_correction[inverse_anc]
             accepted_mask = np.isfinite(unique_confidence[inverse_anc]) & np.isin(
                 corrected_factory,
@@ -161,7 +175,7 @@ def _build_generic_threshold_tables(
 
             accepted_detectors = dataset.detectors[accepted_mask]
             _unique_full_packed, unique_full_indices, inverse_full = np.unique(
-                pack_boolean_array(accepted_detectors),
+                _pack_boolean_array(accepted_detectors),
                 return_index=True,
                 return_inverse=True,
             )

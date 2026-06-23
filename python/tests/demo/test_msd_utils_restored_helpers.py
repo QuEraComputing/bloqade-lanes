@@ -3,12 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import stim
+from bloqade.decoders._decoders.mld.utils import pack_boolean_array, shots_to_counts
 
-from bloqade.gemini.decoding.bit_packing import (
-    pack_boolean_array,
-    shots_to_counts,
-    unpack_packed_bits,
-)
 from bloqade.gemini.decoding.confidence import (
     ConfidenceDecoder,
     GurobiDecoderWithConfidence,
@@ -31,16 +27,12 @@ def test_tomography_result_builds_density_matrix_and_point_fidelity():
     assert result.fidelity_bloch(np.array([1.0, 0.0, 0.0])) == pytest.approx(1.0)
 
 
-def test_bit_packing_helpers_round_trip_little_endian_bits():
+def test_bit_packing_helpers_pack_little_endian_bits():
     bits = np.array([[1, 0, 1], [0, 1, 1]], dtype=np.uint8)
 
     packed = pack_boolean_array(bits)
 
     assert packed.tolist() == [0b101, 0b110]
-    np.testing.assert_array_equal(
-        unpack_packed_bits(0b1101, 4),
-        np.array([1, 0, 1, 1], dtype=np.uint8),
-    )
 
 
 def test_bit_packing_helpers_support_zero_width_rows():
@@ -49,7 +41,6 @@ def test_bit_packing_helpers_support_zero_width_rows():
     packed = pack_boolean_array(bits)
 
     np.testing.assert_array_equal(packed, np.zeros(3, dtype=np.uint64))
-    np.testing.assert_array_equal(unpack_packed_bits(0, 0), np.zeros(0, dtype=np.uint8))
 
 
 def test_sub_detector_error_model_composes_duplicate_projected_errors():

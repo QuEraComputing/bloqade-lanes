@@ -7,8 +7,8 @@ import logging
 import numpy as np
 import stim
 from bloqade.decoders import TableDecoder
+from bloqade.decoders._decoders.mld.utils import pack_boolean_array, shots_to_counts
 
-from .bit_packing import pack_boolean_array, shots_to_counts
 from .confidence import ConfidenceDecoder
 
 logger = logging.getLogger(__name__)
