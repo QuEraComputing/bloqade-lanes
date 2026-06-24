@@ -13,8 +13,10 @@ from bloqade.gemini.common.dialects.movement.stmts import Permute
 from bloqade.gemini.common.validation.move_to import MoveToValidation
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects import move as move_dialect, place
 from bloqade.lanes.dialects.place import _resolve_permute_locations
+from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
+from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
 
 
@@ -198,10 +200,9 @@ def test_permute_then_cz_compiles():
             f"Unexpected error type {type(exc).__name__!r} (not a routing/placement "
             f"infeasibility): {exc}"
         )
-    except Exception:
-        # Any other exception (ValueError, RuntimeError, ValidationErrorGroup, etc.)
-        # is interpreted as a routing/placement infeasibility — an accepted failure
-        # mode for cycle permutations per the spec's "Out of scope / limitations".
+    except (RuntimeError, ValueError):
+        # RuntimeError / ValueError are the expected routing/placement-infeasibility
+        # exception types (documented limitation for cycle permutations).
         pass
 
 
@@ -219,3 +220,26 @@ def test_permute_rejected_on_plain_logical_kernel():
             q = squin.qalloc(2)
             movement.permute([q[0], q[1]], [1, 0])
             squin.cz(q[0], q[1])
+
+
+def test_permute_full_pipeline_emits_moves_and_deletes_place_permute():
+    """A permute compiled through the full PhysicalPipeline must lower to
+    move-dialect IR with no residual place.Permute / movement.Permute nodes
+    (RewriteGates must delete the place.Permute after InsertMoves)."""
+
+    @physical.kernel(aggressive_unroll=True, verify=False)
+    def k():
+        q = squin.qalloc(2)
+        movement.permute([q[0], q[1]], [1, 0])
+        squin.cz(q[0], q[1])
+
+    strat = make_physical_placement_strategy(return_moves=False)
+    pipeline = PhysicalPipeline(placement_strategy=strat)
+    out = pipeline.emit(k)
+
+    stmts = list(out.callable_region.walk())
+    # No residual place-layer permute / movement-layer permute survives.
+    assert not any(isinstance(s, place.Permute) for s in stmts)
+    assert not any(isinstance(s, movement.stmts.Permute) for s in stmts)
+    # The permute lowered to actual move-dialect Move layers.
+    assert any(isinstance(s, move_dialect.Move) for s in stmts)

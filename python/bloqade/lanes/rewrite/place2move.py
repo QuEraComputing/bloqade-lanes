@@ -189,6 +189,10 @@ class RewriteGates(RewriteRule):
     def _(self, node: place.MoveTo, state_after: placement.AtomState):
         return []
 
+    @stmts_to_insert.register(place.Permute)
+    def _(self, node: place.Permute, state_after: placement.AtomState):
+        return []
+
     @stmts_to_insert.register(place.StarRz)
     def _(self, node: place.StarRz, state_after: placement.AtomState):
         if not isinstance(state_after, placement.ConcreteState):

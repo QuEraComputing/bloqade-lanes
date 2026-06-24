@@ -29,8 +29,8 @@ def _resolve_permute_locations(
     """Resolve a permutation to target locations against the current layout.
 
     ``qubits`` are layout indices; ``perm`` permutes the *positions* of
-    ``qubits``. The target for each permuted position ``j`` in ``perm`` is the
-    current location of the qubit at that position, ``layout[qubits[j]]``.
+    ``qubits``. For each value ``j`` in ``perm`` (an index into ``qubits``),
+    the target is the current location of that qubit, ``layout[qubits[j]]``.
     """
     return tuple(layout[qubits[j]] for j in perm)
 
