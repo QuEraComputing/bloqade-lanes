@@ -21,6 +21,20 @@ from bloqade.lanes.types import StateType
 dialect = ir.Dialect(name="lanes.place")
 
 
+def _resolve_permute_locations(
+    layout: tuple[LocationAddress, ...],
+    qubits: tuple[int, ...],
+    perm: tuple[int, ...],
+) -> tuple[LocationAddress, ...]:
+    """Resolve a permutation to target locations against the current layout.
+
+    ``qubits`` are layout indices; ``perm`` permutes the *positions* of
+    ``qubits``. The target for position ``i`` is the current location of the
+    qubit at position ``perm[i]`` (i.e. ``layout[qubits[perm[i]]]``).
+    """
+    return tuple(layout[qubits[perm[i]]] for i in range(len(qubits)))
+
+
 @statement(dialect=dialect)
 class LogicalInitialize(ir.Statement):
     """Initialize logical qubits in the |0> state.
@@ -164,6 +178,21 @@ class MoveTo(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class Permute(QuantumStmt):
+    """Place-layer permute directive.
+
+    Produced by RewritePlaceOperations.rewrite_Permute from movement.Permute.
+    Consumed by placement analysis (the interpreter resolves the permutation
+    against the current layout and delegates to move_to_placements, producing
+    UserMoved) and deleted by RewriteGates after InsertMoves emits the forward
+    Move IR. ``perm`` is a permutation over the positions of ``qubits``.
+    """
+
+    qubits: tuple[int, ...] = info.attribute()
+    perm: tuple[int, ...] = info.attribute()
+
+
+@statement(dialect=dialect)
 class EndMeasure(QuantumStmt):
     state_before: ir.SSAValue = info.argument(StateType)
 
@@ -295,6 +324,24 @@ class PlacementMethods(interp.MethodTable):
         if not isinstance(state, ConcreteState):
             return (state,)
         new_state = strategy.move_to_placements(state, stmt.qubits, stmt.locations)
+        return (new_state,)
+
+    @interp.impl(Permute)
+    def impl_permute(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: Permute,
+    ):
+        strategy = _interp.placement_strategy
+        if not isinstance(strategy, MoveToPlacementStrategyABC):
+            # Strategy does not support user-directed movement.
+            return (AtomState.bottom(),)
+        state = frame.get(stmt.state_before)
+        if not isinstance(state, ConcreteState):
+            return (state,)
+        locations = _resolve_permute_locations(state.layout, stmt.qubits, stmt.perm)
+        new_state = strategy.move_to_placements(state, stmt.qubits, locations)
         return (new_state,)
 
     @interp.impl(Initialize)
