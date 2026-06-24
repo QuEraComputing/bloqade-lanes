@@ -41,6 +41,19 @@ class NativeToPlace:
 
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
+
+        if self.arch_spec is not None:
+            # Resolve movement.cz_partner against the arch spec, then re-fold so
+            # the resulting constant locations propagate into move_to lists.
+            from bloqade.rewrite.passes.aggressive_unroll import Fold
+
+            from bloqade.gemini.common.dialects.movement.rewrite import (
+                ResolveCzPartner,
+            )
+
+            rewrite.Walk(ResolveCzPartner(self.arch_spec)).rewrite(out.code)
+            Fold(out.dialects, no_raise=no_raise)(out)
+
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
