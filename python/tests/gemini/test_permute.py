@@ -12,9 +12,11 @@ def test_permute_statement_shape():
     # Lowered from a Python call; NOT pure (it mutates placement state).
     assert any(isinstance(t, lowering.FromPythonCall) for t in Permute.traits)
     assert not any(isinstance(t, ir.Pure) for t in Permute.traits)
+    # Registered on the movement dialect — catches wrong-dialect registration.
+    assert Permute in movement.dialect.stmts
 
 
-def test_permute_interface_exported():
-    # `permute` is exported from the movement package and wraps Permute.
-    assert movement.permute is not None
+def test_permute_callable_lowering_wrapper():
+    # movement.permute must be callable (it is the lowering wrapper for Permute).
+    # The import itself exercises the re-export; this asserts the wrapper is usable.
     assert callable(movement.permute)
