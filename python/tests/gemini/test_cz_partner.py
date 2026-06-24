@@ -29,12 +29,16 @@ def test_cz_partner_statement_shape():
     assert issubclass(CzPartner, ir.Statement)
     assert CzPartner.name == "cz_partner"
     assert any(isinstance(t, lowering.FromPythonCall) for t in CzPartner.traits)
-    # Deliberately NOT ir.Pure: marking it Pure lets constant folding hoist an
-    # enclosing ilist.map closure into an opaque constant Method that the
-    # resolver's Walk never descends into, so cz_partner is never resolved.
-    # See the CzPartner statement docstring/comment for the full rationale.
-    assert not any(isinstance(t, ir.Pure) for t in CzPartner.traits)
+    # CzPartner is now Pure: materialization rides on the standard
+    # const-prop / fold machinery once arch_spec is bound by the pipeline.
+    assert any(isinstance(t, ir.Pure) for t in CzPartner.traits)
     assert CzPartner in movement.dialect.stmts
+
+    # arch_spec is an attribute (default None) — populated by the pipeline's
+    # BindCzPartnerArchSpec pass before unrolling.
+    addr = ir.TestValue()
+    stmt = CzPartner(addr)
+    assert stmt.arch_spec is None
 
 
 def test_cz_partner_wrapper_callable():
