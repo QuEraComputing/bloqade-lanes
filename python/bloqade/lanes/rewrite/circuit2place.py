@@ -194,6 +194,7 @@ class RewritePlaceOperations(abc.RewriteRule):
                 gate.R,
                 gate.Rz,
                 movement_dialect.stmts.MoveTo,
+                movement_dialect.stmts.Permute,
             ),
         ):
             return abc.RewriteResult()
@@ -376,6 +377,32 @@ class RewritePlaceOperations(abc.RewriteRule):
         )
         return abc.RewriteResult(has_done_something=True)
 
+    def rewrite_Permute(
+        self, node: movement_dialect.stmts.Permute
+    ) -> abc.RewriteResult:
+        # qubits: after unrolling, always an ilist.New
+        if not isinstance(qubits_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
+
+        # perm: must be const-foldable
+        perm_hint = node.perm.hints.get("const")
+        if not isinstance(perm_hint, const.Value):
+            return abc.RewriteResult()
+
+        inputs = qubits_list.values
+        perm_attr = tuple(int(p) for p in perm_hint.data)
+
+        body, block, entry_state = self.prep_region()
+        permute_stmt = place.Permute(
+            entry_state,
+            qubits=tuple(range(len(inputs))),
+            perm=perm_attr,
+        )
+        node.replace_by(
+            self.construct_execute(permute_stmt, qubits=inputs, body=body, block=block)
+        )
+        return abc.RewriteResult(has_done_something=True)
+
 
 class RewritePhysicalMeasure(abc.RewriteRule):
     """Lower qubit.stmts.Measure to place.StaticPlacement(EndMeasure).
@@ -548,6 +575,7 @@ class MergePlacementRegions(abc.RewriteRule):
                     place.EndMeasure,
                     place.Initialize,
                     place.MoveTo,
+                    place.Permute,
                 ),
             ):
                 attributes: dict[str, ir.Attribute] = {
@@ -560,6 +588,8 @@ class MergePlacementRegions(abc.RewriteRule):
                     attributes["multi_move_warning"] = ir.PyAttr(
                         stmt.multi_move_warning
                     )
+                if isinstance(stmt, place.Permute):
+                    attributes["perm"] = ir.PyAttr(stmt.perm)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
@@ -607,6 +637,7 @@ _GATE_STMT_TYPES = (
     place.CZ,
     place.Yield,
     place.MoveTo,
+    place.Permute,
 )
 _SQ_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.Yield)
 
@@ -631,7 +662,7 @@ def sq_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> boo
 
 def _is_move_to_only_block(sp: place.StaticPlacement) -> bool:
     return all(
-        isinstance(stmt, (place.MoveTo, place.Yield))
+        isinstance(stmt, (place.MoveTo, place.Permute, place.Yield))
         for stmt in sp.body.blocks[0].stmts
     )
 
@@ -703,6 +734,7 @@ class MergeStaticPlacement(abc.RewriteRule):
                     place.EndMeasure,
                     place.Initialize,
                     place.MoveTo,
+                    place.Permute,
                 ),
             ):
                 attributes: dict[str, ir.Attribute] = {
@@ -715,6 +747,8 @@ class MergeStaticPlacement(abc.RewriteRule):
                     attributes["multi_move_warning"] = ir.PyAttr(
                         stmt.multi_move_warning
                     )
+                if isinstance(stmt, place.Permute):
+                    attributes["perm"] = ir.PyAttr(stmt.perm)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),

@@ -1,12 +1,15 @@
 """Tests for the movement-dialect permute(qubits, perm) feature."""
 
-from kirin import ir, lowering
+from kirin import ir, lowering, rewrite
+from kirin.analysis import const
+from kirin.dialects import ilist, py
 
 from bloqade.gemini.common.dialects import movement
 from bloqade.gemini.common.dialects.movement.stmts import Permute
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.place import _resolve_permute_locations
+from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
 
 
 def test_permute_statement_shape():
@@ -53,3 +56,27 @@ def test_resolve_permute_locations_remapped_indices():
     layout = (_loc(9, 0), _loc(0, 0), _loc(1, 0), _loc(2, 0))
     locations = _resolve_permute_locations(layout, qubits=(1, 2, 3), perm=(2, 0, 1))
     assert locations == (_loc(2, 0), _loc(0, 0), _loc(1, 0))
+
+
+def test_rewrite_permute_produces_place_permute():
+    q0, q1, q2 = ir.TestValue(), ir.TestValue(), ir.TestValue()
+    qubits_new = ilist.New(values=(q0, q1, q2))
+
+    # perm [1, 2, 0] as a const-hinted ilist of ints
+    p0, p1, p2 = py.Constant(1), py.Constant(2), py.Constant(0)
+    perm_new = ilist.New(values=(p0.result, p1.result, p2.result))
+    perm_new.result.hints["const"] = const.Value((1, 2, 0))
+
+    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result)
+
+    # Only statements go in the block; q0/q1/q2 are SSA operands (TestValues).
+    block = ir.Block([qubits_new, p0, p1, p2, perm_new, stmt])
+    region = ir.Region([block])
+
+    rewrite.Walk(RewritePlaceOperations()).rewrite(region)
+
+    permutes = [s for s in region.walk() if isinstance(s, place.Permute)]
+    assert len(permutes) == 1
+    assert permutes[0].qubits == (0, 1, 2)
+    assert permutes[0].perm == (1, 2, 0)
+    assert not any(isinstance(s, movement.stmts.Permute) for s in region.walk())
