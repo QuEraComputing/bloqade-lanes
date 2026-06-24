@@ -4,8 +4,8 @@ import warnings
 from dataclasses import dataclass, field
 
 from kirin import passes, rewrite
-from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
+from kirin.validation import ValidationSuite
 
 from bloqade.gemini.common.validation.terminal_measure import (
     PhysicalTerminalMeasurementValidation,
@@ -26,12 +26,10 @@ from .base import _NativeToPlaceBase, _PlaceToMove
 @dataclass
 class _PhysicalNativeToPlace(_NativeToPlaceBase):
     def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
-        _, errors = PhysicalTerminalMeasurementValidation().run(out)
-        if errors and not no_raise:
-            raise ValidationErrorGroup(
-                f"Physical circuit validation failed with {len(errors)} error(s)",
-                errors=errors,
-            )
+        if no_raise:
+            return
+        suite = ValidationSuite([PhysicalTerminalMeasurementValidation])
+        suite.validate(out).raise_if_invalid()
 
     def _lower_qubits(self, out: Method) -> None:
         rewrite.Walk(circuit2place.RewriteQubitsToPinnedQubits()).rewrite(out.code)

@@ -19,7 +19,7 @@ from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.upstream import squin_to_move
-from bloqade.lanes.validation.address import Validation
+from bloqade.lanes.validation.address import get_validation
 
 _LAYOUT = LogicalLayoutHeuristic()
 _PLACEMENT = LogicalPlacementStrategyNoHome()
@@ -66,7 +66,7 @@ def test_e2e_mixed_pinning():
 
     # Post-compile lanes validator should accept the result.
     arch_spec = _LAYOUT.arch_spec
-    _, errors = Validation(arch_spec=arch_spec).run(out)
+    _, errors = get_validation(arch_spec)().run(out)
     assert errors == [], f"post-compile validator reported errors: {errors}"
 
 

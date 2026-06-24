@@ -7,11 +7,11 @@ from bloqade.analysis import address
 from bloqade.native.dialects import gate as native_gate
 from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
-from kirin import ir, passes, rewrite
+from kirin import passes, rewrite
 from kirin.dialects.scf import scf2cf
-from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
+from kirin.validation import ValidationSuite
 
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.common.validation.duplicate_address import (
@@ -21,7 +21,7 @@ from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
-from bloqade.lanes.validation.address import Validation as AddressValidation
+from bloqade.lanes.validation.address import get_validation
 
 
 @dataclass
@@ -77,16 +77,10 @@ class _NativeToPlaceBase:
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
         if self.arch_spec is not None:
-            validation_errors: list[ir.ValidationError] = []
-            _, per_stmt_errors = AddressValidation(arch_spec=self.arch_spec).run(out)
-            validation_errors.extend(per_stmt_errors)
-            _, dup_errors = DuplicateAddressValidation().run(out)
-            validation_errors.extend(dup_errors)
-            if validation_errors:
-                raise ValidationErrorGroup(
-                    f"Gemini IR validation failed with {len(validation_errors)} error(s)",
-                    errors=validation_errors,
-                )
+            suite = ValidationSuite(
+                [DuplicateAddressValidation, get_validation(self.arch_spec)]
+            )
+            suite.validate(out).raise_if_invalid()
 
         self._lower_qubits(out)
 

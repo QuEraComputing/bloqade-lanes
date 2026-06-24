@@ -97,35 +97,27 @@ def kernel(self):
             from bloqade.gemini.common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
-            from bloqade.gemini.common.validation.move_to import MoveToValidation
             from bloqade.gemini.logical.validation.clifford.analysis import (
                 GeminiLogicalValidation,
             )
             from bloqade.gemini.logical.validation.measurement.analysis import (
                 GeminiTerminalMeasurementValidation,
             )
+            from bloqade.lanes.validation.address import get_validation
 
+            # ``get_validation(arch_spec)`` is the move/movement address
+            # validator (validates ``movement.MoveTo`` / ``Permute`` here),
+            # bound to an arch spec so it can be a bare class in the suite.
             validator = ValidationSuite(
                 [
                     GeminiLogicalValidation,
                     GeminiTerminalMeasurementValidation,
                     FlatKernelNoCloningValidation,
                     DuplicateAddressValidation,
+                    get_validation(arch_spec),
                 ]
             )
-            validation_result = validator.validate(mt)
-            validation_result.raise_if_invalid()
-
-            # MoveToValidation requires arch_spec at construction time and cannot
-            # be used as a bare class in ValidationSuite — run it separately.
-            _, move_to_errors = MoveToValidation(arch_spec=arch_spec).run(mt)
-            if move_to_errors:
-                from kirin.ir.exception import ValidationErrorGroup
-
-                raise ValidationErrorGroup(
-                    f"MoveToValidation failed with {len(move_to_errors)} error(s)",
-                    errors=move_to_errors,
-                )
+            validator.validate(mt).raise_if_invalid()
 
             mt.verify()
 
