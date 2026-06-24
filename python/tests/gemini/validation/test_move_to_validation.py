@@ -25,7 +25,7 @@ _LOC_B = LocationAddress(zone_id=0, word_id=1, site_id=0)
 def _build_test_method(stmts: list[ir.Statement]) -> ir.Method:
     """Build a minimal ir.Method containing the given statements."""
     block = ir.Block(list(stmts) + [func.Return()])
-    block.args.append_from(types.PyClass(object), name="self")
+    block.args.append_from(types.MethodType, name="self")
     region = ir.Region([block])
     func_stmt = func.Function(
         sym_name="test_fn",

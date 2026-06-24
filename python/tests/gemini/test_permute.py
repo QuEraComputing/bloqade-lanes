@@ -99,7 +99,7 @@ _VAL_DIALECTS = structural_no_opt.union([movement_dialect])
 
 def _build_method(stmts):
     block = ir.Block(list(stmts) + [func.Return()])
-    block.args.append_from(types.PyClass(object), name="self")
+    block.args.append_from(types.MethodType, name="self")
     region = ir.Region([block])
     fn = func.Function(
         sym_name="test_fn",
