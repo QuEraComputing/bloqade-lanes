@@ -2,18 +2,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     # These imports are for type-checkers only. At runtime they are deferred via
-    # __getattr__ below to break a circular import:
-    #   bloqade.gemini.common.dialects.movement.stmts imports
-    #   bloqade.lanes.bytecode.encoding, which would otherwise trigger the eager
-    #   imports here and transitively load bloqade.gemini.logical before
-    #   bloqade.gemini.common has finished initializing.
-    from bloqade.gemini.device import (
-        DetectorResult as DetectorResult,
-        GeminiLogicalSimulator as GeminiLogicalSimulator,
-        GeminiLogicalSimulatorTask as GeminiLogicalSimulatorTask,
-        Result as Result,
-    )
-
+    # __getattr__ below: importing any bloqade.lanes submodule runs this package
+    # __init__, and these modules transitively import bloqade.gemini, so eager
+    # imports here would re-enter an in-progress bloqade.gemini import.
     from .metrics import Metrics as Metrics
     from .noise_model import (
         generate_logical_noise_model as generate_logical_noise_model,
@@ -27,29 +18,6 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str):
-    if name in (
-        "DetectorResult",
-        "GeminiLogicalSimulator",
-        "GeminiLogicalSimulatorTask",
-        "Result",
-    ):
-        from bloqade.gemini.device import (
-            DetectorResult,
-            GeminiLogicalSimulator,
-            GeminiLogicalSimulatorTask,
-            Result,
-        )
-
-        g = globals()
-        g.update(
-            {
-                "DetectorResult": DetectorResult,
-                "GeminiLogicalSimulator": GeminiLogicalSimulator,
-                "GeminiLogicalSimulatorTask": GeminiLogicalSimulatorTask,
-                "Result": Result,
-            }
-        )
-        return g[name]
     if name == "Metrics":
         from .metrics import Metrics
 

@@ -1,6 +1,7 @@
 import cudaq  # type: ignore[reportMissingImports]
 
-from bloqade.lanes import GeminiLogicalSimulator, steane7_m2dets, steane7_m2obs
+from bloqade.gemini import GeminiLogicalSimulator
+from bloqade.lanes import steane7_m2dets, steane7_m2obs
 
 m2dets, m2obs = steane7_m2dets(5), steane7_m2obs(5)
 
