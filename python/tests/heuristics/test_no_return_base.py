@@ -33,9 +33,12 @@ def _make_strategy() -> NoReturnPlacementStrategy:
 
 
 def _make_state() -> ConcreteState:
+    # An *unpaired* layout: (2, 0) is not the CZ partner of (0, 0), so
+    # cz_placements must run the inner solver (rather than short-circuiting
+    # the already-paired no-op). The already-paired no-op has its own test.
     return ConcreteState(
         occupied=frozenset(),
-        layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
         move_count=(0, 0),
     )
 
@@ -91,6 +94,47 @@ def test_cz_placements_returns_execute_cz_for_concrete_input():
     strategy = _make_strategy()
     out = strategy.cz_placements(_make_state(), controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
+
+
+def test_cz_placements_no_op_when_already_paired():
+    """When the input layout already places every CZ pair at valid entangling
+    partner sites (e.g. staged there by move_to / permute), cz_placements
+    emits the CZ in place with no moves instead of relocating the qubits.
+
+    Uses the no-home physical strategy + physical arch, which is the
+    configuration that exhibited the relocation bug.
+    """
+    from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
+
+    strategy = make_physical_placement_strategy(return_moves=False)
+    arch = strategy.arch_spec
+
+    # Find a (location, CZ partner) pair in the arch.
+    target_loc = partner_loc = None
+    for w in range(len(arch.words)):
+        for s in range(len(arch.words[w].site_indices)):
+            loc = LocationAddress(w, s)
+            p = arch.get_cz_partner(loc)
+            if p is not None:
+                target_loc, partner_loc = loc, p
+                break
+        if target_loc is not None:
+            break
+    assert (
+        target_loc is not None and partner_loc is not None
+    ), "test arch has no CZ partner pair"
+
+    # qubit 0 (control) is already at the partner of qubit 1 (target): paired.
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(partner_loc, target_loc),
+        move_count=(0, 0),
+    )
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(out, ExecuteCZ)
+    assert out.move_layers == ()
+    assert out.layout == (partner_loc, target_loc)
+    assert out.move_count == (0, 0)
 
 
 # ── sq_placements branches ─────────────────────────────────────────

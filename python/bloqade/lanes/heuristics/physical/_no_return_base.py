@@ -153,6 +153,20 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         # same no-op pattern used by :class:`PhysicalPlacementStrategy`.
         _ = initial_layout
 
+    def _layout_satisfies_cz(
+        self,
+        state: ConcreteState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> bool:
+        """True iff every ``(control, target)`` pair already sits at valid CZ
+        entangling partner sites in ``state.layout`` (no moves needed)."""
+        for control, target in zip(controls, targets):
+            partner = self.arch_spec.get_cz_partner(state.layout[control])
+            if partner != state.layout[target]:
+                return False
+        return True
+
     def cz_placements(
         self,
         state: AtomState,
@@ -165,6 +179,19 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
+
+        # If the current layout already places every CZ pair at valid
+        # entangling partner sites (e.g. the user staged them there with
+        # move_to / permute), the solver would needlessly relocate the
+        # atoms to its own generated target. Emit the CZ in place instead.
+        if self._layout_satisfies_cz(state, controls, targets):
+            return ExecuteCZ(
+                occupied=state.occupied,
+                layout=state.layout,
+                move_count=state.move_count,
+                active_cz_zones=self.arch_spec.cz_zone_addresses,
+                move_layers=(),
+            )
 
         engine = self._get_engine()
         move_search = self._build_move_search()
