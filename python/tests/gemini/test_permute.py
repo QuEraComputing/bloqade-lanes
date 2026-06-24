@@ -208,10 +208,11 @@ def test_permute_then_cz_compiles():
 def test_permute_rejected_on_plain_logical_kernel():
     """A plain logical kernel (no movement dialect) cannot lower permute."""
     import pytest
+    from kirin.lowering.exception import BuildError
 
     from bloqade.gemini import logical
 
-    with pytest.raises(Exception):
+    with pytest.raises(BuildError, match="unsupported dialect"):
 
         @logical.kernel(aggressive_unroll=True)
         def k():
