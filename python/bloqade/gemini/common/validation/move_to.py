@@ -22,7 +22,7 @@ from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
 from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
-from bloqade.gemini.common.dialects.movement.stmts import Loc, MoveTo
+from bloqade.gemini.common.dialects.movement.stmts import Loc, MoveTo, Permute
 from bloqade.lanes.arch.spec import ArchSpec
 
 if TYPE_CHECKING:
@@ -113,6 +113,82 @@ class _MoveToValidationMethods(interp.MethodTable):
                     ir.ValidationError(
                         node,
                         "move_to: same Qubit SSA value appears more than once "
+                        "in qubits list",
+                    ),
+                )
+                break
+            seen_ids.add(id(qv))
+
+        return (EmptyLattice.bottom(),)
+
+    @interp.impl(Permute)
+    def check_permute(
+        self,
+        _interp: "_ValidationAnalysis",
+        frame: ForwardFrame[EmptyLattice],
+        node: Permute,
+    ):
+        from kirin.analysis import const
+        from kirin.ir import ResultValue
+
+        if not isinstance(node.qubits, ResultValue) or not isinstance(
+            qubits_owner := node.qubits.owner, ilist.New
+        ):
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(node, "permute: qubits must be a literal list"),
+            )
+            return (EmptyLattice.bottom(),)
+
+        qubit_values = qubits_owner.values
+
+        # P1: perm must be compile-time constant
+        perm_hint = node.perm.hints.get("const")
+        if not isinstance(perm_hint, const.Value):
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    "permute: perm must be compile-time constants "
+                    "(pass a literal list of ints)",
+                ),
+            )
+            return (EmptyLattice.bottom(),)
+
+        perm_values = tuple(int(p) for p in perm_hint.data)
+
+        # P2: length mismatch
+        if len(qubit_values) != len(perm_values):
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"permute: len(qubits)={len(qubit_values)} != "
+                    f"len(perm)={len(perm_values)}",
+                ),
+            )
+            return (EmptyLattice.bottom(),)
+
+        # P3: perm must be a bijection of range(n)
+        if sorted(perm_values) != list(range(len(perm_values))):
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    "permute: perm must be a permutation of range(len(qubits)) "
+                    "(each index 0..n-1 exactly once)",
+                ),
+            )
+
+        # P4: duplicate qubit SSA values
+        seen_ids: set[int] = set()
+        for qv in qubit_values:
+            if id(qv) in seen_ids:
+                _interp.add_validation_error(
+                    node,
+                    ir.ValidationError(
+                        node,
+                        "permute: same Qubit SSA value appears more than once "
                         "in qubits list",
                     ),
                 )

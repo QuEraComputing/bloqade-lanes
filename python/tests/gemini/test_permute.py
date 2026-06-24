@@ -1,11 +1,15 @@
 """Tests for the movement-dialect permute(qubits, perm) feature."""
 
-from kirin import ir, lowering, rewrite
+from kirin import ir, lowering, rewrite, types
 from kirin.analysis import const
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
+from kirin.prelude import structural_no_opt
 
 from bloqade.gemini.common.dialects import movement
+from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
 from bloqade.gemini.common.dialects.movement.stmts import Permute
+from bloqade.gemini.common.validation.move_to import MoveToValidation
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.place import _resolve_permute_locations
@@ -80,3 +84,66 @@ def test_rewrite_permute_produces_place_permute():
     assert permutes[0].qubits == (0, 1, 2)
     assert permutes[0].perm == (1, 2, 0)
     assert not any(isinstance(s, movement.stmts.Permute) for s in region.walk())
+
+
+# ---------------------------------------------------------------------------
+# Validation tests (P1–P4)
+# ---------------------------------------------------------------------------
+
+_VAL_DIALECTS = structural_no_opt.union([movement_dialect])
+
+
+def _build_method(stmts):
+    block = ir.Block(list(stmts) + [func.Return()])
+    block.args.append_from(types.PyClass(object), name="self")
+    region = ir.Region([block])
+    fn = func.Function(
+        sym_name="test_fn",
+        signature=func.Signature(inputs=(), output=types.NoneType),
+        body=region,
+    )
+    return ir.Method(
+        dialects=_VAL_DIALECTS, sym_name="test_fn", arg_names=["self"], code=fn
+    )
+
+
+def _permute_stmts(qubit_vals, perm_data, *, stamp_const=True):
+    qubits_new = ilist.New(values=tuple(qubit_vals))
+    perm_consts = [py.Constant(p) for p in perm_data]
+    perm_new = ilist.New(values=tuple(c.result for c in perm_consts))
+    if stamp_const:
+        perm_new.result.hints["const"] = const.Value(tuple(perm_data))
+    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result)
+    # Only statements; qubit_vals are SSA operands (TestValues), not statements.
+    return [qubits_new, *perm_consts, perm_new, stmt]
+
+
+def _errors(stmts):
+    _, errs = MoveToValidation(arch_spec=get_arch_spec()).run(_build_method(stmts))
+    return errs
+
+
+def test_permute_valid_passes():
+    q0, q1, q2 = ir.TestValue(), ir.TestValue(), ir.TestValue()
+    assert _errors(_permute_stmts([q0, q1, q2], [1, 2, 0])) == []
+
+
+def test_permute_p1_non_const_perm_rejected():
+    q0, q1 = ir.TestValue(), ir.TestValue()
+    assert len(_errors(_permute_stmts([q0, q1], [1, 0], stamp_const=False))) >= 1
+
+
+def test_permute_p2_length_mismatch_rejected():
+    q0, q1, q2 = ir.TestValue(), ir.TestValue(), ir.TestValue()
+    assert len(_errors(_permute_stmts([q0, q1, q2], [1, 0]))) >= 1
+
+
+def test_permute_p3_not_a_bijection_rejected():
+    q0, q1, q2 = ir.TestValue(), ir.TestValue(), ir.TestValue()
+    assert len(_errors(_permute_stmts([q0, q1, q2], [0, 0, 1]))) >= 1  # duplicate index
+    assert len(_errors(_permute_stmts([q0, q1, q2], [0, 1, 3]))) >= 1  # out of range
+
+
+def test_permute_p4_duplicate_qubit_rejected():
+    q0 = ir.TestValue()
+    assert len(_errors(_permute_stmts([q0, q0], [0, 1]))) >= 1
