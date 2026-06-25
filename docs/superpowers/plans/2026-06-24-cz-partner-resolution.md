@@ -14,6 +14,36 @@
 
 ## Resume Status (2026-06-25)
 
+**COMPLETE.** All tasks (T1–T9) implemented on branch `feat-user-movement-dialect`.
+Full Python suite green (1526 passed, 9 skipped); isort/black/ruff/pyright clean.
+
+Two deviations were forced during T7/T8 (both captured in their commit messages):
+
+- **T7:** Removing the kernel-decorator address validation broke two pre-existing
+  `test_movement_kernel.py` tests that asserted address validation fires at
+  decoration time (`test_loc_out_of_range_raises`,
+  `test_movement_kernel_length_mismatch_raises`). Per the design's documented
+  trade-off (pipeline becomes the sole owner of address validation), those tests
+  were deleted.
+- **T8:** `verify=False` could NOT be dropped from the capturing-closure helper
+  kernels (`locs`, `main`, `with_partner`, `hardcoded`). It is blocked by a
+  pre-existing kirin limitation unrelated to this refactor — the verify
+  pipeline's No-Cloning forward analysis mis-invokes an `ilist.map` closure that
+  captures outer SSA values ("called with N arguments, expected M"), the same
+  interprocedural `ilist.map` gap as
+  [kirin#679](https://github.com/QuEraComputing/kirin/issues/679) /
+  [bloqade-circuit#830](https://github.com/QuEraComputing/bloqade-circuit/issues/830).
+  `verify=False` was dropped only on `alloc` (non-capturing closure); an
+  explanatory comment was added. The no-partner regression is a **const-prop**
+  test (partnered address folds to a `Value`, partnerless stays `Unknown`), not
+  the planned "pipeline.emit raises" e2e assertion — a partnered control proved
+  the e2e form fails identically via Physical Terminal Measurement validation
+  regardless of the partner, so it could not isolate the partnerless behavior.
+
+---
+
+### Original resume point (historical)
+
 Execution paused after Task 6. Currently positioned to start **Task 7** (drop `get_validation(arch_spec)` from `python/bloqade/gemini/physical/group.py`'s `ValidationSuite` and update the `arch_spec` parameter `Doc`).
 
 Completed commits on branch `feat-user-movement-dialect`:
