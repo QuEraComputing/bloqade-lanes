@@ -122,7 +122,7 @@ def msd_mld_decoded(msd_mld_exp, msd_mld_decoders, msd_mld_samples):
     _ = msd_mld_decoders, msd_mld_samples
     return msd_mld_exp.decode_and_postselect(
         np.array([[1, 0, 1, 1]], dtype=np.uint8),
-        decoder_name="MLD",
+        progress_label="MLD",
     )
 
 

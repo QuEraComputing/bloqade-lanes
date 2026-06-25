@@ -12,6 +12,7 @@ from .sampling import _BasisDataset
 from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 
 _DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
+_ProgressLabel = str | bool
 
 
 @dataclass(frozen=True)
@@ -100,13 +101,27 @@ def _decode_confidence_batch(
     )
 
 
+def _resolve_progress_label(
+    progress_label: _ProgressLabel,
+    decoder_map: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]],
+) -> str | None:
+    if progress_label is False:
+        return None
+    if progress_label is True:
+        first_decoder_pair = next(iter(decoder_map.values()), None)
+        if first_decoder_pair is None:
+            return "decoder"
+        return type(first_decoder_pair[0]).__name__
+    return progress_label
+
+
 def _build_generic_threshold_tables(
     actual_data: Mapping[str, _BasisDataset],
     decoder_map: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]],
     *,
     targets: np.ndarray,
     basis_labels: Sequence[str],
-    progress_label: str | None = None,
+    progress_label: _ProgressLabel = False,
 ) -> dict[str, _DecodedPostselectionResult]:
     """Decode, factory-postselect, and keep output bits with confidence.
 
@@ -120,14 +135,15 @@ def _build_generic_threshold_tables(
     }
     decoded_results: dict[str, _DecodedPostselectionResult] = {}
     progress_bars = {}
+    resolved_progress_label = _resolve_progress_label(progress_label, decoder_map)
 
-    if progress_label is not None:
+    if resolved_progress_label is not None:
         from tqdm.auto import tqdm
 
         progress_bars = {
             basis: tqdm(
                 total=len(actual_data[basis].observables),
-                desc=f"{progress_label} {basis}: decoded",
+                desc=f"{resolved_progress_label} {basis}: decoded",
                 unit="shots",
                 position=index,
                 leave=True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from bloqade.decoders import BaseDecoder
 
+from bloqade.gemini.decoding import experiments as experiments_module
 from bloqade.gemini.decoding.confidence import ConfidenceDecoder
 from bloqade.gemini.decoding.experiments import (
     PostSelectionExperiment,
@@ -164,6 +165,36 @@ def test_build_generic_threshold_tables_batch_decodes_unique_detector_patterns()
     assert full.decoded_rows == [2]
 
 
+def test_build_generic_threshold_tables_progress_label_true_uses_decoder_name(
+    monkeypatch,
+):
+    import tqdm.auto
+
+    progress_descriptions: list[str] = []
+
+    class _FakeProgressBar:
+        def __init__(self, **kwargs):
+            progress_descriptions.append(str(kwargs["desc"]))
+
+        def update(self, value):
+            _ = value
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(tqdm.auto, "tqdm", _FakeProgressBar)
+
+    _build_generic_threshold_tables(
+        {"X": _dataset()},
+        {"X": _decoder_pair()},
+        targets=np.array([[0]], dtype=np.uint8),
+        basis_labels=("X",),
+        progress_label=True,
+    )
+
+    assert progress_descriptions == ["_FactoryDecoder X: decoded"]
+
+
 def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
     decoded = {
         basis: _DecodedPostselectionResult(
@@ -199,13 +230,50 @@ def test_postselection_experiment_decode_and_tomography_result_with_cached_data(
 
     decoded = exp.decode_and_postselect(
         np.array([[0]], dtype=np.uint8),
-        decoder_name=None,
+        progress_label=False,
     )
     assert decoded["X"].observables.shape == (3, 1)
 
     result = exp.tomography_result(accepted_fraction=0.5)
     assert isinstance(result, TomographyResult)
     assert result.density_matrix.shape == (2, 2)
+
+
+def test_postselection_experiment_decode_progress_label_true_uses_decoder_class_name(
+    monkeypatch,
+):
+    exp = object.__new__(PostSelectionExperiment)
+    exp.decoder = _FactoryDecoder
+    exp._postselection_exp_cache = _PostSelectionExperimentCache()
+    exp._postselection_exp_cache.raw_results = {
+        basis: _dataset() for basis in ("X", "Y", "Z")
+    }
+    exp._postselection_exp_cache.decoders_with_confidence = {
+        basis: _decoder_pair() for basis in ("X", "Y", "Z")
+    }
+
+    captured_progress_labels: list[str | bool] = []
+
+    def build_tables(*args, **kwargs):
+        _ = args
+        captured_progress_labels.append(kwargs["progress_label"])
+        return {
+            basis: _DecodedPostselectionResult(
+                observables=np.zeros((0, 1), dtype=np.uint8),
+                confidence=np.zeros(0, dtype=np.float64),
+            )
+            for basis in ("X", "Y", "Z")
+        }
+
+    monkeypatch.setattr(
+        experiments_module,
+        "_build_generic_threshold_tables",
+        build_tables,
+    )
+
+    exp.decode_and_postselect(np.array([[0]], dtype=np.uint8), progress_label=True)
+
+    assert captured_progress_labels == ["_FactoryDecoder"]
 
 
 def test_shots_at_accepted_fraction_is_relative_to_postselected_shots():

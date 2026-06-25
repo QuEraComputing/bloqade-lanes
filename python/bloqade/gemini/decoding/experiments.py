@@ -366,7 +366,7 @@ class PostSelectionExperiment:
     def decode_and_postselect(
         self,
         postselection_condition: np.ndarray,
-        decoder_name: str | None = None,
+        progress_label: str | bool = False,
     ) -> dict[str, _DecodedPostselectionResult]:
         """
         With the resulting shot data from the hardware samples, runs the following steps:
@@ -379,8 +379,9 @@ class PostSelectionExperiment:
             postselection_condition (np.ndarray): A 2D numpy array of shape (num_conditions, num_ancillae) representing the valid ancilla patterns to postselect on.
                 Example: If postselection_condition = np.array([[1, 0, 1, 1]]), then we will only accept shots where the first ancilla is 1, the second ancilla is 0, the third ancilla is 1, and the fourth ancilla is 1
                 after those ancilla have been corrected by the decoder.
-            decoder_name (str | None): The name of the decoder, used for displaying the progress bar during decoding.
-                If None, no progress bar is displayed.
+            progress_label (str | bool): If False, no progress bar is displayed. If True,
+                the decoder class name is used as the progress-bar label. If a string, that
+                string is used as the progress-bar label. Defaults to False.
 
         Returns:
             dict[str, _DecodedPostselectionResult]: A dictionary that maps each basis to postselected observables and confidence scores per shot.
@@ -400,7 +401,9 @@ class PostSelectionExperiment:
             decoder_map,
             targets=targets,
             basis_labels=basis_labels,
-            progress_label=decoder_name,
+            progress_label=(
+                self.decoder.__name__ if progress_label is True else progress_label
+            ),
         )
         self._postselection_exp_cache.decoded_results = decoded_results
         return decoded_results

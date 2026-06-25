@@ -51,7 +51,7 @@ msd_mld_exp = PostSelectionExperiment(
     clifford_circuit,
     tomography_circuits,
     TableDecoderWithConfidence,
-    {
+    decoder_init_args={
         "seed": 10,
     },
 )
@@ -66,7 +66,7 @@ injected_mld_exp = PostSelectionExperiment(
     empty_logical_circuit(),
     tomography_circuits,
     TableDecoderWithConfidence,
-    {
+    decoder_init_args={
         "seed": 10,
     },
 )
@@ -84,7 +84,7 @@ msd_mld_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 msd_mld_exp.get_samples(num_shots=1_000_000)
 msd_mld_exp.decode_and_postselect(
     np.array([[1, 0, 1, 1]]),
-    decoder_name="MLD",
+    progress_label="MLD",
 )
 
 # %%
@@ -97,7 +97,7 @@ msd_mle_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 msd_mle_exp.get_samples(num_shots=1_000_000)
 msd_mle_exp.decode_and_postselect(
     np.array([[1, 0, 1, 1]]),
-    decoder_name="MLE",
+    progress_label="MLE",
 )
 
 # %%
@@ -111,7 +111,7 @@ injected_mld_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed
 injected_mld_exp.get_samples(num_shots=1_000_000)
 injected_mld_exp.decode_and_postselect(
     np.array([[]]),
-    decoder_name="Injected MLD",
+    progress_label="Injected MLD",
 )
 
 # %% [markdown]
@@ -126,7 +126,7 @@ injected_mld_exp.decode_and_postselect(
 TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 tomo_result = msd_mld_exp.tomography_result(
-    0.50,
+    accepted_fraction=0.50,
 )
 tomo_result.fidelity_bloch(TARGET_BLOCH)
 
