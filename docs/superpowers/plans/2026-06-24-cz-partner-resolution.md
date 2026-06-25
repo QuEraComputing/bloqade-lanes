@@ -14,7 +14,7 @@
 
 ## Resume Status (2026-06-25)
 
-Execution paused after Task 5. Currently positioned to start **Task 6** (delete `ResolveCzPartner` + its unit tests + its `_const_loc_value` helper from `python/tests/gemini/test_cz_partner.py` + leftover unused imports).
+Execution paused after Task 6. Currently positioned to start **Task 7** (drop `get_validation(arch_spec)` from `python/bloqade/gemini/physical/group.py`'s `ValidationSuite` and update the `arch_spec` parameter `Doc`).
 
 Completed commits on branch `feat-user-movement-dialect`:
 
@@ -26,26 +26,19 @@ Completed commits on branch `feat-user-movement-dialect`:
 | T3 | `7447667b` | `BindCzPartnerArchSpec` rewrite + tests |
 | T4 | `a0490595` | Wire bind into `pipeline/base.py` — e2e tests green again |
 | T5 | `d2c364ff` | Wire bind into `upstream.py` |
+| T6 | `fa2d471a` | Delete `ResolveCzPartner` |
+| T6 (extras) | `f4c5cfb7` | `ArchSpec.__hash__` + concrete-interpreter `@interp.impl(CzPartner)` on `_LocInterpreter` |
 
 **Plan-text correction noticed during execution:** the plan's Step 2 code blocks for T4 and T5 show `CallGraphPass(out.dialects, BindCzPartnerArchSpec(self.arch_spec))(out)`, but the actual implementation needs `CallGraphPass(out.dialects, rewrite.Walk(BindCzPartnerArchSpec(self.arch_spec)))(out)` — `CallGraphPass` calls `rule.rewrite(region)`, and a bare `RewriteRule.rewrite_Region` is a no-op. Both T4 and T5 commits use the `rewrite.Walk(...)`-wrapped form. The plan text for T4/T5 is stale on this point but the code is correct.
 
-**Remaining tasks:** T6 (this), T7 (drop `get_validation(arch_spec)` from `gemini/physical/group.py`), T8 (drop `verify=False` + add no-partner regression test), T9 (full test suite + lint sweep).
+**Extra commit beyond the original plan (T6 extras, `f4c5cfb7`):** required to make the refactor function end-to-end:
 
-To resume: pick up at "Task 6" below, on HEAD `63712413`.
+- `ArchSpec.__hash__` (identity-based) — Kirin's IR attribute machinery needs `ArchSpec` to be hashable now that it's an `info.attribute` value on `CzPartner`.
+- Concrete-interpreter `@interp.impl(CzPartner)` on `_LocInterpreter` (key `"main"`) — fallback used by const-prop's `try_eval_const_pure` when unrolling pure lambdas. Raises `NotImplementedError` when arch_spec is unbound / address is non-const / no partner exists, so kernel-decoration-time `run_no_raise` skips folding gracefully.
 
-**Uncommitted working-tree changes at pause time:** when picking back up, run `git status` first. The working tree has the following uncommitted edits, which appear to be in-progress additions on top of the planned tasks — review each before deciding whether to fold them into T6 or split them off:
+**Remaining tasks:** T7 (this), T8 (drop `verify=False` in `test_cz_partner.py` + add no-partner regression), T9 (full test suite + lint sweep).
 
-- `python/bloqade/gemini/common/dialects/movement/rewrite.py` — `ResolveCzPartner` class and its unused imports already deleted. **This is exactly T6 Step 1 — commit it as part of T6.**
-- `python/tests/gemini/test_cz_partner.py` — `ResolveCzPartner` import, `_const_loc_value` helper, and the two `ResolveCzPartner` unit tests already deleted; `py` import dropped. **This is exactly T6 Step 2 — commit it as part of T6.**
-- `python/bloqade/gemini/common/impl/movement.py` — adds a concrete-interpreter `@interp.impl(CzPartner)` under the existing `_LocInterpreter` method table. This is NOT in the plan but is plausibly needed: const-prop's `try_eval_const_pure` falls back to the concrete interpreter when all operands are const. Raises `NotImplementedError` when arch_spec is unbound / address is non-const / no partner exists. Review whether this was needed to make the e2e tests pass (T4 implementer noted prior work in the tree); if so, fold into T6 with an explanatory commit message, otherwise consider whether the const-prop impl in `constprop.py` already covers this and the concrete impl is redundant.
-- `python/bloqade/lanes/arch/spec.py` — adds `ArchSpec.__hash__` returning `id(self)`. Needed because `ArchSpec` is now stored as an IR attribute (via `info.attribute(default=None)`) and Kirin attribute machinery / CSE need hashability. **Likely required for the refactor to function.** Verify by stashing this change and re-running `pytest python/tests/gemini/test_cz_partner.py` — if anything fails, the hash is needed.
-- `python/bloqade/gemini/common/dialects/movement/constprop.py` — single trailing newline added. Trivial; fold into whichever commit is most convenient.
-
-Suggested resume flow:
-1. `git status` → confirm the same files are dirty.
-2. Verify which extras are needed: stash the `impl/movement.py` and `arch/spec.py` edits, run `uv run pytest python/tests/gemini/test_cz_partner.py -x`. If green, those extras were not load-bearing; if red, they are.
-3. Commit T6 as planned (the `rewrite.py` + `test_cz_partner.py` deletions). If the load-bearing extras are needed, commit them either alongside T6 (with a body note explaining each) or as separate commits before T6 with conventional-commits messages of their own.
-4. Proceed to T7.
+To resume: pick up at "Task 7" below, on HEAD `f4c5cfb7` (or wherever the branch tip is after this status commit pushes).
 
 ---
 
