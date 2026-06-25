@@ -10,6 +10,23 @@ demo/star_demo.ipynb
 demo/test_demo_logarch.ipynb
 demo/star_injection_steane7_physical_squin.ipynb
 demo/scratch.ipynb
+demo/benchmark_exact_table_decoder.ipynb
+demo/*qet*
+demo/results
+demo/profile_decoder_scaling.py
+
+# for stdlib code
+demo/msd_utils/noise.py
+skills
+.agents
+demo/msd_extras
+
+# for qet code
+demo/msd_utils/qet.py
+demo/qet*.ipynb
+demo/qet*.py
+demo/scratch.ipynb
+python/tests/demo/test_qet_utils.py
 
 # misc
 .DS_Store
