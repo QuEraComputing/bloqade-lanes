@@ -82,6 +82,16 @@ def test_bind_arch_spec_leaves_already_bound_statement_alone():
     assert stmt.arch_spec is arch_a
 
 
+# NOTE on ``verify=False`` below: the helper kernels apply an ``ilist.map`` over
+# a closure that *captures* outer SSA values (``locs``'s ``_inner`` closes over
+# ``words``/``sites``; ``main``/``with_partner``'s ``_partner`` closes over
+# ``static_addrs``). Kirin's verify pipeline (the No-Cloning forward analysis)
+# mis-invokes such captured closures ("Method called with N arguments, expected
+# M") — the same interprocedural ilist.map gap tracked in QuEraComputing/kirin#679
+# and QuEraComputing/bloqade-circuit#830. This is unrelated to cz_partner (a plain
+# capturing-closure ``ilist.map`` kernel trips it too), so verify stays off until
+# that limitation is fixed. ``alloc`` uses a non-capturing closure and verifies
+# cleanly, so it keeps the default ``verify=True``.
 def _build_kernel():
     krn = physical.kernel
 
@@ -92,7 +102,7 @@ def _build_kernel():
 
         return ilist.map(_inner, ilist.range(len(words)))
 
-    @krn(verify=False)
+    @krn()
     def alloc(addresses: ilist.IList[LocationAddress, N]):
         def _inner(addr: LocationAddress):
             return qubit.new_at(0, addr.word_id, addr.site_id)
@@ -145,7 +155,7 @@ def test_cz_partner_matches_hardcoded_partner_words():
 
         return ilist.map(_inner, ilist.range(len(words)))
 
-    @krn(verify=False)
+    @krn()
     def alloc(addresses: ilist.IList[LocationAddress, N]):
         def _inner(addr: LocationAddress):
             return qubit.new_at(0, addr.word_id, addr.site_id)
@@ -185,3 +195,63 @@ def test_cz_partner_matches_hardcoded_partner_words():
         ]
 
     assert _move_lanes(with_partner) == _move_lanes(hardcoded)
+
+
+def test_cz_partner_partnerless_location_does_not_const_resolve():
+    """Regression for the no-CZ-partner case.
+
+    A ``cz_partner`` on a location *with* a partner const-folds to a concrete
+    ``LocationAddress`` value; a ``cz_partner`` on a location with *no* partner
+    must NOT fold — it stays top/Unknown so the unresolved partner propagates
+    as a non-const ``move_to`` target (and ultimately a compile error) instead
+    of silently resolving to a wrong location.
+
+    We assert the const-prop behavior directly (the mechanism that makes an
+    unresolved cz_partner surface downstream). An end-to-end "pipeline.emit
+    raises" assertion was deliberately avoided: with no_raise=False the
+    Physical Terminal Measurement validation fires first on this kernel shape
+    regardless of the partner, so it cannot isolate the partnerless behavior.
+    """
+    from kirin.analysis import const
+
+    from bloqade.gemini.common.dialects.movement.rewrite import (
+        BindCzPartnerArchSpec,
+    )
+
+    arch = get_physical_layout_arch_spec()
+
+    def cz_partner_lattice(loc: LocationAddress):
+        krn = physical.kernel
+
+        @krn(verify=False)
+        def k():
+            return movement.cz_partner(
+                movement.loc(loc.zone_id, loc.word_id, loc.site_id)
+            )
+
+        # Bind the arch spec exactly as the pipeline does, then run const-prop.
+        rewrite.Walk(BindCzPartnerArchSpec(arch)).rewrite(k.code)
+        frame, _ = const.Propagate(k.dialects).run(k)
+        cz = next(s for s in k.callable_region.walk() if isinstance(s, CzPartner))
+        return frame.entries.get(cz.result)
+
+    # A partnered location (zone 0 is fully partnered in the physical arch).
+    partnered = LocationAddress(zone_id=0, word_id=0, site_id=0)
+    assert arch.get_cz_partner(partnered) is not None
+
+    # Find a partnerless location to drive the regression.
+    partnerless = next(
+        (
+            candidate
+            for zone_id in range(1, 3)
+            for candidate in [LocationAddress(zone_id=zone_id, word_id=0, site_id=0)]
+            if arch.get_cz_partner(candidate) is None
+        ),
+        None,
+    )
+    assert partnerless is not None, "no partnerless location found in physical arch"
+
+    # Partnered → const-folds to a concrete LocationAddress value.
+    assert isinstance(cz_partner_lattice(partnered), const.Value)
+    # Partnerless → stays unresolved (not a const Value).
+    assert not isinstance(cz_partner_lattice(partnerless), const.Value)
