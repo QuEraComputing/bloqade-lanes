@@ -12,6 +12,29 @@
 
 ---
 
+## Resume Status (2026-06-25)
+
+Execution paused after Task 5. Currently positioned to start **Task 6** (delete `ResolveCzPartner` + its unit tests + its `_const_loc_value` helper from `python/tests/gemini/test_cz_partner.py` + leftover unused imports).
+
+Completed commits on branch `feat-user-movement-dialect`:
+
+| Task | Commit | Note |
+|------|--------|------|
+| T1 | `da977d22` | CzPartner: `ir.Pure()` + `arch_spec: ArchSpec \| None` attribute |
+| T2 | `f7226433` | `CzPartnerConstProp` method table |
+| T2 (polish) | `6c2db20a` | Annotated `frame: Frame`; `isinstance(table, CzPartnerConstProp)` |
+| T3 | `7447667b` | `BindCzPartnerArchSpec` rewrite + tests |
+| T4 | `a0490595` | Wire bind into `pipeline/base.py` — e2e tests green again |
+| T5 | `d2c364ff` | Wire bind into `upstream.py` |
+
+**Plan-text correction noticed during execution:** the plan's Step 2 code blocks for T4 and T5 show `CallGraphPass(out.dialects, BindCzPartnerArchSpec(self.arch_spec))(out)`, but the actual implementation needs `CallGraphPass(out.dialects, rewrite.Walk(BindCzPartnerArchSpec(self.arch_spec)))(out)` — `CallGraphPass` calls `rule.rewrite(region)`, and a bare `RewriteRule.rewrite_Region` is a no-op. Both T4 and T5 commits use the `rewrite.Walk(...)`-wrapped form. The plan text for T4/T5 is stale on this point but the code is correct.
+
+**Remaining tasks:** T6 (this), T7 (drop `get_validation(arch_spec)` from `gemini/physical/group.py`), T8 (drop `verify=False` + add no-partner regression test), T9 (full test suite + lint sweep).
+
+To resume: pick up at "Task 6" below, on HEAD `d2c364ff`.
+
+---
+
 ## File Layout
 
 | File | Status | Responsibility |
