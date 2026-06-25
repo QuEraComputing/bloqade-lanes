@@ -4,6 +4,7 @@ import numpy as np
 
 from bloqade.gemini.device.physical_simulator import (
     PhysicalResult,
+    PhysicalSimulator,
     PhysicalSimulatorTask,
 )
 
@@ -59,3 +60,29 @@ def test_physical_simulator_exports_from_gemini_namespace():
     from bloqade.gemini.device import PhysicalSimulator as DevicePhysicalSimulator
 
     assert PhysicalSimulator is DevicePhysicalSimulator
+
+
+def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
+    import bloqade.lanes.pipeline as pipeline_module
+
+    captured = {}
+
+    class FakePhysicalPipeline:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def emit(self, kernel, no_raise=True):
+            captured["kernel"] = kernel
+            captured["no_raise"] = no_raise
+            return "move_kernel"
+
+    monkeypatch.setattr(pipeline_module, "PhysicalPipeline", FakePhysicalPipeline)
+
+    kernel = MagicMock()
+    placement_strategy = MagicMock()
+    task = PhysicalSimulator().task(kernel, placement_strategy=placement_strategy)
+
+    assert captured["placement_strategy"] is placement_strategy
+    assert captured["kernel"] is kernel
+    assert captured["no_raise"] is False
+    assert task.physical_move_kernel == "move_kernel"

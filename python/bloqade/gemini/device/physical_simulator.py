@@ -21,6 +21,7 @@ from .simulator import DetectorResult
 if TYPE_CHECKING:
     import tsim as tsim_backend  # type: ignore[reportMissingImports]
 
+    from bloqade.lanes.analysis.placement import PlacementStrategyABC
     from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 
@@ -332,6 +333,7 @@ class PhysicalSimulator:
         self,
         physical_kernel: ir.Method[[], RetType],
         place_opt_type: type[passes.Pass] | None = None,
+        placement_strategy: "PlacementStrategyABC | None" = None,
     ) -> PhysicalSimulatorTask[RetType]:
         """Compile a physical SQuIn kernel into a reusable simulation task."""
         from bloqade.lanes.passes import SequentialPlacePass
@@ -343,6 +345,7 @@ class PhysicalSimulator:
         physical_pipeline = PhysicalPipeline(
             arch_spec=self.arch_spec,
             place_opt_type=place_opt_type,
+            placement_strategy=placement_strategy,
         )
         physical_move_kernel = physical_pipeline.emit(physical_kernel, no_raise=False)
 
