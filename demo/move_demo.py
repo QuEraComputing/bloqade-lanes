@@ -240,11 +240,8 @@ def main():
     # logical SWAP-bar_{12} on block a (physical permute iff VIRTUAL is False)
     a = logical_swap(a)
 
-    # logical CCZ-bar_{123} on both blocks. Applying a gadget to `a` *after* the
-    # swap is also load-bearing for the physical (VIRTUAL = False) path: a
-    # movement.permute that is the last movement on a block does not concretise
-    # its placement ("StaticPlacement body did not return a ConcreteState"), so
-    # the swapped block must be consumed by a following operation.
+    # logical CCZ-bar_{123} on both blocks; on `a` the CCZ acts on the relabelled
+    # logical qubits produced by the swap above.
     logical_ccz(a)
     logical_ccz(b)
 

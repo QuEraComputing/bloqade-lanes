@@ -165,12 +165,21 @@ Behavior under the toggle:
 Both yield the same logical effect; `VIRTUAL` toggles whether the relabel costs a
 physical atom rearrangement or is a free software relabel.
 
-**Implementation constraint (discovered):** a `movement.permute` that is the
-*last* movement on a block does not concretise its placement — compilation fails
-with `StaticPlacement body did not return a ConcreteState`. The swapped block
-must therefore be consumed by a following operation, so `main` applies a gadget
-to the swapped block after the swap (see §4.6). This only affects the physical
-(`VIRTUAL = False`) path; the virtual path emits no permute.
+**Implementation note (since fixed):** building this demo surfaced two
+placement-layer bugs, both now fixed in `fix(lanes): concretize terminal
+user-moves and reorder around movement stmts`:
+
+1. A terminal `movement.permute` (last movement on a block, or move-then-measure)
+   failed with `StaticPlacement body did not return a ConcreteState`. The base
+   `measure_placements` now commits a terminal `UserMoved`; `PalindromePlacementStrategy`
+   keeps rejecting it (only a CZ commits a user-move under palindrome).
+2. The ASAP pass skipped any block containing a movement statement, leaving the
+   state-prep un-optimised when `VIRTUAL = False`. `MoveTo`/`Permute` are now
+   reorder barriers, so gate runs on either side are scheduled independently.
+
+`main` still applies `logical_ccz(a)` after the swap, but only because it is a
+meaningful gadget on the relabelled block — it is no longer required for the
+demo to compile.
 
 ### 4.5 `measure_logical_block(blocks)`
 
@@ -223,10 +232,11 @@ criteria:
 2. `pipeline.emit(main, no_raise=False)` produces a compiled move program with no
    residual `movement.*` user-directive statements (cz_partner resolved,
    move_to/permute lowered).
-3. Flipping `VIRTUAL` changes the physical move count: **measured 63 `move.Move`
+3. Flipping `VIRTUAL` changes the physical move count: **measured 37 `move.Move`
    statements with `VIRTUAL = False` (physical permute) vs 26 with
-   `VIRTUAL = True`** (software relabel) — the virtual relabel more than halves
-   physical atom movement.
+   `VIRTUAL = True`** (software relabel). (Before the ASAP-reorder fix the
+   `VIRTUAL = False` count was 63; the fix optimises the state-prep that the
+   permute previously blocked from scheduling.)
 
 (The demo is not part of the pytest suite; it is exercised via `just demo` /
 direct run.)
