@@ -82,10 +82,7 @@ msd_mld_exp.dems()
 msd_mld_exp.initialize_decoders()
 msd_mld_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 msd_mld_exp.get_samples(num_shots=1_000_000)
-msd_mld_exp.decode_and_postselect(
-    np.array([[1, 0, 1, 1]]),
-    progress_label="MLD",
-)
+msd_mld_exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
 
 # %%
 # Run the same set of methods for the MLE decoder.
@@ -95,10 +92,7 @@ msd_mle_exp.dems()
 msd_mle_exp.initialize_decoders()
 msd_mle_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 msd_mle_exp.get_samples(num_shots=1_000_000)
-msd_mle_exp.decode_and_postselect(
-    np.array([[1, 0, 1, 1]]),
-    progress_label="MLE",
-)
+msd_mle_exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
 
 # %%
 # Run the same set of methods for the injected experiment with no distillation circuit and
@@ -109,10 +103,7 @@ injected_mld_exp.dems()
 injected_mld_exp.initialize_decoders()
 injected_mld_exp.make_tasks(device=GeminiLogicalSimulator(backend="clifft", seed=10))
 injected_mld_exp.get_samples(num_shots=1_000_000)
-injected_mld_exp.decode_and_postselect(
-    np.array([[]]),
-    progress_label="Injected MLD",
-)
+injected_mld_exp.decode_and_postselect(np.array([[]]))
 
 # %% [markdown]
 # ## Perform Tomography
