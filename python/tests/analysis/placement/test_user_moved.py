@@ -4,8 +4,10 @@ from bloqade.lanes.analysis.placement.lattice import (
     AtomState,
     ConcreteState,
     ExecuteCZReturn,
+    ExecuteMeasure,
     UserMoved,
 )
+from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
 from bloqade.lanes.bytecode.encoding import (
     Direction,
     LocationAddress,
@@ -86,8 +88,28 @@ def test_sq_placements_user_moved_strips_to_concrete_state():
     assert not isinstance(result, UserMoved)  # stripped to plain ConcreteState
 
 
-def test_measure_placements_user_moved_returns_bottom():
+def test_measure_placements_user_moved_concretizes():
+    """Non-palindrome strategies let a user-move flow through measurement:
+    the UserMoved is treated as a concrete state and measured at its moved
+    layout. The compiler tracks the final atom positions (single zone)."""
     strat = _make_strategy()
+    layout = (_loc(0, 0, 0), _loc(0, 2, 0))
+    um = UserMoved.from_concrete_state(
+        _concrete(layout),
+        move_layers=((_lane(0, 0, 0),),),
+        accumulated_move_layers=((_lane(0, 0, 0),),),
+        pre_user_layout=layout,
+    )
+    result = strat.measure_placements(um, qubits=(0, 1))
+    assert isinstance(result, ExecuteMeasure)
+    assert result.layout == layout
+
+
+def test_palindrome_measure_placements_user_moved_returns_bottom():
+    """Under PalindromePlacementStrategy a user-move must NOT reach a
+    measurement: only a CZ commits a user-move (palindrome stage + return), so
+    a UserMoved at measurement is invalid."""
+    strat = PalindromePlacementStrategy(inner=_make_strategy())
     layout = (_loc(0, 0, 0), _loc(0, 2, 0))
     um = UserMoved.from_concrete_state(
         _concrete(layout),

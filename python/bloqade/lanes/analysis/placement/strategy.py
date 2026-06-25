@@ -72,12 +72,16 @@ class PlacementStrategyABC(abc.ABC):
         Builds an ``ExecuteMeasure`` whose ``layout``/``zone_maps`` are ordered
         by the measurement order ``qubits`` so each emitted measurement result
         lines up with the location of the qubit it measures (``qubits`` is a
-        permutation once StaticPlacement blocks are merged). Strategy-independent;
-        ``PalindromePlacementStrategy`` overrides only to unwrap its return state
-        first.
+        permutation once StaticPlacement blocks are merged).
+
+        A ``UserMoved`` state is accepted here: a user-directed move that ends
+        at a measurement is committed — the atoms stay at their moved layout and
+        are measured there, and the compiler tracks the final positions within
+        the single zone. ``UserMoved`` is a ``ConcreteState`` subclass, so it
+        flows through the concrete-state path below. ``PalindromePlacementStrategy``
+        overrides this to reject ``UserMoved`` instead: under palindrome a
+        user-move is only committed by a following CZ, never a measurement.
         """
-        if isinstance(state, UserMoved):
-            return AtomState.bottom()  # move_to before measurement is invalid
         if not isinstance(state, ConcreteState):
             return state
         if len(qubits) != len(state.layout):
@@ -336,6 +340,11 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
     def measure_placements(
         self, state: AtomState, qubits: tuple[int, ...]
     ) -> AtomState:
+        if isinstance(state, UserMoved):
+            # Under palindrome, a user-move is only committed by a following CZ
+            # (stage + return). Reaching a measurement with a pending user-move
+            # is invalid. (The base strategy concretises it instead.)
+            return AtomState.bottom()
         return self.inner.measure_placements(self._unwrap(state), qubits)
 
     def compute_moves(
