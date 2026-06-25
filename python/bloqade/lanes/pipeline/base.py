@@ -7,7 +7,7 @@ from bloqade.analysis import address
 from bloqade.native.dialects import gate as native_gate
 from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
-from bloqade.rewrite.passes.aggressive_unroll import Fold
+from bloqade.rewrite.passes.callgraph import CallGraphPass
 from kirin import passes, rewrite
 from kirin.dialects.scf import scf2cf
 from kirin.ir.method import Method
@@ -15,7 +15,7 @@ from kirin.rewrite.abc import RewriteRule
 from kirin.validation import ValidationSuite
 
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
-from bloqade.gemini.common.dialects.movement.rewrite import ResolveCzPartner
+from bloqade.gemini.common.dialects.movement.rewrite import BindCzPartnerArchSpec
 from bloqade.gemini.common.validation.duplicate_address import (
     DuplicateAddressValidation,
 )
@@ -71,15 +71,15 @@ class _NativeToPlaceBase:
         out = mt.similar(mt.dialects.add(place))
         out = self._pre_native_rewrites(mt, out, no_raise)
 
+        if self.arch_spec is not None:
+            # Bind arch_spec on every CzPartner reachable through the call graph
+            # so const-prop resolves them during AggressiveUnroll.
+            CallGraphPass(
+                out.dialects, rewrite.Walk(BindCzPartnerArchSpec(self.arch_spec))
+            )(out)
+
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
-
-        if self.arch_spec is not None:
-            # Resolve movement.cz_partner against the arch spec, then re-fold so
-            # the resulting constant locations propagate into move_to lists
-            # before they are validated / lowered.
-            rewrite.Walk(ResolveCzPartner(self.arch_spec)).rewrite(out.code)
-            Fold(out.dialects, no_raise=no_raise)(out)
 
         self._post_unroll_validation(out, no_raise)
 
