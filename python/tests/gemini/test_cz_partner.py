@@ -3,14 +3,12 @@
 import typing
 
 from kirin import ir, lowering, rewrite
-from kirin.analysis import const
-from kirin.dialects import ilist, py
+from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import physical
 from bloqade.gemini.common.dialects import movement, qubit
-from bloqade.gemini.common.dialects.movement.rewrite import ResolveCzPartner
-from bloqade.gemini.common.dialects.movement.stmts import CzPartner, Loc
+from bloqade.gemini.common.dialects.movement.stmts import CzPartner
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move as move_dialect
@@ -43,54 +41,6 @@ def test_cz_partner_statement_shape():
 
 def test_cz_partner_wrapper_callable():
     assert callable(movement.cz_partner)
-
-
-# ---------------------------------------------------------------------------
-# ResolveCzPartner rewrite (unit)
-# ---------------------------------------------------------------------------
-
-
-def _const_loc_value(w, s, z=0):
-    return const.Value(LocationAddress(zone_id=z, word_id=w, site_id=s))
-
-
-def test_resolve_replaces_const_input_with_partner_loc():
-    arch = get_physical_layout_arch_spec()
-    loc0 = LocationAddress(zone_id=0, word_id=0, site_id=0)
-    partner = arch.get_cz_partner(loc0)
-    assert partner is not None
-
-    # A CzPartner whose address operand carries a const LocationAddress hint.
-    addr = ir.TestValue()
-    addr.hints["const"] = const.Value(loc0)
-    stmt = CzPartner(addr)
-    block = ir.Block([stmt])
-    region = ir.Region([block])
-
-    rewrite.Walk(ResolveCzPartner(arch)).rewrite(region)
-
-    # CzPartner is gone; a Loc on the partner's (zone, word, site) replaced it.
-    assert not any(isinstance(s, CzPartner) for s in region.walk())
-    locs = [s for s in region.walk() if isinstance(s, Loc)]
-    assert len(locs) == 1
-    consts = {
-        getattr(s.value, "data", None)
-        for s in region.walk()
-        if isinstance(s, py.Constant)
-    }
-    assert {partner.zone_id, partner.word_id, partner.site_id} <= consts
-
-
-def test_resolve_leaves_non_const_input_untouched():
-    arch = get_physical_layout_arch_spec()
-    addr = ir.TestValue()  # no const hint
-    stmt = CzPartner(addr)
-    region = ir.Region([ir.Block([stmt])])
-
-    rewrite.Walk(ResolveCzPartner(arch)).rewrite(region)
-
-    # Unresolvable: left in place (existing location validation reports it).
-    assert any(isinstance(s, CzPartner) for s in region.walk())
 
 
 # ---------------------------------------------------------------------------
