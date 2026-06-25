@@ -1,5 +1,6 @@
 from kirin import interp
 from kirin.analysis import const
+from kirin.analysis.const.prop import Frame
 
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
@@ -20,7 +21,7 @@ class CzPartnerConstProp(interp.MethodTable):
     """
 
     @interp.impl(CzPartner)
-    def cz_partner(self, _, frame, stmt: CzPartner):
+    def cz_partner(self, _, frame: Frame, stmt: CzPartner):
         if stmt.arch_spec is None:
             return (const.Result.top(),)
         addr = frame.get(stmt.address)

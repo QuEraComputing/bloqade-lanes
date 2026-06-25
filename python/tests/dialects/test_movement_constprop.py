@@ -3,6 +3,7 @@
 from kirin import interp
 
 from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
+from bloqade.gemini.common.dialects.movement.constprop import CzPartnerConstProp
 
 
 def test_movement_dialect_registers_constprop_method_table():
@@ -11,4 +12,4 @@ def test_movement_dialect_registers_constprop_method_table():
     table = movement_dialect.interps.get("constprop")
     assert table is not None, "movement dialect has no 'constprop' registration"
     assert isinstance(table, interp.MethodTable)
-    assert type(table).__name__ == "CzPartnerConstProp"
+    assert isinstance(table, CzPartnerConstProp)
