@@ -50,7 +50,11 @@ def kernel(self):
             int, Doc("number of physical qubits per logical qubit")
         ] = 7,
         arch_spec: Annotated[
-            ArchSpec | None, Doc("architecture spec for MoveToValidation")
+            ArchSpec | None,
+            Doc(
+                "architecture spec; reserved for future kernel-level checks. "
+                "Address validation now runs inside PhysicalPipeline.emit."
+            ),
         ] = None,
     ) -> None:
         # stop circular import problems
@@ -103,18 +107,13 @@ def kernel(self):
             from bloqade.gemini.logical.validation.measurement.analysis import (
                 GeminiTerminalMeasurementValidation,
             )
-            from bloqade.lanes.validation.address import get_validation
 
-            # ``get_validation(arch_spec)`` is the move/movement address
-            # validator (validates ``movement.MoveTo`` / ``Permute`` here),
-            # bound to an arch spec so it can be a bare class in the suite.
             validator = ValidationSuite(
                 [
                     GeminiLogicalValidation,
                     GeminiTerminalMeasurementValidation,
                     FlatKernelNoCloningValidation,
                     DuplicateAddressValidation,
-                    get_validation(arch_spec),
                 ]
             )
             validator.validate(mt).raise_if_invalid()

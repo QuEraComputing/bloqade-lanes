@@ -66,36 +66,6 @@ def test_loc_inline_move_to_then_cz():
     assert k is not None
 
 
-def test_loc_out_of_range_raises():
-    """loc() with an out-of-range address raises ValidationErrorGroup."""
-    from kirin.ir.exception import ValidationErrorGroup
-
-    with pytest.raises(ValidationErrorGroup):
-
-        @movement_kernel(aggressive_unroll=True)
-        def k():
-            q = squin.qalloc(1)
-            move_to([q[0]], [loc(zone_id=99, word_id=0, site_id=0)])
-            return terminal_measure(q)
-
-
-def test_movement_kernel_length_mismatch_raises():
-    """MoveToValidation surfaces length mismatch at decoration time."""
-    from kirin.ir.exception import ValidationErrorGroup
-
-    loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
-    loc_b = LocationAddress(zone_id=0, word_id=1, site_id=0)
-
-    with pytest.raises(ValidationErrorGroup):
-
-        @movement_kernel(aggressive_unroll=True)
-        def k():
-            q = squin.qalloc(2)
-            # 1 qubit but 2 locations — length mismatch caught by MoveToValidation
-            move_to([q[0]], [loc_a, loc_b])
-            return terminal_measure(q)
-
-
 def test_existing_kernel_unaffected():
     """Plain @kernel usage is unaffected (regression canary)."""
 
