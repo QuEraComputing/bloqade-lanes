@@ -98,6 +98,40 @@ def test_resolve_leaves_non_const_input_untouched():
 # ---------------------------------------------------------------------------
 
 
+def test_bind_arch_spec_sets_attribute_on_unbound_statement():
+    from bloqade.gemini.common.dialects.movement.rewrite import (
+        BindCzPartnerArchSpec,
+    )
+
+    arch = get_physical_layout_arch_spec()
+    addr = ir.TestValue()
+    stmt = CzPartner(addr)
+    assert stmt.arch_spec is None
+    region = ir.Region([ir.Block([stmt])])
+
+    rewrite.Walk(BindCzPartnerArchSpec(arch)).rewrite(region)
+
+    assert stmt.arch_spec is arch
+
+
+def test_bind_arch_spec_leaves_already_bound_statement_alone():
+    from bloqade.gemini.common.dialects.movement.rewrite import (
+        BindCzPartnerArchSpec,
+    )
+
+    arch_a = get_physical_layout_arch_spec()
+    arch_b = get_physical_layout_arch_spec()
+    assert arch_a is not arch_b
+
+    addr = ir.TestValue()
+    stmt = CzPartner(addr, arch_spec=arch_a)
+    region = ir.Region([ir.Block([stmt])])
+
+    rewrite.Walk(BindCzPartnerArchSpec(arch_b)).rewrite(region)
+
+    assert stmt.arch_spec is arch_a
+
+
 def _build_kernel():
     krn = physical.kernel
 
