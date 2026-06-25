@@ -1,4 +1,4 @@
-from . import rewrite as rewrite, stmts as stmts
+from . import constprop as constprop, rewrite as rewrite, stmts as stmts
 from ._dialect import dialect as dialect
 from ._interface import (
     cz_partner as cz_partner,
