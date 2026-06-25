@@ -165,6 +165,13 @@ Behavior under the toggle:
 Both yield the same logical effect; `VIRTUAL` toggles whether the relabel costs a
 physical atom rearrangement or is a free software relabel.
 
+**Implementation constraint (discovered):** a `movement.permute` that is the
+*last* movement on a block does not concretise its placement — compilation fails
+with `StaticPlacement body did not return a ConcreteState`. The swapped block
+must therefore be consumed by a following operation, so `main` applies a gadget
+to the swapped block after the swap (see §4.6). This only affects the physical
+(`VIRTUAL = False`) path; the virtual path emits no permute.
+
 ### 4.5 `measure_logical_block(blocks)`
 
 Mirrors `steane_demo.py`'s `measure_logical_reg`: the kernel allows only one
@@ -181,18 +188,23 @@ def main():
     a, b = blocks[0], blocks[1]
     transversal_cx(blocks[:1], blocks[1:])   # logical CX(a -> b)
     a = logical_swap(a)                       # logical SWAP_12 on block a
+    logical_ccz(a)                            # consumes the swap (see §4.4) + CCZ on a
     logical_ccz(b)                            # logical CCZ on block b
     return measure_logical_block([a, b])      # flattened terminal measure
 ```
 
-Then compile + visualize, matching the current demo's ending:
+Then compile + visualize, matching the current demo's ending (using
+`ASAPPlacePass` as the place optimiser, like `steane_demo.py`):
 
 ```
 strat = make_physical_placement_strategy(return_moves=False, ...)
-pipeline = PhysicalPipeline(placement_strategy=strat)
-compiled = pipeline.emit(main)
+pipeline = PhysicalPipeline(placement_strategy=strat, place_opt_type=ASAPPlacePass)
+compiled = pipeline.emit(main, no_raise=False)   # loud failure, not silent degradation
 debugger(compiled, pipeline.arch_spec)
 ```
+
+`no_raise=False` is important: the default `no_raise=True` silently emits a
+degenerate empty program on a compilation error.
 
 `verify=False` is required: the gadget kernels apply `ilist.map` over capturing
 closures, which the verify pipeline cannot analyze (see
@@ -206,13 +218,15 @@ Per scope decision: **compile + visualize only**, no state simulation. Success
 criteria:
 
 1. `demo/move_demo.py` runs end-to-end (`uv run python demo/move_demo.py`) and
-   produces the `debugger` visualization without raising.
-2. `pipeline.emit(main)` produces a compiled move program with no residual
-   `movement.*` user-directive statements (cz_partner resolved, move_to/permute
-   lowered).
-3. Flipping `VIRTUAL` between `True`/`False` changes whether physical permute/move
-   instructions appear for the `logical_swap` gadget — verifiable by eye in the
-   `debugger` output or by walking the compiled IR for move-dialect statements.
+   produces the `debugger` visualization without raising. **Verified** for both
+   `VIRTUAL = False` and `VIRTUAL = True` with `no_raise=False` (exit 0).
+2. `pipeline.emit(main, no_raise=False)` produces a compiled move program with no
+   residual `movement.*` user-directive statements (cz_partner resolved,
+   move_to/permute lowered).
+3. Flipping `VIRTUAL` changes the physical move count: **measured 63 `move.Move`
+   statements with `VIRTUAL = False` (physical permute) vs 26 with
+   `VIRTUAL = True`** (software relabel) — the virtual relabel more than halves
+   physical atom movement.
 
 (The demo is not part of the pytest suite; it is exercised via `just demo` /
 direct run.)
