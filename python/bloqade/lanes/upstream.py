@@ -12,6 +12,7 @@ from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
 
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
+from bloqade.gemini.common.dialects.movement.rewrite import BindCzPartnerArchSpec
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
@@ -39,20 +40,15 @@ class NativeToPlace:
             )
             CallGraphPass(mt.dialects, rule)(out)
 
+        if self.arch_spec is not None:
+            # Bind arch_spec on every CzPartner reachable through the call graph
+            # so const-prop resolves them during AggressiveUnroll.
+            CallGraphPass(
+                out.dialects, rewrite.Walk(BindCzPartnerArchSpec(self.arch_spec))
+            )(out)
+
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
-
-        if self.arch_spec is not None:
-            # Resolve movement.cz_partner against the arch spec, then re-fold so
-            # the resulting constant locations propagate into move_to lists.
-            from bloqade.rewrite.passes.aggressive_unroll import Fold
-
-            from bloqade.gemini.common.dialects.movement.rewrite import (
-                ResolveCzPartner,
-            )
-
-            rewrite.Walk(ResolveCzPartner(self.arch_spec)).rewrite(out.code)
-            Fold(out.dialects, no_raise=no_raise)(out)
 
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
 
