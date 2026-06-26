@@ -32,9 +32,10 @@
 # Before we get started, it's useful to define how we address our architecture. We have three "levels" to addressing atoms in our architecture: zones, words, and sites. A concrete depiction of the architecture for Gemini physical is shown below:
 
 # Import utilities to define the SQuIN kernel dialect that we will be writing our programs in.
-from typing import Any, Literal, TypeVar
 
 # %%
+from typing import Any, Literal, TypeVar
+
 import matplotlib.pyplot as plt
 from bloqade.types import Qubit
 from kirin.dialects import ilist
