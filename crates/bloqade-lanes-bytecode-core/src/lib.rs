@@ -29,5 +29,6 @@ pub mod arch;
 pub mod atom_state;
 pub mod bytecode;
 pub mod version;
+pub mod vihaco_isa;
 
 pub use version::Version;
