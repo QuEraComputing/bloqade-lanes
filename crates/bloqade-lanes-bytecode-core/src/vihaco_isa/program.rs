@@ -229,13 +229,9 @@ fn parse_version(s: &str) -> Option<Version> {
 fn instruction_to_text(inst: &Instruction) -> String {
     use Instruction::*;
     match inst {
-        ConstFloat(v) => format!("const_float {}", format_float(*v)),
-        ConstInt(v) => format!("const_int {v}"),
         Pop => "pop".to_string(),
-        Dup => "dup".to_string(),
         Swap => "swap".to_string(),
         Return => "return".to_string(),
-        Halt => "halt".to_string(),
         ConstLoc(v) => format!("const_loc 0x{v:016x}"),
         ConstLane(v) => format!("const_lane 0x{v:016x}"),
         ConstZone(v) => format!("const_zone 0x{v:08x}"),
@@ -255,17 +251,9 @@ fn instruction_to_text(inst: &Instruction) -> String {
         GetItem(ndims) => format!("get_item {ndims}"),
         SetDetector => "set_detector".to_string(),
         SetObservable => "set_observable".to_string(),
-    }
-}
-
-/// Format a float so it always carries a decimal point (or exponent), so the
-/// text parser reads it back as `f64` rather than ambiguous output.
-fn format_float(f: f64) -> String {
-    let s = format!("{f}");
-    if s.contains(['.', 'e', 'E']) {
-        s
-    } else {
-        format!("{s}.0")
+        // CPU ops render via vihaco-cpu's own `Display` (e.g. `const.i64 42`,
+        // `dup`, `halt`), which the delegated parser reads back.
+        Cpu(inner) => inner.to_string(),
     }
 }
 
@@ -275,11 +263,14 @@ mod tests {
     use super::*;
 
     fn sample() -> Program {
+        use vihaco::value::Value;
+        use vihaco_cpu::Instruction as Cpu;
         Program {
             version: Version::new(1, 2),
             instructions: vec![
-                Instruction::ConstFloat(1.5),
-                Instruction::ConstInt(-42),
+                Instruction::Cpu(Cpu::Const(Value::F64(1.5))),
+                Instruction::Cpu(Cpu::Const(Value::I64(-42))),
+                Instruction::Cpu(Cpu::Dup),
                 Instruction::ConstLoc(0x0000_0000_0100_0000),
                 Instruction::ConstLane(0x0000_0000_0000_0001),
                 Instruction::ConstZone(0x0000_0003),
@@ -294,6 +285,7 @@ mod tests {
                 Instruction::NewArray(2, 10, 20),
                 Instruction::GetItem(2),
                 Instruction::SetDetector,
+                Instruction::Cpu(Cpu::Halt),
                 Instruction::Return,
             ],
         }
@@ -348,12 +340,17 @@ mod tests {
 
     #[test]
     fn parses_comments_and_blanks() {
-        let source = "\n; header comment\n.version 2\n\nconst_int 42  ; inline\nhalt\n";
+        use vihaco::value::Value;
+        use vihaco_cpu::Instruction as Cpu;
+        let source = "\n; header comment\n.version 2\n\nconst.i64 42  ; inline\nhalt\n";
         let program = Program::parse_text(source).unwrap();
         assert_eq!(program.version, Version::new(2, 0));
         assert_eq!(
             program.instructions,
-            vec![Instruction::ConstInt(42), Instruction::Halt]
+            vec![
+                Instruction::Cpu(Cpu::Const(Value::I64(42))),
+                Instruction::Cpu(Cpu::Halt)
+            ]
         );
     }
 

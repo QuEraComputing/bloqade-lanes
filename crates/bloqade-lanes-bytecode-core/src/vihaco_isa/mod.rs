@@ -16,6 +16,23 @@
 //! This adopts vihaco's **native** byte layout (the issue #769 decision); it is
 //! intentionally *not* compatible with the legacy `BLQD` container in
 //! [`crate::bytecode::program`].
+//!
+//! ## CPU ops are reused from `vihaco-cpu`
+//!
+//! Rather than re-defining stack/const opcodes, the [`Instruction::Cpu`]
+//! variant nests the entire [`vihaco_cpu::Instruction`] set (a stack machine
+//! with `const.<type>`, `dup`, `halt`, arithmetic, …), with parsing
+//! `#[delegate]`d to vihaco-cpu's own parser and printing via its `Display`.
+//! Three stack ops stay lanes-native because vihaco-cpu can't round-trip them
+//! through text:
+//!
+//! - `pop`, `swap` — vihaco-cpu has no such opcodes;
+//! - `return` — vihaco-cpu's `Return` is parser-deferred to an orchestrator
+//!   (`ret` does not parse standalone), and lanes needs a terminator that
+//!   round-trips.
+//!
+//! Consequence: CPU text syntax is now vihaco-cpu's (`const.i64 42`,
+//! `const.f64 1.5`, `dup`, `halt`), not the legacy `const_int` / `const_float`.
 
 pub mod parse_helpers;
 pub mod program;
@@ -25,42 +42,34 @@ pub use program::Program;
 use vihaco::Instruction;
 
 /// Fixed width, in bytes, of every encoded instruction word: 1 opcode byte
-/// plus up to 8 payload bytes (the widest operand is a 64-bit address), with
-/// the remainder zero-padded. Decoding consumes exactly this many bytes per
-/// instruction, so a flat program decodes without desync.
-pub const INSTRUCTION_WIDTH: u32 = 16;
+/// plus a payload up to the nested [`vihaco_cpu::Instruction`] word (16 bytes),
+/// zero-padded. Decoding consumes exactly this many bytes per instruction, so a
+/// flat program decodes without desync.
+pub const INSTRUCTION_WIDTH: u32 = 17;
 
 /// The Bloqade Lanes instruction set, defined on the vihaco framework.
 ///
-/// Operands use only the scalar types vihaco implements byte traits for
+/// Device operands use only the scalar types vihaco implements byte traits for
 /// (`u32`, `u64`, `i64`, `f64`); the legacy `u8`/`u16` array operands are
-/// widened to `u32`.
+/// widened to `u32`. CPU ops are reused from [`vihaco_cpu`] via the nested
+/// [`Cpu`](Instruction::Cpu) variant (see module docs).
 ///
 /// **Variant order is significant.** It is both the encoded opcode order and
 /// the text parser's try-order; a token that is a prefix of another must be
-/// declared *after* the longer token. Hence `*_rz` precedes `*_r`.
+/// declared *after* the longer token (hence `*_rz` precedes `*_r`), and the
+/// `#[delegate]` [`Cpu`](Instruction::Cpu) variant is declared **last** so
+/// device-specific tokens (e.g. `get_item <n>`) win over any vihaco-cpu token
+/// they would otherwise shadow.
 #[derive(Debug, Clone, PartialEq, Instruction, vihaco_parser::Parse)]
-#[instruction(width = 16)]
+#[instruction(width = 17)]
 pub enum Instruction {
-    // ---- CPU / stack ----
-    #[token = "const_float"]
-    #[delimiters(open = "", close = "", separator = "")]
-    ConstFloat(f64),
-
-    #[token = "const_int"]
-    #[delimiters(open = "", close = "", separator = "")]
-    ConstInt(i64),
-
+    // ---- Lanes-native stack ops (no round-trippable vihaco-cpu equivalent) ----
     #[token = "pop"]
     Pop,
-    #[token = "dup"]
-    Dup,
     #[token = "swap"]
     Swap,
     #[token = "return"]
     Return,
-    #[token = "halt"]
-    Halt,
 
     // ---- Lane constants (hex operands) ----
     #[token = "const_loc"]
@@ -122,6 +131,12 @@ pub enum Instruction {
     SetDetector,
     #[token = "set_observable"]
     SetObservable,
+
+    // ---- CPU / stack ops, reused wholesale from vihaco-cpu ----
+    // Declared LAST: parsing is `#[delegate]`d to vihaco-cpu's parser, so
+    // device tokens above are tried first and win on any shared prefix.
+    #[delegate]
+    Cpu(vihaco_cpu::Instruction),
 }
 
 #[cfg(test)]
@@ -130,6 +145,8 @@ mod tests {
     use super::*;
     use chumsky::Parser as _;
     use vihaco::instruction::{FromBytes, OpCode, WriteBytes};
+    use vihaco::value::Value;
+    use vihaco_cpu::Instruction as Cpu;
     use vihaco_parser_core::Parse;
 
     fn parse(input: &str) -> Instruction {
@@ -139,11 +156,13 @@ mod tests {
             .unwrap_or_else(|e| panic!("parse({input:?}) failed: {e:?}"))
     }
 
-    /// A representative instruction of every shape (unit, scalar, hex, multi-field).
+    /// A representative instruction of every shape (unit, scalar, hex,
+    /// multi-field, and nested vihaco-cpu).
     fn sample_program() -> Vec<Instruction> {
         vec![
-            Instruction::ConstFloat(3.14159),
-            Instruction::ConstInt(-42),
+            Instruction::Cpu(Cpu::Const(Value::F64(3.14159))),
+            Instruction::Cpu(Cpu::Const(Value::I64(-42))),
+            Instruction::Cpu(Cpu::Dup),
             Instruction::ConstLoc(0x0000_0000_0100_0000),
             Instruction::ConstLane(0x0000_0000_0000_0001),
             Instruction::ConstZone(0x0000_0007),
@@ -162,9 +181,8 @@ mod tests {
             Instruction::SetDetector,
             Instruction::SetObservable,
             Instruction::Pop,
-            Instruction::Dup,
             Instruction::Swap,
-            Instruction::Halt,
+            Instruction::Cpu(Cpu::Halt),
             Instruction::Return,
         ]
     }
@@ -207,11 +225,6 @@ mod tests {
     #[test]
     fn text_parses_each_shape() {
         assert_eq!(
-            parse("const_float 3.14159"),
-            Instruction::ConstFloat(3.14159)
-        );
-        assert_eq!(parse("const_int -42"), Instruction::ConstInt(-42));
-        assert_eq!(
             parse("const_loc 0x0000000001000000"),
             Instruction::ConstLoc(0x0000_0000_0100_0000)
         );
@@ -227,10 +240,8 @@ mod tests {
 
         for (text, inst) in [
             ("pop", Instruction::Pop),
-            ("dup", Instruction::Dup),
             ("swap", Instruction::Swap),
             ("return", Instruction::Return),
-            ("halt", Instruction::Halt),
             ("global_rz", Instruction::GlobalRz),
             ("global_r", Instruction::GlobalR),
             ("cz", Instruction::Cz),
@@ -240,6 +251,29 @@ mod tests {
         ] {
             assert_eq!(parse(text), inst, "text {text:?}");
         }
+    }
+
+    #[test]
+    fn cpu_ops_delegate_to_vihaco_cpu() {
+        // CPU mnemonics use vihaco-cpu's syntax and route through the nested
+        // `Cpu` variant.
+        assert_eq!(
+            parse("const.i64 42"),
+            Instruction::Cpu(Cpu::Const(Value::I64(42)))
+        );
+        assert_eq!(
+            parse("const.f64 1.5"),
+            Instruction::Cpu(Cpu::Const(Value::F64(1.5)))
+        );
+        assert_eq!(parse("dup"), Instruction::Cpu(Cpu::Dup));
+        assert_eq!(parse("halt"), Instruction::Cpu(Cpu::Halt));
+    }
+
+    #[test]
+    fn device_token_wins_over_delegated_cpu() {
+        // vihaco-cpu also defines `get_item` (unit), but the lanes array
+        // `get_item <n>` is declared first and must win on a full line.
+        assert_eq!(parse("get_item 2"), Instruction::GetItem(2));
     }
 
     #[test]

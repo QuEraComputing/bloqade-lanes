@@ -15,6 +15,7 @@ version = "0.10.0-dev"
 # vihaco — virtual ISA + machine framework (QuEra, MIT).
 # See https://github.com/QuEraComputing/bloqade-lanes/issues/769.
 vihaco = "0.1"
+vihaco-cpu = "0.1"
 vihaco-parser = "0.1"
 vihaco-parser-core = "0.1"
 chumsky = "0.10"
