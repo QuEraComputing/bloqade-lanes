@@ -18,6 +18,9 @@
 //! [`crate::bytecode::program`].
 
 pub mod parse_helpers;
+pub mod program;
+
+pub use program::Program;
 
 use vihaco::Instruction;
 
