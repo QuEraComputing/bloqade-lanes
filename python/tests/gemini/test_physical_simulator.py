@@ -1,12 +1,22 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
+from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
+from kirin.dialects import ilist
 
+import bloqade.gemini.device.physical_simulator as physical_simulator_module
+from bloqade import squin
+from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.device.physical_simulator import (
     PhysicalResult,
     PhysicalSimulator,
     PhysicalSimulatorTask,
+    append_measurements_and_annotations_physical,
 )
+from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.pipeline import PhysicalPipeline
 
 
 def test_physical_result_uses_post_processing():
@@ -84,18 +94,114 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
             captured["post_processing_kernel"] = kernel
             return "post_processing"
 
+    def fake_append_measurements_and_annotations_physical(kernel, m2dets, m2obs):
+        captured["annotated_kernel"] = kernel
+        captured["m2dets"] = m2dets
+        captured["m2obs"] = m2obs
+
     monkeypatch.setattr(pipeline_module, "PhysicalPipeline", FakePhysicalPipeline)
     monkeypatch.setattr(atom, "AtomInterpreter", FakeAtomInterpreter)
+    monkeypatch.setattr(
+        physical_simulator_module,
+        "append_measurements_and_annotations_physical",
+        fake_append_measurements_and_annotations_physical,
+    )
 
     kernel = MagicMock()
     placement_strategy = MagicMock()
+    m2dets = [[1]]
+    m2obs = [[1]]
 
-    task = PhysicalSimulator().task(kernel, placement_strategy=placement_strategy)
+    task = PhysicalSimulator().task(
+        kernel,
+        placement_strategy=placement_strategy,
+        m2dets=m2dets,
+        m2obs=m2obs,
+    )
 
     assert captured["placement_strategy"] is placement_strategy
+    assert captured["annotated_kernel"] is kernel
+    assert captured["m2dets"] is m2dets
+    assert captured["m2obs"] is m2obs
     assert captured["kernel"] is kernel
     assert captured["no_raise"] is False
     assert captured["atom_dialects"] == "dialects"
     assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
     assert task._post_processing == "post_processing"
+
+
+def test_append_measurements_and_annotations_physical_preserves_kernel_return():
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(4)
+        measurements = squin.broadcast.measure(reg)
+        return measurements
+
+    append_measurements_and_annotations_physical(
+        kernel,
+        m2dets=[[1], [1]],
+        m2obs=[[1], [0]],
+    )
+
+    assert sum(isinstance(s, SetDetector) for s in kernel.callable_region.walk()) == 2
+    assert sum(isinstance(s, SetObservable) for s in kernel.callable_region.walk()) == 2
+
+    arch_spec = get_arch_spec()
+    physical_move_kernel = PhysicalPipeline(arch_spec=arch_spec).emit(
+        kernel, no_raise=False
+    )
+    post_processing = atom.AtomInterpreter(
+        physical_move_kernel.dialects, arch_spec=arch_spec
+    ).get_post_processing(physical_move_kernel)
+
+    raw_shots = [[True, False, False, True]]
+
+    return_values = list(post_processing.emit_return(raw_shots))
+    assert len(return_values) == 1
+    assert list(return_values[0]) == raw_shots[0]
+    assert list(post_processing.emit_detectors(raw_shots)) == [[True, True]]
+    assert list(post_processing.emit_observables(raw_shots)) == [[True, False]]
+
+
+def test_append_measurements_and_annotations_physical_validates_block_size():
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(3)
+        squin.broadcast.measure(reg)
+
+    with pytest.raises(
+        ValueError,
+        match="physical qubits must be divisible",
+    ):
+        append_measurements_and_annotations_physical(
+            kernel,
+            m2dets=[[1], [1]],
+            m2obs=None,
+        )
+
+
+def test_append_measurements_and_annotations_physical_accepts_new_at_allocations():
+    kernel = squin.kernel.add(gemini_qubit)
+    kernel.run_pass = squin.kernel.run_pass
+
+    @kernel(typeinfer=True)
+    def pinned_kernel():
+        q0 = gemini_qubit.new_at(0, 0, 0)
+        q1 = gemini_qubit.new_at(0, 1, 0)
+        squin.broadcast.measure(ilist.IList([q0, q1]))
+
+    append_measurements_and_annotations_physical(
+        pinned_kernel,
+        m2dets=[[1], [1]],
+        m2obs=[[1], [0]],
+    )
+
+    assert (
+        sum(isinstance(s, SetDetector) for s in pinned_kernel.callable_region.walk())
+        == 1
+    )
+    assert (
+        sum(isinstance(s, SetObservable) for s in pinned_kernel.callable_region.walk())
+        == 1
+    )
