@@ -36,7 +36,7 @@ def _fwd(word: int, site: int, bus: int = 0) -> SiteLaneAddress:
     return SiteLaneAddress(word, site, bus, Direction.FORWARD)
 
 
-def _make_return(move_layers):
+def _make_return(move_layers, user_move_layers=()):
     return ExecuteCZReturn(
         frozenset(),
         (),
@@ -44,6 +44,7 @@ def _make_return(move_layers):
         frozenset([ZoneAddress(0)]),
         move_layers=move_layers,
         initial_layout=(),
+        user_move_layers=user_move_layers,
     )
 
 
@@ -116,6 +117,36 @@ def test_return_layers_multihop_three_layer_dependent():
     assert ret[0] == (c3.reverse(),)
     assert ret[1] == (c2.reverse(), b2.reverse(), a2.reverse())
     assert ret[2] == (c1.reverse(), b1.reverse(), a1.reverse())
+
+
+def test_return_layers_user_move_layer_within_order_reversed():
+    """User-move layers get the same within-layer reversal as compiler layers.
+
+    A user MoveTo layer can also contain dependent lanes (atom A vacates X, atom
+    B enters X in the same layer). On the return, B must precede A — exactly the
+    #733 invariant, applied to ``user_move_layers`` too.
+    """
+    u_a = _fwd(0, 0)  # vacates X
+    u_b = _fwd(1, 0)  # enters X
+    state = _make_return((), user_move_layers=((u_a, u_b),))
+
+    # within-layer order reversed, not preserved
+    assert state.return_move_layers == ((u_b.reverse(), u_a.reverse()),)
+
+
+def test_return_layers_combined_user_then_compiler():
+    """Combined forward is ``user_move_layers + move_layers``; the return is the
+    strict palindrome of the whole sequence → reverse(compiler) then reverse(user),
+    each within-layer reversed.
+    """
+    u_a, u_b = _fwd(0, 0), _fwd(1, 0)  # user layer (dependent pair)
+    c0 = _fwd(2, 0)  # single compiler layer
+    state = _make_return(((c0,),), user_move_layers=((u_a, u_b),))
+
+    ret = state.return_move_layers
+    assert len(ret) == 2
+    assert ret[0] == (c0.reverse(),)  # compiler moves undone first
+    assert ret[1] == (u_b.reverse(), u_a.reverse())  # then user moves, within-reversed
 
 
 def test_return_layers_empty_move_layers():

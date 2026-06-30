@@ -7,7 +7,7 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
-    ExecuteMeasure,
+    MoveToPlacementStrategyABC,
     PalindromePlacementStrategy,
     PlacementStrategyABC,
 )
@@ -19,7 +19,6 @@ from bloqade.lanes.bytecode._native import EntropyTrace, SearchEngine
 from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
-    ZoneAddress,
 )
 from bloqade.lanes.heuristics.physical._solver_dispatch import _STRATEGY_MAP
 from bloqade.lanes.heuristics.physical.target_generator import (
@@ -76,6 +75,19 @@ class RustPlacementTraversal:
     lookahead: bool = False
     collect_entropy_trace: bool = False
     seed: int = 0
+    block_spectators: bool = False
+    """Scope each CZ solve to the participating qubits.
+
+    When ``True``, qubits not in the CZ's ``controls``/``targets`` are treated as
+    blocked obstacles for that solve rather than free atoms to route. This keeps
+    the search effort independent of how many unrelated qubits share the same
+    merged ``StaticPlacement`` block (under ``always_merge`` every CZ otherwise
+    searches over all block qubits, inflating ``nodes_expanded``).
+
+    Defaults to ``False``: blocking spectators removes routing freedom and can
+    *increase* move counts for some strategies (e.g. DFS may relocate a spectator
+    to shorten a participant's path), so the node savings are not free. Enable it
+    only where the search-effort reduction is worth a possible move-count change."""
 
 
 def _move_search_from_traversal(
@@ -107,7 +119,7 @@ def _move_search_from_traversal(
 
 
 @dataclass
-class PhysicalPlacementStrategy(PlacementStrategyABC):
+class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     """Physical placement strategy backed by the Rust ``TargetSolver``."""
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
@@ -199,6 +211,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> AtomState:
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
+        state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
         return self._cz_placements_rust(state, controls, targets, lookahead_cz_layers)
@@ -264,8 +277,23 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 loc for loc in state.occupied if loc not in active_locations
             )
 
-        initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
-        blocked_native = [loc._inner for loc in state.occupied]
+        # Scope the solve to the qubits participating in this CZ. Spectators
+        # (block qubits not in controls/targets) become blocked obstacles rather
+        # than free atoms, so the search effort doesn't scale with unrelated
+        # qubits sharing a merged StaticPlacement block. They don't move either
+        # way; the result reconstruction backfills their unchanged locations.
+        if self.traversal.block_spectators:
+            participants = set(controls) | set(targets)
+        else:
+            participants = set(ctx.placement)
+        spectator_native = [
+            loc._inner for qid, loc in ctx.placement.items() if qid not in participants
+        ]
+
+        initial_native = {
+            qid: loc._inner for qid, loc in ctx.placement.items() if qid in participants
+        }
+        blocked_native = [loc._inner for loc in state.occupied] + spectator_native
         move_search = _move_search_from_traversal(
             self.traversal,
             collect_entropy_trace=(
@@ -279,7 +307,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         for candidate in candidates:
             if remaining is not None and remaining <= 0:
                 break
-            target_native = {qid: loc._inner for qid, loc in candidate.items()}
+            target_native = {
+                qid: loc._inner for qid, loc in candidate.items() if qid in participants
+            }
             result = solver.solve(
                 initial_native,
                 target_native,
@@ -314,7 +344,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             qid: LocationAddress(loc.word_id, loc.site_id, loc.zone_id)
             for qid, loc in winning_result.goal_config.items()
         }
-        goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
+        goal_layout = tuple(
+            goal_map.get(qid, state.layout[qid]) for qid in range(len(state.layout))
+        )
         move_count = tuple(
             mc + int(src != dst)
             for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
@@ -328,29 +360,32 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        _ = qubits
-        if isinstance(state, ConcreteState):
-            return ConcreteState(
-                occupied=state.occupied,
-                layout=state.layout,
-                move_count=state.move_count,
-            )
-        return state
+        return self._strip_user_moved(state)
 
-    def measure_placements(
+    def compute_moves(
         self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-    ) -> AtomState:
-        if not isinstance(state, ConcreteState):
-            return state
-        if len(qubits) != len(state.layout):
-            return AtomState.bottom()
-        return ExecuteMeasure(
-            occupied=state.occupied,
-            layout=state.layout,
-            move_count=state.move_count,
-            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
+        state_before: ConcreteState,
+        state_after: ConcreteState,
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
+        """Route atoms between two fixed layouts for user-directed ``MoveTo``.
+
+        Delegates to the shared ``compute_move_layers`` primitive, passing this
+        strategy's own ``traversal`` and cached :class:`SearchEngine` so MoveTo
+        routing uses the same search configuration and per-arch lane index as
+        ``cz_placements`` (the docstring on ``compute_move_layers`` notes the two
+        callsites are meant to share a traversal).
+
+        The import is deferred to call time: ``heuristics.move_synthesis``
+        imports this module, so a top-level import would be a cycle.
+        """
+        from bloqade.lanes.heuristics.move_synthesis import compute_move_layers
+
+        return compute_move_layers(
+            self.arch_spec,
+            state_before,
+            state_after,
+            engine=self._get_engine(),
+            traversal=self.traversal,
         )
 
 

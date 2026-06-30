@@ -225,3 +225,86 @@ def test_same_type_gates_cluster_within_layer():
     assert isinstance(stmts[0], place.R) and stmts[0].qubits == (0,)  # type: ignore[union-attr]
     assert isinstance(stmts[1], place.R) and stmts[1].qubits == (2,)  # type: ignore[union-attr]
     assert isinstance(stmts[2], place.Rz) and stmts[2].qubits == (1,)  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Movement statements (Permute / MoveTo) act as scheduling barriers: the rule
+# must NOT bail on a block that contains them, and gates on each side of the
+# movement are scheduled independently (it does not reorder across them).
+# ---------------------------------------------------------------------------
+
+
+def test_permute_does_not_bail_and_schedules_before_segment():
+    """R(q0), CZ(q0,q1), R(q2), Permute: the pre-permute segment is ASAP
+    scheduled (R(q2) moves before CZ) and the Permute stays as a trailing
+    barrier — the rule no longer skips the whole block."""
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r0 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r0)
+    cz = place.CZ(r0.state_after, qubits=(0, 1))
+    body_block.stmts.append(cz)
+    r2 = place.R(cz.state_after, axis_angle=axis, rotation_angle=angle, qubits=(2,))
+    body_block.stmts.append(r2)
+    perm = place.Permute(r2.state_after, qubits=(0, 1, 2), perm=(0, 1, 2))
+    body_block.stmts.append(perm)
+
+    _, outer = _wrap_in_static_placement(body_block, num_qubits=3)
+    assert _run(outer)  # pre-permute segment reorders; rule does not bail
+
+    sp = _get_sp(outer)
+    stmts = _body_stmts(sp)
+    assert len(stmts) == 4
+    assert isinstance(stmts[0], place.R) and stmts[0].qubits == (0,)  # type: ignore[union-attr]
+    assert isinstance(stmts[1], place.R) and stmts[1].qubits == (2,)  # type: ignore[union-attr]
+    assert isinstance(stmts[2], place.CZ)
+    assert isinstance(stmts[3], place.Permute)  # barrier stays last
+
+
+def test_permute_prevents_reorder_across():
+    """R(q0), Permute, R(q0): Permute is a barrier; the two length-1 segments
+    cannot reorder across it."""
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r0 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r0)
+    perm = place.Permute(r0.state_after, qubits=(0, 1), perm=(1, 0))
+    body_block.stmts.append(perm)
+    r0b = place.R(perm.state_after, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r0b)
+
+    _, outer = _wrap_in_static_placement(body_block, num_qubits=2)
+    assert not _run(outer)  # both segments length 1, barrier blocks crossing
+
+
+def test_move_to_does_not_bail_and_schedules_before_segment():
+    """Same as the Permute barrier test but for MoveTo."""
+    from bloqade.lanes.bytecode.encoding import LocationAddress
+
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r0 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r0)
+    cz = place.CZ(r0.state_after, qubits=(0, 1))
+    body_block.stmts.append(cz)
+    r2 = place.R(cz.state_after, axis_angle=axis, rotation_angle=angle, qubits=(2,))
+    body_block.stmts.append(r2)
+    move = place.MoveTo(
+        r2.state_after, qubits=(0,), locations=(LocationAddress(0, 0, 0),)
+    )
+    body_block.stmts.append(move)
+
+    _, outer = _wrap_in_static_placement(body_block, num_qubits=3)
+    assert _run(outer)
+
+    sp = _get_sp(outer)
+    stmts = _body_stmts(sp)
+    assert len(stmts) == 4
+    assert isinstance(stmts[1], place.R) and stmts[1].qubits == (2,)  # type: ignore[union-attr]
+    assert isinstance(stmts[3], place.MoveTo)

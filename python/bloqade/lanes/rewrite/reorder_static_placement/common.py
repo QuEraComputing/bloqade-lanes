@@ -4,11 +4,29 @@ import rustworkx
 
 from bloqade.lanes.dialects import place
 
-_BARRIERS: tuple[type, ...] = (place.Initialize, place.EndMeasure)
+# Movement statements (MoveTo, Permute) are barriers too: gates must not be
+# reordered across a user-directed move, but the gate runs on either side of one
+# are still scheduled independently. Without this the reorder rule would bail on
+# any block containing a movement statement, leaving the surrounding gates (e.g.
+# state-prep) completely un-scheduled.
+_BARRIERS: tuple[type, ...] = (
+    place.Initialize,
+    place.EndMeasure,
+    place.MoveTo,
+    place.Permute,
+)
 
-# Union of all concrete QuantumStmt subclasses that carry a .qubits attribute.
+# Union of all concrete QuantumStmt subclasses that the reorder rule accepts in a
+# StaticPlacement body. MoveTo/Permute are accepted as barriers (see _BARRIERS).
 _SchedulableStmt = (
-    place.R | place.Rz | place.StarRz | place.CZ | place.Initialize | place.EndMeasure
+    place.R
+    | place.Rz
+    | place.StarRz
+    | place.CZ
+    | place.Initialize
+    | place.EndMeasure
+    | place.MoveTo
+    | place.Permute
 )
 
 

@@ -1,6 +1,6 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from itertools import chain
-from typing import Any
+from typing import Any, ClassVar
 
 from kirin import interp, ir
 from kirin.analysis.forward import Forward, ForwardFrame
@@ -103,21 +103,32 @@ class _MoveMethods(interp.MethodTable):
         _interp.report_location_errors(node, all_locations)
 
 
-@dataclass
-class Validation(ValidationPass):
-    """Validates a move program against an architecture specification."""
+def get_validation(arch_spec: ArchSpec) -> type[ValidationPass]:
+    """Build an address-validation pass bound to ``arch_spec``.
 
-    arch_spec: ArchSpec = field(kw_only=True)
+    ``kirin``'s :class:`ValidationSuite` instantiates each pass with no
+    arguments (``pass_cls()``), so a pass cannot take ``arch_spec`` as a
+    constructor argument. We close over ``arch_spec`` and stash it on a
+    :data:`ClassVar`, yielding a no-arg-constructible pass class that the
+    suite can drive directly.
+    """
 
-    def name(self) -> str:
-        return "lanes.address.validation"
+    @dataclass
+    class Validation(ValidationPass):
+        """Validates a move program against an architecture specification."""
 
-    def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
+        ARCH_SPEC: ClassVar[ArchSpec] = arch_spec
 
-        analysis = _ValidationAnalysis(
-            method.dialects,
-            arch_spec=self.arch_spec,
-        )
-        frame, _ = analysis.run(method)
+        def name(self) -> str:
+            return "lanes.address.validation"
 
-        return frame, analysis.get_validation_errors()
+        def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
+            analysis = _ValidationAnalysis(
+                method.dialects,
+                arch_spec=self.ARCH_SPEC,
+            )
+            frame, _ = analysis.run(method)
+
+            return frame, analysis.get_validation_errors()
+
+    return Validation

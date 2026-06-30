@@ -8,11 +8,11 @@ from bloqade.rewrite.passes.callgraph import CallGraphPass
 from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
-from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
 
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
+from bloqade.gemini.common.dialects.movement.rewrite import BindCzPartnerArchSpec
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
@@ -40,26 +40,32 @@ class NativeToPlace:
             )
             CallGraphPass(mt.dialects, rule)(out)
 
+        if self.arch_spec is not None:
+            # Bind arch_spec on every CzPartner reachable through the call graph
+            # so const-prop resolves them during AggressiveUnroll.
+            CallGraphPass(
+                out.dialects, rewrite.Walk(BindCzPartnerArchSpec(self.arch_spec))
+            )(out)
+
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
+
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
         if self.arch_spec is not None:
+            from kirin.validation import ValidationSuite
+
             from bloqade.gemini.common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
-            from bloqade.lanes.validation.address import Validation
+            from bloqade.lanes.validation.address import get_validation
 
-            errors: list[ir.ValidationError] = []
-            _, per_stmt_errors = Validation(arch_spec=self.arch_spec).run(out)
-            errors.extend(per_stmt_errors)
-            _, dup_errors = DuplicateAddressValidation().run(out)
-            errors.extend(dup_errors)
-            if errors:
-                message = f"Gemini IR validation failed with {len(errors)} error(s)"
-                raise ValidationErrorGroup(message, errors=errors)
+            suite = ValidationSuite(
+                [DuplicateAddressValidation, get_validation(self.arch_spec)]
+            )
+            suite.validate(out).raise_if_invalid()
 
         if self.logical_initialize:
             rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(

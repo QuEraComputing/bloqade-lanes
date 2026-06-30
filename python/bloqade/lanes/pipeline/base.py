@@ -7,13 +7,15 @@ from bloqade.analysis import address
 from bloqade.native.dialects import gate as native_gate
 from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
-from kirin import ir, passes, rewrite
+from bloqade.rewrite.passes.callgraph import CallGraphPass
+from kirin import passes, rewrite
 from kirin.dialects.scf import scf2cf
-from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
+from kirin.validation import ValidationSuite
 
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
+from bloqade.gemini.common.dialects.movement.rewrite import BindCzPartnerArchSpec
 from bloqade.gemini.common.validation.duplicate_address import (
     DuplicateAddressValidation,
 )
@@ -21,7 +23,7 @@ from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
-from bloqade.lanes.validation.address import Validation as AddressValidation
+from bloqade.lanes.validation.address import get_validation
 
 
 @dataclass
@@ -69,24 +71,26 @@ class _NativeToPlaceBase:
         out = mt.similar(mt.dialects.add(place))
         out = self._pre_native_rewrites(mt, out, no_raise)
 
+        if self.arch_spec is not None:
+            # Bind arch_spec on every CzPartner reachable through the call graph
+            # so const-prop resolves them during AggressiveUnroll.
+            CallGraphPass(
+                out.dialects, rewrite.Walk(BindCzPartnerArchSpec(self.arch_spec))
+            )(out)
+
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
+
         self._post_unroll_validation(out, no_raise)
 
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
         if self.arch_spec is not None:
-            validation_errors: list[ir.ValidationError] = []
-            _, per_stmt_errors = AddressValidation(arch_spec=self.arch_spec).run(out)
-            validation_errors.extend(per_stmt_errors)
-            _, dup_errors = DuplicateAddressValidation().run(out)
-            validation_errors.extend(dup_errors)
-            if validation_errors:
-                raise ValidationErrorGroup(
-                    f"Gemini IR validation failed with {len(validation_errors)} error(s)",
-                    errors=validation_errors,
-                )
+            suite = ValidationSuite(
+                [DuplicateAddressValidation, get_validation(self.arch_spec)]
+            )
+            suite.validate(out).raise_if_invalid()
 
         self._lower_qubits(out)
 

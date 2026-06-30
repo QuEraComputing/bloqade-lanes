@@ -10,8 +10,7 @@ from bloqade.lanes.rewrite import circuit2place
 from bloqade.lanes.rewrite.circuit2place import (
     HoistNewQubitsUp,
     MergeStaticPlacement,
-    gate_only_merge,
-    sq_only_merge,
+    always_merge,
 )
 from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
 from bloqade.lanes.rewrite.remove_debug import RemoveDebugStatements
@@ -32,10 +31,9 @@ from bloqade.lanes.rewrite.transversal import (
 
 @dataclass
 class SequentialPlacePass(passes.Pass):
-    """Preserve gate order; merge only adjacent single-qubit-gate placements (R, Rz).
+    """Merge all adjacent StaticPlacement blocks, preserving original gate order.
 
-    CZ placements remain isolated, preserving the original program order.
-    This is the default behavior.
+    This is the default place-dialect optimization pass.
     """
 
     name: ClassVar[str] = "sequential_place"
@@ -46,13 +44,13 @@ class SequentialPlacePass(passes.Pass):
             rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
         result = result.join(
-            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
                 mt.code
             )
         )
         result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
         result = result.join(
-            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
                 mt.code
             )
         )
@@ -63,7 +61,7 @@ class SequentialPlacePass(passes.Pass):
 class ASAPPlacePass(passes.Pass):
     """ASAP scheduling optimization for the place dialect.
 
-    Merges all pure-gate placements (R, Rz, CZ), reorders gates by ASAP
+    Merges all adjacent StaticPlacement blocks, reorders gates by ASAP
     dependency scheduling, then fuses adjacent compatible gates.
 
     ``debug.Info`` statements are stripped at the start of this pass.
@@ -81,15 +79,15 @@ class ASAPPlacePass(passes.Pass):
             rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(
             rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(mt.code)
@@ -106,8 +104,8 @@ class ALAPPlacePass(passes.Pass):
 
     Same pipeline as ``ASAPPlacePass`` but uses ALAP (As-Late-As-Possible)
     dependency scheduling.  Deferring single-qubit gates to their latest
-    valid layer reduces the qubit footprint of early CZ-anchored
-    StaticPlacement regions, lowering atom-move overhead compared to ASAP.
+    valid layer reduces the qubit footprint of early CZ-anchored regions,
+    lowering atom-move overhead compared to ASAP.
 
     ``debug.Info`` statements are stripped at the start of this pass (same
     reason as ``ASAPPlacePass``).
@@ -122,15 +120,15 @@ class ALAPPlacePass(passes.Pass):
             rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(
             rewrite.Walk(ReorderStaticPlacement(alap_reorder_policy)).rewrite(mt.code)

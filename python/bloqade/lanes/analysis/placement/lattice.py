@@ -208,14 +208,30 @@ class ExecuteCZReturn(ExecuteCZ):
     initial_layout: tuple[LocationAddress, ...] = field(kw_only=True)
     """Atom layout before forward moves were applied (the home position)."""
 
+    user_move_layers: tuple[tuple[LaneAddress, ...], ...] = field(
+        kw_only=True, default=()
+    )
+    """User-move layers already emitted forward at MoveTo sites.
+    Included in return_move_layers to palindrome the full inter-CZ segment."""
+
     return_move_layers: tuple[tuple[LaneAddress, ...], ...] = field(init=False)
-    """Palindrome of move_layers; computed at construction."""
+    """Strict palindrome of the combined forward sequence
+    ``user_move_layers + move_layers``; computed at construction."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        # Forward order within an inter-CZ segment is user moves (emitted at the
+        # MoveTo sites) followed by compiler moves (emitted before the CZ), i.e.
+        # ``user_move_layers + move_layers``. The palindrome return is the strict
+        # reverse of that single combined sequence: layer order reversed and,
+        # within each layer, lane order reversed with each lane's direction
+        # flipped. Treating both halves uniformly yields
+        # ``reverse(move_layers) + reverse(user_move_layers)`` and avoids the
+        # within-layer-ordering mismatch that arises from reversing them apart.
+        forward_layers = self.user_move_layers + self.move_layers
         self.return_move_layers = tuple(
             tuple(lane.reverse() for lane in reversed(layer))
-            for layer in reversed(self.move_layers)
+            for layer in reversed(forward_layers)
         )
 
     def get_reverse_moves(self) -> tuple[tuple[LaneAddress, ...], ...]:
@@ -226,4 +242,52 @@ class ExecuteCZReturn(ExecuteCZ):
             super().is_subseteq(other)
             and isinstance(other, ExecuteCZReturn)
             and self.initial_layout == other.initial_layout
+            and self.user_move_layers == other.user_move_layers
+        )
+
+
+@final
+@dataclass
+class UserMoved(ConcreteState):
+    """State produced by a user-directed place.MoveTo statement.
+
+    - `move_layers`: AOD layers for *this* MoveTo only; read by InsertMoves
+      to emit forward Move IR at the MoveTo site.
+    - `accumulated_move_layers`: all user-move layers since the last CZ (or
+      start), for palindrome return at the next CZ.
+    - `pre_user_layout`: atom layout before the first user move in this
+      inter-CZ segment; the palindrome home position.
+    """
+
+    move_layers: tuple[tuple[LaneAddress, ...], ...] = field(kw_only=True)
+    accumulated_move_layers: tuple[tuple[LaneAddress, ...], ...] = field(kw_only=True)
+    pre_user_layout: tuple[LocationAddress, ...] = field(kw_only=True)
+
+    def get_move_layers(self) -> tuple[tuple[LaneAddress, ...], ...]:
+        return self.move_layers
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return (
+            super().is_subseteq(other)
+            and isinstance(other, UserMoved)
+            and self.move_layers == other.move_layers
+            and self.accumulated_move_layers == other.accumulated_move_layers
+            and self.pre_user_layout == other.pre_user_layout
+        )
+
+    @classmethod
+    def from_concrete_state(
+        cls,
+        state: ConcreteState,
+        move_layers: tuple[tuple[LaneAddress, ...], ...],
+        accumulated_move_layers: tuple[tuple[LaneAddress, ...], ...],
+        pre_user_layout: tuple[LocationAddress, ...],
+    ) -> "UserMoved":
+        return cls(
+            occupied=state.occupied,
+            layout=state.layout,
+            move_count=state.move_count,
+            move_layers=move_layers,
+            accumulated_move_layers=accumulated_move_layers,
+            pre_user_layout=pre_user_layout,
         )
