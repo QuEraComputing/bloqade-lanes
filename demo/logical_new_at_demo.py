@@ -186,6 +186,11 @@ plot_labeled_arch(
 
 
 # %% [markdown]
+# For reference, we display again the connectivity on the logical architecture.
+#
+# <img src="./star_demo_imgs/gemini_logical_buses.png" height=500>
+
+# %% [markdown]
 # # Example Using Default Allocation
 # Below, we give an example of a kernel where we don't specify the location of the qubits during allocation.
 
@@ -195,7 +200,7 @@ plot_labeled_arch(
 def default_allocation():
     reg = squin.qalloc(4)
     squin.broadcast.h(ilist.IList([reg[0], reg[2]]))
-    squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+    squin.broadcast.cx(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
     gemini_logical.terminal_measure(reg)
 
 
@@ -223,7 +228,7 @@ def explicit_allocation():
     c = new_at(0, 4, 0)
     d = new_at(0, 12, 0)
     squin.broadcast.h(ilist.IList([a, b]))
-    squin.broadcast.cz(ilist.IList([a, b]), ilist.IList([c, d]))
+    squin.broadcast.cx(ilist.IList([a, b]), ilist.IList([c, d]))
     gemini_logical.terminal_measure(ilist.IList([a, b, c, d]))
 
 

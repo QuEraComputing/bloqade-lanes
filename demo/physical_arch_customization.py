@@ -209,6 +209,8 @@ plot_labeled_arch(
 # %% [markdown]
 # Each column has the word ID's that are used for the logical architecture. We basically duplicate the logical architecture 8 times to obtain our physical architecture, and you can use the "site_id" to index which "box" to be in.
 # > The diagram only plots the (word_id, site_id) for each site; the "zone_id" is omitted as it is always 0 (for the Gemini MVP architecture, we only have one zone).
+#
+# <img src="./star_demo_imgs/gemini_interleaved_layout.png" width="1000">
 
 # %% [markdown]
 # ## Customizing Physical Layout
@@ -437,3 +439,5 @@ physical_msd_task_res = physical_msd_task.run(shots=1000)
 
 # %%
 print(np.array(physical_msd_task_res.measurements).shape)
+
+# %%
