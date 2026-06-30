@@ -15,11 +15,10 @@ import numpy as np
 from bloqade.analysis.fidelity import FidelityAnalysis
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.rewrite.passes import AggressiveUnroll
-from kirin import ir, passes, rewrite
+from kirin import ir, passes, rewrite, types
 from kirin.dialects import func, ilist, py
 
-from bloqade import qubit
-from bloqade.gemini.common.dialects.qubit import stmts as gemini_qubit_stmts
+from bloqade import qubit, types as bloqade_types
 
 from .simulator import DetectorResult, Result
 
@@ -64,10 +63,11 @@ def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
     """Walk the IR and collect SSA values for physical qubit allocations."""
     qubits: list[ir.SSAValue] = []
     for stmt in mt.callable_region.walk():
-        if isinstance(stmt, qubit.stmts.New):
-            qubits.append(stmt.result)
-        elif isinstance(stmt, gemini_qubit_stmts.NewAt):
-            qubits.append(stmt.qubit)
+        for result in stmt.results:
+            if result.type.is_subseteq(
+                bloqade_types.QubitType
+            ) and not result.type.is_subseteq(types.Bottom):
+                qubits.append(result)
     return qubits
 
 

@@ -3,15 +3,18 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
-from kirin.dialects import ilist
+from kirin import ir, types
+from kirin.decl import info, statement
+from kirin.dialects import func, ilist
 
 import bloqade.gemini.device.physical_simulator as physical_simulator_module
-from bloqade import squin
+from bloqade import squin, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.device.physical_simulator import (
     PhysicalResult,
     PhysicalSimulator,
     PhysicalSimulatorTask,
+    _find_qubit_ssas,
     append_measurements_and_annotations_physical,
 )
 from bloqade.lanes.analysis import atom
@@ -205,3 +208,37 @@ def test_append_measurements_and_annotations_physical_accepts_new_at_allocations
         sum(isinstance(s, SetObservable) for s in pinned_kernel.callable_region.walk())
         == 1
     )
+
+
+def test_find_qubit_ssas_collects_any_qubit_typed_statement_result():
+    test_dialect = ir.Dialect("test.qubit_alloc")
+
+    @statement(dialect=test_dialect)
+    class CustomQubitAlloc(ir.Statement):
+        result: ir.ResultValue = info.result(bloqade_types.QubitType)
+
+    @statement(dialect=test_dialect)
+    class BottomTypedStatement(ir.Statement):
+        result: ir.ResultValue = info.result(types.Bottom)
+
+    block = ir.Block(argtypes=(types.MethodType,))
+    alloc = CustomQubitAlloc()
+    bottom = BottomTypedStatement()
+    none_stmt = func.ConstantNone()
+    for stmt in (alloc, bottom, none_stmt, func.Return(none_stmt.result)):
+        block.stmts.append(stmt)
+
+    function = func.Function(
+        sym_name="custom_alloc",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=ir.Region(blocks=block),
+    )
+    method = ir.Method(
+        dialects=ir.DialectGroup([func.dialect, test_dialect]),
+        code=function,
+        sym_name="custom_alloc",
+        arg_names=[],
+    )
+
+    assert _find_qubit_ssas(method) == [alloc.result]
