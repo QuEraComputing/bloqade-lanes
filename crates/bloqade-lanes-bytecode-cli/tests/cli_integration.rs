@@ -71,8 +71,8 @@ fn test_assemble_creates_binary() {
         .stderr(predicate::str::contains("assembled 23 instructions"));
 
     let bytes = fs::read(&output).unwrap();
-    // Should start with the native BLQV magic bytes
-    assert_eq!(&bytes[..4], b"BLQV");
+    // Should start with the native LANES magic bytes
+    assert_eq!(&bytes[..5], b"LANES");
 }
 
 #[test]

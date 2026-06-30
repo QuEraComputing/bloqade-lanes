@@ -11,7 +11,7 @@
 //! ## Binary layout (native, breaking vs. legacy `BLQD`)
 //!
 //! ```text
-//! magic    : 4 bytes  = b"BLQV"
+//! magic    : 5 bytes  = b"LANES"
 //! version  : u32 LE   = (major << 16) | minor
 //! code     : N * INSTRUCTION_WIDTH bytes (vihaco fixed-width words)
 //! ```
@@ -28,9 +28,12 @@ use vihaco_parser_core::Parse;
 use super::{INSTRUCTION_WIDTH, Instruction};
 use crate::version::Version;
 
-/// 4-byte magic identifying a native vihaco-backed Bloqade Lanes program.
+/// 5-byte magic identifying a native vihaco-backed Bloqade Lanes program.
 /// Distinct from the legacy `BLQD` container so the two can't be confused.
-pub const MAGIC: &[u8; 4] = b"BLQV";
+pub const MAGIC: &[u8; 5] = b"LANES";
+
+/// Header length: [`MAGIC`] (5 bytes) followed by a packed u32 version.
+const HEADER_LEN: usize = MAGIC.len() + 4;
 
 /// A bytecode program: a version and a flat instruction sequence.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,7 +60,7 @@ pub enum BinaryError {
 impl std::fmt::Display for BinaryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BinaryError::BadMagic => write!(f, "bad magic bytes (expected BLQV)"),
+            BinaryError::BadMagic => write!(f, "bad magic bytes (expected LANES)"),
             BinaryError::Truncated { expected, got } => {
                 write!(f, "truncated: expected {expected} bytes, got {got}")
             }
@@ -104,7 +107,8 @@ impl std::error::Error for TextError {}
 impl Program {
     /// Serialize to the native binary format (see module docs).
     pub fn to_binary(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(8 + self.instructions.len() * INSTRUCTION_WIDTH as usize);
+        let mut buf =
+            Vec::with_capacity(HEADER_LEN + self.instructions.len() * INSTRUCTION_WIDTH as usize);
         buf.extend_from_slice(MAGIC);
         let packed: u32 = self.version.into();
         buf.extend_from_slice(&packed.to_le_bytes());
@@ -118,19 +122,24 @@ impl Program {
 
     /// Deserialize from the native binary format.
     pub fn from_binary(bytes: &[u8]) -> Result<Self, BinaryError> {
-        if bytes.len() < 8 {
+        if bytes.len() < HEADER_LEN {
             return Err(BinaryError::Truncated {
-                expected: 8,
+                expected: HEADER_LEN,
                 got: bytes.len(),
             });
         }
-        if &bytes[0..4] != MAGIC {
+        if &bytes[0..MAGIC.len()] != MAGIC {
             return Err(BinaryError::BadMagic);
         }
-        let packed = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let packed = u32::from_le_bytes([
+            bytes[MAGIC.len()],
+            bytes[MAGIC.len() + 1],
+            bytes[MAGIC.len() + 2],
+            bytes[MAGIC.len() + 3],
+        ]);
         let version = Version::from(packed);
 
-        let code = &bytes[8..];
+        let code = &bytes[HEADER_LEN..];
         let width = INSTRUCTION_WIDTH as usize;
         if !code.len().is_multiple_of(width) {
             return Err(BinaryError::UnalignedCode { len: code.len() });
@@ -295,10 +304,10 @@ mod tests {
     fn binary_round_trips() {
         let program = sample();
         let bytes = program.to_binary();
-        assert_eq!(&bytes[0..4], MAGIC);
+        assert_eq!(&bytes[0..MAGIC.len()], MAGIC);
         assert_eq!(
             bytes.len(),
-            8 + program.instructions.len() * INSTRUCTION_WIDTH as usize
+            HEADER_LEN + program.instructions.len() * INSTRUCTION_WIDTH as usize
         );
         assert_eq!(Program::from_binary(&bytes).unwrap(), program);
     }
@@ -319,7 +328,7 @@ mod tests {
             instructions: vec![],
         };
         let bytes = program.to_binary();
-        assert_eq!(bytes.len(), 8);
+        assert_eq!(bytes.len(), HEADER_LEN);
         assert_eq!(Program::from_binary(&bytes).unwrap(), program);
     }
 
@@ -396,9 +405,9 @@ mod tests {
     #[test]
     fn short_buffer_rejected() {
         assert_eq!(
-            Program::from_binary(b"BLQ"),
+            Program::from_binary(b"LAN"),
             Err(BinaryError::Truncated {
-                expected: 8,
+                expected: HEADER_LEN,
                 got: 3
             })
         );
