@@ -61,7 +61,11 @@ def move_to(
 ) -> None:
     """Move the given qubits to the specified LocationAddress destinations.
 
-    Must immediately precede a CZ gate (or another move_to call).
+    User-directed movement within a single zone; the compiler tracks where the
+    atoms end up, so a ``move_to`` may be followed by single-qubit gates,
+    another ``move_to``, a CZ, or a terminal measurement. (Under palindrome
+    return moves the atoms are returned to their pre-move layout at the next CZ,
+    so in that mode a ``move_to`` must reach a CZ before any measurement.)
     Compilation fails if the move is physically infeasible.
     """
     ...

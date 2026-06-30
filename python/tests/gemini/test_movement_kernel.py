@@ -109,7 +109,17 @@ def test_movement_kernel_multi_move_to_then_cz():
 
 
 def test_movement_kernel_terminal_move_to_valid():
-    """move_to as the last statement before measure (no subsequent CZ) is valid."""
+    """move_to immediately before the terminal measure is accepted by the
+    movement_kernel validation suite at kernel-definition time (it must not be
+    rejected for lacking a following CZ).
+
+    This asserts decoration-time acceptance only. The placement-layer behavior
+    it depends on — measure_placements committing a terminal user-move instead
+    of returning bottom — is verified directly in
+    ``tests/analysis/placement/test_user_moved.py::
+    test_measure_placements_user_moved_concretizes``. (Full move-lowering of
+    move_to -> terminal_measure is separately gated by terminal-measurement
+    validation, which is out of scope here.)"""
     loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
 
     @movement_kernel(aggressive_unroll=True)

@@ -365,6 +365,16 @@ class RewritePlaceOperations(abc.RewriteRule):
         inputs = qubits_list.values
         location_attrs = tuple(locations_hint.data)
 
+        if len(location_attrs) != len(inputs):
+            # Fail loudly: a mismatched move_to would otherwise be silently
+            # miscompiled (move_to_placements zips qubits/locations and drops
+            # extras). MoveToValidation catches this too, but it is skipped
+            # under verify=False, so guard here as well.
+            raise ValueError(
+                f"move_to: number of locations ({len(location_attrs)}) does not "
+                f"match number of qubits ({len(inputs)})"
+            )
+
         body, block, entry_state = self.prep_region()
         move_stmt = place.MoveTo(
             entry_state,
@@ -391,6 +401,15 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         inputs = qubits_list.values
         perm_attr = tuple(int(p) for p in perm_hint.data)
+
+        if sorted(perm_attr) != list(range(len(inputs))):
+            # Fail loudly: perm must be a permutation of range(len(qubits)); a
+            # bad perm would otherwise IndexError deep in placement or silently
+            # miscompile. Guard here since validation may be skipped (verify=False).
+            raise ValueError(
+                f"permute: perm {perm_attr} is not a permutation of "
+                f"range({len(inputs)})"
+            )
 
         body, block, entry_state = self.prep_region()
         permute_stmt = place.Permute(
@@ -658,24 +677,6 @@ def gate_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> b
 def sq_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
     """Merge placements whose bodies contain only R and Rz (no CZ)."""
     return _is_sq_only_block(sp1) and _is_sq_only_block(sp2)
-
-
-def _is_move_to_only_block(sp: place.StaticPlacement) -> bool:
-    return all(
-        isinstance(stmt, (place.MoveTo, place.Permute, place.Yield))
-        for stmt in sp.body.blocks[0].stmts
-    )
-
-
-def move_to_gate_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
-    """Merge a MoveTo-only block with the immediately following gate block.
-
-    Required so that ``UserMoved`` state produced by ``move_to_placements``
-    flows into ``cz_placements`` (or any other gate placement) within the
-    same ``StaticPlacement`` analysis context, enabling the pre-staging
-    optimisation.
-    """
-    return _is_move_to_only_block(sp1) and _is_pure_gate_block(sp2)
 
 
 def always_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:

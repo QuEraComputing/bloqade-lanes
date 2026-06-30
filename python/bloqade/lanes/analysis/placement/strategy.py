@@ -94,14 +94,16 @@ class PlacementStrategyABC(abc.ABC):
         )
 
     def _strip_user_moved(self, state: AtomState) -> AtomState:
-        """Strip UserMoved back to plain ConcreteState.
+        """Normalise any ConcreteState subtype back to a plain ConcreteState.
 
-        Non-palindrome strategies call this in sq_placements so that
-        accumulated_move_layers and pre_user_layout (only needed for the
-        palindrome return at the next CZ) don't leak past SQ gates.
-        PalindromePlacementStrategy.sq_placements bypasses this so that
-        UserMoved survives SQ gates and cz_placements can still read
-        accumulated_move_layers.
+        Despite the name, this strips the extra metadata of *any* ConcreteState
+        subclass — UserMoved's ``accumulated_move_layers``/``pre_user_layout`` as
+        well as ExecuteCZ/ExecuteCZReturn's move/CZ metadata — keeping only
+        ``occupied``/``layout``/``move_count``. Non-palindrome strategies call
+        this in sq_placements so that metadata (only needed for the palindrome
+        return at the next CZ) does not leak past SQ gates.
+        PalindromePlacementStrategy.sq_placements bypasses this so that UserMoved
+        survives SQ gates and cz_placements can still read accumulated_move_layers.
         """
         if isinstance(state, ConcreteState):
             return ConcreteState(

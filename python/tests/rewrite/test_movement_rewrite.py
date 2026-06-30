@@ -89,6 +89,47 @@ def test_rewrite_move_to_gives_up_without_const_hint():
     assert len(move_stmts) == 1  # unchanged
 
 
+def test_rewrite_move_to_length_mismatch_raises():
+    """A const-folded move_to whose location count != qubit count fails loudly,
+    so it cannot silently miscompile when MoveToValidation is skipped."""
+    import pytest
+
+    q0 = ir.TestValue()
+    q1 = ir.TestValue()
+    qubits_new = ilist.New(values=(q0, q1))  # 2 qubits
+
+    loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
+    loc_a_val = py.Constant(loc_a)
+    locs_new = ilist.New(values=(loc_a_val.result,))  # only 1 location
+    locs_new.result.hints["const"] = const.Value((loc_a,))
+
+    stmt = movement.stmts.MoveTo(qubits_new.result, locs_new.result)
+    test_block = ir.Block([qubits_new, loc_a_val, locs_new, stmt])
+
+    with pytest.raises(ValueError, match="number of locations"):
+        _make_rule().rewrite(test_block)
+
+
+def test_rewrite_permute_invalid_perm_raises():
+    """A const-folded permute whose perm is not a permutation of
+    range(len(qubits)) fails loudly rather than miscompiling."""
+    import pytest
+
+    q0 = ir.TestValue()
+    q1 = ir.TestValue()
+    qubits_new = ilist.New(values=(q0, q1))  # 2 qubits
+
+    bad_perm_val = py.Constant((0, 0))  # not a permutation of range(2)
+    perm_new = ilist.New(values=(bad_perm_val.result,))
+    perm_new.result.hints["const"] = const.Value((0, 0))
+
+    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result)
+    test_block = ir.Block([qubits_new, bad_perm_val, perm_new, stmt])
+
+    with pytest.raises(ValueError, match="not a permutation"):
+        _make_rule().rewrite(test_block)
+
+
 # ---------------------------------------------------------------------------
 # InsertMoves + RewriteGates tests for place.MoveTo
 # ---------------------------------------------------------------------------
