@@ -186,58 +186,48 @@ plot_labeled_arch(
 
 
 # %% [markdown]
-# ## Example of Allocating Qubits at Specific Locations
-# Here, we give an example of a kernel written in the Gemini Logical dialect that specifies the initial layouts of the logical qubits.
+# # Example Using Default Allocation
+# Below, we give an example of a kernel where we don't specify the location of the qubits during allocation.
 
 
 # %%
 @gemini_logical.kernel(aggressive_unroll=True)
-def main():
-    # Pinned qubits at explicit physical addresses.
-    a = new_at(0, 0, 0)
-    b = new_at(0, 4, 0)
-    # Un-pinned qubits — the layout heuristic chooses their home sites.
-    reg = squin.qalloc(2)
-    # CZ between pinned and un-pinned qubits.
-    squin.cz(a, reg[0])
-    squin.cz(b, reg[1])
-    gemini_logical.terminal_measure(ilist.IList([a, b, reg[0], reg[1]]))
+def default_allocation():
+    reg = squin.qalloc(4)
+    squin.broadcast.h(ilist.IList([reg[0], reg[2]]))
+    squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+    gemini_logical.terminal_measure(reg)
 
 
 # %%
-task = GeminiLogicalSimulator().task(main)
+default_alloc_task = GeminiLogicalSimulator().task(default_allocation)
 
 # %%
-# %matplotlib qt
-
-# %%
-task.visualize()
-
+default_alloc_task.visualize()
 
 # %% [markdown]
-# We can also experiment with an alternative layout where we instead use the qubits in the top right.
+# ## Example of Allocating Qubits at Specific Locations
+# Here, we give an example of a kernel written in the Gemini Logical dialect that specifies the initial layouts of the logical qubits.
+# With more control over the layout, we can better enforce parallelism.
 
 
 # %%
 @gemini_logical.kernel(aggressive_unroll=True)
-def main_alt_layout():
+def explicit_allocation():
     # Pinned qubits at explicit physical addresses.
-    a = new_at(0, 14, 0)
-    b = new_at(0, 18, 0)
-    # Un-pinned qubits — the layout heuristic chooses their home sites.
-    # The default layout heuristic will try to make CZ move patterns similar, but for
-    # this case, it will choose lower word ID's (words 0 and 4).
-    reg = squin.qalloc(2)
-    # CZ between pinned and un-pinned qubits.
-    squin.cz(a, reg[0])
-    squin.cz(b, reg[1])
-    gemini_logical.terminal_measure(ilist.IList([a, b, reg[0], reg[1]]))
+    a = new_at(0, 0, 0)
+    b = new_at(0, 8, 0)
+    c = new_at(0, 4, 0)
+    d = new_at(0, 12, 0)
+    squin.broadcast.h(ilist.IList([a, b]))
+    squin.broadcast.cz(ilist.IList([a, b]), ilist.IList([c, d]))
+    gemini_logical.terminal_measure(ilist.IList([a, b, c, d]))
 
 
 # %%
-task_alt_layout = GeminiLogicalSimulator().task(main_alt_layout)
+explicit_alloc_task = GeminiLogicalSimulator().task(explicit_allocation)
 
 # %%
-task_alt_layout.visualize()
+explicit_alloc_task.visualize()
 
 # %%
