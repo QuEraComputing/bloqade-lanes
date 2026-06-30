@@ -14,18 +14,19 @@ from typing import (
 import numpy as np
 from bloqade.analysis.fidelity import FidelityAnalysis
 from kirin import ir, passes, rewrite
-from stim import DetectorErrorModel
 
-from .simulator import DetectorResult
+from .simulator import DetectorResult, Result
 
 if TYPE_CHECKING:
     import tsim as tsim_backend  # type: ignore[reportMissingImports]
 
+    from bloqade.lanes.analysis import atom
     from bloqade.lanes.analysis.placement import PlacementStrategyABC
     from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 
 RetType = TypeVar("RetType")
+PhysicalResult = Result
 
 
 def _default_noise_model() -> "NoiseModelABC":
@@ -53,49 +54,6 @@ def _tsim():
 
 
 @dataclass(frozen=True)
-class PhysicalResult:
-    """Simulation result for physical SQuIn programs."""
-
-    _raw_measurements: list[list[bool]]
-    _tsim_circuit: tsim_backend.Circuit
-    _detector_error_model: DetectorErrorModel
-    _fidelity_min: float
-    _fidelity_max: float
-
-    def fidelity_bounds(self) -> tuple[float, float]:
-        """Return the lower and upper fidelity bounds."""
-        return (self._fidelity_min, self._fidelity_max)
-
-    @property
-    def detector_error_model(self) -> DetectorErrorModel:
-        """The STIM detector error model corresponding to the noisy circuit."""
-        return self._detector_error_model
-
-    @cached_property
-    def measurements(self) -> list[list[bool]]:
-        """The raw measurement outcomes from the measurement sampler."""
-        return list(map(list, self._raw_measurements))
-
-    @cached_property
-    def _detector_observable_samples(self) -> tuple[np.ndarray, np.ndarray]:
-        converter = self._tsim_circuit.compile_m2d_converter(skip_reference_sample=True)
-        return converter.convert(
-            measurements=np.asarray(self._raw_measurements, dtype=bool),
-            separate_observables=True,
-        )
-
-    @cached_property
-    def detectors(self) -> list[list[bool]]:
-        """The detector outcomes derived from circuit annotations."""
-        return self._detector_observable_samples[0].tolist()
-
-    @cached_property
-    def observables(self) -> list[list[bool]]:
-        """The observable outcomes derived from circuit annotations."""
-        return self._detector_observable_samples[1].tolist()
-
-
-@dataclass(frozen=True)
 class PhysicalSimulatorTask(Generic[RetType]):
     """A compiled simulation task for physical SQuIn programs."""
 
@@ -107,6 +65,8 @@ class PhysicalSimulatorTask(Generic[RetType]):
     """The physical architecture specification."""
     physical_move_kernel: ir.Method[[], RetType] = field(repr=False)
     """The physical move kernel compiled from the source SQuIn kernel."""
+    _post_processing: atom.PostProcessing[RetType] = field(repr=False)
+    """The post-processing object for extracting detectors, observables, and return values."""
     _thread_pool_executor: ThreadPoolExecutor = field(
         default_factory=ThreadPoolExecutor, init=False
     )
@@ -211,7 +171,7 @@ class PhysicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
-    ) -> PhysicalResult: ...
+    ) -> Result[RetType]: ...
 
     @overload
     def run(
@@ -229,7 +189,7 @@ class PhysicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool,
-    ) -> PhysicalResult | DetectorResult: ...
+    ) -> Result[RetType] | DetectorResult: ...
 
     def run(
         self,
@@ -237,7 +197,7 @@ class PhysicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
-    ) -> PhysicalResult | DetectorResult:
+    ) -> Result[RetType] | DetectorResult:
         """Run the task and return measurement or detector samples."""
         if run_detectors:
             return self._run_detectors(shots, with_noise)
@@ -254,10 +214,10 @@ class PhysicalSimulatorTask(Generic[RetType]):
 
         raw_results = sampler.sample(shots=shots).tolist()
         fidelity_min, fidelity_max = self.fidelity_bounds()
-        return PhysicalResult(
+        return Result(
             raw_results,
-            circuit,
             self.detector_error_model,
+            self._post_processing,
             fidelity_min,
             fidelity_max,
         )
@@ -294,7 +254,7 @@ class PhysicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
-    ) -> Future[PhysicalResult]: ...
+    ) -> Future[Result[RetType]]: ...
 
     @overload
     def run_async(
@@ -311,7 +271,7 @@ class PhysicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
-    ) -> Future[PhysicalResult] | Future[DetectorResult]:
+    ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the task asynchronously."""
         if run_detectors:
             return self._thread_pool_executor.submit(
@@ -336,6 +296,7 @@ class PhysicalSimulator:
         placement_strategy: "PlacementStrategyABC | None" = None,
     ) -> PhysicalSimulatorTask[RetType]:
         """Compile a physical SQuIn kernel into a reusable simulation task."""
+        from bloqade.lanes.analysis import atom
         from bloqade.lanes.passes import SequentialPlacePass
         from bloqade.lanes.pipeline import PhysicalPipeline
 
@@ -348,12 +309,16 @@ class PhysicalSimulator:
             placement_strategy=placement_strategy,
         )
         physical_move_kernel = physical_pipeline.emit(physical_kernel, no_raise=False)
+        post_processing = atom.AtomInterpreter(
+            physical_move_kernel.dialects, arch_spec=self.arch_spec
+        ).get_post_processing(physical_move_kernel)
 
         return PhysicalSimulatorTask(
             physical_kernel,
             self.noise_model,
             self.arch_spec,
             physical_move_kernel,
+            post_processing,
         )
 
     @overload
@@ -364,7 +329,7 @@ class PhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
-    ) -> PhysicalResult: ...
+    ) -> Result[RetType]: ...
 
     @overload
     def run(
@@ -384,7 +349,7 @@ class PhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool,
-    ) -> PhysicalResult | DetectorResult: ...
+    ) -> Result[RetType] | DetectorResult: ...
 
     def run(
         self,
@@ -393,7 +358,7 @@ class PhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
-    ) -> PhysicalResult | DetectorResult:
+    ) -> Result[RetType] | DetectorResult:
         """Compile and run a physical SQuIn kernel."""
         return self.task(physical_kernel).run(
             shots, with_noise, run_detectors=run_detectors
@@ -407,7 +372,7 @@ class PhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
-    ) -> Future[PhysicalResult]: ...
+    ) -> Future[Result[RetType]]: ...
 
     @overload
     def run_async(
@@ -426,7 +391,7 @@ class PhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
-    ) -> Future[PhysicalResult] | Future[DetectorResult]:
+    ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Compile and run a physical SQuIn kernel asynchronously."""
         task = self.task(physical_kernel)
         if run_detectors:
