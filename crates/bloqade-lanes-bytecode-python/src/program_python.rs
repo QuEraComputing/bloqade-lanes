@@ -1,10 +1,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use bloqade_lanes_bytecode_core::bytecode::program as rs_prog;
-use bloqade_lanes_bytecode_core::bytecode::text as rs_text;
-use bloqade_lanes_bytecode_core::bytecode::validate as rs_val;
 use bloqade_lanes_bytecode_core::version::Version;
+use bloqade_lanes_bytecode_core::vihaco_isa::program as rs_prog;
+use bloqade_lanes_bytecode_core::vihaco_isa::validate as rs_val;
 
 use crate::arch_python::PyArchSpec;
 use crate::instruction_python::PyInstruction;
@@ -22,20 +21,20 @@ impl PyProgram {
         Self {
             inner: rs_prog::Program {
                 version: Version::new(version.0, version.1),
-                instructions: instructions.iter().map(|i| i.inner).collect(),
+                instructions: instructions.iter().map(|i| i.inner.clone()).collect(),
             },
         }
     }
 
     #[staticmethod]
     fn from_text(source: &str, py: Python<'_>) -> PyResult<Self> {
-        let program =
-            rs_text::parse(source).map_err(|e| crate::errors::parse_error_to_py(py, &e))?;
+        let program = rs_prog::Program::parse_text(source)
+            .map_err(|e| crate::errors::text_error_to_py(py, &e))?;
         Ok(Self { inner: program })
     }
 
     fn to_text(&self) -> String {
-        rs_text::print(&self.inner)
+        self.inner.to_text()
     }
 
     #[staticmethod]
@@ -54,25 +53,21 @@ impl PyProgram {
     /// Validate the program.
     ///
     /// With no arguments, runs structural validation only.
-    /// With `arch=spec`, also validates addresses against the architecture.
-    /// With `arch=spec, stack=True`, also runs stack type simulation.
+    /// With `arch=spec`, also validates addresses and device-capability
+    /// constraints against the architecture.
+    ///
+    /// `stack=True` is accepted for API compatibility but is currently a
+    /// no-op: stack-type simulation has not been ported to the vihaco backend
+    /// (tracked in bloqade-lanes#769).
     #[pyo3(signature = (arch=None, stack=false))]
     fn validate(&self, py: Python<'_>, arch: Option<&PyArchSpec>, stack: bool) -> PyResult<()> {
-        let mut all_errors = Vec::new();
+        let _ = stack; // stack-type simulation not yet ported (see #769)
 
-        // Structural validation always runs
-        all_errors.extend(rs_val::validate_structure(&self.inner));
-
-        // Address and capability validation if arch provided
-        if let Some(arch) = arch {
-            all_errors.extend(rs_val::validate_arch_constraints(&self.inner, &arch.inner));
-        }
-
-        // Stack simulation if requested
-        if stack {
-            let arch_ref = arch.map(|a| &a.inner);
-            all_errors.extend(rs_val::simulate_stack(&self.inner, arch_ref));
-        }
+        let arch_ref = arch.map(|a| &a.inner);
+        let all_errors = rs_val::validate_structure(&self.inner)
+            .into_iter()
+            .chain(rs_val::validate(&self.inner, arch_ref))
+            .collect::<Vec<_>>();
 
         if all_errors.is_empty() {
             Ok(())
@@ -91,7 +86,7 @@ impl PyProgram {
         self.inner
             .instructions
             .iter()
-            .map(|i| PyInstruction { inner: *i })
+            .map(|i| PyInstruction { inner: i.clone() })
             .collect()
     }
 

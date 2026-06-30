@@ -171,6 +171,18 @@ class UnreachableInstructionError(ValidationError):
         super().__init__(f"pc {pc}: unreachable instruction after return or halt")
 
 
+class AddressValidationError(ValidationError):
+    """A const_loc / const_lane / const_zone operand is invalid for the arch.
+
+    Carries the architecture layer's own diagnostic ``message``.
+    """
+
+    def __init__(self, pc: int, message: str):
+        self.pc = pc
+        self.message = message
+        super().__init__(f"pc {pc}: invalid address: {message}")
+
+
 # ── Location group errors (from ArchSpec.check_locations) ──
 
 
@@ -263,6 +275,15 @@ class ParseError(Exception):
 class MissingVersionError(ParseError):
     def __init__(self):
         super().__init__("missing .version directive")
+
+
+class BadInstructionError(ParseError):
+    """A line could not be parsed as an instruction."""
+
+    def __init__(self, line: int, text: str):
+        self.line = line
+        self.text = text
+        super().__init__(f"line {line}: cannot parse instruction '{text}'")
 
 
 class InvalidVersionError(ParseError):

@@ -1,7 +1,7 @@
 //! Vihaco-backed instruction set (ISA) for the Bloqade Lanes bytecode.
 //!
-//! This is the in-progress migration of the hand-rolled bytecode (see the
-//! [`crate::bytecode`] module) onto the [`vihaco`] virtual-ISA framework, per
+//! This is the bytecode instruction set, built on the [`vihaco`] virtual-ISA
+//! framework (the migration off the original hand-rolled format), per
 //! <https://github.com/QuEraComputing/bloqade-lanes/issues/769>.
 //!
 //! The instruction set is defined once as a `#[derive(Instruction, Parse)]`
@@ -14,8 +14,8 @@
 //! - a text (`.sst`) parser ([`vihaco_parser_core::Parse`]).
 //!
 //! This adopts vihaco's **native** byte layout (the issue #769 decision); it is
-//! intentionally *not* compatible with the legacy `BLQD` container in
-//! [`crate::bytecode::program`].
+//! intentionally *not* compatible with the original `BLQD` container that the
+//! hand-rolled bytecode used.
 //!
 //! ## CPU ops are reused from `vihaco-cpu`
 //!

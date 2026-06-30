@@ -19,8 +19,6 @@ from bloqade.lanes.bytecode.exceptions import (
     InitialFillNotFirstError,
     MissingTerminatorError,
     MissingVersionError,
-    StackUnderflowError,
-    TypeMismatchError,
     UnreachableInstructionError,
 )
 
@@ -139,18 +137,20 @@ class TestZoneAddress:
 
 
 class TestInstruction:
+    # The vihaco-backed ISA assigns its own opcode bytes (no legacy packed
+    # (instr<<8)|device scheme), so these check instruction identity via the
+    # stable op_name() rather than a specific opcode value.
     def test_const_float(self):
         inst = Instruction.const_float(1.5)
-        assert inst.opcode == 0x0300  # Cpu device=0x00, inst=0x03
+        assert inst.op_name() == "const_float"
         assert "const_float" in repr(inst)
 
     def test_const_int(self):
-        inst = Instruction.const_int(42)
-        assert inst.opcode == 0x0200  # Cpu device=0x00, inst=0x02
+        assert Instruction.const_int(42).op_name() == "const_int"
 
     def test_const_loc(self):
         inst = Instruction.const_loc(zone_id=0, word_id=0, site_id=1)
-        assert inst.opcode == 0x000F  # LaneConst device=0x0F, inst=0x00
+        assert inst.op_name() == "const_loc"
 
     def test_const_lane(self):
         inst = Instruction.const_lane(
@@ -161,51 +161,44 @@ class TestInstruction:
             bus_id=0,
             direction=Direction.FORWARD,
         )
-        assert inst.opcode == 0x010F  # LaneConst device=0x0F, inst=0x01
+        assert inst.op_name() == "const_lane"
 
     def test_const_zone(self):
-        inst = Instruction.const_zone(zone_id=0)
-        assert inst.opcode == 0x020F  # LaneConst device=0x0F, inst=0x02
+        assert Instruction.const_zone(zone_id=0).op_name() == "const_zone"
 
     def test_stack_ops(self):
-        assert Instruction.pop().opcode == 0x0500  # Cpu device=0x00, inst=0x05
-        assert Instruction.dup().opcode == 0x0400  # Cpu device=0x00, inst=0x04
-        assert Instruction.swap().opcode == 0x0600  # Cpu device=0x00, inst=0x06
+        assert Instruction.pop().op_name() == "pop"
+        assert Instruction.dup().op_name() == "dup"
+        assert Instruction.swap().op_name() == "swap"
 
     def test_atom_ops(self):
-        assert Instruction.initial_fill(2).opcode == 0x0010  # AA device=0x10, inst=0x00
-        assert Instruction.fill(1).opcode == 0x0110  # AA device=0x10, inst=0x01
-        assert Instruction.move_(1).opcode == 0x0210  # AA device=0x10, inst=0x02
+        assert Instruction.initial_fill(2).op_name() == "initial_fill"
+        assert Instruction.fill(1).op_name() == "fill"
+        assert Instruction.move_(1).op_name() == "move"
 
     def test_gate_ops(self):
-        assert Instruction.local_r(1).opcode == 0x0011  # QG device=0x11, inst=0x00
-        assert Instruction.local_rz(1).opcode == 0x0111  # QG device=0x11, inst=0x01
-        assert Instruction.global_r().opcode == 0x0211  # QG device=0x11, inst=0x02
-        assert Instruction.global_rz().opcode == 0x0311  # QG device=0x11, inst=0x03
-        assert Instruction.cz().opcode == 0x0411  # QG device=0x11, inst=0x04
+        assert Instruction.local_r(1).op_name() == "local_r"
+        assert Instruction.local_rz(1).op_name() == "local_rz"
+        assert Instruction.global_r().op_name() == "global_r"
+        assert Instruction.global_rz().op_name() == "global_rz"
+        assert Instruction.cz().op_name() == "cz"
 
     def test_measurement_ops(self):
-        assert Instruction.measure(1).opcode == 0x0012  # Meas device=0x12, inst=0x00
-        assert (
-            Instruction.await_measure().opcode == 0x0112
-        )  # Meas device=0x12, inst=0x01
+        assert Instruction.measure(1).op_name() == "measure"
+        assert Instruction.await_measure().op_name() == "await_measure"
 
     def test_array_ops(self):
-        assert (
-            Instruction.new_array(1, 10).opcode == 0x0013
-        )  # Array device=0x13, inst=0x00
-        assert Instruction.new_array(1, 10, 20).opcode == 0x0013
-        assert Instruction.get_item(2).opcode == 0x0113  # Array device=0x13, inst=0x01
+        assert Instruction.new_array(1, 10).op_name() == "new_array"
+        assert Instruction.new_array(1, 10, 20).op_name() == "new_array"
+        assert Instruction.get_item(2).op_name() == "get_item"
 
     def test_data_ops(self):
-        assert Instruction.set_detector().opcode == 0x0014  # DO device=0x14, inst=0x00
-        assert (
-            Instruction.set_observable().opcode == 0x0114
-        )  # DO device=0x14, inst=0x01
+        assert Instruction.set_detector().op_name() == "set_detector"
+        assert Instruction.set_observable().op_name() == "set_observable"
 
     def test_control_ops(self):
-        assert Instruction.return_().opcode == 0x6400  # Cpu device=0x00, inst=0x64
-        assert Instruction.halt().opcode == 0xFF00  # Cpu device=0x00, inst=0xFF
+        assert Instruction.return_().op_name() == "return"
+        assert Instruction.halt().op_name() == "halt"
 
     def test_equality(self):
         a = Instruction.halt()
@@ -450,7 +443,7 @@ halt
         program = self._sample_program()
         binary = program.to_binary()
         assert isinstance(binary, bytes)
-        assert binary[:4] == b"BLQD"
+        assert binary[:5] == b"LANES"
 
     def test_binary_round_trip(self):
         program = self._sample_program()
@@ -459,8 +452,9 @@ halt
         assert program == decoded
 
     def test_from_binary_invalid(self):
+        # 9 bytes (header length) so the magic check runs before the length check.
         with pytest.raises(BadMagicError):
-            Program.from_binary(b"XXXX\x00\x00\x00\x00")
+            Program.from_binary(b"XXXXX\x00\x00\x00\x00")
 
     def test_text_binary_round_trip(self):
         program = self._sample_program()
@@ -494,24 +488,28 @@ initial_fill 1
             isinstance(e, InitialFillNotFirstError) for e in exc_info.value.errors
         )
 
-    def test_stack_validation(self):
+    def test_stack_validation_is_noop(self):
+        # Stack-type simulation has not been ported to the vihaco backend
+        # (bloqade-lanes#769); `stack=True` is accepted but performs no
+        # analysis. This program would underflow under the legacy simulator
+        # but is structurally valid, so validate(stack=True) does not raise.
         program = Program.from_text("""\
 .version 1.0
 pop
+halt
 """)
-        with pytest.raises(ValidationError) as exc_info:
-            program.validate(stack=True)
-        assert any(isinstance(e, StackUnderflowError) for e in exc_info.value.errors)
+        program.validate(stack=True)  # no-op: does not raise
 
-    def test_stack_type_mismatch(self):
+    def test_stack_type_mismatch_is_noop(self):
+        # Likewise, the legacy simulator caught a float used as a location
+        # here; the vihaco backend's stack sim is a deferred no-op.
         program = Program.from_text("""\
 .version 1.0
-const_float 1.0
+const.f64 1.0
 initial_fill 1
+halt
 """)
-        with pytest.raises(ValidationError) as exc_info:
-            program.validate(stack=True)
-        assert any(isinstance(e, TypeMismatchError) for e in exc_info.value.errors)
+        program.validate(stack=True)  # no-op: does not raise
 
     def test_empty_program_raises_empty_program_error(self):
         program = Program.from_text(".version 1.0\n")
@@ -525,7 +523,7 @@ initial_fill 1
     def test_missing_terminator_raises_missing_terminator_error(self):
         program = Program.from_text("""\
 .version 1.0
-const_int 0
+const.i64 0
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -535,7 +533,7 @@ const_int 0
         program = Program.from_text("""\
 .version 1.0
 halt
-const_int 0
+const.i64 0
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -549,7 +547,7 @@ const_int 0
     def test_valid_program_with_return_no_errors(self):
         program = Program.from_text("""\
 .version 1.0
-const_int 0
+const.i64 0
 return
 """)
         program.validate()  # should not raise
