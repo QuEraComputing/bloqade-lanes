@@ -56,20 +56,6 @@ static const char *INVALID_STRUCTURE =
     "const_loc 0x0000000000000000\n"
     "initial_fill 1\n";
 
-/* Program that triggers a stack underflow (pop on empty stack). */
-static const char *STACK_UNDERFLOW =
-    ".version 1\n"
-    "fill 1\n";
-
-/* Program with type mismatch: fill expects locations, gets float. */
-static const char *TYPE_MISMATCH =
-    ".version 1\n"
-    "const_loc 0x0000000000000000\n"
-    "initial_fill 1\n"
-    "const_float 3.14\n"
-    "fill 1\n"
-    "halt\n";
-
 int main(void) {
     int tests_passed = 0;
 
@@ -172,71 +158,24 @@ int main(void) {
         tests_passed++;
     }
 
-    /* --- Test 5: Stack simulation --- */
+    /* --- Test 5: Stack simulation is a no-op on the vihaco backend ---
+     * The legacy stack simulator has not been ported; blqd_simulate_stack
+     * retains its symbol for ABI stability but performs no analysis and
+     * reports no errors. See bloqade-lanes#769. */
     {
         struct BLQDProgram *prog = NULL;
         ASSERT_OK(blqd_program_from_text(VALID_PROGRAM, &prog),
                   "parse for stack sim");
 
         struct BLQDValidationErrors *errs = NULL;
-        ASSERT_OK(blqd_simulate_stack(prog, &errs), "simulate stack");
+        ASSERT_OK(blqd_simulate_stack(prog, &errs), "simulate stack (no-op)");
 
         uint32_t err_count = blqd_validation_errors_count(errs);
-        ASSERT_EQ(err_count, 0, "no stack simulation errors");
+        ASSERT_EQ(err_count, 0, "stack simulation reports no errors (no-op)");
 
         blqd_validation_errors_free(errs);
         blqd_program_free(prog);
-        printf("  PASS: stack simulation\n");
-        tests_passed++;
-    }
-
-    /* --- Test 6: Stack simulation detects underflow --- */
-    {
-        struct BLQDProgram *prog = NULL;
-        ASSERT_OK(blqd_program_from_text(STACK_UNDERFLOW, &prog),
-                  "parse stack-underflow program");
-
-        struct BLQDValidationErrors *errs = NULL;
-        enum BlqdStatus s = blqd_simulate_stack(prog, &errs);
-        ASSERT_EQ(s, BLQD_STATUS_ERR_VALIDATION,
-                  "stack sim returns ErrValidation for underflow");
-
-        uint32_t err_count = blqd_validation_errors_count(errs);
-        ASSERT_TRUE(err_count > 0, "at least one stack error");
-
-        const char *msg = blqd_validation_error_message(errs, 0);
-        ASSERT_TRUE(msg != NULL, "underflow error message is non-null");
-
-        blqd_validation_errors_free(errs);
-        blqd_program_free(prog);
-        printf("  PASS: stack simulation (underflow)\n");
-        tests_passed++;
-    }
-
-    /* --- Test 7: Stack simulation detects type mismatch --- */
-    {
-        struct BLQDProgram *prog = NULL;
-        ASSERT_OK(blqd_program_from_text(TYPE_MISMATCH, &prog),
-                  "parse type-mismatch program");
-
-        struct BLQDValidationErrors *errs = NULL;
-        enum BlqdStatus s = blqd_simulate_stack(prog, &errs);
-        ASSERT_EQ(s, BLQD_STATUS_ERR_VALIDATION,
-                  "stack sim returns ErrValidation for type mismatch");
-
-        uint32_t err_count = blqd_validation_errors_count(errs);
-        ASSERT_TRUE(err_count > 0, "at least one type mismatch error");
-
-        const char *msg = blqd_validation_error_message(errs, 0);
-        ASSERT_TRUE(msg != NULL, "type mismatch error message is non-null");
-        ASSERT_TRUE(strstr(msg, "type mismatch") != NULL ||
-                    strstr(msg, "Type mismatch") != NULL ||
-                    strstr(msg, "TypeMismatch") != NULL,
-                    "error mentions type mismatch");
-
-        blqd_validation_errors_free(errs);
-        blqd_program_free(prog);
-        printf("  PASS: stack simulation (type mismatch)\n");
+        printf("  PASS: stack simulation (deferred no-op)\n");
         tests_passed++;
     }
 

@@ -55,7 +55,24 @@ pub enum ValidationError {
     InvalidLane { pc: usize, message: String },
     /// A `const_zone` operand does not name a valid zone in the arch spec.
     InvalidZone { pc: usize, message: String },
+
+    // ---- structural (arch-independent) ----
+    /// `new_array` dim0 must be greater than zero.
+    NewArrayZeroDim0 { pc: usize },
+    /// `new_array` type_tag exceeds the maximum value tag.
+    NewArrayInvalidTypeTag { pc: usize, type_tag: u32 },
+    /// `initial_fill` is not the first non-constant instruction.
+    InitialFillNotFirst { pc: usize },
+    /// The program has no instructions (and therefore no terminator).
+    EmptyProgram,
+    /// The final instruction is neither `return` nor `halt`.
+    MissingTerminator { pc: usize },
+    /// An instruction follows a `return`/`halt` and is unreachable.
+    UnreachableInstruction { pc: usize },
 }
+
+/// Maximum valid value type tag (`TAG_OBSERVABLE_REF = 0x8`).
+const MAX_TYPE_TAG: u32 = 0x8;
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -82,6 +99,28 @@ impl fmt::Display for ValidationError {
             }
             ValidationError::InvalidZone { pc, message } => {
                 write!(f, "pc {pc}: invalid zone: {message}")
+            }
+            ValidationError::NewArrayZeroDim0 { pc } => {
+                write!(f, "pc {pc}: new_array dim0 must be > 0")
+            }
+            ValidationError::NewArrayInvalidTypeTag { pc, type_tag } => {
+                write!(f, "pc {pc}: invalid new_array type tag {type_tag}")
+            }
+            ValidationError::InitialFillNotFirst { pc } => write!(
+                f,
+                "pc {pc}: initial_fill must be the first non-constant instruction"
+            ),
+            ValidationError::EmptyProgram => {
+                write!(
+                    f,
+                    "program has no instructions: missing return or halt terminator"
+                )
+            }
+            ValidationError::MissingTerminator { pc } => {
+                write!(f, "pc {pc}: program must end with return or halt")
+            }
+            ValidationError::UnreachableInstruction { pc } => {
+                write!(f, "pc {pc}: unreachable instruction after return or halt")
             }
         }
     }
@@ -159,11 +198,97 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     errors
 }
 
+/// True if `inst` terminates execution (`return` or `halt`).
+fn is_terminator(inst: &Instruction) -> bool {
+    matches!(inst, Instruction::Return | Instruction::Cpu(Cpu::Halt))
+}
+
+/// True if `inst` only pushes a constant (and so may precede `initial_fill`).
+fn is_constant_push(inst: &Instruction) -> bool {
+    matches!(
+        inst,
+        Instruction::ConstLoc(_)
+            | Instruction::ConstLane(_)
+            | Instruction::ConstZone(_)
+            | Instruction::Cpu(Cpu::Const(_))
+    )
+}
+
+/// Validate a program's arch-independent structural rules: `new_array` operand
+/// bounds, `initial_fill` ordering, and terminator/reachability. These never
+/// consult an arch spec, so they always run.
+pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let mut seen_non_constant = false;
+
+    for (pc, inst) in program.instructions.iter().enumerate() {
+        match inst {
+            Instruction::NewArray(type_tag, dim0, _dim1) => {
+                if *dim0 == 0 {
+                    errors.push(ValidationError::NewArrayZeroDim0 { pc });
+                }
+                if *type_tag > MAX_TYPE_TAG {
+                    errors.push(ValidationError::NewArrayInvalidTypeTag {
+                        pc,
+                        type_tag: *type_tag,
+                    });
+                }
+                seen_non_constant = true;
+            }
+            Instruction::InitialFill(_) => {
+                if seen_non_constant {
+                    errors.push(ValidationError::InitialFillNotFirst { pc });
+                }
+                seen_non_constant = true;
+            }
+            inst if is_constant_push(inst) => {}
+            _ => seen_non_constant = true,
+        }
+    }
+
+    // Any instruction after the first terminator is unreachable. If there are
+    // unreachable instructions they explain a non-terminal last instruction, so
+    // `MissingTerminator` would be a redundant second error.
+    let mut found_terminator = false;
+    let mut unreachable = Vec::new();
+    for (pc, inst) in program.instructions.iter().enumerate() {
+        if found_terminator {
+            unreachable.push(ValidationError::UnreachableInstruction { pc });
+        }
+        if is_terminator(inst) {
+            found_terminator = true;
+        }
+    }
+
+    if unreachable.is_empty() {
+        match program.instructions.last() {
+            None => errors.push(ValidationError::EmptyProgram),
+            Some(last) if !is_terminator(last) => errors.push(ValidationError::MissingTerminator {
+                pc: program.instructions.len() - 1,
+            }),
+            Some(_) => {}
+        }
+    } else {
+        errors.extend(unreachable);
+    }
+
+    errors
+}
+
 impl Program {
     /// Validate this program's arch-dependent constraints; see [`validate`].
     /// Passing `None` skips all arch-dependent checks.
     pub fn validate(&self, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
         validate(self, arch)
+    }
+
+    /// Run all available checks: arch-independent [`validate_structure`] plus,
+    /// when `arch` is `Some`, the arch-dependent [`validate`] checks. Errors are
+    /// returned structure-first, then arch.
+    pub fn validate_all(&self, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
+        let mut errors = validate_structure(self);
+        errors.extend(validate(self, arch));
+        errors
     }
 }
 
@@ -362,6 +487,98 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, ValidationError::InvalidLane { pc: 0, .. })),
             "got {errors:?}"
+        );
+    }
+
+    // ---- structural checks ----
+
+    #[test]
+    fn well_formed_program_has_no_structural_errors() {
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::InitialFill(1),
+            Instruction::Return,
+        ]);
+        assert!(validate_structure(&p).is_empty());
+    }
+
+    #[test]
+    fn empty_program_is_rejected() {
+        assert_eq!(
+            validate_structure(&program(vec![])),
+            vec![ValidationError::EmptyProgram]
+        );
+    }
+
+    #[test]
+    fn missing_terminator_rejected() {
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::InitialFill(1),
+        ]);
+        assert_eq!(
+            validate_structure(&p),
+            vec![ValidationError::MissingTerminator { pc: 1 }]
+        );
+    }
+
+    #[test]
+    fn halt_is_a_valid_terminator() {
+        let p = program(vec![Instruction::Cpu(Cpu::Halt)]);
+        assert!(validate_structure(&p).is_empty());
+    }
+
+    #[test]
+    fn unreachable_after_terminator_rejected() {
+        let p = program(vec![Instruction::Return, Instruction::Cpu(Cpu::Halt)]);
+        assert_eq!(
+            validate_structure(&p),
+            vec![ValidationError::UnreachableInstruction { pc: 1 }]
+        );
+    }
+
+    #[test]
+    fn initial_fill_must_be_first_non_constant() {
+        // A const push before initial_fill is fine; a gate before it is not.
+        let ok = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::InitialFill(1),
+            Instruction::Return,
+        ]);
+        assert!(validate_structure(&ok).is_empty());
+
+        let bad = program(vec![
+            Instruction::GlobalR,
+            Instruction::InitialFill(1),
+            Instruction::Return,
+        ]);
+        assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 1 }));
+    }
+
+    #[test]
+    fn new_array_bounds_checked() {
+        let p = program(vec![Instruction::NewArray(99, 0, 0), Instruction::Return]);
+        let errors = validate_structure(&p);
+        assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 0 }));
+        assert!(errors.contains(&ValidationError::NewArrayInvalidTypeTag {
+            pc: 0,
+            type_tag: 99
+        }));
+    }
+
+    #[test]
+    fn validate_all_runs_structure_then_arch() {
+        // Missing terminator (structural) + bad zone (arch), both reported.
+        let arch = simple_arch();
+        let p = program(vec![Instruction::ConstZone(
+            ZoneAddr { zone_id: 5 }.encode(),
+        )]);
+        let errors = p.validate_all(Some(&arch));
+        assert!(errors.contains(&ValidationError::MissingTerminator { pc: 0 }));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::InvalidZone { .. }))
         );
     }
 

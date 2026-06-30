@@ -1,6 +1,6 @@
 use std::os::raw::c_char;
 
-use bloqade_lanes_bytecode_core::bytecode::validate;
+use bloqade_lanes_bytecode_core::vihaco_isa::validate;
 
 use super::error::{BlqdStatus, clear_last_error, set_last_error};
 use super::handles::{BLQDArchSpec, BLQDProgram, BLQDValidationErrors};
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn blqd_validate_addresses(
 
     let prog = unsafe { &*prog };
     let arch = unsafe { &*arch };
-    let errors = validate::validate_arch_constraints(&prog.inner, &arch.inner);
+    let errors = validate::validate(&prog.inner, Some(&arch.inner));
     let status = if errors.is_empty() {
         BlqdStatus::Ok
     } else {
@@ -58,6 +58,11 @@ pub unsafe extern "C" fn blqd_validate_addresses(
 }
 
 /// Stack type simulation.
+///
+/// Not yet supported on the vihaco backend (the legacy stack simulator has not
+/// been ported). The symbol is retained for ABI stability; it currently
+/// performs no analysis and reports no errors. Tracked for the cutover work in
+/// <https://github.com/QuEraComputing/bloqade-lanes/issues/769>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn blqd_simulate_stack(
     prog: *const BLQDProgram,
@@ -70,16 +75,10 @@ pub unsafe extern "C" fn blqd_simulate_stack(
         return BlqdStatus::ErrNullPtr;
     }
 
-    let prog = unsafe { &*prog };
-    let errors = validate::simulate_stack(&prog.inner, None);
-    let status = if errors.is_empty() {
-        BlqdStatus::Ok
-    } else {
-        BlqdStatus::ErrValidation
-    };
-    let handle = Box::new(BLQDValidationErrors::from_errors(errors));
+    // No-op: stack simulation is not yet available on the vihaco backend.
+    let handle = Box::new(BLQDValidationErrors::from_errors(Vec::new()));
     unsafe { *out = Box::into_raw(handle) };
-    status
+    BlqdStatus::Ok
 }
 
 /// Number of errors in the handle.

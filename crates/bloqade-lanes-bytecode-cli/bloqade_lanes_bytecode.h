@@ -121,6 +121,11 @@ enum BlqdStatus blqd_validate_addresses(const struct BLQDProgram *prog,
 
 /**
  * Stack type simulation.
+ *
+ * Not yet supported on the vihaco backend (the legacy stack simulator has not
+ * been ported). The symbol is retained for ABI stability; it currently
+ * performs no analysis and reports no errors. Tracked for the cutover work in
+ * <https://github.com/QuEraComputing/bloqade-lanes/issues/769>.
  */
 enum BlqdStatus blqd_simulate_stack(const struct BLQDProgram *prog,
                                     struct BLQDValidationErrors **out);

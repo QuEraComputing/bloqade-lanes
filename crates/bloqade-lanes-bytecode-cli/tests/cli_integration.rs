@@ -19,8 +19,8 @@ halt
 /// Ordered so that initial_fill comes right after constants (structurally valid).
 const ALL_INSTRUCTIONS_PROGRAM: &str = "\
 .version 1.0
-const_float 1.5
-const_int 42
+const.f64 1.5
+const.i64 42
 const_loc 0x00010002
 const_lane 0x8000000000010002
 const_zone 0x00000003
@@ -71,8 +71,8 @@ fn test_assemble_creates_binary() {
         .stderr(predicate::str::contains("assembled 23 instructions"));
 
     let bytes = fs::read(&output).unwrap();
-    // Should start with BLQD magic bytes
-    assert_eq!(&bytes[..4], b"BLQD");
+    // Should start with the native BLQV magic bytes
+    assert_eq!(&bytes[..4], b"BLQV");
 }
 
 #[test]
@@ -98,8 +98,8 @@ fn test_disassemble_to_stdout() {
         .args(["disassemble", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("const_float 1.5"))
-        .stdout(predicate::str::contains("const_int 42"))
+        .stdout(predicate::str::contains("const.f64 1.5"))
+        .stdout(predicate::str::contains("const.i64 42"))
         .stdout(predicate::str::contains("const_loc"))
         .stdout(predicate::str::contains("const_lane"))
         .stdout(predicate::str::contains("const_zone"))
@@ -138,8 +138,8 @@ fn test_disassemble_to_file() {
 
     let text = fs::read_to_string(&output_txt).unwrap();
     // Spot-check all instruction categories are present
-    assert!(text.contains("const_float"));
-    assert!(text.contains("const_int"));
+    assert!(text.contains("const.f64"));
+    assert!(text.contains("const.i64"));
     assert!(text.contains("const_loc"));
     assert!(text.contains("const_lane"));
     assert!(text.contains("const_zone"));
@@ -508,7 +508,7 @@ fn test_round_trip_preserves_version() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
-    fs::write(&input, ".version 2.3\nconst_int 99\nhalt\n").unwrap();
+    fs::write(&input, ".version 2.3\nconst.i64 99\nhalt\n").unwrap();
 
     cmd()
         .args([

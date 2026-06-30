@@ -7,9 +7,8 @@ use clap::{Parser, Subcommand};
 mod policy;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
-use bloqade_lanes_bytecode_core::bytecode::program::Program;
-use bloqade_lanes_bytecode_core::bytecode::text;
-use bloqade_lanes_bytecode_core::bytecode::validate;
+use bloqade_lanes_bytecode_core::vihaco_isa::Program;
+use bloqade_lanes_bytecode_core::vihaco_isa::validate;
 
 #[derive(Parser)]
 #[command(
@@ -169,7 +168,7 @@ fn main() {
 fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
-    let program = text::parse(&source).map_err(|e| e.to_string())?;
+    let program = Program::parse_text(&source).map_err(|e| e.to_string())?;
     let binary = program.to_binary();
     fs::write(output, &binary).map_err(|e| format!("writing {}: {}", output.display(), e))?;
     eprintln!(
@@ -183,7 +182,7 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
 fn cmd_disassemble(input: &PathBuf, output: Option<&std::path::Path>) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
     let program = Program::from_binary(&bytes).map_err(|e| e.to_string())?;
-    let text_out = text::print(&program);
+    let text_out = program.to_text();
     match output {
         Some(path) => {
             fs::write(path, &text_out).map_err(|e| format!("writing {}: {}", path.display(), e))?;
@@ -214,16 +213,18 @@ fn cmd_validate(
         None => None,
     };
 
-    let mut all_errors = Vec::new();
-    all_errors.extend(validate::validate_structure(&program));
-
-    if let Some(arch) = &arch {
-        all_errors.extend(validate::validate_arch_constraints(&program, arch));
-    }
-
     if simulate_stack {
-        all_errors.extend(validate::simulate_stack(&program, arch.as_ref()));
+        eprintln!(
+            "note: stack-type simulation is not yet supported on the vihaco backend; skipping"
+        );
     }
+
+    // `validate_all` runs structural checks always, and the arch-dependent
+    // capability + address checks when an arch spec is provided.
+    let all_errors = validate::validate_structure(&program)
+        .into_iter()
+        .chain(validate::validate(&program, arch.as_ref()))
+        .collect::<Vec<_>>();
 
     if all_errors.is_empty() {
         eprintln!("valid ({} instructions)", program.instructions.len());
@@ -365,7 +366,7 @@ fn load_program(path: &PathBuf) -> Result<Program, String> {
         "sst" => {
             let source = fs::read_to_string(path)
                 .map_err(|e| format!("reading {}: {}", path.display(), e))?;
-            text::parse(&source).map_err(|e| e.to_string())
+            Program::parse_text(&source).map_err(|e| e.to_string())
         }
         _ => {
             let bytes = fs::read(path).map_err(|e| format!("reading {}: {}", path.display(), e))?;

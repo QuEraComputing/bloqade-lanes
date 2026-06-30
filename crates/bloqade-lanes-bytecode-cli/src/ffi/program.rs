@@ -2,8 +2,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
-use bloqade_lanes_bytecode_core::bytecode::program::Program;
-use bloqade_lanes_bytecode_core::bytecode::text;
+use bloqade_lanes_bytecode_core::vihaco_isa::Program;
 
 use super::error::{BlqdStatus, clear_last_error, set_last_error};
 use super::handles::BLQDProgram;
@@ -87,7 +86,7 @@ pub unsafe extern "C" fn blqd_program_from_text(
         }
     };
 
-    match text::parse(source) {
+    match Program::parse_text(source) {
         Ok(program) => {
             let handle = Box::new(BLQDProgram { inner: program });
             unsafe { *out = Box::into_raw(handle) };
@@ -115,7 +114,7 @@ pub unsafe extern "C" fn blqd_program_to_text(
     }
 
     let prog = unsafe { &*prog };
-    let text_out = text::print(&prog.inner);
+    let text_out = prog.inner.to_text();
 
     match CString::new(text_out) {
         Ok(cstr) => {

@@ -12,7 +12,7 @@ use bloqade_lanes_bytecode::ffi::validate::*;
 
 #[test]
 fn text_to_binary_to_text_round_trip() {
-    let source = CString::new(".version 1.0\nconst_int 42\nhalt\n").unwrap();
+    let source = CString::new(".version 1.0\nconst.i64 42\nhalt\n").unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
 
     // Parse text
@@ -51,7 +51,7 @@ fn text_to_binary_to_text_round_trip() {
     assert!(!text_out.is_null());
 
     let text_str = unsafe { CStr::from_ptr(text_out) }.to_str().unwrap();
-    assert!(text_str.contains("const_int 42"));
+    assert!(text_str.contains("const.i64 42"));
     assert!(text_str.contains("halt"));
 
     // Cleanup
@@ -268,16 +268,19 @@ fn simulate_stack_valid() {
 }
 
 #[test]
-fn simulate_stack_with_errors() {
-    // Pop on empty stack
+fn simulate_stack_is_a_noop_on_vihaco_backend() {
+    // Stack-type simulation has not been ported to the vihaco backend; the
+    // symbol is retained for ABI stability but performs no analysis. A program
+    // that would underflow under the legacy simulator now reports no errors.
+    // Tracked in bloqade-lanes#769.
     let source = CString::new(".version 1.0\npop\n").unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
     unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
 
     let mut errs: *mut BLQDValidationErrors = ptr::null_mut();
     let status = unsafe { blqd_simulate_stack(prog, &mut errs) };
-    assert_eq!(status, BlqdStatus::ErrValidation);
-    assert!(unsafe { blqd_validation_errors_count(errs) } > 0);
+    assert_eq!(status, BlqdStatus::Ok);
+    assert_eq!(unsafe { blqd_validation_errors_count(errs) }, 0);
 
     unsafe {
         blqd_validation_errors_free(errs);
