@@ -313,6 +313,10 @@ class PyIndexingMethods(interp.MethodTable):
                     return (values[i],)
                 except IndexError:
                     return (Bottom(),)
+            case (IListResult(values), Value(i)) if isinstance(i, slice):
+                return (IListResult(values[i]),)
+            case (TupleResult(values), Value(i)) if isinstance(i, slice):
+                return (TupleResult(values[i]),)
             case _:
                 return (Bottom(),)
 
