@@ -57,12 +57,8 @@ pub unsafe extern "C" fn blqd_validate_addresses(
     status
 }
 
-/// Stack type simulation.
-///
-/// Not yet supported on the vihaco backend (the legacy stack simulator has not
-/// been ported). The symbol is retained for ABI stability; it currently
-/// performs no analysis and reports no errors. Tracked for the cutover work in
-/// <https://github.com/QuEraComputing/bloqade-lanes/issues/769>.
+/// Stack type simulation (underflow, type mismatches, and lane/location group
+/// checks). Runs without an arch spec (duplicate-only group checks).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn blqd_simulate_stack(
     prog: *const BLQDProgram,
@@ -75,10 +71,16 @@ pub unsafe extern "C" fn blqd_simulate_stack(
         return BlqdStatus::ErrNullPtr;
     }
 
-    // No-op: stack simulation is not yet available on the vihaco backend.
-    let handle = Box::new(BLQDValidationErrors::from_errors(Vec::new()));
+    let prog = unsafe { &*prog };
+    let errors = validate::simulate_stack(&prog.inner, None);
+    let status = if errors.is_empty() {
+        BlqdStatus::Ok
+    } else {
+        BlqdStatus::ErrValidation
+    };
+    let handle = Box::new(BLQDValidationErrors::from_errors(errors));
     unsafe { *out = Box::into_raw(handle) };
-    BlqdStatus::Ok
+    status
 }
 
 /// Number of errors in the handle.

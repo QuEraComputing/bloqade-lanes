@@ -5,7 +5,10 @@
 //! called with `None`), every check here is skipped and an empty error list is
 //! returned — an arch-free program is considered fine at this layer.
 //!
-//! Two families of checks run (both only when an arch spec is present):
+//! [`validate`] runs the arch-dependent capability + address checks below.
+//! [`validate_structure`] adds arch-independent structural checks, and
+//! [`simulate_stack`] adds optional stack-type simulation (underflow, type
+//! mismatches, and lane/location group validation).
 //!
 //! ## Capability checks
 //!
@@ -27,13 +30,30 @@
 //! [`check_zone`](ArchSpec::check_zone) — invalid zones, words, sites, lanes,
 //! and AOD constraints are reported with the arch layer's own message.
 
+use std::collections::HashSet;
 use std::fmt;
 
+use vihaco::value::Value;
 use vihaco_cpu::Instruction as Cpu;
 
 use super::{Instruction, Program};
 use crate::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
+use crate::arch::query::{LaneGroupError, LocationGroupError};
 use crate::arch::types::ArchSpec;
+
+/// Value type tags tracked by the [`simulate_stack`] type simulator. These
+/// mirror the stack value kinds the runtime distinguishes.
+pub mod tag {
+    pub const FLOAT: u8 = 0x0;
+    pub const INT: u8 = 0x1;
+    pub const ARRAY_REF: u8 = 0x2;
+    pub const LOCATION: u8 = 0x3;
+    pub const LANE: u8 = 0x4;
+    pub const ZONE: u8 = 0x5;
+    pub const MEASURE_FUTURE: u8 = 0x6;
+    pub const DETECTOR_REF: u8 = 0x7;
+    pub const OBSERVABLE_REF: u8 = 0x8;
+}
 
 /// An arch-dependent validation failure, tagged with the offending
 /// instruction's program counter.
@@ -69,6 +89,19 @@ pub enum ValidationError {
     MissingTerminator { pc: usize },
     /// An instruction follows a `return`/`halt` and is unreachable.
     UnreachableInstruction { pc: usize },
+
+    // ---- stack-type simulation (only via `simulate_stack`) ----
+    /// An instruction popped from an empty stack.
+    StackUnderflow { pc: usize },
+    /// A popped value had the wrong type tag (see [`tag`]).
+    TypeMismatch { pc: usize, expected: u8, got: u8 },
+    /// A `local_r`/`local_rz`/`fill`/`initial_fill` location group is invalid.
+    LocationGroupValidation {
+        pc: usize,
+        error: LocationGroupError,
+    },
+    /// A `move` lane group is invalid (duplicate, inconsistent, AOD, …).
+    LaneGroupValidation { pc: usize, error: LaneGroupError },
 }
 
 /// Maximum valid value type tag (`TAG_OBSERVABLE_REF = 0x8`).
@@ -122,6 +155,15 @@ impl fmt::Display for ValidationError {
             ValidationError::UnreachableInstruction { pc } => {
                 write!(f, "pc {pc}: unreachable instruction after return or halt")
             }
+            ValidationError::StackUnderflow { pc } => write!(f, "pc {pc}: stack underflow"),
+            ValidationError::TypeMismatch { pc, expected, got } => write!(
+                f,
+                "pc {pc}: type mismatch: expected tag 0x{expected:x}, got 0x{got:x}"
+            ),
+            ValidationError::LocationGroupValidation { pc, error } => {
+                write!(f, "pc {pc}: {error}")
+            }
+            ValidationError::LaneGroupValidation { pc, error } => write!(f, "pc {pc}: {error}"),
         }
     }
 }
@@ -290,6 +332,272 @@ impl Program {
         errors.extend(validate(self, arch));
         errors
     }
+}
+
+// ── Stack-type simulation ──────────────────────────────────────────────────
+
+/// One tracked stack value: its type tag and (when known) concrete bits.
+#[derive(Debug, Clone)]
+struct SimEntry {
+    tag: u8,
+    value: Option<u64>,
+}
+
+/// Type-level stack simulator: walks the instruction stream tracking value
+/// types, reporting underflow and type mismatches, and — when given an
+/// [`ArchSpec`] — validating `move` lane groups and `fill`/`local_*` location
+/// groups (duplicates only without an arch).
+struct StackSimulator<'a> {
+    stack: Vec<SimEntry>,
+    errors: Vec<ValidationError>,
+    arch: Option<&'a ArchSpec>,
+    pc: usize,
+}
+
+impl<'a> StackSimulator<'a> {
+    fn new(arch: Option<&'a ArchSpec>) -> Self {
+        Self {
+            stack: Vec::new(),
+            errors: Vec::new(),
+            arch,
+            pc: 0,
+        }
+    }
+
+    fn pop_any(&mut self) {
+        if self.stack.pop().is_none() {
+            self.errors
+                .push(ValidationError::StackUnderflow { pc: self.pc });
+        }
+    }
+
+    fn pop_typed(&mut self, expected: u8) {
+        match self.stack.pop() {
+            Some(entry) if entry.tag != expected => {
+                self.errors.push(ValidationError::TypeMismatch {
+                    pc: self.pc,
+                    expected,
+                    got: entry.tag,
+                })
+            }
+            Some(_) => {}
+            None => self
+                .errors
+                .push(ValidationError::StackUnderflow { pc: self.pc }),
+        }
+    }
+
+    fn pop_typed_n(&mut self, expected: u8, count: u32) {
+        for _ in 0..count {
+            self.pop_typed(expected);
+        }
+    }
+
+    /// Pop one value expected to have `expected` tag, returning its concrete
+    /// bits when the type matches.
+    fn pop_addr(&mut self, expected: u8) -> Option<u64> {
+        match self.stack.pop() {
+            Some(entry) if entry.tag == expected => entry.value,
+            Some(entry) => {
+                self.errors.push(ValidationError::TypeMismatch {
+                    pc: self.pc,
+                    expected,
+                    got: entry.tag,
+                });
+                None
+            }
+            None => {
+                self.errors
+                    .push(ValidationError::StackUnderflow { pc: self.pc });
+                None
+            }
+        }
+    }
+
+    fn push(&mut self, tag: u8, value: Option<u64>) {
+        self.stack.push(SimEntry { tag, value });
+    }
+
+    fn sim_dup(&mut self) {
+        if let Some(top) = self.stack.last().cloned() {
+            self.stack.push(top);
+        } else {
+            self.errors
+                .push(ValidationError::StackUnderflow { pc: self.pc });
+        }
+    }
+
+    fn sim_swap(&mut self) {
+        let len = self.stack.len();
+        if len >= 2 {
+            self.stack.swap(len - 1, len - 2);
+        } else {
+            self.errors
+                .push(ValidationError::StackUnderflow { pc: self.pc });
+        }
+    }
+
+    /// Report each uniquely-duplicated location once (no-arch fallback).
+    fn check_duplicate_locations(&mut self, locations: &[LocationAddr]) {
+        let mut seen = HashSet::new();
+        let mut reported = HashSet::new();
+        for loc in locations {
+            let bits = loc.encode();
+            if !seen.insert(bits) && reported.insert(bits) {
+                self.errors.push(ValidationError::LocationGroupValidation {
+                    pc: self.pc,
+                    error: LocationGroupError::DuplicateAddress { address: bits },
+                });
+            }
+        }
+    }
+
+    /// Report each uniquely-duplicated lane once (no-arch fallback).
+    fn check_duplicate_lanes(&mut self, lanes: &[LaneAddr]) {
+        let mut seen = HashSet::new();
+        let mut reported = HashSet::new();
+        for lane in lanes {
+            let (d0, d1) = lane.encode();
+            let combined = (d0 as u64) | ((d1 as u64) << 32);
+            if !seen.insert(combined) && reported.insert(combined) {
+                self.errors.push(ValidationError::LaneGroupValidation {
+                    pc: self.pc,
+                    error: LaneGroupError::DuplicateAddress { address: (d0, d1) },
+                });
+            }
+        }
+    }
+
+    /// Pop `arity` locations and validate them as a group.
+    fn pop_and_validate_locations(&mut self, arity: u32) {
+        let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LOCATION)).collect();
+        let locations: Vec<LocationAddr> = bits
+            .iter()
+            .filter_map(|v| v.map(LocationAddr::decode))
+            .collect();
+        let pc = self.pc;
+        if let Some(arch) = self.arch {
+            for error in arch.check_locations(&locations) {
+                self.errors
+                    .push(ValidationError::LocationGroupValidation { pc, error });
+            }
+        } else {
+            self.check_duplicate_locations(&locations);
+        }
+    }
+
+    /// Pop `arity` lanes and validate them as a group.
+    fn sim_move(&mut self, arity: u32) {
+        let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LANE)).collect();
+        let lanes: Vec<LaneAddr> = bits
+            .iter()
+            .filter_map(|v| v.map(LaneAddr::decode_u64))
+            .collect();
+        let pc = self.pc;
+        if let Some(arch) = self.arch {
+            for error in arch.check_lanes(&lanes) {
+                self.errors
+                    .push(ValidationError::LaneGroupValidation { pc, error });
+            }
+        } else {
+            self.check_duplicate_lanes(&lanes);
+        }
+    }
+
+    fn dispatch(&mut self, inst: &Instruction) {
+        match inst {
+            // constants push a typed value
+            Instruction::Cpu(Cpu::Const(Value::F64(v))) => self.push(tag::FLOAT, Some(v.to_bits())),
+            Instruction::Cpu(Cpu::Const(Value::I64(v))) => self.push(tag::INT, Some(*v as u64)),
+            Instruction::ConstLoc(v) => self.push(tag::LOCATION, Some(*v)),
+            Instruction::ConstLane(v) => self.push(tag::LANE, Some(*v)),
+            Instruction::ConstZone(v) => self.push(tag::ZONE, Some(*v as u64)),
+
+            // stack manipulation
+            Instruction::Pop => self.pop_any(),
+            Instruction::Cpu(Cpu::Dup) => self.sim_dup(),
+            Instruction::Swap => self.sim_swap(),
+
+            // atom arrangement
+            Instruction::InitialFill(arity) | Instruction::Fill(arity) => {
+                self.pop_and_validate_locations(*arity)
+            }
+            Instruction::Move(arity) => self.sim_move(*arity),
+
+            // gates
+            Instruction::LocalR(arity) => {
+                self.pop_typed_n(tag::FLOAT, 2);
+                self.pop_and_validate_locations(*arity);
+            }
+            Instruction::LocalRz(arity) => {
+                self.pop_typed_n(tag::FLOAT, 1);
+                self.pop_and_validate_locations(*arity);
+            }
+            Instruction::GlobalR => self.pop_typed_n(tag::FLOAT, 2),
+            Instruction::GlobalRz => self.pop_typed_n(tag::FLOAT, 1),
+            Instruction::Cz => self.pop_typed(tag::ZONE),
+
+            // measurement
+            Instruction::Measure(arity) => {
+                self.pop_typed_n(tag::ZONE, *arity);
+                for _ in 0..*arity {
+                    self.push(tag::MEASURE_FUTURE, None);
+                }
+            }
+            Instruction::AwaitMeasure => {
+                self.pop_typed(tag::MEASURE_FUTURE);
+                self.push(tag::ARRAY_REF, None);
+            }
+
+            // arrays
+            Instruction::NewArray(_type_tag, dim0, dim1) => {
+                let count = dim0 * if *dim1 == 0 { 1 } else { *dim1 };
+                for _ in 0..count {
+                    self.pop_any();
+                }
+                self.push(tag::ARRAY_REF, None);
+            }
+            Instruction::GetItem(ndims) => {
+                self.pop_typed_n(tag::INT, *ndims);
+                self.pop_typed(tag::ARRAY_REF);
+                // Element type is not tracked; assume float.
+                self.push(tag::FLOAT, None);
+            }
+
+            // detectors / observables
+            Instruction::SetDetector => {
+                self.pop_typed(tag::ARRAY_REF);
+                self.push(tag::DETECTOR_REF, None);
+            }
+            Instruction::SetObservable => {
+                self.pop_typed(tag::ARRAY_REF);
+                self.push(tag::OBSERVABLE_REF, None);
+            }
+
+            // control
+            Instruction::Return => self.pop_any(),
+            Instruction::Cpu(Cpu::Halt) => {}
+
+            // Other reused vihaco-cpu ops (arithmetic, etc.) are not emitted by
+            // the lanes pipeline and are not modeled here.
+            Instruction::Cpu(_) => {}
+        }
+    }
+
+    fn run(mut self, program: &Program) -> Vec<ValidationError> {
+        for (pc, inst) in program.instructions.iter().enumerate() {
+            self.pc = pc;
+            self.dispatch(inst);
+        }
+        self.errors
+    }
+}
+
+/// Run the type-level stack simulation over a program. Collects underflow and
+/// type-mismatch errors, plus lane/location group errors (validated against
+/// `arch` when provided, else duplicate-only).
+pub fn simulate_stack(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
+    StackSimulator::new(arch).run(program)
 }
 
 #[cfg(test)]
@@ -608,5 +916,126 @@ mod tests {
             errors[2],
             ValidationError::InvalidZone { pc: 2, .. }
         ));
+    }
+
+    // ---- stack simulation ----
+
+    fn cpu_float(v: f64) -> Instruction {
+        Instruction::Cpu(Cpu::Const(Value::F64(v)))
+    }
+
+    #[test]
+    fn stack_well_typed_program_has_no_errors() {
+        // const_loc, const_loc, initial_fill 2, const_zone, measure 1,
+        // await_measure, return — all types line up.
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::ConstLoc(loc(0, 0, 1)),
+            Instruction::InitialFill(2),
+            Instruction::ConstZone(0),
+            Instruction::Measure(1),
+            Instruction::AwaitMeasure,
+            Instruction::Return,
+        ]);
+        assert!(
+            simulate_stack(&p, None).is_empty(),
+            "{:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    #[test]
+    fn stack_underflow_detected() {
+        let p = program(vec![Instruction::Pop]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 0 }]
+        );
+    }
+
+    #[test]
+    fn type_mismatch_detected() {
+        // initial_fill expects locations; a float is on the stack instead.
+        let p = program(vec![cpu_float(1.0), Instruction::InitialFill(1)]);
+        let errors = simulate_stack(&p, None);
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                ValidationError::TypeMismatch {
+                    pc: 1,
+                    expected,
+                    got
+                } if *expected == tag::LOCATION && *got == tag::FLOAT
+            )),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn measure_pushes_future_consumed_by_await() {
+        // A measure future left dangling is fine; awaiting a non-future is not.
+        let p = program(vec![cpu_float(1.0), Instruction::AwaitMeasure]);
+        let errors = simulate_stack(&p, None);
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                ValidationError::TypeMismatch { pc: 1, expected, .. } if *expected == tag::MEASURE_FUTURE
+            )),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn local_r_pops_two_floats_then_locations() {
+        // const_loc, const_float, const_float, local_r 1 — well typed.
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            cpu_float(1.5),
+            cpu_float(0.5),
+            Instruction::LocalR(1),
+        ]);
+        assert!(simulate_stack(&p, None).is_empty());
+    }
+
+    #[test]
+    fn duplicate_locations_flagged_without_arch() {
+        // Two identical locations into a single fill group.
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::InitialFill(2),
+        ]);
+        let errors = simulate_stack(&p, None);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::LocationGroupValidation { .. })),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_lane_group_flagged_with_arch() {
+        let arch = simple_arch();
+        // A lane in a nonexistent zone forms an invalid move group.
+        let bad = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 9,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let p = program(vec![
+            Instruction::ConstLane(bad.encode_u64()),
+            Instruction::Move(1),
+        ]);
+        let errors = simulate_stack(&p, Some(&arch));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::LaneGroupValidation { .. })),
+            "got {errors:?}"
+        );
     }
 }

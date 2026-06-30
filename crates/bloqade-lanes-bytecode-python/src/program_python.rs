@@ -55,19 +55,19 @@ impl PyProgram {
     /// With no arguments, runs structural validation only.
     /// With `arch=spec`, also validates addresses and device-capability
     /// constraints against the architecture.
-    ///
-    /// `stack=True` is accepted for API compatibility but is currently a
-    /// no-op: stack-type simulation has not been ported to the vihaco backend
-    /// (tracked in bloqade-lanes#769).
+    /// With `stack=True`, also runs stack-type simulation (underflow, type
+    /// mismatches, and lane/location group checks).
     #[pyo3(signature = (arch=None, stack=false))]
     fn validate(&self, py: Python<'_>, arch: Option<&PyArchSpec>, stack: bool) -> PyResult<()> {
-        let _ = stack; // stack-type simulation not yet ported (see #769)
-
         let arch_ref = arch.map(|a| &a.inner);
-        let all_errors = rs_val::validate_structure(&self.inner)
+        let mut all_errors = rs_val::validate_structure(&self.inner)
             .into_iter()
             .chain(rs_val::validate(&self.inner, arch_ref))
             .collect::<Vec<_>>();
+
+        if stack {
+            all_errors.extend(rs_val::simulate_stack(&self.inner, arch_ref));
+        }
 
         if all_errors.is_empty() {
             Ok(())

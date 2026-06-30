@@ -213,18 +213,16 @@ fn cmd_validate(
         None => None,
     };
 
-    if simulate_stack {
-        eprintln!(
-            "note: stack-type simulation is not yet supported on the vihaco backend; skipping"
-        );
-    }
-
-    // `validate_all` runs structural checks always, and the arch-dependent
-    // capability + address checks when an arch spec is provided.
-    let all_errors = validate::validate_structure(&program)
+    // Structural checks always run; arch-dependent capability + address checks
+    // run when an arch spec is provided; stack-type simulation runs on request.
+    let mut all_errors = validate::validate_structure(&program)
         .into_iter()
         .chain(validate::validate(&program, arch.as_ref()))
         .collect::<Vec<_>>();
+
+    if simulate_stack {
+        all_errors.extend(validate::simulate_stack(&program, arch.as_ref()));
+    }
 
     if all_errors.is_empty() {
         eprintln!("valid ({} instructions)", program.instructions.len());

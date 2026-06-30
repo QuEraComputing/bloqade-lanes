@@ -19,6 +19,8 @@ from bloqade.lanes.bytecode.exceptions import (
     InitialFillNotFirstError,
     MissingTerminatorError,
     MissingVersionError,
+    StackUnderflowError,
+    TypeMismatchError,
     UnreachableInstructionError,
 )
 
@@ -488,28 +490,24 @@ initial_fill 1
             isinstance(e, InitialFillNotFirstError) for e in exc_info.value.errors
         )
 
-    def test_stack_validation_is_noop(self):
-        # Stack-type simulation has not been ported to the vihaco backend
-        # (bloqade-lanes#769); `stack=True` is accepted but performs no
-        # analysis. This program would underflow under the legacy simulator
-        # but is structurally valid, so validate(stack=True) does not raise.
+    def test_stack_validation(self):
         program = Program.from_text("""\
 .version 1.0
 pop
-halt
 """)
-        program.validate(stack=True)  # no-op: does not raise
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        assert any(isinstance(e, StackUnderflowError) for e in exc_info.value.errors)
 
-    def test_stack_type_mismatch_is_noop(self):
-        # Likewise, the legacy simulator caught a float used as a location
-        # here; the vihaco backend's stack sim is a deferred no-op.
+    def test_stack_type_mismatch(self):
         program = Program.from_text("""\
 .version 1.0
 const.f64 1.0
 initial_fill 1
-halt
 """)
-        program.validate(stack=True)  # no-op: does not raise
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        assert any(isinstance(e, TypeMismatchError) for e in exc_info.value.errors)
 
     def test_empty_program_raises_empty_program_error(self):
         program = Program.from_text(".version 1.0\n")

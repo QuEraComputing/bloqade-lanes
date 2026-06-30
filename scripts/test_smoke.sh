@@ -3,13 +3,9 @@
 #
 # Self-contained: programs are generated inline in the *native* text format
 # (const.i64/const.f64 etc.), so this does not depend on the legacy example
-# .sst files. Covers assemble/disassemble round-trip plus the validation that
-# the vihaco backend currently supports: structural checks, arch-dependent
-# capability checks, and address checks.
-#
-# Deferred (tracked in bloqade-lanes#769, not exercised here):
-#   - stack-type simulation (--simulate-stack is currently a no-op)
-#   - lane-group consistency / AOD-rectangle checks
+# .sst files. Covers assemble/disassemble round-trip plus validation:
+# structural checks, arch-dependent capability + address checks, and
+# stack-type simulation (--simulate-stack).
 #
 # Usage: ./scripts/test_smoke.sh
 set -euo pipefail
@@ -142,6 +138,34 @@ initial_fill 1
 return
 EOF
 expect_fail "invalid site" "invalid location" validate "$WORK/bad_site.sst" --arch "$ARCH"
+
+echo ""
+echo "=== Category E: stack-type simulation (--simulate-stack) ==="
+# Stack-balanced: the two locations are consumed by initial_fill, leaving the
+# stack empty at the `halt` terminator (halt pops nothing).
+prog typed_ok <<'EOF'
+.version 1.0
+const_loc 0x0000000000000000
+const_loc 0x0000000001000000
+initial_fill 2
+halt
+EOF
+expect_pass "well-typed program" validate "$WORK/typed_ok.sst" --simulate-stack
+
+prog underflow <<'EOF'
+.version 1.0
+pop
+return
+EOF
+expect_fail "stack underflow" "underflow" validate "$WORK/underflow.sst" --simulate-stack
+
+prog mismatch <<'EOF'
+.version 1.0
+const.f64 1.0
+initial_fill 1
+return
+EOF
+expect_fail "type mismatch" "type mismatch" validate "$WORK/mismatch.sst" --simulate-stack
 
 echo ""
 echo "=== Results: $PASSED passed, $FAILED failed ==="

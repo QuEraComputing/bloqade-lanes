@@ -180,6 +180,25 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("UnreachableInstructionError")?;
             cls.call1((*pc,))?
         }
+        // Stack-type simulation
+        ValidationError::StackUnderflow { pc } => {
+            let cls = module.getattr("StackUnderflowError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::TypeMismatch { pc, expected, got } => {
+            let cls = module.getattr("TypeMismatchError")?;
+            cls.call1((*pc, *expected, *got))?
+        }
+        ValidationError::LocationGroupValidation { pc, error } => {
+            let inner = location_group_error_to_py(py, error)?;
+            let cls = module.getattr("LocationValidationError")?;
+            cls.call1((*pc, inner))?
+        }
+        ValidationError::LaneGroupValidation { pc, error } => {
+            let inner = lane_group_error_to_py(py, error)?;
+            let cls = module.getattr("LaneValidationError")?;
+            cls.call1((*pc, inner))?
+        }
     };
 
     Ok(obj.into())
