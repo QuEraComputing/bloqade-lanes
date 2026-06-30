@@ -38,7 +38,7 @@ from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 from .workflow import _plot_decoder_curves
 
 if TYPE_CHECKING:
-    import tsim as tsim_backend
+    import tsim as tsim_backend  # type: ignore[reportMissingImports]
 
 
 def magic_state_dist_steane(
