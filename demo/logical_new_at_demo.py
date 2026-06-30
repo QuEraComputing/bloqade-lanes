@@ -203,6 +203,9 @@ def default_allocation():
 default_alloc_task = GeminiLogicalSimulator().task(default_allocation)
 
 # %%
+# %matplotlib qt
+
+# %%
 default_alloc_task.visualize()
 
 # %% [markdown]
