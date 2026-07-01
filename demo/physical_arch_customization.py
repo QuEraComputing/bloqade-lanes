@@ -30,13 +30,16 @@
 
 # %% [markdown]
 # Before we get started, it's useful to define how we address our architecture. We have three "levels" to addressing atoms in our architecture: zones, words, and sites. A concrete depiction of the architecture for Gemini physical is shown below:
-
+#
 # Import utilities to define the SQuIN kernel dialect that we will be writing our programs in.
 
 # %%
 from typing import Any, Literal, TypeVar
 
 import matplotlib.pyplot as plt
+
+# For postprocessing
+import numpy as np
 from bloqade.types import Qubit
 from kirin.dialects import ilist
 from kirin.dialects.ilist import IList
@@ -206,6 +209,8 @@ plot_labeled_arch(
 # %% [markdown]
 # Each column has the word ID's that are used for the logical architecture. We basically duplicate the logical architecture 8 times to obtain our physical architecture, and you can use the "site_id" to index which "box" to be in.
 # > The diagram only plots the (word_id, site_id) for each site; the "zone_id" is omitted as it is always 0 (for the Gemini MVP architecture, we only have one zone).
+#
+# <img src="./star_demo_imgs/gemini_interleaved_layout.png" width="1000">
 
 # %% [markdown]
 # ## Customizing Physical Layout
@@ -425,7 +430,14 @@ physical_msd_task = simulator.task(
 # %%
 physical_msd_task.visualize()
 
+# %% [markdown]
+# ## Running Tasks using Physical Simulator
+# Similar to the simulator task for the logical simulator, we can also run the tasks for the physical simulator using "task.run()".
+
 # %%
-physical_msd_task.physical_move_kernel.print()
+physical_msd_task_res = physical_msd_task.run(shots=1000)
+
+# %%
+print(np.array(physical_msd_task_res.measurements).shape)
 
 # %%
