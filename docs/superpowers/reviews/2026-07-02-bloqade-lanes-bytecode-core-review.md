@@ -2,6 +2,8 @@
 
 Focus: the crate's integration with vihaco (`vihaco` / `vihaco-cpu` / `vihaco-parser`), following the #769 migration.
 
+> **Resolution (2026-07-02, commit `24970e7`).** In-scope, low-risk cleanups on this PR's own surface were fixed: **`validate_all` removed** (dead + wrongly omitted `simulate_stack`; its coverage folded into a `validate_structure`+`validate` chain test), and **`TextError` moved to `isa::text`** where it's produced (restoring cohesion). Deferred — mostly the `NewArray`/array-refactor blast zone (#776) or larger surface changes: the `isa/validate.rs` simulator split (§4), the `Program` newtype firewall (§3.1), the no-arch duplicate-check fallbacks (§4 pattern 1), `op_name`-from-`#[token]` (guarded by test), the `Instruction::Cpu` leakage / vihaco-semver question, the error-umbrella, and `BadInstruction.line: 0` (needs upstream vihaco spans). The open questions below stand as-is for those.
+
 ## 1. Context
 
 `bloqade-lanes-bytecode-core` is the pure-Rust foundation of the Bloqade Lanes SDK: it owns the architecture spec (`arch`), the atom-movement simulator (`atom_state`), versioning (`version`), and — the subject of this review — the bytecode instruction set, program container, text/binary codecs, and validation (`isa`). It depends on `chumsky`, `eyre`, `serde`/`serde_json`, `thiserror`, and the four vihaco crates. Four workspace crates consume it: `bloqade-lanes-bytecode-python` (PyO3 bindings), `bloqade-lanes-bytecode-cli` (CLI + C FFI), `bloqade-lanes-dsl-core`, and `bloqade-lanes-search`.
