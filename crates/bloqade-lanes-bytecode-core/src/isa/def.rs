@@ -13,6 +13,15 @@ use vihaco::Instruction;
 /// plus a payload up to the nested [`vihaco_cpu::Instruction`] word (16 bytes),
 /// zero-padded. Decoding consumes exactly this many bytes per instruction, so a
 /// flat program decodes without desync.
+///
+/// The `17` is forced entirely by nesting the 16-byte vihaco-cpu word (1 + 16);
+/// every lanes-native variant needs at most 13 bytes (`NewArray` = 1 + 3×u32).
+/// It is *not* an alignment choice. This is entangled with the array /
+/// measurement-result representation (today a bespoke `ARRAY_REF` +
+/// `new_array`/`get_item`), which is slated to move onto vihaco-cpu's heap
+/// allocator as a nested `IList` — see
+/// <https://github.com/QuEraComputing/bloqade-lanes/issues/776>. That refactor
+/// is deliberately deferred; the width stays 17 until it lands.
 pub const INSTRUCTION_WIDTH: u32 = 17;
 
 /// The Bloqade Lanes instruction set, defined on the vihaco framework.
