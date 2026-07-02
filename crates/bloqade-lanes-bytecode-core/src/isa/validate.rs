@@ -53,6 +53,7 @@ pub mod tag {
     pub const MEASURE_FUTURE: u8 = 0x6;
     pub const DETECTOR_REF: u8 = 0x7;
     pub const OBSERVABLE_REF: u8 = 0x8;
+    pub const MEASUREMENT_RESULT: u8 = 0x9;
 }
 
 /// An arch-dependent validation failure, tagged with the offending
@@ -104,8 +105,8 @@ pub enum ValidationError {
     LaneGroupValidation { pc: usize, error: LaneGroupError },
 }
 
-/// Maximum valid value type tag (`TAG_OBSERVABLE_REF = 0x8`).
-const MAX_TYPE_TAG: u32 = 0x8;
+/// Maximum valid value type tag (`TAG_MEASUREMENT_RESULT = 0x9`).
+const MAX_TYPE_TAG: u32 = 0x9;
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -538,7 +539,7 @@ impl<'a> StackSimulator<'a> {
             }
             Instruction::AwaitMeasure => {
                 self.pop_typed(tag::MEASURE_FUTURE);
-                self.push(tag::ARRAY_REF, None);
+                self.push(tag::MEASUREMENT_RESULT, None);
             }
 
             // arrays
@@ -1026,5 +1027,24 @@ mod tests {
                 .any(|e| matches!(e, ValidationError::LaneGroupValidation { .. })),
             "got {errors:?}"
         );
+    }
+
+    #[test]
+    fn await_measure_pushes_measurement_result() {
+        // const_zone, measure 1, await_measure — the awaited value carries the
+        // measurement-result tag, so a following set_detector (wants ARRAY_REF)
+        // now type-mismatches on MEASUREMENT_RESULT rather than silently matching.
+        let p = program(vec![
+            Instruction::ConstZone(0),
+            Instruction::Measure(1),
+            Instruction::AwaitMeasure,
+        ]);
+        // await_measure must push the measurement-result tag.
+        assert_eq!(tag::MEASUREMENT_RESULT, 0x9);
+        // Sanity: simulate cleanly (no underflow/mismatch) for the measure→await chain.
+        assert!(simulate_stack(&p, None).iter().all(|e| !matches!(
+            e,
+            ValidationError::StackUnderflow { .. } | ValidationError::TypeMismatch { .. }
+        )));
     }
 }
