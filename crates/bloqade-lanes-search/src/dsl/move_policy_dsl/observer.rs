@@ -219,6 +219,7 @@ mod tests {
 
         use crate::dsl::move_policy_dsl::kernel::{PolicyOptions, solve_with_policy};
         use crate::primitives::lane_index::LaneIndex;
+        use crate::search::options::AodGridStrategy;
         use crate::test_utils::example_arch_json;
 
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
@@ -240,6 +241,7 @@ mod tests {
             max_expansions: 32,
             timeout_s: Some(1.0),
             sandbox: SandboxConfig::default(),
+            aod_grid_strategy: AodGridStrategy::default(),
         };
 
         let mut obs = RecordingObserver::default();
@@ -283,6 +285,7 @@ mod tests {
 
         use crate::dsl::move_policy_dsl::kernel::{PolicyOptions, solve_with_policy};
         use crate::primitives::lane_index::LaneIndex;
+        use crate::search::options::AodGridStrategy;
         use crate::test_utils::{example_arch_json, lane, loc};
 
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
@@ -321,6 +324,7 @@ mod tests {
             max_expansions: 32,
             timeout_s: Some(2.0),
             sandbox: SandboxConfig::default(),
+            aod_grid_strategy: AodGridStrategy::default(),
         };
 
         let mut obs = RecordingObserver::default();

@@ -896,6 +896,7 @@ impl PyEntropyOptions {
                 w_t,
                 collect_entropy_trace,
                 seed,
+                ..EntropyOptions::default()
             },
         })
     }

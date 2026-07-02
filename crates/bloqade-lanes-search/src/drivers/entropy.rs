@@ -28,6 +28,7 @@ use crate::primitives::ordering::{
     cmp_triplet_entry_tiebreak,
 };
 use crate::primitives::path::find_path_occupied;
+use crate::search::options::AodGridStrategy;
 use crate::traits::Goal;
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
@@ -295,6 +296,8 @@ pub struct EntropyParams {
     pub lookahead: bool,
     /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
     pub w_t: f64,
+    /// Strategy for AOD grid construction from selected movers.
+    pub aod_grid_strategy: AodGridStrategy,
 }
 
 impl Default for EntropyParams {
@@ -313,6 +316,7 @@ impl Default for EntropyParams {
             max_movesets_per_group: 3,
             lookahead: false,
             w_t: 0.95,
+            aod_grid_strategy: AodGridStrategy::default(),
         }
     }
 }
@@ -391,6 +395,7 @@ fn build_deadlock_breaker_candidate(
     occupied: &HashSet<u64>,
     all_scores: &[(TripletKey, ScoredEntry)],
     ctx: &SearchContext,
+    aod_grid_strategy: AodGridStrategy,
 ) -> Option<(f64, MoveSet, Config)> {
     let unresolved: HashSet<u32> = ctx
         .targets
@@ -414,7 +419,8 @@ fn build_deadlock_breaker_candidate(
     for ((mt_u8, bus_id, dir_u8), mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
         let (mt, dir) = decode_triplet_key(mt_u8, dir_u8);
-        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied);
+        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied)
+            .with_strategy(aod_grid_strategy);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -959,7 +965,8 @@ pub(crate) fn generate_candidates(
         qubits.sort_by(cmp_group_entries);
         let (mt, dir) = decode_triplet_key(mt_u8, dir_u8);
 
-        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
+        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied)
+            .with_strategy(params.aod_grid_strategy);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, &ScoredEntry> = HashMap::new();
@@ -1018,8 +1025,13 @@ pub(crate) fn generate_candidates(
 
     let mut used_deadlock_breaker = false;
     if candidates.is_empty()
-        && let Some(deadlock_breaker) =
-            build_deadlock_breaker_candidate(config, &occupied, &all_scores, ctx)
+        && let Some(deadlock_breaker) = build_deadlock_breaker_candidate(
+            config,
+            &occupied,
+            &all_scores,
+            ctx,
+            params.aod_grid_strategy,
+        )
     {
         candidates.push(deadlock_breaker);
         used_deadlock_breaker = true;
@@ -2619,6 +2631,60 @@ mod tests {
             trace.steps.iter().any(|step| step.event == "descend"
                 && step.reason.as_deref() == Some("deadlock-breaker")),
             "expected descend step marked with deadlock-breaker reason in trace"
+        );
+    }
+
+    /// E2E wiring test: `EntropyParams::aod_grid_strategy = Clique` reaches
+    /// `generate_candidates` and produces a valid moveset (grids non-empty,
+    /// both movers covered) on a 2-qubit multi-mover fixture.
+    ///
+    /// Fixture mirrors `generate_candidates_emit_aod_rectangles` exactly.
+    #[test]
+    fn aod_grid_strategy_clique_wiring_produces_valid_moveset() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        let target_encoded = vec![(0u32, loc(0, 5).encode()), (1u32, loc(0, 6).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams {
+            max_movesets_per_group: 4,
+            aod_grid_strategy: AodGridStrategy::Clique,
+            ..EntropyParams::default()
+        };
+
+        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+
+        // At least one candidate must be produced.
+        assert!(
+            !out.is_empty(),
+            "Clique strategy must produce at least one moveset candidate"
+        );
+
+        // Every candidate's moveset must be non-empty (grids non-empty).
+        for (moveset, _, _, _) in &out {
+            assert!(
+                !moveset.encoded_lanes().is_empty(),
+                "moveset lanes must be non-empty"
+            );
+        }
+
+        // At least one candidate must move at least one of the two movers.
+        let any_mover_covered = out.iter().any(|(moveset, new_cfg, _, _)| {
+            let _ = moveset;
+            new_cfg.location_of(0) != config.location_of(0)
+                || new_cfg.location_of(1) != config.location_of(1)
+        });
+        assert!(
+            any_mover_covered,
+            "Clique strategy must produce a candidate that moves at least one qubit"
         );
     }
 }

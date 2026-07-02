@@ -26,6 +26,7 @@ use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::ordering::{
     TripletKey, cmp_moveset_config_tiebreak, cmp_triplet_entry_tiebreak,
 };
+use crate::search::options::AodGridStrategy;
 use crate::traits::MoveGenerator;
 
 /// Policy for handling deadlocks (no improving moves available).
@@ -101,6 +102,8 @@ pub struct HeuristicGenerator {
     top_c: Option<usize>,
     /// Counter for deadlock occurrences (single-threaded; each restart gets its own generator).
     deadlock_count: Cell<u32>,
+    /// Strategy for AOD grid construction from selected movers.
+    aod_grid_strategy: AodGridStrategy,
 }
 
 impl Default for HeuristicGenerator {
@@ -118,7 +121,14 @@ impl HeuristicGenerator {
             seed: 0,
             top_c: None,
             deadlock_count: Cell::new(0),
+            aod_grid_strategy: AodGridStrategy::default(),
         }
+    }
+
+    /// Select the AOD grid construction strategy.
+    pub fn with_aod_grid_strategy(mut self, strategy: AodGridStrategy) -> Self {
+        self.aod_grid_strategy = strategy;
+        self
     }
 
     /// Set the deadlock escape policy.
@@ -553,7 +563,8 @@ impl MoveGenerator for HeuristicGenerator {
             // Build grid context from ALL lanes on this bus group (cross-zone).
             let grid_ctx = crate::ops::aod_grid::BusGridContext::new(
                 ctx.index, mt, bus_id, None, dir, &occupied,
-            );
+            )
+            .with_strategy(self.aod_grid_strategy);
 
             // Build entries (src_encoded -> lane_encoded) and a lane -> triple lookup.
             // Each source location has at most one atom, so no overwrites occur.

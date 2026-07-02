@@ -68,6 +68,7 @@ def step(graph, gs, ctx, lib):
         max_expansions: 100,
         timeout_s: Some(5.0),
         sandbox: SandboxConfig::default(),
+        ..PolicyOptions::default()
     };
 
     let result = solve_with_policy(

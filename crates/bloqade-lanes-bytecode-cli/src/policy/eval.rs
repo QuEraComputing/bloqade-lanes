@@ -80,6 +80,7 @@ fn run_move(
                 .or(mp.budget.as_ref().map(|b| b.timeout_s))
                 .unwrap_or(10.0),
         ),
+        ..PolicyOptions::default()
     };
     let mut obs = NoOpMoveObserver;
     let t0 = Instant::now();

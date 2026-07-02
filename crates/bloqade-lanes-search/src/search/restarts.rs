@@ -131,6 +131,7 @@ where
     let collect_entropy_trace = entropy.collect_entropy_trace;
     let w_t = entropy.w_t;
     let base_seed = entropy.seed;
+    let aod_grid_strategy = entropy.aod_grid_strategy;
 
     // Helper: run a single inner strategy with the given seed and budget.
     let run_inner = |inner: InnerStrategy, seed: u64, budget: Option<u32>| -> SolveResult {
@@ -153,6 +154,7 @@ where
                     max_goal_candidates,
                     lookahead: opts.lookahead,
                     w_t,
+                    aod_grid_strategy,
                     ..crate::drivers::entropy::EntropyParams::default()
                 };
                 let mut entropy_trace = if collect_entropy_trace {

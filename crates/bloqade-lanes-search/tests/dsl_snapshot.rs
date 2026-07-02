@@ -136,6 +136,7 @@ fn run_one(problem_path: &Path, expected_path: &Path, policy_path: &Path) -> Res
                 policy_params: mp.policy_params.clone(),
                 max_expansions: mp.budget.as_ref().map(|b| b.max_expansions).unwrap_or(5000),
                 timeout_s: Some(mp.budget.as_ref().map(|b| b.timeout_s).unwrap_or(10.0)),
+                ..PolicyOptions::default()
             };
             let mut obs = NoOpMoveObserver;
             let res = solve_with_policy(initial, target, blocked, index, opts, &mut obs)

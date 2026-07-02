@@ -84,6 +84,7 @@ fn trace_move(
                 .or(mp.budget.as_ref().map(|b| b.timeout_s))
                 .unwrap_or(10.0),
         ),
+        ..PolicyOptions::default()
     };
 
     if json {

@@ -288,6 +288,7 @@ impl PyPolicyRunner {
             max_expansions: max_expansions.unwrap_or(100_000),
             timeout_s,
             sandbox: bloqade_lanes_dsl_core::sandbox::SandboxConfig::default(),
+            ..PolicyOptions::default()
         };
 
         let index = Arc::clone(&self.index);

@@ -30,6 +30,7 @@ use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::ordering::cmp_moveset_config_tiebreak;
+use crate::search::options::AodGridStrategy;
 
 /// One scored `(qubit, lane)` pair produced by Stage 1 of the pipeline.
 #[derive(Debug, Clone)]
@@ -85,6 +86,7 @@ pub(crate) fn pack_aod_rectangles(
     config: &Config,
     index: &LaneIndex,
     blocked: &HashSet<u64>,
+    aod_grid_strategy: AodGridStrategy,
 ) -> Vec<PackedCandidate> {
     // Build occupied set: blocked locations + qubits already in this config.
     let mut occupied: HashSet<u64> = HashSet::with_capacity(blocked.len() + config.len());
@@ -109,7 +111,8 @@ pub(crate) fn pack_aod_rectangles(
         };
 
         // Build the grid context across all zones for the bus.
-        let grid_ctx = BusGridContext::new(index, mt, bus_id, None, dir, &occupied);
+        let grid_ctx = BusGridContext::new(index, mt, bus_id, None, dir, &occupied)
+            .with_strategy(aod_grid_strategy);
 
         // Build src→lane entries and lane→entry lookup for score lifting
         // and destination derivation.
@@ -257,7 +260,13 @@ mod tests {
         }];
         let groups = group_by_triplet(scored);
         let blocked = HashSet::new();
-        let candidates = pack_aod_rectangles(groups, &config, &index, &blocked);
+        let candidates = pack_aod_rectangles(
+            groups,
+            &config,
+            &index,
+            &blocked,
+            AodGridStrategy::default(),
+        );
         assert!(
             !candidates.is_empty(),
             "should produce at least one candidate"
@@ -288,7 +297,13 @@ mod tests {
             score: 3.0,
         }];
         let groups = group_by_triplet(scored);
-        let candidates = pack_aod_rectangles(groups, &config, &index, &blocked);
+        let candidates = pack_aod_rectangles(
+            groups,
+            &config,
+            &index,
+            &blocked,
+            AodGridStrategy::default(),
+        );
         // No candidate should land qubit 0 on the blocked destination.
         for c in &candidates {
             assert_ne!(c.new_config.location_of(0), Some(dst));

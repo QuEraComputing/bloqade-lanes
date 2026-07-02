@@ -52,6 +52,7 @@ use crate::primitives::config::Config;
 use crate::primitives::distance::DistanceTable;
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
+use crate::search::options::AodGridStrategy;
 
 // ── public types ─────────────────────────────────────────────────────────
 
@@ -74,6 +75,8 @@ pub struct PolicyOptions {
     pub timeout_s: Option<f64>,
     /// Sandbox config for the per-solve evaluator.
     pub sandbox: SandboxConfig,
+    /// Strategy for AOD grid construction from selected movers.
+    pub aod_grid_strategy: AodGridStrategy,
 }
 
 impl Default for PolicyOptions {
@@ -84,6 +87,7 @@ impl Default for PolicyOptions {
             max_expansions: 10_000,
             timeout_s: None,
             sandbox: SandboxConfig::default(),
+            aod_grid_strategy: AodGridStrategy::default(),
         }
     }
 }
@@ -236,6 +240,7 @@ pub fn solve_with_policy(
         dist_table: dist_table.clone(),
         targets: target_pairs.clone(),
         blocked: blocked_set.clone(),
+        aod_grid_strategy: opts.aod_grid_strategy,
     };
     let ctx = Ctx::new(target_pairs.clone(), blocked_set.clone(), arch_wrap);
 
@@ -1028,6 +1033,7 @@ def step(graph, gs, ctx, lib):
             max_expansions: 100,
             timeout_s: Some(5.0),
             sandbox: SandboxConfig::default(),
+            aod_grid_strategy: AodGridStrategy::default(),
         };
 
         let result = solve_with_policy(
@@ -1077,6 +1083,7 @@ def step(graph, gs, ctx, lib):
             max_expansions: 1000,
             timeout_s: Some(5.0),
             sandbox: SandboxConfig::default(),
+            aod_grid_strategy: AodGridStrategy::default(),
         };
 
         let result = solve_with_policy(

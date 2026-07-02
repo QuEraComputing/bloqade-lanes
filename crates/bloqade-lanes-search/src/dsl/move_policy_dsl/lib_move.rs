@@ -30,6 +30,7 @@ use crate::dsl::pipeline::{
 use crate::primitives::config::Config;
 use crate::primitives::distance::DistanceTable;
 use crate::primitives::lane_index::LaneIndex;
+use crate::search::options::AodGridStrategy;
 
 // ── StarlarkConfig ─────────────────────────────────────────────────────
 
@@ -327,6 +328,8 @@ pub struct LibMove {
     pub(super) targets: Vec<(u32, u64)>,
     /// Locations blocked from use as move destinations.
     pub(super) blocked: HashSet<u64>,
+    /// Strategy for AOD grid construction from selected movers.
+    pub(super) aod_grid_strategy: AodGridStrategy,
 }
 
 impl allocative::Allocative for LibMove {
@@ -588,8 +591,13 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         let raw_scored = unpack_scored_list(scored)?;
         let raw_groups = pipeline_group_by_triplet(raw_scored);
 
-        let candidates =
-            pipeline_pack_aod_rectangles(raw_groups, &config.0, &this.index, &this.blocked);
+        let candidates = pipeline_pack_aod_rectangles(
+            raw_groups,
+            &config.0,
+            &this.index,
+            &this.blocked,
+            this.aod_grid_strategy,
+        );
         let items: Vec<Value<'v>> = candidates
             .into_iter()
             .map(|c| heap.alloc(StarlarkPackedCandidate(c)))

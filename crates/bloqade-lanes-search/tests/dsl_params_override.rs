@@ -73,6 +73,7 @@ fn run_with_params(
         max_expansions,
         timeout_s: Some(15.0),
         sandbox: SandboxConfig::default(),
+        ..PolicyOptions::default()
     };
     solve_with_policy(
         initial.iter().copied(),

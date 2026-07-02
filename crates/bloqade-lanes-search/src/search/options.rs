@@ -137,6 +137,8 @@ pub struct EntropyOptions {
     /// A non-zero base seed starts the per-restart sequence at that value
     /// so every run is reproducible.
     pub seed: u64,
+    /// Strategy for AOD grid construction from selected movers.
+    pub aod_grid_strategy: AodGridStrategy,
 }
 
 impl Default for EntropyOptions {
@@ -147,6 +149,7 @@ impl Default for EntropyOptions {
             w_t: 0.05,
             collect_entropy_trace: false,
             seed: 0,
+            aod_grid_strategy: AodGridStrategy::default(),
         }
     }
 }

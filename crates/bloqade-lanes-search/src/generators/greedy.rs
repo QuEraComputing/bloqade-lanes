@@ -16,6 +16,7 @@ use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::graph::{MoveSet, NodeId};
 use crate::primitives::path::find_path_occupied;
+use crate::search::options::AodGridStrategy;
 use crate::traits::MoveGenerator;
 
 /// Greedy shortest-path move generator.
@@ -23,7 +24,24 @@ use crate::traits::MoveGenerator;
 /// Routes each unresolved qubit along the shortest path to its target,
 /// takes the first lane, groups by bus parameters, and builds
 /// AOD-compatible rectangular grids.
-pub struct GreedyGenerator;
+#[derive(Default)]
+pub struct GreedyGenerator {
+    /// Strategy for AOD grid construction from selected movers.
+    pub aod_grid_strategy: AodGridStrategy,
+}
+
+impl GreedyGenerator {
+    /// Create a new greedy generator with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select the AOD grid construction strategy.
+    pub fn with_aod_grid_strategy(mut self, strategy: AodGridStrategy) -> Self {
+        self.aod_grid_strategy = strategy;
+        self
+    }
+}
 
 impl MoveGenerator for GreedyGenerator {
     fn generate(
@@ -90,7 +108,8 @@ impl MoveGenerator for GreedyGenerator {
 
         // 4. For each group, build AOD grids and emit candidates.
         for ((mt, bus_id, dir), entries) in &groups {
-            let grid_ctx = BusGridContext::new(index, *mt, *bus_id, None, *dir, &occupied);
+            let grid_ctx = BusGridContext::new(index, *mt, *bus_id, None, *dir, &occupied)
+                .with_strategy(self.aod_grid_strategy);
             let grids = grid_ctx.build_aod_grids(entries);
 
             for grid in grids {
@@ -156,7 +175,7 @@ mod tests {
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
         let mut out = Vec::new();
-        GreedyGenerator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
+        GreedyGenerator::new().generate(&config, NodeId(0), &ctx, &mut state, &mut out);
 
         assert!(!out.is_empty(), "should produce at least one candidate");
 
@@ -197,7 +216,7 @@ mod tests {
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
         let mut out = Vec::new();
-        GreedyGenerator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
+        GreedyGenerator::new().generate(&config, NodeId(0), &ctx, &mut state, &mut out);
 
         assert!(out.is_empty(), "no candidates when qubit already at target");
     }
