@@ -98,7 +98,6 @@ impl BusGridContext {
     }
 
     /// Select the grid-construction strategy (default [`AodGridStrategy::GreedyMerge`]).
-    #[allow(dead_code)]
     pub(crate) fn with_strategy(mut self, strategy: AodGridStrategy) -> Self {
         self.strategy = strategy;
         self
@@ -240,10 +239,10 @@ impl BusGridContext {
             };
 
             // Evaluate a clique (bitset over node indices) by the objective.
-            // Scoring is based on the EMITTED rectangle (the full xs × ys product
-            // of the clique's distinct tones), not the clique bitset size, because
-            // the product may contain valid positions that are non-adjacent to some
-            // clique members yet still covered by the emitted AOD shot.
+            // Score on the emitted rectangle (xs × ys) so area and movers_covered
+            // match exactly what rect_to_lanes emits. Every node in the clique
+            // already passed is_valid_rect, so the induced product is fully covered
+            // — no "extra" cells outside the clique can appear.
             // Returns without updating if the emitted rectangle covers zero movers.
             // Inlined into consider to avoid borrow-checker issues with closures.
             let mut best_key: Option<(usize, std::cmp::Reverse<usize>, u64)> = None;
@@ -288,6 +287,9 @@ impl BusGridContext {
             };
 
             if n <= Self::MAX_EXACT_CLIQUE_NODES {
+                // The n == 64 branch is never reached today (MAX_EXACT_CLIQUE_NODES = 32),
+                // but is kept defensively in case MAX_EXACT_CLIQUE_NODES is raised toward 64
+                // in the future; `1u64 << 64` would panic, so the guard must stay.
                 let full_p: u64 = if n == 64 { u64::MAX } else { (1u64 << n) - 1 };
                 Self::bron_kerbosch(&adj, 0, full_p, 0, &mut consider);
             } else {
@@ -310,6 +312,16 @@ impl BusGridContext {
                 ys.insert(y);
             }
             let lanes = self.rect_to_lanes(&xs, &ys);
+            // Soundness invariant: the emitted rectangle must be the full Cartesian
+            // product of the winning clique's x/y tone sets.
+            debug_assert!(
+                lanes.len() == xs.len() * ys.len(),
+                "rect_to_lanes emitted {} lanes but xs({}) × ys({}) = {}",
+                lanes.len(),
+                xs.len(),
+                ys.len(),
+                xs.len() * ys.len(),
+            );
             if lanes.is_empty() {
                 break;
             }
@@ -955,10 +967,25 @@ mod tests {
             .into_iter()
             .collect();
 
-        let mut a = ctx_a.build_aod_grids(&entries);
-        let mut b = ctx_b.build_aod_grids(&entries);
+        let raw_a = ctx_a.build_aod_grids(&entries);
+        let raw_b = ctx_b.build_aod_grids(&entries);
 
-        // Normalize: sort lanes within each grid, then sort grids for comparison.
+        // Strong check: sort only the OUTER vec (grid order may vary) but leave
+        // inner vecs unsorted, so intra-grid lane order is also verified to be
+        // identical between the two differently-inserted contexts.
+        let mut inner_a = raw_a.clone();
+        let mut inner_b = raw_b.clone();
+        inner_a.sort_by_key(|g| g.first().copied().unwrap_or(0));
+        inner_b.sort_by_key(|g| g.first().copied().unwrap_or(0));
+        assert_eq!(
+            inner_a, inner_b,
+            "clique strategy intra-grid lane order must be identical regardless of insertion order"
+        );
+
+        // Normalized check (sort lanes within each grid too): retained for
+        // completeness and to catch any set-level content divergence.
+        let mut a = raw_a;
+        let mut b = raw_b;
         for g in &mut a {
             g.sort();
         }
