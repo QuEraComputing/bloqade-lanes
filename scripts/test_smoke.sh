@@ -49,13 +49,15 @@ expect_fail() {
 
 # A minimal valid program reused across cases.
 prog valid <<'EOF'
-.version 1.0
-const_loc 0x0000000000000000
-const_loc 0x0000000001000000
-initial_fill 2
-const.f64 1.5708
-global_rz
-return
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  const_loc 0x0000000001000000
+  initial_fill 2
+  const.f64 1.5708
+  global_rz
+  return
+}
 EOF
 
 echo ""
@@ -72,42 +74,50 @@ echo "=== Category B: structural validation ==="
 expect_pass "valid program" validate "$WORK/valid.sst"
 
 prog no_terminator <<'EOF'
-.version 1.0
-const_loc 0x0000000000000000
-initial_fill 1
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+}
 EOF
 expect_fail "missing terminator" "return or halt" validate "$WORK/no_terminator.sst"
 
 prog fill_not_first <<'EOF'
-.version 1.0
-global_r
-initial_fill 1
-return
+version 1.0;
+fn @main() {
+  global_r
+  initial_fill 1
+  return
+}
 EOF
 expect_fail "initial_fill not first" "initial_fill" validate "$WORK/fill_not_first.sst"
 
 echo ""
 echo "=== Category C: capability validation (--arch) ==="
 prog multi_measure <<'EOF'
-.version 1.0
-const_loc 0x0000000000000000
-initial_fill 1
-const_zone 0x00000000
-measure 1
-const_zone 0x00000000
-measure 1
-return
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+  const_zone 0x00000000
+  measure 1
+  const_zone 0x00000000
+  measure 1
+  return
+}
 EOF
 expect_fail "multiple measure (feed_forward=false)" "feed_forward" \
     validate "$WORK/multi_measure.sst" --arch "$ARCH"
 
 prog fill_reload <<'EOF'
-.version 1.0
-const_loc 0x0000000000000000
-initial_fill 1
-const_loc 0x0000000000000000
-fill 1
-return
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+  const_loc 0x0000000000000000
+  fill 1
+  return
+}
 EOF
 expect_fail "fill without atom_reloading" "atom_reloading" \
     validate "$WORK/fill_reload.sst" --arch "$ARCH"
@@ -122,20 +132,24 @@ echo "=== Category D: address validation (--arch) ==="
 expect_pass "valid addresses" validate "$WORK/valid.sst" --arch "$ARCH"
 
 prog bad_zone <<'EOF'
-.version 1.0
-const_loc 0x0000000000000000
-initial_fill 1
-const_zone 0x00000005
-measure 1
-return
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+  const_zone 0x00000005
+  measure 1
+  return
+}
 EOF
 expect_fail "invalid zone" "invalid zone" validate "$WORK/bad_zone.sst" --arch "$ARCH"
 
 prog bad_site <<'EOF'
-.version 1.0
-const_loc 0x0000000063000000
-initial_fill 1
-return
+version 1.0;
+fn @main() {
+  const_loc 0x0000000063000000
+  initial_fill 1
+  return
+}
 EOF
 expect_fail "invalid site" "invalid location" validate "$WORK/bad_site.sst" --arch "$ARCH"
 
@@ -144,26 +158,32 @@ echo "=== Category E: stack-type simulation (--simulate-stack) ==="
 # Stack-balanced: the two locations are consumed by initial_fill, leaving the
 # stack empty at the `halt` terminator (halt pops nothing).
 prog typed_ok <<'EOF'
-.version 1.0
-const_loc 0x0000000000000000
-const_loc 0x0000000001000000
-initial_fill 2
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  const_loc 0x0000000001000000
+  initial_fill 2
+  halt
+}
 EOF
 expect_pass "well-typed program" validate "$WORK/typed_ok.sst" --simulate-stack
 
 prog underflow <<'EOF'
-.version 1.0
-pop
-return
+version 1.0;
+fn @main() {
+  pop
+  return
+}
 EOF
 expect_fail "stack underflow" "underflow" validate "$WORK/underflow.sst" --simulate-stack
 
 prog mismatch <<'EOF'
-.version 1.0
-const.f64 1.0
-initial_fill 1
-return
+version 1.0;
+fn @main() {
+  const.f64 1.0
+  initial_fill 1
+  return
+}
 EOF
 expect_fail "type mismatch" "type mismatch" validate "$WORK/mismatch.sst" --simulate-stack
 

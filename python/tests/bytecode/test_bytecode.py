@@ -399,39 +399,39 @@ class TestProgramConstruction:
 
     def test_from_text(self):
         source = """\
-.version 1.0
-const_loc 0x00000000
-initial_fill 1
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  initial_fill 1
+  halt
+}
 """
         program = Program.from_text(source)
         assert program.version == (1, 0)
         assert len(program) == 3
 
-    def test_from_text_legacy_version(self):
-        source = ".version 1\nhalt\n"
-        program = Program.from_text(source)
-        assert program.version == (1, 0)
-
     def test_from_text_invalid(self):
         with pytest.raises(MissingVersionError):
-            Program.from_text("halt\n")  # missing .version
+            Program.from_text("fn @main() {\n  halt\n}\n")  # missing version header
 
 
 class TestProgramSerialization:
     def _sample_program(self):
         return Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-const_loc 0x00000001
-initial_fill 2
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  const_loc 0x00000001
+  initial_fill 2
+  halt
+}
 """)
 
     def test_to_text(self):
         program = self._sample_program()
         text = program.to_text()
-        assert ".version 1.0" in text
+        assert "version 1.0" in text
+        assert "fn @main()" in text
         assert "initial_fill 2" in text
         assert "halt" in text
 
@@ -470,19 +470,23 @@ halt
 class TestProgramValidation:
     def test_structural_valid(self):
         program = Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-initial_fill 1
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  initial_fill 1
+  halt
+}
 """)
         program.validate()  # should not raise
 
     def test_structural_invalid(self):
         program = Program.from_text("""\
-.version 1.0
-halt
-const_loc 0x00000000
-initial_fill 1
+version 1.0;
+fn @main() {
+  halt
+  const_loc 0x00000000
+  initial_fill 1
+}
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -492,8 +496,10 @@ initial_fill 1
 
     def test_stack_validation(self):
         program = Program.from_text("""\
-.version 1.0
-pop
+version 1.0;
+fn @main() {
+  pop
+}
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(stack=True)
@@ -501,16 +507,18 @@ pop
 
     def test_stack_type_mismatch(self):
         program = Program.from_text("""\
-.version 1.0
-const.f64 1.0
-initial_fill 1
+version 1.0;
+fn @main() {
+  const.f64 1.0
+  initial_fill 1
+}
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(stack=True)
         assert any(isinstance(e, TypeMismatchError) for e in exc_info.value.errors)
 
     def test_empty_program_raises_empty_program_error(self):
-        program = Program.from_text(".version 1.0\n")
+        program = Program.from_text("version 1.0;\nfn @main() {\n}\n")
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
         assert any(isinstance(e, EmptyProgramError) for e in exc_info.value.errors)
@@ -520,8 +528,10 @@ initial_fill 1
 
     def test_missing_terminator_raises_missing_terminator_error(self):
         program = Program.from_text("""\
-.version 1.0
-const.i64 0
+version 1.0;
+fn @main() {
+  const.i64 0
+}
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -529,9 +539,11 @@ const.i64 0
 
     def test_unreachable_instruction_raises_unreachable_error(self):
         program = Program.from_text("""\
-.version 1.0
-halt
-const.i64 0
+version 1.0;
+fn @main() {
+  halt
+  const.i64 0
+}
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -544,16 +556,20 @@ const.i64 0
 
     def test_valid_program_with_return_no_errors(self):
         program = Program.from_text("""\
-.version 1.0
-const.i64 0
-return
+version 1.0;
+fn @main() {
+  const.i64 0
+  return
+}
 """)
         program.validate()  # should not raise
 
     def test_valid_program_with_halt_no_errors(self):
         program = Program.from_text("""\
-.version 1.0
-halt
+version 1.0;
+fn @main() {
+  halt
+}
 """)
         program.validate()  # should not raise
 
@@ -586,31 +602,35 @@ class TestCapabilityValidation:
     def test_single_measure_allowed(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-const_loc 0x00000001
-initial_fill 2
-const_zone 0x00000000
-measure 1
-await_measure
-return
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  const_loc 0x00000001
+  initial_fill 2
+  const_zone 0x00000000
+  measure 1
+  await_measure
+  return
+}
 """)
         program.validate(arch=arch)  # should not raise
 
     def test_multiple_measure_rejected_without_feed_forward(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-const_loc 0x00000001
-initial_fill 2
-const_zone 0x00000000
-measure 1
-await_measure
-const_zone 0x00000000
-measure 1
-await_measure
-return
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  const_loc 0x00000001
+  initial_fill 2
+  const_zone 0x00000000
+  measure 1
+  await_measure
+  const_zone 0x00000000
+  measure 1
+  await_measure
+  return
+}
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
@@ -625,30 +645,34 @@ return
         data["feed_forward"] = True
         arch = ArchSpec.from_json(json.dumps(data))
         program = Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-const_loc 0x00000001
-initial_fill 2
-const_zone 0x00000000
-measure 1
-await_measure
-const_zone 0x00000000
-measure 1
-await_measure
-return
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  const_loc 0x00000001
+  initial_fill 2
+  const_zone 0x00000000
+  measure 1
+  await_measure
+  const_zone 0x00000000
+  measure 1
+  await_measure
+  return
+}
 """)
         program.validate(arch=arch)  # should not raise
 
     def test_fill_rejected_without_atom_reloading(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-const_loc 0x00000001
-initial_fill 2
-const_loc 0x00000000
-fill 1
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  const_loc 0x00000001
+  initial_fill 2
+  const_loc 0x00000000
+  fill 1
+  halt
+}
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
@@ -663,23 +687,27 @@ halt
         data["atom_reloading"] = True
         arch = ArchSpec.from_json(json.dumps(data))
         program = Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-const_loc 0x00000001
-initial_fill 2
-const_loc 0x00000000
-fill 1
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  const_loc 0x00000001
+  initial_fill 2
+  const_loc 0x00000000
+  fill 1
+  halt
+}
 """)
         program.validate(arch=arch)  # should not raise
 
     def test_initial_fill_always_allowed(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-.version 1.0
-const_loc 0x00000000
-initial_fill 1
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000000
+  initial_fill 1
+  halt
+}
 """)
         program.validate(arch=arch)  # should not raise
 
@@ -695,7 +723,7 @@ halt
 
 class TestProgramRepr:
     def test_repr(self):
-        program = Program.from_text(".version 1.0\nhalt\n")
+        program = Program.from_text("version 1.0;\nfn @main() {\n  halt\n}\n")
         r = repr(program)
         assert "Program" in r
         assert "(1, 0)" in r

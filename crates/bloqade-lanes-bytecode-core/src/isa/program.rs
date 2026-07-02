@@ -21,11 +21,9 @@
 
 use std::io::Cursor;
 
-use chumsky::Parser as _;
 use vihaco::instruction::{FromBytes, WriteBytes};
 use vihaco::module::Module;
 use vihaco::value::{Type, Value};
-use vihaco_parser_core::Parse;
 
 use super::{INSTRUCTION_WIDTH, Instruction};
 use crate::version::Version;
@@ -185,83 +183,6 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
     Ok(from_code(version, instructions))
 }
 
-/// Parse assembly text. Requires a leading `.version` directive; `;`
-/// begins a line comment; blank lines are ignored. Each remaining line is
-/// delegated to the vihaco-derived [`Instruction`] parser.
-pub fn parse_text(source: &str) -> Result<Program, TextError> {
-    let mut version: Option<Version> = None;
-    let mut instructions = Vec::new();
-
-    for (idx, raw) in source.lines().enumerate() {
-        let line_num = idx + 1;
-        let line = match raw.find(';') {
-            Some(pos) => &raw[..pos],
-            None => raw,
-        };
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Some(rest) = line.strip_prefix('.') {
-            let mut parts = rest.split_whitespace();
-            if parts.next() == Some("version") {
-                let value = parts.next().unwrap_or("");
-                version = Some(
-                    parse_version(value).ok_or_else(|| TextError::InvalidVersion {
-                        line: line_num,
-                        value: value.to_string(),
-                    })?,
-                );
-            }
-            continue;
-        }
-
-        let inst = Instruction::parser()
-            .parse(line)
-            .into_result()
-            .map_err(|_| TextError::BadInstruction {
-                line: line_num,
-                text: line.to_string(),
-            })?;
-        instructions.push(inst);
-    }
-
-    Ok(from_code(
-        version.ok_or(TextError::MissingVersion)?,
-        instructions,
-    ))
-}
-
-/// Render the program as assembly text that [`parse_text`] round-trips.
-pub fn to_text(program: &Program) -> String {
-    let mut out = format!(
-        ".version {}.{}\n",
-        program.extra.version.major, program.extra.version.minor
-    );
-    for inst in &program.code {
-        out.push_str(&instruction_to_text(inst));
-        out.push('\n');
-    }
-    out
-}
-
-/// Parse a `major.minor` (or bare `major`, minor defaulting to 0) version.
-fn parse_version(s: &str) -> Option<Version> {
-    if s.is_empty() {
-        return None;
-    }
-    match s.split_once('.') {
-        Some((major, minor)) => Some(Version::new(major.parse().ok()?, minor.parse().ok()?)),
-        None => Some(Version::new(s.parse().ok()?, 0)),
-    }
-}
-
-/// Render one instruction as its canonical text line.
-fn instruction_to_text(inst: &Instruction) -> String {
-    inst.to_string()
-}
-
 #[cfg(test)]
 #[allow(clippy::approx_constant)] // illustrative sample floats, not math constants
 mod tests {
@@ -323,66 +244,6 @@ mod tests {
         let bytes = to_binary(&program);
         assert_eq!(bytes.len(), HEADER_LEN);
         assert_eq!(from_binary(&bytes).unwrap(), program);
-    }
-
-    #[test]
-    fn text_round_trips() {
-        let program = sample();
-        let text = to_text(&program);
-        assert_eq!(parse_text(&text).unwrap(), program);
-    }
-
-    #[test]
-    fn text_then_binary_agree() {
-        let program = sample();
-        let from_text = parse_text(&to_text(&program)).unwrap();
-        let from_bin = from_binary(&to_binary(&from_text)).unwrap();
-        assert_eq!(from_bin, program);
-    }
-
-    #[test]
-    fn parses_comments_and_blanks() {
-        use vihaco::value::Value;
-        use vihaco_cpu::Instruction as Cpu;
-        let source = "\n; header comment\n.version 2\n\nconst.i64 42  ; inline\nhalt\n";
-        let program = parse_text(source).unwrap();
-        assert_eq!(program.extra.version, Version::new(2, 0));
-        assert_eq!(
-            program.code,
-            vec![
-                Instruction::Cpu(Cpu::Const(Value::I64(42))),
-                Instruction::Cpu(Cpu::Halt)
-            ]
-        );
-    }
-
-    #[test]
-    fn version_directive_required() {
-        assert_eq!(parse_text("halt\n"), Err(TextError::MissingVersion));
-    }
-
-    #[test]
-    fn major_minor_and_bare_versions() {
-        assert_eq!(
-            parse_text(".version 2.3\nhalt\n").unwrap().extra.version,
-            Version::new(2, 3)
-        );
-        assert_eq!(
-            parse_text(".version 5\nhalt\n").unwrap().extra.version,
-            Version::new(5, 0)
-        );
-    }
-
-    #[test]
-    fn bad_instruction_reports_line() {
-        let err = parse_text(".version 1\nhalt\nnope_nope\n").unwrap_err();
-        assert_eq!(
-            err,
-            TextError::BadInstruction {
-                line: 3,
-                text: "nope_nope".to_string()
-            }
-        );
     }
 
     #[test]

@@ -2,7 +2,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
-use bloqade_lanes_bytecode_core::isa::program::{from_binary, parse_text, to_binary, to_text};
+use bloqade_lanes_bytecode_core::isa::program::{from_binary, to_binary};
+use bloqade_lanes_bytecode_core::isa::{parse_text, to_text};
 
 use super::error::{BlqdStatus, clear_last_error, set_last_error};
 use super::handles::BLQDProgram;

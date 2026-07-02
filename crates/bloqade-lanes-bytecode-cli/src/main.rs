@@ -8,8 +8,9 @@ mod policy;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
 use bloqade_lanes_bytecode_core::isa::Program;
-use bloqade_lanes_bytecode_core::isa::program::{from_binary, parse_text, to_binary, to_text};
+use bloqade_lanes_bytecode_core::isa::program::{from_binary, to_binary};
 use bloqade_lanes_bytecode_core::isa::validate;
+use bloqade_lanes_bytecode_core::isa::{parse_text, to_text};
 
 #[derive(Parser)]
 #[command(

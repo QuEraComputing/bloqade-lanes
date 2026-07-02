@@ -43,31 +43,39 @@
  * zone 0, word 0, site 0 = 0x0000000000000000
  * zone 0, word 0, site 1 = 0x0000000001000000 */
 static const char *VALID_PROGRAM =
-    ".version 1\n"
-    "const_loc 0x0000000000000000\n"
-    "const_loc 0x0000000001000000\n"
-    "initial_fill 2\n"
-    "halt\n";
+    "version 1.0;\n"
+    "fn @main() {\n"
+    "  const_loc 0x0000000000000000\n"
+    "  const_loc 0x0000000001000000\n"
+    "  initial_fill 2\n"
+    "  halt\n"
+    "}\n";
 
 /* Program that triggers a structural error (initial_fill not first). */
 static const char *INVALID_STRUCTURE =
-    ".version 1\n"
-    "halt\n"
-    "const_loc 0x0000000000000000\n"
-    "initial_fill 1\n";
+    "version 1.0;\n"
+    "fn @main() {\n"
+    "  halt\n"
+    "  const_loc 0x0000000000000000\n"
+    "  initial_fill 1\n"
+    "}\n";
 
 /* Program that triggers a stack underflow (pop on empty stack). */
 static const char *STACK_UNDERFLOW =
-    ".version 1\n"
-    "fill 1\n";
+    "version 1.0;\n"
+    "fn @main() {\n"
+    "  fill 1\n"
+    "}\n";
 
 /* Program with a type mismatch: fill expects locations, gets a float. */
 static const char *TYPE_MISMATCH =
-    ".version 1\n"
-    "const.f64 3.14\n"
-    "initial_fill 1\n"
-    "fill 1\n"
-    "halt\n";
+    "version 1.0;\n"
+    "fn @main() {\n"
+    "  const.f64 3.14\n"
+    "  initial_fill 1\n"
+    "  fill 1\n"
+    "  halt\n"
+    "}\n";
 
 int main(void) {
     int tests_passed = 0;

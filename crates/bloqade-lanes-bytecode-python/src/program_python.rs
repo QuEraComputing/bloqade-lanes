@@ -3,6 +3,7 @@ use pyo3::types::PyBytes;
 
 use bloqade_lanes_bytecode_core::isa::program as rs_prog;
 use bloqade_lanes_bytecode_core::isa::validate as rs_val;
+use bloqade_lanes_bytecode_core::isa::{parse_text, to_text};
 use bloqade_lanes_bytecode_core::version::Version;
 
 use crate::arch_python::PyArchSpec;
@@ -28,13 +29,12 @@ impl PyProgram {
 
     #[staticmethod]
     fn from_text(source: &str, py: Python<'_>) -> PyResult<Self> {
-        let program =
-            rs_prog::parse_text(source).map_err(|e| crate::errors::text_error_to_py(py, &e))?;
+        let program = parse_text(source).map_err(|e| crate::errors::text_error_to_py(py, &e))?;
         Ok(Self { inner: program })
     }
 
     fn to_text(&self) -> String {
-        rs_prog::to_text(&self.inner)
+        to_text(&self.inner)
     }
 
     #[staticmethod]
