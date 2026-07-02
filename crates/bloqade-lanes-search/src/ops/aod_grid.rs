@@ -1,8 +1,16 @@
-//! Two-phase AOD grid construction for the heuristic expander.
+//! AOD grid construction for the heuristic expander.
 //!
-//! Ports the Python `BusContext.build_aod_grids()` algorithm: a greedy
-//! sequential pass forms initial rectangular clusters, then an iterative
-//! merge pass combines compatible clusters into larger rectangles.
+//! `build_aod_grids` dispatches between two strategies based on
+//! [`BusGridContext::strategy`]:
+//!
+//! - **GreedyMerge** (default): a greedy sequential pass forms initial
+//!   rectangular clusters, then an iterative merge pass combines compatible
+//!   clusters into larger rectangles.
+//! - **Clique**: builds a conflict graph whose nodes are valid positions in the
+//!   movers' induced Cartesian product and whose edges connect positions that
+//!   form a valid 2×2 rectangle. Each round finds the maximal clique covering
+//!   the most movers (tie-break: smaller area, then deterministic), emits the
+//!   corresponding rectangle, prunes covered movers, and repeats.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -182,10 +190,227 @@ impl BusGridContext {
             .collect()
     }
 
-    /// Conflict-graph max-clique grid construction (implemented in Task 2).
+    /// Maximum nodes for exact Bron–Kerbosch; above this, use the greedy
+    /// fallback. Bounded by the u64 adjacency bitset (≤64) and enumeration cost.
+    const MAX_EXACT_CLIQUE_NODES: usize = 32;
+
+    /// Conflict-graph max-clique grid construction.
+    ///
+    /// Candidate nodes are the valid positions in the input movers' induced
+    /// Cartesian product; two nodes are adjacent iff their induced 2×2 rectangle
+    /// is valid (so a maximal clique = a maximal valid rectangle). Each round
+    /// emits the rectangle covering the most input movers (tie-break: smaller
+    /// area, then deterministic), then prunes those movers and repeats.
     fn build_aod_grids_clique(&self, entries: &HashMap<u64, u64>) -> Vec<Vec<u64>> {
-        // Placeholder until Task 2. Falls back to greedy so callers still work.
-        self.build_aod_grids_greedy(entries)
+        if entries.is_empty() {
+            return Vec::new();
+        }
+        let mut remaining: HashSet<u64> = entries.keys().copied().collect();
+        let mut out: Vec<Vec<u64>> = Vec::new();
+
+        while !remaining.is_empty() {
+            // Candidate universe: positions in X × Y of the remaining movers.
+            let nodes = self.clique_candidate_nodes(&remaining);
+            if nodes.is_empty() {
+                break;
+            }
+            let movers: &HashSet<u64> = &remaining;
+
+            // Adjacency bitsets: edge iff the 2×2 {A,B} rectangle is valid.
+            let n = nodes.len();
+            let mut adj = vec![0u64; n];
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let (xi, yi) = nodes[i];
+                    let (xj, yj) = nodes[j];
+                    let xs: BTreeSet<u64> = [xi, xj].into_iter().collect();
+                    let ys: BTreeSet<u64> = [yi, yj].into_iter().collect();
+                    if self.is_valid_rect(&xs, &ys, movers) {
+                        adj[i] |= 1u64 << j;
+                        adj[j] |= 1u64 << i;
+                    }
+                }
+            }
+
+            // Helper: is a node index a remaining mover?
+            let is_mover = |idx: usize| -> bool {
+                self.pos_to_src
+                    .get(&nodes[idx])
+                    .is_some_and(|src| movers.contains(src))
+            };
+
+            // Evaluate a clique (bitset over node indices) by the objective.
+            // Returns None if it covers zero input movers.
+            // Inlined into consider to avoid borrow-checker issues with closures.
+            let mut best_key: Option<(usize, std::cmp::Reverse<usize>, u64)> = None;
+            let mut best_clique: u64 = 0;
+            let mut consider = |clique: u64| {
+                if clique == 0 {
+                    return;
+                }
+                let mut movers_covered = 0usize;
+                let mut bits = clique;
+                while bits != 0 {
+                    let idx = bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    if is_mover(idx) {
+                        movers_covered += 1;
+                    }
+                }
+                if movers_covered == 0 {
+                    return;
+                }
+                let area = clique.count_ones() as usize;
+                // Deterministic tie-break: the clique's raw bitset (lower node
+                // indices, which follow sorted node order, win).
+                let key = (movers_covered, std::cmp::Reverse(area), !clique);
+                if best_key.as_ref().is_none_or(|b| key > *b) {
+                    best_key = Some(key);
+                    best_clique = clique;
+                }
+            };
+
+            if n <= Self::MAX_EXACT_CLIQUE_NODES {
+                let full_p: u64 = if n == 64 { u64::MAX } else { (1u64 << n) - 1 };
+                Self::bron_kerbosch(&adj, 0, full_p, 0, &mut consider);
+            } else {
+                Self::greedy_max_clique(&adj, n, &is_mover, &mut consider);
+            }
+
+            if best_clique == 0 {
+                break; // no mover-covering clique (shouldn't happen while movers remain)
+            }
+
+            // Coordinate sets of the winning clique → complete rectangle.
+            let mut xs = BTreeSet::new();
+            let mut ys = BTreeSet::new();
+            let mut bits = best_clique;
+            while bits != 0 {
+                let idx = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                let (x, y) = nodes[idx];
+                xs.insert(x);
+                ys.insert(y);
+            }
+            let lanes = self.rect_to_lanes(&xs, &ys);
+            if lanes.is_empty() {
+                break;
+            }
+
+            // Prune covered movers (sources inside the rectangle).
+            for &x in &xs {
+                for &y in &ys {
+                    if let Some(&src) = self.pos_to_src.get(&(x, y)) {
+                        remaining.remove(&src);
+                    }
+                }
+            }
+            out.push(lanes);
+        }
+
+        out
+    }
+
+    /// Valid positions in the movers' induced X × Y product (each a valid 1×1).
+    /// Sorted for determinism. Capped at 64 nodes (u64 bitset); excess dropped
+    /// deterministically (the greedy fallback handles large sets, and >64 valid
+    /// positions is not expected per bus per step).
+    fn clique_candidate_nodes(&self, movers: &HashSet<u64>) -> Vec<(u64, u64)> {
+        let mut xs = BTreeSet::new();
+        let mut ys = BTreeSet::new();
+        for &src in movers {
+            if let Some(&(x, y)) = self.src_to_pos.get(&src) {
+                xs.insert(x);
+                ys.insert(y);
+            }
+        }
+        let mut nodes = Vec::new();
+        for &x in &xs {
+            for &y in &ys {
+                let px: BTreeSet<u64> = [x].into_iter().collect();
+                let py: BTreeSet<u64> = [y].into_iter().collect();
+                if self.is_valid_rect(&px, &py, movers) {
+                    nodes.push((x, y));
+                    if nodes.len() == 64 {
+                        return nodes;
+                    }
+                }
+            }
+        }
+        nodes
+    }
+
+    /// Bron–Kerbosch with pivoting over a u64 adjacency bitset (≤64 nodes).
+    /// Invokes `visit` on each maximal clique (as a node-index bitset).
+    fn bron_kerbosch(adj: &[u64], r: u64, p: u64, x: u64, visit: &mut impl FnMut(u64)) {
+        if p == 0 && x == 0 {
+            visit(r);
+            return;
+        }
+        // Pivot u ∈ P∪X maximizing |P ∩ adj[u]|.
+        let mut pux = p | x;
+        let mut pivot = 0usize;
+        let mut best = -1i32;
+        while pux != 0 {
+            let u = pux.trailing_zeros() as usize;
+            pux &= pux - 1;
+            let cnt = (p & adj[u]).count_ones() as i32;
+            if cnt > best {
+                best = cnt;
+                pivot = u;
+            }
+        }
+        let mut p = p;
+        let mut x = x;
+        let mut cand = p & !adj[pivot];
+        while cand != 0 {
+            let v = cand.trailing_zeros() as usize;
+            let vbit = 1u64 << v;
+            cand &= cand - 1;
+            Self::bron_kerbosch(adj, r | vbit, p & adj[v], x & adj[v], visit);
+            p &= !vbit;
+            x |= vbit;
+        }
+    }
+
+    /// Greedy maximal-clique fallback for large node sets. Seeds from each mover
+    /// node, extends by highest-degree compatible node, and reports each grown
+    /// clique to `visit`. Deterministic (sorted seeds/candidates).
+    fn greedy_max_clique(
+        adj: &[u64],
+        n: usize,
+        is_mover: &impl Fn(usize) -> bool,
+        visit: &mut impl FnMut(u64),
+    ) {
+        for seed in 0..n {
+            if !is_mover(seed) {
+                continue;
+            }
+            let mut clique = 1u64 << seed;
+            let mut cand = adj[seed];
+            while cand != 0 {
+                // Pick the candidate with the most connections to `cand`
+                // (deterministic: lowest index breaks ties).
+                let mut bits = cand;
+                let mut pick = usize::MAX;
+                let mut best = -1i32;
+                while bits != 0 {
+                    let v = bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    let deg = (adj[v] & cand).count_ones() as i32;
+                    if deg > best {
+                        best = deg;
+                        pick = v;
+                    }
+                }
+                if pick == usize::MAX {
+                    break;
+                }
+                clique |= 1u64 << pick;
+                cand &= adj[pick];
+            }
+            visit(clique);
+        }
     }
 
     /// Form initial clusters via greedy sequential expansion.
@@ -599,5 +824,122 @@ mod tests {
         assert_eq!(ctx.strategy, AodGridStrategy::GreedyMerge);
         let clique = ctx.with_strategy(AodGridStrategy::Clique);
         assert_eq!(clique.strategy, AodGridStrategy::Clique);
+    }
+
+    #[test]
+    fn clique_builds_single_complete_rectangle() {
+        // 2×2 grid, 3 movers + 1 empty filler (13). Clique strategy should
+        // return one complete rectangle of all four lanes.
+        let ctx = make_context(
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
+            &[(10, 100), (11, 101), (12, 102), (13, 103)],
+            &[],
+        )
+        .with_strategy(AodGridStrategy::Clique);
+        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        assert_eq!(grids.len(), 1);
+        let mut sorted = grids[0].clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![100, 101, 102, 103]);
+    }
+
+    #[test]
+    fn clique_recovers_rectangle_greedy_would_split() {
+        // Movers at (0,0),(1,1) with valid corners (1,0),(0,1) as empty fillers.
+        // Both strategies must yield one 2×2 rectangle; this locks in that the
+        // clique path completes the rectangle from the movers' product.
+        let ctx = make_context(
+            &[((0, 0), 10), ((1, 1), 13), ((1, 0), 11), ((0, 1), 12)],
+            &[(10, 100), (13, 103), (11, 101), (12, 102)],
+            &[],
+        )
+        .with_strategy(AodGridStrategy::Clique);
+        let entries: HashMap<u64, u64> = [(10, 100), (13, 103)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        assert_eq!(grids.len(), 1);
+        let mut sorted = grids[0].clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![100, 101, 102, 103]);
+    }
+
+    #[test]
+    fn clique_emits_only_mover_covering_rectangles() {
+        // One mover at (0,0). A disjoint empty 2×2 region at x∈{5,6}, y∈{5,6}
+        // is a valid rectangle but covers no mover — it must never be emitted.
+        let ctx = make_context(
+            &[
+                ((0, 0), 10),
+                ((5, 5), 20),
+                ((6, 5), 21),
+                ((5, 6), 22),
+                ((6, 6), 23),
+            ],
+            &[(10, 100), (20, 200), (21, 201), (22, 202), (23, 203)],
+            &[],
+        )
+        .with_strategy(AodGridStrategy::Clique);
+        let entries: HashMap<u64, u64> = [(10, 100)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        // Only the mover's own 1×1 rectangle; no empty-region rectangle.
+        assert_eq!(grids.len(), 1);
+        assert_eq!(grids[0], vec![100]);
+    }
+
+    #[test]
+    fn clique_reversibility_rejects_filled_filler_destination() {
+        // Mover 10 at (0,0). Filler 13 at (1,1) has an occupied destination
+        // (stationary atom), so the 2×2 with mover 11/12 corners is invalid;
+        // the reversible sub-rectangle is 1×2 or 2×1, not 2×2.
+        let ctx = make_context(
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
+            &[(10, 100), (11, 101), (12, 102), (13, 103)],
+            &[13], // src 13's destination is occupied (stationary)
+        )
+        .with_strategy(AodGridStrategy::Clique);
+        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        // No 4-lane rectangle (13 can't be a filler); every mover still covered.
+        assert!(!grids.iter().any(|g| g.len() == 4));
+        let covered: HashSet<u64> = grids.iter().flatten().copied().collect();
+        assert!([100, 101, 102].iter().all(|l| covered.contains(l)));
+    }
+
+    #[test]
+    fn clique_is_deterministic() {
+        let ctx = make_context(
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
+            &[(10, 100), (11, 101), (12, 102), (13, 103)],
+            &[],
+        )
+        .with_strategy(AodGridStrategy::Clique);
+        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102), (13, 103)]
+            .into_iter()
+            .collect();
+        let a = ctx.build_aod_grids(&entries);
+        let b = ctx.build_aod_grids(&entries);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clique_covers_all_movers_via_decomposition() {
+        // Two separate movers whose induced 2×2 corners are blocked, forcing
+        // two 1×1 shots. Both movers must be covered across the returned grids.
+        let ctx = make_context_with_occupied(
+            &[((0, 0), 10), ((3, 3), 13), ((3, 0), 11), ((0, 3), 12)],
+            &[(10, 100), (13, 103), (11, 101), (12, 102)],
+            &[],
+            &[11, 12], // corner sources are spectators → 2×2 invalid
+        )
+        .with_strategy(AodGridStrategy::Clique);
+        let entries: HashMap<u64, u64> = [(10, 100), (13, 103)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        let covered: HashSet<u64> = grids.iter().flatten().copied().collect();
+        assert!(covered.contains(&100) && covered.contains(&103));
     }
 }
