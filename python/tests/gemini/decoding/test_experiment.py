@@ -3,11 +3,12 @@ from __future__ import annotations
 import math
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, cast, get_type_hints
 from unittest.mock import Mock
 
 import numpy as np
 import pytest
+import stim
 from bloqade.decoders import BaseDecoder
 from bloqade.squin.gate import stmts as gate_stmts
 from kirin.dialects import func, py
@@ -22,6 +23,11 @@ from bloqade.gemini.decoding import (
     single_qubit_state_tomography,
 )
 from bloqade.gemini.decoding.confidence import ConfidenceDecoder
+from bloqade.gemini.decoding.experiments import (
+    _ExperimentDevice,
+    _ExperimentRunResult,
+    _ExperimentTask,
+)
 from bloqade.gemini.decoding.sampling import _BasisDataset
 from bloqade.gemini.device import GeminiLogicalSimulator
 
@@ -353,8 +359,9 @@ def test_postselection_experiment_dem_circuits_have_zero_reference_signs(
     msd_mld_dem_circuits,
 ):
     for dem_circ in msd_mld_dem_circuits.values():
+        assert isinstance(dem_circ, stim.Circuit)
         detector_signs, observable_signs = (
-            dem_circ._stim_circ.reference_detector_and_observable_signs()
+            dem_circ.reference_detector_and_observable_signs()
         )
 
         assert not np.any(detector_signs)
@@ -418,6 +425,13 @@ def test_postselection_experiment_make_tasks_sets_cache(msd_mld_exp, msd_mld_ker
     tasks = msd_mld_exp.make_tasks(GeminiLogicalSimulator())
 
     assert msd_mld_exp._postselection_exp_cache.hardware_tasks is tasks
+
+
+def test_postselection_experiment_make_tasks_uses_abstract_simulator_types():
+    annotations = get_type_hints(PostSelectionExperiment.make_tasks)
+
+    assert annotations["device"] == _ExperimentDevice[_ExperimentRunResult]
+    assert annotations["return"] == dict[str, _ExperimentTask[_ExperimentRunResult]]
 
 
 @dataclass

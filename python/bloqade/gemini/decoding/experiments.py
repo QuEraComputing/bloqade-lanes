@@ -2,19 +2,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Callable, cast
+from typing import Any, Callable, Literal, Protocol, TypeVar, cast
 
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder
 from kirin import ir
 
-from bloqade.gemini.device import (
-    DetectorResult,
-    GeminiLogicalSimulator,
-    GeminiLogicalSimulatorTask,
-    Result,
-)
+from bloqade.gemini.device import GeminiLogicalSimulator
 
 from .confidence import ConfidenceDecoder
 from .dem import _sub_detector_error_model
@@ -33,12 +28,64 @@ from .postselection import (
     _shots_at_accepted_fraction,
 )
 from .sampling import _BasisDataset
-from .special_tasks import _apply_special_tsim_circuit_strategy
+from .special_tasks import _apply_noiseless_unitary_prefix
 from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 from .workflow import _plot_decoder_curves
 
-if TYPE_CHECKING:
-    import tsim as tsim_backend
+_ExperimentTaskResult_co = TypeVar(
+    "_ExperimentTaskResult_co", bound="_ExperimentResult", covariant=True
+)
+
+
+class _ExperimentResult(Protocol):
+    """Minimum result surface needed by postselection experiments."""
+
+    @property
+    def detectors(self) -> Any:
+        """Detector outcomes from the completed task."""
+        ...
+
+    @property
+    def observables(self) -> Any:
+        """Observable outcomes from the completed task."""
+        ...
+
+
+class _ExperimentFuture(Protocol[_ExperimentTaskResult_co]):
+    """Minimum future surface needed by postselection experiments."""
+
+    def result(self) -> _ExperimentTaskResult_co:
+        """Return the completed task result."""
+        ...
+
+
+class _ExperimentTask(Protocol[_ExperimentTaskResult_co]):
+    """Minimum async task surface needed by postselection experiments."""
+
+    def run_async(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+    ) -> _ExperimentFuture[_ExperimentTaskResult_co]:
+        """Run the task asynchronously and return detector/observable data."""
+        ...
+
+
+class _ExperimentDevice(Protocol[_ExperimentTaskResult_co]):
+    """Minimum task factory surface needed by postselection experiments."""
+
+    def task(
+        self,
+        kernel: ir.Method[..., _LogicalTomographyReturn],
+        /,
+    ) -> _ExperimentTask[_ExperimentTaskResult_co]:
+        """Create a task for the tomography kernel."""
+        ...
+
+
+_ExperimentRunResult = _ExperimentResult
 
 
 def magic_state_dist_steane(
@@ -100,15 +147,13 @@ def empty_logical_circuit() -> ir.Method[..., None]:
 # TODO: make this "cache" class abstract as well?
 class _PostSelectionExperimentCache:
     dem_kernels: dict[str, ir.Method[..., _LogicalTomographyReturn]] | None
-    dem_circuits: Mapping[str, tsim_backend.Circuit] | None
+    dem_circuits: Mapping[str, stim.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
     decoders_with_confidence: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]] | None
     raw_results: Mapping[str, _BasisDataset] | None
     decoded_results: Mapping[str, _DecodedPostselectionResult] | None
     thresholded_data: PostselectionCurveData | None
-    hardware_tasks: (
-        Mapping[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]] | None
-    )
+    hardware_tasks: Mapping[str, _ExperimentTask[_ExperimentRunResult]] | None
 
     def __init__(self):
         self.dem_kernels = None
@@ -122,7 +167,7 @@ class _PostSelectionExperimentCache:
 
 
 def _basis_dataset_from_task_result(
-    result: _BasisDataset | DetectorResult | Result[_LogicalTomographyReturn],
+    result: _ExperimentRunResult,
 ) -> _BasisDataset:
     if isinstance(result, _BasisDataset):
         return result
@@ -206,9 +251,9 @@ class PostSelectionExperiment:
         self._postselection_exp_cache.dem_kernels = dem_kernels
         return dem_kernels
 
-    def dem_circuits(self) -> dict[str, tsim_backend.Circuit]:
+    def dem_circuits(self) -> dict[str, stim.Circuit]:
         """
-        Constructs TSIM circuits annotated with error channels for each basis from the tomography kernels, which will later
+        Constructs STIM circuits annotated with error channels for each basis from the tomography kernels, which will later
         be used to construct detector error models.
 
         Note: this function depends on .kernels() being invoked.
@@ -216,22 +261,19 @@ class PostSelectionExperiment:
         we take our whole circuit, strip away the noise, and prepend it to our circuit so that the noiseless behavior is U^dagU = I.
 
         Returns:
-            dict[str, tsim_backend.Circuit]: A dictionary mapping each basis label to a compiled TSIM circuit with noise channels, where the observables
+            dict[str, stim.Circuit]: A dictionary mapping each basis label to a compiled STIM circuit with noise channels, where the observables
             in noiseless simulation are all 0.
         """
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before dem_circuits.")
-        dem_tasks = {
-            basis: self._simulator.task(kernel.similar(), None, None)
+        dem_circuits = {
+            basis: self._simulator.task(kernel.similar()).stim_circuit
             for basis, kernel in dem_kernels.items()
         }
-        dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)
-        special_tsim_circuits: dict[str, tsim_backend.Circuit] = {
-            basis: task.tsim_circuit for basis, task in dem_tasks.items()
-        }
-        self._postselection_exp_cache.dem_circuits = special_tsim_circuits
-        return special_tsim_circuits
+        special_stim_circuits = _apply_noiseless_unitary_prefix(dem_circuits)
+        self._postselection_exp_cache.dem_circuits = special_stim_circuits
+        return special_stim_circuits
 
     def dems(self) -> dict[str, stim.DetectorErrorModel]:
         """
@@ -316,21 +358,13 @@ class PostSelectionExperiment:
 
     def make_tasks(
         self,
-        # TODO: Ideally, we don't want to make the type of the device GeminiLogicalSimulator (this should be flexible to support the type representing
-        # the hardware). However, because GeminiLogicalSimulator currently doesn't obey any interface/inheritance for a generic hardware object,
-        # we can't really replace this with a more specific type without changing the design of GeminiLogicalSimulator.
-        device: GeminiLogicalSimulator,
-        # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
-        # TaskABC[GeminiLogicalFuture]. However, currently, GeminiLogicalSimulatorTask does not inherit from the abstract "task" types in
-        # bloqade-core.
-    ) -> dict[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]]:
+        device: _ExperimentDevice[_ExperimentRunResult],
+    ) -> dict[str, _ExperimentTask[_ExperimentRunResult]]:
         """Prepares tasks for submission to the hardware device."""
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
-        actual_tasks: dict[
-            str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]
-        ] = {
+        actual_tasks: dict[str, _ExperimentTask[_ExperimentRunResult]] = {
             basis: device.task(kernel.similar())
             for basis, kernel in dem_kernels.items()
         }
@@ -352,6 +386,8 @@ class PostSelectionExperiment:
             raise RuntimeError("make_tasks must be called before get_samples.")
         # In this implementation, we request samples for each basis in parallel, and then iteratively block
         # on X, Y, and then Z being finished.
+        # TODO: in the future, dealing with the Future and Result types to coordinate with bloqade-core
+        # hardware types will be needed. This integration will have to be done in a future change.
         futures = {
             basis: task.run_async(num_shots, run_detectors=True)
             for basis, task in actual_tasks.items()
