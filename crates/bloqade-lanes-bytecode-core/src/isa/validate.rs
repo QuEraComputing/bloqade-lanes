@@ -105,8 +105,8 @@ pub enum ValidationError {
     LaneGroupValidation { pc: usize, error: LaneGroupError },
 }
 
-/// Maximum valid value type tag (`TAG_MEASUREMENT_RESULT = 0x9`).
-const MAX_TYPE_TAG: u32 = 0x9;
+/// Maximum valid `new_array` element type tag (`TAG_OBSERVABLE_REF = 0x8`).
+const MAX_TYPE_TAG: u32 = 0x8;
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
