@@ -21,6 +21,7 @@ from bloqade.lanes.bytecode.exceptions import (
     MissingVersionError,
     StackUnderflowError,
     TypeMismatchError,
+    UnalignedCodeError,
     UnreachableInstructionError,
 )
 
@@ -457,6 +458,18 @@ fn @main() {
         # 9 bytes (header length) so the magic check runs before the length check.
         with pytest.raises(BadMagicError):
             Program.from_binary(b"XXXXX\x00\x00\x00\x00")
+
+    def test_bad_magic_message_mentions_lanes(self):
+        with pytest.raises(BadMagicError) as e:
+            Program.from_binary(b"XXXXX\x00\x00\x00\x00")
+        assert "LANES" in str(e.value)
+
+    def test_unaligned_binary_raises_unaligned_code_error(self):
+        # Append one stray byte so the code region is not a multiple of the
+        # 17-byte instruction word width.
+        valid = self._sample_program().to_binary()
+        with pytest.raises(UnalignedCodeError):
+            Program.from_binary(valid + b"\x00")
 
     def test_text_binary_round_trip(self):
         program = self._sample_program()

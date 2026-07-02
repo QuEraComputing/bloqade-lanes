@@ -3,6 +3,7 @@ use pyo3::types::PyList;
 
 use bloqade_lanes_bytecode_core::arch::query::{LaneGroupError, LocationGroupError};
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
+use bloqade_lanes_bytecode_core::isa::INSTRUCTION_WIDTH;
 use bloqade_lanes_bytecode_core::isa::program::{BinaryError, TextError};
 use bloqade_lanes_bytecode_core::isa::validate::ValidationError;
 
@@ -257,7 +258,7 @@ pub fn text_error_to_py(py: Python<'_>, error: &TextError) -> PyErr {
             }
             TextError::InvalidVersion { line, value } => {
                 let cls = module.getattr("InvalidVersionError")?;
-                cls.call1((format!("line {line}: invalid version '{value}'"),))?
+                cls.call1((format!("line {line}: '{value}'"),))?
             }
             TextError::BadInstruction { line, text } => {
                 let cls = module.getattr("BadInstructionError")?;
@@ -291,8 +292,8 @@ pub fn program_error_to_py(py: Python<'_>, error: &BinaryError) -> PyErr {
                 cls.call1((*expected, *got))?
             }
             BinaryError::UnalignedCode { len } => {
-                let cls = module.getattr("InvalidCodeSectionLengthError")?;
-                cls.call1((*len,))?
+                let cls = module.getattr("UnalignedCodeError")?;
+                cls.call1((*len, INSTRUCTION_WIDTH as usize))?
             }
             BinaryError::Decode { pc, message } => {
                 let cls = module.getattr("DecodeErrorInProgram")?;

@@ -322,7 +322,7 @@ class ProgramError(Exception):
 
 class BadMagicError(ProgramError):
     def __init__(self):
-        super().__init__("bad magic bytes (expected BLQD)")
+        super().__init__("bad magic bytes (expected LANES)")
 
 
 class TruncatedError(ProgramError):
@@ -342,6 +342,15 @@ class InvalidCodeSectionLengthError(ProgramError):
     def __init__(self, length: int):
         self.length = length
         super().__init__(f"code section length {length} is not a multiple of 8")
+
+
+class UnalignedCodeError(ProgramError):
+    """Binary code region length is not a whole number of instruction words."""
+
+    def __init__(self, length: int, width: int):
+        self.length = length
+        self.width = width
+        super().__init__(f"code length {length} is not a multiple of {width}")
 
 
 class MissingMetadataSectionError(ProgramError):
