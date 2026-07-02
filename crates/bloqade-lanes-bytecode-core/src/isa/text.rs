@@ -112,6 +112,8 @@ fn map_resolve_err(err: &eyre::Report) -> TextError {
 ///   ...
 /// }
 /// ```
+///
+/// Note: `TextError::BadInstruction` errors have `line: 0` for parse-level failures via vihaco `ParsedModule`.
 pub fn parse_text(src: &str) -> Result<Program, TextError> {
     let parsed = ParsedModule::<Instruction, LanesHeader>::parser()
         .parse(src)
@@ -223,9 +225,10 @@ mod tests {
     #[test]
     fn bad_instruction_returns_error() {
         let src = "version 1.0;\nfn @main() {\n  nope_nope\n}\n";
-        // The parser falls back to Raw form for unknown mnemonics, then
-        // resolve_body rejects the Raw item.
-        assert!(parse_text(src).is_err());
+        assert!(matches!(
+            parse_text(src),
+            Err(TextError::BadInstruction { .. })
+        ));
     }
 
     #[test]
