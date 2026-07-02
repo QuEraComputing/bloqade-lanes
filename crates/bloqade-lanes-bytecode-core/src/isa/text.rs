@@ -18,8 +18,38 @@ use vihaco::syntax::{ParsedModule, Resolve};
 use vihaco_parser_core::Parse;
 
 use super::Instruction;
-use super::program::{Program, TextError, from_code};
+use super::program::{Program, from_code};
 use crate::version::Version;
+
+/// Error from text (`.sst`) parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextError {
+    /// No `version M.N;` header was found before the first instruction.
+    MissingVersion,
+    /// The version header's value could not be parsed.
+    /// Currently unreachable: a malformed version fails the whole parse via `BadInstruction`.
+    /// Retained for API stability and potential future use.
+    InvalidVersion { line: usize, value: String },
+    /// A line could not be parsed as an instruction. `line` is currently always
+    /// `0` for parse-level failures via the vihaco `ParsedModule` parser.
+    BadInstruction { line: usize, text: String },
+}
+
+impl std::fmt::Display for TextError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TextError::MissingVersion => write!(f, "missing version header"),
+            TextError::InvalidVersion { line, value } => {
+                write!(f, "line {line}: invalid version '{value}'")
+            }
+            TextError::BadInstruction { line, text } => {
+                write!(f, "line {line}: cannot parse instruction '{text}'")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TextError {}
 
 // ── LanesHeader ──────────────────────────────────────────────────────────────
 

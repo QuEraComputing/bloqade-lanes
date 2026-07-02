@@ -318,15 +318,6 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     errors
 }
 
-/// Run all available checks: arch-independent [`validate_structure`] plus,
-/// when `arch` is `Some`, the arch-dependent [`validate`] checks. Errors are
-/// returned structure-first, then arch.
-pub fn validate_all(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
-    let mut errors = validate_structure(program);
-    errors.extend(validate(program, arch));
-    errors
-}
-
 // ── Stack-type simulation ──────────────────────────────────────────────────
 
 /// One tracked stack value: its type tag and (when known) concrete bits.
@@ -865,13 +856,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_all_runs_structure_then_arch() {
-        // Missing terminator (structural) + bad zone (arch), both reported.
+    fn structure_and_arch_checks_compose() {
+        // The composition consumers run: structural + arch-dependent checks
+        // both fire and collect. Missing terminator (structural) + bad zone (arch).
         let arch = simple_arch();
         let p = program(vec![Instruction::ConstZone(
             ZoneAddr { zone_id: 5 }.encode(),
         )]);
-        let errors = validate_all(&p, Some(&arch));
+        let errors: Vec<_> = validate_structure(&p)
+            .into_iter()
+            .chain(validate(&p, Some(&arch)))
+            .collect();
         assert!(errors.contains(&ValidationError::MissingTerminator { pc: 0 }));
         assert!(
             errors

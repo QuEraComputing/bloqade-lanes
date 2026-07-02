@@ -4,7 +4,8 @@ use pyo3::types::PyList;
 use bloqade_lanes_bytecode_core::arch::query::{LaneGroupError, LocationGroupError};
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 use bloqade_lanes_bytecode_core::isa::INSTRUCTION_WIDTH;
-use bloqade_lanes_bytecode_core::isa::program::{BinaryError, TextError};
+use bloqade_lanes_bytecode_core::isa::program::BinaryError;
+use bloqade_lanes_bytecode_core::isa::text::TextError;
 use bloqade_lanes_bytecode_core::isa::validate::ValidationError;
 
 const EXCEPTIONS_MODULE: &str = "bloqade.lanes.bytecode.exceptions";
