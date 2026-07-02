@@ -258,29 +258,7 @@ impl PyInstruction {
     }
 
     fn op_name(&self) -> &'static str {
-        match &self.inner {
-            VInst::Pop => "pop",
-            VInst::Swap => "swap",
-            VInst::Return => "return",
-            VInst::ConstLoc(_) => "const_loc",
-            VInst::ConstLane(_) => "const_lane",
-            VInst::ConstZone(_) => "const_zone",
-            VInst::InitialFill(_) => "initial_fill",
-            VInst::Fill(_) => "fill",
-            VInst::Move(_) => "move",
-            VInst::LocalR(_) => "local_r",
-            VInst::LocalRz(_) => "local_rz",
-            VInst::GlobalR => "global_r",
-            VInst::GlobalRz => "global_rz",
-            VInst::Cz => "cz",
-            VInst::Measure(_) => "measure",
-            VInst::AwaitMeasure => "await_measure",
-            VInst::NewArray(..) => "new_array",
-            VInst::GetItem(_) => "get_item",
-            VInst::SetDetector => "set_detector",
-            VInst::SetObservable => "set_observable",
-            VInst::Cpu(cpu) => cpu_op_name(cpu),
-        }
+        self.inner.op_name()
     }
 
     fn float_value(&self) -> PyResult<f64> {
@@ -390,19 +368,6 @@ impl PyInstruction {
 
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
-    }
-}
-
-/// Canonical mnemonic for a nested vihaco-cpu instruction. Only the ops the
-/// lanes pipeline emits get a stable name; the rest fall back to `"cpu"`.
-fn cpu_op_name(cpu: &Cpu) -> &'static str {
-    match cpu {
-        Cpu::Const(Value::F64(_)) => "const_float",
-        Cpu::Const(Value::I64(_)) => "const_int",
-        Cpu::Const(_) => "const",
-        Cpu::Dup => "dup",
-        Cpu::Halt => "halt",
-        _ => "cpu",
     }
 }
 

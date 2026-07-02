@@ -142,6 +142,57 @@ pub enum Instruction {
     Cpu(vihaco_cpu::Instruction),
 }
 
+impl Instruction {
+    /// Canonical opcode name used for decode dispatch (the Python decoder
+    /// calls `_visit_{op_name}`) and introspection.
+    ///
+    /// For lanes-native ops this equals the parser `#[token]` / `Display`
+    /// mnemonic. For nested vihaco-cpu ops it returns the **decode-handler**
+    /// name (`const_float`/`const_int`/`dup`/`halt`), which deliberately
+    /// differs from the vihaco-cpu *text* syntax (`const.f64`, …) because
+    /// decode handler method names cannot contain `.`.
+    pub fn op_name(&self) -> &'static str {
+        match self {
+            Instruction::Pop => "pop",
+            Instruction::Swap => "swap",
+            Instruction::Return => "return",
+            Instruction::ConstLoc(_) => "const_loc",
+            Instruction::ConstLane(_) => "const_lane",
+            Instruction::ConstZone(_) => "const_zone",
+            Instruction::InitialFill(_) => "initial_fill",
+            Instruction::Fill(_) => "fill",
+            Instruction::Move(_) => "move",
+            Instruction::LocalRz(_) => "local_rz",
+            Instruction::LocalR(_) => "local_r",
+            Instruction::GlobalRz => "global_rz",
+            Instruction::GlobalR => "global_r",
+            Instruction::Cz => "cz",
+            Instruction::Measure(_) => "measure",
+            Instruction::AwaitMeasure => "await_measure",
+            Instruction::NewArray(..) => "new_array",
+            Instruction::GetItem(_) => "get_item",
+            Instruction::SetDetector => "set_detector",
+            Instruction::SetObservable => "set_observable",
+            Instruction::Cpu(cpu) => cpu_op_name(cpu),
+        }
+    }
+}
+
+/// Decode-handler dispatch name for a nested vihaco-cpu instruction. NOT the
+/// text mnemonic (see `Instruction::op_name` docs).
+fn cpu_op_name(cpu: &vihaco_cpu::Instruction) -> &'static str {
+    use vihaco::value::Value;
+    use vihaco_cpu::Instruction as Cpu;
+    match cpu {
+        Cpu::Const(Value::F64(_)) => "const_float",
+        Cpu::Const(Value::I64(_)) => "const_int",
+        Cpu::Const(_) => "const",
+        Cpu::Dup => "dup",
+        Cpu::Halt => "halt",
+        _ => "cpu",
+    }
+}
+
 impl std::fmt::Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -324,6 +375,54 @@ mod tests {
         from_text.write_bytes(&mut bytes).unwrap();
         let decoded = Instruction::from_bytes(&mut std::io::Cursor::new(bytes)).unwrap();
         assert_eq!(from_text, decoded);
+    }
+
+    #[test]
+    fn op_name_matches_display_leading_token_for_native_ops() {
+        // For lanes-native ops, op_name() == the first whitespace token of Display
+        // (Display is itself pinned to the parser #[token] by the round-trip test),
+        // so op_name / Display / parser token cannot drift apart.
+        let native = [
+            Instruction::Pop,
+            Instruction::Swap,
+            Instruction::Return,
+            Instruction::ConstLoc(0),
+            Instruction::ConstLane(0),
+            Instruction::ConstZone(0),
+            Instruction::InitialFill(1),
+            Instruction::Fill(1),
+            Instruction::Move(1),
+            Instruction::LocalRz(1),
+            Instruction::LocalR(1),
+            Instruction::GlobalRz,
+            Instruction::GlobalR,
+            Instruction::Cz,
+            Instruction::Measure(1),
+            Instruction::AwaitMeasure,
+            Instruction::NewArray(1, 1, 0),
+            Instruction::GetItem(1),
+            Instruction::SetDetector,
+            Instruction::SetObservable,
+        ];
+        for inst in native {
+            let display_head = inst.to_string();
+            let head = display_head.split_whitespace().next().unwrap();
+            assert_eq!(inst.op_name(), head, "op_name/Display drift for {inst:?}");
+        }
+    }
+
+    #[test]
+    fn cpu_op_name_uses_decode_handler_names() {
+        assert_eq!(
+            Instruction::Cpu(Cpu::Const(Value::F64(0.0))).op_name(),
+            "const_float"
+        );
+        assert_eq!(
+            Instruction::Cpu(Cpu::Const(Value::I64(0))).op_name(),
+            "const_int"
+        );
+        assert_eq!(Instruction::Cpu(Cpu::Dup).op_name(), "dup");
+        assert_eq!(Instruction::Cpu(Cpu::Halt).op_name(), "halt");
     }
 
     #[test]
