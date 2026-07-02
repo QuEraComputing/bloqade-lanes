@@ -1,6 +1,6 @@
 use std::os::raw::c_char;
 
-use bloqade_lanes_bytecode_core::vihaco_isa::validate;
+use bloqade_lanes_bytecode_core::isa::validate;
 
 use super::error::{BlqdStatus, clear_last_error, set_last_error};
 use super::handles::{BLQDArchSpec, BLQDProgram, BLQDValidationErrors};

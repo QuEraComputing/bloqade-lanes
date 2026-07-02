@@ -7,8 +7,8 @@ use clap::{Parser, Subcommand};
 mod policy;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
-use bloqade_lanes_bytecode_core::vihaco_isa::Program;
-use bloqade_lanes_bytecode_core::vihaco_isa::validate;
+use bloqade_lanes_bytecode_core::isa::Program;
+use bloqade_lanes_bytecode_core::isa::validate;
 
 #[derive(Parser)]
 #[command(

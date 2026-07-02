@@ -1,9 +1,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use bloqade_lanes_bytecode_core::isa::program as rs_prog;
+use bloqade_lanes_bytecode_core::isa::validate as rs_val;
 use bloqade_lanes_bytecode_core::version::Version;
-use bloqade_lanes_bytecode_core::vihaco_isa::program as rs_prog;
-use bloqade_lanes_bytecode_core::vihaco_isa::validate as rs_val;
 
 use crate::arch_python::PyArchSpec;
 use crate::instruction_python::PyInstruction;

@@ -2,7 +2,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
-use bloqade_lanes_bytecode_core::vihaco_isa::Program;
+use bloqade_lanes_bytecode_core::isa::Program;
 
 use super::error::{BlqdStatus, clear_last_error, set_last_error};
 use super::handles::BLQDProgram;

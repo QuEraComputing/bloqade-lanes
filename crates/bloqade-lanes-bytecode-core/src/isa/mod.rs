@@ -75,15 +75,15 @@ pub enum Instruction {
     // ---- Lane constants (hex operands) ----
     #[token = "const_loc"]
     #[delimiters(open = "", close = "", separator = "")]
-    ConstLoc(#[parse_with = "crate::vihaco_isa::parse_helpers::hex_u64"] u64),
+    ConstLoc(#[parse_with = "crate::isa::parse_helpers::hex_u64"] u64),
 
     #[token = "const_lane"]
     #[delimiters(open = "", close = "", separator = "")]
-    ConstLane(#[parse_with = "crate::vihaco_isa::parse_helpers::hex_u64"] u64),
+    ConstLane(#[parse_with = "crate::isa::parse_helpers::hex_u64"] u64),
 
     #[token = "const_zone"]
     #[delimiters(open = "", close = "", separator = "")]
-    ConstZone(#[parse_with = "crate::vihaco_isa::parse_helpers::hex_u32"] u32),
+    ConstZone(#[parse_with = "crate::isa::parse_helpers::hex_u32"] u32),
 
     // ---- Atom arrangement ----
     #[token = "initial_fill"]

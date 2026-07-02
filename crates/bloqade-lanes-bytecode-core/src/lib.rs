@@ -5,7 +5,7 @@
 //!
 //! - **Architecture specification** ([`arch`]) — device topology, transport buses,
 //!   zones, grids, and validation
-//! - **Bytecode** ([`vihaco_isa`]) — the instruction set (defined on the
+//! - **Bytecode** ([`isa`]) — the instruction set (defined on the
 //!   [`vihaco`] virtual-ISA framework), program serialization (native binary +
 //!   text SST), and validation
 //! - **Versioning** ([`Version`]) — semantic versioning for arch specs and programs
@@ -19,12 +19,12 @@
 //! - [`arch::addr`] — bit-packed address types (`LocationAddr`, `LaneAddr`, `ZoneAddr`)
 //! - [`arch::query`] — arch spec queries (position lookup, lane resolution, JSON loading)
 //! - [`arch::validate`] — structural validation with collected errors
-//! - [`vihaco_isa`] — the `Instruction` enum (vihaco-backed), `Program`
+//! - [`isa`] — the `Instruction` enum (vihaco-backed), `Program`
 //!   (native binary + `.sst` text), and arch-dependent validation
 
 pub mod arch;
 pub mod atom_state;
+pub mod isa;
 pub mod version;
-pub mod vihaco_isa;
 
 pub use version::Version;

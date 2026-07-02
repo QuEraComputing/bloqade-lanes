@@ -1,8 +1,8 @@
 use std::ffi::CString;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
-use bloqade_lanes_bytecode_core::vihaco_isa::Program;
-use bloqade_lanes_bytecode_core::vihaco_isa::validate::ValidationError;
+use bloqade_lanes_bytecode_core::isa::Program;
+use bloqade_lanes_bytecode_core::isa::validate::ValidationError;
 
 /// Opaque handle wrapping a `Program`.
 pub struct BLQDProgram {

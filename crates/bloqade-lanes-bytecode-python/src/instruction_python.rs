@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
-use bloqade_lanes_bytecode_core::vihaco_isa::Instruction as VInst;
+use bloqade_lanes_bytecode_core::isa::Instruction as VInst;
 use vihaco::instruction::OpCode;
 use vihaco::value::Value;
 use vihaco_cpu::Instruction as Cpu;
