@@ -269,4 +269,50 @@ mod tests {
         let reparsed = parse_text(&text).unwrap();
         assert_eq!(reparsed.extra.version, Version::new(3, 7));
     }
+
+    #[test]
+    fn text_error_display_strings() {
+        assert_eq!(
+            TextError::MissingVersion.to_string(),
+            "missing version header"
+        );
+        assert_eq!(
+            TextError::InvalidVersion {
+                line: 2,
+                value: "1.x".into()
+            }
+            .to_string(),
+            "line 2: invalid version '1.x'"
+        );
+        assert_eq!(
+            TextError::BadInstruction {
+                line: 3,
+                text: "nope".into()
+            }
+            .to_string(),
+            "line 3: cannot parse instruction 'nope'"
+        );
+    }
+
+    #[test]
+    fn multiple_functions_rejected() {
+        // The grammar admits several `fn` blocks, but a lanes program is a
+        // single flat `@main`; the resolver rejects anything but exactly one.
+        let src = "version 1.0;\nfn @main() {\n  halt\n}\nfn @extra() {\n  halt\n}\n";
+        assert!(matches!(
+            parse_text(src),
+            Err(TextError::BadInstruction { .. })
+        ));
+    }
+
+    #[test]
+    fn syntactically_broken_source_is_a_parse_error() {
+        // An unterminated function body fails the `ParsedModule` parser itself
+        // (before resolution), so `parse_text` maps it to `BadInstruction`.
+        let src = "version 1.0;\nfn @main() {\n  halt\n";
+        assert!(matches!(
+            parse_text(src),
+            Err(TextError::BadInstruction { .. })
+        ));
+    }
 }

@@ -246,4 +246,57 @@ mod tests {
             Err(BinaryError::UnalignedCode { .. })
         ));
     }
+
+    #[test]
+    fn decode_error_on_bad_opcode() {
+        // A well-formed header followed by one aligned word whose opcode byte
+        // (0xFF) names no instruction: length checks pass, so the failure must
+        // come from per-word decoding, tagged with its pc.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        let packed: u32 = Version::new(1, 0).into();
+        bytes.extend_from_slice(&packed.to_le_bytes());
+        bytes.extend_from_slice(&[0xFF; INSTRUCTION_WIDTH as usize]);
+        assert!(
+            matches!(from_binary(&bytes), Err(BinaryError::Decode { pc: 0, .. })),
+            "got {:?}",
+            from_binary(&bytes)
+        );
+    }
+
+    #[test]
+    fn binary_error_display_strings() {
+        assert_eq!(
+            BinaryError::BadMagic.to_string(),
+            "bad magic bytes (expected LANES)"
+        );
+        assert_eq!(
+            BinaryError::Truncated {
+                expected: 9,
+                got: 3
+            }
+            .to_string(),
+            "truncated: expected 9 bytes, got 3"
+        );
+        assert_eq!(
+            BinaryError::UnalignedCode { len: 5 }.to_string(),
+            format!("code length 5 is not a multiple of {INSTRUCTION_WIDTH}")
+        );
+        assert_eq!(
+            BinaryError::Decode {
+                pc: 2,
+                message: "boom".into()
+            }
+            .to_string(),
+            "decode error at instruction 2: boom"
+        );
+    }
+
+    #[test]
+    fn lanes_info_display() {
+        let info = LanesInfo {
+            version: Version::new(1, 4),
+        };
+        assert_eq!(info.to_string(), "version 1.4");
+    }
 }

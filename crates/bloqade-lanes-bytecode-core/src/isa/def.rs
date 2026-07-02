@@ -400,6 +400,18 @@ mod tests {
     }
 
     #[test]
+    fn cpu_op_name_falls_back_for_other_variants() {
+        // A `const.<type>` that is neither float nor int uses the generic
+        // "const" handler name (the `Cpu::Const(_)` catch-all arm)...
+        assert_eq!(
+            Instruction::Cpu(Cpu::Const(Value::Bool(true))).op_name(),
+            "const"
+        );
+        // ...and any other reused vihaco-cpu op falls through to "cpu".
+        assert_eq!(Instruction::Cpu(Cpu::Print).op_name(), "cpu");
+    }
+
+    #[test]
     fn display_matches_parser_tokens() {
         use std::string::ToString;
         // Every non-CPU variant's Display must re-parse to itself.

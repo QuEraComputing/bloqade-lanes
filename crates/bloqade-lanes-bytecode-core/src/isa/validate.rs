@@ -1042,4 +1042,326 @@ mod tests {
             ValidationError::StackUnderflow { .. } | ValidationError::TypeMismatch { .. }
         )));
     }
+
+    // ---- Display ----
+
+    #[test]
+    fn validation_error_display_strings() {
+        use crate::arch::query::{LaneGroupError, LocationGroupError};
+
+        let cases: Vec<(ValidationError, String)> = vec![
+            (
+                ValidationError::ControlFlowRequiresFeedForward {
+                    pc: 3,
+                    mnemonic: "cond_br",
+                },
+                "pc 3: control-flow instruction 'cond_br' requires feed_forward capability".into(),
+            ),
+            (
+                ValidationError::MultipleMeasuresRequireFeedForward { pc: 5 },
+                "pc 5: multiple measure instructions require feed_forward capability".into(),
+            ),
+            (
+                ValidationError::FillRequiresAtomReloading { pc: 1 },
+                "pc 1: fill instruction requires atom_reloading capability".into(),
+            ),
+            (
+                ValidationError::InvalidLocation {
+                    pc: 2,
+                    message: "bad".into(),
+                },
+                "pc 2: invalid location: bad".into(),
+            ),
+            (
+                ValidationError::InvalidLane {
+                    pc: 2,
+                    message: "bad".into(),
+                },
+                "pc 2: invalid lane: bad".into(),
+            ),
+            (
+                ValidationError::InvalidZone {
+                    pc: 2,
+                    message: "bad".into(),
+                },
+                "pc 2: invalid zone: bad".into(),
+            ),
+            (
+                ValidationError::NewArrayZeroDim0 { pc: 0 },
+                "pc 0: new_array dim0 must be > 0".into(),
+            ),
+            (
+                ValidationError::NewArrayInvalidTypeTag {
+                    pc: 0,
+                    type_tag: 99,
+                },
+                "pc 0: invalid new_array type tag 99".into(),
+            ),
+            (
+                ValidationError::InitialFillNotFirst { pc: 4 },
+                "pc 4: initial_fill must be the first non-constant instruction".into(),
+            ),
+            (
+                ValidationError::EmptyProgram,
+                "program has no instructions: missing return or halt terminator".into(),
+            ),
+            (
+                ValidationError::MissingTerminator { pc: 7 },
+                "pc 7: program must end with return or halt".into(),
+            ),
+            (
+                ValidationError::UnreachableInstruction { pc: 8 },
+                "pc 8: unreachable instruction after return or halt".into(),
+            ),
+            (
+                ValidationError::StackUnderflow { pc: 1 },
+                "pc 1: stack underflow".into(),
+            ),
+            (
+                ValidationError::TypeMismatch {
+                    pc: 1,
+                    expected: tag::LOCATION,
+                    got: tag::FLOAT,
+                },
+                "pc 1: type mismatch: expected tag 0x3, got 0x0".into(),
+            ),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(err.to_string(), expected);
+        }
+
+        // The two group-validation variants prefix `pc N:` onto the wrapped
+        // arch-layer error's own Display.
+        let loc_err = LocationGroupError::DuplicateAddress { address: 0x10 };
+        assert_eq!(
+            ValidationError::LocationGroupValidation {
+                pc: 2,
+                error: loc_err.clone(),
+            }
+            .to_string(),
+            format!("pc 2: {loc_err}")
+        );
+        let lane_err = LaneGroupError::DuplicateAddress { address: (1, 2) };
+        assert_eq!(
+            ValidationError::LaneGroupValidation {
+                pc: 3,
+                error: lane_err.clone(),
+            }
+            .to_string(),
+            format!("pc 3: {lane_err}")
+        );
+    }
+
+    // ---- stack simulation: dispatch coverage ----
+
+    #[test]
+    fn stack_sim_int_const_and_pop() {
+        // `const.i64` pushes an INT; `pop` discards it. Well typed.
+        let p = program(vec![
+            Instruction::Cpu(Cpu::Const(Value::I64(7))),
+            Instruction::Pop,
+        ]);
+        assert!(simulate_stack(&p, None).is_empty());
+    }
+
+    #[test]
+    fn stack_sim_swap_needs_two_entries() {
+        let ok = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::ConstLoc(loc(0, 0, 1)),
+            Instruction::Swap,
+        ]);
+        assert!(simulate_stack(&ok, None).is_empty());
+
+        // Only one entry: swap underflows.
+        let bad = program(vec![Instruction::ConstLoc(loc(0, 0, 0)), Instruction::Swap]);
+        assert_eq!(
+            simulate_stack(&bad, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    #[test]
+    fn stack_sim_dup_underflow_on_empty() {
+        let p = program(vec![Instruction::Cpu(Cpu::Dup)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 0 }]
+        );
+    }
+
+    #[test]
+    fn stack_sim_dup_copies_top_of_stack() {
+        // `dup` on a non-empty stack pushes a copy of the top entry; popping
+        // both leaves an empty, well-typed stack.
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::Cpu(Cpu::Dup),
+            Instruction::Pop,
+            Instruction::Pop,
+        ]);
+        assert!(
+            simulate_stack(&p, None).is_empty(),
+            "{:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    #[test]
+    fn stack_sim_gate_ops_are_well_typed() {
+        // Exercises the LocalRz / GlobalR / GlobalRz / Cz dispatch arms.
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            cpu_float(0.5),
+            Instruction::LocalRz(1),
+            cpu_float(0.5),
+            Instruction::GlobalRz,
+            cpu_float(0.5),
+            cpu_float(0.25),
+            Instruction::GlobalR,
+            Instruction::ConstZone(0),
+            Instruction::Cz,
+        ]);
+        assert!(
+            simulate_stack(&p, None).is_empty(),
+            "{:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    #[test]
+    fn stack_sim_gate_underflow_on_empty_stack() {
+        // GlobalRz pops one float via `pop_typed`; empty stack -> underflow.
+        assert_eq!(
+            simulate_stack(&program(vec![Instruction::GlobalRz]), None),
+            vec![ValidationError::StackUnderflow { pc: 0 }]
+        );
+        // Move pops a lane via `pop_addr`; empty stack -> underflow.
+        assert_eq!(
+            simulate_stack(&program(vec![Instruction::Move(1)]), None),
+            vec![ValidationError::StackUnderflow { pc: 0 }]
+        );
+    }
+
+    #[test]
+    fn stack_sim_new_array_and_get_item() {
+        // new_array pops `dim0` elements and pushes an ARRAY_REF; get_item pops
+        // `ndims` INT indices plus the ARRAY_REF and pushes the element.
+        let p = program(vec![
+            Instruction::Cpu(Cpu::Const(Value::I64(1))),
+            Instruction::Cpu(Cpu::Const(Value::I64(2))),
+            Instruction::NewArray(tag::INT as u32, 2, 0),
+            Instruction::Cpu(Cpu::Const(Value::I64(0))),
+            Instruction::GetItem(1),
+        ]);
+        assert!(
+            simulate_stack(&p, None).is_empty(),
+            "{:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    #[test]
+    fn stack_sim_set_detector_and_observable() {
+        // Each consumes an ARRAY_REF (produced by a 1-element new_array).
+        let det = program(vec![
+            Instruction::Cpu(Cpu::Const(Value::I64(0))),
+            Instruction::NewArray(tag::INT as u32, 1, 0),
+            Instruction::SetDetector,
+        ]);
+        assert!(
+            simulate_stack(&det, None).is_empty(),
+            "{:?}",
+            simulate_stack(&det, None)
+        );
+
+        let obs = program(vec![
+            Instruction::Cpu(Cpu::Const(Value::I64(0))),
+            Instruction::NewArray(tag::INT as u32, 1, 0),
+            Instruction::SetObservable,
+        ]);
+        assert!(
+            simulate_stack(&obs, None).is_empty(),
+            "{:?}",
+            simulate_stack(&obs, None)
+        );
+    }
+
+    #[test]
+    fn stack_sim_halt_and_other_cpu_ops_are_noops() {
+        // `halt` and any other reused vihaco-cpu op (here `print`, and a
+        // non-int/float `const`) are untracked no-ops in the type simulator.
+        let p = program(vec![
+            Instruction::Cpu(Cpu::Print),
+            Instruction::Cpu(Cpu::Const(Value::Bool(true))),
+            Instruction::Cpu(Cpu::Halt),
+        ]);
+        assert!(simulate_stack(&p, None).is_empty());
+    }
+
+    #[test]
+    fn location_group_validated_against_arch() {
+        // With an arch, `initial_fill` runs the arch location-group check
+        // (not just the no-arch duplicate fallback). Two valid distinct
+        // locations produce no group error.
+        let arch = simple_arch();
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::ConstLoc(loc(0, 0, 1)),
+            Instruction::InitialFill(2),
+        ]);
+        let errors = simulate_stack(&p, Some(&arch));
+        assert!(
+            !errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::LocationGroupValidation { .. })),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn location_group_arch_errors_are_reported() {
+        // With an arch, a bad fill group surfaces the arch layer's own
+        // location-group error (exercising the arch branch's error path, not
+        // the no-arch duplicate fallback). A location repeated within the
+        // group is invalid.
+        let arch = simple_arch();
+        let p = program(vec![
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::ConstLoc(loc(0, 0, 0)),
+            Instruction::InitialFill(2),
+        ]);
+        let errors = simulate_stack(&p, Some(&arch));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::LocationGroupValidation { .. })),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_lanes_flagged_without_arch() {
+        // The no-arch `move` fallback reports repeated lanes as duplicates.
+        let lane = LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let p = program(vec![
+            Instruction::ConstLane(lane.encode_u64()),
+            Instruction::ConstLane(lane.encode_u64()),
+            Instruction::Move(2),
+        ]);
+        let errors = simulate_stack(&p, None);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::LaneGroupValidation { .. })),
+            "got {errors:?}"
+        );
+    }
 }
