@@ -274,7 +274,7 @@ class ParseError(Exception):
 
 class MissingVersionError(ParseError):
     def __init__(self):
-        super().__init__("missing .version directive")
+        super().__init__("missing version header")
 
 
 class BadInstructionError(ParseError):
@@ -338,6 +338,7 @@ class UnknownSectionTypeError(ProgramError):
         super().__init__(f"unknown section type: {section_type}")
 
 
+# Deprecated: no Rust path maps here anymore; superseded by UnalignedCodeError (kept for backward-compatible imports).
 class InvalidCodeSectionLengthError(ProgramError):
     def __init__(self, length: int):
         self.length = length

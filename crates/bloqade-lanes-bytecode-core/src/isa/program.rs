@@ -106,9 +106,11 @@ impl std::error::Error for BinaryError {}
 /// Error from text (`.sst`) parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextError {
-    /// No `.version` directive was found before the first instruction.
+    /// No `version M.N;` header was found before the first instruction.
     MissingVersion,
-    /// The `.version` directive's value could not be parsed.
+    /// The version header's value could not be parsed.
+    /// Currently unreachable: a malformed version fails the whole parse via `BadInstruction`.
+    /// Retained for API stability and potential future use.
     InvalidVersion { line: usize, value: String },
     /// A line could not be parsed as an instruction.
     BadInstruction { line: usize, text: String },
@@ -117,7 +119,7 @@ pub enum TextError {
 impl std::fmt::Display for TextError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TextError::MissingVersion => write!(f, "missing .version directive"),
+            TextError::MissingVersion => write!(f, "missing version header"),
             TextError::InvalidVersion { line, value } => {
                 write!(f, "line {line}: invalid version '{value}'")
             }
