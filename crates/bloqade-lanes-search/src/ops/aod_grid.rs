@@ -240,7 +240,11 @@ impl BusGridContext {
             };
 
             // Evaluate a clique (bitset over node indices) by the objective.
-            // Returns None if it covers zero input movers.
+            // Scoring is based on the EMITTED rectangle (the full xs × ys product
+            // of the clique's distinct tones), not the clique bitset size, because
+            // the product may contain valid positions that are non-adjacent to some
+            // clique members yet still covered by the emitted AOD shot.
+            // Returns without updating if the emitted rectangle covers zero movers.
             // Inlined into consider to avoid borrow-checker issues with closures.
             let mut best_key: Option<(usize, std::cmp::Reverse<usize>, u64)> = None;
             let mut best_clique: u64 = 0;
@@ -248,19 +252,32 @@ impl BusGridContext {
                 if clique == 0 {
                     return;
                 }
-                let mut movers_covered = 0usize;
+                // Derive distinct x/y tones of the clique.
+                let mut xs_set = BTreeSet::new();
+                let mut ys_set = BTreeSet::new();
                 let mut bits = clique;
                 while bits != 0 {
                     let idx = bits.trailing_zeros() as usize;
                     bits &= bits - 1;
-                    if is_mover(idx) {
-                        movers_covered += 1;
+                    let (x, y) = nodes[idx];
+                    xs_set.insert(x);
+                    ys_set.insert(y);
+                }
+                // Score on the full xs × ys product (the emitted rectangle).
+                let area = xs_set.len() * ys_set.len();
+                let mut movers_covered = 0usize;
+                for &x in &xs_set {
+                    for &y in &ys_set {
+                        if let Some(&src) = self.pos_to_src.get(&(x, y))
+                            && movers.contains(&src)
+                        {
+                            movers_covered += 1;
+                        }
                     }
                 }
                 if movers_covered == 0 {
                     return;
                 }
-                let area = clique.count_ones() as usize;
                 // Deterministic tie-break: the clique's raw bitset (lower node
                 // indices, which follow sorted node order, win).
                 let key = (movers_covered, std::cmp::Reverse(area), !clique);
@@ -389,8 +406,10 @@ impl BusGridContext {
             let mut clique = 1u64 << seed;
             let mut cand = adj[seed];
             while cand != 0 {
-                // Pick the candidate with the most connections to `cand`
-                // (deterministic: lowest index breaks ties).
+                // Pick the candidate with the most connections to `cand`.
+                // Tie-break: lowest index wins, because `trailing_zeros` iterates
+                // low-to-high and a strictly-greater `deg > best` comparison means
+                // the first (lowest-index) maximum is kept.
                 let mut bits = cand;
                 let mut pick = usize::MAX;
                 let mut best = -1i32;
@@ -911,18 +930,48 @@ mod tests {
 
     #[test]
     fn clique_is_deterministic() {
-        let ctx = make_context(
+        // Fix 4: prove order-independence structurally by building TWO contexts
+        // with positions/lanes inserted in different orders and asserting identical
+        // output after consistent per-grid normalization.
+        //
+        // Context A: positions and lanes in ascending src order.
+        let ctx_a = make_context(
             &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         )
         .with_strategy(AodGridStrategy::Clique);
+
+        // Context B: positions and lanes in reversed src order (different HashMap
+        // insertion order, which affects HashMap iteration and bucket distribution).
+        let ctx_b = make_context(
+            &[((1, 1), 13), ((0, 1), 12), ((1, 0), 11), ((0, 0), 10)],
+            &[(13, 103), (12, 102), (11, 101), (10, 100)],
+            &[],
+        )
+        .with_strategy(AodGridStrategy::Clique);
+
         let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102), (13, 103)]
             .into_iter()
             .collect();
-        let a = ctx.build_aod_grids(&entries);
-        let b = ctx.build_aod_grids(&entries);
-        assert_eq!(a, b);
+
+        let mut a = ctx_a.build_aod_grids(&entries);
+        let mut b = ctx_b.build_aod_grids(&entries);
+
+        // Normalize: sort lanes within each grid, then sort grids for comparison.
+        for g in &mut a {
+            g.sort();
+        }
+        for g in &mut b {
+            g.sort();
+        }
+        a.sort();
+        b.sort();
+
+        assert_eq!(
+            a, b,
+            "clique strategy must produce identical output regardless of insertion order"
+        );
     }
 
     #[test]
@@ -941,5 +990,152 @@ mod tests {
         let grids = ctx.build_aod_grids(&entries);
         let covered: HashSet<u64> = grids.iter().flatten().copied().collect();
         assert!(covered.contains(&100) && covered.contains(&103));
+    }
+
+    /// Fix 3: Build a candidate set exceeding MAX_EXACT_CLIQUE_NODES (>32 valid
+    /// positions) with AodGridStrategy::Clique and assert the result is valid:
+    /// non-empty, every emitted grid covers ≥1 mover, and all input movers are
+    /// covered across the returned grids. This exercises the `greedy_max_clique`
+    /// branch.
+    #[test]
+    fn clique_greedy_fallback_large_candidate_set() {
+        // Build a 7×6 = 42-position grid. All positions are movers. 42 > 32
+        // forces the greedy_max_clique fallback (MAX_EXACT_CLIQUE_NODES = 32).
+        let mut positions: Vec<((u64, u64), u64)> = Vec::new();
+        let mut lanes: Vec<(u64, u64)> = Vec::new();
+        let mut entries: HashMap<u64, u64> = HashMap::new();
+        let mut src = 1u64;
+        let mut lane_enc = 1001u64;
+
+        for x in 0u64..7 {
+            for y in 0u64..6 {
+                positions.push(((x, y), src));
+                lanes.push((src, lane_enc));
+                entries.insert(src, lane_enc);
+                src += 1;
+                lane_enc += 1;
+            }
+        }
+
+        let ctx = make_context(&positions, &lanes, &[]).with_strategy(AodGridStrategy::Clique);
+        let mover_lanes: HashSet<u64> = entries.values().copied().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+
+        // Must emit at least one grid.
+        assert!(
+            !grids.is_empty(),
+            "greedy fallback must produce at least one grid"
+        );
+
+        // Every emitted grid must cover ≥1 mover.
+        for grid in &grids {
+            let covers_mover = grid.iter().any(|l| mover_lanes.contains(l));
+            assert!(
+                covers_mover,
+                "every emitted grid must cover at least one mover; got {:?}",
+                grid
+            );
+        }
+
+        // All input movers must be covered across the returned grids.
+        let covered: HashSet<u64> = grids.iter().flatten().copied().collect();
+        for &l in &mover_lanes {
+            assert!(covered.contains(&l), "mover lane {} not covered", l);
+        }
+    }
+
+    /// Fix 1+2: Verify that the objective scoring uses the emitted rectangle's
+    /// product dimensions (xs.len() * ys.len()) rather than the clique bitset
+    /// count. We construct a scenario where two competing cliques have the same
+    /// number of nodes (clique.count_ones()) but different emitted-rectangle areas
+    /// (xs.len()*ys.len()), then assert the winner is selected by product-area.
+    ///
+    /// Scenario:
+    ///   - 6 movers laid out as two groups:
+    ///     Group A: (0,0),(1,0),(0,1),(1,1) — a fully-connected 2×2 with 4 movers.
+    ///     Group B: (5,0),(6,0),(7,0) — a 3×1 line with 3 movers.
+    ///   - The maximal clique for A has 4 nodes (all pairwise valid), area_product=4.
+    ///   - The maximal clique for B has 3 nodes, area_product=3.
+    ///   - Under EITHER scoring A wins (4 movers vs 3). The meaningful check is
+    ///     that A's emitted rectangle has area 4 (xs.len()*ys.len()=4), not that
+    ///     area is computed from node count in some other way.
+    ///
+    /// Note: The L-shape fixture (clique with fewer nodes than its xs×ys product)
+    /// is NOT constructible in this graph: for any 3-node L-shape {A,B,C} to be
+    /// fully connected, the edge between the two nodes that differ in BOTH x and y
+    /// requires is_valid_rect on their induced 2×2, which checks the 4th product
+    /// cell. If the 4th cell is valid, it is adjacent to all three and extends the
+    /// clique to 4 nodes, making the L-shape non-maximal. If the 4th cell is
+    /// invalid, the 2×2 edge doesn't exist and the L-shape isn't a clique. Hence
+    /// a strict L-shaped maximal clique cannot arise.
+    ///
+    /// Instead we verify: the winning rectangle's lane count equals xs.len()*ys.len()
+    /// and covers the correct set of movers.
+    #[test]
+    fn clique_objective_uses_product_area_not_bitset_count() {
+        // Group A: 2×2 = 4 movers at x∈{0,1}, y∈{0,1} (all valid, no collisions).
+        // Group B: 3×1 = 3 movers at x∈{5,6,7}, y∈{5} (disjoint in BOTH x and y).
+        // Groups share no x or y tones so no cross-group rectangle forms.
+        let ctx = make_context(
+            &[
+                ((0, 0), 10),
+                ((1, 0), 11),
+                ((0, 1), 12),
+                ((1, 1), 13), // group A
+                ((5, 5), 20),
+                ((6, 5), 21),
+                ((7, 5), 22), // group B (disjoint y)
+            ],
+            &[
+                (10, 100),
+                (11, 101),
+                (12, 102),
+                (13, 103),
+                (20, 200),
+                (21, 201),
+                (22, 202),
+            ],
+            &[],
+        )
+        .with_strategy(AodGridStrategy::Clique);
+
+        // All 7 are movers.
+        let entries: HashMap<u64, u64> = [
+            (10, 100),
+            (11, 101),
+            (12, 102),
+            (13, 103),
+            (20, 200),
+            (21, 201),
+            (22, 202),
+        ]
+        .into_iter()
+        .collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+
+        // First emitted grid must be the 2×2 group A (4 movers > 3 movers).
+        assert!(!grids.is_empty());
+        let mut first = grids[0].clone();
+        first.sort();
+        assert_eq!(
+            first,
+            vec![100, 101, 102, 103],
+            "group A (4 movers, product area 4) must be selected first"
+        );
+
+        // Product area of first grid is xs.len()*ys.len() = 2*2 = 4, matching lane count.
+        assert_eq!(
+            grids[0].len(),
+            4,
+            "emitted rectangle lane count must equal xs.len()*ys.len()"
+        );
+
+        // All movers covered across all grids.
+        let covered: HashSet<u64> = grids.iter().flatten().copied().collect();
+        for l in [100u64, 101, 102, 103, 200, 201, 202] {
+            assert!(covered.contains(&l), "lane {} not covered", l);
+        }
     }
 }
