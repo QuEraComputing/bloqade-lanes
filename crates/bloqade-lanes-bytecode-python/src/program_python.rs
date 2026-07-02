@@ -19,34 +19,34 @@ impl PyProgram {
     #[new]
     fn new(version: (u16, u16), instructions: Vec<PyRef<'_, PyInstruction>>) -> Self {
         Self {
-            inner: rs_prog::Program {
-                version: Version::new(version.0, version.1),
-                instructions: instructions.iter().map(|i| i.inner.clone()).collect(),
-            },
+            inner: rs_prog::from_code(
+                Version::new(version.0, version.1),
+                instructions.iter().map(|i| i.inner.clone()).collect(),
+            ),
         }
     }
 
     #[staticmethod]
     fn from_text(source: &str, py: Python<'_>) -> PyResult<Self> {
-        let program = rs_prog::Program::parse_text(source)
-            .map_err(|e| crate::errors::text_error_to_py(py, &e))?;
+        let program =
+            rs_prog::parse_text(source).map_err(|e| crate::errors::text_error_to_py(py, &e))?;
         Ok(Self { inner: program })
     }
 
     fn to_text(&self) -> String {
-        self.inner.to_text()
+        rs_prog::to_text(&self.inner)
     }
 
     #[staticmethod]
     fn from_binary(data: &Bound<'_, PyBytes>, py: Python<'_>) -> PyResult<Self> {
         let bytes = data.as_bytes();
-        let program = rs_prog::Program::from_binary(bytes)
-            .map_err(|e| crate::errors::program_error_to_py(py, &e))?;
+        let program =
+            rs_prog::from_binary(bytes).map_err(|e| crate::errors::program_error_to_py(py, &e))?;
         Ok(Self { inner: program })
     }
 
     fn to_binary<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        let bytes = self.inner.to_binary();
+        let bytes = rs_prog::to_binary(&self.inner);
         PyBytes::new(py, &bytes)
     }
 
@@ -78,13 +78,16 @@ impl PyProgram {
 
     #[getter]
     fn version(&self) -> (u16, u16) {
-        (self.inner.version.major, self.inner.version.minor)
+        (
+            self.inner.extra.version.major,
+            self.inner.extra.version.minor,
+        )
     }
 
     #[getter]
     fn instructions(&self) -> Vec<PyInstruction> {
         self.inner
-            .instructions
+            .code
             .iter()
             .map(|i| PyInstruction { inner: i.clone() })
             .collect()
@@ -93,14 +96,14 @@ impl PyProgram {
     fn __repr__(&self) -> String {
         format!(
             "Program(version=({}, {}), instructions={})",
-            self.inner.version.major,
-            self.inner.version.minor,
-            self.inner.instructions.len()
+            self.inner.extra.version.major,
+            self.inner.extra.version.minor,
+            self.inner.code.len()
         )
     }
 
     fn __len__(&self) -> usize {
-        self.inner.instructions.len()
+        self.inner.code.len()
     }
 
     fn __eq__(&self, other: &Self) -> bool {

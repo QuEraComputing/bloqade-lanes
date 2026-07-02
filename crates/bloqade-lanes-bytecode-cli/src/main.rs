@@ -8,6 +8,7 @@ mod policy;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
 use bloqade_lanes_bytecode_core::isa::Program;
+use bloqade_lanes_bytecode_core::isa::program::{from_binary, parse_text, to_binary, to_text};
 use bloqade_lanes_bytecode_core::isa::validate;
 
 #[derive(Parser)]
@@ -168,12 +169,12 @@ fn main() {
 fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
-    let program = Program::parse_text(&source).map_err(|e| e.to_string())?;
-    let binary = program.to_binary();
+    let program = parse_text(&source).map_err(|e| e.to_string())?;
+    let binary = to_binary(&program);
     fs::write(output, &binary).map_err(|e| format!("writing {}: {}", output.display(), e))?;
     eprintln!(
         "assembled {} instructions -> {}",
-        program.instructions.len(),
+        program.code.len(),
         output.display()
     );
     Ok(())
@@ -181,14 +182,14 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
 
 fn cmd_disassemble(input: &PathBuf, output: Option<&std::path::Path>) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
-    let program = Program::from_binary(&bytes).map_err(|e| e.to_string())?;
-    let text_out = program.to_text();
+    let program = from_binary(&bytes).map_err(|e| e.to_string())?;
+    let text_out = to_text(&program);
     match output {
         Some(path) => {
             fs::write(path, &text_out).map_err(|e| format!("writing {}: {}", path.display(), e))?;
             eprintln!(
                 "disassembled {} instructions -> {}",
-                program.instructions.len(),
+                program.code.len(),
                 path.display()
             );
         }
@@ -225,7 +226,7 @@ fn cmd_validate(
     }
 
     if all_errors.is_empty() {
-        eprintln!("valid ({} instructions)", program.instructions.len());
+        eprintln!("valid ({} instructions)", program.code.len());
         Ok(())
     } else {
         for e in &all_errors {
@@ -364,11 +365,11 @@ fn load_program(path: &PathBuf) -> Result<Program, String> {
         "sst" => {
             let source = fs::read_to_string(path)
                 .map_err(|e| format!("reading {}: {}", path.display(), e))?;
-            Program::parse_text(&source).map_err(|e| e.to_string())
+            parse_text(&source).map_err(|e| e.to_string())
         }
         _ => {
             let bytes = fs::read(path).map_err(|e| format!("reading {}: {}", path.display(), e))?;
-            Program::from_binary(&bytes).map_err(|e| e.to_string())
+            from_binary(&bytes).map_err(|e| e.to_string())
         }
     }
 }

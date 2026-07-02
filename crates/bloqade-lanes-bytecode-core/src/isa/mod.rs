@@ -38,7 +38,7 @@ pub mod parse_helpers;
 pub mod program;
 pub mod validate;
 
-pub use program::Program;
+pub use program::{LanesInfo, Program, from_code};
 
 use vihaco::Instruction;
 

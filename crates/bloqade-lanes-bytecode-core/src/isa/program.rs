@@ -23,6 +23,8 @@ use std::io::Cursor;
 
 use chumsky::Parser as _;
 use vihaco::instruction::{FromBytes, WriteBytes};
+use vihaco::module::Module;
+use vihaco::value::{Type, Value};
 use vihaco_parser_core::Parse;
 
 use super::{INSTRUCTION_WIDTH, Instruction};
@@ -35,19 +37,45 @@ pub const MAGIC: &[u8; 5] = b"LANES";
 /// Header length: [`MAGIC`] (5 bytes) followed by a packed u32 version.
 const HEADER_LEN: usize = MAGIC.len() + 4;
 
-/// A bytecode program: a version and a flat instruction sequence.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Program {
-    /// Program version.
+/// Consumer metadata carried in `Module::extra` (vihaco has no version field).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanesInfo {
     pub version: Version,
-    /// Instructions in execution order.
-    pub instructions: Vec<Instruction>,
+}
+
+impl Default for LanesInfo {
+    fn default() -> Self {
+        Self {
+            version: Version::new(0, 0),
+        }
+    }
+}
+
+impl std::fmt::Display for LanesInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "version {}", self.version)
+    }
+}
+
+/// A Bloqade Lanes program: a vihaco `Module` specialised to our ISA. A single
+/// `@main` function's worth of flat code plus the version in `extra`.
+pub type Program = Module<Instruction, Value, Type, LanesInfo>;
+
+/// Build a `Program` from a version + flat instruction list. This is the ONE
+/// constructor used by both binary and text loading, so all `Program`s built
+/// from the same (version, code) compare equal regardless of source.
+#[allow(clippy::field_reassign_with_default)] // `Module` is a foreign type; struct-literal init is not possible
+pub fn from_code(version: Version, code: Vec<Instruction>) -> Program {
+    let mut m = Program::default();
+    m.code = code;
+    m.extra = LanesInfo { version };
+    m
 }
 
 /// Error from binary (de)serialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryError {
-    /// First four bytes were not [`MAGIC`].
+    /// First five bytes were not [`MAGIC`].
     BadMagic,
     /// Buffer ended before a complete header or instruction word.
     Truncated { expected: usize, got: usize },
@@ -104,123 +132,118 @@ impl std::fmt::Display for TextError {
 
 impl std::error::Error for TextError {}
 
-impl Program {
-    /// Serialize to the native binary format (see module docs).
-    pub fn to_binary(&self) -> Vec<u8> {
-        let mut buf =
-            Vec::with_capacity(HEADER_LEN + self.instructions.len() * INSTRUCTION_WIDTH as usize);
-        buf.extend_from_slice(MAGIC);
-        let packed: u32 = self.version.into();
-        buf.extend_from_slice(&packed.to_le_bytes());
-        for inst in &self.instructions {
-            // WriteBytes into a Vec is infallible.
-            inst.write_bytes(&mut buf)
-                .expect("writing instruction bytes to a Vec cannot fail");
-        }
-        buf
+/// Serialize to the native binary format (see module docs).
+pub fn to_binary(program: &Program) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(HEADER_LEN + program.code.len() * INSTRUCTION_WIDTH as usize);
+    buf.extend_from_slice(MAGIC);
+    let packed: u32 = program.extra.version.into();
+    buf.extend_from_slice(&packed.to_le_bytes());
+    for inst in &program.code {
+        // WriteBytes into a Vec is infallible.
+        inst.write_bytes(&mut buf)
+            .expect("writing instruction bytes to a Vec cannot fail");
+    }
+    buf
+}
+
+/// Deserialize from the native binary format.
+pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
+    if bytes.len() < HEADER_LEN {
+        return Err(BinaryError::Truncated {
+            expected: HEADER_LEN,
+            got: bytes.len(),
+        });
+    }
+    if &bytes[0..MAGIC.len()] != MAGIC {
+        return Err(BinaryError::BadMagic);
+    }
+    let packed = u32::from_le_bytes([
+        bytes[MAGIC.len()],
+        bytes[MAGIC.len() + 1],
+        bytes[MAGIC.len() + 2],
+        bytes[MAGIC.len() + 3],
+    ]);
+    let version = Version::from(packed);
+
+    let code = &bytes[HEADER_LEN..];
+    let width = INSTRUCTION_WIDTH as usize;
+    if !code.len().is_multiple_of(width) {
+        return Err(BinaryError::UnalignedCode { len: code.len() });
     }
 
-    /// Deserialize from the native binary format.
-    pub fn from_binary(bytes: &[u8]) -> Result<Self, BinaryError> {
-        if bytes.len() < HEADER_LEN {
-            return Err(BinaryError::Truncated {
-                expected: HEADER_LEN,
-                got: bytes.len(),
-            });
-        }
-        if &bytes[0..MAGIC.len()] != MAGIC {
-            return Err(BinaryError::BadMagic);
-        }
-        let packed = u32::from_le_bytes([
-            bytes[MAGIC.len()],
-            bytes[MAGIC.len() + 1],
-            bytes[MAGIC.len() + 2],
-            bytes[MAGIC.len() + 3],
-        ]);
-        let version = Version::from(packed);
+    let count = code.len() / width;
+    let mut instructions = Vec::with_capacity(count);
+    let mut cursor = Cursor::new(code);
+    for pc in 0..count {
+        let inst = Instruction::from_bytes(&mut cursor).map_err(|e| BinaryError::Decode {
+            pc,
+            message: e.to_string(),
+        })?;
+        instructions.push(inst);
+    }
 
-        let code = &bytes[HEADER_LEN..];
-        let width = INSTRUCTION_WIDTH as usize;
-        if !code.len().is_multiple_of(width) {
-            return Err(BinaryError::UnalignedCode { len: code.len() });
+    Ok(from_code(version, instructions))
+}
+
+/// Parse assembly text. Requires a leading `.version` directive; `;`
+/// begins a line comment; blank lines are ignored. Each remaining line is
+/// delegated to the vihaco-derived [`Instruction`] parser.
+pub fn parse_text(source: &str) -> Result<Program, TextError> {
+    let mut version: Option<Version> = None;
+    let mut instructions = Vec::new();
+
+    for (idx, raw) in source.lines().enumerate() {
+        let line_num = idx + 1;
+        let line = match raw.find(';') {
+            Some(pos) => &raw[..pos],
+            None => raw,
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
         }
 
-        let count = code.len() / width;
-        let mut instructions = Vec::with_capacity(count);
-        let mut cursor = Cursor::new(code);
-        for pc in 0..count {
-            let inst = Instruction::from_bytes(&mut cursor).map_err(|e| BinaryError::Decode {
-                pc,
-                message: e.to_string(),
+        if let Some(rest) = line.strip_prefix('.') {
+            let mut parts = rest.split_whitespace();
+            if parts.next() == Some("version") {
+                let value = parts.next().unwrap_or("");
+                version = Some(
+                    parse_version(value).ok_or_else(|| TextError::InvalidVersion {
+                        line: line_num,
+                        value: value.to_string(),
+                    })?,
+                );
+            }
+            continue;
+        }
+
+        let inst = Instruction::parser()
+            .parse(line)
+            .into_result()
+            .map_err(|_| TextError::BadInstruction {
+                line: line_num,
+                text: line.to_string(),
             })?;
-            instructions.push(inst);
-        }
-
-        Ok(Program {
-            version,
-            instructions,
-        })
+        instructions.push(inst);
     }
 
-    /// Parse assembly text. Requires a leading `.version` directive; `;`
-    /// begins a line comment; blank lines are ignored. Each remaining line is
-    /// delegated to the vihaco-derived [`Instruction`] parser.
-    pub fn parse_text(source: &str) -> Result<Self, TextError> {
-        let mut version: Option<Version> = None;
-        let mut instructions = Vec::new();
+    Ok(from_code(
+        version.ok_or(TextError::MissingVersion)?,
+        instructions,
+    ))
+}
 
-        for (idx, raw) in source.lines().enumerate() {
-            let line_num = idx + 1;
-            let line = match raw.find(';') {
-                Some(pos) => &raw[..pos],
-                None => raw,
-            };
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some(rest) = line.strip_prefix('.') {
-                let mut parts = rest.split_whitespace();
-                if parts.next() == Some("version") {
-                    let value = parts.next().unwrap_or("");
-                    version =
-                        Some(
-                            parse_version(value).ok_or_else(|| TextError::InvalidVersion {
-                                line: line_num,
-                                value: value.to_string(),
-                            })?,
-                        );
-                }
-                continue;
-            }
-
-            let inst = Instruction::parser()
-                .parse(line)
-                .into_result()
-                .map_err(|_| TextError::BadInstruction {
-                    line: line_num,
-                    text: line.to_string(),
-                })?;
-            instructions.push(inst);
-        }
-
-        Ok(Program {
-            version: version.ok_or(TextError::MissingVersion)?,
-            instructions,
-        })
+/// Render the program as assembly text that [`parse_text`] round-trips.
+pub fn to_text(program: &Program) -> String {
+    let mut out = format!(
+        ".version {}.{}\n",
+        program.extra.version.major, program.extra.version.minor
+    );
+    for inst in &program.code {
+        out.push_str(&instruction_to_text(inst));
+        out.push('\n');
     }
-
-    /// Render the program as assembly text that [`parse_text`](Self::parse_text)
-    /// round-trips.
-    pub fn to_text(&self) -> String {
-        let mut out = format!(".version {}.{}\n", self.version.major, self.version.minor);
-        for inst in &self.instructions {
-            out.push_str(&instruction_to_text(inst));
-            out.push('\n');
-        }
-        out
-    }
+    out
 }
 
 /// Parse a `major.minor` (or bare `major`, minor defaulting to 0) version.
@@ -247,9 +270,9 @@ mod tests {
     fn sample() -> Program {
         use vihaco::value::Value;
         use vihaco_cpu::Instruction as Cpu;
-        Program {
-            version: Version::new(1, 2),
-            instructions: vec![
+        from_code(
+            Version::new(1, 2),
+            vec![
                 Instruction::Cpu(Cpu::Const(Value::F64(1.5))),
                 Instruction::Cpu(Cpu::Const(Value::I64(-42))),
                 Instruction::Cpu(Cpu::Dup),
@@ -270,54 +293,51 @@ mod tests {
                 Instruction::Cpu(Cpu::Halt),
                 Instruction::Return,
             ],
-        }
+        )
     }
 
     #[test]
     fn binary_round_trips() {
         let program = sample();
-        let bytes = program.to_binary();
+        let bytes = to_binary(&program);
         assert_eq!(&bytes[0..MAGIC.len()], MAGIC);
         assert_eq!(
             bytes.len(),
-            HEADER_LEN + program.instructions.len() * INSTRUCTION_WIDTH as usize
+            HEADER_LEN + program.code.len() * INSTRUCTION_WIDTH as usize
         );
-        assert_eq!(Program::from_binary(&bytes).unwrap(), program);
+        assert_eq!(from_binary(&bytes).unwrap(), program);
     }
 
     #[test]
     fn binary_preserves_version() {
-        let bytes = sample().to_binary();
+        let bytes = to_binary(&sample());
         assert_eq!(
-            Program::from_binary(&bytes).unwrap().version,
+            from_binary(&bytes).unwrap().extra.version,
             Version::new(1, 2)
         );
     }
 
     #[test]
     fn empty_program_round_trips() {
-        let program = Program {
-            version: Version::new(1, 0),
-            instructions: vec![],
-        };
-        let bytes = program.to_binary();
+        let program = from_code(Version::new(1, 0), vec![]);
+        let bytes = to_binary(&program);
         assert_eq!(bytes.len(), HEADER_LEN);
-        assert_eq!(Program::from_binary(&bytes).unwrap(), program);
+        assert_eq!(from_binary(&bytes).unwrap(), program);
     }
 
     #[test]
     fn text_round_trips() {
         let program = sample();
-        let text = program.to_text();
-        assert_eq!(Program::parse_text(&text).unwrap(), program);
+        let text = to_text(&program);
+        assert_eq!(parse_text(&text).unwrap(), program);
     }
 
     #[test]
     fn text_then_binary_agree() {
         let program = sample();
-        let from_text = Program::parse_text(&program.to_text()).unwrap();
-        let from_binary = Program::from_binary(&from_text.to_binary()).unwrap();
-        assert_eq!(from_binary, program);
+        let from_text = parse_text(&to_text(&program)).unwrap();
+        let from_bin = from_binary(&to_binary(&from_text)).unwrap();
+        assert_eq!(from_bin, program);
     }
 
     #[test]
@@ -325,10 +345,10 @@ mod tests {
         use vihaco::value::Value;
         use vihaco_cpu::Instruction as Cpu;
         let source = "\n; header comment\n.version 2\n\nconst.i64 42  ; inline\nhalt\n";
-        let program = Program::parse_text(source).unwrap();
-        assert_eq!(program.version, Version::new(2, 0));
+        let program = parse_text(source).unwrap();
+        assert_eq!(program.extra.version, Version::new(2, 0));
         assert_eq!(
-            program.instructions,
+            program.code,
             vec![
                 Instruction::Cpu(Cpu::Const(Value::I64(42))),
                 Instruction::Cpu(Cpu::Halt)
@@ -338,27 +358,24 @@ mod tests {
 
     #[test]
     fn version_directive_required() {
-        assert_eq!(
-            Program::parse_text("halt\n"),
-            Err(TextError::MissingVersion)
-        );
+        assert_eq!(parse_text("halt\n"), Err(TextError::MissingVersion));
     }
 
     #[test]
     fn major_minor_and_bare_versions() {
         assert_eq!(
-            Program::parse_text(".version 2.3\nhalt\n").unwrap().version,
+            parse_text(".version 2.3\nhalt\n").unwrap().extra.version,
             Version::new(2, 3)
         );
         assert_eq!(
-            Program::parse_text(".version 5\nhalt\n").unwrap().version,
+            parse_text(".version 5\nhalt\n").unwrap().extra.version,
             Version::new(5, 0)
         );
     }
 
     #[test]
     fn bad_instruction_reports_line() {
-        let err = Program::parse_text(".version 1\nhalt\nnope_nope\n").unwrap_err();
+        let err = parse_text(".version 1\nhalt\nnope_nope\n").unwrap_err();
         assert_eq!(
             err,
             TextError::BadInstruction {
@@ -370,15 +387,15 @@ mod tests {
 
     #[test]
     fn bad_magic_rejected() {
-        let mut bytes = sample().to_binary();
+        let mut bytes = to_binary(&sample());
         bytes[0] = b'X';
-        assert_eq!(Program::from_binary(&bytes), Err(BinaryError::BadMagic));
+        assert_eq!(from_binary(&bytes), Err(BinaryError::BadMagic));
     }
 
     #[test]
     fn short_buffer_rejected() {
         assert_eq!(
-            Program::from_binary(b"LAN"),
+            from_binary(b"LAN"),
             Err(BinaryError::Truncated {
                 expected: HEADER_LEN,
                 got: 3
@@ -388,10 +405,10 @@ mod tests {
 
     #[test]
     fn unaligned_code_rejected() {
-        let mut bytes = sample().to_binary();
+        let mut bytes = to_binary(&sample());
         bytes.push(0); // one stray byte past the last full word
         assert!(matches!(
-            Program::from_binary(&bytes),
+            from_binary(&bytes),
             Err(BinaryError::UnalignedCode { .. })
         ));
     }

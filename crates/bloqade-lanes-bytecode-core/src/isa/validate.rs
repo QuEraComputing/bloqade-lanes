@@ -198,7 +198,7 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     let mut errors = Vec::new();
     let mut measure_count = 0u32;
 
-    for (pc, inst) in program.instructions.iter().enumerate() {
+    for (pc, inst) in program.code.iter().enumerate() {
         match inst {
             // ---- capability checks ----
             Instruction::Cpu(cpu) if !arch.feed_forward => {
@@ -263,7 +263,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let mut seen_non_constant = false;
 
-    for (pc, inst) in program.instructions.iter().enumerate() {
+    for (pc, inst) in program.code.iter().enumerate() {
         match inst {
             Instruction::NewArray(type_tag, dim0, _dim1) => {
                 if *dim0 == 0 {
@@ -293,7 +293,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     // `MissingTerminator` would be a redundant second error.
     let mut found_terminator = false;
     let mut unreachable = Vec::new();
-    for (pc, inst) in program.instructions.iter().enumerate() {
+    for (pc, inst) in program.code.iter().enumerate() {
         if found_terminator {
             unreachable.push(ValidationError::UnreachableInstruction { pc });
         }
@@ -303,10 +303,10 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     }
 
     if unreachable.is_empty() {
-        match program.instructions.last() {
+        match program.code.last() {
             None => errors.push(ValidationError::EmptyProgram),
             Some(last) if !is_terminator(last) => errors.push(ValidationError::MissingTerminator {
-                pc: program.instructions.len() - 1,
+                pc: program.code.len() - 1,
             }),
             Some(_) => {}
         }
@@ -317,21 +317,13 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     errors
 }
 
-impl Program {
-    /// Validate this program's arch-dependent constraints; see [`validate`].
-    /// Passing `None` skips all arch-dependent checks.
-    pub fn validate(&self, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
-        validate(self, arch)
-    }
-
-    /// Run all available checks: arch-independent [`validate_structure`] plus,
-    /// when `arch` is `Some`, the arch-dependent [`validate`] checks. Errors are
-    /// returned structure-first, then arch.
-    pub fn validate_all(&self, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
-        let mut errors = validate_structure(self);
-        errors.extend(validate(self, arch));
-        errors
-    }
+/// Run all available checks: arch-independent [`validate_structure`] plus,
+/// when `arch` is `Some`, the arch-dependent [`validate`] checks. Errors are
+/// returned structure-first, then arch.
+pub fn validate_all(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
+    let mut errors = validate_structure(program);
+    errors.extend(validate(program, arch));
+    errors
 }
 
 // ── Stack-type simulation ──────────────────────────────────────────────────
@@ -585,7 +577,7 @@ impl<'a> StackSimulator<'a> {
     }
 
     fn run(mut self, program: &Program) -> Vec<ValidationError> {
-        for (pc, inst) in program.instructions.iter().enumerate() {
+        for (pc, inst) in program.code.iter().enumerate() {
             self.pc = pc;
             self.dispatch(inst);
         }
@@ -629,10 +621,7 @@ mod tests {
     }
 
     fn program(instructions: Vec<Instruction>) -> Program {
-        Program {
-            version: Version::new(1, 0),
-            instructions,
-        }
+        crate::isa::program::from_code(Version::new(1, 0), instructions)
     }
 
     fn loc(zone_id: u32, word_id: u32, site_id: u32) -> u64 {
@@ -655,7 +644,7 @@ mod tests {
             Instruction::Measure(1),
             Instruction::ConstZone(99), // also an invalid address
         ]);
-        assert!(p.validate(None).is_empty());
+        assert!(validate(&p, None).is_empty());
     }
 
     #[test]
@@ -666,7 +655,7 @@ mod tests {
             Instruction::Cpu(Cpu::Call(1, 0)),
             Instruction::Cpu(Cpu::IndirectCall),
         ]);
-        let errors = p.validate(Some(&caps_arch(false, false)));
+        let errors = validate(&p, Some(&caps_arch(false, false)));
         assert_eq!(
             errors,
             vec![
@@ -697,7 +686,7 @@ mod tests {
             Instruction::Measure(1),
             Instruction::Measure(1),
         ]);
-        assert!(p.validate(Some(&caps_arch(true, false))).is_empty());
+        assert!(validate(&p, Some(&caps_arch(true, false))).is_empty());
     }
 
     #[test]
@@ -708,14 +697,14 @@ mod tests {
             Instruction::Cpu(Cpu::Dup),
             Instruction::Cpu(Cpu::Halt),
         ]);
-        assert!(p.validate(Some(&caps_arch(false, false))).is_empty());
+        assert!(validate(&p, Some(&caps_arch(false, false))).is_empty());
     }
 
     #[test]
     fn single_measure_ok_but_second_rejected_without_feed_forward() {
         let p = program(vec![Instruction::Measure(1), Instruction::Measure(1)]);
         assert_eq!(
-            p.validate(Some(&caps_arch(false, false))),
+            validate(&p, Some(&caps_arch(false, false))),
             vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 1 }]
         );
     }
@@ -724,10 +713,10 @@ mod tests {
     fn fill_requires_atom_reloading() {
         let p = program(vec![Instruction::Fill(1)]);
         assert_eq!(
-            p.validate(Some(&caps_arch(false, false))),
+            validate(&p, Some(&caps_arch(false, false))),
             vec![ValidationError::FillRequiresAtomReloading { pc: 0 }]
         );
-        assert!(p.validate(Some(&caps_arch(false, true))).is_empty());
+        assert!(validate(&p, Some(&caps_arch(false, true))).is_empty());
     }
 
     // ---- address checks ----
@@ -741,7 +730,7 @@ mod tests {
             Instruction::ConstLoc(loc(0, 0, 4)),
             Instruction::ConstZone(ZoneAddr { zone_id: 0 }.encode()),
         ]);
-        assert!(p.validate(Some(&arch)).is_empty(), "expected no errors");
+        assert!(validate(&p, Some(&arch)).is_empty(), "expected no errors");
     }
 
     #[test]
@@ -749,7 +738,7 @@ mod tests {
         let arch = simple_arch();
         // site 99 is out of range for a 5-site word.
         let p = program(vec![Instruction::ConstLoc(loc(0, 0, 99))]);
-        let errors = p.validate(Some(&arch));
+        let errors = validate(&p, Some(&arch));
         assert!(
             matches!(
                 errors.as_slice(),
@@ -766,7 +755,7 @@ mod tests {
         let p = program(vec![Instruction::ConstZone(
             ZoneAddr { zone_id: 5 }.encode(),
         )]);
-        let errors = p.validate(Some(&arch));
+        let errors = validate(&p, Some(&arch));
         assert!(
             matches!(
                 errors.as_slice(),
@@ -789,7 +778,7 @@ mod tests {
             bus_id: 0,
         };
         let p = program(vec![Instruction::ConstLane(bad.encode_u64())]);
-        let errors = p.validate(Some(&arch));
+        let errors = validate(&p, Some(&arch));
         assert!(
             errors
                 .iter()
@@ -881,7 +870,7 @@ mod tests {
         let p = program(vec![Instruction::ConstZone(
             ZoneAddr { zone_id: 5 }.encode(),
         )]);
-        let errors = p.validate_all(Some(&arch));
+        let errors = validate_all(&p, Some(&arch));
         assert!(errors.contains(&ValidationError::MissingTerminator { pc: 0 }));
         assert!(
             errors
@@ -898,7 +887,7 @@ mod tests {
             Instruction::Fill(1),             // pc 1: reloading
             Instruction::ConstZone(ZoneAddr { zone_id: 5 }.encode()), // pc 2: bad zone
         ]);
-        let errors = p.validate(Some(&arch));
+        let errors = validate(&p, Some(&arch));
         assert_eq!(
             errors.len(),
             3,
