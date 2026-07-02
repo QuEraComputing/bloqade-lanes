@@ -40,6 +40,18 @@ pub enum Strategy {
     Entropy,
 }
 
+/// Strategy for turning selected mover lanes into valid AOD rectangles in
+/// [`BusGridContext`](crate::ops::aod_grid::BusGridContext).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AodGridStrategy {
+    /// Greedy sequential clustering + iterative rectangle merge (original).
+    #[default]
+    GreedyMerge,
+    /// Conflict-graph max-clique: pick the rectangle covering the most input
+    /// movers, completing it with filler/no-op lanes.
+    Clique,
+}
+
 /// Core search-tuning parameters shared by every solver entry point.
 ///
 /// Strategy-specific knobs live in [`EntropyOptions`] (entropy-search

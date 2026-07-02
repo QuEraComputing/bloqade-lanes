@@ -9,6 +9,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
 
 use crate::primitives::lane_index::LaneIndex;
+use crate::search::options::AodGridStrategy;
 
 /// A cluster represented by its X and Y coordinate sets.
 /// The rectangle covers the Cartesian product X × Y.
@@ -32,6 +33,8 @@ pub(crate) struct BusGridContext {
     src_to_pos: HashMap<u64, (u64, u64)>,
     /// Locations occupied by atoms or blocked locations in the current config.
     occupied_locs: HashSet<u64>,
+    /// Which grid-construction strategy `build_aod_grids` dispatches to.
+    strategy: AodGridStrategy,
 }
 
 impl BusGridContext {
@@ -82,7 +85,15 @@ impl BusGridContext {
             src_to_dst,
             src_to_pos,
             occupied_locs: occupied.clone(),
+            strategy: AodGridStrategy::default(),
         }
+    }
+
+    /// Select the grid-construction strategy (default [`AodGridStrategy::GreedyMerge`]).
+    #[allow(dead_code)]
+    pub(crate) fn with_strategy(mut self, strategy: AodGridStrategy) -> Self {
+        self.strategy = strategy;
+        self
     }
 
     /// Check if every position in the X × Y rectangle is valid.
@@ -142,12 +153,18 @@ impl BusGridContext {
 
     /// Build AOD-compatible rectangular grids from scored entry lanes.
     ///
-    /// `entries` maps `encoded_src → encoded_lane` for the scored/selected
-    /// moving atoms. Returned grids may also include empty filler lanes so each
-    /// lane set remains a complete AOD rectangle.
-    ///
-    /// Returns a list of lane sets, each forming a valid AOD rectangle.
+    /// Dispatches on [`BusGridContext::strategy`]. See
+    /// [`build_aod_grids_greedy`](Self::build_aod_grids_greedy) and
+    /// [`build_aod_grids_clique`](Self::build_aod_grids_clique).
     pub(crate) fn build_aod_grids(&self, entries: &HashMap<u64, u64>) -> Vec<Vec<u64>> {
+        match self.strategy {
+            AodGridStrategy::GreedyMerge => self.build_aod_grids_greedy(entries),
+            AodGridStrategy::Clique => self.build_aod_grids_clique(entries),
+        }
+    }
+
+    /// Greedy sequential clustering + iterative merge (original algorithm).
+    fn build_aod_grids_greedy(&self, entries: &HashMap<u64, u64>) -> Vec<Vec<u64>> {
         if entries.is_empty() {
             return Vec::new();
         }
@@ -163,6 +180,12 @@ impl BusGridContext {
             .map(|(xs, ys)| self.rect_to_lanes(xs, ys))
             .filter(|lanes| !lanes.is_empty())
             .collect()
+    }
+
+    /// Conflict-graph max-clique grid construction (implemented in Task 2).
+    fn build_aod_grids_clique(&self, entries: &HashMap<u64, u64>) -> Vec<Vec<u64>> {
+        // Placeholder until Task 2. Falls back to greedy so callers still work.
+        self.build_aod_grids_greedy(entries)
     }
 
     /// Form initial clusters via greedy sequential expansion.
@@ -332,6 +355,7 @@ mod tests {
             src_to_dst,
             src_to_pos,
             occupied_locs,
+            strategy: AodGridStrategy::default(),
         }
     }
 
@@ -567,5 +591,13 @@ mod tests {
         let mut sorted = grids[0].clone();
         sorted.sort();
         assert_eq!(sorted, vec![100, 101, 102, 103]);
+    }
+
+    #[test]
+    fn strategy_defaults_to_greedy_merge() {
+        let ctx = make_context(&[((0, 0), 10)], &[(10, 100)], &[]);
+        assert_eq!(ctx.strategy, AodGridStrategy::GreedyMerge);
+        let clique = ctx.with_strategy(AodGridStrategy::Clique);
+        assert_eq!(clique.strategy, AodGridStrategy::Clique);
     }
 }
