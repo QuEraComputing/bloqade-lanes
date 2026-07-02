@@ -140,6 +140,35 @@ pub enum Instruction {
     Cpu(vihaco_cpu::Instruction),
 }
 
+impl std::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::Pop => f.write_str("pop"),
+            Instruction::Swap => f.write_str("swap"),
+            Instruction::Return => f.write_str("return"),
+            Instruction::ConstLoc(v) => write!(f, "const_loc 0x{v:016x}"),
+            Instruction::ConstLane(v) => write!(f, "const_lane 0x{v:016x}"),
+            Instruction::ConstZone(v) => write!(f, "const_zone 0x{v:08x}"),
+            Instruction::InitialFill(a) => write!(f, "initial_fill {a}"),
+            Instruction::Fill(a) => write!(f, "fill {a}"),
+            Instruction::Move(a) => write!(f, "move {a}"),
+            Instruction::LocalRz(a) => write!(f, "local_rz {a}"),
+            Instruction::LocalR(a) => write!(f, "local_r {a}"),
+            Instruction::GlobalRz => f.write_str("global_rz"),
+            Instruction::GlobalR => f.write_str("global_r"),
+            Instruction::Cz => f.write_str("cz"),
+            Instruction::Measure(a) => write!(f, "measure {a}"),
+            Instruction::AwaitMeasure => f.write_str("await_measure"),
+            Instruction::NewArray(t, d0, d1) => write!(f, "new_array {t} {d0} {d1}"),
+            Instruction::GetItem(n) => write!(f, "get_item {n}"),
+            Instruction::SetDetector => f.write_str("set_detector"),
+            Instruction::SetObservable => f.write_str("set_observable"),
+            // vihaco-cpu owns its own Display (const.f64 / dup / halt / …).
+            Instruction::Cpu(cpu) => write!(f, "{cpu}"),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::approx_constant)] // sample floats are illustrative, not math constants
 mod tests {
@@ -293,5 +322,26 @@ mod tests {
         from_text.write_bytes(&mut bytes).unwrap();
         let decoded = Instruction::from_bytes(&mut std::io::Cursor::new(bytes)).unwrap();
         assert_eq!(from_text, decoded);
+    }
+
+    #[test]
+    fn display_matches_parser_tokens() {
+        use std::string::ToString;
+        // Every non-CPU variant's Display must re-parse to itself.
+        let samples = [
+            Instruction::ConstLoc(0x0100_0000),
+            Instruction::Move(2),
+            Instruction::LocalRz(1),
+            Instruction::GlobalR,
+            Instruction::NewArray(1, 3, 0),
+            Instruction::Pop,
+            Instruction::Return,
+            Instruction::Cpu(Cpu::Const(Value::F64(1.5))),
+            Instruction::Cpu(Cpu::Halt),
+        ];
+        for inst in samples {
+            let text = inst.to_string();
+            assert_eq!(parse(&text), inst, "Display/parse mismatch for {text:?}");
+        }
     }
 }

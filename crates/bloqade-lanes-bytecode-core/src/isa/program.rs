@@ -236,34 +236,7 @@ fn parse_version(s: &str) -> Option<Version> {
 
 /// Render one instruction as its canonical text line.
 fn instruction_to_text(inst: &Instruction) -> String {
-    use Instruction::*;
-    match inst {
-        Pop => "pop".to_string(),
-        Swap => "swap".to_string(),
-        Return => "return".to_string(),
-        ConstLoc(v) => format!("const_loc 0x{v:016x}"),
-        ConstLane(v) => format!("const_lane 0x{v:016x}"),
-        ConstZone(v) => format!("const_zone 0x{v:08x}"),
-        InitialFill(arity) => format!("initial_fill {arity}"),
-        Fill(arity) => format!("fill {arity}"),
-        Move(arity) => format!("move {arity}"),
-        LocalRz(arity) => format!("local_rz {arity}"),
-        LocalR(arity) => format!("local_r {arity}"),
-        GlobalRz => "global_rz".to_string(),
-        GlobalR => "global_r".to_string(),
-        Cz => "cz".to_string(),
-        Measure(arity) => format!("measure {arity}"),
-        AwaitMeasure => "await_measure".to_string(),
-        // Always three operands — the native parser requires explicit dim1
-        // (use 0 for 1-D arrays), unlike the legacy 1-D shorthand.
-        NewArray(type_tag, dim0, dim1) => format!("new_array {type_tag} {dim0} {dim1}"),
-        GetItem(ndims) => format!("get_item {ndims}"),
-        SetDetector => "set_detector".to_string(),
-        SetObservable => "set_observable".to_string(),
-        // CPU ops render via vihaco-cpu's own `Display` (e.g. `const.i64 42`,
-        // `dup`, `halt`), which the delegated parser reads back.
-        Cpu(inner) => inner.to_string(),
-    }
+    inst.to_string()
 }
 
 #[cfg(test)]
