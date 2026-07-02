@@ -2,8 +2,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
-use bloqade_lanes_bytecode_core::bytecode::program::Program;
-use bloqade_lanes_bytecode_core::bytecode::text;
+use bloqade_lanes_bytecode_core::isa::program::{from_binary, to_binary};
+use bloqade_lanes_bytecode_core::isa::{parse_text, to_text};
 
 use super::error::{BlqdStatus, clear_last_error, set_last_error};
 use super::handles::BLQDProgram;
@@ -24,7 +24,7 @@ pub unsafe extern "C" fn blqd_program_from_binary(
 
     let bytes = unsafe { slice::from_raw_parts(data, len) };
 
-    match Program::from_binary(bytes) {
+    match from_binary(bytes) {
         Ok(program) => {
             let handle = Box::new(BLQDProgram { inner: program });
             unsafe { *out = Box::into_raw(handle) };
@@ -53,7 +53,7 @@ pub unsafe extern "C" fn blqd_program_to_binary(
     }
 
     let prog = unsafe { &*prog };
-    let bytes = prog.inner.to_binary();
+    let bytes = to_binary(&prog.inner);
     let len = bytes.len();
     let boxed = bytes.into_boxed_slice();
     let ptr = Box::into_raw(boxed) as *mut u8;
@@ -87,7 +87,7 @@ pub unsafe extern "C" fn blqd_program_from_text(
         }
     };
 
-    match text::parse(source) {
+    match parse_text(source) {
         Ok(program) => {
             let handle = Box::new(BLQDProgram { inner: program });
             unsafe { *out = Box::into_raw(handle) };
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn blqd_program_to_text(
     }
 
     let prog = unsafe { &*prog };
-    let text_out = text::print(&prog.inner);
+    let text_out = to_text(&prog.inner);
 
     match CString::new(text_out) {
         Ok(cstr) => {
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn blqd_program_instruction_count(prog: *const BLQDProgram
         return 0;
     }
     let prog = unsafe { &*prog };
-    prog.inner.instructions.len() as u32
+    prog.inner.code.len() as u32
 }
 
 /// Query program version.
@@ -151,8 +151,8 @@ pub unsafe extern "C" fn blqd_program_version(
     }
     let prog = unsafe { &*prog };
     unsafe {
-        *major = prog.inner.version.major;
-        *minor = prog.inner.version.minor;
+        *major = prog.inner.extra.version.major;
+        *minor = prog.inner.extra.version.minor;
     }
 }
 

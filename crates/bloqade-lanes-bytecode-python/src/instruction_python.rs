@@ -1,7 +1,10 @@
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
-use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
+use bloqade_lanes_bytecode_core::isa::Instruction as VInst;
+use vihaco::instruction::OpCode;
+use vihaco::value::Value;
+use vihaco_cpu::Instruction as Cpu;
 
 use crate::arch_python::{PyDirection, PyLaneAddr, PyLocationAddr, PyMoveType, PyZoneAddr};
 use crate::validation::validate_field;
@@ -13,24 +16,26 @@ use crate::validation::validate_field;
 )]
 #[derive(Clone)]
 pub struct PyInstruction {
-    pub(crate) inner: rs::Instruction,
+    pub(crate) inner: VInst,
 }
 
 #[pymethods]
 impl PyInstruction {
     // ── Constants ──
+    // CPU const pushes are reused from vihaco-cpu (a typed Value), so the
+    // legacy `const_float` / `const_int` factories map onto `Cpu(Const(..))`.
 
     #[staticmethod]
     fn const_float(value: f64) -> Self {
         Self {
-            inner: rs::Instruction::Cpu(rs::CpuInstruction::ConstFloat(value)),
+            inner: VInst::Cpu(Cpu::Const(Value::F64(value))),
         }
     }
 
     #[staticmethod]
     fn const_int(value: i64) -> Self {
         Self {
-            inner: rs::Instruction::Cpu(rs::CpuInstruction::ConstInt(value)),
+            inner: VInst::Cpu(Cpu::Const(Value::I64(value))),
         }
     }
 
@@ -45,7 +50,7 @@ impl PyInstruction {
             site_id,
         };
         Ok(Self {
-            inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(addr.encode())),
+            inner: VInst::ConstLoc(addr.encode()),
         })
     }
 
@@ -71,9 +76,8 @@ impl PyInstruction {
             site_id,
             bus_id,
         };
-        let (d0, d1) = addr.encode();
         Ok(Self {
-            inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLane(d0, d1)),
+            inner: VInst::ConstLane(addr.encode_u64()),
         })
     }
 
@@ -82,31 +86,28 @@ impl PyInstruction {
         let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let addr = rs_addr::ZoneAddr { zone_id };
         Ok(Self {
-            inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(addr.encode())),
+            inner: VInst::ConstZone(addr.encode()),
         })
     }
 
     // ── Stack manipulation ──
+    // `pop`/`swap` are lanes-native; `dup` is reused from vihaco-cpu.
 
     #[staticmethod]
     fn pop() -> Self {
-        Self {
-            inner: rs::Instruction::Cpu(rs::CpuInstruction::Pop),
-        }
+        Self { inner: VInst::Pop }
     }
 
     #[staticmethod]
     fn dup() -> Self {
         Self {
-            inner: rs::Instruction::Cpu(rs::CpuInstruction::Dup),
+            inner: VInst::Cpu(Cpu::Dup),
         }
     }
 
     #[staticmethod]
     fn swap() -> Self {
-        Self {
-            inner: rs::Instruction::Cpu(rs::CpuInstruction::Swap),
-        }
+        Self { inner: VInst::Swap }
     }
 
     // ── Atom operations ──
@@ -115,9 +116,7 @@ impl PyInstruction {
     fn initial_fill(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::InitialFill {
-                arity,
-            }),
+            inner: VInst::InitialFill(arity),
         })
     }
 
@@ -125,7 +124,7 @@ impl PyInstruction {
     fn fill(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::Fill { arity }),
+            inner: VInst::Fill(arity),
         })
     }
 
@@ -134,7 +133,7 @@ impl PyInstruction {
     fn move_instr(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::Move { arity }),
+            inner: VInst::Move(arity),
         })
     }
 
@@ -144,7 +143,7 @@ impl PyInstruction {
     fn local_r(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::LocalR { arity }),
+            inner: VInst::LocalR(arity),
         })
     }
 
@@ -152,29 +151,27 @@ impl PyInstruction {
     fn local_rz(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::LocalRz { arity }),
+            inner: VInst::LocalRz(arity),
         })
     }
 
     #[staticmethod]
     fn global_r() -> Self {
         Self {
-            inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::GlobalR),
+            inner: VInst::GlobalR,
         }
     }
 
     #[staticmethod]
     fn global_rz() -> Self {
         Self {
-            inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::GlobalRz),
+            inner: VInst::GlobalRz,
         }
     }
 
     #[staticmethod]
     fn cz() -> Self {
-        Self {
-            inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::CZ),
-        }
+        Self { inner: VInst::Cz }
     }
 
     // ── Measurement ──
@@ -183,39 +180,37 @@ impl PyInstruction {
     fn measure(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: rs::Instruction::Measurement(rs::MeasurementInstruction::Measure { arity }),
+            inner: VInst::Measure(arity),
         })
     }
 
     #[staticmethod]
     fn await_measure() -> Self {
         Self {
-            inner: rs::Instruction::Measurement(rs::MeasurementInstruction::AwaitMeasure),
+            inner: VInst::AwaitMeasure,
         }
     }
 
     // ── Array ──
+    // type_tag/dim0/dim1 are validated as in the legacy API (u8/u16) then
+    // widened to the u32 operands the vihaco ISA uses.
 
     #[staticmethod]
     #[pyo3(signature = (type_tag, dim0, dim1=0))]
     fn new_array(type_tag: i64, dim0: i64, dim1: i64) -> PyResult<Self> {
-        let type_tag = validate_field::<u8>("type_tag", type_tag)?;
-        let dim0 = validate_field::<u16>("dim0", dim0)?;
-        let dim1 = validate_field::<u16>("dim1", dim1)?;
+        let type_tag = validate_field::<u8>("type_tag", type_tag)? as u32;
+        let dim0 = validate_field::<u16>("dim0", dim0)? as u32;
+        let dim1 = validate_field::<u16>("dim1", dim1)? as u32;
         Ok(Self {
-            inner: rs::Instruction::Array(rs::ArrayInstruction::NewArray {
-                type_tag,
-                dim0,
-                dim1,
-            }),
+            inner: VInst::NewArray(type_tag, dim0, dim1),
         })
     }
 
     #[staticmethod]
     fn get_item(ndims: i64) -> PyResult<Self> {
-        let ndims = validate_field::<u16>("ndims", ndims)?;
+        let ndims = validate_field::<u16>("ndims", ndims)? as u32;
         Ok(Self {
-            inner: rs::Instruction::Array(rs::ArrayInstruction::GetItem { ndims }),
+            inner: VInst::GetItem(ndims),
         })
     }
 
@@ -224,91 +219,51 @@ impl PyInstruction {
     #[staticmethod]
     fn set_detector() -> Self {
         Self {
-            inner: rs::Instruction::DetectorObservable(
-                rs::DetectorObservableInstruction::SetDetector,
-            ),
+            inner: VInst::SetDetector,
         }
     }
 
     #[staticmethod]
     fn set_observable() -> Self {
         Self {
-            inner: rs::Instruction::DetectorObservable(
-                rs::DetectorObservableInstruction::SetObservable,
-            ),
+            inner: VInst::SetObservable,
         }
     }
 
     // ── Control ──
+    // `return` is lanes-native; `halt` is reused from vihaco-cpu.
 
     #[staticmethod]
     #[pyo3(name = "return_")]
     fn return_instr() -> Self {
         Self {
-            inner: rs::Instruction::Cpu(rs::CpuInstruction::Return),
+            inner: VInst::Return,
         }
     }
 
     #[staticmethod]
     fn halt() -> Self {
         Self {
-            inner: rs::Instruction::Cpu(rs::CpuInstruction::Halt),
+            inner: VInst::Cpu(Cpu::Halt),
         }
     }
 
     // ── Introspection ──
 
+    /// The vihaco opcode byte for this instruction (the outer enum's opcode;
+    /// for `Cpu(..)` this is the CPU device's opcode, not the nested one).
     #[getter]
     fn opcode(&self) -> u16 {
-        self.inner.opcode()
+        OpCode::opcode(&self.inner) as u16
     }
 
     fn op_name(&self) -> &'static str {
-        match &self.inner {
-            rs::Instruction::Cpu(cpu) => match cpu {
-                rs::CpuInstruction::ConstFloat(_) => "const_float",
-                rs::CpuInstruction::ConstInt(_) => "const_int",
-                rs::CpuInstruction::Pop => "pop",
-                rs::CpuInstruction::Dup => "dup",
-                rs::CpuInstruction::Swap => "swap",
-                rs::CpuInstruction::Return => "return",
-                rs::CpuInstruction::Halt => "halt",
-            },
-            rs::Instruction::LaneConst(lc) => match lc {
-                rs::LaneConstInstruction::ConstLoc(_) => "const_loc",
-                rs::LaneConstInstruction::ConstLane(_, _) => "const_lane",
-                rs::LaneConstInstruction::ConstZone(_) => "const_zone",
-            },
-            rs::Instruction::AtomArrangement(aa) => match aa {
-                rs::AtomArrangementInstruction::InitialFill { .. } => "initial_fill",
-                rs::AtomArrangementInstruction::Fill { .. } => "fill",
-                rs::AtomArrangementInstruction::Move { .. } => "move",
-            },
-            rs::Instruction::QuantumGate(qg) => match qg {
-                rs::QuantumGateInstruction::LocalR { .. } => "local_r",
-                rs::QuantumGateInstruction::LocalRz { .. } => "local_rz",
-                rs::QuantumGateInstruction::GlobalR => "global_r",
-                rs::QuantumGateInstruction::GlobalRz => "global_rz",
-                rs::QuantumGateInstruction::CZ => "cz",
-            },
-            rs::Instruction::Measurement(m) => match m {
-                rs::MeasurementInstruction::Measure { .. } => "measure",
-                rs::MeasurementInstruction::AwaitMeasure => "await_measure",
-            },
-            rs::Instruction::Array(arr) => match arr {
-                rs::ArrayInstruction::NewArray { .. } => "new_array",
-                rs::ArrayInstruction::GetItem { .. } => "get_item",
-            },
-            rs::Instruction::DetectorObservable(dob) => match dob {
-                rs::DetectorObservableInstruction::SetDetector => "set_detector",
-                rs::DetectorObservableInstruction::SetObservable => "set_observable",
-            },
-        }
+        self.inner.op_name()
     }
 
     fn float_value(&self) -> PyResult<f64> {
         match &self.inner {
-            rs::Instruction::Cpu(rs::CpuInstruction::ConstFloat(f)) => Ok(*f),
+            VInst::Cpu(Cpu::Const(Value::F64(f))) => Ok(*f),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "float_value() is only valid on const_float",
             )),
@@ -317,7 +272,7 @@ impl PyInstruction {
 
     fn int_value(&self) -> PyResult<i64> {
         match &self.inner {
-            rs::Instruction::Cpu(rs::CpuInstruction::ConstInt(n)) => Ok(*n),
+            VInst::Cpu(Cpu::Const(Value::I64(n))) => Ok(*n),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "int_value() is only valid on const_int",
             )),
@@ -326,10 +281,9 @@ impl PyInstruction {
 
     fn location_address(&self) -> PyResult<PyLocationAddr> {
         match &self.inner {
-            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(bits)) => {
-                let addr = rs_addr::LocationAddr::decode(*bits);
-                Ok(PyLocationAddr { inner: addr })
-            }
+            VInst::ConstLoc(bits) => Ok(PyLocationAddr {
+                inner: rs_addr::LocationAddr::decode(*bits),
+            }),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "location_address() is only valid on const_loc",
             )),
@@ -338,10 +292,9 @@ impl PyInstruction {
 
     fn lane_address(&self) -> PyResult<PyLaneAddr> {
         match &self.inner {
-            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLane(d0, d1)) => {
-                let addr = rs_addr::LaneAddr::decode(*d0, *d1);
-                Ok(PyLaneAddr { inner: addr })
-            }
+            VInst::ConstLane(bits) => Ok(PyLaneAddr {
+                inner: rs_addr::LaneAddr::decode_u64(*bits),
+            }),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "lane_address() is only valid on const_lane",
             )),
@@ -350,48 +303,45 @@ impl PyInstruction {
 
     fn zone_address(&self) -> PyResult<PyZoneAddr> {
         match &self.inner {
-            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(bits)) => {
-                let addr = rs_addr::ZoneAddr::decode(*bits);
-                Ok(PyZoneAddr { inner: addr })
-            }
+            VInst::ConstZone(bits) => Ok(PyZoneAddr {
+                inner: rs_addr::ZoneAddr::decode(*bits),
+            }),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "zone_address() is only valid on const_zone",
             )),
         }
     }
 
-    fn type_tag(&self) -> PyResult<u8> {
+    fn type_tag(&self) -> PyResult<u32> {
         match &self.inner {
-            rs::Instruction::Array(rs::ArrayInstruction::NewArray { type_tag, .. }) => {
-                Ok(*type_tag)
-            }
+            VInst::NewArray(type_tag, ..) => Ok(*type_tag),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "type_tag() is only valid on new_array",
             )),
         }
     }
 
-    fn dim0(&self) -> PyResult<u16> {
+    fn dim0(&self) -> PyResult<u32> {
         match &self.inner {
-            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim0, .. }) => Ok(*dim0),
+            VInst::NewArray(_, dim0, _) => Ok(*dim0),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "dim0() is only valid on new_array",
             )),
         }
     }
 
-    fn dim1(&self) -> PyResult<u16> {
+    fn dim1(&self) -> PyResult<u32> {
         match &self.inner {
-            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim1, .. }) => Ok(*dim1),
+            VInst::NewArray(_, _, dim1) => Ok(*dim1),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "dim1() is only valid on new_array",
             )),
         }
     }
 
-    fn ndims(&self) -> PyResult<u16> {
+    fn ndims(&self) -> PyResult<u32> {
         match &self.inner {
-            rs::Instruction::Array(rs::ArrayInstruction::GetItem { ndims }) => Ok(*ndims),
+            VInst::GetItem(ndims) => Ok(*ndims),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "ndims() is only valid on get_item",
             )),
@@ -400,18 +350,12 @@ impl PyInstruction {
 
     fn arity(&self) -> PyResult<u32> {
         match &self.inner {
-            rs::Instruction::AtomArrangement(
-                rs::AtomArrangementInstruction::InitialFill { arity }
-                | rs::AtomArrangementInstruction::Fill { arity }
-                | rs::AtomArrangementInstruction::Move { arity },
-            ) => Ok(*arity),
-            rs::Instruction::QuantumGate(
-                rs::QuantumGateInstruction::LocalR { arity }
-                | rs::QuantumGateInstruction::LocalRz { arity },
-            ) => Ok(*arity),
-            rs::Instruction::Measurement(rs::MeasurementInstruction::Measure { arity }) => {
-                Ok(*arity)
-            }
+            VInst::InitialFill(arity)
+            | VInst::Fill(arity)
+            | VInst::Move(arity)
+            | VInst::LocalR(arity)
+            | VInst::LocalRz(arity)
+            | VInst::Measure(arity) => Ok(*arity),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "arity() not applicable to this opcode",
             )),
@@ -427,97 +371,62 @@ impl PyInstruction {
     }
 }
 
-fn format_instruction(instr: &rs::Instruction) -> String {
+fn format_instruction(instr: &VInst) -> String {
     match instr {
-        rs::Instruction::Cpu(cpu) => match cpu {
-            rs::CpuInstruction::ConstFloat(f) => format!("Instruction.const_float({})", f),
-            rs::CpuInstruction::ConstInt(n) => format!("Instruction.const_int({})", n),
-            rs::CpuInstruction::Pop => "Instruction.pop()".to_string(),
-            rs::CpuInstruction::Dup => "Instruction.dup()".to_string(),
-            rs::CpuInstruction::Swap => "Instruction.swap()".to_string(),
-            rs::CpuInstruction::Return => "Instruction.return_()".to_string(),
-            rs::CpuInstruction::Halt => "Instruction.halt()".to_string(),
-        },
-        rs::Instruction::LaneConst(lc) => match lc {
-            rs::LaneConstInstruction::ConstLoc(bits) => {
-                let addr = rs_addr::LocationAddr::decode(*bits);
-                format!(
-                    "Instruction.const_loc(zone_id={}, word_id={}, site_id={})",
-                    addr.zone_id, addr.word_id, addr.site_id
-                )
+        VInst::Pop => "Instruction.pop()".to_string(),
+        VInst::Swap => "Instruction.swap()".to_string(),
+        VInst::Return => "Instruction.return_()".to_string(),
+        VInst::ConstLoc(bits) => {
+            let addr = rs_addr::LocationAddr::decode(*bits);
+            format!(
+                "Instruction.const_loc(zone_id={}, word_id={}, site_id={})",
+                addr.zone_id, addr.word_id, addr.site_id
+            )
+        }
+        VInst::ConstLane(bits) => {
+            let addr = rs_addr::LaneAddr::decode_u64(*bits);
+            let dir = match addr.direction {
+                rs_addr::Direction::Forward => "Direction.FORWARD",
+                rs_addr::Direction::Backward => "Direction.BACKWARD",
+            };
+            let mt = match addr.move_type {
+                rs_addr::MoveType::SiteBus => "MoveType.SITE",
+                rs_addr::MoveType::WordBus => "MoveType.WORD",
+                rs_addr::MoveType::ZoneBus => "MoveType.ZONE",
+            };
+            format!(
+                "Instruction.const_lane(move_type={}, zone_id={}, word_id={}, site_id={}, bus_id={}, direction={})",
+                mt, addr.zone_id, addr.word_id, addr.site_id, addr.bus_id, dir
+            )
+        }
+        VInst::ConstZone(bits) => {
+            let addr = rs_addr::ZoneAddr::decode(*bits);
+            format!("Instruction.const_zone(zone_id={})", addr.zone_id)
+        }
+        VInst::InitialFill(arity) => format!("Instruction.initial_fill({arity})"),
+        VInst::Fill(arity) => format!("Instruction.fill({arity})"),
+        VInst::Move(arity) => format!("Instruction.move_({arity})"),
+        VInst::LocalR(arity) => format!("Instruction.local_r({arity})"),
+        VInst::LocalRz(arity) => format!("Instruction.local_rz({arity})"),
+        VInst::GlobalR => "Instruction.global_r()".to_string(),
+        VInst::GlobalRz => "Instruction.global_rz()".to_string(),
+        VInst::Cz => "Instruction.cz()".to_string(),
+        VInst::Measure(arity) => format!("Instruction.measure({arity})"),
+        VInst::AwaitMeasure => "Instruction.await_measure()".to_string(),
+        VInst::NewArray(type_tag, dim0, dim1) => {
+            if *dim1 == 0 {
+                format!("Instruction.new_array({type_tag}, {dim0})")
+            } else {
+                format!("Instruction.new_array({type_tag}, {dim0}, {dim1})")
             }
-            rs::LaneConstInstruction::ConstLane(d0, d1) => {
-                let addr = rs_addr::LaneAddr::decode(*d0, *d1);
-                let dir = match addr.direction {
-                    rs_addr::Direction::Forward => "Direction.FORWARD",
-                    rs_addr::Direction::Backward => "Direction.BACKWARD",
-                };
-                let mt = match addr.move_type {
-                    rs_addr::MoveType::SiteBus => "MoveType.SITE",
-                    rs_addr::MoveType::WordBus => "MoveType.WORD",
-                    rs_addr::MoveType::ZoneBus => "MoveType.ZONE",
-                };
-                format!(
-                    "Instruction.const_lane(move_type={}, zone_id={}, word_id={}, site_id={}, bus_id={}, direction={})",
-                    mt, addr.zone_id, addr.word_id, addr.site_id, addr.bus_id, dir
-                )
-            }
-            rs::LaneConstInstruction::ConstZone(bits) => {
-                let addr = rs_addr::ZoneAddr::decode(*bits);
-                format!("Instruction.const_zone(zone_id={})", addr.zone_id)
-            }
-        },
-        rs::Instruction::AtomArrangement(aa) => match aa {
-            rs::AtomArrangementInstruction::InitialFill { arity } => {
-                format!("Instruction.initial_fill({})", arity)
-            }
-            rs::AtomArrangementInstruction::Fill { arity } => {
-                format!("Instruction.fill({})", arity)
-            }
-            rs::AtomArrangementInstruction::Move { arity } => {
-                format!("Instruction.move_({})", arity)
-            }
-        },
-        rs::Instruction::QuantumGate(qg) => match qg {
-            rs::QuantumGateInstruction::LocalR { arity } => {
-                format!("Instruction.local_r({})", arity)
-            }
-            rs::QuantumGateInstruction::LocalRz { arity } => {
-                format!("Instruction.local_rz({})", arity)
-            }
-            rs::QuantumGateInstruction::GlobalR => "Instruction.global_r()".to_string(),
-            rs::QuantumGateInstruction::GlobalRz => "Instruction.global_rz()".to_string(),
-            rs::QuantumGateInstruction::CZ => "Instruction.cz()".to_string(),
-        },
-        rs::Instruction::Measurement(m) => match m {
-            rs::MeasurementInstruction::Measure { arity } => {
-                format!("Instruction.measure({})", arity)
-            }
-            rs::MeasurementInstruction::AwaitMeasure => "Instruction.await_measure()".to_string(),
-        },
-        rs::Instruction::Array(arr) => match arr {
-            rs::ArrayInstruction::NewArray {
-                type_tag,
-                dim0,
-                dim1,
-            } => {
-                if *dim1 == 0 {
-                    format!("Instruction.new_array({}, {})", type_tag, dim0)
-                } else {
-                    format!("Instruction.new_array({}, {}, {})", type_tag, dim0, dim1)
-                }
-            }
-            rs::ArrayInstruction::GetItem { ndims } => {
-                format!("Instruction.get_item({})", ndims)
-            }
-        },
-        rs::Instruction::DetectorObservable(dob) => match dob {
-            rs::DetectorObservableInstruction::SetDetector => {
-                "Instruction.set_detector()".to_string()
-            }
-            rs::DetectorObservableInstruction::SetObservable => {
-                "Instruction.set_observable()".to_string()
-            }
-        },
+        }
+        VInst::GetItem(ndims) => format!("Instruction.get_item({ndims})"),
+        VInst::SetDetector => "Instruction.set_detector()".to_string(),
+        VInst::SetObservable => "Instruction.set_observable()".to_string(),
+        VInst::Cpu(Cpu::Const(Value::F64(f))) => format!("Instruction.const_float({f})"),
+        VInst::Cpu(Cpu::Const(Value::I64(n))) => format!("Instruction.const_int({n})"),
+        VInst::Cpu(Cpu::Dup) => "Instruction.dup()".to_string(),
+        VInst::Cpu(Cpu::Halt) => "Instruction.halt()".to_string(),
+        VInst::Cpu(other) => format!("Instruction.cpu({other:?})"),
     }
 }

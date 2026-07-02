@@ -1,6 +1,6 @@
 use std::os::raw::c_char;
 
-use bloqade_lanes_bytecode_core::bytecode::validate;
+use bloqade_lanes_bytecode_core::isa::validate;
 
 use super::error::{BlqdStatus, clear_last_error, set_last_error};
 use super::handles::{BLQDArchSpec, BLQDProgram, BLQDValidationErrors};
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn blqd_validate_addresses(
 
     let prog = unsafe { &*prog };
     let arch = unsafe { &*arch };
-    let errors = validate::validate_arch_constraints(&prog.inner, &arch.inner);
+    let errors = validate::validate(&prog.inner, Some(&arch.inner));
     let status = if errors.is_empty() {
         BlqdStatus::Ok
     } else {
@@ -57,7 +57,8 @@ pub unsafe extern "C" fn blqd_validate_addresses(
     status
 }
 
-/// Stack type simulation.
+/// Stack type simulation (underflow, type mismatches, and lane/location group
+/// checks). Runs without an arch spec (duplicate-only group checks).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn blqd_simulate_stack(
     prog: *const BLQDProgram,

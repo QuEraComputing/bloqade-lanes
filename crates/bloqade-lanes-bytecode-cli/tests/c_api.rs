@@ -12,7 +12,7 @@ use bloqade_lanes_bytecode::ffi::validate::*;
 
 #[test]
 fn text_to_binary_to_text_round_trip() {
-    let source = CString::new(".version 1.0\nconst_int 42\nhalt\n").unwrap();
+    let source = CString::new("version 1.0;\nfn @main() {\n  const.i64 42\n  halt\n}\n").unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
 
     // Parse text
@@ -51,7 +51,7 @@ fn text_to_binary_to_text_round_trip() {
     assert!(!text_out.is_null());
 
     let text_str = unsafe { CStr::from_ptr(text_out) }.to_str().unwrap();
-    assert!(text_str.contains("const_int 42"));
+    assert!(text_str.contains("const.i64 42"));
     assert!(text_str.contains("halt"));
 
     // Cleanup
@@ -66,7 +66,7 @@ fn text_to_binary_to_text_round_trip() {
 #[test]
 fn binary_decode_known_good() {
     // Build a known binary via text parse, then decode it
-    let source = CString::new(".version 1.0\nhalt\n").unwrap();
+    let source = CString::new("version 1.0;\nfn @main() {\n  halt\n}\n").unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
     let status = unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
     assert_eq!(status, BlqdStatus::Ok);
@@ -155,7 +155,7 @@ fn validation_error_message_null_returns_null() {
 
 #[test]
 fn invalid_input_sets_last_error() {
-    let bad_source = CString::new("no version directive\nhalt\n").unwrap();
+    let bad_source = CString::new("no version directive\nfn @main() {\n  halt\n}\n").unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
 
     let status = unsafe { blqd_program_from_text(bad_source.as_ptr(), &mut prog) };
@@ -189,7 +189,7 @@ fn successful_call_clears_last_error() {
     assert!(!blqd_last_error().is_null());
 
     // Now make a successful call
-    let good_source = CString::new(".version 1.0\nhalt\n").unwrap();
+    let good_source = CString::new("version 1.0;\nfn @main() {\n  halt\n}\n").unwrap();
     let status = unsafe { blqd_program_from_text(good_source.as_ptr(), &mut prog) };
     assert_eq!(status, BlqdStatus::Ok);
 
@@ -203,8 +203,10 @@ fn successful_call_clears_last_error() {
 
 #[test]
 fn validate_structure_valid_program() {
-    let source =
-        CString::new(".version 1.0\nconst_loc 0x00000000\ninitial_fill 1\nhalt\n").unwrap();
+    let source = CString::new(
+        "version 1.0;\nfn @main() {\n  const_loc 0x00000000\n  initial_fill 1\n  halt\n}\n",
+    )
+    .unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
     unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
 
@@ -222,8 +224,10 @@ fn validate_structure_valid_program() {
 #[test]
 fn validate_structure_with_errors() {
     // initial_fill after a non-constant instruction
-    let source =
-        CString::new(".version 1.0\nhalt\nconst_loc 0x00000000\ninitial_fill 1\n").unwrap();
+    let source = CString::new(
+        "version 1.0;\nfn @main() {\n  halt\n  const_loc 0x00000000\n  initial_fill 1\n}\n",
+    )
+    .unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
     unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
 
@@ -251,8 +255,10 @@ fn validate_structure_with_errors() {
 
 #[test]
 fn simulate_stack_valid() {
-    let source =
-        CString::new(".version 1.0\nconst_loc 0x00000000\ninitial_fill 1\nhalt\n").unwrap();
+    let source = CString::new(
+        "version 1.0;\nfn @main() {\n  const_loc 0x00000000\n  initial_fill 1\n  halt\n}\n",
+    )
+    .unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
     unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
 
@@ -269,8 +275,8 @@ fn simulate_stack_valid() {
 
 #[test]
 fn simulate_stack_with_errors() {
-    // Pop on empty stack
-    let source = CString::new(".version 1.0\npop\n").unwrap();
+    // Pop on an empty stack underflows.
+    let source = CString::new("version 1.0;\nfn @main() {\n  pop\n}\n").unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();
     unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
 
@@ -330,7 +336,7 @@ fn arch_from_json_invalid() {
 #[test]
 fn validate_addresses_with_arch() {
     let source = CString::new(
-        ".version 1.0\nconst_loc 0x00000000\nconst_loc 0x00000001\ninitial_fill 2\nhalt\n",
+        "version 1.0;\nfn @main() {\n  const_loc 0x00000000\n  const_loc 0x00000001\n  initial_fill 2\n  halt\n}\n",
     )
     .unwrap();
     let mut prog: *mut BLQDProgram = ptr::null_mut();

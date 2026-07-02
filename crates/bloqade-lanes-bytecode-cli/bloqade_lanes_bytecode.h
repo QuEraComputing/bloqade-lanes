@@ -120,7 +120,8 @@ enum BlqdStatus blqd_validate_addresses(const struct BLQDProgram *prog,
                                         struct BLQDValidationErrors **out);
 
 /**
- * Stack type simulation.
+ * Stack type simulation (underflow, type mismatches, and lane/location group
+ * checks). Runs without an arch spec (duplicate-only group checks).
  */
 enum BlqdStatus blqd_simulate_stack(const struct BLQDProgram *prog,
                                     struct BLQDValidationErrors **out);
