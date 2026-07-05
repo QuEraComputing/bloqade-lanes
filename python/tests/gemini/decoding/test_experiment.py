@@ -11,6 +11,7 @@ import pytest
 import stim
 from bloqade.decoders import BaseDecoder
 from bloqade.squin.gate import stmts as gate_stmts
+from kirin import ir
 from kirin.dialects import func, py
 
 from bloqade.gemini.decoding import (
@@ -25,7 +26,6 @@ from bloqade.gemini.decoding import (
 from bloqade.gemini.decoding.confidence import ConfidenceDecoder
 from bloqade.gemini.decoding.experiments import (
     _ExperimentDevice,
-    _ExperimentRunResult,
     _ExperimentTask,
 )
 from bloqade.gemini.decoding.sampling import _BasisDataset
@@ -429,9 +429,11 @@ def test_postselection_experiment_make_tasks_sets_cache(msd_mld_exp, msd_mld_ker
 
 def test_postselection_experiment_make_tasks_uses_abstract_simulator_types():
     annotations = get_type_hints(PostSelectionExperiment.make_tasks)
+    task_annotations = get_type_hints(_ExperimentDevice.task)
 
-    assert annotations["device"] == _ExperimentDevice[_ExperimentRunResult]
-    assert annotations["return"] == dict[str, _ExperimentTask[_ExperimentRunResult]]
+    assert annotations["device"] == _ExperimentDevice
+    assert annotations["return"] == dict[str, _ExperimentTask]
+    assert task_annotations["kernel"] == ir.Method
 
 
 @dataclass

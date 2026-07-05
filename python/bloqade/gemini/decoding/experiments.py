@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any, Callable, Literal, Protocol, TypeVar, cast
+from typing import Any, Callable, Literal, Protocol, cast
 
 import numpy as np
 import stim
@@ -32,10 +32,6 @@ from .special_tasks import _apply_noiseless_unitary_prefix
 from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 from .workflow import _plot_decoder_curves
 
-_ExperimentTaskResult_co = TypeVar(
-    "_ExperimentTaskResult_co", bound="_ExperimentResult", covariant=True
-)
-
 
 class _ExperimentResult(Protocol):
     """Minimum result surface needed by postselection experiments."""
@@ -51,15 +47,15 @@ class _ExperimentResult(Protocol):
         ...
 
 
-class _ExperimentFuture(Protocol[_ExperimentTaskResult_co]):
+class _ExperimentFuture(Protocol):
     """Minimum future surface needed by postselection experiments."""
 
-    def result(self) -> _ExperimentTaskResult_co:
+    def result(self) -> _ExperimentResult:
         """Return the completed task result."""
         ...
 
 
-class _ExperimentTask(Protocol[_ExperimentTaskResult_co]):
+class _ExperimentTask(Protocol):
     """Minimum async task surface needed by postselection experiments."""
 
     def run_async(
@@ -68,24 +64,21 @@ class _ExperimentTask(Protocol[_ExperimentTaskResult_co]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
-    ) -> _ExperimentFuture[_ExperimentTaskResult_co]:
+    ) -> _ExperimentFuture:
         """Run the task asynchronously and return detector/observable data."""
         ...
 
 
-class _ExperimentDevice(Protocol[_ExperimentTaskResult_co]):
+class _ExperimentDevice(Protocol):
     """Minimum task factory surface needed by postselection experiments."""
 
     def task(
         self,
-        kernel: ir.Method[..., _LogicalTomographyReturn],
+        kernel: ir.Method,
         /,
-    ) -> _ExperimentTask[_ExperimentTaskResult_co]:
+    ) -> _ExperimentTask:
         """Create a task for the tomography kernel."""
         ...
-
-
-_ExperimentRunResult = _ExperimentResult
 
 
 def magic_state_dist_steane(
@@ -153,7 +146,7 @@ class _PostSelectionExperimentCache:
     raw_results: Mapping[str, _BasisDataset] | None
     decoded_results: Mapping[str, _DecodedPostselectionResult] | None
     thresholded_data: PostselectionCurveData | None
-    hardware_tasks: Mapping[str, _ExperimentTask[_ExperimentRunResult]] | None
+    hardware_tasks: Mapping[str, _ExperimentTask] | None
 
     def __init__(self):
         self.dem_kernels = None
@@ -167,7 +160,7 @@ class _PostSelectionExperimentCache:
 
 
 def _basis_dataset_from_task_result(
-    result: _ExperimentRunResult,
+    result: _ExperimentResult,
 ) -> _BasisDataset:
     if isinstance(result, _BasisDataset):
         return result
@@ -358,13 +351,13 @@ class PostSelectionExperiment:
 
     def make_tasks(
         self,
-        device: _ExperimentDevice[_ExperimentRunResult],
-    ) -> dict[str, _ExperimentTask[_ExperimentRunResult]]:
+        device: _ExperimentDevice,
+    ) -> dict[str, _ExperimentTask]:
         """Prepares tasks for submission to the hardware device."""
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
-        actual_tasks: dict[str, _ExperimentTask[_ExperimentRunResult]] = {
+        actual_tasks: dict[str, _ExperimentTask] = {
             basis: device.task(kernel.similar())
             for basis, kernel in dem_kernels.items()
         }
