@@ -603,6 +603,8 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
     def detector_error_model(self) -> DetectorErrorModel:
         """The STIM detector error model corresponding to the noisy circuit."""
         import stim
+
+        # TODO: redefine this function somewhere else so CliffT sim path doesn't have to import tsim?
         from tsim.circuit import (
             get_detector_error_model,  # type: ignore[reportMissingImports]
         )
@@ -624,6 +626,8 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
         CliffT compilation.
         """
         import clifft
+
+        # TODO: redefine this function somewhere else so CliffT sim path doesn't have to import tsim?
         from tsim.utils.program_text import (
             stim_to_shorthand,  # type: ignore[reportMissingImports]
         )
@@ -636,6 +640,8 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
     def clifft_noiseless_tsim_program(self) -> Program:
         """The noiseless CliffT program."""
         import clifft
+
+        # TODO: redefine this function somewhere else so CliffT sim path doesn't have to import tsim?
         from tsim.utils.program_text import (
             stim_to_shorthand,  # type: ignore[reportMissingImports]
         )
@@ -805,10 +811,12 @@ class AbstractSimulator(abc.ABC):
     seed: int | None = None
     """Optional backend seed for task sampling."""
 
+    # TODO: rename "kernel" arg in "task" function to something that both logical and physical simulators can agree on? for arg names
+    # ^ ideally, in a "nonbreaking" fashion
     @abc.abstractmethod
     def task(
         self,
-        kernel: ir.Method[..., TaskRet],
+        kernel: ir.Method[[], TaskRet],
         *args: Any,
         **kwargs: Any,
     ) -> AbstractSimulatorTask[TaskRet]:
@@ -818,7 +826,7 @@ class AbstractSimulator(abc.ABC):
     @overload
     def run(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -828,7 +836,7 @@ class AbstractSimulator(abc.ABC):
     @overload
     def run(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -838,7 +846,7 @@ class AbstractSimulator(abc.ABC):
     @overload
     def run(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -847,7 +855,7 @@ class AbstractSimulator(abc.ABC):
 
     def run(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -876,7 +884,7 @@ class AbstractSimulator(abc.ABC):
     @overload
     def run_async(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -886,7 +894,7 @@ class AbstractSimulator(abc.ABC):
     @overload
     def run_async(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -896,7 +904,7 @@ class AbstractSimulator(abc.ABC):
     @overload
     def run_async(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -905,7 +913,7 @@ class AbstractSimulator(abc.ABC):
 
     def run_async(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -933,7 +941,7 @@ class AbstractSimulator(abc.ABC):
         return task.run_async(shots, with_noise)
 
     def tsim_circuit(
-        self, logical_squin_kernel: ir.Method[..., TaskRet], with_noise: bool = True
+        self, logical_squin_kernel: ir.Method[[], TaskRet], with_noise: bool = True
     ) -> tsim_backend.Circuit:
         """Compile the logical squin kernel to the tsim circuit.
 
@@ -952,7 +960,7 @@ class AbstractSimulator(abc.ABC):
 
     def visualize(
         self,
-        logical_squin_kernel: ir.Method[..., TaskRet],
+        logical_squin_kernel: ir.Method[[], TaskRet],
         animated: bool = False,
         interactive: bool = True,
     ):
@@ -969,7 +977,7 @@ class AbstractSimulator(abc.ABC):
         )
 
     def physical_squin_kernel(
-        self, logical_squin_kernel: ir.Method[..., TaskRet]
+        self, logical_squin_kernel: ir.Method[[], TaskRet]
     ) -> ir.Method[[], TaskRet]:
         """Compile the logical squin kernel to the physical squin kernel.
 
@@ -983,7 +991,7 @@ class AbstractSimulator(abc.ABC):
         return self.task(logical_squin_kernel).physical_squin_kernel
 
     def physical_move_kernel(
-        self, logical_squin_kernel: ir.Method[..., TaskRet]
+        self, logical_squin_kernel: ir.Method[[], TaskRet]
     ) -> ir.Method[[], TaskRet]:
         """Compile the logical squin kernel to the physical move kernel.
 
@@ -997,7 +1005,7 @@ class AbstractSimulator(abc.ABC):
         return self.task(logical_squin_kernel).physical_move_kernel
 
     def fidelity_bounds(
-        self, logical_squin_kernel: ir.Method[..., TaskRet]
+        self, logical_squin_kernel: ir.Method[[], TaskRet]
     ) -> tuple[float, float]:
         """Get the fidelity bounds for the logical squin kernel.
 

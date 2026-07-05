@@ -56,7 +56,7 @@ class PhysicalSimulator(AbstractSimulator):
 
     def task(
         self,
-        physical_kernel: ir.Method[..., RetType],
+        physical_kernel: ir.Method[[], RetType],
         place_opt_type: type[passes.Pass] | None = None,
         placement_strategy: "PlacementStrategyABC | None" = None,
     ) -> PhysicalSimulatorTask[RetType]:
@@ -85,7 +85,7 @@ class PhysicalSimulator(AbstractSimulator):
 
     def _compile_physical_task(
         self,
-        physical_kernel: ir.Method[..., RetType],
+        physical_kernel: ir.Method[[], RetType],
         place_opt_type: type[passes.Pass] | None = None,
         placement_strategy: "PlacementStrategyABC | None" = None,
     ) -> tuple[ir.Method[[], RetType], "atom.PostProcessing[RetType]"]:
@@ -118,7 +118,7 @@ class PhysicalCliffTSimulator(AbstractSimulator):
 
     def task(
         self,
-        physical_kernel: ir.Method[..., RetType],
+        physical_kernel: ir.Method[[], RetType],
         place_opt_type: type[passes.Pass] | None = None,
         placement_strategy: "PlacementStrategyABC | None" = None,
     ) -> PhysicalCliffTSimulatorTask[RetType]:
@@ -147,7 +147,7 @@ class PhysicalCliffTSimulator(AbstractSimulator):
 
     def _compile_physical_task(
         self,
-        physical_kernel: ir.Method[..., RetType],
+        physical_kernel: ir.Method[[], RetType],
         place_opt_type: type[passes.Pass] | None = None,
         placement_strategy: "PlacementStrategyABC | None" = None,
     ) -> tuple[ir.Method[[], RetType], "atom.PostProcessing[RetType]"]:

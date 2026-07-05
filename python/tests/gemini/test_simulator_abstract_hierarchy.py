@@ -72,6 +72,46 @@ def test_task_source_kernel_lives_on_abstract_task():
     )
 
 
+def test_simulator_task_entrypoints_expect_zero_arg_kernels():
+    assert AbstractSimulator.task.__annotations__["kernel"] == "ir.Method[[], TaskRet]"
+    assert AbstractSimulator.run.__annotations__["logical_squin_kernel"] == (
+        "ir.Method[[], TaskRet]"
+    )
+    assert AbstractSimulator.run_async.__annotations__["logical_squin_kernel"] == (
+        "ir.Method[[], TaskRet]"
+    )
+    assert AbstractSimulator.tsim_circuit.__annotations__["logical_squin_kernel"] == (
+        "ir.Method[[], TaskRet]"
+    )
+    assert AbstractSimulator.visualize.__annotations__["logical_squin_kernel"] == (
+        "ir.Method[[], TaskRet]"
+    )
+    assert (
+        AbstractSimulator.physical_squin_kernel.__annotations__["logical_squin_kernel"]
+        == "ir.Method[[], TaskRet]"
+    )
+    assert (
+        AbstractSimulator.physical_move_kernel.__annotations__["logical_squin_kernel"]
+        == "ir.Method[[], TaskRet]"
+    )
+    assert AbstractSimulator.fidelity_bounds.__annotations__[
+        "logical_squin_kernel"
+    ] == ("ir.Method[[], TaskRet]")
+
+    assert GeminiLogicalSimulator.task.__annotations__["logical_kernel"] == (
+        "Union[ir.Method[[], RetType], Callable[..., Any]]"
+    )
+    assert GeminiLogicalCliffTSimulator.task.__annotations__["logical_kernel"] == (
+        "Union[ir.Method[[], RetType], Callable[..., Any]]"
+    )
+    assert PhysicalSimulator.task.__annotations__["physical_kernel"] == (
+        "ir.Method[[], RetType]"
+    )
+    assert PhysicalCliffTSimulator.task.__annotations__["physical_kernel"] == (
+        "ir.Method[[], RetType]"
+    )
+
+
 def test_physical_task_source_kernel_aliases_logical_kernel_field():
     source_kernel = MagicMock()
     task = PhysicalSimulatorTask(

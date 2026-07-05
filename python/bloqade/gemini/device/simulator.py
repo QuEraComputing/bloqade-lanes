@@ -52,7 +52,7 @@ class GeminiLogicalSimulator(AbstractSimulator):
 
     def task(
         self,
-        logical_kernel: Union[ir.Method[..., RetType], Callable[..., Any]],
+        logical_kernel: Union[ir.Method[[], RetType], Callable[..., Any]],
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
     ) -> GeminiLogicalSimulatorTask[RetType]:
@@ -83,6 +83,7 @@ class GeminiLogicalSimulator(AbstractSimulator):
             post_processing,
         ) = compile_task(logical_kernel, m2dets, m2obs)
 
+        # NOTE: kept for backwards compatibility only
         if self.backend == "clifft":
             from bloqade.gemini.decoding.tasks import _CliffTSimulatorTask
 
@@ -116,7 +117,7 @@ class GeminiLogicalCliffTSimulator(AbstractSimulator):
 
     def task(
         self,
-        logical_kernel: Union[ir.Method[..., RetType], Callable[..., Any]],
+        logical_kernel: Union[ir.Method[[], RetType], Callable[..., Any]],
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
     ) -> GeminiLogicalCliffTSimulatorTask[RetType]:
