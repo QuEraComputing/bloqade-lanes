@@ -13,41 +13,41 @@ use bloqade_lanes_bytecode::ffi::validate::*;
 #[test]
 fn text_to_binary_to_text_round_trip() {
     let source = CString::new("version 1.0;\nfn @main() {\n  const.i64 42\n  halt\n}\n").unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
+    let mut prog: *mut LANESProgram = ptr::null_mut();
 
     // Parse text
-    let status = unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
-    assert_eq!(status, BlqdStatus::Ok);
+    let status = unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
+    assert_eq!(status, LanesStatus::Ok);
     assert!(!prog.is_null());
 
     // Check instruction count
-    let count = unsafe { blqd_program_instruction_count(prog) };
+    let count = unsafe { lanes_program_instruction_count(prog) };
     assert_eq!(count, 2);
 
     // Check version
     let mut major: u16 = 0;
     let mut minor: u16 = 0;
-    unsafe { blqd_program_version(prog, &mut major, &mut minor) };
+    unsafe { lanes_program_version(prog, &mut major, &mut minor) };
     assert_eq!(major, 1);
     assert_eq!(minor, 0);
 
     // Serialize to binary
     let mut bin_data: *mut u8 = ptr::null_mut();
     let mut bin_len: usize = 0;
-    let status = unsafe { blqd_program_to_binary(prog, &mut bin_data, &mut bin_len) };
-    assert_eq!(status, BlqdStatus::Ok);
+    let status = unsafe { lanes_program_to_binary(prog, &mut bin_data, &mut bin_len) };
+    assert_eq!(status, LanesStatus::Ok);
     assert!(!bin_data.is_null());
     assert!(bin_len > 0);
 
     // Parse binary back
-    let mut prog2: *mut BLQDProgram = ptr::null_mut();
-    let status = unsafe { blqd_program_from_binary(bin_data, bin_len, &mut prog2) };
-    assert_eq!(status, BlqdStatus::Ok);
+    let mut prog2: *mut LANESProgram = ptr::null_mut();
+    let status = unsafe { lanes_program_from_binary(bin_data, bin_len, &mut prog2) };
+    assert_eq!(status, LanesStatus::Ok);
 
     // Convert back to text
     let mut text_out: *mut std::os::raw::c_char = ptr::null_mut();
-    let status = unsafe { blqd_program_to_text(prog2, &mut text_out) };
-    assert_eq!(status, BlqdStatus::Ok);
+    let status = unsafe { lanes_program_to_text(prog2, &mut text_out) };
+    assert_eq!(status, LanesStatus::Ok);
     assert!(!text_out.is_null());
 
     let text_str = unsafe { CStr::from_ptr(text_out) }.to_str().unwrap();
@@ -56,10 +56,10 @@ fn text_to_binary_to_text_round_trip() {
 
     // Cleanup
     unsafe {
-        blqd_free_string(text_out);
-        blqd_free_bytes(bin_data, bin_len);
-        blqd_program_free(prog2);
-        blqd_program_free(prog);
+        lanes_free_string(text_out);
+        lanes_free_bytes(bin_data, bin_len);
+        lanes_program_free(prog2);
+        lanes_program_free(prog);
     }
 }
 
@@ -67,23 +67,23 @@ fn text_to_binary_to_text_round_trip() {
 fn binary_decode_known_good() {
     // Build a known binary via text parse, then decode it
     let source = CString::new("version 1.0;\nfn @main() {\n  halt\n}\n").unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
-    let status = unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
-    assert_eq!(status, BlqdStatus::Ok);
+    let mut prog: *mut LANESProgram = ptr::null_mut();
+    let status = unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
+    assert_eq!(status, LanesStatus::Ok);
 
     let mut bin_data: *mut u8 = ptr::null_mut();
     let mut bin_len: usize = 0;
-    unsafe { blqd_program_to_binary(prog, &mut bin_data, &mut bin_len) };
+    unsafe { lanes_program_to_binary(prog, &mut bin_data, &mut bin_len) };
 
-    let mut prog2: *mut BLQDProgram = ptr::null_mut();
-    let status = unsafe { blqd_program_from_binary(bin_data, bin_len, &mut prog2) };
-    assert_eq!(status, BlqdStatus::Ok);
-    assert_eq!(unsafe { blqd_program_instruction_count(prog2) }, 1);
+    let mut prog2: *mut LANESProgram = ptr::null_mut();
+    let status = unsafe { lanes_program_from_binary(bin_data, bin_len, &mut prog2) };
+    assert_eq!(status, LanesStatus::Ok);
+    assert_eq!(unsafe { lanes_program_instruction_count(prog2) }, 1);
 
     unsafe {
-        blqd_free_bytes(bin_data, bin_len);
-        blqd_program_free(prog2);
-        blqd_program_free(prog);
+        lanes_free_bytes(bin_data, bin_len);
+        lanes_program_free(prog2);
+        lanes_program_free(prog);
     }
 }
 
@@ -91,64 +91,64 @@ fn binary_decode_known_good() {
 
 #[test]
 fn null_pointer_returns_err_null_ptr() {
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
+    let mut prog: *mut LANESProgram = ptr::null_mut();
 
     // from_binary with null data
-    let status = unsafe { blqd_program_from_binary(ptr::null(), 0, &mut prog) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let status = unsafe { lanes_program_from_binary(ptr::null(), 0, &mut prog) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // from_binary with null out
     let data: [u8; 1] = [0];
-    let status = unsafe { blqd_program_from_binary(data.as_ptr(), 1, ptr::null_mut()) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let status = unsafe { lanes_program_from_binary(data.as_ptr(), 1, ptr::null_mut()) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // from_text with null text
-    let status = unsafe { blqd_program_from_text(ptr::null(), &mut prog) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let status = unsafe { lanes_program_from_text(ptr::null(), &mut prog) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // to_binary with null prog
     let mut out_data: *mut u8 = ptr::null_mut();
     let mut out_len: usize = 0;
-    let status = unsafe { blqd_program_to_binary(ptr::null(), &mut out_data, &mut out_len) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let status = unsafe { lanes_program_to_binary(ptr::null(), &mut out_data, &mut out_len) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // to_text with null prog
     let mut text_out: *mut std::os::raw::c_char = ptr::null_mut();
-    let status = unsafe { blqd_program_to_text(ptr::null(), &mut text_out) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let status = unsafe { lanes_program_to_text(ptr::null(), &mut text_out) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // arch_from_json with null json
-    let mut arch: *mut BLQDArchSpec = ptr::null_mut();
-    let status = unsafe { blqd_arch_from_json(ptr::null(), &mut arch) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let mut arch: *mut LANESArchSpec = ptr::null_mut();
+    let status = unsafe { lanes_arch_from_json(ptr::null(), &mut arch) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // validate_structure with null prog
-    let mut errs: *mut BLQDValidationErrors = ptr::null_mut();
-    let status = unsafe { blqd_validate_structure(ptr::null(), &mut errs) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let mut errs: *mut LANESValidationErrors = ptr::null_mut();
+    let status = unsafe { lanes_validate_structure(ptr::null(), &mut errs) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // validate_addresses with null prog
-    let status = unsafe { blqd_validate_addresses(ptr::null(), ptr::null(), &mut errs) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let status = unsafe { lanes_validate_addresses(ptr::null(), ptr::null(), &mut errs) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 
     // simulate_stack with null prog
-    let status = unsafe { blqd_simulate_stack(ptr::null(), &mut errs) };
-    assert_eq!(status, BlqdStatus::ErrNullPtr);
+    let status = unsafe { lanes_simulate_stack(ptr::null(), &mut errs) };
+    assert_eq!(status, LanesStatus::ErrNullPtr);
 }
 
 #[test]
 fn instruction_count_null_returns_zero() {
-    assert_eq!(unsafe { blqd_program_instruction_count(ptr::null()) }, 0);
+    assert_eq!(unsafe { lanes_program_instruction_count(ptr::null()) }, 0);
 }
 
 #[test]
 fn validation_errors_count_null_returns_zero() {
-    assert_eq!(unsafe { blqd_validation_errors_count(ptr::null()) }, 0);
+    assert_eq!(unsafe { lanes_validation_errors_count(ptr::null()) }, 0);
 }
 
 #[test]
 fn validation_error_message_null_returns_null() {
-    assert!(unsafe { blqd_validation_error_message(ptr::null(), 0) }.is_null());
+    assert!(unsafe { lanes_validation_error_message(ptr::null(), 0) }.is_null());
 }
 
 // --- Error message tests ---
@@ -156,13 +156,13 @@ fn validation_error_message_null_returns_null() {
 #[test]
 fn invalid_input_sets_last_error() {
     let bad_source = CString::new("no version directive\nfn @main() {\n  halt\n}\n").unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
+    let mut prog: *mut LANESProgram = ptr::null_mut();
 
-    let status = unsafe { blqd_program_from_text(bad_source.as_ptr(), &mut prog) };
-    assert_eq!(status, BlqdStatus::ErrParse);
+    let status = unsafe { lanes_program_from_text(bad_source.as_ptr(), &mut prog) };
+    assert_eq!(status, LanesStatus::ErrParse);
     assert!(prog.is_null());
 
-    let err_ptr = blqd_last_error();
+    let err_ptr = lanes_last_error();
     assert!(!err_ptr.is_null());
     let err_msg = unsafe { CStr::from_ptr(err_ptr) }.to_str().unwrap();
     assert!(!err_msg.is_empty());
@@ -171,12 +171,12 @@ fn invalid_input_sets_last_error() {
 #[test]
 fn invalid_binary_sets_last_error() {
     let bad_data: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
+    let mut prog: *mut LANESProgram = ptr::null_mut();
 
-    let status = unsafe { blqd_program_from_binary(bad_data.as_ptr(), bad_data.len(), &mut prog) };
-    assert_eq!(status, BlqdStatus::ErrDecode);
+    let status = unsafe { lanes_program_from_binary(bad_data.as_ptr(), bad_data.len(), &mut prog) };
+    assert_eq!(status, LanesStatus::ErrDecode);
 
-    let err_ptr = blqd_last_error();
+    let err_ptr = lanes_last_error();
     assert!(!err_ptr.is_null());
 }
 
@@ -184,19 +184,19 @@ fn invalid_binary_sets_last_error() {
 fn successful_call_clears_last_error() {
     // First, trigger an error
     let bad_source = CString::new("invalid").unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
-    unsafe { blqd_program_from_text(bad_source.as_ptr(), &mut prog) };
-    assert!(!blqd_last_error().is_null());
+    let mut prog: *mut LANESProgram = ptr::null_mut();
+    unsafe { lanes_program_from_text(bad_source.as_ptr(), &mut prog) };
+    assert!(!lanes_last_error().is_null());
 
     // Now make a successful call
     let good_source = CString::new("version 1.0;\nfn @main() {\n  halt\n}\n").unwrap();
-    let status = unsafe { blqd_program_from_text(good_source.as_ptr(), &mut prog) };
-    assert_eq!(status, BlqdStatus::Ok);
+    let status = unsafe { lanes_program_from_text(good_source.as_ptr(), &mut prog) };
+    assert_eq!(status, LanesStatus::Ok);
 
-    let err_ptr = blqd_last_error();
+    let err_ptr = lanes_last_error();
     assert!(err_ptr.is_null());
 
-    unsafe { blqd_program_free(prog) };
+    unsafe { lanes_program_free(prog) };
 }
 
 // --- Validation tests ---
@@ -207,17 +207,17 @@ fn validate_structure_valid_program() {
         "version 1.0;\nfn @main() {\n  const_loc 0x00000000\n  initial_fill 1\n  halt\n}\n",
     )
     .unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
-    unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
+    let mut prog: *mut LANESProgram = ptr::null_mut();
+    unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 
-    let mut errs: *mut BLQDValidationErrors = ptr::null_mut();
-    let status = unsafe { blqd_validate_structure(prog, &mut errs) };
-    assert_eq!(status, BlqdStatus::Ok);
-    assert_eq!(unsafe { blqd_validation_errors_count(errs) }, 0);
+    let mut errs: *mut LANESValidationErrors = ptr::null_mut();
+    let status = unsafe { lanes_validate_structure(prog, &mut errs) };
+    assert_eq!(status, LanesStatus::Ok);
+    assert_eq!(unsafe { lanes_validation_errors_count(errs) }, 0);
 
     unsafe {
-        blqd_validation_errors_free(errs);
-        blqd_program_free(prog);
+        lanes_validation_errors_free(errs);
+        lanes_program_free(prog);
     }
 }
 
@@ -228,28 +228,28 @@ fn validate_structure_with_errors() {
         "version 1.0;\nfn @main() {\n  halt\n  const_loc 0x00000000\n  initial_fill 1\n}\n",
     )
     .unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
-    unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
+    let mut prog: *mut LANESProgram = ptr::null_mut();
+    unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 
-    let mut errs: *mut BLQDValidationErrors = ptr::null_mut();
-    let status = unsafe { blqd_validate_structure(prog, &mut errs) };
-    assert_eq!(status, BlqdStatus::ErrValidation);
+    let mut errs: *mut LANESValidationErrors = ptr::null_mut();
+    let status = unsafe { lanes_validate_structure(prog, &mut errs) };
+    assert_eq!(status, LanesStatus::ErrValidation);
 
-    let count = unsafe { blqd_validation_errors_count(errs) };
+    let count = unsafe { lanes_validation_errors_count(errs) };
     assert!(count > 0);
 
     // Check we can read the error message
-    let msg_ptr = unsafe { blqd_validation_error_message(errs, 0) };
+    let msg_ptr = unsafe { lanes_validation_error_message(errs, 0) };
     assert!(!msg_ptr.is_null());
     let msg = unsafe { CStr::from_ptr(msg_ptr) }.to_str().unwrap();
     assert!(msg.contains("initial_fill"));
 
     // Out-of-range index returns NULL
-    assert!(unsafe { blqd_validation_error_message(errs, count) }.is_null());
+    assert!(unsafe { lanes_validation_error_message(errs, count) }.is_null());
 
     unsafe {
-        blqd_validation_errors_free(errs);
-        blqd_program_free(prog);
+        lanes_validation_errors_free(errs);
+        lanes_program_free(prog);
     }
 }
 
@@ -259,17 +259,17 @@ fn simulate_stack_valid() {
         "version 1.0;\nfn @main() {\n  const_loc 0x00000000\n  initial_fill 1\n  halt\n}\n",
     )
     .unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
-    unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
+    let mut prog: *mut LANESProgram = ptr::null_mut();
+    unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 
-    let mut errs: *mut BLQDValidationErrors = ptr::null_mut();
-    let status = unsafe { blqd_simulate_stack(prog, &mut errs) };
-    assert_eq!(status, BlqdStatus::Ok);
-    assert_eq!(unsafe { blqd_validation_errors_count(errs) }, 0);
+    let mut errs: *mut LANESValidationErrors = ptr::null_mut();
+    let status = unsafe { lanes_simulate_stack(prog, &mut errs) };
+    assert_eq!(status, LanesStatus::Ok);
+    assert_eq!(unsafe { lanes_validation_errors_count(errs) }, 0);
 
     unsafe {
-        blqd_validation_errors_free(errs);
-        blqd_program_free(prog);
+        lanes_validation_errors_free(errs);
+        lanes_program_free(prog);
     }
 }
 
@@ -277,17 +277,17 @@ fn simulate_stack_valid() {
 fn simulate_stack_with_errors() {
     // Pop on an empty stack underflows.
     let source = CString::new("version 1.0;\nfn @main() {\n  pop\n}\n").unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
-    unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
+    let mut prog: *mut LANESProgram = ptr::null_mut();
+    unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 
-    let mut errs: *mut BLQDValidationErrors = ptr::null_mut();
-    let status = unsafe { blqd_simulate_stack(prog, &mut errs) };
-    assert_eq!(status, BlqdStatus::ErrValidation);
-    assert!(unsafe { blqd_validation_errors_count(errs) } > 0);
+    let mut errs: *mut LANESValidationErrors = ptr::null_mut();
+    let status = unsafe { lanes_simulate_stack(prog, &mut errs) };
+    assert_eq!(status, LanesStatus::ErrValidation);
+    assert!(unsafe { lanes_validation_errors_count(errs) } > 0);
 
     unsafe {
-        blqd_validation_errors_free(errs);
-        blqd_program_free(prog);
+        lanes_validation_errors_free(errs);
+        lanes_program_free(prog);
     }
 }
 
@@ -313,23 +313,23 @@ fn arch_from_json_valid() {
     )
     .unwrap();
 
-    let mut arch: *mut BLQDArchSpec = ptr::null_mut();
-    let status = unsafe { blqd_arch_from_json(json.as_ptr(), &mut arch) };
-    assert_eq!(status, BlqdStatus::Ok);
+    let mut arch: *mut LANESArchSpec = ptr::null_mut();
+    let status = unsafe { lanes_arch_from_json(json.as_ptr(), &mut arch) };
+    assert_eq!(status, LanesStatus::Ok);
     assert!(!arch.is_null());
 
-    unsafe { blqd_arch_free(arch) };
+    unsafe { lanes_arch_free(arch) };
 }
 
 #[test]
 fn arch_from_json_invalid() {
     let bad_json = CString::new("not json").unwrap();
-    let mut arch: *mut BLQDArchSpec = ptr::null_mut();
-    let status = unsafe { blqd_arch_from_json(bad_json.as_ptr(), &mut arch) };
-    assert_eq!(status, BlqdStatus::ErrJson);
+    let mut arch: *mut LANESArchSpec = ptr::null_mut();
+    let status = unsafe { lanes_arch_from_json(bad_json.as_ptr(), &mut arch) };
+    assert_eq!(status, LanesStatus::ErrJson);
     assert!(arch.is_null());
 
-    let err_ptr = blqd_last_error();
+    let err_ptr = lanes_last_error();
     assert!(!err_ptr.is_null());
 }
 
@@ -339,8 +339,8 @@ fn validate_addresses_with_arch() {
         "version 1.0;\nfn @main() {\n  const_loc 0x00000000\n  const_loc 0x00000001\n  initial_fill 2\n  halt\n}\n",
     )
     .unwrap();
-    let mut prog: *mut BLQDProgram = ptr::null_mut();
-    unsafe { blqd_program_from_text(source.as_ptr(), &mut prog) };
+    let mut prog: *mut LANESProgram = ptr::null_mut();
+    unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 
     let json = CString::new(
         r#"{
@@ -359,18 +359,18 @@ fn validate_addresses_with_arch() {
     }"#,
     )
     .unwrap();
-    let mut arch: *mut BLQDArchSpec = ptr::null_mut();
-    unsafe { blqd_arch_from_json(json.as_ptr(), &mut arch) };
+    let mut arch: *mut LANESArchSpec = ptr::null_mut();
+    unsafe { lanes_arch_from_json(json.as_ptr(), &mut arch) };
 
-    let mut errs: *mut BLQDValidationErrors = ptr::null_mut();
-    let status = unsafe { blqd_validate_addresses(prog, arch, &mut errs) };
-    assert_eq!(status, BlqdStatus::Ok);
-    assert_eq!(unsafe { blqd_validation_errors_count(errs) }, 0);
+    let mut errs: *mut LANESValidationErrors = ptr::null_mut();
+    let status = unsafe { lanes_validate_addresses(prog, arch, &mut errs) };
+    assert_eq!(status, LanesStatus::Ok);
+    assert_eq!(unsafe { lanes_validation_errors_count(errs) }, 0);
 
     unsafe {
-        blqd_validation_errors_free(errs);
-        blqd_arch_free(arch);
-        blqd_program_free(prog);
+        lanes_validation_errors_free(errs);
+        lanes_arch_free(arch);
+        lanes_program_free(prog);
     }
 }
 
@@ -379,10 +379,10 @@ fn validate_addresses_with_arch() {
 #[test]
 fn free_null_pointers_safe() {
     unsafe {
-        blqd_program_free(ptr::null_mut());
-        blqd_arch_free(ptr::null_mut());
-        blqd_validation_errors_free(ptr::null_mut());
-        blqd_free_string(ptr::null_mut());
-        blqd_free_bytes(ptr::null_mut(), 0);
+        lanes_program_free(ptr::null_mut());
+        lanes_arch_free(ptr::null_mut());
+        lanes_validation_errors_free(ptr::null_mut());
+        lanes_free_string(ptr::null_mut());
+        lanes_free_bytes(ptr::null_mut(), 0);
     }
 }

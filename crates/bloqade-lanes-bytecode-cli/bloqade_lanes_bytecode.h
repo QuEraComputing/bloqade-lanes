@@ -13,133 +13,134 @@
 /**
  * Status codes returned by all fallible C-API functions.
  */
-typedef enum BlqdStatus {
-    BLQD_STATUS_OK = 0,
-    BLQD_STATUS_ERR_PARSE = 1,
-    BLQD_STATUS_ERR_DECODE = 2,
-    BLQD_STATUS_ERR_VALIDATION = 3,
-    BLQD_STATUS_ERR_IO = 4,
-    BLQD_STATUS_ERR_NULL_PTR = 5,
-    BLQD_STATUS_ERR_JSON = 6,
-} BlqdStatus;
+typedef enum LanesStatus {
+    LANES_STATUS_OK = 0,
+    LANES_STATUS_ERR_PARSE = 1,
+    LANES_STATUS_ERR_DECODE = 2,
+    LANES_STATUS_ERR_VALIDATION = 3,
+    LANES_STATUS_ERR_IO = 4,
+    LANES_STATUS_ERR_NULL_PTR = 5,
+    LANES_STATUS_ERR_JSON = 6,
+} LanesStatus;
 
 /**
  * Opaque handle wrapping an `ArchSpec`.
  */
-typedef struct BLQDArchSpec BLQDArchSpec;
+typedef struct LANESArchSpec LANESArchSpec;
 
 /**
  * Opaque handle wrapping a `Program`.
  */
-typedef struct BLQDProgram BLQDProgram;
+typedef struct LANESProgram LANESProgram;
 
 /**
  * Opaque handle wrapping a list of validation errors with cached CString messages.
  */
-typedef struct BLQDValidationErrors BLQDValidationErrors;
+typedef struct LANESValidationErrors LANESValidationErrors;
 
 /**
  * Parse and validate an architecture spec from JSON (null-terminated UTF-8).
  */
-enum BlqdStatus blqd_arch_from_json(const char *json, struct BLQDArchSpec **out);
+enum LanesStatus lanes_arch_from_json(const char *json, struct LANESArchSpec **out);
 
 /**
  * Free an ArchSpec handle.
  */
-void blqd_arch_free(struct BLQDArchSpec *arch);
+void lanes_arch_free(struct LANESArchSpec *arch);
 
 /**
  * Returns a pointer to the last error message, or NULL if no error.
  * Valid until the next C-API call on the same thread.
  */
-const char *blqd_last_error(void);
+const char *lanes_last_error(void);
 
 /**
- * Free a Rust-allocated C string (from `blqd_program_to_text`, etc.)
+ * Free a Rust-allocated C string (from `lanes_program_to_text`, etc.)
  */
-void blqd_free_string(char *ptr);
+void lanes_free_string(char *ptr);
 
 /**
- * Free a Rust-allocated byte buffer (from `blqd_program_to_binary`).
+ * Free a Rust-allocated byte buffer (from `lanes_program_to_binary`).
  * `len` must be the value returned by the producing function.
  */
-void blqd_free_bytes(uint8_t *ptr, uintptr_t len);
+void lanes_free_bytes(uint8_t *ptr, uintptr_t len);
 
 /**
- * Parse a BLQD binary buffer into a Program handle.
+ * Parse a native LANES binary buffer into a Program handle.
  */
-enum BlqdStatus blqd_program_from_binary(const uint8_t *data,
-                                         uintptr_t len,
-                                         struct BLQDProgram **out);
+enum LanesStatus lanes_program_from_binary(const uint8_t *data,
+                                           uintptr_t len,
+                                           struct LANESProgram **out);
 
 /**
- * Serialize a Program to BLQD binary format.
- * Caller must free the returned buffer with `blqd_free_bytes(out_data, out_len)`.
+ * Serialize a Program to native LANES binary format.
+ * Caller must free the returned buffer with `lanes_free_bytes(out_data, out_len)`.
  */
-enum BlqdStatus blqd_program_to_binary(const struct BLQDProgram *prog,
-                                       uint8_t **out_data,
-                                       uintptr_t *out_len);
+enum LanesStatus lanes_program_to_binary(const struct LANESProgram *prog,
+                                         uint8_t **out_data,
+                                         uintptr_t *out_len);
 
 /**
  * Parse assembly text (null-terminated UTF-8) into a Program handle.
  */
-enum BlqdStatus blqd_program_from_text(const char *text_ptr, struct BLQDProgram **out);
+enum LanesStatus lanes_program_from_text(const char *text_ptr, struct LANESProgram **out);
 
 /**
  * Print a Program as assembly text.
- * Caller must free the returned string with `blqd_free_string()`.
+ * Caller must free the returned string with `lanes_free_string()`.
  */
-enum BlqdStatus blqd_program_to_text(const struct BLQDProgram *prog, char **out_text);
+enum LanesStatus lanes_program_to_text(const struct LANESProgram *prog, char **out_text);
 
 /**
  * Query instruction count.
  */
-uint32_t blqd_program_instruction_count(const struct BLQDProgram *prog);
+uint32_t lanes_program_instruction_count(const struct LANESProgram *prog);
 
 /**
  * Query program version.
  */
-void blqd_program_version(const struct BLQDProgram *prog, uint16_t *major, uint16_t *minor);
+void lanes_program_version(const struct LANESProgram *prog, uint16_t *major, uint16_t *minor);
 
 /**
  * Free a Program handle.
  */
-void blqd_program_free(struct BLQDProgram *prog);
+void lanes_program_free(struct LANESProgram *prog);
 
 /**
  * Structural validation (arity bounds, initial_fill ordering, etc.)
  */
-enum BlqdStatus blqd_validate_structure(const struct BLQDProgram *prog,
-                                        struct BLQDValidationErrors **out);
+enum LanesStatus lanes_validate_structure(const struct LANESProgram *prog,
+                                          struct LANESValidationErrors **out);
 
 /**
  * Architecture-dependent validation (addresses + capability constraints).
  */
-enum BlqdStatus blqd_validate_addresses(const struct BLQDProgram *prog,
-                                        const struct BLQDArchSpec *arch,
-                                        struct BLQDValidationErrors **out);
+enum LanesStatus lanes_validate_addresses(const struct LANESProgram *prog,
+                                          const struct LANESArchSpec *arch,
+                                          struct LANESValidationErrors **out);
 
 /**
  * Stack type simulation (underflow, type mismatches, and lane/location group
  * checks). Runs without an arch spec (duplicate-only group checks).
  */
-enum BlqdStatus blqd_simulate_stack(const struct BLQDProgram *prog,
-                                    struct BLQDValidationErrors **out);
+enum LanesStatus lanes_simulate_stack(const struct LANESProgram *prog,
+                                      struct LANESValidationErrors **out);
 
 /**
  * Number of errors in the handle.
  */
-uint32_t blqd_validation_errors_count(const struct BLQDValidationErrors *errs);
+uint32_t lanes_validation_errors_count(const struct LANESValidationErrors *errs);
 
 /**
  * Error message at index. Returns NULL if index is out of range.
  * Pointer is valid until the handle is freed.
  */
-const char *blqd_validation_error_message(const struct BLQDValidationErrors *errs, uint32_t index);
+const char *lanes_validation_error_message(const struct LANESValidationErrors *errs,
+                                           uint32_t index);
 
 /**
  * Free a validation errors handle.
  */
-void blqd_validation_errors_free(struct BLQDValidationErrors *errs);
+void lanes_validation_errors_free(struct LANESValidationErrors *errs);
 
 #endif  /* BLOQADE_LANES_BYTECODE_H */

@@ -5,22 +5,22 @@ use bloqade_lanes_bytecode_core::isa::Program;
 use bloqade_lanes_bytecode_core::isa::validate::ValidationError;
 
 /// Opaque handle wrapping a `Program`.
-pub struct BLQDProgram {
+pub struct LANESProgram {
     pub(crate) inner: Program,
 }
 
 /// Opaque handle wrapping an `ArchSpec`.
-pub struct BLQDArchSpec {
+pub struct LANESArchSpec {
     pub(crate) inner: ArchSpec,
 }
 
 /// Opaque handle wrapping a list of validation errors with cached CString messages.
-pub struct BLQDValidationErrors {
+pub struct LANESValidationErrors {
     pub(crate) errors: Vec<ValidationError>,
     pub(crate) messages: Vec<CString>,
 }
 
-impl BLQDValidationErrors {
+impl LANESValidationErrors {
     pub(crate) fn from_errors(errors: Vec<ValidationError>) -> Self {
         let messages = errors
             .iter()
