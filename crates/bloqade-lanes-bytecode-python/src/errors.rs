@@ -3,9 +3,10 @@ use pyo3::types::PyList;
 
 use bloqade_lanes_bytecode_core::arch::query::{LaneGroupError, LocationGroupError};
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
-use bloqade_lanes_bytecode_core::bytecode::program::ProgramError;
-use bloqade_lanes_bytecode_core::bytecode::text::ParseError;
-use bloqade_lanes_bytecode_core::bytecode::validate::ValidationError;
+use bloqade_lanes_bytecode_core::isa::INSTRUCTION_WIDTH;
+use bloqade_lanes_bytecode_core::isa::program::BinaryError;
+use bloqade_lanes_bytecode_core::isa::text::TextError;
+use bloqade_lanes_bytecode_core::isa::validate::ValidationError;
 
 const EXCEPTIONS_MODULE: &str = "bloqade.lanes.bytecode.exceptions";
 
@@ -139,6 +140,24 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
     let module = py.import(EXCEPTIONS_MODULE)?;
 
     let obj = match error {
+        // Capability checks
+        ValidationError::ControlFlowRequiresFeedForward { pc, .. }
+        | ValidationError::MultipleMeasuresRequireFeedForward { pc } => {
+            let cls = module.getattr("FeedForwardNotSupportedError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::FillRequiresAtomReloading { pc } => {
+            let cls = module.getattr("AtomReloadingNotSupportedError")?;
+            cls.call1((*pc,))?
+        }
+        // Address checks (carry the arch layer's own message)
+        ValidationError::InvalidLocation { pc, message }
+        | ValidationError::InvalidLane { pc, message }
+        | ValidationError::InvalidZone { pc, message } => {
+            let cls = module.getattr("AddressValidationError")?;
+            cls.call1((*pc, message.as_str()))?
+        }
+        // Structural checks
         ValidationError::NewArrayZeroDim0 { pc } => {
             let cls = module.getattr("NewArrayZeroDim0Error")?;
             cls.call1((*pc,))?
@@ -149,36 +168,6 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
         }
         ValidationError::InitialFillNotFirst { pc } => {
             let cls = module.getattr("InitialFillNotFirstError")?;
-            cls.call1((*pc,))?
-        }
-        ValidationError::StackUnderflow { pc } => {
-            let cls = module.getattr("StackUnderflowError")?;
-            cls.call1((*pc,))?
-        }
-        ValidationError::TypeMismatch { pc, expected, got } => {
-            let cls = module.getattr("TypeMismatchError")?;
-            cls.call1((*pc, *expected, *got))?
-        }
-        ValidationError::InvalidZone { pc, zone_id } => {
-            let cls = module.getattr("InvalidZoneError")?;
-            cls.call1((*pc, *zone_id))?
-        }
-        ValidationError::LocationGroupValidation { pc, error } => {
-            let inner = location_group_error_to_py(py, error)?;
-            let cls = module.getattr("LocationValidationError")?;
-            cls.call1((*pc, inner))?
-        }
-        ValidationError::LaneGroupValidation { pc, error } => {
-            let inner = lane_group_error_to_py(py, error)?;
-            let cls = module.getattr("LaneValidationError")?;
-            cls.call1((*pc, inner))?
-        }
-        ValidationError::FeedForwardNotSupported { pc } => {
-            let cls = module.getattr("FeedForwardNotSupportedError")?;
-            cls.call1((*pc,))?
-        }
-        ValidationError::AtomReloadingNotSupported { pc } => {
-            let cls = module.getattr("AtomReloadingNotSupportedError")?;
             cls.call1((*pc,))?
         }
         ValidationError::EmptyProgram => {
@@ -192,6 +181,25 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
         ValidationError::UnreachableInstruction { pc } => {
             let cls = module.getattr("UnreachableInstructionError")?;
             cls.call1((*pc,))?
+        }
+        // Stack-type simulation
+        ValidationError::StackUnderflow { pc } => {
+            let cls = module.getattr("StackUnderflowError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::TypeMismatch { pc, expected, got } => {
+            let cls = module.getattr("TypeMismatchError")?;
+            cls.call1((*pc, *expected, *got))?
+        }
+        ValidationError::LocationGroupValidation { pc, error } => {
+            let inner = location_group_error_to_py(py, error)?;
+            let cls = module.getattr("LocationValidationError")?;
+            cls.call1((*pc, inner))?
+        }
+        ValidationError::LaneGroupValidation { pc, error } => {
+            let inner = lane_group_error_to_py(py, error)?;
+            let cls = module.getattr("LaneValidationError")?;
+            cls.call1((*pc, inner))?
         }
     };
 
@@ -236,8 +244,8 @@ pub fn validation_errors_to_py(py: Python<'_>, errors: Vec<ValidationError>) -> 
     }
 }
 
-/// Convert a ParseError to a Python exception.
-pub fn parse_error_to_py(py: Python<'_>, error: &ParseError) -> PyErr {
+/// Convert a TextError (`.sst` parse failure) to a Python exception.
+pub fn text_error_to_py(py: Python<'_>, error: &TextError) -> PyErr {
     let module = match py.import(EXCEPTIONS_MODULE) {
         Ok(m) => m,
         Err(e) => return e,
@@ -245,25 +253,17 @@ pub fn parse_error_to_py(py: Python<'_>, error: &ParseError) -> PyErr {
 
     let result: PyResult<PyObject> = (|| {
         let obj = match error {
-            ParseError::MissingVersion => {
+            TextError::MissingVersion => {
                 let cls = module.getattr("MissingVersionError")?;
                 cls.call0()?
             }
-            ParseError::InvalidVersion(msg) => {
+            TextError::InvalidVersion { line, value } => {
                 let cls = module.getattr("InvalidVersionError")?;
-                cls.call1((msg.as_str(),))?
+                cls.call1((format!("line {line}: '{value}'"),))?
             }
-            ParseError::UnknownMnemonic { line, mnemonic } => {
-                let cls = module.getattr("UnknownMnemonicError")?;
-                cls.call1((*line, mnemonic.as_str()))?
-            }
-            ParseError::MissingOperand { line, mnemonic } => {
-                let cls = module.getattr("MissingOperandError")?;
-                cls.call1((*line, mnemonic.as_str()))?
-            }
-            ParseError::InvalidOperand { line, message } => {
-                let cls = module.getattr("InvalidOperandError")?;
-                cls.call1((*line, message.as_str()))?
+            TextError::BadInstruction { line, text } => {
+                let cls = module.getattr("BadInstructionError")?;
+                cls.call1((*line, text.as_str()))?
             }
         };
         Ok(obj.into())
@@ -275,8 +275,8 @@ pub fn parse_error_to_py(py: Python<'_>, error: &ParseError) -> PyErr {
     }
 }
 
-/// Convert a ProgramError to a Python exception.
-pub fn program_error_to_py(py: Python<'_>, error: &ProgramError) -> PyErr {
+/// Convert a BinaryError (program (de)serialization failure) to a Python exception.
+pub fn program_error_to_py(py: Python<'_>, error: &BinaryError) -> PyErr {
     let module = match py.import(EXCEPTIONS_MODULE) {
         Ok(m) => m,
         Err(e) => return e,
@@ -284,33 +284,21 @@ pub fn program_error_to_py(py: Python<'_>, error: &ProgramError) -> PyErr {
 
     let result: PyResult<PyObject> = (|| {
         let obj = match error {
-            ProgramError::BadMagic => {
+            BinaryError::BadMagic => {
                 let cls = module.getattr("BadMagicError")?;
                 cls.call0()?
             }
-            ProgramError::Truncated { expected, got } => {
+            BinaryError::Truncated { expected, got } => {
                 let cls = module.getattr("TruncatedError")?;
                 cls.call1((*expected, *got))?
             }
-            ProgramError::UnknownSectionType(t) => {
-                let cls = module.getattr("UnknownSectionTypeError")?;
-                cls.call1((*t,))?
+            BinaryError::UnalignedCode { len } => {
+                let cls = module.getattr("UnalignedCodeError")?;
+                cls.call1((*len, INSTRUCTION_WIDTH as usize))?
             }
-            ProgramError::InvalidCodeSectionLength(len) => {
-                let cls = module.getattr("InvalidCodeSectionLengthError")?;
-                cls.call1((*len,))?
-            }
-            ProgramError::MissingMetadataSection => {
-                let cls = module.getattr("MissingMetadataSectionError")?;
-                cls.call0()?
-            }
-            ProgramError::MissingCodeSection => {
-                let cls = module.getattr("MissingCodeSectionError")?;
-                cls.call0()?
-            }
-            ProgramError::Decode(decode_err) => {
+            BinaryError::Decode { pc, message } => {
                 let cls = module.getattr("DecodeErrorInProgram")?;
-                cls.call1((decode_err.to_string(),))?
+                cls.call1((format!("pc {pc}: {message}"),))?
             }
         };
         Ok(obj.into())
