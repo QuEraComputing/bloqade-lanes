@@ -9,7 +9,7 @@ style = "both"
 parse_deps = false
 
 [export]
-include = ["BlqdStatus"]
+include = ["LanesStatus"]
 
 [enum]
 rename_variants = "ScreamingSnakeCase"
