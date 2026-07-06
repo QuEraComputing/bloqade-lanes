@@ -1,7 +1,8 @@
 //! Entangling placement enumeration, distance precomputation, and optimal
 //! pair-to-position assignment for loose-goal search.
 //!
-//! This module supports [`crate::search::solve::MoveSolver::solve_entangling`] by
+//! This module supports
+//! [`solve_loose_goal`](crate::placement::loose_goal::solve_loose_goal) by
 //! providing the architectural queries needed to work with entangling
 //! constraints rather than fixed target locations.
 
@@ -17,7 +18,7 @@ use crate::primitives::lane_index::LaneIndex;
 // ── Shared cost-matrix constants ────────────────────────────────────
 
 /// Default spectator-occupancy penalty (in lane-hop units). See
-/// [`crate::search::solve::EntanglingOptions::occupancy_penalty`] for full semantics.
+/// [`crate::search::options::EntanglingOptions::occupancy_penalty`] for full semantics.
 pub(crate) const OCCUPANCY_PENALTY_DEFAULT: f64 = 1.0;
 
 /// Per-atom-moved penalty (in lane-hop units) applied by the iterative
@@ -99,6 +100,31 @@ pub fn all_entangling_locations(arch: &ArchSpec) -> Vec<u64> {
     locs.sort_unstable();
     locs.dedup();
     locs
+}
+
+/// Enumerate all home-site locations (encoded) from the architecture.
+///
+/// A home site is any `(zone_id, word_id, site_id)` where `word_id` is
+/// in [`ArchSpec::left_cz_word_ids`].
+pub(crate) fn home_sites(arch: &ArchSpec) -> Vec<u64> {
+    let home_words = arch.left_cz_word_ids();
+    let word_zone = arch.word_zone_map();
+    let sites_per_word = arch.sites_per_word() as u32;
+    let mut result = Vec::new();
+    for &word_id in &home_words {
+        let zone_id = *word_zone.get(&word_id).unwrap_or(&0);
+        for site_id in 0..sites_per_word {
+            result.push(
+                LocationAddr {
+                    zone_id,
+                    word_id,
+                    site_id,
+                }
+                .encode(),
+            );
+        }
+    }
+    result
 }
 
 /// Build O(1) lookup set for valid entangling placements.

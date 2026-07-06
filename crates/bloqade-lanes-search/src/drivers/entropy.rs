@@ -15,7 +15,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use crate::drivers::astar::SearchResult;
+use crate::drivers::result::SearchResult;
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
@@ -289,7 +289,7 @@ pub struct EntropyParams {
     pub reversion_steps: u32,
     pub e_max: u32,
     pub max_goal_candidates: usize,
-    // Expander settings.
+    // Generator settings.
     pub max_movesets_per_group: usize,
     /// Enable 2-step lookahead scoring.
     pub lookahead: bool,

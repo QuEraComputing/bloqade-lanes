@@ -11,9 +11,9 @@
 //!   Hungarian assignment + word-pair distances (`entangling`).
 //! - [`drivers`] — the search-loop engines: frontier-based (`frontier`),
 //!   entropy-guided (`entropy`).
-//! - [`search`] — `MoveSearch` facade + result/options types (currently
-//!   the pre-split `solve.rs` god module; will dissolve into siblings
-//!   during the type split).
+//! - [`search`] — `MoveSearch` facade + result/options types: canonical
+//!   `result` / `options` / `restarts` / `engine` / `move_search` /
+//!   `target_solver` submodules (no shim layer).
 //! - [`placement`] — CZ-placement strategies: `target_generator`,
 //!   `nohome`, `receding_horizon` (and forthcoming `single_heuristic` /
 //!   `loose_goal` peers).
@@ -38,7 +38,7 @@ pub(crate) mod test_utils;
 pub mod traits;
 
 pub use cost::UniformCost;
-pub use drivers::astar::SearchResult;
+pub use drivers::result::SearchResult;
 pub use generators::{
     DeadlockPolicy, ExhaustiveGenerator, GreedyGenerator, HeuristicGenerator, LooseTargetGenerator,
 };
@@ -63,8 +63,7 @@ pub use primitives::lane_index::LaneIndex;
 pub use scorers::{DistanceScorer, EntropyScorer};
 pub use search::engine::SearchEngine;
 pub use search::move_search::MoveSearch;
-pub use search::solve::{
-    CandidateAttempt, InnerStrategy, MultiSolveResult, SolveOptions, Strategy,
-};
+pub use search::options::{InnerStrategy, SolveOptions, Strategy};
+pub use search::result::{CandidateAttempt, MultiSolveResult};
 pub use search::target_solver::TargetSolver;
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};

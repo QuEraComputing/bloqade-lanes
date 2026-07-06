@@ -3,12 +3,10 @@
 //! [`TargetSolver`] is the composition: `Arc<SearchEngine>` (the
 //! arch-bound state) + [`MoveSearch`] (the search configuration). Its
 //! `solve(initial, target, blocked, max_expansions)` is the single
-//! entry point new callers should use.
+//! entry point callers should use.
 //!
-//! The same implementation backs the legacy
-//! [`MoveSolver::solve`](super::solve::MoveSolver::solve) facade —
-//! both paths funnel through [`solve_with_engine`] so future tuning
-//! and observer wiring happens in exactly one place.
+//! The implementation lives in [`solve_with_engine`] so future tuning and
+//! observer wiring happens in exactly one place.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -33,10 +31,9 @@ use crate::search::result::SolveResult;
 /// [`MoveSearch`] (configuration). `solve` accepts an `(initial,
 /// target, blocked)` triple and returns a [`SolveResult`].
 ///
-/// The legacy [`MoveSolver`](super::solve::MoveSolver) facade
-/// dissolves into this type plus the upcoming `CzPlacement` peers;
-/// both `TargetSolver` and `MoveSolver` share the same underlying
-/// implementation via [`solve_with_engine`].
+/// Fixed-target routing is this type's job; the loose-goal entangling
+/// variants live in the `placement::*CzPlacement` peers. All of them
+/// share the same underlying search via [`solve_with_engine`].
 pub struct TargetSolver {
     engine: Arc<SearchEngine>,
     search: MoveSearch,
@@ -89,8 +86,7 @@ impl TargetSolver {
     }
 }
 
-/// Shared implementation backing both [`TargetSolver::solve`] and the
-/// legacy [`MoveSolver::solve`](super::solve::MoveSolver::solve).
+/// Shared implementation backing [`TargetSolver::solve`].
 ///
 /// Builds the distance table, heuristic, goal predicate, search
 /// context, and generator factory from the supplied arch (`engine`)
@@ -159,9 +155,7 @@ pub(crate) fn solve_with_engine(
 mod tests {
     use super::*;
     use crate::search::move_search::MoveSearch;
-    use crate::search::options::{EntropyOptions, SolveOptions, Strategy};
     use crate::search::result::SolveStatus;
-    use crate::search::solve::MoveSolver;
     use crate::test_utils::{example_arch_json, loc};
     use std::sync::Arc;
 
@@ -187,64 +181,5 @@ mod tests {
         assert_eq!(result.status, SolveStatus::Solved);
         assert!(!result.move_layers.is_empty());
         assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
-    }
-
-    /// Parity check: `TargetSolver::solve` and the legacy
-    /// `MoveSolver::solve` must produce identical results when given
-    /// the same engine, search config, and inputs — both now funnel
-    /// through `solve_with_engine`.
-    #[test]
-    fn target_solver_matches_move_solver_solve() {
-        let engine = make_engine();
-        let opts = SolveOptions {
-            strategy: Strategy::AStar,
-            weight: 1.0,
-            ..SolveOptions::default()
-        };
-        let entropy_opts = EntropyOptions::default();
-        let search = MoveSearch::new(opts.clone(), entropy_opts.clone());
-        let target_solver = TargetSolver::new(engine.clone(), search);
-
-        // The legacy facade shares the engine (no rebuild cost).
-        let move_solver = MoveSolver::from_index(engine.index().clone());
-
-        let initial = [(0u32, loc(0, 0))];
-        let target = [(0u32, loc(0, 5))];
-        let blocked: [LocationAddr; 0] = [];
-
-        let ts_result = target_solver
-            .solve(
-                initial.iter().copied(),
-                target.iter().copied(),
-                blocked.iter().copied(),
-                Some(1000),
-            )
-            .unwrap();
-        let ms_result = move_solver
-            .solve(
-                initial.iter().copied(),
-                target.iter().copied(),
-                blocked.iter().copied(),
-                Some(1000),
-                &opts,
-                Some(&entropy_opts),
-            )
-            .unwrap();
-
-        assert_eq!(ts_result.status, ms_result.status);
-        assert_eq!(ts_result.cost.to_bits(), ms_result.cost.to_bits());
-        assert_eq!(ts_result.nodes_expanded, ms_result.nodes_expanded);
-        assert_eq!(ts_result.deadlocks, ms_result.deadlocks);
-        let ts_layers: Vec<Vec<u64>> = ts_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        let ms_layers: Vec<Vec<u64>> = ms_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        assert_eq!(ts_layers, ms_layers);
     }
 }

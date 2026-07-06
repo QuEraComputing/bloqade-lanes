@@ -1,7 +1,6 @@
 import math
 from dataclasses import dataclass, field
 from functools import singledispatchmethod
-from typing import Any
 
 from bloqade.squin.gate import stmts as gate_stmts
 from kirin import ir
@@ -16,14 +15,13 @@ from bloqade.lanes.dialects import move
 
 from ... import utils
 from .base import AtomStateRewriter
+from .noise import LogicalInitKernel
 
 
 @dataclass
 class InsertGates(AtomStateRewriter):
     move_exec_analysis: ForwardFrame[atom.MoveExecution]
-    initialize_kernel: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-    ) = None
+    initialize_kernel: LogicalInitKernel | None = None
     measurement_index_map: dict[ZoneAddress, dict[LocationAddress, int]] = field(
         init=False, default_factory=dict
     )
@@ -147,6 +145,10 @@ class InsertGates(AtomStateRewriter):
             return rewrite_abc.RewriteResult()
 
         nodes_to_insert: list[ir.Statement] = [tau := py.Constant(math.tau)]
+        theta_rads: list[ir.SSAValue] = []
+        phi_rads: list[ir.SSAValue] = []
+        lam_rads: list[ir.SSAValue] = []
+        regs: list[ir.SSAValue] = []
         for theta, phi, lam, locations in zip(
             node.thetas, node.phis, node.lams, node.location_addresses
         ):
@@ -158,8 +160,26 @@ class InsertGates(AtomStateRewriter):
             nodes_to_insert.append(phi_rad := py.Mult(tau.result, phi))
             nodes_to_insert.append(lam_rad := py.Mult(tau.result, lam))
             nodes_to_insert.append(reg_stmt := ilist.New(qubit_ssa))
-            inputs = (theta_rad.result, phi_rad.result, lam_rad.result, reg_stmt.result)
-            nodes_to_insert.append(func.Invoke(inputs, callee=self.initialize_kernel))
+            theta_rads.append(theta_rad.result)
+            phi_rads.append(phi_rad.result)
+            lam_rads.append(lam_rad.result)
+            regs.append(reg_stmt.result)
+
+        nodes_to_insert.append(thetas_reg := ilist.New(tuple(theta_rads)))
+        nodes_to_insert.append(phis_reg := ilist.New(tuple(phi_rads)))
+        nodes_to_insert.append(lams_reg := ilist.New(tuple(lam_rads)))
+        nodes_to_insert.append(qubits_reg := ilist.New(tuple(regs)))
+        nodes_to_insert.append(
+            func.Invoke(
+                (
+                    thetas_reg.result,
+                    phis_reg.result,
+                    lams_reg.result,
+                    qubits_reg.result,
+                ),
+                callee=self.initialize_kernel,
+            )
+        )
 
         for n in nodes_to_insert:
             n.insert_before(node)
