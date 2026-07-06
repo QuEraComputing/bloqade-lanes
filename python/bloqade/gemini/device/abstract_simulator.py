@@ -721,6 +721,7 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
         # TODO: should GeminiLogicalSimulatorTask.run expose NumPy arrays instead
         # of list-backed Result/DetectorResult objects? CliffT natively returns
         # measurement, detector, and observable arrays.
+        # ^ We can't return numpy arrays natively from the simulator task because they aren't a Kirin type, I believe
         return Result(
             _raw_measurements=np.asarray(sample_result.measurements, dtype=np.uint8)
             .astype(bool)
@@ -763,7 +764,7 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
         # TODO: should GeminiLogicalSimulatorTask.run_async preserve NumPy-array
         # results for detector-heavy workflows instead of wrapping list-backed
         # Result/DetectorResult containers?
-        # ^ We can't return numpy arrays natively because they aren't a Kirin type, I believe
+        # ^ We can't return numpy arrays natively from the simulator task because they aren't a Kirin type, I believe
         if run_detectors:
             return cast(
                 Future[DetectorResult],
@@ -864,7 +865,7 @@ class AbstractSimulator(abc.ABC):
         """Run the kernel and get simulation results.
 
         Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
+            logical_squin_kernel (ir.Method[[], TaskRet]): The logical squin kernel to run.
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
             run_detectors (bool): When ``True``, use the detector sampler instead of
@@ -872,7 +873,7 @@ class AbstractSimulator(abc.ABC):
                 Defaults to False.
 
         Returns:
-            Result[RetType]: When ``run_detectors=False``, the full simulation result.
+            Result[TaskRet]: When ``run_detectors=False``, the full simulation result.
             DetectorResult: When ``run_detectors=True``, the result containing only
                 detector and observable outcomes.
 
@@ -922,14 +923,14 @@ class AbstractSimulator(abc.ABC):
         """Run the kernel asynchronously and get simulation results.
 
         Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
+            logical_squin_kernel (ir.Method[[], TaskRet]): The logical squin kernel to run.
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
             run_detectors (bool): When ``True``, use the detector sampler instead of
                 the measurement sampler. Defaults to False.
 
         Returns:
-            Future[Result[RetType]]: When ``run_detectors=False``, a future resolving
+            Future[Result[TaskRet]]: When ``run_detectors=False``, a future resolving
                 to the full simulation result.
             Future[DetectorResult]: When ``run_detectors=True``, a future resolving
                 to the detector result.
@@ -946,7 +947,7 @@ class AbstractSimulator(abc.ABC):
         """Compile the logical squin kernel to the tsim circuit.
 
         Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
+            logical_squin_kernel (ir.Method[[], TaskRet]): The logical squin kernel to compile.
             with_noise (bool): Whether to include noise in the tsim circuit. Defaults to True.
 
         Returns:
@@ -967,7 +968,7 @@ class AbstractSimulator(abc.ABC):
         """Visualize the physical move kernel using the built-in debugger.
 
         Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to visualize.
+            logical_squin_kernel (ir.Method[[], TaskRet]): The logical squin kernel to visualize.
             animated (bool): Whether to use the animated debugger. Defaults to False.
             interactive (bool): Whether to enable interactive mode. Defaults to True.
 
@@ -982,10 +983,10 @@ class AbstractSimulator(abc.ABC):
         """Compile the logical squin kernel to the physical squin kernel.
 
         Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
+            logical_squin_kernel (ir.Method[[], TaskRet]): The logical squin kernel to compile.
 
         Returns:
-            ir.Method[[], RetType]: The physical squin kernel.
+            ir.Method[[], TaskRet]: The physical squin kernel.
 
         """
         return self.task(logical_squin_kernel).physical_squin_kernel
@@ -996,10 +997,10 @@ class AbstractSimulator(abc.ABC):
         """Compile the logical squin kernel to the physical move kernel.
 
         Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
+            logical_squin_kernel (ir.Method[[], TaskRet]): The logical squin kernel to compile.
 
         Returns:
-            ir.Method[[], RetType]: The physical move kernel.
+            ir.Method[[], TaskRet]: The physical move kernel.
 
         """
         return self.task(logical_squin_kernel).physical_move_kernel
@@ -1010,7 +1011,7 @@ class AbstractSimulator(abc.ABC):
         """Get the fidelity bounds for the logical squin kernel.
 
         Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to analyze.
+            logical_squin_kernel (ir.Method[[], TaskRet]): The logical squin kernel to analyze.
 
         Returns:
             tuple[float, float]: The (min, max) fidelity bounds.
