@@ -99,19 +99,24 @@ impl Resolve<Instruction, LanesHeader> for LanesResolver {
         &mut self,
         parsed: ParsedModule<Instruction, LanesHeader>,
     ) -> eyre::Result<Program> {
-        let version = parsed
-            .headers
-            .iter()
-            .map(|h| match h {
-                LanesHeader::Version(v) => *v,
-            })
-            .next()
-            .ok_or_else(|| eyre::eyre!("missing version header"))?;
+        // Exactly one `version M.N;` header. Additional headers almost always
+        // signal a mistake (conflicting versions), so reject them rather than
+        // silently taking the first.
+        let version = match parsed.headers.as_slice() {
+            [] => eyre::bail!("missing version header"),
+            [LanesHeader::Version(v)] => *v,
+            _ => eyre::bail!("multiple version headers"),
+        };
 
+        // Exactly one function, and it must be `@main`. The parser strips the
+        // leading `@`, so the resolved name is bare `"main"`.
         let func = match parsed.functions.as_slice() {
             [f] => f,
             _ => eyre::bail!("expected exactly one function (@main)"),
         };
+        if func.name != "main" {
+            eyre::bail!("expected function @main, found @{}", func.name);
+        }
 
         // Default resolve_body: all lanes instructions are Direct; Raw is an error.
         let code = self.resolve_body(func.body.clone())?;
@@ -143,14 +148,20 @@ fn map_resolve_err(err: &eyre::Report) -> TextError {
 /// }
 /// ```
 ///
-/// Note: `TextError::BadInstruction` errors have `line: 0` for parse-level failures via vihaco `ParsedModule`.
+/// Note: `TextError::BadInstruction` errors have `line: 0` for parse-level
+/// failures via vihaco `ParsedModule`; the underlying chumsky diagnostics are
+/// preserved in `text` even though a precise line number is not yet available.
 pub fn parse_text(src: &str) -> Result<Program, TextError> {
     let parsed = ParsedModule::<Instruction, LanesHeader>::parser()
         .parse(src)
         .into_result()
-        .map_err(|_| TextError::BadInstruction {
+        .map_err(|errs| TextError::BadInstruction {
             line: 0,
-            text: "parse error".into(),
+            text: errs
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
         })?;
     LanesResolver
         .resolve_module(parsed)
@@ -310,6 +321,42 @@ mod tests {
         // An unterminated function body fails the `ParsedModule` parser itself
         // (before resolution), so `parse_text` maps it to `BadInstruction`.
         let src = "version 1.0;\nfn @main() {\n  halt\n";
+        assert!(matches!(
+            parse_text(src),
+            Err(TextError::BadInstruction { .. })
+        ));
+    }
+
+    #[test]
+    fn parse_error_preserves_diagnostic_text() {
+        // Parse-level failures surface the underlying chumsky diagnostic rather
+        // than a bare "parse error" placeholder, so CLI/Python errors are
+        // debuggable.
+        let src = "version 1.0;\nfn @main() {\n  halt\n";
+        match parse_text(src) {
+            Err(TextError::BadInstruction { text, .. }) => {
+                assert_ne!(text, "parse error");
+                assert!(!text.is_empty(), "diagnostic text should be non-empty");
+            }
+            other => panic!("expected BadInstruction, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_version_headers_rejected() {
+        // Two `version` directives are ambiguous; the resolver rejects them
+        // rather than silently taking the first.
+        let src = "version 1.0;\nversion 2.0;\nfn @main() {\n  halt\n}\n";
+        assert!(matches!(
+            parse_text(src),
+            Err(TextError::BadInstruction { .. })
+        ));
+    }
+
+    #[test]
+    fn non_main_function_rejected() {
+        // The single function must be named `@main`.
+        let src = "version 1.0;\nfn @extra() {\n  halt\n}\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })

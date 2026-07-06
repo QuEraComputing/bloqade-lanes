@@ -60,19 +60,23 @@ static const char *INVALID_STRUCTURE =
     "  initial_fill 1\n"
     "}\n";
 
-/* Program that triggers a stack underflow (pop on empty stack). */
+/* Program that triggers a stack underflow: `pop` on an empty stack. */
 static const char *STACK_UNDERFLOW =
     "version 1.0;\n"
     "fn @main() {\n"
-    "  fill 1\n"
+    "  pop\n"
+    "  halt\n"
     "}\n";
 
-/* Program with a type mismatch: fill expects locations, gets a float. */
+/* Program with a type mismatch: `fill` expects a location but gets a float.
+ * `initial_fill` is fed a valid location first so the mismatch lands squarely
+ * on `fill`. */
 static const char *TYPE_MISMATCH =
     "version 1.0;\n"
     "fn @main() {\n"
-    "  const.f64 3.14\n"
+    "  const_loc 0x0000000000000000\n"
     "  initial_fill 1\n"
+    "  const.f64 3.14\n"
     "  fill 1\n"
     "  halt\n"
     "}\n";

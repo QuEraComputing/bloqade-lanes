@@ -125,7 +125,7 @@ expect_fail "fill without atom_reloading" "atom_reloading" \
 # Note: the feed_forward control-flow rule (rejecting br/cond_br/call) is not
 # exercised here because vihaco-cpu's branch mnemonics are parser-deferred and
 # cannot be expressed in text; that rule is covered by unit tests in
-# vihaco_isa::validate. See bloqade-lanes#769.
+# isa::validate. See bloqade-lanes#769.
 
 echo ""
 echo "=== Category D: address validation (--arch) ==="

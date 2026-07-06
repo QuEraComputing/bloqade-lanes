@@ -427,6 +427,9 @@ fn format_instruction(instr: &VInst) -> String {
         VInst::Cpu(Cpu::Const(Value::I64(n))) => format!("Instruction.const_int({n})"),
         VInst::Cpu(Cpu::Dup) => "Instruction.dup()".to_string(),
         VInst::Cpu(Cpu::Halt) => "Instruction.halt()".to_string(),
-        VInst::Cpu(other) => format!("Instruction.cpu({other:?})"),
+        // No Python factory exists for arbitrary nested vihaco-cpu ops, so emit
+        // a clearly non-evaluable marker rather than a fake `Instruction.cpu(...)`
+        // call that `repr()` would otherwise imply could be evaluated.
+        VInst::Cpu(other) => format!("<unsupported cpu op: {other:?}>"),
     }
 }

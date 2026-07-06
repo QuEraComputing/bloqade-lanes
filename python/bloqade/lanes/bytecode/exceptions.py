@@ -317,7 +317,7 @@ class InvalidOperandError(ParseError):
 
 
 class ProgramError(Exception):
-    """Base class for BLQD binary format errors."""
+    """Base class for native LANES binary format errors."""
 
 
 class BadMagicError(ProgramError):
@@ -342,7 +342,9 @@ class UnknownSectionTypeError(ProgramError):
 class InvalidCodeSectionLengthError(ProgramError):
     def __init__(self, length: int):
         self.length = length
-        super().__init__(f"code section length {length} is not a multiple of 8")
+        super().__init__(
+            f"code section length {length} is not a whole number of instruction words"
+        )
 
 
 class UnalignedCodeError(ProgramError):
