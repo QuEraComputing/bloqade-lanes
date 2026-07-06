@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock
 
+import bloqade.squin as squin
+from kirin.dialects import ilist
+
 from bloqade.gemini.device.abstract_simulator import (
     AbstractSimulator,
     AbstractSimulatorTask,
@@ -170,6 +173,72 @@ def test_task_physical_squin_kernel_uses_logical_move_to_squin(monkeypatch):
         "add_noise": True,
         "kernel": move_kernel,
     }
+
+
+def test_logical_move_to_squin_matches_physical_for_physical_move_kernel():
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
+    from bloqade.lanes.noise_model import generate_logical_noise_model
+    from bloqade.lanes.pipeline import PhysicalPipeline
+    from bloqade.lanes.transform import MoveToSquinLogical, MoveToSquinPhysical
+
+    @squin.kernel
+    def physical_kernel():
+        reg = squin.qalloc(2)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        squin.broadcast.measure(ilist.IList([reg[0], reg[1]]))
+
+    arch_spec = get_arch_spec()
+    physical_move_kernel = PhysicalPipeline(arch_spec=arch_spec).emit(
+        physical_kernel, no_raise=False
+    )
+    noise_model = generate_logical_noise_model()
+
+    logical_squin = MoveToSquinLogical(
+        arch_spec=arch_spec,
+        noise_model=noise_model,
+        add_noise=False,
+    ).emit(physical_move_kernel, no_raise=False)
+    physical_squin = MoveToSquinPhysical(
+        arch_spec=arch_spec,
+    ).emit(physical_move_kernel, no_raise=False)
+
+    assert logical_squin.print_str() == physical_squin.print_str()
+
+
+def test_logical_move_to_squin_matches_physical_for_physical_move_kernel_noisy():
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
+    from bloqade.lanes.noise_model import (
+        generate_logical_noise_model,
+        generate_simple_noise_model,
+    )
+    from bloqade.lanes.pipeline import PhysicalPipeline
+    from bloqade.lanes.transform import MoveToSquinLogical, MoveToSquinPhysical
+
+    @squin.kernel
+    def physical_kernel():
+        reg = squin.qalloc(2)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        squin.broadcast.measure(ilist.IList([reg[0], reg[1]]))
+
+    arch_spec = get_arch_spec()
+    physical_move_kernel = PhysicalPipeline(arch_spec=arch_spec).emit(
+        physical_kernel, no_raise=False
+    )
+    noise_model = generate_logical_noise_model()
+    noise_model_phys = generate_simple_noise_model()
+
+    logical_squin = MoveToSquinLogical(
+        arch_spec=arch_spec,
+        noise_model=noise_model,
+        add_noise=True,
+    ).emit(physical_move_kernel, no_raise=False)
+    physical_squin = MoveToSquinPhysical(
+        arch_spec=arch_spec, noise_model=noise_model_phys
+    ).emit(physical_move_kernel, no_raise=False)
+
+    assert logical_squin.print_str() == physical_squin.print_str()
 
 
 def test_concrete_simulators_inherit_shared_tsim_circuit_method():
