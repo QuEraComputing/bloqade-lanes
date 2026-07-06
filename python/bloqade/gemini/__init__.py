@@ -6,5 +6,8 @@ from .device import (
     GeminiLogicalResult as GeminiLogicalResult,
     GeminiLogicalSimulator as GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask as GeminiLogicalSimulatorTask,
+    PhysicalResult as PhysicalResult,
+    PhysicalSimulator as PhysicalSimulator,
+    PhysicalSimulatorTask as PhysicalSimulatorTask,
     Result as Result,
 )

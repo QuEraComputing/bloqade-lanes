@@ -1,6 +1,6 @@
 from bloqade.decoders.dialects import annotate
 from kirin import ir, types
-from kirin.dialects import func
+from kirin.dialects import func, ilist
 
 from bloqade import squin
 from bloqade.lanes._prelude import kernel
@@ -102,6 +102,48 @@ def test_get_post_processing():
 
     assert returns[0] == (False, False)
     assert returns[1] == (False, False)
+
+
+def test_atom_interpreter_tracks_ilist_slice_getitem():
+    @kernel
+    def main():
+        state0 = move.load()
+        state1 = move.fill(
+            state0,
+            location_addresses=(
+                move.LocationAddress(0, 0),
+                move.LocationAddress(1, 0),
+                move.LocationAddress(2, 0),
+            ),
+        )
+        future = move.end_measure(state1, zone_addresses=(move.ZoneAddress(0),))
+        result_0 = move.get_future_result(
+            future,
+            zone_address=move.ZoneAddress(0),
+            location_address=move.LocationAddress(0, 0),
+        )
+        result_1 = move.get_future_result(
+            future,
+            zone_address=move.ZoneAddress(0),
+            location_address=move.LocationAddress(1, 0),
+        )
+        result_2 = move.get_future_result(
+            future,
+            zone_address=move.ZoneAddress(0),
+            location_address=move.LocationAddress(2, 0),
+        )
+        results = ilist.IList([result_0, result_1, result_2])
+        return results[1:]
+
+    interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())
+    _, result = interp.run(main)
+
+    assert result == atom.IListResult(
+        (
+            atom.MeasureResult(qubit_id=1, location_address=move.LocationAddress(1, 0)),
+            atom.MeasureResult(qubit_id=2, location_address=move.LocationAddress(2, 0)),
+        )
+    )
 
 
 def _build_measure_method(zones: tuple[move.ZoneAddress, ...]) -> ir.Method:

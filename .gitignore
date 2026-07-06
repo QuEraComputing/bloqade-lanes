@@ -14,6 +14,8 @@ demo/benchmark_exact_table_decoder.ipynb
 demo/*qet*
 demo/results
 demo/profile_decoder_scaling.py
+demo/color_code_17_1_5_qubits.py
+demo/alternative_physical_arch_code.ipynb
 
 # for stdlib code
 demo/msd_utils/noise.py
