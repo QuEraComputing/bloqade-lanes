@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["BlqdStatus"],"fn":["blqd_last_error"]};
+window.SIDEBAR_ITEMS = {"enum":["LanesStatus"],"fn":["lanes_last_error"]};

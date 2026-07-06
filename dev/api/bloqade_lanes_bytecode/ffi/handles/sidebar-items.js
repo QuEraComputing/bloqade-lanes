@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["BLQDArchSpec","BLQDProgram","BLQDValidationErrors"]};
+window.SIDEBAR_ITEMS = {"struct":["LANESArchSpec","LANESProgram","LANESValidationErrors"]};

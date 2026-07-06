@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a><span class="doccomment">/// Status codes returned by all fallible C-API functions.
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="attr">#[repr(C)]
 <a href=#7 id=7 data-nosnippet>7</a>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">pub enum </span>BlqdStatus {
+<a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">pub enum </span>LanesStatus {
 <a href=#9 id=9 data-nosnippet>9</a>    <span class="prelude-val">Ok </span>= <span class="number">0</span>,
 <a href=#10 id=10 data-nosnippet>10</a>    ErrParse = <span class="number">1</span>,
 <a href=#11 id=11 data-nosnippet>11</a>    ErrDecode = <span class="number">2</span>,
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// Returns a pointer to the last error message, or NULL if no error.
 <a href=#35 id=35 data-nosnippet>35</a>/// Valid until the next C-API call on the same thread.
 <a href=#36 id=36 data-nosnippet>36</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
-<a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">pub extern </span><span class="string">"C" </span><span class="kw">fn </span>blqd_last_error() -&gt; <span class="kw-2">*const </span>c_char {
+<a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">pub extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_last_error() -&gt; <span class="kw-2">*const </span>c_char {
 <a href=#38 id=38 data-nosnippet>38</a>    LAST_ERROR.with(|cell| {
 <a href=#39 id=39 data-nosnippet>39</a>        <span class="kw">let </span>borrow = cell.borrow();
 <a href=#40 id=40 data-nosnippet>40</a>        <span class="kw">match </span><span class="kw-2">&amp;*</span>borrow {

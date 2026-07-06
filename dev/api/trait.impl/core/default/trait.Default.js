@@ -1,9 +1,9 @@
 (function() {
-    const implementors = Object.fromEntries([["bloqade_lanes_bytecode_core",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.96.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"bloqade_lanes_bytecode_core/atom_state/struct.AtomStateData.html\" title=\"struct bloqade_lanes_bytecode_core::atom_state::AtomStateData\">AtomStateData</a>",0]]]]);
+    const implementors = Object.fromEntries([["bloqade_lanes_bytecode_core",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.96.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"bloqade_lanes_bytecode_core/atom_state/struct.AtomStateData.html\" title=\"struct bloqade_lanes_bytecode_core::atom_state::AtomStateData\">AtomStateData</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.96.1/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"bloqade_lanes_bytecode_core/isa/program/struct.LanesInfo.html\" title=\"struct bloqade_lanes_bytecode_core::isa::program::LanesInfo\">LanesInfo</a>",0]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":59,"fragment_lengths":[376]}
+//{"start":59,"fragment_lengths":[710]}

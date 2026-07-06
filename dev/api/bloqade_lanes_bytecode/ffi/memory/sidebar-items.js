@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["blqd_free_bytes","blqd_free_string"]};
+window.SIDEBAR_ITEMS = {"fn":["lanes_free_bytes","lanes_free_string"]};

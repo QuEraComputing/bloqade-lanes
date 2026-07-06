@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["arch","atom_state","bytecode","version"]};
+window.SIDEBAR_ITEMS = {"mod":["arch","atom_state","isa","version"]};

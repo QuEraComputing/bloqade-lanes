@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["blqd_simulate_stack","blqd_validate_addresses","blqd_validate_structure","blqd_validation_error_message","blqd_validation_errors_count","blqd_validation_errors_free"]};
+window.SIDEBAR_ITEMS = {"fn":["lanes_simulate_stack","lanes_validate_addresses","lanes_validate_structure","lanes_validation_error_message","lanes_validation_errors_count","lanes_validation_errors_free"]};
