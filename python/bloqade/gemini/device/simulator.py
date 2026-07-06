@@ -475,6 +475,10 @@ class GeminiLogicalSimulator:
 
     noise_model: LogicalNoiseModelABC = field(default_factory=_default_noise_model)
     """The noise model used for simulation. Defaults to :func:`generate_logical_noise_model`."""
+    backend: str = "tsim"
+    """Sampling backend for tasks created by this simulator."""
+    seed: int | None = None
+    """Optional backend seed for task sampling."""
 
     def task(
         self,
@@ -509,6 +513,21 @@ class GeminiLogicalSimulator:
             post_processing,
         ) = compile_task(logical_kernel, m2dets, m2obs)
 
+        # TODO (Breaking): For the future, ideally we'd want to encode the simulator backend in the class itself or as a
+        # type parameter in the class. For now, we have a simple conditional to decide the simulator backend to use.
+        if self.backend == "clifft":
+            from bloqade.gemini.decoding.tasks import _CliffTSimulatorTask
+
+            return _CliffTSimulatorTask(
+                logical_squin_kernel,
+                self.noise_model,
+                physical_arch_spec,
+                physical_move_kernel,
+                post_processing,
+                seed=self.seed,
+            )
+        if self.backend != "tsim":
+            raise ValueError("backend must be either 'tsim' or 'clifft'.")
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
