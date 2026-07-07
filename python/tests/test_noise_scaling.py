@@ -15,9 +15,7 @@ import math
 
 import pytest
 from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
-from kirin.dialects.ilist.runtime import IList
 from kirin.dialects.py import Constant
-from kirin.ir import PyAttr
 
 from bloqade.lanes.noise_model import (
     PAIRED_KEYS,
@@ -34,21 +32,26 @@ def _float_constants(kernel) -> set[float]:
     """
     out: set[float] = set()
     for stmt in kernel.callable_region.walk():
-        if (
-            isinstance(stmt, Constant)
-            and isinstance(stmt.value, PyAttr)
-            and isinstance(stmt.value.data, float)
-        ):
-            out.add(stmt.value.data)
+        if isinstance(stmt, Constant):
+            data = stmt.value.unwrap()
+            if isinstance(data, float):
+                out.add(data)
     return out
 
 
 def _list_constant(kernel) -> list[float]:
-    """Return the first IList constant baked into a kernel, as floats."""
+    """Return the first list/IList constant baked into a kernel, as floats."""
     for stmt in kernel.callable_region.walk():
-        if isinstance(stmt, Constant) and isinstance(stmt.value, IList):
-            return [float(x) for x in stmt.value.data]
-    raise AssertionError("no IList constant found in kernel")
+        if not isinstance(stmt, Constant):
+            continue
+        data = stmt.value.unwrap()
+        if isinstance(data, (bool, str, float, int)):
+            continue
+        try:
+            return [float(x) for x in data]
+        except TypeError:
+            continue
+    raise AssertionError("no list constant found in kernel")
 
 
 def _has(consts, target: float) -> bool:
