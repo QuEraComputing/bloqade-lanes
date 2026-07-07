@@ -99,7 +99,7 @@ def generate_simple_noise_model(
         [cz_paired_error_dict.get(k, 0.0) for k in PAIRED_KEYS]
     )
 
-    cz_unpaired_loss_prob = noise_model.cz_gate_loss_prob
+    cz_paired_loss_prob = noise_model.cz_gate_loss_prob
 
     @squin.kernel
     def cz_paired_noise(
@@ -115,7 +115,7 @@ def generate_simple_noise_model(
 
         if loss:
             groups = ilist.map(pair_qubit, ilist.range(len(controls)))
-            squin.broadcast.correlated_qubit_loss(cz_unpaired_loss_prob, groups)
+            squin.broadcast.correlated_qubit_loss(cz_paired_loss_prob, groups)
 
     local_px, local_py, local_pz = noise_model.local_pauli_rates
     local_loss_prob = noise_model.local_loss_prob

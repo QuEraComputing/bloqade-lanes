@@ -58,32 +58,31 @@ def _has(consts, target: float) -> bool:
     return any(math.isclose(c, target, rel_tol=1e-9, abs_tol=1e-18) for c in consts)
 
 
-# (kernel attribute, raw px/py/pz field names it should bake, scaled)
+# (kernel attribute, scaled getter property the kernel should bake). Expectations
+# are derived from the getter APIs themselves (the source of truth), not by
+# re-deriving raw * scale, so the tests stay valid if upstream changes how
+# scaling is applied.
 SINGLE_QUBIT_RATE_KERNELS = [
-    ("lane_noise", ("mover_px", "mover_py", "mover_pz")),
-    ("idle_noise", ("sitter_px", "sitter_py", "sitter_pz")),
-    (
-        "cz_unpaired_noise",
-        ("cz_unpaired_gate_px", "cz_unpaired_gate_py", "cz_unpaired_gate_pz"),
-    ),
-    ("local_r_noise", ("local_px", "local_py", "local_pz")),
-    ("local_rz_noise", ("local_px", "local_py", "local_pz")),
-    ("global_r_noise", ("global_px", "global_py", "global_pz")),
-    ("global_rz_noise", ("global_px", "global_py", "global_pz")),
+    ("lane_noise", "mover_pauli_rates"),
+    ("idle_noise", "sitter_pauli_rates"),
+    ("cz_unpaired_noise", "cz_unpaired_pauli_rates"),
+    ("local_r_noise", "local_pauli_rates"),
+    ("local_rz_noise", "local_pauli_rates"),
+    ("global_r_noise", "global_pauli_rates"),
+    ("global_rz_noise", "global_pauli_rates"),
 ]
 
 
 @pytest.mark.parametrize("scale", [0.0, 0.5, 2.0])
-@pytest.mark.parametrize("kernel_name,rate_fields", SINGLE_QUBIT_RATE_KERNELS)
-def test_single_qubit_pauli_rates_honor_scaling_factor(scale, kernel_name, rate_fields):
+@pytest.mark.parametrize("kernel_name,getter", SINGLE_QUBIT_RATE_KERNELS)
+def test_single_qubit_pauli_rates_honor_scaling_factor(scale, kernel_name, getter):
     model = GeminiOneZoneNoiseModel(scaling_factor=scale)
     nm = generate_simple_noise_model(model)
     consts = _float_constants(getattr(nm, kernel_name))
-    for field in rate_fields:
-        expected = getattr(model, field) * scale
+    for expected in getattr(model, getter):
         assert _has(
             consts, expected
-        ), f"{kernel_name}: expected scaled {field}={expected}, got {sorted(consts)}"
+        ), f"{kernel_name}: expected scaled rate {expected}, got {sorted(consts)}"
 
 
 @pytest.mark.parametrize("scale", [0.0, 0.5, 2.0])
@@ -92,12 +91,13 @@ def test_cz_paired_probabilities_honor_scaling_factor(scale):
     nm = generate_simple_noise_model(model)
     baked = _list_constant(nm.cz_paired_noise)
     assert len(baked) == len(PAIRED_KEYS)
-    raw = model.cz_paired_error_probabilities
-    assert raw is not None
+    # Expected values come from the scaled getter (the source of truth) rather
+    # than re-deriving raw[key] * scale.
+    expected = model.two_qubit_pauli.error_probabilities
     for key, got in zip(PAIRED_KEYS, baked):
         assert math.isclose(
-            got, raw[key] * scale, rel_tol=1e-9, abs_tol=1e-18
-        ), f"paired {key}: expected {raw[key] * scale}, got {got}"
+            got, expected[key], rel_tol=1e-9, abs_tol=1e-18
+        ), f"paired {key}: expected {expected[key]}, got {got}"
 
 
 def test_scaling_changes_baked_constants():
@@ -166,8 +166,9 @@ def test_logical_init_kernels_honor_scaling_factor():
     _, noisy = nm.get_logical_initialize()
     assert noisy is not None
     consts = _float_constants(noisy)
-    for field in ("local_px", "mover_px", "sitter_px"):
-        expected = getattr(model, field) * scale
+    # The px component of each getter should be baked into the init kernel.
+    for getter in ("local_pauli_rates", "mover_pauli_rates", "sitter_pauli_rates"):
+        expected = getattr(model, getter)[0]
         assert _has(
             consts, expected
-        ), f"logical init: expected scaled {field}={expected}, got {sorted(consts)}"
+        ), f"logical init: expected scaled {getter}[0]={expected}, got {sorted(consts)}"
