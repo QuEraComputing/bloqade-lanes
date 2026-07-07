@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 import numpy as np
 import numpy.typing as npt
 from bloqade.decoders import GurobiDecoder
+
+if TYPE_CHECKING:
+    import gurobipy as gp  # type: ignore[reportMissingImports]
+
+
+def _gurobipy() -> Any:
+    try:
+        import gurobipy as gp  # type: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise ImportError(
+            "Gurobi confidence decoding requires the optional `gurobipy` "
+            "dependency. Install it with `bloqade-lanes[msd-reprod]` or "
+            "include `gurobipy` in your environment."
+        ) from exc
+
+    return gp
 
 
 def _validate_detector_bits(
@@ -89,7 +105,7 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
 
     @classmethod
     def _get_env(cls) -> object:
-        import gurobipy as gp
+        gp = _gurobipy()
 
         if cls._env is None:
             cls._env = gp.Env()
@@ -102,8 +118,8 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
         verbose: bool = False,
         forbidden_logical: np.ndarray | None = None,
     ) -> _ConfidenceSolveResult | None:
-        import gurobipy as gp
-        from gurobipy import GRB
+        gp = _gurobipy()
+        GRB = gp.GRB
 
         env = cast(Any, self._get_env())
         env.setParam("OutputFlag", 1 if verbose else 0)  # type: ignore[union-attr]
@@ -113,9 +129,9 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
         detector_vertices = self._detector_vertices
         observable_indices = self._observable_indices
 
-        error_variables: list[gp.Var] = []
-        detector_variables: list[gp.Var] = []
-        logical_variables: list[gp.Var] = []
+        error_variables: list["gp.Var"] = []
+        detector_variables: list["gp.Var"] = []
+        logical_variables: list["gp.Var"] = []
         objective: gp.LinExpr = gp.LinExpr(0)
 
         for i, weight in enumerate(weights):
@@ -158,7 +174,7 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
             m.addConstr(constraint == logical_var, name="lpar" + str(obs_idx))
 
         if forbidden_logical is not None:
-            diff_variables: list[gp.Var] = []
+            diff_variables: list["gp.Var"] = []
             for obs_idx, forbidden_bit in enumerate(forbidden_logical.astype(int)):
                 diff_var = m.addVar(vtype=GRB.BINARY, name="d" + str(obs_idx))
                 diff_variables.append(diff_var)

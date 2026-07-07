@@ -15,7 +15,7 @@ from stim import DetectorErrorModel
 if TYPE_CHECKING:
     import stim as stim_backend
     import tsim as tsim_backend  # type: ignore[reportMissingImports]
-    from clifft import Program, SampleResult
+    from clifft import Program, SampleResult  # type: ignore[reportMissingImports]
 
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.arch.spec import ArchSpec
@@ -625,7 +625,7 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
         construction, and this property converts back to tsim shorthand only for
         CliffT compilation.
         """
-        import clifft
+        import clifft  # type: ignore[reportMissingImports]
 
         # TODO: redefine this function somewhere else so CliffT sim path doesn't have to import tsim?
         from tsim.utils.program_text import (
@@ -639,7 +639,7 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
     @cached_property
     def clifft_noiseless_tsim_program(self) -> Program:
         """The noiseless CliffT program."""
-        import clifft
+        import clifft  # type: ignore[reportMissingImports]
 
         # TODO: redefine this function somewhere else so CliffT sim path doesn't have to import tsim?
         from tsim.utils.program_text import (
@@ -656,7 +656,7 @@ class CliffTSimulatorTask(AbstractSimulatorTask[RetType]):
         *,
         with_noise: bool = True,
     ) -> SampleResult:
-        import clifft
+        import clifft  # type: ignore[reportMissingImports]
 
         # TODO: check if _run_clifft() is ever called with run()... because I think we might be calling sample_clifft_det_obs always?
         program = (
