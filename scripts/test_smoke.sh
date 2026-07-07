@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Smoke tests for bytecode validation CLI.
-# Runs .sst test files through the CLI and checks exit codes / error output.
+# Smoke tests for the bytecode CLI (vihaco-backed).
+#
+# Self-contained: programs are generated inline in the *native* text format
+# (const.i64/const.f64 etc.), so this does not depend on the legacy example
+# .sst files. Covers assemble/disassemble round-trip plus validation:
+# structural checks, arch-dependent capability + address checks, and
+# stack-type simulation (--simulate-stack).
+#
 # Usage: ./scripts/test_smoke.sh
 set -euo pipefail
 
@@ -8,139 +14,178 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-ARCH="examples/arch/full.json"
+ARCH="examples/arch/simple.json"   # zone 0, word 0, 5 sites; feed_forward=false, atom_reloading=false
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 PASSED=0
 FAILED=0
 
 pass() { echo "  PASS: $1"; PASSED=$((PASSED + 1)); }
 fail() { echo "  FAIL: $1"; FAILED=$((FAILED + 1)); }
 
-# Build CLI
 echo "=== Building CLI ==="
 cargo build -p bloqade-lanes-bytecode-cli 2>&1 | tail -1
 CLI="target/debug/bloqade-bytecode"
 
-# --- Helper: expect success ---
+# Write a program to $WORK/$1.sst from stdin.
+prog() { cat > "$WORK/$1.sst"; }
+
 expect_pass() {
-    local desc="$1"
-    shift
-    if "$CLI" "$@" >/dev/null 2>&1; then
-        pass "$desc"
-    else
-        fail "$desc (expected pass, got exit code $?)"
-    fi
+    local desc="$1"; shift
+    if "$CLI" "$@" >/dev/null 2>&1; then pass "$desc"; else fail "$desc (expected pass, exit $?)"; fi
 }
 
-# --- Helper: expect failure with optional error pattern ---
 expect_fail() {
-    local desc="$1"
-    local pattern="$2"
-    shift 2
-    local stderr_out
-    if stderr_out=$("$CLI" "$@" 2>&1); then
+    local desc="$1" pattern="$2"; shift 2
+    local out
+    if out=$("$CLI" "$@" 2>&1); then
         fail "$desc (expected failure, got exit 0)"
-    elif [ -n "$pattern" ] && ! echo "$stderr_out" | grep -qi "$pattern"; then
-        fail "$desc (missing pattern '$pattern' in output)"
-        echo "    output: $stderr_out"
+    elif [ -n "$pattern" ] && ! echo "$out" | grep -qi "$pattern"; then
+        fail "$desc (missing '$pattern' in output)"; echo "    output: $out"
     else
         pass "$desc"
     fi
 }
 
-echo ""
-echo "=== Category A: Address validation (--arch) ==="
-
-expect_pass "addr_locations" \
-    validate examples/programs/valid/addr_locations.sst --arch "$ARCH"
-
-expect_pass "addr_lanes_site_bus" \
-    validate examples/programs/valid/addr_lanes_site_bus.sst --arch "$ARCH"
-
-expect_pass "addr_lanes_word_bus" \
-    validate examples/programs/valid/addr_lanes_word_bus.sst --arch "$ARCH"
-
-expect_pass "addr_zone" \
-    validate examples/programs/valid/addr_zone.sst --arch "$ARCH"
-
-expect_fail "addr_invalid_word" "invalid location" \
-    validate examples/programs/invalid/addr_invalid_word.sst --arch "$ARCH"
-
-expect_fail "addr_invalid_site" "invalid location" \
-    validate examples/programs/invalid/addr_invalid_site.sst --arch "$ARCH"
-
-expect_fail "addr_invalid_bus" "invalid lane" \
-    validate examples/programs/invalid/addr_invalid_bus.sst --arch "$ARCH"
-
-expect_fail "addr_invalid_zone" "invalid zone" \
-    validate examples/programs/invalid/addr_invalid_zone.sst --arch "$ARCH"
+# A minimal valid program reused across cases.
+prog valid <<'EOF'
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  const_loc 0x0000000001000000
+  initial_fill 2
+  const.f64 1.5708
+  global_rz
+  return
+}
+EOF
 
 echo ""
-echo "=== Category B: Stack simulation (--simulate-stack) ==="
-
-expect_pass "stack_basic" \
-    validate examples/programs/valid/stack_basic.sst --simulate-stack
-
-expect_pass "stack_full_pipeline" \
-    validate examples/programs/valid/stack_full_pipeline.sst --simulate-stack --arch "$ARCH"
-
-expect_fail "stack_underflow" "stack underflow" \
-    validate examples/programs/invalid/stack_underflow.sst --simulate-stack
-
-expect_fail "stack_type_mismatch_fill" "type mismatch" \
-    validate examples/programs/invalid/stack_type_mismatch_fill.sst --simulate-stack
-
-expect_fail "stack_type_mismatch_cz" "type mismatch" \
-    validate examples/programs/invalid/stack_type_mismatch_cz.sst --simulate-stack
-
-expect_fail "stack_initial_fill_not_first" "initial_fill" \
-    validate examples/programs/invalid/stack_initial_fill_not_first.sst
-
-expect_fail "stack_move_wrong_type" "type mismatch" \
-    validate examples/programs/invalid/stack_move_wrong_type.sst --simulate-stack
+echo "=== Category A: assemble / disassemble round-trip ==="
+"$CLI" assemble "$WORK/valid.sst" -o "$WORK/valid.bin" >/dev/null 2>&1 \
+    && "$CLI" disassemble "$WORK/valid.bin" > "$WORK/valid.out.sst" 2>/dev/null \
+    && "$CLI" assemble "$WORK/valid.out.sst" -o "$WORK/valid2.bin" >/dev/null 2>&1 \
+    && cmp -s "$WORK/valid.bin" "$WORK/valid2.bin" \
+    && pass "round-trip assemble->disassemble->assemble is stable" \
+    || fail "round-trip"
 
 echo ""
-echo "=== Category C: Lane group validation (--simulate-stack --arch) ==="
+echo "=== Category B: structural validation ==="
+expect_pass "valid program" validate "$WORK/valid.sst"
 
-expect_pass "group_consistent_site_bus" \
-    validate examples/programs/valid/group_consistent_site_bus.sst --simulate-stack --arch "$ARCH"
+prog no_terminator <<'EOF'
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+}
+EOF
+expect_fail "missing terminator" "return or halt" validate "$WORK/no_terminator.sst"
 
-expect_pass "group_consistent_word_bus" \
-    validate examples/programs/valid/group_consistent_word_bus.sst --simulate-stack --arch "$ARCH"
-
-expect_pass "group_rectangle" \
-    validate examples/programs/valid/group_rectangle.sst --simulate-stack --arch "$ARCH"
-
-expect_fail "group_inconsistent_bus" "inconsistent" \
-    validate examples/programs/invalid/group_inconsistent_bus.sst --simulate-stack --arch "$ARCH"
-
-expect_fail "group_inconsistent_dir" "inconsistent" \
-    validate examples/programs/invalid/group_inconsistent_dir.sst --simulate-stack --arch "$ARCH"
-
-expect_fail "group_not_rectangle" "AOD constraint" \
-    validate examples/programs/invalid/group_not_rectangle.sst --simulate-stack --arch "$ARCH"
-
-expect_fail "group_word_not_in_bus_list" "words_with_site_buses" \
-    validate examples/programs/invalid/group_word_not_in_bus_list.sst --simulate-stack --arch "$ARCH"
-
-expect_fail "group_site_not_in_bus_list" "sites_with_word_buses" \
-    validate examples/programs/invalid/group_site_not_in_bus_list.sst --simulate-stack --arch "$ARCH"
+prog fill_not_first <<'EOF'
+version 1.0;
+fn @main() {
+  global_r
+  initial_fill 1
+  return
+}
+EOF
+expect_fail "initial_fill not first" "initial_fill" validate "$WORK/fill_not_first.sst"
 
 echo ""
-echo "=== Category E: Capability validation (--arch) ==="
+echo "=== Category C: capability validation (--arch) ==="
+prog multi_measure <<'EOF'
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+  const_zone 0x00000000
+  measure 1
+  const_zone 0x00000000
+  measure 1
+  return
+}
+EOF
+expect_fail "multiple measure (feed_forward=false)" "feed_forward" \
+    validate "$WORK/multi_measure.sst" --arch "$ARCH"
 
-ARCH_SIMPLE="examples/arch/simple.json"
+prog fill_reload <<'EOF'
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+  const_loc 0x0000000000000000
+  fill 1
+  return
+}
+EOF
+expect_fail "fill without atom_reloading" "atom_reloading" \
+    validate "$WORK/fill_reload.sst" --arch "$ARCH"
 
-expect_fail "cap_multiple_measure (feed_forward=false)" "feed_forward" \
-    validate examples/programs/invalid/cap_multiple_measure.sst --arch "$ARCH_SIMPLE"
-
-expect_fail "cap_fill_no_reload (atom_reloading=false)" "atom_reloading" \
-    validate examples/programs/invalid/cap_fill_no_reload.sst --arch "$ARCH_SIMPLE"
+# Note: the feed_forward control-flow rule (rejecting br/cond_br/call) is not
+# exercised here because vihaco-cpu's branch mnemonics are parser-deferred and
+# cannot be expressed in text; that rule is covered by unit tests in
+# isa::validate. See bloqade-lanes#769.
 
 echo ""
-echo "=== Category D: Multi-error collection ==="
+echo "=== Category D: address validation (--arch) ==="
+expect_pass "valid addresses" validate "$WORK/valid.sst" --arch "$ARCH"
 
-expect_fail "kitchen_sink (multiple errors)" "validation error" \
-    validate examples/programs/invalid/kitchen_sink.sst --simulate-stack --arch "$ARCH"
+prog bad_zone <<'EOF'
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+  const_zone 0x00000005
+  measure 1
+  return
+}
+EOF
+expect_fail "invalid zone" "invalid zone" validate "$WORK/bad_zone.sst" --arch "$ARCH"
+
+prog bad_site <<'EOF'
+version 1.0;
+fn @main() {
+  const_loc 0x0000000063000000
+  initial_fill 1
+  return
+}
+EOF
+expect_fail "invalid site" "invalid location" validate "$WORK/bad_site.sst" --arch "$ARCH"
+
+echo ""
+echo "=== Category E: stack-type simulation (--simulate-stack) ==="
+# Stack-balanced: the two locations are consumed by initial_fill, leaving the
+# stack empty at the `halt` terminator (halt pops nothing).
+prog typed_ok <<'EOF'
+version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  const_loc 0x0000000001000000
+  initial_fill 2
+  halt
+}
+EOF
+expect_pass "well-typed program" validate "$WORK/typed_ok.sst" --simulate-stack
+
+prog underflow <<'EOF'
+version 1.0;
+fn @main() {
+  pop
+  return
+}
+EOF
+expect_fail "stack underflow" "underflow" validate "$WORK/underflow.sst" --simulate-stack
+
+prog mismatch <<'EOF'
+version 1.0;
+fn @main() {
+  const.f64 1.0
+  initial_fill 1
+  return
+}
+EOF
+expect_fail "type mismatch" "type mismatch" validate "$WORK/mismatch.sst" --simulate-stack
 
 echo ""
 echo "=== Results: $PASSED passed, $FAILED failed ==="

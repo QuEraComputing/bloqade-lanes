@@ -7,9 +7,10 @@ use clap::{Parser, Subcommand};
 mod policy;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
-use bloqade_lanes_bytecode_core::bytecode::program::Program;
-use bloqade_lanes_bytecode_core::bytecode::text;
-use bloqade_lanes_bytecode_core::bytecode::validate;
+use bloqade_lanes_bytecode_core::isa::Program;
+use bloqade_lanes_bytecode_core::isa::program::{from_binary, to_binary};
+use bloqade_lanes_bytecode_core::isa::validate;
+use bloqade_lanes_bytecode_core::isa::{parse_text, to_text};
 
 #[derive(Parser)]
 #[command(
@@ -169,12 +170,12 @@ fn main() {
 fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
-    let program = text::parse(&source).map_err(|e| e.to_string())?;
-    let binary = program.to_binary();
+    let program = parse_text(&source).map_err(|e| e.to_string())?;
+    let binary = to_binary(&program);
     fs::write(output, &binary).map_err(|e| format!("writing {}: {}", output.display(), e))?;
     eprintln!(
         "assembled {} instructions -> {}",
-        program.instructions.len(),
+        program.code.len(),
         output.display()
     );
     Ok(())
@@ -182,14 +183,14 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
 
 fn cmd_disassemble(input: &PathBuf, output: Option<&std::path::Path>) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
-    let program = Program::from_binary(&bytes).map_err(|e| e.to_string())?;
-    let text_out = text::print(&program);
+    let program = from_binary(&bytes).map_err(|e| e.to_string())?;
+    let text_out = to_text(&program);
     match output {
         Some(path) => {
             fs::write(path, &text_out).map_err(|e| format!("writing {}: {}", path.display(), e))?;
             eprintln!(
                 "disassembled {} instructions -> {}",
-                program.instructions.len(),
+                program.code.len(),
                 path.display()
             );
         }
@@ -214,19 +215,19 @@ fn cmd_validate(
         None => None,
     };
 
-    let mut all_errors = Vec::new();
-    all_errors.extend(validate::validate_structure(&program));
-
-    if let Some(arch) = &arch {
-        all_errors.extend(validate::validate_arch_constraints(&program, arch));
-    }
+    // Structural checks always run; arch-dependent capability + address checks
+    // run when an arch spec is provided; stack-type simulation runs on request.
+    let mut all_errors = validate::validate_structure(&program)
+        .into_iter()
+        .chain(validate::validate(&program, arch.as_ref()))
+        .collect::<Vec<_>>();
 
     if simulate_stack {
         all_errors.extend(validate::simulate_stack(&program, arch.as_ref()));
     }
 
     if all_errors.is_empty() {
-        eprintln!("valid ({} instructions)", program.instructions.len());
+        eprintln!("valid ({} instructions)", program.code.len());
         Ok(())
     } else {
         for e in &all_errors {
@@ -365,11 +366,11 @@ fn load_program(path: &PathBuf) -> Result<Program, String> {
         "sst" => {
             let source = fs::read_to_string(path)
                 .map_err(|e| format!("reading {}: {}", path.display(), e))?;
-            text::parse(&source).map_err(|e| e.to_string())
+            parse_text(&source).map_err(|e| e.to_string())
         }
         _ => {
             let bytes = fs::read(path).map_err(|e| format!("reading {}: {}", path.display(), e))?;
-            Program::from_binary(&bytes).map_err(|e| e.to_string())
+            from_binary(&bytes).map_err(|e| e.to_string())
         }
     }
 }

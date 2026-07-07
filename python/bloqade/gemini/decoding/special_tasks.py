@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from bloqade.gemini.device import GeminiLogicalSimulatorTask
 
 if TYPE_CHECKING:
-    import tsim as tsim_backend
+    import tsim as tsim_backend  # type: ignore[reportMissingImports]
 
 _TaskT = TypeVar("_TaskT", bound=GeminiLogicalSimulatorTask[Any])
 

@@ -11,7 +11,7 @@ import numpy as np
 from bloqade.gemini.device import DetectorResult, GeminiLogicalSimulatorTask, Result
 
 if TYPE_CHECKING:
-    from clifft import Program, SampleResult
+    from clifft import Program, SampleResult  # type: ignore[reportMissingImports]
 
 RetType = TypeVar("RetType")
 
@@ -27,6 +27,19 @@ def _clifft_compatible_stim_text(circuit: Any) -> str:
     )
 
 
+def _clifft() -> Any:
+    try:
+        import clifft  # type: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise ImportError(
+            "CliffT simulation requires the optional `clifft` dependency. "
+            "Install it with `bloqade-lanes[msd-reprod]` or include `clifft` "
+            "in your environment."
+        ) from exc
+
+    return clifft
+
+
 # TODO: inherits from GeminiLogicalSimulatorTask for now because a lot of fields used in the experiment are basically in GeminiLogicalSimulatorTask.
 # ^ these fields are primarily used in _apply_special_tsim_circuit_strategy where we need some way to modify the tsim_circuit associated w/ a task.
 # ^ can think of a better design later.
@@ -38,15 +51,21 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
 
     @cached_property
     def clifft_tsim_program(self) -> Program:
-        import clifft
+        clifft = _clifft()
 
-        return clifft.compile(_clifft_compatible_stim_text(self.tsim_circuit))
+        return cast(
+            "Program",
+            clifft.compile(_clifft_compatible_stim_text(self.tsim_circuit)),
+        )
 
     @cached_property
     def clifft_noiseless_tsim_program(self) -> Program:
-        import clifft
+        clifft = _clifft()
 
-        return clifft.compile(_clifft_compatible_stim_text(self.noiseless_tsim_circuit))
+        return cast(
+            "Program",
+            clifft.compile(_clifft_compatible_stim_text(self.noiseless_tsim_circuit)),
+        )
 
     def _sample_clifft(
         self,
@@ -54,7 +73,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         *,
         with_noise: bool = True,
     ) -> SampleResult:
-        import clifft
+        clifft = _clifft()
 
         # TODO: check if _run_clifft() is ever called with run()... because I think we might be calling sample_clifft_det_obs always?
         program = (
