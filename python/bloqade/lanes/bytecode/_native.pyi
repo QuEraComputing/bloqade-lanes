@@ -2226,7 +2226,7 @@ class Program:
     """A bytecode program consisting of a version and instruction sequence.
 
     Programs can be constructed directly, parsed from SST text assembly,
-    or deserialized from BLQD binary format.
+    or deserialized from native LANES binary format.
 
     Args:
         version (tuple[int, int]): Program version as ``(major, minor)``.
@@ -2261,10 +2261,10 @@ class Program:
 
     @staticmethod
     def from_binary(data: bytes) -> Program:
-        """Deserialize a program from BLQD binary format.
+        """Deserialize a program from native LANES binary format.
 
         Args:
-            data (bytes): Raw BLQD binary data.
+            data (bytes): Raw native LANES binary data.
 
         Returns:
             Program: The deserialized program.
@@ -2275,10 +2275,10 @@ class Program:
         ...
 
     def to_binary(self) -> bytes:
-        """Serialize the program to BLQD binary format.
+        """Serialize the program to native LANES binary format.
 
         Returns:
-            bytes: The BLQD binary representation.
+            bytes: The native LANES binary representation.
         """
         ...
 

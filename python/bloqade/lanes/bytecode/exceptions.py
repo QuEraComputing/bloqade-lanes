@@ -171,6 +171,18 @@ class UnreachableInstructionError(ValidationError):
         super().__init__(f"pc {pc}: unreachable instruction after return or halt")
 
 
+class AddressValidationError(ValidationError):
+    """A const_loc / const_lane / const_zone operand is invalid for the arch.
+
+    Carries the architecture layer's own diagnostic ``message``.
+    """
+
+    def __init__(self, pc: int, message: str):
+        self.pc = pc
+        self.message = message
+        super().__init__(f"pc {pc}: invalid address: {message}")
+
+
 # ── Location group errors (from ArchSpec.check_locations) ──
 
 
@@ -262,7 +274,16 @@ class ParseError(Exception):
 
 class MissingVersionError(ParseError):
     def __init__(self):
-        super().__init__("missing .version directive")
+        super().__init__("missing version header")
+
+
+class BadInstructionError(ParseError):
+    """A line could not be parsed as an instruction."""
+
+    def __init__(self, line: int, text: str):
+        self.line = line
+        self.text = text
+        super().__init__(f"line {line}: cannot parse instruction '{text}'")
 
 
 class InvalidVersionError(ParseError):
@@ -296,12 +317,12 @@ class InvalidOperandError(ParseError):
 
 
 class ProgramError(Exception):
-    """Base class for BLQD binary format errors."""
+    """Base class for native LANES binary format errors."""
 
 
 class BadMagicError(ProgramError):
     def __init__(self):
-        super().__init__("bad magic bytes (expected BLQD)")
+        super().__init__("bad magic bytes (expected LANES)")
 
 
 class TruncatedError(ProgramError):
@@ -317,10 +338,22 @@ class UnknownSectionTypeError(ProgramError):
         super().__init__(f"unknown section type: {section_type}")
 
 
+# Deprecated: no Rust path maps here anymore; superseded by UnalignedCodeError (kept for backward-compatible imports).
 class InvalidCodeSectionLengthError(ProgramError):
     def __init__(self, length: int):
         self.length = length
-        super().__init__(f"code section length {length} is not a multiple of 8")
+        super().__init__(
+            f"code section length {length} is not a whole number of instruction words"
+        )
+
+
+class UnalignedCodeError(ProgramError):
+    """Binary code region length is not a whole number of instruction words."""
+
+    def __init__(self, length: int, width: int):
+        self.length = length
+        self.width = width
+        super().__init__(f"code length {length} is not a multiple of {width}")
 
 
 class MissingMetadataSectionError(ProgramError):

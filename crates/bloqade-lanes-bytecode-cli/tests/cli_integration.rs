@@ -9,47 +9,53 @@ fn cmd() -> Command {
 
 /// A small program for basic command tests.
 const SAMPLE_PROGRAM: &str = "\
-.version 1.0
-const_loc 0x00000102
-const_lane 0x0000000100030002
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000102
+  const_lane 0x0000000100030002
+  halt
+}
 ";
 
 /// All 23 instructions exercised in a single program.
 /// Ordered so that initial_fill comes right after constants (structurally valid).
 const ALL_INSTRUCTIONS_PROGRAM: &str = "\
-.version 1.0
-const_float 1.5
-const_int 42
-const_loc 0x00010002
-const_lane 0x8000000000010002
-const_zone 0x00000003
-initial_fill 3
-pop
-dup
-swap
-fill 2
-move 1
-local_r 4
-local_rz 2
-global_r
-global_rz
-cz
-measure 1
-await_measure
-new_array 2 10 20
-get_item 2
-set_detector
-set_observable
-halt
+version 1.0;
+fn @main() {
+  const.f64 1.5
+  const.i64 42
+  const_loc 0x00010002
+  const_lane 0x8000000000010002
+  const_zone 0x00000003
+  initial_fill 3
+  pop
+  dup
+  swap
+  fill 2
+  move 1
+  local_r 4
+  local_rz 2
+  global_r
+  global_rz
+  cz
+  measure 1
+  await_measure
+  new_array 2 10 20
+  get_item 2
+  set_detector
+  set_observable
+  halt
+}
 ";
 
 /// A program with addresses valid for the test arch spec (word_id=0, site_id in 0..5, bus_id=0).
 const ARCH_VALID_PROGRAM: &str = "\
-.version 1.0
-const_loc 0x00000001
-const_zone 0x00000000
-halt
+version 1.0;
+fn @main() {
+  const_loc 0x00000001
+  const_zone 0x00000000
+  halt
+}
 ";
 
 #[test]
@@ -71,8 +77,8 @@ fn test_assemble_creates_binary() {
         .stderr(predicate::str::contains("assembled 23 instructions"));
 
     let bytes = fs::read(&output).unwrap();
-    // Should start with BLQD magic bytes
-    assert_eq!(&bytes[..4], b"BLQD");
+    // Should start with the native LANES magic bytes
+    assert_eq!(&bytes[..5], b"LANES");
 }
 
 #[test]
@@ -98,8 +104,8 @@ fn test_disassemble_to_stdout() {
         .args(["disassemble", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("const_float 1.5"))
-        .stdout(predicate::str::contains("const_int 42"))
+        .stdout(predicate::str::contains("const.f64 1.5"))
+        .stdout(predicate::str::contains("const.i64 42"))
         .stdout(predicate::str::contains("const_loc"))
         .stdout(predicate::str::contains("const_lane"))
         .stdout(predicate::str::contains("const_zone"))
@@ -138,8 +144,8 @@ fn test_disassemble_to_file() {
 
     let text = fs::read_to_string(&output_txt).unwrap();
     // Spot-check all instruction categories are present
-    assert!(text.contains("const_float"));
-    assert!(text.contains("const_int"));
+    assert!(text.contains("const.f64"));
+    assert!(text.contains("const.i64"));
     assert!(text.contains("const_loc"));
     assert!(text.contains("const_lane"));
     assert!(text.contains("const_zone"));
@@ -366,7 +372,7 @@ fn test_assemble_invalid_syntax() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("bad.sst");
     let output = dir.path().join("out.bin");
-    fs::write(&input, ".version 1\nfoobar_invalid\n").unwrap();
+    fs::write(&input, "version 1.0;\nfn @main() {\n  foobar_invalid\n}\n").unwrap();
 
     cmd()
         .args([
@@ -508,7 +514,11 @@ fn test_round_trip_preserves_version() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
-    fs::write(&input, ".version 2.3\nconst_int 99\nhalt\n").unwrap();
+    fs::write(
+        &input,
+        "version 2.3;\nfn @main() {\n  const.i64 99\n  halt\n}\n",
+    )
+    .unwrap();
 
     cmd()
         .args([
@@ -524,5 +534,6 @@ fn test_round_trip_preserves_version() {
         .args(["disassemble", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains(".version 2.3"));
+        .stdout(predicate::str::contains("version 2.3"))
+        .stdout(predicate::str::contains("fn @main()"));
 }
