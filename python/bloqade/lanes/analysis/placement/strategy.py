@@ -69,10 +69,13 @@ class PlacementStrategyABC(abc.ABC):
     ) -> AtomState:
         """Place a terminal measurement of all ``qubits``.
 
-        Builds an ``ExecuteMeasure`` whose ``layout``/``zone_maps`` are ordered
-        by the measurement order ``qubits`` so each emitted measurement result
-        lines up with the location of the qubit it measures (``qubits`` is a
-        permutation once StaticPlacement blocks are merged).
+        ``layout`` stays canonical (indexed by qubit id) — it must not be
+        permuted, since reordering it would relabel qubits. The measurement
+        order is carried by ``place.EndMeasure.qubits`` and applied when the
+        measurement is lowered (see ``place2move.InsertMeasure``), which indexes
+        this canonical layout by ``qubits`` so each result reads the location of
+        the qubit it measures (``qubits`` is a permutation once StaticPlacement
+        blocks are merged).
 
         A ``UserMoved`` state is accepted here: a user-directed move that ends
         at a measurement is committed — the atoms stay at their moved layout and
@@ -88,9 +91,9 @@ class PlacementStrategyABC(abc.ABC):
             return AtomState.bottom()  # all qubits must be measured
         return ExecuteMeasure(
             occupied=state.occupied,
-            layout=tuple(state.layout[i] for i in qubits),
-            move_count=tuple(state.move_count[i] for i in qubits),
-            zone_maps=tuple(ZoneAddress(state.layout[i].zone_id) for i in qubits),
+            layout=state.layout,
+            move_count=state.move_count,
+            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )
 
     def _strip_user_moved(self, state: AtomState) -> AtomState:

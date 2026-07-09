@@ -255,14 +255,17 @@ class InsertMeasure(RewriteRule):
             )
         ).insert_before(node)
 
-        for result, zone_address, loc_addr in zip(
-            node.results[1:], atom_state.zone_maps, atom_state.layout, strict=True
-        ):
+        # ``node.qubits`` gives the qubit id measured at each result position
+        # (the squin measurement order, remapped to block-local ids by
+        # MergeStaticPlacement). Index the canonical ``layout``/``zone_maps``
+        # (both qubit-id ordered) by it so each result reads the location of the
+        # qubit it actually measures, without permuting the layout upstream.
+        for result, qid in zip(node.results[1:], node.qubits, strict=True):
             (
                 get_item_stmt := move.GetFutureResult(
                     future_stmt.result,
-                    zone_address=zone_address,
-                    location_address=loc_addr,
+                    zone_address=atom_state.zone_maps[qid],
+                    location_address=atom_state.layout[qid],
                 )
             ).insert_before(node)
 
