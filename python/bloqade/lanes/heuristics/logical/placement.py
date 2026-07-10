@@ -724,10 +724,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         if len(qubits) != len(state.layout):
             return AtomState.bottom()
 
-        # ``layout`` stays canonical (indexed by qubit id). The measurement
-        # order is carried by ``place.EndMeasure.qubits`` and applied when the
-        # measurement is lowered (see ``place2move.InsertMeasure``), so we do
-        # not permute the layout here (that would relabel qubits).
         return ExecuteMeasure(
             occupied=state.occupied,
             layout=state.layout,

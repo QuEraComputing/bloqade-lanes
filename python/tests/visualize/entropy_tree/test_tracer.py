@@ -43,16 +43,7 @@ def test_decode_config_returns_qid_mapping():
 
 
 @pytest.mark.slow
-def test_build_entropy_trace_targets_all_qubits_without_spectator_blocking():
-    """With ``block_spectators`` off (the default), every qubit in the block is
-    part of the CZ solve, so the traced target covers all qubits and no
-    spectators are exposed as blocked locations.
-
-    Spectator scoping (participants-only target, spectators blocked) is opt-in
-    via ``RustPlacementTraversal.block_spectators``; ``build_entropy_trace`` does
-    not enable it, so the trace reflects the unscoped default.
-    """
-
+def test_build_entropy_trace_exposes_spectator_qubits_as_blocked_locations():
     @squin.kernel(typeinfer=True, fold=True)
     def spectator_kernel():
         q = squin.qalloc(4)
@@ -68,7 +59,7 @@ def test_build_entropy_trace_targets_all_qubits_without_spectator_blocking():
         max_goal_candidates=3,
     )
 
-    # All four qubits are routed (the two CZ participants plus the two
-    # spectators), and nothing is blocked under the default.
-    assert len(bundle.traced_target) == 4
-    assert len(bundle.blocked_locations) == 0
+    assert len(bundle.traced_target) == 2
+    assert len(bundle.blocked_locations) == 2
+    assert set(bundle.blocked_locations).isdisjoint(bundle.traced_target.values())
+    assert all(loc in bundle.location_to_global_qid for loc in bundle.blocked_locations)
