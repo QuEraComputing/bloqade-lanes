@@ -203,6 +203,46 @@ class ZoneBuilder:
         self._entangling_pairs: list[tuple[int, int]] = []
         self._blockade_radius_nm: int | None = None
 
+    @classmethod
+    def from_positions(
+        cls,
+        name: str,
+        x_coordinates: Sequence[float | int],
+        y_coordinates: Sequence[float | int],
+        word_shape: tuple[int, int],
+        *,
+        x_clearance: float,
+        y_clearance: float,
+    ) -> ZoneBuilder:
+        """Build a zone from explicit x/y coordinate arrays.
+
+        Convenience constructor that builds the coordinate grid from
+        ``x_coordinates`` and ``y_coordinates`` (via ``Grid.from_positions``)
+        and forwards the remaining arguments to the default constructor.
+
+        Args:
+            name: Human-readable zone name (stored in Rust Zone).
+            x_coordinates: X-coordinates of the grid points (at least one).
+                Every position must be representable at 1 nm precision.
+            y_coordinates: Y-coordinates of the grid points (at least one).
+            word_shape: (num_x_sites, num_y_sites) — uniform shape for
+                all words in this zone.
+            x_clearance: Minimum x-axis clearance (> 0, µm) from grid lines
+                that path waypoints must maintain.
+            y_clearance: Same as ``x_clearance``, applied to the y-axis.
+
+        Returns:
+            ZoneBuilder: The constructed zone.
+        """
+        grid = _RustGrid.from_positions(list(x_coordinates), list(y_coordinates))
+        return cls(
+            name,
+            grid,
+            word_shape,
+            x_clearance=x_clearance,
+            y_clearance=y_clearance,
+        )
+
     @property
     def name(self) -> str:
         """Zone name."""

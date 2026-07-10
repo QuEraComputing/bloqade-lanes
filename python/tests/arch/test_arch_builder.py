@@ -76,6 +76,64 @@ class TestAODValidation:
         _validate_aod_rectangle([(0, 0), (0, 1), (0, 2)], "test")
 
 
+# ── ZoneBuilder: from_positions ──
+
+
+class TestZoneBuilderFromPositions:
+    def test_builds_equivalent_to_default_constructor(self):
+        xs = [0.0, 1.0, 2.0, 3.0]
+        ys = [0.0, 1.0]
+        zone = ZoneBuilder.from_positions(
+            "gate",
+            xs,
+            ys,
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        assert isinstance(zone, ZoneBuilder)
+        assert zone.name == "gate"
+        assert zone.word_shape == (2, 1)
+        assert zone.x_clearance == _DEFAULT_CL
+        assert zone.y_clearance == _DEFAULT_CL
+        assert list(zone._grid.x_positions) == xs
+        assert list(zone._grid.y_positions) == ys
+
+    def test_accepts_int_coordinates(self):
+        zone = ZoneBuilder.from_positions(
+            "gate",
+            [0, 1, 2, 3],
+            [0, 1],
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        assert list(zone._grid.x_positions) == [0.0, 1.0, 2.0, 3.0]
+        assert list(zone._grid.y_positions) == [0.0, 1.0]
+
+    def test_result_is_usable(self):
+        zone = ZoneBuilder.from_positions(
+            "gate",
+            [0.0, 1.0, 2.0, 3.0],
+            [0.0, 1.0],
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        assert zone.add_word(x_sites=slice(0, 2), y_sites=slice(0, 1)) == 0
+
+    def test_invalid_clearance_raises(self):
+        with pytest.raises(ValueError, match="x_clearance must be positive"):
+            ZoneBuilder.from_positions(
+                "gate",
+                [0.0, 1.0],
+                [0.0],
+                word_shape=(2, 1),
+                x_clearance=0.0,
+                y_clearance=_DEFAULT_CL,
+            )
+
+
 # ── ZoneBuilder: add_word ──
 
 

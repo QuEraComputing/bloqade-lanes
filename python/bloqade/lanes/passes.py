@@ -10,8 +10,7 @@ from bloqade.lanes.rewrite import circuit2place
 from bloqade.lanes.rewrite.circuit2place import (
     HoistNewQubitsUp,
     MergeStaticPlacement,
-    gate_only_merge,
-    sq_only_merge,
+    always_merge,
 )
 from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
 from bloqade.lanes.rewrite.remove_debug import RemoveDebugStatements
@@ -32,10 +31,14 @@ from bloqade.lanes.rewrite.transversal import (
 
 @dataclass
 class SequentialPlacePass(passes.Pass):
-    """Preserve gate order; merge only adjacent single-qubit-gate placements (R, Rz).
+    """Merge all adjacent StaticPlacement blocks, preserving original gate order.
 
-    CZ placements remain isolated, preserving the original program order.
-    This is the default behavior.
+    Merging CZ placements into a single region (rather than leaving each CZ
+    isolated) is required for correctness: the placement analysis threads the
+    atom layout through the merged region, so each CZ layer is placed from the
+    *current* (possibly displaced) layout. Isolated CZ blocks were each placed
+    from the initial home layout, which is only valid when return moves restore
+    home between layers. This is the default place-dialect optimization pass.
     """
 
     name: ClassVar[str] = "sequential_place"
@@ -46,13 +49,13 @@ class SequentialPlacePass(passes.Pass):
             rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
         result = result.join(
-            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
                 mt.code
             )
         )
         result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
         result = result.join(
-            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
                 mt.code
             )
         )
@@ -81,15 +84,15 @@ class ASAPPlacePass(passes.Pass):
             rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(
             rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(mt.code)
@@ -122,15 +125,15 @@ class ALAPPlacePass(passes.Pass):
             rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
         result = result.join(
-            rewrite.Fixpoint(
-                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
-            ).rewrite(mt.code)
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+                mt.code
+            )
         )
         result = result.join(
             rewrite.Walk(ReorderStaticPlacement(alap_reorder_policy)).rewrite(mt.code)

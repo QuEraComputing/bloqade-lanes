@@ -10,7 +10,7 @@ from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
 from bloqade.lanes.upstream import squin_to_move
 from bloqade.lanes.validation.address import Validation
 
@@ -27,7 +27,7 @@ def _compile_physical_move(kernel):
     return squin_to_move(
         kernel,
         PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PhysicalPlacementStrategy(),
+        make_physical_placement_strategy(),
         logical_initialize=False,
         no_raise=False,
     )
