@@ -263,6 +263,9 @@ class PhysicalCliffTSimulator(AbstractSimulator):
         physical_kernel: ir.Method[[], RetType],
         place_opt_type: type[passes.Pass] | None = None,
         placement_strategy: "PlacementStrategyABC | None" = None,
+        # TODO: support m2dets, m2obs
+        m2dets: list[list[int]] | None = None,
+        m2obs: list[list[int]] | None = None,
     ) -> PhysicalCliffTSimulatorTask[RetType]:
         """Compile a physical SQuIn kernel into a reusable CliffT-backed task.
 
@@ -276,7 +279,7 @@ class PhysicalCliffTSimulator(AbstractSimulator):
 
         """
         physical_move_kernel, post_processing = self._compile_physical_task(
-            physical_kernel, place_opt_type, placement_strategy
+            physical_kernel, place_opt_type, placement_strategy, m2dets, m2obs
         )
         return PhysicalCliffTSimulatorTask(
             physical_kernel,
@@ -292,8 +295,12 @@ class PhysicalCliffTSimulator(AbstractSimulator):
         physical_kernel: ir.Method[[], RetType],
         place_opt_type: type[passes.Pass] | None = None,
         placement_strategy: "PlacementStrategyABC | None" = None,
+        m2dets: list[list[int]] | None = None,
+        m2obs: list[list[int]] | None = None,
     ) -> tuple[ir.Method[[], RetType], "atom.PostProcessing[RetType]"]:
         """Compile a physical kernel using the shared physical simulator helper."""
         return PhysicalSimulator(
             noise_model=self.noise_model, arch_spec=self.arch_spec
-        )._compile_physical_task(physical_kernel, place_opt_type, placement_strategy)
+        )._compile_physical_task(
+            physical_kernel, place_opt_type, placement_strategy, m2dets, m2obs
+        )
