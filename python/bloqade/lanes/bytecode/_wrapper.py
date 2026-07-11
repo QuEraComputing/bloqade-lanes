@@ -86,8 +86,12 @@ class KirinRustWrapper(RustWrapper[R], ir.Data):
 
     * :meth:`from_inner` — runs ``__post_init__`` so the Kirin ``type``
       attribute is initialised on wrappers built from existing Rust objects.
-    * :meth:`unwrap` — returns ``self._inner`` (the Rust object), which is
-      the natural ``T`` for ``ir.Data[T]``.
+    * :meth:`unwrap` — returns ``self`` (the Python wrapper), preserving the
+      wrapper identity through Kirin's constprop pipeline.  Kirin's
+      ``py.Constant`` interpreter calls ``unwrap()`` to obtain the value to
+      store in ``const.Value``; returning ``self._inner`` here would cause the
+      raw Rust object (without ``._inner``) to be stored instead of the Python
+      wrapper, breaking any downstream code that calls ``loc._inner``.
     * :meth:`encode` — delegates to the Rust object's ``encode`` method
       (most address types implement it). Override if the Rust type does not.
     * :meth:`print_impl` — prints the encoded address as a hex literal,
@@ -106,8 +110,8 @@ class KirinRustWrapper(RustWrapper[R], ir.Data):
         obj.__post_init__()
         return obj
 
-    def unwrap(self) -> R:
-        return self._inner
+    def unwrap(self) -> Self:
+        return self
 
     def encode(self) -> int:
         return self._inner.encode()  # type: ignore[attr-defined]

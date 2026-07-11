@@ -8,6 +8,7 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
+from bloqade.gemini.common.dialects import movement as movement_dialect
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.bytecode.encoding import LocationAddress
@@ -192,6 +193,8 @@ class RewritePlaceOperations(abc.RewriteRule):
                 gate.CZ,
                 gate.R,
                 gate.Rz,
+                movement_dialect.stmts.MoveTo,
+                movement_dialect.stmts.Permute,
             ),
         ):
             return abc.RewriteResult()
@@ -347,6 +350,76 @@ class RewritePlaceOperations(abc.RewriteRule):
             )
         )
 
+        return abc.RewriteResult(has_done_something=True)
+
+    def rewrite_MoveTo(self, node: movement_dialect.stmts.MoveTo) -> abc.RewriteResult:
+        # qubits: after unrolling, always an ilist.New
+        if not isinstance(qubits_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
+
+        # locations: must be const-foldable
+        locations_hint = node.locations.hints.get("const")
+        if not isinstance(locations_hint, const.Value):
+            return abc.RewriteResult()
+
+        inputs = qubits_list.values
+        location_attrs = tuple(locations_hint.data)
+
+        if len(location_attrs) != len(inputs):
+            # Fail loudly: a mismatched move_to would otherwise be silently
+            # miscompiled (move_to_placements zips qubits/locations and drops
+            # extras). MoveToValidation catches this too, but it is skipped
+            # under verify=False, so guard here as well.
+            raise ValueError(
+                f"move_to: number of locations ({len(location_attrs)}) does not "
+                f"match number of qubits ({len(inputs)})"
+            )
+
+        body, block, entry_state = self.prep_region()
+        move_stmt = place.MoveTo(
+            entry_state,
+            qubits=tuple(range(len(inputs))),
+            locations=location_attrs,
+            multi_move_warning=node.multi_move_warning,
+        )
+        node.replace_by(
+            self.construct_execute(move_stmt, qubits=inputs, body=body, block=block)
+        )
+        return abc.RewriteResult(has_done_something=True)
+
+    def rewrite_Permute(
+        self, node: movement_dialect.stmts.Permute
+    ) -> abc.RewriteResult:
+        # qubits: after unrolling, always an ilist.New
+        if not isinstance(qubits_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
+
+        # perm: must be const-foldable
+        perm_hint = node.perm.hints.get("const")
+        if not isinstance(perm_hint, const.Value):
+            return abc.RewriteResult()
+
+        inputs = qubits_list.values
+        perm_attr = tuple(int(p) for p in perm_hint.data)
+
+        if sorted(perm_attr) != list(range(len(inputs))):
+            # Fail loudly: perm must be a permutation of range(len(qubits)); a
+            # bad perm would otherwise IndexError deep in placement or silently
+            # miscompile. Guard here since validation may be skipped (verify=False).
+            raise ValueError(
+                f"permute: perm {perm_attr} is not a permutation of "
+                f"range({len(inputs)})"
+            )
+
+        body, block, entry_state = self.prep_region()
+        permute_stmt = place.Permute(
+            entry_state,
+            qubits=tuple(range(len(inputs))),
+            perm=perm_attr,
+        )
+        node.replace_by(
+            self.construct_execute(permute_stmt, qubits=inputs, body=body, block=block)
+        )
         return abc.RewriteResult(has_done_something=True)
 
 
@@ -520,6 +593,8 @@ class MergePlacementRegions(abc.RewriteRule):
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
+                    place.MoveTo,
+                    place.Permute,
                 ),
             ):
                 attributes: dict[str, ir.Attribute] = {
@@ -527,6 +602,13 @@ class MergePlacementRegions(abc.RewriteRule):
                 }
                 if isinstance(stmt, place.StarRz):
                     attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
+                if isinstance(stmt, place.MoveTo):
+                    attributes["locations"] = ir.PyAttr(stmt.locations)
+                    attributes["multi_move_warning"] = ir.PyAttr(
+                        stmt.multi_move_warning
+                    )
+                if isinstance(stmt, place.Permute):
+                    attributes["perm"] = ir.PyAttr(stmt.perm)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
@@ -567,7 +649,15 @@ class MergePlacementRegions(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
-_GATE_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.CZ, place.Yield)
+_GATE_STMT_TYPES = (
+    place.R,
+    place.Rz,
+    place.StarRz,
+    place.CZ,
+    place.Yield,
+    place.MoveTo,
+    place.Permute,
+)
 _SQ_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.Yield)
 
 
@@ -644,6 +734,8 @@ class MergeStaticPlacement(abc.RewriteRule):
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
+                    place.MoveTo,
+                    place.Permute,
                 ),
             ):
                 attributes: dict[str, ir.Attribute] = {
@@ -651,6 +743,13 @@ class MergeStaticPlacement(abc.RewriteRule):
                 }
                 if isinstance(stmt, place.StarRz):
                     attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
+                if isinstance(stmt, place.MoveTo):
+                    attributes["locations"] = ir.PyAttr(stmt.locations)
+                    attributes["multi_move_warning"] = ir.PyAttr(
+                        stmt.multi_move_warning
+                    )
+                if isinstance(stmt, place.Permute):
+                    attributes["perm"] = ir.PyAttr(stmt.perm)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),

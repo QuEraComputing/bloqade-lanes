@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass
 from functools import singledispatchmethod
 
@@ -44,6 +45,17 @@ class InsertMoves(RewriteRule):
                 ).insert_before(node)
             move.Store(current_state.result).insert_before(node)
             has_done_something = True
+
+        if isinstance(node, place.MoveTo) and node.multi_move_warning:
+            layers = state_after.get_move_layers()
+            if len(layers) > 1:
+                warnings.warn(
+                    f"movement.move_to(qubits={node.qubits}, "
+                    f"locations={node.locations}) could not be packed into a "
+                    f"single AOD shot (split across {len(layers)} layers)",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         if reverse_moves := state_after.get_reverse_moves():
             prev = node
@@ -172,6 +184,14 @@ class RewriteGates(RewriteRule):
                 ),
                 move.Store(mid_state.result),
             ]
+
+    @stmts_to_insert.register(place.MoveTo)
+    def _(self, node: place.MoveTo, state_after: placement.AtomState):
+        return []
+
+    @stmts_to_insert.register(place.Permute)
+    def _(self, node: place.Permute, state_after: placement.AtomState):
+        return []
 
     @stmts_to_insert.register(place.StarRz)
     def _(self, node: place.StarRz, state_after: placement.AtomState):

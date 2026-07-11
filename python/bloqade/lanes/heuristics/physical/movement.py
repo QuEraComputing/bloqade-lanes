@@ -7,7 +7,7 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
-    ExecuteMeasure,
+    MoveToPlacementStrategyABC,
     PalindromePlacementStrategy,
     PlacementStrategyABC,
 )
@@ -19,7 +19,6 @@ from bloqade.lanes.bytecode._native import EntropyTrace, SearchEngine
 from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
-    ZoneAddress,
 )
 from bloqade.lanes.heuristics.physical._solver_dispatch import _STRATEGY_MAP
 from bloqade.lanes.heuristics.physical.target_generator import (
@@ -121,7 +120,7 @@ def _move_search_from_traversal(
 
 
 @dataclass
-class PhysicalPlacementStrategy(PlacementStrategyABC):
+class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     """Physical placement strategy backed by the Rust ``TargetSolver``."""
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
@@ -213,6 +212,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> AtomState:
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
+        state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
         return self._cz_placements_rust(state, controls, targets, lookahead_cz_layers)
@@ -365,29 +365,32 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        _ = qubits
-        if isinstance(state, ConcreteState):
-            return ConcreteState(
-                occupied=state.occupied,
-                layout=state.layout,
-                move_count=state.move_count,
-            )
-        return state
+        return self._strip_user_moved(state)
 
-    def measure_placements(
+    def compute_moves(
         self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-    ) -> AtomState:
-        if not isinstance(state, ConcreteState):
-            return state
-        if len(qubits) != len(state.layout):
-            return AtomState.bottom()
-        return ExecuteMeasure(
-            occupied=state.occupied,
-            layout=state.layout,
-            move_count=state.move_count,
-            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
+        state_before: ConcreteState,
+        state_after: ConcreteState,
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
+        """Route atoms between two fixed layouts for user-directed ``MoveTo``.
+
+        Delegates to the shared ``compute_move_layers`` primitive, passing this
+        strategy's own ``traversal`` and cached :class:`SearchEngine` so MoveTo
+        routing uses the same search configuration and per-arch lane index as
+        ``cz_placements`` (the docstring on ``compute_move_layers`` notes the two
+        callsites are meant to share a traversal).
+
+        The import is deferred to call time: ``heuristics.move_synthesis``
+        imports this module, so a top-level import would be a cycle.
+        """
+        from bloqade.lanes.heuristics.move_synthesis import compute_move_layers
+
+        return compute_move_layers(
+            self.arch_spec,
+            state_before,
+            state_after,
+            engine=self._get_engine(),
+            traversal=self.traversal,
         )
 
 

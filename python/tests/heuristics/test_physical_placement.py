@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
+from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.placement import (
@@ -371,3 +372,135 @@ def test_congestion_aware_applies_to_rust_traversal():
     assert isinstance(
         result, ExecuteCZ
     ), "RustPlacementTraversal did not produce ExecuteCZ"
+
+
+# ---------------------------------------------------------------------------
+# Regression: cz_placements accepts non-home starting configurations
+# ---------------------------------------------------------------------------
+
+
+def test_cz_placements_accepts_execute_cz_as_input():
+    """ExecuteCZ from a prior CZ is a valid ConcreteState at staging positions.
+
+    With always_merge, a second CZ in the same StaticPlacement body receives
+    the first CZ's ExecuteCZ output directly as state_before.  The strategy
+    must solve from those staging positions rather than erroring or returning
+    bottom.
+    """
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        traversal=RustPlacementTraversal(),
+    )
+    cz1 = strategy.cz_placements(_make_state(), controls=(0,), targets=(1,))
+    assert isinstance(cz1, ExecuteCZ)
+
+    # Atoms are now at staging positions (CZ-partner sites). Pass ExecuteCZ
+    # directly as state_before for the second CZ on the same pair.
+    cz2 = strategy.cz_placements(cz1, controls=(0,), targets=(1,))
+    assert isinstance(
+        cz2, ExecuteCZ
+    ), "cz_placements must accept ExecuteCZ (staging positions) and return ExecuteCZ"
+
+
+def test_cz_placements_unwraps_execute_cz_return_to_home(monkeypatch):
+    """ExecuteCZReturn carries home positions in initial_layout; the strategy
+    must start the next CZ solve from there, not from the staging layout.
+    """
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        traversal=RustPlacementTraversal(),
+    )
+    home_state = _make_state()
+
+    cz1 = strategy.cz_placements(home_state, controls=(0,), targets=(1,))
+    assert isinstance(cz1, ExecuteCZ)
+
+    cz_return = ExecuteCZReturn(
+        occupied=cz1.occupied,
+        layout=cz1.layout,
+        move_count=cz1.move_count,
+        active_cz_zones=cz1.active_cz_zones,
+        move_layers=cz1.move_layers,
+        initial_layout=home_state.layout,
+    )
+
+    received: list[ConcreteState] = []
+    original = PhysicalPlacementStrategy._cz_placements_rust
+
+    def capture(self, state, controls, targets, lookahead=()):
+        received.append(state)
+        return original(self, state, controls, targets, lookahead)
+
+    monkeypatch.setattr(PhysicalPlacementStrategy, "_cz_placements_rust", capture)
+    strategy.cz_placements(cz_return, controls=(0,), targets=(1,))
+
+    assert len(received) == 1
+    assert (
+        received[0].layout == home_state.layout
+    ), "ExecuteCZReturn must be unwrapped to initial_layout (home), not staging layout"
+
+
+# ---------------------------------------------------------------------------
+# MoveTo support (MoveToPlacementStrategyABC)
+# ---------------------------------------------------------------------------
+
+
+def test_is_move_to_placement_strategy():
+    """PhysicalPlacementStrategy supports user-directed movement, so the MoveTo
+    placement interpreter (which gates on ``MoveToPlacementStrategyABC``) routes
+    through it instead of returning bottom."""
+    from bloqade.lanes.analysis.placement import MoveToPlacementStrategyABC
+
+    strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
+    assert isinstance(strategy, MoveToPlacementStrategyABC)
+
+
+def test_compute_moves_routes_between_layouts():
+    """``compute_moves`` synthesizes AOD move layers routing atoms from one
+    concrete layout to another (qubit 0: word 0 -> word 1 via word bus, with
+    qubit 1 parked at word 2 so the destination is free)."""
+    strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
+    arch_spec = strategy.arch_spec
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(1, 0), LocationAddress(2, 0)),
+        move_count=(1, 0),
+    )
+    layers = strategy.compute_moves(state_before, state_after)
+    assert len(layers) > 0
+    for layer in layers:
+        for lane in layer:
+            assert not arch_spec.check_lane_group([lane])
+
+
+def test_compute_moves_no_diff_is_empty():
+    """Routing a layout to itself yields no move layers."""
+    strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
+    state = _make_state()
+    assert strategy.compute_moves(state, state) == ()
+
+
+def test_move_to_placements_produces_user_moved():
+    """``move_to_placements`` (inherited from ``MoveToPlacementStrategyABC``)
+    places a qubit at a user-directed location, producing a ``UserMoved`` state
+    whose move history is populated by ``compute_moves``."""
+    from bloqade.lanes.analysis.placement import UserMoved
+
+    strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    out = strategy.move_to_placements(
+        state, qubits=(0,), locations=(LocationAddress(1, 0),)
+    )
+    assert isinstance(out, UserMoved)
+    assert out.layout == (LocationAddress(1, 0), LocationAddress(2, 0))
+    assert out.accumulated_move_layers == out.move_layers
+    assert len(out.move_layers) > 0

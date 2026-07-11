@@ -12,12 +12,27 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
+    MoveToPlacementStrategyABC,
     PlacementAnalysis,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")
+
+
+def _resolve_permute_locations(
+    layout: tuple[LocationAddress, ...],
+    qubits: tuple[int, ...],
+    perm: tuple[int, ...],
+) -> tuple[LocationAddress, ...]:
+    """Resolve a permutation to target locations against the current layout.
+
+    ``qubits`` are layout indices; ``perm`` permutes the *positions* of
+    ``qubits``. For each value ``j`` in ``perm`` (an index into ``qubits``),
+    the target is the current location of that qubit, ``layout[qubits[j]]``.
+    """
+    return tuple(layout[qubits[j]] for j in perm)
 
 
 @statement(dialect=dialect)
@@ -149,6 +164,35 @@ class StarRz(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class MoveTo(QuantumStmt):
+    """User-directed atom placement directive at the place layer.
+
+    Produced by RewritePlaceOperations.rewrite_MoveTo from movement.MoveTo.
+    Consumed by placement analysis (produces UserMoved state) and then
+    deleted by RewriteGates after InsertMoves emits the forward Move IR.
+    """
+
+    qubits: tuple[int, ...] = info.attribute()
+    locations: tuple[LocationAddress, ...] = info.attribute()
+    multi_move_warning: bool = info.attribute(default=True)
+
+
+@statement(dialect=dialect)
+class Permute(QuantumStmt):
+    """Place-layer permute directive.
+
+    Produced by RewritePlaceOperations.rewrite_Permute from movement.Permute.
+    Consumed by placement analysis (the interpreter resolves the permutation
+    against the current layout and delegates to move_to_placements, producing
+    UserMoved) and deleted by RewriteGates after InsertMoves emits the forward
+    Move IR. ``perm`` is a permutation over the positions of ``qubits``.
+    """
+
+    qubits: tuple[int, ...] = info.attribute()
+    perm: tuple[int, ...] = info.attribute()
+
+
+@statement(dialect=dialect)
 class EndMeasure(QuantumStmt):
     state_before: ir.SSAValue = info.argument(StateType)
 
@@ -263,6 +307,51 @@ class PlacementMethods(interp.MethodTable):
         ):
             raise interp.InterpreterError("Invalid moves detected")
         return (state,)
+
+    @interp.impl(MoveTo)
+    def impl_move_to(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: MoveTo,
+    ):
+        strategy = _interp.placement_strategy
+        if not isinstance(strategy, MoveToPlacementStrategyABC):
+            # Strategy does not support user-directed movement; mark the path
+            # infeasible rather than calling an unavailable interface.
+            return (AtomState.bottom(),)
+        state = frame.get(stmt.state_before)
+        if not isinstance(state, ConcreteState):
+            return (state,)
+        new_state = strategy.move_to_placements(state, stmt.qubits, stmt.locations)
+        return (new_state,)
+
+    @interp.impl(Permute)
+    def impl_permute(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: Permute,
+    ):
+        strategy = _interp.placement_strategy
+        if not isinstance(strategy, MoveToPlacementStrategyABC):
+            # Strategy does not support user-directed movement.
+            return (AtomState.bottom(),)
+        state = frame.get(stmt.state_before)
+        if not isinstance(state, ConcreteState):
+            return (state,)
+        locations = _resolve_permute_locations(state.layout, stmt.qubits, stmt.perm)
+        new_state = strategy.move_to_placements(state, stmt.qubits, locations)
+        return (new_state,)
+
+    @interp.impl(Initialize)
+    def impl_initialize(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: Initialize,
+    ):
+        return (frame.get(stmt.state_before),)
 
     @interp.impl(R)
     @interp.impl(Rz)

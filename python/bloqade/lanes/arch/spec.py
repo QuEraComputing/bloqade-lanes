@@ -37,6 +37,13 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         self._inner = inner
         self._inner.validate()
 
+    def __hash__(self) -> int:
+        # The underlying Rust ArchSpec is not hashable, so fall back to
+        # identity-based hashing. ArchSpec objects are effectively immutable
+        # configuration objects, and identity is the right notion of equality
+        # for use in IR attribute caches (e.g. CSE).
+        return id(self)
+
     @cached_property
     def words(self) -> tuple[Word, ...]:
         """Python Word wrappers, derived from the Rust ArchSpec."""
