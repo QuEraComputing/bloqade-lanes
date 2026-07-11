@@ -25,8 +25,10 @@ requires-python = ">= 3.10"
 
 [project.optional-dependencies]
 cudaq = [
-    "cudaq>=0.13.0",
-    "qbraid-qir[squin]>=0.5.1",
+    # CUDA-Q (and its cuda-quantum-cuNN backend) ships no Windows wheels, so
+    # skip it there; --all-extras then resolves to empty on win32.
+    "cudaq>=0.13.0; sys_platform != 'win32'",
+    "qbraid-qir[squin]>=0.5.1; sys_platform != 'win32'",
 ]
 sim = [
     "bloqade-circuit[cirq, tsim]~=0.14.1",
