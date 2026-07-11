@@ -167,15 +167,16 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
     """
 
     def __init__(self, *, inner: PlacementStrategyABC, lookahead: int = 1) -> None:
+        if lookahead < 0:
+            raise ValueError(f"lookahead must be >= 0, got {lookahead}")
         self.inner = inner
+        # ``lookahead``: number of CZ layers forwarded to ``inner.cz_placements``.
+        # Defaults to ``1`` (only the current CZ layer). Palindrome moves always
+        # return atoms to the pre-CZ home before the next CZ, so future CZ layers
+        # cannot inform the current placement — looking ahead only inflates the
+        # inner solver's search without changing the (forced) home return. A
+        # larger value forwards that many leading layers; ``0`` forwards none.
         self.lookahead = lookahead
-        """Number of CZ layers forwarded to ``inner.cz_placements``.
-
-        Defaults to ``1`` (only the current CZ layer). Palindrome moves always
-        return atoms to the pre-CZ home before the next CZ, so future CZ layers
-        cannot inform the current placement — looking ahead only inflates the
-        inner solver's search without changing the (forced) home return. A
-        larger value forwards that many leading layers; ``0`` forwards none."""
 
     @property  # type: ignore[reportIncompatibleVariableOverride]
     def arch_spec(self) -> ArchSpec:  # type: ignore[reportIncompatibleVariableOverride]
