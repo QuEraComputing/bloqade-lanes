@@ -21,7 +21,7 @@ from bloqade.tsim import Circuit as TsimCircuit
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.logical.stdlib import default_post_processing
-from bloqade.lanes import GeminiLogicalSimulator
+from bloqade.gemini import GeminiLogicalSimulator
 
 # Shot counts kept modest. Per the issue the expected P(obs[0] = 0) is
 # deterministic 100% on both paths (the post-selected subset on the

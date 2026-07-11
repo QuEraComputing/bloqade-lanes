@@ -18,7 +18,7 @@ from bloqade.gemini.decoding import (
     single_qubit_state_tomography,
 )
 from bloqade.gemini.decoding.workflow import _plot_decoder_curves
-from bloqade.lanes import GeminiLogicalSimulator
+from bloqade.gemini import GeminiLogicalSimulator
 
 # %% [markdown]
 # ## Define Circuits to Run
