@@ -33,7 +33,7 @@ def test_cz_partner_statement_shape():
     assert CzPartner in arch.dialect.stmts
 
     # arch_spec is an attribute (default None) — populated by the pipeline's
-    # BindCzPartnerArchSpec pass before unrolling.
+    # BindArchSpec pass before unrolling.
     addr = ir.TestValue()
     stmt = CzPartner(addr)
     assert stmt.arch_spec is None
@@ -49,7 +49,7 @@ def test_cz_partner_wrapper_callable():
 
 
 def test_bind_arch_spec_sets_attribute_on_unbound_statement():
-    from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
+    from bloqade.lanes.dialects.arch import BindArchSpec
 
     arch = get_physical_layout_arch_spec()
     addr = ir.TestValue()
@@ -57,13 +57,13 @@ def test_bind_arch_spec_sets_attribute_on_unbound_statement():
     assert stmt.arch_spec is None
     region = ir.Region([ir.Block([stmt])])
 
-    rewrite.Walk(BindCzPartnerArchSpec(arch)).rewrite(region)
+    rewrite.Walk(BindArchSpec(arch)).rewrite(region)
 
     assert stmt.arch_spec is arch
 
 
 def test_bind_arch_spec_leaves_already_bound_statement_alone():
-    from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
+    from bloqade.lanes.dialects.arch import BindArchSpec
 
     arch_a = get_physical_layout_arch_spec()
     arch_b = get_physical_layout_arch_spec()
@@ -73,7 +73,7 @@ def test_bind_arch_spec_leaves_already_bound_statement_alone():
     stmt = CzPartner(addr, arch_spec=arch_a)
     region = ir.Region([ir.Block([stmt])])
 
-    rewrite.Walk(BindCzPartnerArchSpec(arch_b)).rewrite(region)
+    rewrite.Walk(BindArchSpec(arch_b)).rewrite(region)
 
     assert stmt.arch_spec is arch_a
 
@@ -92,11 +92,11 @@ def _build_kernel():
     krn = physical.kernel
 
     @krn(verify=False)
-    def locs(words: ilist.IList[int, N], sites: ilist.IList[int, N]):
+    def locs(rows: ilist.IList[int, N], cols: ilist.IList[int, N]):
         def _inner(i: int):
-            return arch.loc(0, words[i], sites[i])
+            return arch.loc(0, rows[i], cols[i])
 
-        return ilist.map(_inner, ilist.range(len(words)))
+        return ilist.map(_inner, ilist.range(len(rows)))
 
     @krn()
     def alloc(addresses: ilist.IList[LocationAddress, N]):
@@ -107,8 +107,8 @@ def _build_kernel():
 
     @krn(aggressive_unroll=True, verify=False)
     def main():
-        static_addrs = locs(ilist.IList([0, 4]), ilist.IList([0, 0]))
-        mobile_addrs = locs(ilist.IList([2, 6]), ilist.IList([0, 0]))
+        static_addrs = locs(ilist.IList([0, 1]), ilist.IList([0, 0]))
+        mobile_addrs = locs(ilist.IList([0, 1]), ilist.IList([2, 2]))
         static = alloc(static_addrs)
         mobile = alloc(mobile_addrs)
 
@@ -145,11 +145,11 @@ def test_cz_partner_matches_hardcoded_partner_words():
     krn = physical.kernel
 
     @krn(verify=False)
-    def locs(words: ilist.IList[int, N], sites: ilist.IList[int, N]):
+    def locs(rows: ilist.IList[int, N], cols: ilist.IList[int, N]):
         def _inner(i: int):
-            return arch.loc(0, words[i], sites[i])
+            return arch.loc(0, rows[i], cols[i])
 
-        return ilist.map(_inner, ilist.range(len(words)))
+        return ilist.map(_inner, ilist.range(len(rows)))
 
     @krn()
     def alloc(addresses: ilist.IList[LocationAddress, N]):
@@ -160,8 +160,8 @@ def test_cz_partner_matches_hardcoded_partner_words():
 
     @krn(aggressive_unroll=True, verify=False)
     def with_partner():
-        static_addrs = locs(ilist.IList([0, 4]), ilist.IList([0, 0]))
-        mobile_addrs = locs(ilist.IList([2, 6]), ilist.IList([0, 0]))
+        static_addrs = locs(ilist.IList([0, 1]), ilist.IList([0, 0]))
+        mobile_addrs = locs(ilist.IList([0, 1]), ilist.IList([2, 2]))
         static = alloc(static_addrs)
         mobile = alloc(mobile_addrs)
 
@@ -173,9 +173,9 @@ def test_cz_partner_matches_hardcoded_partner_words():
 
     @krn(aggressive_unroll=True, verify=False)
     def hardcoded():
-        static_addrs = locs(ilist.IList([0, 4]), ilist.IList([0, 0]))
-        mobile_addrs = locs(ilist.IList([2, 6]), ilist.IList([0, 0]))
-        partner_addrs = locs(ilist.IList([1, 5]), ilist.IList([0, 0]))
+        static_addrs = locs(ilist.IList([0, 1]), ilist.IList([0, 0]))
+        mobile_addrs = locs(ilist.IList([0, 1]), ilist.IList([2, 2]))
+        partner_addrs = locs(ilist.IList([0, 1]), ilist.IList([1, 1]))
         static = alloc(static_addrs)
         mobile = alloc(mobile_addrs)
         arrange.move_to(mobile, partner_addrs)
@@ -193,36 +193,36 @@ def test_cz_partner_matches_hardcoded_partner_words():
     assert _move_lanes(with_partner) == _move_lanes(hardcoded)
 
 
-def test_cz_partner_partnerless_location_does_not_const_resolve():
+def test_cz_partner_partnerless_location_raises_during_analysis():
     """Regression for the no-CZ-partner case.
 
     A ``cz_partner`` on a location *with* a partner const-folds to a concrete
     ``LocationAddress`` value; a ``cz_partner`` on a location with *no* partner
-    must NOT fold — it stays top/Unknown so the unresolved partner propagates
-    as a non-const ``move_to`` target (and ultimately a compile error) instead
-    of silently resolving to a wrong location.
+    raises during const-prop rather than silently resolving to a wrong location
+    — errors surface during analysis (consistent with the interpreter impls).
 
-    We assert the const-prop behavior directly (the mechanism that makes an
-    unresolved cz_partner surface downstream). An end-to-end "pipeline.emit
-    raises" assertion was deliberately avoided: with no_raise=False the
-    Physical Terminal Measurement validation fires first on this kernel shape
-    regardless of the partner, so it cannot isolate the partnerless behavior.
+    We drive const-prop directly. An end-to-end "pipeline.emit raises" assertion
+    was deliberately avoided: with no_raise=False the Physical Terminal
+    Measurement validation fires first on this kernel shape regardless of the
+    partner, so it cannot isolate the partnerless behavior.
     """
+    import pytest
+    from kirin import interp
     from kirin.analysis import const
 
-    from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
+    from bloqade.lanes.dialects.arch import BindArchSpec
 
     arch_spec = get_physical_layout_arch_spec()
 
-    def cz_partner_lattice(loc: LocationAddress):
+    def cz_partner_lattice(location: LocationAddress):
         krn = physical.kernel
 
         @krn(verify=False)
         def k():
-            return arch.cz_partner(arch.loc(loc.zone_id, loc.word_id, loc.site_id))
+            return arch.cz_partner(location)
 
         # Bind the arch spec exactly as the pipeline does, then run const-prop.
-        rewrite.Walk(BindCzPartnerArchSpec(arch_spec)).rewrite(k.code)
+        rewrite.Walk(BindArchSpec(arch_spec)).rewrite(k.code)
         frame, _ = const.Propagate(k.dialects).run(k)
         cz = next(s for s in k.callable_region.walk() if isinstance(s, CzPartner))
         return frame.entries.get(cz.result)
@@ -245,5 +245,7 @@ def test_cz_partner_partnerless_location_does_not_const_resolve():
 
     # Partnered → const-folds to a concrete LocationAddress value.
     assert isinstance(cz_partner_lattice(partnered), const.Value)
-    # Partnerless → stays unresolved (not a const Value).
-    assert not isinstance(cz_partner_lattice(partnerless), const.Value)
+    # Partnerless → const-prop raises (no partner in the arch spec) instead of
+    # silently resolving to a wrong location.
+    with pytest.raises(interp.InterpreterError):
+        cz_partner_lattice(partnerless)

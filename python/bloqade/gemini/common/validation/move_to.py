@@ -205,19 +205,34 @@ class _MoveToValidationMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: Loc,
     ):
+        """Validate a residual (non-const-folded) ``arch.loc(zone, row, col)``.
+
+        A constant ``loc`` const-folds to a ``LocationAddress`` during
+        ``AggressiveUnroll`` and never reaches validation; this fires only on a
+        residual ``Loc`` — coordinates that are not compile-time constants, or
+        (defensively) that don't resolve to a location in the arch spec. The
+        ``(zone, row, col)`` resolution against ``ArchSpec.location_at`` is the
+        in-range check for the coordinate addressing scheme.
+        """
         from bloqade.gemini.common.validation.new_at import _expect_const_int
-        from bloqade.lanes.bytecode.encoding import LocationAddress
 
-        z = _expect_const_int(node.zone_id, "zone_id", node, _interp)
-        w = _expect_const_int(node.word_id, "word_id", node, _interp)
-        s = _expect_const_int(node.site_id, "site_id", node, _interp)
+        zone = _expect_const_int(node.zone, "zone", node, _interp)
+        row = _expect_const_int(node.row, "row", node, _interp)
+        col = _expect_const_int(node.col, "col", node, _interp)
 
-        if z is None or w is None or s is None:
+        if zone is None or row is None or col is None:
             return (EmptyLattice.bottom(),)
 
-        _interp.report_location_errors(
-            node, (LocationAddress(zone_id=z, word_id=w, site_id=s),)
-        )
+        if _interp.arch_spec.location_at(zone, row, col) is None:
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"loc: no location at (zone={zone}, row={row}, col={col}) "
+                    "in the architecture spec",
+                ),
+            )
+
         return (EmptyLattice.bottom(),)
 
 

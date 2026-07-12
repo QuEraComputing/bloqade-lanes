@@ -6,10 +6,14 @@ from .stmts import CzPartner, Loc
 
 
 @lowering.wraps(Loc)
-def loc(zone_id: int, word_id: int, site_id: int) -> LocationAddress:
-    """Construct a LocationAddress for use with move_to inside a kernel body.
+def loc(zone: int, row: int, col: int) -> LocationAddress:
+    """Construct a LocationAddress from a ``(zone, row, col)`` grid coordinate.
 
-    All three arguments must be compile-time-constant integers.
+    ``col`` is the grid x-index and ``row`` the grid y-index within ``zone``;
+    the coordinate is resolved to a physical ``LocationAddress`` (``word_id`` +
+    ``site_id``) against the architecture's addressing scheme
+    (``ArchSpec.location_at``) at compile time. All three must be
+    compile-time-constant integers.
     """
     ...
 

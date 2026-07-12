@@ -810,6 +810,16 @@ class ArchSpec:
                 in any entangling pair within its zone.
         """
         ...
+
+    def location_at(self, zone: int, row: int, col: int) -> Optional[LocationAddress]:
+        """Resolve a (zone, row, col) grid coordinate to a LocationAddress.
+
+        ``col`` is the grid x-index and ``row`` the grid y-index within
+        ``zone``; returns the location whose word site sits at that grid
+        position (a unique word_id/site_id within the zone), or None if no
+        atom occupies it.
+        """
+        ...
     # -- Derived topology queries (#464 phase 2) --
 
     def word_partner_map(self) -> dict[int, int]:

@@ -16,7 +16,7 @@ from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
+from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 
@@ -41,11 +41,9 @@ class NativeToPlace:
             CallGraphPass(mt.dialects, rule)(out)
 
         if self.arch_spec is not None:
-            # Bind arch_spec on every CzPartner reachable through the call graph
+            # Bind arch_spec on every arch-resolved statement (Loc, CzPartner) reachable
             # so const-prop resolves them during AggressiveUnroll.
-            CallGraphPass(
-                out.dialects, rewrite.Walk(BindCzPartnerArchSpec(self.arch_spec))
-            )(out)
+            CallGraphPass(out.dialects, rewrite.Walk(BindArchSpec(self.arch_spec)))(out)
 
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)

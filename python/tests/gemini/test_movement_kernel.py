@@ -47,7 +47,7 @@ def test_loc_inline_compiles():
     @movement_kernel(aggressive_unroll=True)
     def k():
         q = squin.qalloc(2)
-        move_to([q[0]], [loc(zone_id=0, word_id=0, site_id=0)])
+        move_to([q[0]], [loc(0, 0, 0)])
         return terminal_measure(q)
 
     assert k is not None

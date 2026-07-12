@@ -8,7 +8,7 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 from bloqade.lanes.arch.spec import ArchSpec
 
 from ._dialect import dialect
-from .stmts import CzPartner, LocationAddressType, SiteId, WordId, ZoneId
+from .stmts import ArchResolvedStmt, LocationAddressType, SiteId, WordId, ZoneId
 
 _ATTR_TO_STMT = {"word_id": WordId, "site_id": SiteId, "zone_id": ZoneId}
 
@@ -41,19 +41,20 @@ dialect.rules.inference.append(Walk(RewriteLocationAttr()))
 
 
 @dataclass
-class BindCzPartnerArchSpec(RewriteRule):
-    """Populate ``CzPartner.arch_spec`` from the pipeline's arch spec.
+class BindArchSpec(RewriteRule):
+    """Populate ``arch_spec`` on every unbound arch-resolved statement
+    (``Loc``, ``CzPartner``, and any future ``ArchResolvedStmt``).
 
-    Run once as a ``CallGraphPass`` before any folding so the const-prop impl
-    can resolve every ``CzPartner`` during ``AggressiveUnroll``. Only binds
-    statements whose attribute is still ``None`` — a statement that was
-    constructed with an explicit arch spec is left alone.
+    Run once as a ``CallGraphPass`` before any folding so the const-prop impls
+    can resolve them during ``AggressiveUnroll``. Only binds statements whose
+    attribute is still ``None`` — a statement that was constructed with an
+    explicit arch spec is left alone.
     """
 
     arch_spec: ArchSpec
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, CzPartner) or node.arch_spec is not None:
+        if not isinstance(node, ArchResolvedStmt) or node.arch_spec is not None:
             return RewriteResult()
         node.arch_spec = self.arch_spec
         return RewriteResult(has_done_something=True)

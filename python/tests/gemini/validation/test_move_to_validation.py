@@ -11,12 +11,13 @@ from bloqade.gemini.common.dialects.arrange.stmts import MoveTo
 from bloqade.gemini.common.validation.move_to import MoveToValidation
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.dialects.arch import Loc, dialect as arch_dialect
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DIALECTS = structural_no_opt.union([arrange_dialect])
+_DIALECTS = structural_no_opt.union([arrange_dialect, arch_dialect])
 
 _LOC_A = LocationAddress(zone_id=0, word_id=0, site_id=0)
 _LOC_B = LocationAddress(zone_id=0, word_id=1, site_id=0)
@@ -218,3 +219,53 @@ def test_non_ilist_qubits():
     _, errors = _validator().run(method)
     assert len(errors) >= 1
     assert any("literal list" in str(e) for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# arch.loc(zone, row, col) — residual (non-const-folded) Loc validation
+#
+# In the normal pipeline a constant ``loc`` const-folds to a LocationAddress
+# during AggressiveUnroll and never reaches validation. ``check_loc`` fires
+# only on a residual ``Loc`` — coordinates that are not compile-time constant,
+# or (defensively) that don't resolve to a location in the arch spec.
+# ---------------------------------------------------------------------------
+
+
+def _const_int(v: int) -> ir.SSAValue:
+    tv = ir.TestValue(type=types.Int)
+    tv.hints["const"] = const.Value(v)
+    return tv
+
+
+def test_loc_non_constant_coords_reported():
+    """Non-constant loc coordinates report a compile-time-constant error.
+
+    Regression: ``check_loc`` read the pre-refactor ``zone_id``/``word_id``/
+    ``site_id`` fields, which no longer exist on ``Loc`` (now ``zone``/``row``/
+    ``col``) — so a residual ``Loc`` crashed validation with ``AttributeError``.
+    """
+    zone = ir.TestValue(type=types.Int)  # no const hint → non-constant
+    stmt = Loc(zone=zone, row=_const_int(0), col=_const_int(0))
+    method = _build_test_method([stmt])
+
+    _, errors = _validator().run(method)
+    assert any("compile-time constant" in str(e) for e in errors)
+
+
+def test_loc_unresolvable_coords_reported():
+    """Constant coords that resolve to no location report an invalid-location
+    error rather than silently passing."""
+    stmt = Loc(zone=_const_int(0), row=_const_int(999), col=_const_int(999))
+    method = _build_test_method([stmt])
+
+    _, errors = _validator().run(method)
+    assert any("no location" in str(e) for e in errors)
+
+
+def test_loc_valid_coords_no_error():
+    """Constant coords that resolve to a real location produce no error."""
+    stmt = Loc(zone=_const_int(0), row=_const_int(0), col=_const_int(0))
+    method = _build_test_method([stmt])
+
+    _, errors = _validator().run(method)
+    assert errors == []

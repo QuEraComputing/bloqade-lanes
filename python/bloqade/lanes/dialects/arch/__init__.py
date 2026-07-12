@@ -17,10 +17,11 @@ from . import (
 from ._dialect import dialect as dialect
 from ._interface import cz_partner as cz_partner, loc as loc
 from .rewrite import (
-    BindCzPartnerArchSpec as BindCzPartnerArchSpec,
+    BindArchSpec as BindArchSpec,
     RewriteLocationAttr as RewriteLocationAttr,
 )
 from .stmts import (
+    ArchResolvedStmt as ArchResolvedStmt,
     CzPartner as CzPartner,
     Loc as Loc,
     LocationAddressType as LocationAddressType,

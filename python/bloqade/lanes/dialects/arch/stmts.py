@@ -9,29 +9,46 @@ from ._dialect import dialect
 LocationAddressType = types.PyClass(LocationAddress)
 
 
+@statement(init=False)
+class ArchResolvedStmt(ir.Statement):
+    """Base for arch-dialect statements resolved against a bound ``ArchSpec``.
+
+    Holds ``arch_spec`` (populated by the pipeline's ``BindArchSpec`` pass before
+    folding). While unbound, const-prop and the interpreter leave the statement
+    unresolved; once ``arch_spec`` is bound and the operands are constant they
+    materialize the ``LocationAddress`` result. Subclasses: ``Loc``, ``CzPartner``.
+    """
+
+    arch_spec: ArchSpec | None = info.attribute(default=None)
+
+
 @statement(dialect=dialect)
-class Loc(ir.Statement):
-    """Construct a LocationAddress from three integer SSA values."""
+class Loc(ArchResolvedStmt):
+    """Construct a LocationAddress from a ``(zone, row, col)`` grid coordinate.
+
+    Resolved against the architecture's addressing scheme
+    (``ArchSpec.location_at``) once ``arch_spec`` is bound by ``BindArchSpec``;
+    ``zone`` / ``row`` / ``col`` must be compile-time constants.
+    """
 
     name = "loc"
     traits = frozenset({ir.Pure(), lowering.FromPythonCall()})
-    zone_id: ir.SSAValue = info.argument(types.Int)
-    word_id: ir.SSAValue = info.argument(types.Int)
-    site_id: ir.SSAValue = info.argument(types.Int)
-    location: ir.ResultValue = info.result(LocationAddressType)
+    zone: ir.SSAValue = info.argument(types.Int)
+    row: ir.SSAValue = info.argument(types.Int)
+    col: ir.SSAValue = info.argument(types.Int)
+    result: ir.ResultValue = info.result(LocationAddressType)
 
 
 @statement(dialect=dialect)
-class CzPartner(ir.Statement):
+class CzPartner(ArchResolvedStmt):
     """Resolve the CZ blockade-partner LocationAddress of a location.
 
     ``arch.cz_partner(loc)`` returns the location an atom must occupy to be
-    CZ-entangled with an atom at ``loc``. The result is materialized by
-    standard const-prop: once ``arch_spec`` is bound (by the pipeline's
-    ``BindCzPartnerArchSpec`` pass) and the ``address`` operand is constant,
-    the registered constprop impl returns a ``const.Value(LocationAddress)``
-    so the rest of the fold pipeline propagates it (e.g. into a ``move_to``
-    locations list).
+    CZ-entangled with an atom at ``loc``. The result is materialized by standard
+    const-prop: once ``arch_spec`` is bound (by ``BindArchSpec``) and the
+    ``address`` operand is constant, the registered constprop impl returns a
+    ``const.Value(LocationAddress)`` so the rest of the fold pipeline propagates
+    it (e.g. into a ``move_to`` locations list).
 
     Any ``CzPartner`` that survives resolution (because ``arch_spec`` was not
     bound, ``address`` did not const-fold, or the architecture has no partner
@@ -42,7 +59,6 @@ class CzPartner(ir.Statement):
     name = "cz_partner"
     traits = frozenset({ir.Pure(), lowering.FromPythonCall()})
     address: ir.SSAValue = info.argument(LocationAddressType)
-    arch_spec: ArchSpec | None = info.attribute(default=None)
     result: ir.ResultValue = info.result(LocationAddressType)
 
 

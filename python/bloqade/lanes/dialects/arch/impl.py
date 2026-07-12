@@ -1,20 +1,41 @@
 from kirin import interp
 from kirin.interp import Frame
 
+from bloqade.lanes.bytecode.encoding import LocationAddress
+
 from ._dialect import dialect
 from .stmts import CzPartner, Loc, SiteId, WordId, ZoneId
 
 
 @dialect.register
-class _LocInterpreter(interp.MethodTable):
+class _ArchInterpreter(interp.MethodTable):
     @interp.impl(Loc)
     def loc(self, interp_: interp.Interpreter, frame: Frame, stmt: Loc):
-        from bloqade.lanes.bytecode.encoding import LocationAddress
+        """Concrete evaluation of ``loc`` — resolve a ``(zone, row, col)`` grid
+        coordinate to a ``LocationAddress`` via the bound arch spec.
 
-        z = frame.get(stmt.zone_id)
-        w = frame.get(stmt.word_id)
-        s = frame.get(stmt.site_id)
-        return (LocationAddress(zone_id=z, word_id=w, site_id=s),)
+        Requires ``arch_spec`` to be bound (by ``BindArchSpec``) and the
+        coordinates to be concrete in the interpreter frame. Raises
+        ``InterpreterError`` otherwise. During const-folding (``run_no_raise``)
+        this is caught and the frame falls back to bottom, so an unbound arch
+        spec at kernel-decoration time gracefully skips folding without
+        corrupting the IR; during analysis (``no_raise=False``) it surfaces as
+        an error, consistent with the const-prop table in ``constprop.py``.
+        """
+        if stmt.arch_spec is None:
+            raise interp.InterpreterError(
+                "Loc has no arch_spec bound; run BindArchSpec before AggressiveUnroll."
+            )
+        zone = frame.get(stmt.zone)
+        row = frame.get(stmt.row)
+        col = frame.get(stmt.col)
+        location = stmt.arch_spec.location_at(zone, row, col)
+        if location is None:
+            raise interp.InterpreterError(
+                f"loc: no location address at (zone={zone}, row={row}, col={col}) "
+                "in the architecture spec."
+            )
+        return (location,)
 
     @interp.impl(WordId)
     def word_id(self, interp_: interp.Interpreter, frame: Frame, stmt: WordId):
@@ -33,28 +54,23 @@ class _LocInterpreter(interp.MethodTable):
         """Concrete evaluation of ``cz_partner`` used by the ilist constprop's
         ``try_eval_const_pure`` when unrolling pure lambdas at pipeline time.
 
-        Requires ``arch_spec`` to be bound (by ``BindCzPartnerArchSpec``) and
-        ``address`` to be a concrete ``LocationAddress`` in the interpreter
-        frame. Raises ``NotImplementedError`` otherwise — at kernel-decoration
-        time (arch_spec not yet set) this causes ``run_no_raise`` to return an
-        empty frame, which gracefully skips const-folding without corrupting the
-        IR.
+        Requires ``arch_spec`` to be bound (by ``BindArchSpec``) and ``address``
+        to be a concrete ``LocationAddress`` in the interpreter frame. Raises
+        ``InterpreterError`` otherwise (see ``loc`` for the rationale).
         """
-        from bloqade.lanes.bytecode.encoding import LocationAddress
-
         if stmt.arch_spec is None:
-            raise NotImplementedError(
+            raise interp.InterpreterError(
                 "CzPartner has no arch_spec bound; "
-                "run BindCzPartnerArchSpec before AggressiveUnroll."
+                "run BindArchSpec before AggressiveUnroll."
             )
         address = frame.get(stmt.address)
         if not isinstance(address, LocationAddress):
-            raise NotImplementedError(
+            raise interp.InterpreterError(
                 f"CzPartner address is not a concrete LocationAddress: {address!r}"
             )
         partner = stmt.arch_spec.get_cz_partner(address)
         if partner is None:
-            raise NotImplementedError(
-                f"No CZ partner for {address!r} in the architecture spec."
+            raise interp.InterpreterError(
+                f"cz_partner: no CZ partner for {address!r} in the architecture spec."
             )
         return (partner,)

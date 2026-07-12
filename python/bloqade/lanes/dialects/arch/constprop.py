@@ -5,19 +5,20 @@ from kirin.analysis.const.prop import Frame
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
 from ._dialect import dialect
-from .stmts import CzPartner
+from .stmts import CzPartner, Loc
 
 
 @dialect.register(key="constprop")
-class CzPartnerConstProp(interp.MethodTable):
-    """Resolve ``arch.cz_partner(loc)`` during const propagation.
+class ArchResolvedConstProp(interp.MethodTable):
+    """Const-prop for arch-resolved statements (``Loc`` / ``CzPartner``).
 
-    Returns the partner location as ``const.Value`` once ``arch_spec`` is
-    bound (by ``BindCzPartnerArchSpec`` in the pipeline) and the ``address``
-    operand is itself a constant ``LocationAddress``. Returns ``top()`` for
-    every other case so downstream consumers stay non-const — that's how
-    unresolved ``CzPartner`` surfaces as a compilation error today (via the
-    existing move_to "locations must be compile-time constants" check).
+    Materializes the ``LocationAddress`` as a ``const.Value`` once ``arch_spec``
+    is bound (by ``BindArchSpec`` in the pipeline) and the operands are constant.
+    While still unresolved (arch spec unbound, or operands not yet constant) it
+    returns ``top()`` so the statement stays non-const and folds later. If the
+    arch API resolves to ``None`` — no CZ partner, or no atom at the requested
+    ``(zone, row, col)`` — it raises ``InterpreterError`` so the error surfaces
+    during analysis (consistent with the interpreter impls in ``impl.py``).
     """
 
     @interp.impl(CzPartner)
@@ -31,5 +32,33 @@ class CzPartnerConstProp(interp.MethodTable):
             return (const.Result.top(),)
         partner = stmt.arch_spec.get_cz_partner(addr.data)
         if partner is None:
-            return (const.Result.top(),)
+            raise interp.InterpreterError(
+                f"cz_partner: no CZ partner for {addr.data!r} in the architecture spec."
+            )
         return (const.Value(partner),)
+
+    @interp.impl(Loc)
+    def loc(self, _, frame: Frame, stmt: Loc):
+        if stmt.arch_spec is None:
+            return (const.Result.top(),)
+        zone_v = frame.get(stmt.zone)
+        row_v = frame.get(stmt.row)
+        col_v = frame.get(stmt.col)
+        if not (
+            isinstance(zone_v, const.Value)
+            and isinstance(row_v, const.Value)
+            and isinstance(col_v, const.Value)
+        ):
+            return (const.Result.top(),)
+        zone, row, col = zone_v.data, row_v.data, col_v.data
+        if not (
+            isinstance(zone, int) and isinstance(row, int) and isinstance(col, int)
+        ):
+            return (const.Result.top(),)
+        location = stmt.arch_spec.location_at(zone, row, col)
+        if location is None:
+            raise interp.InterpreterError(
+                f"loc: no location address at (zone={zone}, row={row}, col={col}) "
+                "in the architecture spec."
+            )
+        return (const.Value(location),)

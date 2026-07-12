@@ -428,3 +428,18 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         if result is None:
             return None
         return LocationAddress.from_inner(result)
+
+    def location_at(self, zone: int, row: int, col: int) -> LocationAddress | None:
+        """Resolve a ``(zone, row, col)`` grid coordinate to a ``LocationAddress``.
+
+        ``col`` is the grid x-index and ``row`` the grid y-index within ``zone``.
+        Returns the location whose word site sits at that grid position (a
+        unique ``(word_id, site_id)`` within the zone), or ``None`` if no atom
+        occupies it. This is the authoritative ``(row, col)`` -> location
+        mapping for the architecture's addressing scheme (defined Rust-side);
+        callers depend only on this, not on the word/site layout.
+        """
+        result = self._inner.location_at(zone, row, col)
+        if result is None:
+            return None
+        return LocationAddress.from_inner(result)
