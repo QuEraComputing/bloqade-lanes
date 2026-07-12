@@ -440,9 +440,16 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
         qubits: tuple[int, ...],
         locations: tuple[LocationAddress, ...],
     ) -> AtomState:
-        # A relabel commits immediately (it is not palindrome-returned), so we
-        # just unwrap any pending CZ-return home and delegate to the inner
-        # strategy, which produces the committed ``Relabeled`` state.
-        if not isinstance(self.inner, MoveToPlacementStrategyABC):
-            return AtomState.bottom()
-        return self.inner.relabel_placements(self._unwrap(state), qubits, locations)
+        # ``relabel=True`` is an active, *committed* permutation. It is
+        # fundamentally incompatible with the palindrome model, which returns
+        # every move to the pre-move home at the next CZ: a committed relabel
+        # would leave the atoms permuted away from that home, silently breaking
+        # the return invariant. Reject it loudly rather than emit output whose
+        # permutation is (partly) undone by the return moves — ``relabel=True``
+        # is meant for a non-palindrome (no-return) strategy, where moves commit.
+        raise NotImplementedError(
+            "permute(relabel=True) commits an active qubit permutation, which "
+            "PalindromePlacementStrategy cannot express (it returns every move to "
+            "the pre-move home at each CZ). Use a non-palindrome (no-return) "
+            "placement strategy for relabel=True permutes."
+        )

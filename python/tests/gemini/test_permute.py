@@ -350,3 +350,23 @@ def test_relabel_state_is_measurable_but_user_move_is_not():
         pre_user_layout=layout,
     )
     assert strat.measure_placements(user_moved, (0, 1)) == AtomState.bottom()
+
+
+def test_relabel_placements_rejected_under_palindrome():
+    """PalindromePlacementStrategy rejects relabel=True: a committed permutation
+    is incompatible with returning every move to the pre-move home."""
+    import pytest
+
+    from bloqade.lanes.analysis.placement import (
+        ConcreteState,
+        PalindromePlacementStrategy,
+    )
+    from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
+
+    strat = PalindromePlacementStrategy(
+        inner=LogicalPlacementStrategy(arch_spec=get_arch_spec())
+    )
+    layout = (_loc(0, 0), _loc(2, 0))
+    state = ConcreteState(occupied=frozenset(), layout=layout, move_count=(0, 0))
+    with pytest.raises(NotImplementedError, match="relabel=True"):
+        strat.relabel_placements(state, (0, 1), (layout[1], layout[0]))
