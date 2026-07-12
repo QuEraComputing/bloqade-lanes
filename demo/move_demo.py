@@ -44,9 +44,11 @@ Gadgets implemented
                                     vertex permutation for the x<->y axis swap,
                                     driven by arrange.permute.
 
-The VIRTUAL flag (below) toggles whether the logical SWAP emits an explicit
-physical permute (VIRTUAL = False) or is performed as a free software relabel
-with no atom movement (VIRTUAL = True).
+The VIRTUAL flag (below) selects how the logical SWAP's single ``arrange.permute``
+is realized, via ``insert_moves = not VIRTUAL``: VIRTUAL = False commits the
+physical moves now (the atoms are rearranged in place), while VIRTUAL = True is a
+free software relabel with no atom movement (the swap is absorbed lazily by a
+later transversal move).
 """
 
 from typing import Any, Literal, TypeVar
@@ -63,12 +65,20 @@ from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.visualize import debugger
 
 # ---------------------------------------------------------------------------
-# Toggle: when False, logical relabels emit explicit arrange.permute (the
-# atoms are physically rearranged). When True, relabels are pure software
-# relabels -- no physical move instructions are emitted, the move compiler only
-# moves atoms lazily when a later gate needs them adjacent.
+# Toggle: VIRTUAL selects how the logical relabel (arrange.permute) is realized,
+# via insert_moves = not VIRTUAL:
+#   VIRTUAL = False -> insert_moves=True : the permutation also commits physical
+#             moves, so the atoms are rearranged in place now.
+#   VIRTUAL = True  -> insert_moves=False: a pure software relabel -- no move
+#             instructions are emitted; the move compiler only moves atoms
+#             lazily when a later gate needs them adjacent.
 # ---------------------------------------------------------------------------
 VIRTUAL = False
+
+# arrange.permute's insert_moves attribute. Derived here at module scope (rather
+# than as `insert_moves=not VIRTUAL` inside the kernel) because the kernel
+# lowering captures a bare global constant but cannot lower a `not` expression.
+INSERT_MOVES = not VIRTUAL
 
 N = TypeVar("N")
 
@@ -170,45 +180,60 @@ def transversal_cx(
 # Transversal non-Clifford gadget: logical CCZ (the signature [[8,3,2]] gate)
 # ---------------------------------------------------------------------------
 @physical.kernel(verify=False)
-def logical_ccz(reg: LogicalBlock):
-    """Logical CCZ-bar_{123} via T on even-parity vertices, T-dagger on odd.
+def logical_ccz(reg: ilist.IList[LogicalBlock, Any]):
+    """Logical CCZ-bar_{123} via T on even-parity vertices, T-dagger on odd,
+    broadcast across every block in ``reg``.
 
-    This diagonal transversal gate (T on {0,3,5,6}, T-dagger on {1,2,4,7}) is
-    the defining transversal non-Clifford gate of the [[8,3,2]] code. CCZ is
-    Hermitian, so the even/odd assignment fixes the gate up to its (trivial)
-    inverse.
+    This diagonal transversal gate (per block: T on {0,3,5,6}, T-dagger on
+    {1,2,4,7}) is the defining transversal non-Clifford gate of the [[8,3,2]]
+    code. CCZ is Hermitian, so the even/odd assignment fixes the gate up to its
+    (trivial) inverse. Gathering the even/odd vertices of every block and
+    issuing a single broadcast applies the gadget to all blocks at once.
     """
 
-    def _even(v: int):
-        return reg[v]
+    def _even(block: LogicalBlock):
+        def _pick(v: int):
+            return block[v]
 
-    def _odd(v: int):
-        return reg[v]
+        return ilist.map(_pick, EVEN_VERTICES)
 
-    squin.broadcast.t(ilist.map(_even, EVEN_VERTICES))
-    squin.broadcast.t_adj(ilist.map(_odd, ODD_VERTICES))
+    def _odd(block: LogicalBlock):
+        def _pick(v: int):
+            return block[v]
+
+        return ilist.map(_pick, ODD_VERTICES)
+
+    squin.broadcast.t(flat(ilist.map(_even, reg)))
+    squin.broadcast.t_adj(flat(ilist.map(_odd, reg)))
 
 
 # ---------------------------------------------------------------------------
 # Intra-block logical gadget: SWAP of logical qubits 1<->2 via arrange.permute
 # ---------------------------------------------------------------------------
 @physical.kernel(verify=False)
-def logical_swap(reg: LogicalBlock) -> LogicalBlock:
-    """Logical SWAP-bar_{12} realised by the x<->y cube vertex permutation.
+def logical_swap(reg: ilist.IList[LogicalBlock, Any]):
+    """Logical SWAP-bar_{12} realised by the x<->y cube vertex permutation,
+    broadcast across every block in ``reg``.
 
-    When VIRTUAL is False we emit arrange.permute (the atoms physically move
-    so that reg[i] lands on the current location of reg[SWAP_XY[i]]) and then
-    relabel. When VIRTUAL is True we only relabel -- no physical permute is
-    emitted, so the logical swap is free and atoms move lazily later.
+    Extends SWAP_XY to a permutation over the whole flattened register (each
+    block's SWAP_XY offset by its block position) and issues a single
+    arrange.permute. The relabel is tracked by the compiler -- afterwards
+    reg[b][i] refers to what was reg[b][SWAP_XY[i]] -- so downstream gates see
+    the swapped logical qubits with no need to rebuild or return the blocks.
+    With insert_moves = not VIRTUAL, VIRTUAL True is a free software relabel (no
+    atoms move; a later transversal move absorbs it lazily) while VIRTUAL False
+    also commits the physical moves so the code blocks are rearranged in place.
     """
+    block_size = len(SWAP_XY)
 
-    def _relabel(p: int):
-        return reg[p]
+    def _extend(acc: ilist.IList[int, Any], p: int):
+        def _add(ele: int):
+            return ele + p * block_size
 
-    if not VIRTUAL:
-        arrange.permute(reg, SWAP_XY)
+        return acc + ilist.map(_add, SWAP_XY)
 
-    return ilist.map(_relabel, SWAP_XY)
+    perm = ilist.foldl(_extend, ilist.range(len(reg)), ilist.IList([]))
+    arrange.permute(flat(reg), perm, insert_moves=INSERT_MOVES)
 
 
 # ---------------------------------------------------------------------------
@@ -231,21 +256,20 @@ def measure_logical_block(blocks: ilist.IList[LogicalBlock, Any]):
 @physical.kernel(aggressive_unroll=True, verify=False)
 def main():
     blocks = qalloc(ilist.IList([0, 1]))
-    a = blocks[0]
-    b = blocks[1]
 
-    # logical CX-bar(a -> b) on all three logical pairs
+    # logical CX-bar(block 0 -> block 1) on all three logical pairs
     transversal_cx(blocks[0:1], blocks[1:2])
 
-    # logical SWAP-bar_{12} on block a (physical permute iff VIRTUAL is False)
-    a = logical_swap(a)
+    # logical SWAP-bar_{12} on block 0 (passed as a 1-block list; physical moves
+    # committed iff VIRTUAL is False). The relabel is tracked by the compiler, so
+    # `blocks` keeps referring to the same qubits with block 0's labels swapped.
+    logical_swap(blocks[0:1])
 
-    # logical CCZ-bar_{123} on both blocks; on `a` the CCZ acts on the relabelled
-    # logical qubits produced by the swap above.
-    logical_ccz(a)
-    logical_ccz(b)
+    # logical CCZ-bar_{123} on every block (broadcast), acting on block 0's
+    # relabelled logical qubits produced by the swap above.
+    logical_ccz(blocks)
 
-    return measure_logical_block(ilist.IList([a, b]))
+    return measure_logical_block(blocks)
 
 
 # ---------------------------------------------------------------------------
