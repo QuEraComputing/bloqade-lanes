@@ -50,7 +50,7 @@ class InsertMoves(RewriteRule):
             layers = state_after.get_move_layers()
             if len(layers) > 1:
                 warnings.warn(
-                    f"movement.move_to(qubits={node.qubits}, "
+                    f"move_to(qubits={node.qubits}, "
                     f"locations={node.locations}) could not be packed into a "
                     f"single AOD shot (split across {len(layers)} layers)",
                     UserWarning,

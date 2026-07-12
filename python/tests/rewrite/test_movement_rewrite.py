@@ -6,7 +6,7 @@ from kirin import ir, rewrite
 from kirin.analysis import const
 from kirin.dialects import ilist, py
 
-from bloqade.gemini.common.dialects import movement
+from bloqade.gemini.common.dialects import arrange
 from bloqade.lanes.analysis.placement.lattice import (
     AtomState,
     ConcreteState,
@@ -38,7 +38,7 @@ def _make_rule():
 
 
 def test_rewrite_move_to_produces_static_placement():
-    """movement.MoveTo with const-foldable locations rewrites to place.StaticPlacement(place.MoveTo)."""
+    """arrange.MoveTo with const-foldable locations rewrites to place.StaticPlacement(place.MoveTo)."""
     q0 = ir.TestValue()
     q1 = ir.TestValue()
     qubits_new = ilist.New(values=(q0, q1))
@@ -51,7 +51,7 @@ def test_rewrite_move_to_produces_static_placement():
     # Stamp const hint on the locations SSA value
     locs_new.result.hints["const"] = const.Value((loc_a, loc_b))
 
-    stmt = movement.stmts.MoveTo(
+    stmt = arrange.stmts.MoveTo(
         qubits_new.result, locs_new.result, multi_move_warning=False
     )
 
@@ -72,20 +72,20 @@ def test_rewrite_move_to_produces_static_placement():
 
 
 def test_rewrite_move_to_gives_up_without_const_hint():
-    """movement.MoveTo without a const hint on locations gives up silently."""
+    """arrange.MoveTo without a const hint on locations gives up silently."""
     q0 = ir.TestValue()
     qubits_new = ilist.New(values=(q0,))
     loc_val = ir.TestValue()
     locs_new = ilist.New(values=(loc_val,))
     # No const hint on locs_new.result
 
-    stmt = movement.stmts.MoveTo(qubits_new.result, locs_new.result)
+    stmt = arrange.stmts.MoveTo(qubits_new.result, locs_new.result)
     test_block = ir.Block([qubits_new, locs_new, stmt])
 
     _make_rule().rewrite(test_block)
 
     remaining = list(test_block.stmts)
-    move_stmts = [s for s in remaining if isinstance(s, movement.stmts.MoveTo)]
+    move_stmts = [s for s in remaining if isinstance(s, arrange.stmts.MoveTo)]
     assert len(move_stmts) == 1  # unchanged
 
 
@@ -103,7 +103,7 @@ def test_rewrite_move_to_length_mismatch_raises():
     locs_new = ilist.New(values=(loc_a_val.result,))  # only 1 location
     locs_new.result.hints["const"] = const.Value((loc_a,))
 
-    stmt = movement.stmts.MoveTo(qubits_new.result, locs_new.result)
+    stmt = arrange.stmts.MoveTo(qubits_new.result, locs_new.result)
     test_block = ir.Block([qubits_new, loc_a_val, locs_new, stmt])
 
     with pytest.raises(ValueError, match="number of locations"):
@@ -123,7 +123,7 @@ def test_rewrite_permute_invalid_perm_raises():
     perm_new = ilist.New(values=(bad_perm_val.result,))
     perm_new.result.hints["const"] = const.Value((0, 0))
 
-    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result)
+    stmt = arrange.stmts.Permute(qubits_new.result, perm_new.result)
     test_block = ir.Block([qubits_new, bad_perm_val, perm_new, stmt])
 
     with pytest.raises(ValueError, match="not a permutation"):

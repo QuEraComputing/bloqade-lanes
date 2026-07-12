@@ -1,4 +1,4 @@
-"""Tests for the movement-dialect cz_partner(loc) feature."""
+"""Tests for the arch-dialect cz_partner(loc) feature."""
 
 import typing
 
@@ -7,7 +7,7 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import physical
-from bloqade.gemini.common.dialects import movement, qubit
+from bloqade.gemini.common.dialects import arrange, qubit
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import arch, move as move_dialect
@@ -119,9 +119,9 @@ def _build_kernel():
             return arch.cz_partner(static_addrs[i])
 
         partners = ilist.map(_partner, ilist.range(2))
-        movement.move_to(mobile, partners)
+        arrange.move_to(mobile, partners)
         squin.broadcast.cx(mobile, static)
-        movement.move_to(mobile, mobile_addrs)
+        arrange.move_to(mobile, mobile_addrs)
 
     return main
 
@@ -168,7 +168,7 @@ def test_cz_partner_matches_hardcoded_partner_words():
         def _partner(i: int):
             return arch.cz_partner(static_addrs[i])
 
-        movement.move_to(mobile, ilist.map(_partner, ilist.range(2)))
+        arrange.move_to(mobile, ilist.map(_partner, ilist.range(2)))
         squin.broadcast.cx(mobile, static)
 
     @krn(aggressive_unroll=True, verify=False)
@@ -178,7 +178,7 @@ def test_cz_partner_matches_hardcoded_partner_words():
         partner_addrs = locs(ilist.IList([1, 5]), ilist.IList([0, 0]))
         static = alloc(static_addrs)
         mobile = alloc(mobile_addrs)
-        movement.move_to(mobile, partner_addrs)
+        arrange.move_to(mobile, partner_addrs)
         squin.broadcast.cx(mobile, static)
 
     def _move_lanes(kernel):

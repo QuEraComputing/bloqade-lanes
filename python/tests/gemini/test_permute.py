@@ -7,9 +7,9 @@ from kirin.dialects import func, ilist, py
 from kirin.prelude import structural_no_opt
 
 from bloqade.gemini import physical
-from bloqade.gemini.common.dialects import movement
-from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
-from bloqade.gemini.common.dialects.movement.stmts import Permute
+from bloqade.gemini.common.dialects import arrange
+from bloqade.gemini.common.dialects.arrange import dialect as arrange_dialect
+from bloqade.gemini.common.dialects.arrange.stmts import Permute
 from bloqade.gemini.common.validation.move_to import MoveToValidation
 from bloqade.lanes.analysis.placement.strategy import _resolve_permute_locations
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -26,14 +26,14 @@ def test_permute_statement_shape():
     # Lowered from a Python call; NOT pure (it mutates placement state).
     assert any(isinstance(t, lowering.FromPythonCall) for t in Permute.traits)
     assert not any(isinstance(t, ir.Pure) for t in Permute.traits)
-    # Registered on the movement dialect — catches wrong-dialect registration.
-    assert Permute in movement.dialect.stmts
+    # Registered on the arrange dialect — catches wrong-dialect registration.
+    assert Permute in arrange.dialect.stmts
 
 
 def test_permute_callable_lowering_wrapper():
-    # movement.permute must be callable (it is the lowering wrapper for Permute).
+    # arrange.permute must be callable (it is the lowering wrapper for Permute).
     # The import itself exercises the re-export; this asserts the wrapper is usable.
-    assert callable(movement.permute)
+    assert callable(arrange.permute)
 
 
 def _loc(w, s):
@@ -79,7 +79,7 @@ def test_rewrite_permute_produces_place_permute():
     perm_new = ilist.New(values=(p0.result, p1.result, p2.result))
     perm_new.result.hints["const"] = const.Value((1, 2, 0))
 
-    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result)
+    stmt = arrange.stmts.Permute(qubits_new.result, perm_new.result)
 
     # Only statements go in the block; q0/q1/q2 are SSA operands (TestValues).
     block = ir.Block([qubits_new, p0, p1, p2, perm_new, stmt])
@@ -91,14 +91,14 @@ def test_rewrite_permute_produces_place_permute():
     assert len(permutes) == 1
     assert permutes[0].qubits == (0, 1, 2)
     assert permutes[0].perm == (1, 2, 0)
-    assert not any(isinstance(s, movement.stmts.Permute) for s in region.walk())
+    assert not any(isinstance(s, arrange.stmts.Permute) for s in region.walk())
 
 
 # ---------------------------------------------------------------------------
 # Validation tests (P1–P4)
 # ---------------------------------------------------------------------------
 
-_VAL_DIALECTS = structural_no_opt.union([movement_dialect])
+_VAL_DIALECTS = structural_no_opt.union([arrange_dialect])
 
 
 def _build_method(stmts):
@@ -121,7 +121,7 @@ def _permute_stmts(qubit_vals, perm_data, *, stamp_const=True):
     perm_new = ilist.New(values=tuple(c.result for c in perm_consts))
     if stamp_const:
         perm_new.result.hints["const"] = const.Value(tuple(perm_data))
-    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result)
+    stmt = arrange.stmts.Permute(qubits_new.result, perm_new.result)
     # Only statements; qubit_vals are SSA operands (TestValues), not statements.
     return [qubits_new, *perm_consts, perm_new, stmt]
 
@@ -168,7 +168,7 @@ def test_permute_identity_compiles():
     @physical.kernel(aggressive_unroll=True, verify=False)
     def k():
         q = squin.qalloc(2)
-        movement.permute([q[0], q[1]], [0, 1])
+        arrange.permute([q[0], q[1]], [0, 1])
         squin.cz(q[0], q[1])
 
     assert k is not None
@@ -184,14 +184,14 @@ def test_permute_then_cz_compiles():
     @physical.kernel(aggressive_unroll=True, verify=False)
     def k():
         q = squin.qalloc(3)
-        movement.permute([q[0], q[1], q[2]], [1, 2, 0])
+        arrange.permute([q[0], q[1], q[2]], [1, 2, 0])
         squin.cz(q[0], q[1])
 
     assert k is not None
 
 
 def test_permute_rejected_on_plain_logical_kernel():
-    """A plain logical kernel (no movement dialect) cannot lower permute."""
+    """A plain logical kernel (no arrange dialect) cannot lower permute."""
     import pytest
     from kirin.lowering.exception import BuildError
 
@@ -202,7 +202,7 @@ def test_permute_rejected_on_plain_logical_kernel():
         @logical.kernel(aggressive_unroll=True)
         def k():
             q = squin.qalloc(2)
-            movement.permute([q[0], q[1]], [1, 0])
+            arrange.permute([q[0], q[1]], [1, 0])
             squin.cz(q[0], q[1])
 
 
@@ -215,14 +215,14 @@ def test_permute_default_relabel_full_pipeline_emits_no_moves():
     @physical.kernel(aggressive_unroll=True, verify=False)
     def k():
         q = squin.qalloc(3)
-        movement.permute([q[0], q[1], q[2]], [1, 2, 0])
+        arrange.permute([q[0], q[1], q[2]], [1, 2, 0])
 
     strat = make_physical_placement_strategy(return_moves=True)  # palindrome
     out = PhysicalPipeline(placement_strategy=strat).emit(k)
 
     stmts = list(out.callable_region.walk())
     assert not any(isinstance(s, place.Permute) for s in stmts)
-    assert not any(isinstance(s, movement.stmts.Permute) for s in stmts)
+    assert not any(isinstance(s, arrange.stmts.Permute) for s in stmts)
     # relabel-only is free — the permute emits no move-dialect Move.
     assert not any(isinstance(s, move_dialect.Move) for s in stmts)
 
@@ -247,7 +247,7 @@ def test_rewrite_permute_propagates_insert_moves():
     perm_new = ilist.New(values=(p0.result, p1.result))
     perm_new.result.hints["const"] = const.Value((1, 0))
 
-    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result, insert_moves=True)
+    stmt = arrange.stmts.Permute(qubits_new.result, perm_new.result, insert_moves=True)
     block = ir.Block([qubits_new, p0, p1, perm_new, stmt])
     region = ir.Region([block])
     rewrite.Walk(RewritePlaceOperations()).rewrite(region)
@@ -291,7 +291,7 @@ def test_permute_insert_moves_full_pipeline_emits_moves():
     @physical.kernel(aggressive_unroll=True, verify=False)
     def k():
         q = squin.qalloc(2)
-        movement.permute([q[0], q[1]], [1, 0], insert_moves=True)
+        arrange.permute([q[0], q[1]], [1, 0], insert_moves=True)
         squin.cz(q[0], q[1])
 
     strat = make_physical_placement_strategy(return_moves=False)  # no-return
@@ -299,7 +299,7 @@ def test_permute_insert_moves_full_pipeline_emits_moves():
 
     stmts = list(out.callable_region.walk())
     assert not any(isinstance(s, place.Permute) for s in stmts)
-    assert not any(isinstance(s, movement.stmts.Permute) for s in stmts)
+    assert not any(isinstance(s, arrange.stmts.Permute) for s in stmts)
     assert any(isinstance(s, move_dialect.Move) for s in stmts)
 
 

@@ -2,7 +2,7 @@
 
 This demo shows how to build *physically correct* logical gadgets for the
 [[8,3,2]] code (the smallest 3D color code, on a single cube) using the
-movement dialect and squin gates, and how the move compiler turns them into
+arrange dialect and squin gates, and how the move compiler turns them into
 physical atom movement.
 
 [[8,3,2]] conventions used throughout
@@ -42,7 +42,7 @@ Gadgets implemented
                                     transversal non-Clifford gate of [[8,3,2]]).
   * logical SWAP (one block)      : SWAP of logical qubits 1<->2 via the cube
                                     vertex permutation for the x<->y axis swap,
-                                    driven by movement.permute.
+                                    driven by arrange.permute.
 
 The VIRTUAL flag (below) toggles whether the logical SWAP emits an explicit
 physical permute (VIRTUAL = False) or is performed as a free software relabel
@@ -56,14 +56,14 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import physical
-from bloqade.gemini.common.dialects import movement, qubit
+from bloqade.gemini.common.dialects import arrange, qubit
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.passes import ASAPPlacePass
 from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.visualize import debugger
 
 # ---------------------------------------------------------------------------
-# Toggle: when False, logical relabels emit explicit movement.permute (the
+# Toggle: when False, logical relabels emit explicit arrange.permute (the
 # atoms are physically rearranged). When True, relabels are pure software
 # relabels -- no physical move instructions are emitted, the move compiler only
 # moves atoms lazily when a later gate needs them adjacent.
@@ -80,7 +80,7 @@ EVEN_VERTICES = ilist.IList([0, 3, 5, 6])
 ODD_VERTICES = ilist.IList([1, 2, 4, 7])
 
 # Vertex permutation realising the x<->y axis swap, i.e. v=(x,y,z) -> (y,x,z).
-# As a movement.permute argument: qubits[i] moves to the current location of
+# As a arrange.permute argument: qubits[i] moves to the current location of
 # qubits[SWAP_XY[i]]. It is an involution (fixes the x=y diagonal, swaps 2<->4
 # and 3<->5) and implements logical SWAP-bar between logical qubits 1 and 2.
 SWAP_XY = ilist.IList([0, 1, 4, 5, 2, 3, 6, 7])
@@ -190,13 +190,13 @@ def logical_ccz(reg: LogicalBlock):
 
 
 # ---------------------------------------------------------------------------
-# Intra-block logical gadget: SWAP of logical qubits 1<->2 via movement.permute
+# Intra-block logical gadget: SWAP of logical qubits 1<->2 via arrange.permute
 # ---------------------------------------------------------------------------
 @physical.kernel(verify=False)
 def logical_swap(reg: LogicalBlock) -> LogicalBlock:
     """Logical SWAP-bar_{12} realised by the x<->y cube vertex permutation.
 
-    When VIRTUAL is False we emit movement.permute (the atoms physically move
+    When VIRTUAL is False we emit arrange.permute (the atoms physically move
     so that reg[i] lands on the current location of reg[SWAP_XY[i]]) and then
     relabel. When VIRTUAL is True we only relabel -- no physical permute is
     emitted, so the logical swap is free and atoms move lazily later.
@@ -206,7 +206,7 @@ def logical_swap(reg: LogicalBlock) -> LogicalBlock:
         return reg[p]
 
     if not VIRTUAL:
-        movement.permute(reg, SWAP_XY)
+        arrange.permute(reg, SWAP_XY)
 
     return ilist.map(_relabel, SWAP_XY)
 

@@ -16,14 +16,14 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import arch as arch_dialect
 
 
-@ir.dialect_group(logical_kernel.union([gemini_common.dialects.movement, arch_dialect]))
+@ir.dialect_group(logical_kernel.union([gemini_common.dialects.arrange, arch_dialect]))
 def kernel(self):
     """Gemini kernel with user-directed atom movement.
 
-    Extends the logical ``kernel`` with the movement dialect (``move_to`` /
+    Extends the logical ``kernel`` with the arrange dialect (``move_to`` /
     ``permute``) and the ``bloqade.lanes.arch`` dialect (``loc`` / ``cz_partner``
     / location-attribute reads); use this when your kernel calls
-    ``movement.move_to(...)`` / location primitives.
+    ``arrange.move_to(...)`` / location primitives.
     """
     address_analysis = address.AddressAnalysis(dialects=self)
 

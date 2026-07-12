@@ -1,4 +1,4 @@
-"""Eager per-statement validation for ``movement.MoveTo`` (failures 1-5 from spec §4).
+"""Eager per-statement validation for ``arrange.MoveTo`` (failures 1-5 from spec §4).
 
 Registered against the lanes validation interpreter key (``move.address.validation``).
 The impl checks:
@@ -21,8 +21,8 @@ from kirin.dialects import ilist
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
-from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
-from bloqade.gemini.common.dialects.movement.stmts import MoveTo, Permute
+from bloqade.gemini.common.dialects.arrange import dialect as arrange_dialect
+from bloqade.gemini.common.dialects.arrange.stmts import MoveTo, Permute
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects.arch import Loc
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bloqade.lanes.validation.address import _ValidationAnalysis
 
 
-@movement_dialect.register(key="move.address.validation")
+@arrange_dialect.register(key="move.address.validation")
 class _MoveToValidationMethods(interp.MethodTable):
     @interp.impl(MoveTo)
     def check_move_to(
@@ -223,7 +223,7 @@ class _MoveToValidationMethods(interp.MethodTable):
 
 @dataclass
 class MoveToValidation(ValidationPass):
-    """Eager per-statement validation for ``movement.MoveTo`` (failures 1-5)."""
+    """Eager per-statement validation for ``arrange.MoveTo`` (failures 1-5)."""
 
     arch_spec: ArchSpec = field(kw_only=True)
 

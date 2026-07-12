@@ -1,11 +1,11 @@
 from kirin import lowering
 
-from bloqade.gemini.common.dialects import movement
-from bloqade.gemini.common.dialects.movement.stmts import MoveTo
+from bloqade.gemini.common.dialects import arrange
+from bloqade.gemini.common.dialects.arrange.stmts import MoveTo
 
 
-def test_move_to_in_movement_dialect():
-    assert MoveTo in movement.dialect.stmts
+def test_move_to_in_arrange_dialect():
+    assert MoveTo in arrange.dialect.stmts
 
 
 def test_move_to_attributes():

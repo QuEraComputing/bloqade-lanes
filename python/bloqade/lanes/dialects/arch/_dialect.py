@@ -1,3 +1,3 @@
 from kirin import ir
 
-dialect = ir.Dialect(name="bloqade.lanes.arch")
+dialect = ir.Dialect(name="lanes.arch")
