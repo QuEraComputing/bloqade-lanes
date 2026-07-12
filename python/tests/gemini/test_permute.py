@@ -303,6 +303,34 @@ def test_permute_insert_moves_full_pipeline_emits_moves():
     assert any(isinstance(s, move_dialect.Move) for s in stmts)
 
 
+def test_permute_insert_moves_survives_asap_place_pass():
+    """Regression: the ASAP/ALAP place passes merge & reorder StaticPlacement
+    blocks by *reconstructing* each inner statement's attributes
+    (HoistNewQubitsUp / MergeStaticPlacement). That reconstruction rebuilt
+    place.Permute with only ``qubits``/``perm`` and dropped ``insert_moves``, so a
+    permute compiled with ``place_opt_type=ASAPPlacePass`` crashed at placement
+    analysis with ``KeyError('insert_moves')``. The default pipeline place pass
+    never merges/hoists a Permute, so this path was uncovered."""
+    from bloqade.lanes.passes import ASAPPlacePass
+
+    @physical.kernel(aggressive_unroll=True, verify=False)
+    def k():
+        q = squin.qalloc(2)
+        squin.cz(q[0], q[1])
+        arrange.permute([q[0], q[1]], [1, 0], insert_moves=True)
+        squin.cz(q[0], q[1])
+
+    strat = make_physical_placement_strategy(return_moves=False)  # no-return
+    out = PhysicalPipeline(placement_strategy=strat, place_opt_type=ASAPPlacePass).emit(
+        k
+    )
+
+    stmts = list(out.callable_region.walk())
+    assert not any(isinstance(s, place.Permute) for s in stmts)
+    assert not any(isinstance(s, arrange.stmts.Permute) for s in stmts)
+    assert any(isinstance(s, move_dialect.Move) for s in stmts)
+
+
 def test_permuted_state_is_measurable_but_user_move_is_not():
     """The committed Permuted state is measurable, whereas a palindrome-pending
     UserMoved is rejected at a terminal measure — Permuted is deliberately not a

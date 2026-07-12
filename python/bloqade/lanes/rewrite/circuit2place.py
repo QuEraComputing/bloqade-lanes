@@ -608,6 +608,7 @@ class MergePlacementRegions(abc.RewriteRule):
                     )
                 if isinstance(stmt, place.Permute):
                     attributes["perm"] = ir.PyAttr(stmt.perm)
+                    attributes["insert_moves"] = ir.PyAttr(stmt.insert_moves)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
@@ -749,6 +750,7 @@ class MergeStaticPlacement(abc.RewriteRule):
                     )
                 if isinstance(stmt, place.Permute):
                     attributes["perm"] = ir.PyAttr(stmt.perm)
+                    attributes["insert_moves"] = ir.PyAttr(stmt.insert_moves)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
