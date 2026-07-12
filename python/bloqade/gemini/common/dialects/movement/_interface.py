@@ -75,7 +75,7 @@ def move_to(
 def permute(
     qubits: ilist.IList[Qubit, Len],
     perm: ilist.IList[int, Len],
-    relabel: bool = False,
+    insert_moves: bool = False,
 ): ...
 
 
@@ -83,7 +83,7 @@ def permute(
 def permute(
     qubits: list[Qubit],
     perm: list[int],
-    relabel: bool = False,
+    insert_moves: bool = False,
 ): ...
 
 
@@ -91,25 +91,23 @@ def permute(
 def permute(
     qubits,
     perm,
-    relabel=False,
+    insert_moves=False,
 ) -> None:
-    """Move qubits into a permutation of their own current locations.
+    """Permute qubits — a logical relabel where ``qubits[i]`` ends up referring
+    to what was ``qubits[perm[i]]``.
 
-    ``qubits[i]`` moves to the location currently held by ``qubits[perm[i]]``.
     ``perm`` must be a compile-time-constant permutation of ``range(len(qubits))``.
+    ``insert_moves`` (compile-time constant) selects how the permutation is
+    realized:
 
-    ``relabel`` (compile-time constant) selects the semantics:
-
-    - ``False`` (default): **reposition** — physically move the atoms to the
-      permuted locations while each qubit keeps its own label/state. Like
-      ``move_to``, this is user-directed movement within an inter-CZ segment
-      (palindrome-returned to the pre-move layout at the next CZ).
-    - ``True``: **active permutation** — physically move *and* relabel the
-      qubits. The moves are committed (not returned) and the qubit ids are
-      pinned back to their original slots, so the *quantum information* is
-      permuted across the ids: afterwards ``qubits[i]`` refers to what was
-      ``qubits[perm[i]]``. Use this for QEC relabelings (e.g. permuting a code
-      block) where you want the atoms physically placed to match the new labels
-      rather than a lazy permutation deferred into a later transversal move.
+    - ``False`` (default): **relabel only** — no atoms move; the qubit references
+      are permuted (the quantum information is permuted for free). A later
+      transversal move absorbs the physical permutation (a "lazy" permutation).
+      Valid under any strategy, including palindrome.
+    - ``True``: **also commit the moves** — physically route the atoms so the
+      permutation is realized in place now (e.g. to keep a QEC code block
+      physically arranged to match the new labels). Only valid under a
+      non-palindrome (no-return) strategy; ``PalindromePlacementStrategy``
+      rejects it, since it would return the committed moves home.
     """
     ...

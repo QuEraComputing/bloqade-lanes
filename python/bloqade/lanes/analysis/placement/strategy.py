@@ -10,9 +10,24 @@ from .lattice import (
     ExecuteCZ,
     ExecuteCZReturn,
     ExecuteMeasure,
-    Relabeled,
+    Permuted,
     UserMoved,
 )
+
+
+def _resolve_permute_locations(
+    layout: tuple[LocationAddress, ...],
+    qubits: tuple[int, ...],
+    permutation: tuple[int, ...],
+) -> tuple[LocationAddress, ...]:
+    """Resolve a permutation to target locations against the current layout.
+
+    ``qubits`` are layout indices; ``permutation`` permutes the *positions* of
+    ``qubits``. For each value ``j`` in ``permutation`` (an index into
+    ``qubits``), the target is the current location of that qubit,
+    ``layout[qubits[j]]``.
+    """
+    return tuple(layout[qubits[j]] for j in permutation)
 
 
 def assert_single_cz_zone(arch_spec: ArchSpec, strategy_name: str) -> None:
@@ -208,26 +223,34 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
             pre_user_layout=pre_user,
         )
 
-    def relabel_placements(
+    def permute_placements(
         self,
         state: AtomState,
         qubits: tuple[int, ...],
-        locations: tuple[LocationAddress, ...],
+        permutation: tuple[int, ...],
+        insert_moves: bool = False,
     ) -> AtomState:
-        """Actively permute ``qubits``: physically route atoms to ``locations``
-        and relabel so qubit ids pin back to their pre-permute slots.
+        """Permute ``qubits`` — a logical relabel where ``qubits[i]`` ends up
+        referring to what was ``qubits[permutation[i]]``.
 
-        A permutation cycles atoms among the same set of slots, so the emitted
-        move layers are *committed* (realized now, not palindrome-returned) while
-        the resulting ``layout`` is unchanged — each qid keeps its slot but now
-        holds the atom that was routed there, i.e. the quantum information is
-        permuted across qubit ids. Produces a committed ``Relabeled`` state, in
-        contrast to ``move_to_placements`` (``UserMoved``, palindrome-pending).
+        ``insert_moves=False`` (default) is a *lazy* relabel: no atoms move, the
+        ``layout`` is permuted so each qubit id points at the location of the
+        atom it now denotes, and the quantum information is permuted for free (a
+        later transversal move absorbs the physical permutation). Produces a
+        plain ``ConcreteState`` with the permuted layout.
+
+        ``insert_moves=True`` additionally *commits* the physical moves that
+        route the atoms so the permutation is realized now, pinning the layout
+        back to the pre-permute layout (each qid keeps its slot, now holding the
+        routed atom). Produces a ``Permuted`` state. This is only valid under a
+        non-palindrome strategy (``PalindromePlacementStrategy`` rejects it).
         """
         if state == AtomState.bottom():
             return AtomState.bottom()
         if not isinstance(state, ConcreteState):
             return AtomState.top()
+
+        locations = _resolve_permute_locations(state.layout, qubits, permutation)
 
         # Occupancy check: destinations must not be held by unmoved qubits. In a
         # permutation every destination is held by a moving qubit, so this passes.
@@ -237,24 +260,31 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
                 if current_loc == dest and idx not in moved_set:
                     return AtomState.bottom()
 
-        permuted_layout = list(state.layout)
+        relabeled_layout = list(state.layout)
         for qubit_idx, dest in zip(qubits, locations):
-            permuted_layout[qubit_idx] = dest
+            relabeled_layout[qubit_idx] = dest
+
+        if not insert_moves:
+            # Lazy relabel: permute the layout (references) only, emit no moves.
+            return ConcreteState(
+                occupied=state.occupied,
+                layout=tuple(relabeled_layout),
+                move_count=state.move_count,
+            )
+
+        # Active: commit the physical permutation. Route atoms to the relabeled
+        # positions, then pin the layout back to the pre-permute layout (the
+        # atoms are permuted among their slots; each qid keeps its slot).
         target_state = ConcreteState(
             occupied=state.occupied,
-            layout=tuple(permuted_layout),
+            layout=tuple(relabeled_layout),
             move_count=state.move_count,
         )
-
         try:
             move_layers = self.compute_moves(state, target_state)
         except RuntimeError:
             return AtomState.bottom()  # synthesizer failure
-
-        # Commit the moves, but pin the layout back to the pre-permute layout:
-        # the atoms are permuted among their slots and each qid is relabeled to
-        # the atom now at its own slot.
-        return Relabeled(
+        return Permuted(
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
@@ -434,22 +464,28 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
             return AtomState.bottom()
         return self.inner.move_to_placements(self._unwrap(state), qubits, locations)
 
-    def relabel_placements(
+    def permute_placements(
         self,
         state: AtomState,
         qubits: tuple[int, ...],
-        locations: tuple[LocationAddress, ...],
+        permutation: tuple[int, ...],
+        insert_moves: bool = False,
     ) -> AtomState:
-        # ``relabel=True`` is an active, *committed* permutation. It is
-        # fundamentally incompatible with the palindrome model, which returns
-        # every move to the pre-move home at the next CZ: a committed relabel
-        # would leave the atoms permuted away from that home, silently breaking
-        # the return invariant. Reject it loudly rather than emit output whose
-        # permutation is (partly) undone by the return moves — ``relabel=True``
-        # is meant for a non-palindrome (no-return) strategy, where moves commit.
-        raise NotImplementedError(
-            "permute(relabel=True) commits an active qubit permutation, which "
-            "PalindromePlacementStrategy cannot express (it returns every move to "
-            "the pre-move home at each CZ). Use a non-palindrome (no-return) "
-            "placement strategy for relabel=True permutes."
+        # The default relabel-only permute is fine under palindrome: it just
+        # permutes the layout (references) with no physical moves. But
+        # ``insert_moves=True`` commits a physical permutation, which is
+        # incompatible with the palindrome model — every move is returned to the
+        # pre-move home at the next CZ, so committed moves would be (partly)
+        # undone. Reject that combination loudly.
+        if insert_moves:
+            raise NotImplementedError(
+                "permute(insert_moves=True) commits a physical permutation, which "
+                "PalindromePlacementStrategy cannot express (it returns every move "
+                "to the pre-move home at each CZ). Use a non-palindrome (no-return) "
+                "placement strategy, or the default relabel-only permute."
+            )
+        if not isinstance(self.inner, MoveToPlacementStrategyABC):
+            return AtomState.bottom()
+        return self.inner.permute_placements(
+            self._unwrap(state), qubits, permutation, insert_moves=False
         )

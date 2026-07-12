@@ -21,20 +21,6 @@ from bloqade.lanes.types import StateType
 dialect = ir.Dialect(name="lanes.place")
 
 
-def _resolve_permute_locations(
-    layout: tuple[LocationAddress, ...],
-    qubits: tuple[int, ...],
-    perm: tuple[int, ...],
-) -> tuple[LocationAddress, ...]:
-    """Resolve a permutation to target locations against the current layout.
-
-    ``qubits`` are layout indices; ``perm`` permutes the *positions* of
-    ``qubits``. For each value ``j`` in ``perm`` (an index into ``qubits``),
-    the target is the current location of that qubit, ``layout[qubits[j]]``.
-    """
-    return tuple(layout[qubits[j]] for j in perm)
-
-
 @statement(dialect=dialect)
 class LogicalInitialize(ir.Statement):
     """Initialize logical qubits in the |0> state.
@@ -183,23 +169,23 @@ class Permute(QuantumStmt):
 
     Produced by RewritePlaceOperations.rewrite_Permute from movement.Permute.
     Consumed by placement analysis and deleted by RewriteGates after InsertMoves
-    emits the forward Move IR. ``perm`` is a permutation over the positions of
-    ``qubits``.
+    emits any forward Move IR. ``perm`` is a permutation over the positions of
+    ``qubits``: ``qubits[i]`` ends up referring to what was ``qubits[perm[i]]``.
 
-    ``relabel`` selects the semantics (see the placement interpreter):
+    ``insert_moves`` selects how the permutation is realized (see
+    ``MoveToPlacementStrategyABC.permute_placements``):
 
-    - ``False`` (default): reposition — atoms move to the permuted locations and
-      keep their labels (``move_to_placements`` -> ``UserMoved``, palindrome-
-      returned). The quantum state stays with each qubit id; only positions change.
-    - ``True``: active permutation — physically move *and* relabel
-      (``relabel_placements`` -> ``Relabeled``). Moves are committed and the
-      layout is pinned back to the pre-permute layout, so the quantum information
-      is permuted across qubit ids.
+    - ``False`` (default): relabel only — the qubit references are permuted with
+      no physical moves (the layout is permuted; the quantum information is
+      permuted for free). Valid under any strategy, including palindrome.
+    - ``True``: also commit the physical moves that route the atoms so the
+      permutation is realized in place (``Permuted``; layout pinned to the
+      pre-permute layout). Rejected by ``PalindromePlacementStrategy``.
     """
 
     qubits: tuple[int, ...] = info.attribute()
     perm: tuple[int, ...] = info.attribute()
-    relabel: bool = info.attribute(default=False)
+    insert_moves: bool = info.attribute(default=False)
 
 
 @statement(dialect=dialect)
@@ -350,14 +336,12 @@ class PlacementMethods(interp.MethodTable):
         state = frame.get(stmt.state_before)
         if not isinstance(state, ConcreteState):
             return (state,)
-        locations = _resolve_permute_locations(state.layout, stmt.qubits, stmt.perm)
-        if stmt.relabel:
-            # Active permutation: commit the physical moves and relabel qubit
-            # ids (permutes the quantum information; layout stays pinned).
-            new_state = strategy.relabel_placements(state, stmt.qubits, locations)
-        else:
-            # Reposition: move atoms to the permuted locations, keep labels.
-            new_state = strategy.move_to_placements(state, stmt.qubits, locations)
+        # relabel by default (no moves); commit the physical permutation when
+        # ``insert_moves`` is set. The strategy resolves the permutation to
+        # target locations and picks the right lattice state.
+        new_state = strategy.permute_placements(
+            state, stmt.qubits, stmt.perm, stmt.insert_moves
+        )
         return (new_state,)
 
     @interp.impl(Initialize)

@@ -416,7 +416,7 @@ class RewritePlaceOperations(abc.RewriteRule):
             entry_state,
             qubits=tuple(range(len(inputs))),
             perm=perm_attr,
-            relabel=node.relabel,
+            insert_moves=node.insert_moves,
         )
         node.replace_by(
             self.construct_execute(permute_stmt, qubits=inputs, body=body, block=block)

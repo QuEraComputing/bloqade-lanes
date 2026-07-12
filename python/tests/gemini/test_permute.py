@@ -11,10 +11,10 @@ from bloqade.gemini.common.dialects import movement
 from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
 from bloqade.gemini.common.dialects.movement.stmts import Permute
 from bloqade.gemini.common.validation.move_to import MoveToValidation
+from bloqade.lanes.analysis.placement.strategy import _resolve_permute_locations
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move as move_dialect, place
-from bloqade.lanes.dialects.place import _resolve_permute_locations
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
@@ -48,21 +48,25 @@ def test_place_permute_statement_shape():
 
 def test_resolve_permute_locations_cycle():
     layout = (_loc(0, 0), _loc(1, 0), _loc(2, 0))
-    locations = _resolve_permute_locations(layout, qubits=(0, 1, 2), perm=(1, 2, 0))
+    locations = _resolve_permute_locations(
+        layout, qubits=(0, 1, 2), permutation=(1, 2, 0)
+    )
     assert locations == (_loc(1, 0), _loc(2, 0), _loc(0, 0))
 
 
 def test_resolve_permute_locations_identity():
     layout = (_loc(0, 0), _loc(1, 0))
-    locations = _resolve_permute_locations(layout, qubits=(0, 1), perm=(0, 1))
+    locations = _resolve_permute_locations(layout, qubits=(0, 1), permutation=(0, 1))
     assert locations == (_loc(0, 0), _loc(1, 0))
 
 
 def test_resolve_permute_locations_remapped_indices():
     # qubits are global layout indices (StaticPlacement merging remaps them);
-    # perm indexes positions within the qubits tuple.
+    # permutation indexes positions within the qubits tuple.
     layout = (_loc(9, 0), _loc(0, 0), _loc(1, 0), _loc(2, 0))
-    locations = _resolve_permute_locations(layout, qubits=(1, 2, 3), perm=(2, 0, 1))
+    locations = _resolve_permute_locations(
+        layout, qubits=(1, 2, 3), permutation=(2, 0, 1)
+    )
     assert locations == (_loc(2, 0), _loc(0, 0), _loc(1, 0))
 
 
@@ -171,39 +175,19 @@ def test_permute_identity_compiles():
 
 
 def test_permute_then_cz_compiles():
-    """permute followed by a CZ lowers without error (routing handled by the
-    placement strategy).
+    """permute (relabel-only, the default) followed by a CZ lowers without error.
 
-    NOTE: A pure cycle/swap permutation may be infeasible to route if the move
-    solver cannot find an intermediate staging location for the atoms. This is
-    a documented limitation of the feature (see spec "Out of scope / limitations"
-    section on cycle/swap routing). If infeasible, the kernel construction will
-    raise a placement/routing error — that is acceptable. What must NOT happen
-    is an unexpected AttributeError, ImportError, or TypeError in our new code.
+    The default permute is a pure relabel — no atoms move and no routing is
+    involved — so it always builds regardless of the permutation (a cycle here).
     """
-    import pytest
 
-    # Unexpected exception types that indicate a wiring bug, not a routing limit.
-    _UNEXPECTED_TYPES = (AttributeError, ImportError, TypeError, NotImplementedError)
+    @physical.kernel(aggressive_unroll=True, verify=False)
+    def k():
+        q = squin.qalloc(3)
+        movement.permute([q[0], q[1], q[2]], [1, 2, 0])
+        squin.cz(q[0], q[1])
 
-    try:
-
-        @physical.kernel(aggressive_unroll=True, verify=False)
-        def k():
-            q = squin.qalloc(3)
-            movement.permute([q[0], q[1], q[2]], [1, 2, 0])
-            squin.cz(q[0], q[1])
-
-        assert k is not None
-    except _UNEXPECTED_TYPES as exc:
-        pytest.fail(
-            f"Unexpected error type {type(exc).__name__!r} (not a routing/placement "
-            f"infeasibility): {exc}"
-        )
-    except (RuntimeError, ValueError):
-        # RuntimeError / ValueError are the expected routing/placement-infeasibility
-        # exception types (documented limitation for cycle permutations).
-        pass
+    assert k is not None
 
 
 def test_permute_rejected_on_plain_logical_kernel():
@@ -222,93 +206,95 @@ def test_permute_rejected_on_plain_logical_kernel():
             squin.cz(q[0], q[1])
 
 
-def test_permute_full_pipeline_emits_moves_and_deletes_place_permute():
-    """A permute compiled through the full PhysicalPipeline must lower to
-    move-dialect IR with no residual place.Permute / movement.Permute nodes
-    (RewriteGates must delete the place.Permute after InsertMoves)."""
+def test_permute_default_relabel_full_pipeline_emits_no_moves():
+    """The default permute (relabel-only) compiled through the full pipeline
+    lowers to *no* move IR — it is a free relabel — and leaves no residual
+    place/movement Permute. Runs under the palindrome strategy, where
+    relabel-only is allowed."""
 
     @physical.kernel(aggressive_unroll=True, verify=False)
     def k():
-        q = squin.qalloc(2)
-        movement.permute([q[0], q[1]], [1, 0])
-        squin.cz(q[0], q[1])
+        q = squin.qalloc(3)
+        movement.permute([q[0], q[1], q[2]], [1, 2, 0])
 
-    strat = make_physical_placement_strategy(return_moves=False)
-    pipeline = PhysicalPipeline(placement_strategy=strat)
-    out = pipeline.emit(k)
+    strat = make_physical_placement_strategy(return_moves=True)  # palindrome
+    out = PhysicalPipeline(placement_strategy=strat).emit(k)
 
     stmts = list(out.callable_region.walk())
-    # No residual place-layer permute / movement-layer permute survives.
     assert not any(isinstance(s, place.Permute) for s in stmts)
     assert not any(isinstance(s, movement.stmts.Permute) for s in stmts)
-    # The permute lowered to actual move-dialect Move layers.
-    assert any(isinstance(s, move_dialect.Move) for s in stmts)
+    # relabel-only is free — the permute emits no move-dialect Move.
+    assert not any(isinstance(s, move_dialect.Move) for s in stmts)
 
 
 # ---------------------------------------------------------------------------
-# relabel=True (active permutation) — physically move AND relabel qubit ids
+# insert_moves=True — commit the physical permutation (active)
 # ---------------------------------------------------------------------------
 
 
-def test_place_permute_relabel_attribute_defaults_false():
-    assert place.Permute(ir.TestValue(), qubits=(0, 1), perm=(1, 0)).relabel is False
-    stmt = place.Permute(ir.TestValue(), qubits=(0, 1), perm=(1, 0), relabel=True)
-    assert stmt.relabel is True
+def test_place_permute_insert_moves_attribute_defaults_false():
+    assert (
+        place.Permute(ir.TestValue(), qubits=(0, 1), perm=(1, 0)).insert_moves is False
+    )
+    stmt = place.Permute(ir.TestValue(), qubits=(0, 1), perm=(1, 0), insert_moves=True)
+    assert stmt.insert_moves is True
 
 
-def test_rewrite_permute_propagates_relabel():
+def test_rewrite_permute_propagates_insert_moves():
     q0, q1 = ir.TestValue(), ir.TestValue()
     qubits_new = ilist.New(values=(q0, q1))
     p0, p1 = py.Constant(1), py.Constant(0)
     perm_new = ilist.New(values=(p0.result, p1.result))
     perm_new.result.hints["const"] = const.Value((1, 0))
 
-    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result, relabel=True)
+    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result, insert_moves=True)
     block = ir.Block([qubits_new, p0, p1, perm_new, stmt])
     region = ir.Region([block])
     rewrite.Walk(RewritePlaceOperations()).rewrite(region)
 
     permutes = [s for s in region.walk() if isinstance(s, place.Permute)]
     assert len(permutes) == 1
-    assert permutes[0].relabel is True
+    assert permutes[0].insert_moves is True
 
 
-def test_relabel_placements_pins_layout_and_commits_moves():
-    """relabel=True: the physical permutation moves are committed and the layout
-    is pinned back to the pre-permute layout (a relabel of the qubit ids), so the
-    quantum information is permuted across ids. Contrast with move_to_placements,
-    which permutes the layout and stages a palindrome return."""
-    from bloqade.lanes.analysis.placement import ConcreteState, Relabeled, UserMoved
+def test_permute_placements_relabel_only_vs_insert_moves():
+    """Default (relabel-only): permuted layout, no moves, plain ConcreteState.
+    insert_moves=True: committed physical moves with the layout pinned to the
+    pre-permute layout (a Permuted state). Both leave qubit ``i`` referring to
+    what was qubit ``perm[i]``."""
+    from bloqade.lanes.analysis.placement import ConcreteState, Permuted
     from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
 
     strat = LogicalPlacementStrategy(arch_spec=get_arch_spec())
     layout = (_loc(0, 0), _loc(2, 0), _loc(4, 0))
     state = ConcreteState(occupied=frozenset(), layout=layout, move_count=(0, 0, 0))
-    locs = _resolve_permute_locations(layout, (0, 1, 2), (2, 1, 0))
+    perm = (2, 1, 0)
 
-    relabeled = strat.relabel_placements(state, (0, 1, 2), locs)
-    assert isinstance(relabeled, Relabeled)
-    assert relabeled.layout == layout  # layout pinned (relabel)
-    assert relabeled.get_move_layers()  # committed physical moves
-    assert relabeled.get_reverse_moves() == ()  # not palindrome-returned
+    # Default: relabel only — no atoms move, layout is permuted, no move layers.
+    relabel = strat.permute_placements(state, (0, 1, 2), perm, insert_moves=False)
+    assert type(relabel) is ConcreteState  # neither Permuted nor UserMoved
+    assert relabel.layout == (_loc(4, 0), _loc(2, 0), _loc(0, 0))  # permuted refs
+    assert relabel.get_move_layers() == ()  # free
 
-    repositioned = strat.move_to_placements(state, (0, 1, 2), locs)
-    assert isinstance(repositioned, UserMoved)
-    assert repositioned.layout == locs  # positions follow the atoms
-    assert repositioned.pre_user_layout == layout  # palindrome home
+    # insert_moves=True: commit the physical permutation, pin the layout.
+    active = strat.permute_placements(state, (0, 1, 2), perm, insert_moves=True)
+    assert isinstance(active, Permuted)
+    assert active.layout == layout  # pinned to the pre-permute layout
+    assert active.get_move_layers()  # committed physical moves
+    assert active.get_reverse_moves() == ()  # not palindrome-returned
 
 
-def test_permute_relabel_full_pipeline_emits_moves_and_deletes_place_permute():
-    """A relabel=True permute compiled through the full PhysicalPipeline commits
-    its moves and lowers to move IR with no residual place/movement Permute."""
+def test_permute_insert_moves_full_pipeline_emits_moves():
+    """insert_moves=True under a non-palindrome (no-return) strategy commits the
+    permutation to move IR, with no residual place/movement Permute."""
 
     @physical.kernel(aggressive_unroll=True, verify=False)
     def k():
         q = squin.qalloc(2)
-        movement.permute([q[0], q[1]], [1, 0], relabel=True)
+        movement.permute([q[0], q[1]], [1, 0], insert_moves=True)
         squin.cz(q[0], q[1])
 
-    strat = make_physical_placement_strategy(return_moves=False)
+    strat = make_physical_placement_strategy(return_moves=False)  # no-return
     out = PhysicalPipeline(placement_strategy=strat).emit(k)
 
     stmts = list(out.callable_region.walk())
@@ -317,16 +303,15 @@ def test_permute_relabel_full_pipeline_emits_moves_and_deletes_place_permute():
     assert any(isinstance(s, move_dialect.Move) for s in stmts)
 
 
-def test_relabel_state_is_measurable_but_user_move_is_not():
-    """The committed Relabeled state is measurable under palindrome, whereas a
-    palindrome-pending UserMoved is rejected at a terminal measure — the reason a
-    relabel=True permute may be followed directly by a measurement while a plain
-    (reposition) permute/move_to may not."""
+def test_permuted_state_is_measurable_but_user_move_is_not():
+    """The committed Permuted state is measurable, whereas a palindrome-pending
+    UserMoved is rejected at a terminal measure — Permuted is deliberately not a
+    UserMoved, so palindrome never picks it up."""
     from bloqade.lanes.analysis.placement import (
         AtomState,
         ExecuteMeasure,
         PalindromePlacementStrategy,
-        Relabeled,
+        Permuted,
         UserMoved,
     )
     from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
@@ -336,10 +321,10 @@ def test_relabel_state_is_measurable_but_user_move_is_not():
     )
     layout = (_loc(0, 0), _loc(2, 0))
 
-    relabeled = Relabeled(
+    permuted = Permuted(
         occupied=frozenset(), layout=layout, move_count=(0, 0), move_layers=()
     )
-    assert isinstance(strat.measure_placements(relabeled, (0, 1)), ExecuteMeasure)
+    assert isinstance(strat.measure_placements(permuted, (0, 1)), ExecuteMeasure)
 
     user_moved = UserMoved(
         occupied=frozenset(),
@@ -352,9 +337,10 @@ def test_relabel_state_is_measurable_but_user_move_is_not():
     assert strat.measure_placements(user_moved, (0, 1)) == AtomState.bottom()
 
 
-def test_relabel_placements_rejected_under_palindrome():
-    """PalindromePlacementStrategy rejects relabel=True: a committed permutation
-    is incompatible with returning every move to the pre-move home."""
+def test_permute_insert_moves_rejected_under_palindrome():
+    """PalindromePlacementStrategy rejects insert_moves=True (a committed
+    permutation is incompatible with returning every move to the pre-move home),
+    while the default relabel-only permute is still allowed."""
     import pytest
 
     from bloqade.lanes.analysis.placement import (
@@ -368,5 +354,11 @@ def test_relabel_placements_rejected_under_palindrome():
     )
     layout = (_loc(0, 0), _loc(2, 0))
     state = ConcreteState(occupied=frozenset(), layout=layout, move_count=(0, 0))
-    with pytest.raises(NotImplementedError, match="relabel=True"):
-        strat.relabel_placements(state, (0, 1), (layout[1], layout[0]))
+
+    with pytest.raises(NotImplementedError, match="insert_moves=True"):
+        strat.permute_placements(state, (0, 1), (1, 0), insert_moves=True)
+
+    # relabel-only is fine under palindrome: permuted references, no moves.
+    relabel = strat.permute_placements(state, (0, 1), (1, 0), insert_moves=False)
+    assert isinstance(relabel, ConcreteState)
+    assert relabel.layout == (_loc(2, 0), _loc(0, 0))
