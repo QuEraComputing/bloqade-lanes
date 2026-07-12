@@ -1,17 +1,11 @@
 from kirin import interp
 from kirin.interp import Frame
 
-from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
-from bloqade.gemini.common.dialects.movement.stmts import (
-    CzPartner,
-    Loc,
-    SiteId,
-    WordId,
-    ZoneId,
-)
+from ._dialect import dialect
+from .stmts import CzPartner, Loc, SiteId, WordId, ZoneId
 
 
-@movement_dialect.register
+@dialect.register
 class _LocInterpreter(interp.MethodTable):
     @interp.impl(Loc)
     def loc(self, interp_: interp.Interpreter, frame: Frame, stmt: Loc):

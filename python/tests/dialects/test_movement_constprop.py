@@ -1,15 +1,15 @@
-"""Const-prop registration for the movement dialect."""
+"""Const-prop registration for the arch dialect (cz_partner)."""
 
 from kirin import interp
 
-from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
-from bloqade.gemini.common.dialects.movement.constprop import CzPartnerConstProp
+from bloqade.lanes.dialects.arch import dialect as arch_dialect
+from bloqade.lanes.dialects.arch.constprop import CzPartnerConstProp
 
 
-def test_movement_dialect_registers_constprop_method_table():
+def test_arch_dialect_registers_constprop_method_table():
     # ``Dialect.interps`` is the dict of registered method tables keyed by
     # interpreter key. The const-prop analysis looks under "constprop".
-    table = movement_dialect.interps.get("constprop")
-    assert table is not None, "movement dialect has no 'constprop' registration"
+    table = arch_dialect.interps.get("constprop")
+    assert table is not None, "arch dialect has no 'constprop' registration"
     assert isinstance(table, interp.MethodTable)
     assert isinstance(table, CzPartnerConstProp)

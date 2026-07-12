@@ -3,16 +3,16 @@
 from kirin import ir, lowering, types
 from kirin.dialects import func, py
 
-from bloqade.gemini.common.dialects.movement.rewrite import RewriteLocationAttr
-from bloqade.gemini.common.dialects.movement.stmts import (
+from bloqade.gemini.logical import loc
+from bloqade.gemini.physical import kernel as movement_kernel
+from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.dialects.arch import (
     LocationAddressType,
+    RewriteLocationAttr,
     SiteId,
     WordId,
     ZoneId,
 )
-from bloqade.gemini.logical import loc
-from bloqade.gemini.physical import kernel as movement_kernel
-from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
 def test_statements_are_pure_and_named():

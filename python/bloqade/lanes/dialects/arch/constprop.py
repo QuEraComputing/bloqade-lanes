@@ -10,7 +10,7 @@ from .stmts import CzPartner
 
 @dialect.register(key="constprop")
 class CzPartnerConstProp(interp.MethodTable):
-    """Resolve ``movement.cz_partner(loc)`` during const propagation.
+    """Resolve ``arch.cz_partner(loc)`` during const propagation.
 
     Returns the partner location as ``const.Value`` once ``arch_spec`` is
     bound (by ``BindCzPartnerArchSpec`` in the pipeline) and the ``address``

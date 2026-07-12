@@ -15,13 +15,13 @@ from kirin.rewrite.abc import RewriteRule
 from kirin.validation import ValidationSuite
 
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
-from bloqade.gemini.common.dialects.movement.rewrite import BindCzPartnerArchSpec
 from bloqade.gemini.common.validation.duplicate_address import (
     DuplicateAddressValidation,
 )
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 from bloqade.lanes.validation.address import get_validation
 

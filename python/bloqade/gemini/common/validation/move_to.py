@@ -22,8 +22,9 @@ from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
 from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
-from bloqade.gemini.common.dialects.movement.stmts import Loc, MoveTo, Permute
+from bloqade.gemini.common.dialects.movement.stmts import MoveTo, Permute
 from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.dialects.arch import Loc
 
 if TYPE_CHECKING:
     from bloqade.lanes.validation.address import _ValidationAnalysis

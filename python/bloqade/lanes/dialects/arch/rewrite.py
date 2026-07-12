@@ -16,7 +16,7 @@ _ATTR_TO_STMT = {"word_id": WordId, "site_id": SiteId, "zone_id": ZoneId}
 @dataclass
 class RewriteLocationAttr(RewriteRule):
     """Lower ``py.GetAttr`` on a ``LocationAddress`` (``word_id`` / ``site_id`` /
-    ``zone_id``) into the corresponding movement-dialect statement."""
+    ``zone_id``) into the corresponding arch-dialect statement."""
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, py.GetAttr):

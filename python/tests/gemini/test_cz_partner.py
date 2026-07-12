@@ -8,10 +8,10 @@ from kirin.dialects import ilist
 from bloqade import squin
 from bloqade.gemini import physical
 from bloqade.gemini.common.dialects import movement, qubit
-from bloqade.gemini.common.dialects.movement.stmts import CzPartner
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import move as move_dialect
+from bloqade.lanes.dialects import arch, move as move_dialect
+from bloqade.lanes.dialects.arch import CzPartner
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.pipeline import PhysicalPipeline
 
@@ -30,7 +30,7 @@ def test_cz_partner_statement_shape():
     # CzPartner is now Pure: materialization rides on the standard
     # const-prop / fold machinery once arch_spec is bound by the pipeline.
     assert any(isinstance(t, ir.Pure) for t in CzPartner.traits)
-    assert CzPartner in movement.dialect.stmts
+    assert CzPartner in arch.dialect.stmts
 
     # arch_spec is an attribute (default None) — populated by the pipeline's
     # BindCzPartnerArchSpec pass before unrolling.
@@ -40,7 +40,7 @@ def test_cz_partner_statement_shape():
 
 
 def test_cz_partner_wrapper_callable():
-    assert callable(movement.cz_partner)
+    assert callable(arch.cz_partner)
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +49,7 @@ def test_cz_partner_wrapper_callable():
 
 
 def test_bind_arch_spec_sets_attribute_on_unbound_statement():
-    from bloqade.gemini.common.dialects.movement.rewrite import (
-        BindCzPartnerArchSpec,
-    )
+    from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
 
     arch = get_physical_layout_arch_spec()
     addr = ir.TestValue()
@@ -65,9 +63,7 @@ def test_bind_arch_spec_sets_attribute_on_unbound_statement():
 
 
 def test_bind_arch_spec_leaves_already_bound_statement_alone():
-    from bloqade.gemini.common.dialects.movement.rewrite import (
-        BindCzPartnerArchSpec,
-    )
+    from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
 
     arch_a = get_physical_layout_arch_spec()
     arch_b = get_physical_layout_arch_spec()
@@ -98,7 +94,7 @@ def _build_kernel():
     @krn(verify=False)
     def locs(words: ilist.IList[int, N], sites: ilist.IList[int, N]):
         def _inner(i: int):
-            return movement.loc(0, words[i], sites[i])
+            return arch.loc(0, words[i], sites[i])
 
         return ilist.map(_inner, ilist.range(len(words)))
 
@@ -120,7 +116,7 @@ def _build_kernel():
         # hardcoded partner words. Already-paired short-circuit then makes the
         # CZ itself a no-op, so all moves are user-directed and predictable.
         def _partner(i: int):
-            return movement.cz_partner(static_addrs[i])
+            return arch.cz_partner(static_addrs[i])
 
         partners = ilist.map(_partner, ilist.range(2))
         movement.move_to(mobile, partners)
@@ -151,7 +147,7 @@ def test_cz_partner_matches_hardcoded_partner_words():
     @krn(verify=False)
     def locs(words: ilist.IList[int, N], sites: ilist.IList[int, N]):
         def _inner(i: int):
-            return movement.loc(0, words[i], sites[i])
+            return arch.loc(0, words[i], sites[i])
 
         return ilist.map(_inner, ilist.range(len(words)))
 
@@ -170,7 +166,7 @@ def test_cz_partner_matches_hardcoded_partner_words():
         mobile = alloc(mobile_addrs)
 
         def _partner(i: int):
-            return movement.cz_partner(static_addrs[i])
+            return arch.cz_partner(static_addrs[i])
 
         movement.move_to(mobile, ilist.map(_partner, ilist.range(2)))
         squin.broadcast.cx(mobile, static)
@@ -214,30 +210,26 @@ def test_cz_partner_partnerless_location_does_not_const_resolve():
     """
     from kirin.analysis import const
 
-    from bloqade.gemini.common.dialects.movement.rewrite import (
-        BindCzPartnerArchSpec,
-    )
+    from bloqade.lanes.dialects.arch import BindCzPartnerArchSpec
 
-    arch = get_physical_layout_arch_spec()
+    arch_spec = get_physical_layout_arch_spec()
 
     def cz_partner_lattice(loc: LocationAddress):
         krn = physical.kernel
 
         @krn(verify=False)
         def k():
-            return movement.cz_partner(
-                movement.loc(loc.zone_id, loc.word_id, loc.site_id)
-            )
+            return arch.cz_partner(arch.loc(loc.zone_id, loc.word_id, loc.site_id))
 
         # Bind the arch spec exactly as the pipeline does, then run const-prop.
-        rewrite.Walk(BindCzPartnerArchSpec(arch)).rewrite(k.code)
+        rewrite.Walk(BindCzPartnerArchSpec(arch_spec)).rewrite(k.code)
         frame, _ = const.Propagate(k.dialects).run(k)
         cz = next(s for s in k.callable_region.walk() if isinstance(s, CzPartner))
         return frame.entries.get(cz.result)
 
     # A partnered location (zone 0 is fully partnered in the physical arch).
     partnered = LocationAddress(zone_id=0, word_id=0, site_id=0)
-    assert arch.get_cz_partner(partnered) is not None
+    assert arch_spec.get_cz_partner(partnered) is not None
 
     # Find a partnerless location to drive the regression.
     partnerless = next(
@@ -245,7 +237,7 @@ def test_cz_partner_partnerless_location_does_not_const_resolve():
             candidate
             for zone_id in range(1, 3)
             for candidate in [LocationAddress(zone_id=zone_id, word_id=0, site_id=0)]
-            if arch.get_cz_partner(candidate) is None
+            if arch_spec.get_cz_partner(candidate) is None
         ),
         None,
     )
