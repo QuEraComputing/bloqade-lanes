@@ -182,14 +182,24 @@ class Permute(QuantumStmt):
     """Place-layer permute directive.
 
     Produced by RewritePlaceOperations.rewrite_Permute from movement.Permute.
-    Consumed by placement analysis (the interpreter resolves the permutation
-    against the current layout and delegates to move_to_placements, producing
-    UserMoved) and deleted by RewriteGates after InsertMoves emits the forward
-    Move IR. ``perm`` is a permutation over the positions of ``qubits``.
+    Consumed by placement analysis and deleted by RewriteGates after InsertMoves
+    emits the forward Move IR. ``perm`` is a permutation over the positions of
+    ``qubits``.
+
+    ``relabel`` selects the semantics (see the placement interpreter):
+
+    - ``False`` (default): reposition — atoms move to the permuted locations and
+      keep their labels (``move_to_placements`` -> ``UserMoved``, palindrome-
+      returned). The quantum state stays with each qubit id; only positions change.
+    - ``True``: active permutation — physically move *and* relabel
+      (``relabel_placements`` -> ``Relabeled``). Moves are committed and the
+      layout is pinned back to the pre-permute layout, so the quantum information
+      is permuted across qubit ids.
     """
 
     qubits: tuple[int, ...] = info.attribute()
     perm: tuple[int, ...] = info.attribute()
+    relabel: bool = info.attribute(default=False)
 
 
 @statement(dialect=dialect)
@@ -341,7 +351,13 @@ class PlacementMethods(interp.MethodTable):
         if not isinstance(state, ConcreteState):
             return (state,)
         locations = _resolve_permute_locations(state.layout, stmt.qubits, stmt.perm)
-        new_state = strategy.move_to_placements(state, stmt.qubits, locations)
+        if stmt.relabel:
+            # Active permutation: commit the physical moves and relabel qubit
+            # ids (permutes the quantum information; layout stays pinned).
+            new_state = strategy.relabel_placements(state, stmt.qubits, locations)
+        else:
+            # Reposition: move atoms to the permuted locations, keep labels.
+            new_state = strategy.move_to_placements(state, stmt.qubits, locations)
         return (new_state,)
 
     @interp.impl(Initialize)

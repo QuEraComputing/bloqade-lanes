@@ -291,3 +291,39 @@ class UserMoved(ConcreteState):
             accumulated_move_layers=accumulated_move_layers,
             pre_user_layout=pre_user_layout,
         )
+
+
+@final
+@dataclass
+class Relabeled(ConcreteState):
+    """State produced by a ``place.Permute`` with ``relabel=True`` (an active
+    qubit permutation).
+
+    The physical permutation is *committed*: ``move_layers`` are emitted at the
+    permute site (``get_move_layers``) but are **not** palindrome-returned. The
+    permutation cycles atoms among the same set of slots, so each qubit id is
+    pinned back to its pre-permute slot — ``layout`` is therefore unchanged, and
+    the permutation surfaces as a relabel: the atom now sitting at qid ``i``'s
+    slot is a different one, so downstream ops on qid ``i`` act on the permuted
+    quantum information.
+
+    Unlike ``UserMoved`` (palindrome-pending, rejected at a terminal measure),
+    ``Relabeled`` is a committed ``ConcreteState``: it flows through subsequent
+    SQ / CZ / measure normally, and ``_strip_user_moved`` collapses it to a plain
+    ``ConcreteState`` once its forward moves have been emitted at the permute
+    site.
+    """
+
+    move_layers: tuple[tuple[LaneAddress, ...], ...] = field(kw_only=True, default=())
+    """Forward AOD layers realizing the physical permutation; emitted once at
+    the permute site and not returned."""
+
+    def get_move_layers(self) -> tuple[tuple[LaneAddress, ...], ...]:
+        return self.move_layers
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return (
+            super().is_subseteq(other)
+            and isinstance(other, Relabeled)
+            and self.move_layers == other.move_layers
+        )

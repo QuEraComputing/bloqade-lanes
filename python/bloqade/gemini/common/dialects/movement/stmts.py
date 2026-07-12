@@ -49,12 +49,18 @@ class Permute(ir.Statement):
 
     Lowered from a Python call by FromPythonCall. RewritePlaceOperations rewrites
     this to a StaticPlacement(place.Permute) after const-folding the perm ilist.
+
+    ``relabel`` (compile-time constant) selects the semantics: ``False`` (default)
+    repositions the atoms and keeps labels; ``True`` physically moves *and*
+    relabels, permuting the quantum information across the qubit ids. See
+    ``place.Permute`` / the placement interpreter for details.
     """
 
     name = "permute"
     traits = frozenset({lowering.FromPythonCall()})
     qubits: ir.SSAValue = info.argument(type=ilist.IListType[QubitType, Len])
     perm: ir.SSAValue = info.argument(type=ilist.IListType[types.Int, Len])
+    relabel: bool = info.attribute(default=False)
 
 
 @statement(dialect=dialect)

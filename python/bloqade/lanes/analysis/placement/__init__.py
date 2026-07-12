@@ -7,6 +7,7 @@ from .lattice import (
     ExecuteCZ as ExecuteCZ,
     ExecuteCZReturn as ExecuteCZReturn,
     ExecuteMeasure as ExecuteMeasure,
+    Relabeled as Relabeled,
     UserMoved as UserMoved,
 )
 from .strategy import (

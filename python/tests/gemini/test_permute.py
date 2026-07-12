@@ -243,3 +243,110 @@ def test_permute_full_pipeline_emits_moves_and_deletes_place_permute():
     assert not any(isinstance(s, movement.stmts.Permute) for s in stmts)
     # The permute lowered to actual move-dialect Move layers.
     assert any(isinstance(s, move_dialect.Move) for s in stmts)
+
+
+# ---------------------------------------------------------------------------
+# relabel=True (active permutation) — physically move AND relabel qubit ids
+# ---------------------------------------------------------------------------
+
+
+def test_place_permute_relabel_attribute_defaults_false():
+    assert place.Permute(ir.TestValue(), qubits=(0, 1), perm=(1, 0)).relabel is False
+    stmt = place.Permute(ir.TestValue(), qubits=(0, 1), perm=(1, 0), relabel=True)
+    assert stmt.relabel is True
+
+
+def test_rewrite_permute_propagates_relabel():
+    q0, q1 = ir.TestValue(), ir.TestValue()
+    qubits_new = ilist.New(values=(q0, q1))
+    p0, p1 = py.Constant(1), py.Constant(0)
+    perm_new = ilist.New(values=(p0.result, p1.result))
+    perm_new.result.hints["const"] = const.Value((1, 0))
+
+    stmt = movement.stmts.Permute(qubits_new.result, perm_new.result, relabel=True)
+    block = ir.Block([qubits_new, p0, p1, perm_new, stmt])
+    region = ir.Region([block])
+    rewrite.Walk(RewritePlaceOperations()).rewrite(region)
+
+    permutes = [s for s in region.walk() if isinstance(s, place.Permute)]
+    assert len(permutes) == 1
+    assert permutes[0].relabel is True
+
+
+def test_relabel_placements_pins_layout_and_commits_moves():
+    """relabel=True: the physical permutation moves are committed and the layout
+    is pinned back to the pre-permute layout (a relabel of the qubit ids), so the
+    quantum information is permuted across ids. Contrast with move_to_placements,
+    which permutes the layout and stages a palindrome return."""
+    from bloqade.lanes.analysis.placement import ConcreteState, Relabeled, UserMoved
+    from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
+
+    strat = LogicalPlacementStrategy(arch_spec=get_arch_spec())
+    layout = (_loc(0, 0), _loc(2, 0), _loc(4, 0))
+    state = ConcreteState(occupied=frozenset(), layout=layout, move_count=(0, 0, 0))
+    locs = _resolve_permute_locations(layout, (0, 1, 2), (2, 1, 0))
+
+    relabeled = strat.relabel_placements(state, (0, 1, 2), locs)
+    assert isinstance(relabeled, Relabeled)
+    assert relabeled.layout == layout  # layout pinned (relabel)
+    assert relabeled.get_move_layers()  # committed physical moves
+    assert relabeled.get_reverse_moves() == ()  # not palindrome-returned
+
+    repositioned = strat.move_to_placements(state, (0, 1, 2), locs)
+    assert isinstance(repositioned, UserMoved)
+    assert repositioned.layout == locs  # positions follow the atoms
+    assert repositioned.pre_user_layout == layout  # palindrome home
+
+
+def test_permute_relabel_full_pipeline_emits_moves_and_deletes_place_permute():
+    """A relabel=True permute compiled through the full PhysicalPipeline commits
+    its moves and lowers to move IR with no residual place/movement Permute."""
+
+    @physical.kernel(aggressive_unroll=True, verify=False)
+    def k():
+        q = squin.qalloc(2)
+        movement.permute([q[0], q[1]], [1, 0], relabel=True)
+        squin.cz(q[0], q[1])
+
+    strat = make_physical_placement_strategy(return_moves=False)
+    out = PhysicalPipeline(placement_strategy=strat).emit(k)
+
+    stmts = list(out.callable_region.walk())
+    assert not any(isinstance(s, place.Permute) for s in stmts)
+    assert not any(isinstance(s, movement.stmts.Permute) for s in stmts)
+    assert any(isinstance(s, move_dialect.Move) for s in stmts)
+
+
+def test_relabel_state_is_measurable_but_user_move_is_not():
+    """The committed Relabeled state is measurable under palindrome, whereas a
+    palindrome-pending UserMoved is rejected at a terminal measure — the reason a
+    relabel=True permute may be followed directly by a measurement while a plain
+    (reposition) permute/move_to may not."""
+    from bloqade.lanes.analysis.placement import (
+        AtomState,
+        ExecuteMeasure,
+        PalindromePlacementStrategy,
+        Relabeled,
+        UserMoved,
+    )
+    from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
+
+    strat = PalindromePlacementStrategy(
+        inner=LogicalPlacementStrategy(arch_spec=get_arch_spec())
+    )
+    layout = (_loc(0, 0), _loc(2, 0))
+
+    relabeled = Relabeled(
+        occupied=frozenset(), layout=layout, move_count=(0, 0), move_layers=()
+    )
+    assert isinstance(strat.measure_placements(relabeled, (0, 1)), ExecuteMeasure)
+
+    user_moved = UserMoved(
+        occupied=frozenset(),
+        layout=layout,
+        move_count=(0, 0),
+        move_layers=(),
+        accumulated_move_layers=(),
+        pre_user_layout=layout,
+    )
+    assert strat.measure_placements(user_moved, (0, 1)) == AtomState.bottom()

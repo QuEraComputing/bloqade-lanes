@@ -10,6 +10,7 @@ from .lattice import (
     ExecuteCZ,
     ExecuteCZReturn,
     ExecuteMeasure,
+    Relabeled,
     UserMoved,
 )
 
@@ -207,6 +208,59 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
             pre_user_layout=pre_user,
         )
 
+    def relabel_placements(
+        self,
+        state: AtomState,
+        qubits: tuple[int, ...],
+        locations: tuple[LocationAddress, ...],
+    ) -> AtomState:
+        """Actively permute ``qubits``: physically route atoms to ``locations``
+        and relabel so qubit ids pin back to their pre-permute slots.
+
+        A permutation cycles atoms among the same set of slots, so the emitted
+        move layers are *committed* (realized now, not palindrome-returned) while
+        the resulting ``layout`` is unchanged — each qid keeps its slot but now
+        holds the atom that was routed there, i.e. the quantum information is
+        permuted across qubit ids. Produces a committed ``Relabeled`` state, in
+        contrast to ``move_to_placements`` (``UserMoved``, palindrome-pending).
+        """
+        if state == AtomState.bottom():
+            return AtomState.bottom()
+        if not isinstance(state, ConcreteState):
+            return AtomState.top()
+
+        # Occupancy check: destinations must not be held by unmoved qubits. In a
+        # permutation every destination is held by a moving qubit, so this passes.
+        moved_set = set(qubits)
+        for dest in locations:
+            for idx, current_loc in enumerate(state.layout):
+                if current_loc == dest and idx not in moved_set:
+                    return AtomState.bottom()
+
+        permuted_layout = list(state.layout)
+        for qubit_idx, dest in zip(qubits, locations):
+            permuted_layout[qubit_idx] = dest
+        target_state = ConcreteState(
+            occupied=state.occupied,
+            layout=tuple(permuted_layout),
+            move_count=state.move_count,
+        )
+
+        try:
+            move_layers = self.compute_moves(state, target_state)
+        except RuntimeError:
+            return AtomState.bottom()  # synthesizer failure
+
+        # Commit the moves, but pin the layout back to the pre-permute layout:
+        # the atoms are permuted among their slots and each qid is relabeled to
+        # the atom now at its own slot.
+        return Relabeled(
+            occupied=state.occupied,
+            layout=state.layout,
+            move_count=state.move_count,
+            move_layers=move_layers,
+        )
+
 
 class SingleZonePlacementStrategyABC(MoveToPlacementStrategyABC):
 
@@ -379,3 +433,16 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
         if not isinstance(self.inner, MoveToPlacementStrategyABC):
             return AtomState.bottom()
         return self.inner.move_to_placements(self._unwrap(state), qubits, locations)
+
+    def relabel_placements(
+        self,
+        state: AtomState,
+        qubits: tuple[int, ...],
+        locations: tuple[LocationAddress, ...],
+    ) -> AtomState:
+        # A relabel commits immediately (it is not palindrome-returned), so we
+        # just unwrap any pending CZ-return home and delegate to the inner
+        # strategy, which produces the committed ``Relabeled`` state.
+        if not isinstance(self.inner, MoveToPlacementStrategyABC):
+            return AtomState.bottom()
+        return self.inner.relabel_placements(self._unwrap(state), qubits, locations)
