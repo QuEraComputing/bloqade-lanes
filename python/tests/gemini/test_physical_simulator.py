@@ -71,7 +71,8 @@ def test_physical_simulator_exports_from_gemini_namespace():
     assert PhysicalSimulator is DevicePhysicalSimulator
 
 
-def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
+def _patch_physical_pipeline(monkeypatch):
+    """Replace the compilation pipeline with fakes; returns (captured, move_kernel)."""
     import bloqade.lanes.pipeline as pipeline_module
     from bloqade.lanes.analysis import atom
 
@@ -109,15 +110,19 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
         "append_measurements_and_annotations_physical",
         fake_append_measurements_and_annotations_physical,
     )
+    return captured, move_kernel
+
+
+def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
+    captured, move_kernel = _patch_physical_pipeline(monkeypatch)
 
     kernel = MagicMock()
     placement_strategy = MagicMock()
     m2dets = [[1]]
     m2obs = [[1]]
 
-    task = PhysicalSimulator().task(
+    task = PhysicalSimulator(placement_strategy=placement_strategy).task(
         kernel,
-        placement_strategy=placement_strategy,
         m2dets=m2dets,
         m2obs=m2obs,
     )
@@ -132,6 +137,30 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
     assert task._post_processing == "post_processing"
+
+
+def test_physical_simulator_task_defaults_to_sequential_place_pass(monkeypatch):
+    from bloqade.lanes.passes import SequentialPlacePass
+
+    captured, _ = _patch_physical_pipeline(monkeypatch)
+
+    PhysicalSimulator().task(MagicMock())
+
+    assert captured["place_opt_type"] is SequentialPlacePass
+    assert captured["placement_strategy"] is None
+    # No annotation matrices -> the kernel must not be annotated.
+    assert "annotated_kernel" not in captured
+
+
+def test_physical_simulator_task_passes_place_opt_type(monkeypatch):
+    from bloqade.lanes.passes import ASAPPlacePass
+
+    captured, _ = _patch_physical_pipeline(monkeypatch)
+
+    simulator = PhysicalSimulator(place_opt_type=ASAPPlacePass)
+    simulator.task(MagicMock())
+
+    assert captured["place_opt_type"] is ASAPPlacePass
 
 
 def test_append_measurements_and_annotations_physical_preserves_kernel_return():

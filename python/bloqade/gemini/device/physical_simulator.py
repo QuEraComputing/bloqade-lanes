@@ -422,12 +422,14 @@ class PhysicalSimulator:
     """The physical noise model used for simulation."""
     arch_spec: ArchSpec = field(default_factory=_default_arch_spec)
     """The physical architecture specification used for compilation."""
+    place_opt_type: type[passes.Pass] | None = None
+    """Optional placement pass type used for compilation."""
+    placement_strategy: "PlacementStrategyABC | None" = None
+    """Optional placement strategy used for compilation."""
 
     def task(
         self,
         physical_kernel: ir.Method[[], RetType],
-        place_opt_type: type[passes.Pass] | None = None,
-        placement_strategy: "PlacementStrategyABC | None" = None,
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
     ) -> PhysicalSimulatorTask[RetType]:
@@ -439,13 +441,12 @@ class PhysicalSimulator:
         if m2dets is not None or m2obs is not None:
             append_measurements_and_annotations_physical(physical_kernel, m2dets, m2obs)
 
-        if place_opt_type is None:
-            place_opt_type = SequentialPlacePass
+        place_opt_type = self.place_opt_type or SequentialPlacePass
 
         physical_pipeline = PhysicalPipeline(
             arch_spec=self.arch_spec,
             place_opt_type=place_opt_type,
-            placement_strategy=placement_strategy,
+            placement_strategy=self.placement_strategy,
         )
         physical_move_kernel = physical_pipeline.emit(physical_kernel, no_raise=False)
         post_processing = atom.AtomInterpreter(
