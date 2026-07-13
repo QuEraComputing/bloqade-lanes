@@ -5,7 +5,7 @@ import pytest
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from kirin import ir, types
 from kirin.decl import info, statement
-from kirin.dialects import func, ilist
+from kirin.dialects import func, ilist, ssacfg
 
 import bloqade.gemini.device.physical_simulator as physical_simulator_module
 from bloqade import squin, types as bloqade_types
@@ -210,22 +210,17 @@ def test_append_measurements_and_annotations_physical_accepts_new_at_allocations
     )
 
 
-def test_find_qubit_ssas_collects_any_qubit_typed_statement_result():
+def test_find_qubit_ssas_ignores_qubit_typed_results_without_addresses():
     test_dialect = ir.Dialect("test.qubit_alloc")
 
     @statement(dialect=test_dialect)
     class CustomQubitAlloc(ir.Statement):
         result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
-    @statement(dialect=test_dialect)
-    class BottomTypedStatement(ir.Statement):
-        result: ir.ResultValue = info.result(types.Bottom)
-
     block = ir.Block(argtypes=(types.MethodType,))
     alloc = CustomQubitAlloc()
-    bottom = BottomTypedStatement()
     none_stmt = func.ConstantNone()
-    for stmt in (alloc, bottom, none_stmt, func.Return(none_stmt.result)):
+    for stmt in (alloc, none_stmt, func.Return(none_stmt.result)):
         block.stmts.append(stmt)
 
     function = func.Function(
@@ -235,10 +230,10 @@ def test_find_qubit_ssas_collects_any_qubit_typed_statement_result():
         body=ir.Region(blocks=block),
     )
     method = ir.Method(
-        dialects=ir.DialectGroup([func.dialect, test_dialect]),
+        dialects=ir.DialectGroup([func.dialect, ssacfg.dialect, test_dialect]),
         code=function,
         sym_name="custom_alloc",
         arg_names=[],
     )
 
-    assert _find_qubit_ssas(method) == [alloc.result]
+    assert _find_qubit_ssas(method) == []
