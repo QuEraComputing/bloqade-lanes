@@ -12,13 +12,14 @@ from typing import (
 )
 
 import numpy as np
+from bloqade.analysis.address import AddressAnalysis, AddressQubit
 from bloqade.analysis.fidelity import FidelityAnalysis
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.rewrite.passes import AggressiveUnroll
-from kirin import ir, passes, rewrite, types
+from kirin import ir, passes, rewrite
 from kirin.dialects import func, ilist, py
 
-from bloqade import qubit, types as bloqade_types
+from bloqade import qubit
 
 from .simulator import DetectorResult, Result
 
@@ -60,15 +61,20 @@ def _tsim():
 
 
 def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
-    """Walk the IR and collect SSA values for physical qubit allocations."""
-    qubits: list[ir.SSAValue] = []
+    """Return one physical-qubit SSA value per concrete qubit address."""
+    address_analysis = AddressAnalysis(mt.dialects)
+    frame, _ = address_analysis.run(mt)
+    qubits_by_address: dict[int, ir.SSAValue] = {}
+
     for stmt in mt.callable_region.walk():
         for result in stmt.results:
-            if result.type.is_subseteq(
-                bloqade_types.QubitType
-            ) and not result.type.is_subseteq(types.Bottom):
-                qubits.append(result)
-    return qubits
+            address = frame.get(result)
+            if isinstance(address, AddressQubit):
+                qubits_by_address.setdefault(address.data, result)
+
+    return [
+        qubits_by_address[address] for address in range(address_analysis.qubit_count)
+    ]
 
 
 def _find_return_stmt(mt: ir.Method) -> func.Return:

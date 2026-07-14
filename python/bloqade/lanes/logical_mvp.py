@@ -2,6 +2,7 @@ import io
 from functools import cache
 from typing import Any, Callable, TypeVar
 
+from bloqade.analysis.address import AddressAnalysis, AddressQubit
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.stim.emit.stim_str import EmitStimMain
@@ -10,7 +11,6 @@ from kirin import ir
 from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
-from bloqade import qubit
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
@@ -218,11 +218,23 @@ _S = TypeVar("_S", bound=ir.Statement)
 
 
 def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
-    """Walk the squin IR and collect SSA values for all qubit allocations."""
+    """Return one qubit SSA value per concrete qubit address.
+
+    ``qalloc`` calls must be aggressively unrolled so each allocation has a
+    corresponding SSA value in ``mt``.
+    """
+    address_analysis = AddressAnalysis(mt.dialects)
+    frame, _ = address_analysis.run(mt)
+    qubits_by_address: dict[int, ir.SSAValue] = {}
+
+    for stmt in mt.callable_region.walk():
+        for result in stmt.results:
+            address = frame.get(result)
+            if isinstance(address, AddressQubit):
+                qubits_by_address.setdefault(address.data, result)
+
     return [
-        stmt.result
-        for stmt in mt.callable_region.walk()
-        if isinstance(stmt, qubit.stmts.New)
+        qubits_by_address[address] for address in range(address_analysis.qubit_count)
     ]
 
 
