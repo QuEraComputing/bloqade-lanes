@@ -19,6 +19,7 @@ from bloqade.gemini.device.physical_simulator import (
 )
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.logical_mvp import append_measurements_and_annotations
 from bloqade.lanes.pipeline import PhysicalPipeline
 
 
@@ -97,17 +98,25 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
             captured["post_processing_kernel"] = kernel
             return "post_processing"
 
-    def fake_append_measurements_and_annotations_physical(kernel, m2dets, m2obs):
+    def fake_append_measurements_and_annotations(
+        kernel, m2dets, m2obs, *, level="logical"
+    ):
         captured["annotated_kernel"] = kernel
         captured["m2dets"] = m2dets
         captured["m2obs"] = m2obs
+        captured["level"] = level
 
     monkeypatch.setattr(pipeline_module, "PhysicalPipeline", FakePhysicalPipeline)
     monkeypatch.setattr(atom, "AtomInterpreter", FakeAtomInterpreter)
     monkeypatch.setattr(
         physical_simulator_module,
+        "append_measurements_and_annotations",
+        fake_append_measurements_and_annotations,
+    )
+    monkeypatch.setattr(
+        physical_simulator_module,
         "append_measurements_and_annotations_physical",
-        fake_append_measurements_and_annotations_physical,
+        MagicMock(side_effect=AssertionError("legacy wrapper called")),
     )
 
     kernel = MagicMock()
@@ -126,6 +135,7 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     assert captured["annotated_kernel"] is kernel
     assert captured["m2dets"] is m2dets
     assert captured["m2obs"] is m2obs
+    assert captured["level"] == "physical"
     assert captured["kernel"] is kernel
     assert captured["no_raise"] is False
     assert captured["atom_dialects"] == "dialects"
@@ -165,6 +175,54 @@ def test_append_measurements_and_annotations_physical_preserves_kernel_return():
     assert list(return_values[0]) == raw_shots[0]
     assert list(post_processing.emit_detectors(raw_shots)) == [[True, True]]
     assert list(post_processing.emit_observables(raw_shots)) == [[True, False]]
+
+
+def test_unified_append_measurements_and_annotations_supports_physical_level():
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(4)
+        squin.broadcast.measure(reg)
+
+    append_measurements_and_annotations(
+        kernel,
+        m2dets=[[1], [1]],
+        m2obs=[[1], [0]],
+        level="physical",
+    )
+
+    assert sum(isinstance(s, SetDetector) for s in kernel.callable_region.walk()) == 2
+    assert sum(isinstance(s, SetObservable) for s in kernel.callable_region.walk()) == 2
+
+
+def test_legacy_physical_annotation_helper_delegates(monkeypatch):
+    captured = {}
+
+    def fake_append_measurements_and_annotations(
+        kernel, m2dets, m2obs, *, level="logical"
+    ):
+        captured["kernel"] = kernel
+        captured["m2dets"] = m2dets
+        captured["m2obs"] = m2obs
+        captured["level"] = level
+
+    monkeypatch.setattr(
+        physical_simulator_module,
+        "append_measurements_and_annotations",
+        fake_append_measurements_and_annotations,
+        raising=False,
+    )
+    kernel = MagicMock()
+    m2dets = [[1]]
+    m2obs = [[1]]
+
+    append_measurements_and_annotations_physical(kernel, m2dets, m2obs)
+
+    assert captured == {
+        "kernel": kernel,
+        "m2dets": m2dets,
+        "m2obs": m2obs,
+        "level": "physical",
+    }
 
 
 def test_append_measurements_and_annotations_physical_validates_block_size():

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from kirin.dialects import func
@@ -67,6 +69,52 @@ def test_find_return_stmt():
 def test_raises_when_both_matrices_none():
     with pytest.raises(ValueError, match="At least one"):
         append_measurements_and_annotations(_make_kernel(1), None, None)
+
+
+def test_canonical_measurement_annotation_import():
+    module = importlib.import_module("bloqade.gemini.measurement_annotations")
+
+    assert (
+        module.append_measurements_and_annotations
+        is append_measurements_and_annotations
+    )
+
+
+def test_rejects_unknown_annotation_level():
+    with pytest.raises(ValueError, match="Unknown measurement annotation level"):
+        append_measurements_and_annotations(
+            _make_kernel(1),
+            DETS,
+            OBS,
+            level="unknown",  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    "matrix, match",
+    [
+        ([], "at least one row"),
+        ([[1], [1, 0]], "same length"),
+    ],
+    ids=["empty", "ragged"],
+)
+def test_rejects_invalid_annotation_matrix(matrix: list[list[int]], match: str):
+    with pytest.raises(ValueError, match=match):
+        append_measurements_and_annotations(_make_kernel(1), matrix, None)
+
+
+def test_rejects_annotation_matrices_with_different_row_counts():
+    with pytest.raises(ValueError, match="same number of rows"):
+        append_measurements_and_annotations(_make_kernel(1), DETS, [[1]])
+
+
+def test_accepts_zero_column_annotation_matrix():
+    mt = _make_kernel(1)
+
+    append_measurements_and_annotations(mt, [[]], None)
+
+    assert _count_stmts(mt, TerminalLogicalMeasurement) == 1
+    assert _count_stmts(mt, SetDetector) == 0
 
 
 def test_raises_when_no_qubits():
