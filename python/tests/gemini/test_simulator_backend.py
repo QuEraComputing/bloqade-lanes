@@ -306,6 +306,8 @@ def test_clifft_backend_real_seeded_sampling_and_dem():
     assert first.measurements.shape == (16, 1)
     assert np.array_equal(first.measurements, second.measurements)
     assert first_backend.detector_error_model(_random_physical_kernel) is not None
+    first_backend._programs.clear()
+    second_backend._programs.clear()
 
 
 def test_pyqrack_backend_real_deterministic_sampling_uses_fresh_shot_tasks():

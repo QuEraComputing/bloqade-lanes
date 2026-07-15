@@ -9,6 +9,7 @@ from .device import (
     GeminiLogicalResult as GeminiLogicalResult,
     GeminiLogicalSimulator as GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask as GeminiLogicalSimulatorTask,
+    GeminiPhysicalSimulator as GeminiPhysicalSimulator,
     PhysicalResult as PhysicalResult,
     PhysicalSimulator as PhysicalSimulator,
     PhysicalSimulatorTask as PhysicalSimulatorTask,

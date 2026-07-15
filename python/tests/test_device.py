@@ -246,6 +246,8 @@ def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
     assert isinstance(result, Result)
     assert len(result.measurements) == 2
     assert result.detector_error_model is not None
+    if isinstance(backend, CliffTSimulatorBackend):
+        backend._programs.clear()
 
 
 def test_pyqrack_logical_detector_run_uses_measurement_fallback():

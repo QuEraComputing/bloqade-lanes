@@ -4,6 +4,7 @@ from .logical import (
     GeminiLogicalResult as GeminiLogicalResult,
 )
 from .physical_simulator import (
+    GeminiPhysicalSimulator as GeminiPhysicalSimulator,
     PhysicalResult as PhysicalResult,
     PhysicalSimulator as PhysicalSimulator,
     PhysicalSimulatorTask as PhysicalSimulatorTask,
