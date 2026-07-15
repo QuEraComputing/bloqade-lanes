@@ -14,3 +14,8 @@ from .simulator import (
     GeminiLogicalSimulatorTask as GeminiLogicalSimulatorTask,
     Result as Result,
 )
+from .simulator_backend import (
+    AbstractSimulatorBackend as AbstractSimulatorBackend,
+    BackendSample as BackendSample,
+    TsimSimulatorBackend as TsimSimulatorBackend,
+)

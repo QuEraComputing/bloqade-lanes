@@ -49,3 +49,28 @@ def test_logical_simulator_import_does_not_import_tsim():
         """)
 
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_tsim_backend_import_is_lazy():
+    code = textwrap.dedent("""
+        import sys
+
+        from bloqade.gemini import (
+            AbstractSimulatorBackend,
+            BackendSample,
+            TsimSimulatorBackend,
+        )
+
+        assert AbstractSimulatorBackend.__name__ == "AbstractSimulatorBackend"
+        assert BackendSample.__name__ == "BackendSample"
+        assert TsimSimulatorBackend.__name__ == "TsimSimulatorBackend"
+        assert not any(
+            name == "tsim"
+            or name.startswith("tsim.")
+            or name == "bloqade.tsim"
+            or name.startswith("bloqade.tsim.")
+            for name in sys.modules
+        )
+        """)
+
+    subprocess.run([sys.executable, "-c", code], check=True)
