@@ -137,8 +137,8 @@ def _move_kernel_with_unlowered_stmt() -> ir.Method:
 
 
 def test_emit_fails_fast_on_unlowered_move_stmt():
-    """emit() raises (even with no_raise=True) when a move statement is not
-    lowered, naming the offending statement kind rather than failing later."""
+    """emit(no_raise=False) raises when a move statement is not lowered, naming
+    the offending statement kind rather than failing later in dump_program."""
     method = _move_kernel_with_unlowered_stmt()
     with pytest.raises(ValueError, match="ConstZone"):
-        MoveToStackMove(arch_spec=_ARCH).emit(method, no_raise=True)
+        MoveToStackMove(arch_spec=_ARCH).emit(method, no_raise=False)
