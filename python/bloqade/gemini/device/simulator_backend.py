@@ -3,11 +3,12 @@ from __future__ import annotations
 import abc
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from weakref import WeakKeyDictionary
 
 import numpy as np
 from kirin import ir, rewrite
+from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 if TYPE_CHECKING:
     from stim import DetectorErrorModel
@@ -237,3 +238,123 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
             return self.tsim_backend.detector_error_model(physical_squin_kernel)
         except ImportError as exc:
             raise _clifft_tsim_import_error(exc) from exc
+
+
+def _pyqrack_tsim_import_error(exc: ImportError) -> ImportError:
+    return ImportError(
+        "PyQrack simulation also requires `bloqade-lanes[sim]`: Tsim provides "
+        "the guaranteed detector error model even when PyQrack is selected "
+        "for sampling."
+    )
+
+
+class _RemovePyQrackAnnotations(RewriteRule):
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        from bloqade.decoders.dialects.annotate.stmts import (
+            SetDetector,
+            SetObservable,
+        )
+
+        if isinstance(node, (SetDetector, SetObservable)):
+            node.delete()
+            return RewriteResult(has_done_something=True)
+        return RewriteResult()
+
+
+@dataclass
+class PyQrackSimulatorBackend(AbstractSimulatorBackend):
+    """Backend using PyQrack for sampling and Tsim for guaranteed DEM generation."""
+
+    seed: int | None = None
+    options: dict[str, Any] | None = None
+    min_qubits: int = 0
+    tsim_backend: TsimSimulatorBackend = field(
+        default_factory=TsimSimulatorBackend, repr=False
+    )
+    _rng_state: np.random.Generator = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._rng_state = np.random.default_rng(self.seed)
+
+    def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
+        try:
+            return self.tsim_backend._tsim_circuit(physical_squin_kernel)
+        except ImportError as exc:
+            raise _pyqrack_tsim_import_error(exc) from exc
+
+    def sample(
+        self,
+        physical_squin_kernel: ir.Method,
+        *,
+        shots: int,
+        run_detectors: bool = False,
+    ) -> BackendSample:
+        from bloqade.pyqrack.base import PyQrackInterpreter
+        from bloqade.pyqrack.device import StackMemorySimulator
+        from bloqade.pyqrack.reg import MeasurementResultValue
+        from bloqade.pyqrack.task import PyQrackSimulatorTask
+
+        class _RecordingPyQrackInterpreter(PyQrackInterpreter):
+            measurements: list[MeasurementResultValue]
+
+            def initialize(self):
+                self.measurements = []
+                return super().initialize()
+
+            def set_global_measurement_id(self, m):
+                super().set_global_measurement_id(m)
+                self.measurements.append(m)
+
+        class _RecordingStackMemorySimulator(StackMemorySimulator):
+            def new_task(self, mt, args, kwargs, memory):
+                interpreter = _RecordingPyQrackInterpreter(
+                    mt.dialects,
+                    memory=memory,
+                    rng_state=self.rng_state,
+                    loss_m_result=self.loss_m_result,
+                )
+                return PyQrackSimulatorTask(
+                    kernel=mt,
+                    args=args,
+                    kwargs=kwargs,
+                    pyqrack_interp=interpreter,
+                )
+
+        # Annotation removal mutates its input, so prepare one owned kernel for
+        # this sampling request and reuse it only to construct fresh shot tasks.
+        owned_kernel = physical_squin_kernel.similar()
+        rewrite.Walk(_RemovePyQrackAnnotations()).rewrite(owned_kernel.code)
+        simulator = _RecordingStackMemorySimulator(
+            options=cast(Any, self.options or {}),
+            rng_state=self._rng_state,
+            min_qubits=self.min_qubits,
+        )
+        recorded_measurements: list[list[bool]] = []
+        for _ in range(shots):
+            task = simulator.task(owned_kernel)
+            task.run()
+            interpreter = cast(_RecordingPyQrackInterpreter, task.pyqrack_interp)
+            recorded_measurements.append(
+                [
+                    self._measurement_to_bool(measurement, MeasurementResultValue)
+                    for measurement in interpreter.measurements
+                ]
+            )
+
+        return BackendSample(measurements=np.asarray(recorded_measurements, dtype=bool))
+
+    def detector_error_model(
+        self, physical_squin_kernel: ir.Method
+    ) -> DetectorErrorModel:
+        try:
+            return self.tsim_backend.detector_error_model(physical_squin_kernel)
+        except ImportError as exc:
+            raise _pyqrack_tsim_import_error(exc) from exc
+
+    @staticmethod
+    def _measurement_to_bool(measurement: Any, measurement_result_value: Any) -> bool:
+        if measurement == measurement_result_value.Zero:
+            return False
+        if measurement == measurement_result_value.One:
+            return True
+        raise ValueError(f"Unsupported PyQrack measurement result: {measurement!r}")

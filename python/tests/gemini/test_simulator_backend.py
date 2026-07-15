@@ -17,6 +17,7 @@ from bloqade.gemini.device import (
     AbstractSimulatorBackend,
     BackendSample,
     CliffTSimulatorBackend,
+    PyQrackSimulatorBackend,
     TsimSimulatorBackend,
 )
 from bloqade.gemini.device.simulator_backend import (
@@ -35,6 +36,13 @@ def _physical_kernel():
 def _random_physical_kernel():
     reg = squin.qalloc(1)
     squin.h(reg[0])
+    return squin.broadcast.measure(reg)
+
+
+@squin.kernel
+def _one_physical_kernel():
+    reg = squin.qalloc(1)
+    squin.x(reg[0])
     return squin.broadcast.measure(reg)
 
 
@@ -298,3 +306,74 @@ def test_clifft_backend_real_seeded_sampling_and_dem():
     assert first.measurements.shape == (16, 1)
     assert np.array_equal(first.measurements, second.measurements)
     assert first_backend.detector_error_model(_random_physical_kernel) is not None
+
+
+def test_pyqrack_backend_real_deterministic_sampling_uses_fresh_shot_tasks():
+    pytest.importorskip("pyqrack")
+    backend = PyQrackSimulatorBackend(seed=441)
+
+    sample = backend.sample(_one_physical_kernel, shots=16)
+
+    assert sample.measurements is not None
+    assert sample.measurements.shape == (16, 1)
+    assert sample.measurements.dtype == np.bool_
+    assert np.all(sample.measurements)
+
+
+def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch):
+    from bloqade.decoders.dialects.annotate.stmts import SetDetector
+
+    from bloqade.gemini.device.physical_simulator import (
+        append_measurements_and_annotations_physical,
+    )
+
+    annotated = _physical_kernel.similar()
+    append_measurements_and_annotations_physical(annotated, m2dets=[[1]], m2obs=None)
+    source_ir = annotated.print_str()
+    similar = MagicMock(wraps=annotated.similar)
+    monkeypatch.setattr(annotated, "similar", similar)
+
+    sample = PyQrackSimulatorBackend(seed=2).sample(
+        annotated, shots=3, run_detectors=True
+    )
+
+    assert sample.measurements is not None
+    assert sample.measurements.shape == (3, 1)
+    assert similar.call_count == 1
+    assert annotated.print_str() == source_ir
+    assert any(
+        isinstance(stmt, SetDetector) for stmt in annotated.callable_region.walk()
+    )
+
+
+def test_pyqrack_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "circuit"
+    tsim_backend.detector_error_model.return_value = "dem"
+    backend = PyQrackSimulatorBackend(tsim_backend=tsim_backend)
+
+    assert _get_tsim_circuit(backend, _physical_kernel) == "circuit"
+    assert backend.detector_error_model(_physical_kernel) == "dem"
+    tsim_backend._tsim_circuit.assert_called_once_with(_physical_kernel)
+    tsim_backend.detector_error_model.assert_called_once_with(_physical_kernel)
+
+
+def test_pyqrack_backend_reframes_missing_tsim_dependency():
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.side_effect = ImportError("missing tsim")
+    tsim_backend.detector_error_model.side_effect = ImportError("missing tsim")
+    backend = PyQrackSimulatorBackend(tsim_backend=tsim_backend)
+
+    with pytest.raises(ImportError, match=r"PyQrack.*bloqade-lanes\[sim\]"):
+        _get_tsim_circuit(backend, _physical_kernel)
+    with pytest.raises(ImportError, match=r"PyQrack.*bloqade-lanes\[sim\]"):
+        backend.detector_error_model(_physical_kernel)
+
+
+def test_pyqrack_measurements_are_mapped_explicitly():
+    values = SimpleNamespace(Zero=0, One=1, Lost=2)
+
+    assert PyQrackSimulatorBackend._measurement_to_bool(0, values) is False
+    assert PyQrackSimulatorBackend._measurement_to_bool(1, values) is True
+    with pytest.raises(ValueError, match="Unsupported PyQrack measurement"):
+        PyQrackSimulatorBackend._measurement_to_bool(2, values)

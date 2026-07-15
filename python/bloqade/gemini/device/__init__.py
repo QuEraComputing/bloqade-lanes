@@ -18,5 +18,6 @@ from .simulator_backend import (
     AbstractSimulatorBackend as AbstractSimulatorBackend,
     BackendSample as BackendSample,
     CliffTSimulatorBackend as CliffTSimulatorBackend,
+    PyQrackSimulatorBackend as PyQrackSimulatorBackend,
     TsimSimulatorBackend as TsimSimulatorBackend,
 )

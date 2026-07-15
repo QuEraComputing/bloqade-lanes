@@ -59,12 +59,14 @@ def test_tsim_backend_import_is_lazy():
             AbstractSimulatorBackend,
             BackendSample,
             CliffTSimulatorBackend,
+            PyQrackSimulatorBackend,
             TsimSimulatorBackend,
         )
 
         assert AbstractSimulatorBackend.__name__ == "AbstractSimulatorBackend"
         assert BackendSample.__name__ == "BackendSample"
         assert CliffTSimulatorBackend.__name__ == "CliffTSimulatorBackend"
+        assert PyQrackSimulatorBackend.__name__ == "PyQrackSimulatorBackend"
         assert TsimSimulatorBackend.__name__ == "TsimSimulatorBackend"
         assert not any(
             name == "tsim"
