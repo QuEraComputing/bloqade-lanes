@@ -14,6 +14,7 @@ from bloqade.gemini.device import (
     GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask,
     Result,
+    TsimSimulatorBackend,
 )
 
 from .confidence import ConfidenceDecoder
@@ -222,8 +223,12 @@ class PostSelectionExperiment:
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before dem_circuits.")
+        dem_simulator = GeminiLogicalSimulator(
+            noise_model=self._simulator.noise_model,
+            backend=TsimSimulatorBackend(),
+        )
         dem_tasks = {
-            basis: self._simulator.task(kernel.similar(), None, None)
+            basis: dem_simulator.task(kernel.similar())
             for basis, kernel in dem_kernels.items()
         }
         dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)

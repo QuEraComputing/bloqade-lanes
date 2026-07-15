@@ -15,7 +15,7 @@ def main_cuda():
     h(q[4])  # noqa: F821  # pyright: ignore
 
 
-task = GeminiLogicalSimulator().task(main_cuda, m2dets=m2dets, m2obs=m2obs)
+task = GeminiLogicalSimulator(m2dets=m2dets, m2obs=m2obs).task(main_cuda)
 
 result = task.run(10)
 print(result.detectors)
