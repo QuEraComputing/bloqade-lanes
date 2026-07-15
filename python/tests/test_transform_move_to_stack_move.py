@@ -6,13 +6,14 @@ drives it through ``MoveToStackMove.emit`` / ``emit_bytecode`` and checks the
 result is a canonicalized, bytecode-ready ``stack_move`` kernel.
 """
 
+import pytest
 from kirin import ir, types
 from kirin.dialects import func, py
 from kirin.rewrite import Walk
 
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.decode import load_program
-from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
 from bloqade.lanes.transform import MoveToStackMove
@@ -115,3 +116,29 @@ def test_emit_bytecode_version_passthrough():
         _move_kernel(), version=(2, 3)
     )
     assert prog.version == (2, 3)
+
+
+def _move_kernel_with_unlowered_stmt() -> ir.Method:
+    """A move kernel containing move.ConstZone, which RewriteMoveToStackMove
+    does not lower (it passes through unchanged)."""
+    cz = move.ConstZone(value=ZoneAddress(0))
+    ret = func.Return(cz.result)
+    block = ir.Block(argtypes=(types.MethodType,))
+    for s in [cz, ret]:
+        block.stmts.append(s)
+    function = func.Function(
+        sym_name="main",
+        signature=func.Signature((), types.Any),
+        slots=(),
+        body=ir.Region(blocks=block),
+    )
+    dialects = ir.DialectGroup([stack_move.dialect, move.dialect, func.dialect])
+    return ir.Method(dialects=dialects, code=function, sym_name="main", arg_names=[])
+
+
+def test_emit_fails_fast_on_unlowered_move_stmt():
+    """emit() raises (even with no_raise=True) when a move statement is not
+    lowered, naming the offending statement kind rather than failing later."""
+    method = _move_kernel_with_unlowered_stmt()
+    with pytest.raises(ValueError, match="ConstZone"):
+        MoveToStackMove(arch_spec=_ARCH).emit(method, no_raise=True)

@@ -32,6 +32,37 @@ def no_none_elements_tuple(xs: tuple[T | None, ...]) -> TypeGuard[tuple[T, ...]]
     return all(x is not None for x in xs)
 
 
+def statements_outside_dialect_group(method: ir.Method) -> list[ir.Statement]:
+    """Return every statement in *method* whose dialect is not in its group.
+
+    Kirin's ``Method.verify()`` checks per-statement structure but never
+    validates that each statement's dialect is a member of the method's
+    declared ``DialectGroup``. An out-of-group statement therefore passes
+    ``verify()`` cleanly and only surfaces lazily — as an ``InterpreterError``
+    at interpretation/emit time (see ``kirin.interp.abc``), far from its cause.
+
+    Use this after a lowering pass that is expected to leave no statements from
+    the source dialect behind (e.g. ``move`` after ``RewriteMoveToStackMove``)
+    to fail fast with a precise, local error instead.
+
+    Statements with no dialect (``stmt.dialect is None``, e.g. dialect-agnostic
+    base statements) are ignored.
+
+    Args:
+        method: The kernel to scan.
+
+    Returns:
+        The offending statements, in walk order. Empty if every statement's
+        dialect is a member of ``method.dialects``.
+    """
+    dialects = method.dialects
+    return [
+        stmt
+        for stmt in method.code.walk()
+        if stmt.dialect is not None and stmt.dialect not in dialects
+    ]
+
+
 def check_circuit(
     squin_method: ir.Method[[], None],
     other_squin_method: ir.Method[[], None],
