@@ -442,8 +442,14 @@ class PhysicalSimulator:
         from bloqade.lanes.passes import SequentialPlacePass
         from bloqade.lanes.pipeline import PhysicalPipeline
 
+        # Annotation, unrolling, and physical compilation all mutate their
+        # input. Keep the method supplied by the caller reusable.
+        source_squin_kernel = physical_kernel.similar()
+
         if m2dets is not None or m2obs is not None:
-            append_measurements_and_annotations_physical(physical_kernel, m2dets, m2obs)
+            append_measurements_and_annotations_physical(
+                source_squin_kernel, m2dets, m2obs
+            )
 
         if place_opt_type is None:
             place_opt_type = SequentialPlacePass
@@ -453,13 +459,15 @@ class PhysicalSimulator:
             place_opt_type=place_opt_type,
             placement_strategy=placement_strategy,
         )
-        physical_move_kernel = physical_pipeline.emit(physical_kernel, no_raise=False)
+        physical_move_kernel = physical_pipeline.emit(
+            source_squin_kernel, no_raise=False
+        )
         post_processing = atom.AtomInterpreter(
             physical_move_kernel.dialects, arch_spec=self.arch_spec
         ).get_post_processing(physical_move_kernel)
 
         return PhysicalSimulatorTask(
-            physical_kernel,
+            source_squin_kernel,
             self.noise_model,
             self.arch_spec,
             physical_move_kernel,

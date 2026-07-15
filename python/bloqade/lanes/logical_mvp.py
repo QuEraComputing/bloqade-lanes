@@ -381,7 +381,9 @@ def compile_task(
 
         append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
     elif isinstance(logical_kernel, ir.Method):
-        logical_squin_kernel = logical_kernel
+        # Compilation and annotation rewrites are in-place. Work on an owned
+        # copy so creating a task never changes a caller-owned kernel.
+        logical_squin_kernel = logical_kernel.similar()
         if m2dets is not None or m2obs is not None:
             append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
     else:

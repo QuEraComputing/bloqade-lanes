@@ -111,6 +111,8 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     )
 
     kernel = MagicMock()
+    owned_kernel = MagicMock()
+    kernel.similar.return_value = owned_kernel
     placement_strategy = MagicMock()
     m2dets = [[1]]
     m2obs = [[1]]
@@ -123,15 +125,49 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     )
 
     assert captured["placement_strategy"] is placement_strategy
-    assert captured["annotated_kernel"] is kernel
+    kernel.similar.assert_called_once_with()
+    assert captured["annotated_kernel"] is owned_kernel
     assert captured["m2dets"] is m2dets
     assert captured["m2obs"] is m2obs
-    assert captured["kernel"] is kernel
+    assert captured["kernel"] is owned_kernel
     assert captured["no_raise"] is False
     assert captured["atom_dialects"] == "dialects"
     assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
     assert task._post_processing == "post_processing"
+    assert task.source_squin_kernel is owned_kernel
+
+
+def test_physical_task_preserves_source_kernel_across_repeated_compilation():
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(2)
+        return squin.broadcast.measure(reg)
+
+    source_ir = kernel.print_str()
+    simulator = PhysicalSimulator()
+    first = simulator.task(kernel, m2dets=[[1], [1]], m2obs=[[1], [0]])
+    second = simulator.task(kernel, m2dets=[[1], [1]], m2obs=[[1], [0]])
+
+    assert kernel.print_str() == source_ir
+    assert first.source_squin_kernel is not kernel
+    assert second.source_squin_kernel is not kernel
+    assert first.source_squin_kernel is not second.source_squin_kernel
+    for task in (first, second):
+        assert (
+            sum(
+                isinstance(stmt, SetDetector)
+                for stmt in task.source_squin_kernel.callable_region.walk()
+            )
+            == 1
+        )
+        assert (
+            sum(
+                isinstance(stmt, SetObservable)
+                for stmt in task.source_squin_kernel.callable_region.walk()
+            )
+            == 1
+        )
 
 
 def test_append_measurements_and_annotations_physical_preserves_kernel_return():
