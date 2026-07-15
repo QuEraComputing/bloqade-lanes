@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
@@ -144,3 +145,95 @@ class TsimSimulatorBackend(AbstractSimulatorBackend):
         return self._tsim_circuit(physical_squin_kernel).detector_error_model(
             approximate_disjoint_errors=True
         )
+
+
+def _clifft_compatible_stim_text(circuit: Any) -> str:
+    """Strip Stim instruction tags that CliffT does not currently parse."""
+
+    return "\n".join(
+        re.sub(r"^([A-Z][A-Z0-9_]*)(\[[^\]\n]+\])", r"\1", line)
+        for line in str(circuit).splitlines()
+    )
+
+
+def _clifft() -> Any:
+    try:
+        import clifft  # type: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise ImportError(
+            "CliffT simulation requires the optional `clifft` dependency. "
+            "Install it with `bloqade-lanes[msd-reprod]` or include `clifft` "
+            "in your environment."
+        ) from exc
+
+    return clifft
+
+
+def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
+    return ImportError(
+        "CliffT simulation also requires `bloqade-lanes[sim]`: Tsim performs "
+        "physical SQuIn conversion and detector error model generation even "
+        "when CliffT is selected for sampling."
+    )
+
+
+@dataclass
+class CliffTSimulatorBackend(AbstractSimulatorBackend):
+    """Backend using Tsim for conversion/DEM generation and CliffT for sampling."""
+
+    seed: int | None = None
+    tsim_backend: TsimSimulatorBackend = field(
+        default_factory=TsimSimulatorBackend, repr=False
+    )
+    _programs: WeakKeyDictionary[ir.Method, Any] = field(
+        default_factory=WeakKeyDictionary, init=False, repr=False
+    )
+
+    def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
+        try:
+            return self.tsim_backend._tsim_circuit(physical_squin_kernel)
+        except ImportError as exc:
+            raise _clifft_tsim_import_error(exc) from exc
+
+    def _clifft_program(self, physical_squin_kernel: ir.Method) -> Any:
+        try:
+            return self._programs[physical_squin_kernel]
+        except KeyError:
+            pass
+
+        program = _clifft().compile(
+            _clifft_compatible_stim_text(self._tsim_circuit(physical_squin_kernel))
+        )
+        self._programs[physical_squin_kernel] = program
+        return program
+
+    def sample(
+        self,
+        physical_squin_kernel: ir.Method,
+        *,
+        shots: int,
+        run_detectors: bool = False,
+    ) -> BackendSample:
+        sample_kwargs: dict[str, int] = {"shots": int(shots)}
+        if self.seed is not None:
+            sample_kwargs["seed"] = int(self.seed)
+
+        sample_result = _clifft().sample(
+            self._clifft_program(physical_squin_kernel), **sample_kwargs
+        )
+        if run_detectors:
+            return BackendSample(
+                detectors=np.asarray(sample_result.detectors, dtype=bool),
+                observables=np.asarray(sample_result.observables, dtype=bool),
+            )
+        return BackendSample(
+            measurements=np.asarray(sample_result.measurements, dtype=bool)
+        )
+
+    def detector_error_model(
+        self, physical_squin_kernel: ir.Method
+    ) -> DetectorErrorModel:
+        try:
+            return self.tsim_backend.detector_error_model(physical_squin_kernel)
+        except ImportError as exc:
+            raise _clifft_tsim_import_error(exc) from exc

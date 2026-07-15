@@ -2,6 +2,7 @@ from . import common as common, decoding as decoding, logical as logical
 from .device import (
     AbstractSimulatorBackend as AbstractSimulatorBackend,
     BackendSample as BackendSample,
+    CliffTSimulatorBackend as CliffTSimulatorBackend,
     DetectorResult as DetectorResult,
     GeminiLogicalDevice as GeminiLogicalDevice,
     GeminiLogicalFuture as GeminiLogicalFuture,

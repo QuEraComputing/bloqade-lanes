@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import gc
+import sys
 import weakref
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 from kirin import ir
 from kirin.dialects import func
 
@@ -14,14 +16,25 @@ from bloqade import squin
 from bloqade.gemini.device import (
     AbstractSimulatorBackend,
     BackendSample,
+    CliffTSimulatorBackend,
     TsimSimulatorBackend,
 )
-from bloqade.gemini.device.simulator_backend import _get_tsim_circuit
+from bloqade.gemini.device.simulator_backend import (
+    _clifft_compatible_stim_text,
+    _get_tsim_circuit,
+)
 
 
 @squin.kernel
 def _physical_kernel():
     reg = squin.qalloc(1)
+    return squin.broadcast.measure(reg)
+
+
+@squin.kernel
+def _random_physical_kernel():
+    reg = squin.qalloc(1)
+    squin.h(reg[0])
     return squin.broadcast.measure(reg)
 
 
@@ -161,3 +174,127 @@ def test_tsim_detector_error_model_and_structural_capability():
     circuit.detector_error_model.assert_called_once_with(
         approximate_disjoint_errors=True
     )
+
+
+def _fake_clifft(monkeypatch, *, sample_result=None):
+    clifft = ModuleType("clifft")
+    clifft.compile = MagicMock(return_value="program")  # type: ignore[attr-defined]
+    clifft.sample = MagicMock(  # type: ignore[attr-defined]
+        return_value=sample_result
+        or SimpleNamespace(
+            measurements=np.array([[0, 1]], dtype=np.uint8),
+            detectors=np.array([[1]], dtype=np.uint8),
+            observables=np.array([[0]], dtype=np.uint8),
+        )
+    )
+    monkeypatch.setitem(sys.modules, "clifft", clifft)
+    return clifft
+
+
+def test_clifft_compatible_stim_text_strips_instruction_tags_only():
+    assert (
+        _clifft_compatible_stim_text(
+            "I_ERROR[loss](0)\nDETECTOR[coords](1)\n# [comment]"
+        )
+        == "I_ERROR(0)\nDETECTOR(1)\n# [comment]"
+    )
+
+
+def test_clifft_backend_compiles_once_normalizes_measurements_and_passes_seed(
+    monkeypatch,
+):
+    clifft = _fake_clifft(monkeypatch)
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "I_ERROR[loss](0)\nM 0"
+    backend = CliffTSimulatorBackend(seed=123, tsim_backend=tsim_backend)
+
+    first = backend.sample(_physical_kernel, shots=2)
+    second = backend.sample(_physical_kernel, shots=2)
+
+    assert first.measurements is not None
+    assert first.measurements.dtype == np.bool_
+    assert np.array_equal(first.measurements, [[False, True]])
+    assert second.measurements is not None
+    clifft.compile.assert_called_once_with("I_ERROR(0)\nM 0")  # type: ignore[attr-defined]
+    assert clifft.sample.call_count == 2  # type: ignore[attr-defined]
+    clifft.sample.assert_called_with(  # type: ignore[attr-defined]
+        "program", shots=2, seed=123
+    )
+
+
+def test_clifft_backend_omits_missing_seed_and_returns_native_detectors(monkeypatch):
+    clifft = _fake_clifft(monkeypatch)
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "M 0"
+    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+
+    sample = backend.sample(_physical_kernel, shots=2, run_detectors=True)
+
+    clifft.sample.assert_called_once_with("program", shots=2)  # type: ignore[attr-defined]
+    assert sample.detectors is not None
+    assert sample.observables is not None
+    assert np.array_equal(sample.detectors, [[True]])
+    assert np.array_equal(sample.observables, [[False]])
+
+
+def test_clifft_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "circuit"
+    tsim_backend.detector_error_model.return_value = "dem"
+    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+
+    assert _get_tsim_circuit(backend, _physical_kernel) == "circuit"
+    assert backend.detector_error_model(_physical_kernel) == "dem"
+    tsim_backend._tsim_circuit.assert_called_once_with(_physical_kernel)
+    tsim_backend.detector_error_model.assert_called_once_with(_physical_kernel)
+
+
+def test_clifft_backend_reframes_missing_tsim_dependency(monkeypatch):
+    _fake_clifft(monkeypatch)
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.side_effect = ImportError("missing tsim")
+    tsim_backend.detector_error_model.side_effect = ImportError("missing tsim")
+    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+
+    with pytest.raises(ImportError, match=r"CliffT.*bloqade-lanes\[sim\]"):
+        backend.sample(_physical_kernel, shots=1)
+    with pytest.raises(ImportError, match=r"CliffT.*bloqade-lanes\[sim\]"):
+        backend.detector_error_model(_physical_kernel)
+
+
+def test_clifft_program_cache_drops_dead_kernel(monkeypatch):
+    _fake_clifft(monkeypatch)
+
+    class Kernel:
+        pass
+
+    kernel = Kernel()
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "M 0"
+    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+
+    backend._clifft_program(cast(ir.Method, kernel))
+    assert len(backend._programs) == 1
+    tsim_backend.reset_mock()
+    kernel_ref = weakref.ref(kernel)
+    del kernel
+    gc.collect()
+
+    assert kernel_ref() is None
+    assert len(backend._programs) == 0
+
+
+def test_clifft_backend_real_seeded_sampling_and_dem():
+    pytest.importorskip("clifft")
+    pytest.importorskip("tsim")
+    first_backend = CliffTSimulatorBackend(seed=991)
+    second_backend = CliffTSimulatorBackend(seed=991)
+
+    first = first_backend.sample(_random_physical_kernel, shots=16)
+    second = second_backend.sample(_random_physical_kernel, shots=16)
+
+    assert first.measurements is not None
+    assert second.measurements is not None
+    assert first.measurements.shape == (16, 1)
+    assert np.array_equal(first.measurements, second.measurements)
+    assert first_backend.detector_error_model(_random_physical_kernel) is not None

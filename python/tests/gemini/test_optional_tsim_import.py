@@ -58,11 +58,13 @@ def test_tsim_backend_import_is_lazy():
         from bloqade.gemini import (
             AbstractSimulatorBackend,
             BackendSample,
+            CliffTSimulatorBackend,
             TsimSimulatorBackend,
         )
 
         assert AbstractSimulatorBackend.__name__ == "AbstractSimulatorBackend"
         assert BackendSample.__name__ == "BackendSample"
+        assert CliffTSimulatorBackend.__name__ == "CliffTSimulatorBackend"
         assert TsimSimulatorBackend.__name__ == "TsimSimulatorBackend"
         assert not any(
             name == "tsim"

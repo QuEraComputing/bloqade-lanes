@@ -17,5 +17,6 @@ from .simulator import (
 from .simulator_backend import (
     AbstractSimulatorBackend as AbstractSimulatorBackend,
     BackendSample as BackendSample,
+    CliffTSimulatorBackend as CliffTSimulatorBackend,
     TsimSimulatorBackend as TsimSimulatorBackend,
 )
