@@ -42,4 +42,6 @@ noiseless circuits. Async task and simulator calls will be checked through
 `.result()`. Tests will also confirm that a seeded call compiles a fresh
 sampler every time, `seed=None` continues to use the cached tsim samplers,
 two independent calls with the same seed reproduce samples at a fixed batch
-size, and a seeded call does not leak into a later unseeded call.
+size, and a seeded call does not leak into a later unseeded call. CliffT tests
+will cover per-call override of the task-level seed, its `seed=None` fallback,
+async forwarding, and invalid-seed rejection.
