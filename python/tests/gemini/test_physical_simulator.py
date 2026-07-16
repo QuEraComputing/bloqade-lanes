@@ -14,11 +14,11 @@ from bloqade.gemini.device.physical_simulator import (
     PhysicalResult,
     PhysicalSimulator,
     PhysicalSimulatorTask,
-    _find_qubit_ssas,
     append_measurements_and_annotations_physical,
 )
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.logical_mvp import _find_qubit_ssas
 from bloqade.lanes.pipeline import PhysicalPipeline
 
 
@@ -165,6 +165,34 @@ def test_append_measurements_and_annotations_physical_preserves_kernel_return():
     assert list(return_values[0]) == raw_shots[0]
     assert list(post_processing.emit_detectors(raw_shots)) == [[True, True]]
     assert list(post_processing.emit_observables(raw_shots)) == [[True, False]]
+
+
+def test_append_measurements_and_annotations_physical_uses_logical_mvp_helpers(
+    monkeypatch,
+):
+    import bloqade.lanes.logical_mvp as logical_mvp
+
+    find_qubit_ssas = MagicMock(wraps=logical_mvp._find_qubit_ssas)
+    find_return_stmt = MagicMock(wraps=logical_mvp._find_return_stmt)
+    insert_before = MagicMock(wraps=logical_mvp._insert_before)
+    monkeypatch.setattr(logical_mvp, "_find_qubit_ssas", find_qubit_ssas)
+    monkeypatch.setattr(logical_mvp, "_find_return_stmt", find_return_stmt)
+    monkeypatch.setattr(logical_mvp, "_insert_before", insert_before)
+
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(2)
+        squin.broadcast.measure(reg)
+
+    append_measurements_and_annotations_physical(
+        kernel,
+        m2dets=[[1], [1]],
+        m2obs=None,
+    )
+
+    find_qubit_ssas.assert_called_once_with(kernel)
+    find_return_stmt.assert_called_once_with(kernel)
+    assert insert_before.call_count > 0
 
 
 def test_append_measurements_and_annotations_physical_validates_block_size():
