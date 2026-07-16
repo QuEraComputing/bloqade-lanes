@@ -149,7 +149,8 @@ def steane7_initialize_with_noise(
         sitter_py: Y-error probability for stationary qubits during CZ.
         sitter_pz: Z-error probability for stationary qubits during CZ.
         sit_loss_prob: Loss probability for stationary qubits during CZ.
-        cz_errors: 2-qubit pauli error probabilities for CZ execution.
+        cz_errors: Sequence of 15 2-qubit Pauli error probabilities for CZ execution
+            (excluding II).
         loss: Whether to include loss channels.
 
     Returns:
@@ -157,7 +158,9 @@ def steane7_initialize_with_noise(
     """
 
     if cz_errors is None:
-        cz_errors = 15 * [0.0]
+        cz_errors = [0.0] * 15
+    elif len(cz_errors) != 15:
+        raise ValueError(f"cz_errors must have length 15 (got {len(cz_errors)})")
 
     cz_errors_ilist = ilist.IList(cz_errors)
 
