@@ -201,6 +201,10 @@ def generate_logical_noise_model(
     local_px, local_py, local_pz = noise_model.local_pauli_rates
     mover_px, mover_py, mover_pz = noise_model.mover_pauli_rates
     sitter_px, sitter_py, sitter_pz = noise_model.sitter_pauli_rates
+    cz_paired_error_dict = noise_model.two_qubit_pauli.error_probabilities
+    cz_paired_error_probabilities = ilist.IList(
+        [cz_paired_error_dict.get(k, 0.0) for k in PAIRED_KEYS]
+    )
 
     clean_init, noisy_init = steane7_initialize_with_noise(
         local_px=local_px,
@@ -215,6 +219,7 @@ def generate_logical_noise_model(
         sitter_py=sitter_py,
         sitter_pz=sitter_pz,
         sit_loss_prob=noise_model.sit_loss_prob,
+        cz_errors=cz_paired_error_probabilities,
         loss=loss,
     )
 

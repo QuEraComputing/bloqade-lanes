@@ -1,4 +1,4 @@
-from typing import Any, Iterator, Literal, TypeVar
+from typing import Any, Iterator, Literal, Sequence, TypeVar
 
 from kirin import ir, rewrite
 from kirin.dialects import debug, ilist
@@ -119,6 +119,7 @@ def steane7_initialize_with_noise(
     sitter_py: float = 0.0,
     sitter_pz: float = 0.0,
     sit_loss_prob: float = 0.0,
+    cz_errors: Sequence[float] | None = None,
     loss: bool = True,
 ) -> tuple[BroadcastInitKernel, BroadcastInitKernel]:
     """Return (clean_kernel, noisy_kernel) for Steane [[7,1,3]] initialization.
@@ -148,11 +149,17 @@ def steane7_initialize_with_noise(
         sitter_py: Y-error probability for stationary qubits during CZ.
         sitter_pz: Z-error probability for stationary qubits during CZ.
         sit_loss_prob: Loss probability for stationary qubits during CZ.
+        cz_errors: 2-qubit pauli error probabilities for CZ execution.
         loss: Whether to include loss channels.
 
     Returns:
         A tuple of (clean_kernel, noisy_kernel).
     """
+
+    if cz_errors is None:
+        cz_errors = 15 * [0.0]
+
+    cz_errors_ilist = ilist.IList(cz_errors)
 
     @squin.kernel
     def noisy_initialize_broadcast(
@@ -213,7 +220,16 @@ def steane7_initialize_with_noise(
             squin.broadcast.qubit_loss(local_loss_prob, cols0_5)
 
         # CZ layer 1: controls=odds (sitters), targets=evens[1:] (movers)
+        squin.broadcast.single_qubit_pauli_channel(
+            sitter_px, sitter_py, sitter_pz, cols_odds
+        )
+        squin.broadcast.single_qubit_pauli_channel(
+            mover_px, mover_py, mover_pz, cols_evens_tail
+        )
         squin.broadcast.cz(cols_odds, cols_evens_tail)
+        squin.broadcast.two_qubit_pauli_channel(
+            cz_errors_ilist, cols_odds, cols_evens_tail
+        )
         squin.broadcast.single_qubit_pauli_channel(
             sitter_px, sitter_py, sitter_pz, cols_odds
         )
@@ -231,7 +247,16 @@ def steane7_initialize_with_noise(
             squin.broadcast.qubit_loss(local_loss_prob, col6)
 
         # CZ layer 2: controls=evens[:-1] (movers), targets=[3,5,6] (sitters)
+        squin.broadcast.single_qubit_pauli_channel(
+            mover_px, mover_py, mover_pz, cols_evens_head
+        )
+        squin.broadcast.single_qubit_pauli_channel(
+            sitter_px, sitter_py, sitter_pz, cols_356
+        )
         squin.broadcast.cz(cols_evens_head, cols_356)
+        squin.broadcast.two_qubit_pauli_channel(
+            cz_errors_ilist, cols_evens_head, cols_356
+        )
         squin.broadcast.single_qubit_pauli_channel(
             mover_px, mover_py, mover_pz, cols_evens_head
         )
@@ -251,7 +276,16 @@ def steane7_initialize_with_noise(
             squin.broadcast.qubit_loss(local_loss_prob, cols2_6)
 
         # CZ layer 3: controls=evens[:-1] (sitters), targets=odds (movers)
+        squin.broadcast.single_qubit_pauli_channel(
+            sitter_px, sitter_py, sitter_pz, cols_evens_head
+        )
+        squin.broadcast.single_qubit_pauli_channel(
+            mover_px, mover_py, mover_pz, cols_odds
+        )
         squin.broadcast.cz(cols_evens_head, cols_odds)
+        squin.broadcast.two_qubit_pauli_channel(
+            cz_errors_ilist, cols_evens_head, cols_odds
+        )
         squin.broadcast.single_qubit_pauli_channel(
             sitter_px, sitter_py, sitter_pz, cols_evens_head
         )

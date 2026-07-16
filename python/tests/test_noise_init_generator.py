@@ -167,3 +167,72 @@ def test_no_double_init_in_compiled_output():
             assert (
                 noisy not in callees
             ), "noisy init kernel should not appear with add_noise=False"
+
+
+def test_noisy_init_adds_correlated_cz_noise_channel_per_cz_layer():
+    """Issue #796: the noisy Steane init kernel emits one correlated two-qubit
+    Pauli channel for every CZ layer; the clean kernel emits none.
+    """
+    from kirin.dialects import func
+
+    from bloqade.lanes.noise_model import generate_logical_noise_model
+
+    clean, noisy = generate_logical_noise_model().get_logical_initialize()
+    assert clean is not None and noisy is not None
+
+    def callee_counts(method):
+        counts: dict[str, int] = {}
+        for stmt in method.callable_region.walk():
+            if isinstance(stmt, func.Invoke):
+                name = getattr(stmt.callee, "sym_name", None)
+                if name is not None:
+                    counts[name] = counts.get(name, 0) + 1
+        return counts
+
+    noisy_counts = callee_counts(noisy)
+    clean_counts = callee_counts(clean)
+
+    n_cz = noisy_counts.get("cz", 0)
+    assert n_cz > 0, "expected CZ layers in the Steane init kernel"
+
+    # One correlated CZ noise channel per CZ layer (issue #796).
+    assert noisy_counts.get("two_qubit_pauli_channel", 0) == n_cz
+
+    # The clean init kernel must not carry the CZ noise channel.
+    assert clean_counts.get("two_qubit_pauli_channel", 0) == 0
+
+
+def test_noisy_init_cz_noise_channel_uses_model_paired_probabilities():
+    """Issue #796: the correlated CZ channel carries the noise model's paired
+    error probabilities (in ``PAIRED_KEYS`` order), not zeros.
+    """
+    from typing import cast
+
+    import pytest
+    from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
+    from kirin.dialects import func
+    from kirin.dialects.py.constant import Constant
+
+    from bloqade.lanes.noise_model import PAIRED_KEYS, generate_logical_noise_model
+
+    noise_model = GeminiOneZoneNoiseModel()
+    error_probs = noise_model.two_qubit_pauli.error_probabilities
+    expected = [float(error_probs.get(k, 0.0)) for k in PAIRED_KEYS]
+    assert any(p > 0.0 for p in expected), "premise: model has nonzero CZ errors"
+
+    _, noisy = generate_logical_noise_model(noise_model).get_logical_initialize()
+    assert noisy is not None
+
+    channels = [
+        stmt
+        for stmt in noisy.callable_region.walk()
+        if isinstance(stmt, func.Invoke)
+        and getattr(stmt.callee, "sym_name", None) == "two_qubit_pauli_channel"
+    ]
+    assert channels, "no correlated CZ noise channel found in noisy init kernel"
+
+    for channel in channels:
+        const = channel.args[0].owner
+        assert isinstance(const, Constant)
+        probs = [float(p) for p in cast(list[float], const.value)]
+        assert probs == pytest.approx(expected)
