@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 import numpy as np
 
 from bloqade.gemini.device import DetectorResult, GeminiLogicalSimulatorTask, Result
+from bloqade.gemini.device.simulator import _validate_seed
 
 if TYPE_CHECKING:
     from clifft import Program, SampleResult  # type: ignore[reportMissingImports]
@@ -72,7 +73,11 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         shots: int,
         *,
         with_noise: bool = True,
+        seed: int | None = None,
     ) -> SampleResult:
+        _validate_seed(seed)
+        _validate_seed(self.seed)
+
         clifft = _clifft()
 
         # TODO: check if _run_clifft() is ever called with run()... because I think we might be calling sample_clifft_det_obs always?
@@ -82,8 +87,9 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
             else self.clifft_noiseless_tsim_program
         )
         sample_kwargs: dict[str, int] = {"shots": int(shots)}
-        if self.seed is not None:
-            sample_kwargs["seed"] = int(self.seed)
+        effective_seed = self.seed if seed is None else seed
+        if effective_seed is not None:
+            sample_kwargs["seed"] = effective_seed
         return cast("SampleResult", clifft.sample(program, **sample_kwargs))
 
     @overload
@@ -93,6 +99,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Result[RetType]: ...
 
     @overload
@@ -102,6 +109,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> DetectorResult: ...
 
     @overload
@@ -111,6 +119,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult: ...
 
     def run(
@@ -119,10 +128,11 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult:
         """Sample detector and observable arrays using CliffT."""
 
-        sample_result = self._sample_clifft(shots, with_noise=with_noise)
+        sample_result = self._sample_clifft(shots, with_noise=with_noise, seed=seed)
         # NOTE: this should be a no-op if detectors/observables are already of the right type
         detectors = np.asarray(sample_result.detectors, dtype=np.uint8)
         observables = np.asarray(sample_result.observables, dtype=np.uint8)
@@ -156,6 +166,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -165,6 +176,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> Future[DetectorResult]: ...
 
     # NOTE: defining run_async because GeminiLogicalSimulatorTask exposes this in public API.
@@ -175,8 +187,12 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the CliffT sampler asynchronously."""
+
+        _validate_seed(seed)
+        _validate_seed(self.seed)
 
         # TODO: should GeminiLogicalSimulatorTask.run_async preserve NumPy-array
         # results for detector-heavy workflows instead of wrapping list-backed
@@ -189,6 +205,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
                     shots,
                     with_noise,
                     run_detectors=True,
+                    seed=seed,
                 ),
             )
         return cast(
@@ -198,6 +215,7 @@ class _CliffTSimulatorTask(GeminiLogicalSimulatorTask[RetType]):
                 shots,
                 with_noise,
                 run_detectors=False,
+                seed=seed,
             ),
         )
 
