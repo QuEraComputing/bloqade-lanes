@@ -1,6 +1,5 @@
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 
-
 class MinimalNoise(NoiseModelABC):
     """Minimal concrete subclass for testing the ABC default."""
 
@@ -173,27 +172,22 @@ def test_noisy_init_adds_correlated_cz_noise_channel_per_cz_layer():
     """Issue #796: the noisy Steane init kernel emits one correlated two-qubit
     Pauli channel for every CZ layer; the clean kernel emits none.
     """
-    from kirin.dialects import func
-
     from bloqade.lanes.noise_model import generate_logical_noise_model
 
     clean, noisy = generate_logical_noise_model().get_logical_initialize()
     assert clean is not None and noisy is not None
 
-    def callee_counts(method):
-        counts: dict[str, int] = {}
+    def noise_counts(method):
+        counts = {}
         for stmt in method.callable_region.walk():
-            if isinstance(stmt, func.Invoke):
-                name = getattr(stmt.callee, "sym_name", None)
-                if name is not None:
-                    counts[name] = counts.get(name, 0) + 1
+            counts[stmt.name] = counts.get(stmt.name, 0) + 1
+            
         return counts
 
-    noisy_counts = callee_counts(noisy)
-    clean_counts = callee_counts(clean)
-
-    n_cz = noisy_counts.get("cz", 0)
-    assert n_cz > 0, "expected CZ layers in the Steane init kernel"
+    noisy_counts = noise_counts(noisy)
+    clean_counts = noise_counts(clean)
+    
+    assert (n_cz := noisy_counts.get("cz", 0)) > 0, "expected CZ layers in the Steane init kernel"
 
     # One correlated CZ noise channel per CZ layer (issue #796).
     assert noisy_counts.get("two_qubit_pauli_channel", 0) == n_cz
@@ -226,8 +220,7 @@ def test_noisy_init_cz_noise_channel_uses_model_paired_probabilities():
     channels = [
         stmt
         for stmt in noisy.callable_region.walk()
-        if isinstance(stmt, func.Invoke)
-        and getattr(stmt.callee, "sym_name", None) == "two_qubit_pauli_channel"
+        if stmt.name == "two_qubit_pauli_channel"
     ]
     assert channels, "no correlated CZ noise channel found in noisy init kernel"
 
