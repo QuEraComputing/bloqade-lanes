@@ -258,3 +258,100 @@ def test_move_to_placements_produces_user_moved():
     assert out.layout == (LocationAddress(1, 0), LocationAddress(2, 0))
     assert out.accumulated_move_layers == out.move_layers
     assert len(out.move_layers) > 0
+
+
+# ── Spurious CZ prevention (Review finding 2) ─────────────────────────
+#
+# The CZ pulse fires globally on every entangling-pair site in an active
+# zone. When ``_layout_satisfies_cz`` takes its no-move fast-path it must
+# verify not only that the participating (control, target) pairs sit at
+# valid partner sites, but also that no OTHER qubit in ``state.layout``
+# (nor any address in ``state.occupied``) also sits on a partner pair —
+# otherwise the emitted CZ silently entangles unintended atoms.
+
+
+def _entangling_pair(arch) -> tuple[LocationAddress, LocationAddress]:
+    """Find any (loc, cz_partner) pair on the given arch."""
+    for w in range(len(arch.words)):
+        for s in range(len(arch.words[w].site_indices)):
+            loc = LocationAddress(w, s)
+            partner = arch.get_cz_partner(loc)
+            if partner is not None:
+                return loc, partner
+    raise AssertionError("arch has no CZ partner pair")
+
+
+def _second_entangling_pair(
+    arch, exclude: tuple[LocationAddress, LocationAddress]
+) -> tuple[LocationAddress, LocationAddress] | None:
+    """Find another (loc, cz_partner) pair on the arch disjoint from ``exclude``."""
+    exclude_set = set(exclude)
+    for w in range(len(arch.words)):
+        for s in range(len(arch.words[w].site_indices)):
+            loc = LocationAddress(w, s)
+            if loc in exclude_set:
+                continue
+            partner = arch.get_cz_partner(loc)
+            if partner is None or partner in exclude_set:
+                continue
+            return loc, partner
+    return None
+
+
+def test_cz_fast_path_rejects_spurious_layout_partner_pair():
+    """``_layout_satisfies_cz`` currently only checks the participating pairs.
+    If any non-participating qubit in ``state.layout`` also sits at a CZ
+    partner site of another non-participating qubit, the global CZ pulse
+    would entangle them too. Reject with bottom (or diagnose loudly) rather
+    than emit a silently over-broad CZ."""
+    from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
+
+    strategy = make_physical_placement_strategy(return_moves=False)
+    arch = strategy.arch_spec
+    pair_a = _entangling_pair(arch)
+    pair_b = _second_entangling_pair(arch, pair_a)
+    assert pair_b is not None, "test arch has no second CZ partner pair"
+
+    # qubit 0/1 are the participating pair (already at partners); qubit 2/3
+    # are non-participating but happen to also sit at partner sites — a
+    # global CZ would entangle them unintentionally.
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(pair_a[0], pair_a[1], pair_b[0], pair_b[1]),
+        move_count=(0, 0, 0, 0),
+    )
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert out == AtomState.bottom(), (
+        "cz_placements fast-path emitted a CZ while a non-participating pair "
+        "(qubits 2 and 3) also sat at valid partner sites — the global CZ "
+        "pulse would entangle them. Analysis must either reject or expand "
+        "the participating set."
+    )
+
+
+def test_cz_fast_path_rejects_spurious_occupied_partner_pair():
+    """Same concern via ``state.occupied``: an external atom sitting on a
+    CZ partner site of a participating qubit (or of another external atom)
+    would still receive the global CZ pulse. The fast-path must consult
+    ``occupied`` before emitting a zero-move CZ."""
+    from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
+
+    strategy = make_physical_placement_strategy(return_moves=False)
+    arch = strategy.arch_spec
+    pair_a = _entangling_pair(arch)
+    pair_b = _second_entangling_pair(arch, pair_a)
+    assert pair_b is not None, "test arch has no second CZ partner pair"
+
+    # Participating pair (0, 1) at pair_a; external atoms at pair_b — a
+    # global CZ would still fire on them.
+    state = ConcreteState(
+        occupied=frozenset({pair_b[0], pair_b[1]}),
+        layout=(pair_a[0], pair_a[1]),
+        move_count=(0, 0),
+    )
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert out == AtomState.bottom(), (
+        "cz_placements fast-path emitted a CZ while ``state.occupied`` held "
+        "atoms at partner-pair sites — the global CZ pulse would entangle "
+        "them. Analysis must consult ``occupied`` before taking the fast-path."
+    )

@@ -272,3 +272,134 @@ def test_palindrome_sq_placements_user_moved_preserves_state():
     )
     result = strat.sq_placements(um, qubits=(0,))
     assert result is um  # UserMoved preserved so CZ can see accumulated move layers
+
+
+# --- Regression: UserMoved must survive an intervening relabel-only Permute
+# under palindrome, so the CZ that commits the segment still palindromes back
+# through the user moves (Review finding 1). ------------------------------
+
+
+def test_palindrome_permute_relabel_preserves_user_moved_history():
+    """Under palindrome, ``permute(insert_moves=False)`` on a ``UserMoved`` input
+    must not drop the user-move history: the next CZ has to palindrome the
+    atoms all the way home to ``pre_user_layout``, not to the mid-segment
+    permuted layout.
+
+    Currently ``permute_placements`` returns a bare ``ConcreteState`` when the
+    input is ``UserMoved``, silently dropping ``accumulated_move_layers`` and
+    ``pre_user_layout``. That makes the palindrome return skip the user MoveTo
+    reverse leg — atoms end up physically at the moved position while analysis
+    believes they returned to the permuted layout.
+    """
+    from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
+
+    inner = _make_strategy()
+    strat = PalindromePlacementStrategy(inner=inner)
+
+    home_layout = (_loc(0, 0, 0), _loc(0, 2, 0), _loc(0, 4, 0))
+
+    # User moves qubit 2 to word 6, then relabel-swaps qubits 0/1. Both qubits
+    # 0/1 stay at their home slots physically; the relabel is just a reference
+    # permutation. The pending physical MoveTo of qubit 2 must survive.
+    um = strat.move_to_placements(
+        _concrete(home_layout), qubits=(2,), locations=(_loc(0, 6, 0),)
+    )
+    assert isinstance(um, UserMoved)
+    accumulated = um.accumulated_move_layers
+    pre_user = um.pre_user_layout
+
+    permuted = strat.permute_placements(
+        um, qubits=(0, 1), permutation=(1, 0), insert_moves=False
+    )
+
+    # The user-move history must not be lost. Either the permute preserves
+    # UserMoved (with the same accumulated layers + home) or it rejects the
+    # combination outright — a silent downgrade to plain ConcreteState is
+    # incorrect under palindrome.
+    assert isinstance(permuted, UserMoved), (
+        "permute(relabel-only) on UserMoved under palindrome dropped user-move "
+        "history to a plain ConcreteState; palindrome return will skip the "
+        "MoveTo reverse leg."
+    )
+    assert permuted.accumulated_move_layers == accumulated
+    assert permuted.pre_user_layout == pre_user
+
+
+def test_palindrome_cz_after_permute_after_move_to_returns_all_the_way_home():
+    """End-to-end analysis check for the same composition: after MoveTo then
+    ``permute(insert_moves=False)`` then CZ, the resulting ``ExecuteCZReturn``
+    must carry the original user moves and set ``initial_layout`` to the
+    pre-MoveTo home. Otherwise the palindrome return is a no-op for the user
+    leg and atoms are stranded at their moved positions."""
+    from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
+    from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
+
+    inner = _make_strategy()
+    strat = PalindromePlacementStrategy(inner=inner)
+
+    home_layout = (_loc(0, 0, 0), _loc(0, 2, 0))
+
+    # MoveTo qubit 1 → word 1 (the CZ partner of word 0), then relabel-swap.
+    um = strat.move_to_placements(
+        _concrete(home_layout), qubits=(1,), locations=(_loc(0, 1, 0),)
+    )
+    assert isinstance(um, UserMoved)
+    user_moves = um.accumulated_move_layers
+
+    permuted = strat.permute_placements(
+        um, qubits=(0, 1), permutation=(1, 0), insert_moves=False
+    )
+
+    result = strat.cz_placements(permuted, controls=(0,), targets=(1,))
+    assert isinstance(result, ExecuteCZReturn)
+    assert result.user_move_layers == user_moves, (
+        "ExecuteCZReturn lost the user-move history across an intervening "
+        "relabel Permute; palindrome return will not unwind the MoveTo."
+    )
+    assert result.initial_layout == home_layout, (
+        "ExecuteCZReturn.initial_layout should be the pre-MoveTo home, not "
+        "the mid-segment permuted layout."
+    )
+
+
+# --- Regression: MoveTo/permute destination collisions must return bottom,
+# not raise AssertionError from ConcreteState.__post_init__
+# (Review findings 3 and 4). ----------------------------------------------
+
+
+def test_move_to_placements_target_in_occupied_returns_bottom():
+    """A MoveTo whose destination overlaps ``state.occupied`` (an external atom
+    outside the static circuit) must be rejected as a placement conflict —
+    returning ``AtomState.bottom()`` — rather than tripping the ConcreteState
+    invariant that ``layout`` and ``occupied`` are disjoint."""
+    strat = _make_strategy()
+    external = _loc(0, 4, 0)
+    layout = (_loc(0, 0, 0), _loc(0, 2, 0))
+    state = ConcreteState(
+        occupied=frozenset({external}),
+        layout=layout,
+        move_count=(0, 0),
+    )
+    result = strat.move_to_placements(state, qubits=(0,), locations=(external,))
+    assert result == AtomState.bottom()
+
+
+def test_move_to_placements_duplicate_destinations_returns_bottom():
+    """A MoveTo call that names the same destination for two moving qubits
+    would place two atoms at the same slot. The placement analysis must reject
+    this cleanly (bottom) rather than assert-fail inside ConcreteState."""
+    strat = _make_strategy()
+    layout = (_loc(0, 0, 0), _loc(0, 2, 0))
+    state = _concrete(layout)
+    dup = _loc(0, 4, 0)
+    result = strat.move_to_placements(state, qubits=(0, 1), locations=(dup, dup))
+    assert result == AtomState.bottom()
+
+
+# NOTE: There is no permute analog for the ``occupied``-overlap MoveTo test.
+# ``permute_placements`` derives destinations exclusively from ``state.layout``
+# (via ``_resolve_permute_locations``), and ``ConcreteState.__post_init__``
+# asserts ``layout`` is disjoint from ``occupied``, so the collision is
+# unreachable by construction. Duplicate destinations are likewise unreachable
+# because ``circuit2place.rewrite_Permute`` validates ``perm`` is a true
+# permutation before placement analysis sees it.
