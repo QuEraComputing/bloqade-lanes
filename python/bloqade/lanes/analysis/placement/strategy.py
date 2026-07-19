@@ -266,6 +266,26 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
 
         if not insert_moves:
             # Lazy relabel: permute the layout (references) only, emit no moves.
+            if isinstance(state, UserMoved):
+                # Preserve the user-move history through the relabel: the
+                # accumulated physical layers are lane-indexed and unchanged,
+                # but pre_user_layout is qubit-id indexed and must permute
+                # alongside layout so the palindrome return maps each qubit id
+                # to the correct home slot for the atom it now denotes.
+                pre_user_values = _resolve_permute_locations(
+                    state.pre_user_layout, qubits, permutation
+                )
+                permuted_pre_user = list(state.pre_user_layout)
+                for qubit_idx, source_val in zip(qubits, pre_user_values):
+                    permuted_pre_user[qubit_idx] = source_val
+                return UserMoved(
+                    occupied=state.occupied,
+                    layout=tuple(relabeled_layout),
+                    move_count=state.move_count,
+                    move_layers=(),  # relabel adds no physical moves here
+                    accumulated_move_layers=state.accumulated_move_layers,
+                    pre_user_layout=tuple(permuted_pre_user),
+                )
             return ConcreteState(
                 occupied=state.occupied,
                 layout=tuple(relabeled_layout),

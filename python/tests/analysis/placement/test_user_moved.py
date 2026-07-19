@@ -282,14 +282,19 @@ def test_palindrome_sq_placements_user_moved_preserves_state():
 def test_palindrome_permute_relabel_preserves_user_moved_history():
     """Under palindrome, ``permute(insert_moves=False)`` on a ``UserMoved`` input
     must not drop the user-move history: the next CZ has to palindrome the
-    atoms all the way home to ``pre_user_layout``, not to the mid-segment
-    permuted layout.
+    atoms all the way home, not stop at the mid-segment permuted layout.
 
     Currently ``permute_placements`` returns a bare ``ConcreteState`` when the
     input is ``UserMoved``, silently dropping ``accumulated_move_layers`` and
     ``pre_user_layout``. That makes the palindrome return skip the user MoveTo
     reverse leg — atoms end up physically at the moved position while analysis
     believes they returned to the permuted layout.
+
+    The relabel does not move atoms and it does not add lane-indexed physical
+    moves, so ``accumulated_move_layers`` is preserved verbatim. But
+    ``pre_user_layout`` is qubit-id indexed, so it must be permuted the same
+    way ``layout`` is — otherwise the qubit-id-to-atom mapping after palindrome
+    return would be inconsistent with the relabel.
     """
     from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
 
@@ -298,31 +303,31 @@ def test_palindrome_permute_relabel_preserves_user_moved_history():
 
     home_layout = (_loc(0, 0, 0), _loc(0, 2, 0), _loc(0, 4, 0))
 
-    # User moves qubit 2 to word 6, then relabel-swaps qubits 0/1. Both qubits
-    # 0/1 stay at their home slots physically; the relabel is just a reference
+    # User moves qubit 2 to word 6, then relabel-swaps qubits 0/1. Qubits 0/1
+    # stay at their home slots physically; the relabel is just a reference
     # permutation. The pending physical MoveTo of qubit 2 must survive.
     um = strat.move_to_placements(
         _concrete(home_layout), qubits=(2,), locations=(_loc(0, 6, 0),)
     )
     assert isinstance(um, UserMoved)
     accumulated = um.accumulated_move_layers
-    pre_user = um.pre_user_layout
 
     permuted = strat.permute_placements(
         um, qubits=(0, 1), permutation=(1, 0), insert_moves=False
     )
 
-    # The user-move history must not be lost. Either the permute preserves
-    # UserMoved (with the same accumulated layers + home) or it rejects the
-    # combination outright — a silent downgrade to plain ConcreteState is
-    # incorrect under palindrome.
+    # The user-move history must not be lost. A silent downgrade to plain
+    # ConcreteState is incorrect under palindrome — the next CZ would not
+    # unwind the MoveTo.
     assert isinstance(permuted, UserMoved), (
         "permute(relabel-only) on UserMoved under palindrome dropped user-move "
         "history to a plain ConcreteState; palindrome return will skip the "
         "MoveTo reverse leg."
     )
     assert permuted.accumulated_move_layers == accumulated
-    assert permuted.pre_user_layout == pre_user
+    # pre_user_layout is qubit-id indexed and must permute with the layout:
+    # qubits 0/1 swap, qubit 2 unaffected.
+    assert permuted.pre_user_layout == (home_layout[1], home_layout[0], home_layout[2])
 
 
 def test_palindrome_cz_after_permute_after_move_to_returns_all_the_way_home():
@@ -356,9 +361,11 @@ def test_palindrome_cz_after_permute_after_move_to_returns_all_the_way_home():
         "ExecuteCZReturn lost the user-move history across an intervening "
         "relabel Permute; palindrome return will not unwind the MoveTo."
     )
-    assert result.initial_layout == home_layout, (
-        "ExecuteCZReturn.initial_layout should be the pre-MoveTo home, not "
-        "the mid-segment permuted layout."
+    # initial_layout is qubit-id indexed and must reflect the intervening
+    # relabel — atoms return to home physically, but qubits 0/1 swap labels.
+    assert result.initial_layout == (home_layout[1], home_layout[0]), (
+        "ExecuteCZReturn.initial_layout should be the pre-MoveTo home with "
+        "qubit references permuted to match the intervening relabel Permute."
     )
 
 
