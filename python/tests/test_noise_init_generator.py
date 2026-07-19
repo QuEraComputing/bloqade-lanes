@@ -1,5 +1,6 @@
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 
+
 class MinimalNoise(NoiseModelABC):
     """Minimal concrete subclass for testing the ABC default."""
 
@@ -181,13 +182,15 @@ def test_noisy_init_adds_correlated_cz_noise_channel_per_cz_layer():
         counts = {}
         for stmt in method.callable_region.walk():
             counts[stmt.name] = counts.get(stmt.name, 0) + 1
-            
+
         return counts
 
     noisy_counts = noise_counts(noisy)
     clean_counts = noise_counts(clean)
-    
-    assert (n_cz := noisy_counts.get("cz", 0)) > 0, "expected CZ layers in the Steane init kernel"
+
+    assert (
+        n_cz := noisy_counts.get("cz", 0)
+    ) > 0, "expected CZ layers in the Steane init kernel"
 
     # One correlated CZ noise channel per CZ layer (issue #796).
     assert noisy_counts.get("two_qubit_pauli_channel", 0) == n_cz
@@ -204,7 +207,6 @@ def test_noisy_init_cz_noise_channel_uses_model_paired_probabilities():
 
     import pytest
     from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
-    from kirin.dialects import func
     from kirin.dialects.py.constant import Constant
 
     from bloqade.lanes.noise_model import PAIRED_KEYS, generate_logical_noise_model
