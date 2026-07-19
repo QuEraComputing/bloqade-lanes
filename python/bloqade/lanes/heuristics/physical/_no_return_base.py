@@ -201,20 +201,16 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
-        # A global CZ pulse fires on every entangling-pair site in an active
-        # CZ zone. If a non-participating atom (in layout or occupied) sits at
-        # a partner site whose partner is also occupied, the pulse would
-        # entangle them too — regardless of what moves the solver plans for
-        # the participating pairs. Reject up front rather than emitting a
-        # silently-broader CZ.
-        if self._has_spurious_partner_pair(state, controls, targets):
-            return AtomState.bottom()
-
         # If the current layout already places every CZ pair at valid
         # entangling partner sites (e.g. the user staged them there with
         # move_to / permute), the solver would needlessly relocate the
-        # atoms to its own generated target. Emit the CZ in place instead.
+        # atoms to its own generated target. Emit the CZ in place instead —
+        # provided no non-participating atom sits at a partner site whose
+        # partner is also occupied, since the global CZ pulse would entangle
+        # those bystanders too.
         if self._layout_satisfies_cz(state, controls, targets):
+            if self._has_spurious_partner_pair(state, controls, targets):
+                return AtomState.bottom()
             return ExecuteCZ(
                 occupied=state.occupied,
                 layout=state.layout,
@@ -255,6 +251,17 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
             mc + int(src != dst)
             for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
         )
+
+        # Reject if the solver's output layout has a bystander pair at CZ
+        # partner sites — same reasoning as the fast-path check, applied to
+        # the routed layout the CZ pulse actually acts on.
+        goal_state = ConcreteState(
+            occupied=state.occupied,
+            layout=goal_layout,
+            move_count=move_count,
+        )
+        if self._has_spurious_partner_pair(goal_state, controls, targets):
+            return AtomState.bottom()
 
         return ExecuteCZ(
             occupied=state.occupied,
