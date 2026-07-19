@@ -221,7 +221,7 @@ def generate_logical_noise_model(
         sit_loss_prob=noise_model.sit_loss_prob,
         cz_errors=cz_paired_error_probabilities,
         cz_paired_loss=noise_model.cz_gate_loss_prob,
-        cz_unpaired_loss=noise_model.cz_gate_loss_prob,
+        cz_unpaired_loss=noise_model.cz_unpaired_loss_prob,
         loss=loss,
     )
 

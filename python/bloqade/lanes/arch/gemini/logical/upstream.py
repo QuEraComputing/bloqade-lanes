@@ -293,7 +293,7 @@ def steane7_initialize_with_noise(
 
         debug.info("End Steane7 Noisy Initialize")
 
-    AggressiveUnroll(squin.kernel).fixpoint(noisy_initialize_broadcast)
+    AggressiveUnroll(noisy_initialize_broadcast.dialects).fixpoint(noisy_initialize_broadcast)
     return steane7_initialize_broadcast, noisy_initialize_broadcast
 
 
