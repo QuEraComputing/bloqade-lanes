@@ -167,6 +167,27 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
                 return False
         return True
 
+    def _has_spurious_partner_pair(
+        self,
+        state: ConcreteState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> bool:
+        """True iff some non-participating atom (in ``state.layout`` or
+        ``state.occupied``) sits at a CZ partner site whose partner is also
+        occupied — a global CZ pulse would then entangle them alongside the
+        intended pairs."""
+        participants: set[LocationAddress] = set()
+        for control, target in zip(controls, targets):
+            participants.add(state.layout[control])
+            participants.add(state.layout[target])
+        all_atoms = set(state.layout) | set(state.occupied)
+        for loc in all_atoms - participants:
+            partner = self.arch_spec.get_cz_partner(loc)
+            if partner is not None and partner in all_atoms:
+                return True
+        return False
+
     def cz_placements(
         self,
         state: AtomState,
@@ -179,6 +200,15 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
+
+        # A global CZ pulse fires on every entangling-pair site in an active
+        # CZ zone. If a non-participating atom (in layout or occupied) sits at
+        # a partner site whose partner is also occupied, the pulse would
+        # entangle them too — regardless of what moves the solver plans for
+        # the participating pairs. Reject up front rather than emitting a
+        # silently-broader CZ.
+        if self._has_spurious_partner_pair(state, controls, targets):
+            return AtomState.bottom()
 
         # If the current layout already places every CZ pair at valid
         # entangling partner sites (e.g. the user staged them there with
