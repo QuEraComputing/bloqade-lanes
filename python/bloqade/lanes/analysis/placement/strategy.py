@@ -187,9 +187,18 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
-        # Occupancy check: destinations must not be held by unmoved qubits.
+        # Occupancy check: reject any request that would produce an invalid
+        # target layout (which ConcreteState's __post_init__ would otherwise
+        # assert on). Three ways to invalidate:
+        #   1. two moved qubits mapped to the same destination,
+        #   2. destination overlaps an external atom in state.occupied,
+        #   3. destination held by an unmoved qubit.
+        if len(set(locations)) != len(locations):
+            return AtomState.bottom()
         moved_set = set(qubits)
         for dest in locations:
+            if dest in state.occupied:
+                return AtomState.bottom()
             for idx, current_loc in enumerate(state.layout):
                 if current_loc == dest and idx not in moved_set:
                     return AtomState.bottom()
