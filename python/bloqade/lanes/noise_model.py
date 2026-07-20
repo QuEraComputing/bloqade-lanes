@@ -205,7 +205,7 @@ def generate_logical_noise_model(
     cz_paired_error_probabilities = ilist.IList(
         [cz_paired_error_dict.get(k, 0.0) for k in PAIRED_KEYS]
     )
-    
+
     clean_init, noisy_init = steane7_initialize_with_noise(
         local_px=local_px,
         local_py=local_py,

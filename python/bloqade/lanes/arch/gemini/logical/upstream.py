@@ -160,6 +160,9 @@ def steane7_initialize_with_noise(
         sitter_py: Y-error probability for stationary qubits during CZ.
         sitter_pz: Z-error probability for stationary qubits during CZ.
         sit_loss_prob: Loss probability for stationary qubits during CZ.
+        cz_unpaired_gate_px: X-error probability for unpaired qubits during CZ.
+        cz_unpaired_gate_py: Y-error probability for unpaired qubits during CZ.
+        cz_unpaired_gate_pz: Z-error probability for unpaired qubits during CZ.
         cz_errors: Sequence of 15 two-qubit Pauli error probabilities applied
             after each CZ (excluding the identity ``II`` term). Must have
             length exactly 15; defaults to all zeros. Ordering follows
@@ -246,11 +249,12 @@ def steane7_initialize_with_noise(
             squin.broadcast.single_qubit_pauli_channel(
                 mover_px, mover_py, mover_pz, movers
             )
+
             def pair_qubit(i: int):
                 return ilist.IList([movers[i], sitters[i]])
-            
+
             groups = ilist.map(pair_qubit, ilist.range(len(movers)))
-            
+
             if loss:
                 squin.broadcast.qubit_loss(cz_unpaired_loss, others)
                 squin.broadcast.correlated_qubit_loss(cz_paired_loss, groups)
