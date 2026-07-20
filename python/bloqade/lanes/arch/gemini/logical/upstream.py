@@ -107,6 +107,20 @@ def steane7_initialize(
     )
 
 
+M = TypeVar("M")
+T = TypeVar("T")
+
+
+@squin.kernel
+def kirin_zip(
+    lhs: ilist.IList[T, M], rhs: ilist.IList[T, M]
+) -> ilist.IList[ilist.IList[T, Literal[2]], M]:
+    def _pair(idx: int):
+        return ilist.IList([lhs[idx], rhs[idx]])
+
+    return ilist.map(_pair, ilist.range(len(lhs)))
+
+
 # TODO: make this a class instead of a huge list
 def steane7_initialize_with_noise(
     local_px: float = 0.0,
@@ -185,8 +199,6 @@ def steane7_initialize_with_noise(
 
     cz_errors_ilist = ilist.IList(cz_errors)
 
-    M = TypeVar("M")
-
     @squin.kernel
     def noisy_initialize_broadcast(
         theta: ilist.IList[float, N],
@@ -198,19 +210,18 @@ def steane7_initialize_with_noise(
         num_rows = len(qubits)
         num_cols = len(qubits[0])
 
-        def _new_row(j: int):
-            def _get(i: int):
-                return qubits[i][j]
+        def get_cols_flattened(indices: ilist.IList[int, Any]):
+            def _get_and_reduce_columns(
+                cumulant: ilist.IList[qubit.Qubit, Any], i: int
+            ):
+                def _get_col_in_row(j: int):
+                    return qubits[j][i]
 
-            return ilist.map(_get, ilist.range(num_rows))
+                return cumulant + ilist.map(_get_col_in_row, ilist.range(num_rows))
 
-        qubits_t = ilist.map(_new_row, ilist.range(num_cols))
-
-        def get_rows(indices: ilist.IList[int, Any]):
-            def _inner(cumulant, i: int):
-                return cumulant + qubits_t[i]
-
-            return ilist.foldl(_inner, indices, ilist.IList([], elem=qubit.QubitType))
+            return ilist.foldl(
+                _get_and_reduce_columns, indices, ilist.IList([], elem=qubit.QubitType)
+            )
 
         def not_in(max: int, indices: ilist.IList[int, Any]):
             def _in(acc: ilist.IList[int, Any], ele: int):
@@ -223,10 +234,10 @@ def steane7_initialize_with_noise(
 
         def cz_w_noise(mover_ids: ilist.IList[int, M], sitter_ids: ilist.IList[int, M]):
             rest = not_in(num_cols, mover_ids + sitter_ids)
-            movers = get_rows(mover_ids)
-            cz_sitters = get_rows(sitter_ids)
-            sitters = get_rows(sitter_ids + rest)
-            others = get_rows(rest)
+            movers = get_cols_flattened(mover_ids)
+            cz_sitters = get_cols_flattened(sitter_ids)
+            sitters = get_cols_flattened(sitter_ids + rest)
+            others = get_cols_flattened(rest)
             squin.broadcast.single_qubit_pauli_channel(
                 sitter_px, sitter_py, sitter_pz, sitters
             )
@@ -250,19 +261,16 @@ def steane7_initialize_with_noise(
                 mover_px, mover_py, mover_pz, movers
             )
 
-            def pair_qubit(i: int):
-                return ilist.IList([movers[i], sitters[i]])
-
-            groups = ilist.map(pair_qubit, ilist.range(len(movers)))
-
             if loss:
                 squin.broadcast.qubit_loss(cz_unpaired_loss, others)
-                squin.broadcast.correlated_qubit_loss(cz_paired_loss, groups)
+                squin.broadcast.correlated_qubit_loss(
+                    cz_paired_loss, kirin_zip(movers, sitters)
+                )
                 squin.broadcast.qubit_loss(sit_loss_prob, sitters)
                 squin.broadcast.qubit_loss(move_loss_prob, movers)
 
         def gate_with_noise(indices: ilist.IList[int, Any], gate):
-            qubits = get_rows(indices)
+            qubits = get_cols_flattened(indices)
             gate(qubits)
             squin.broadcast.single_qubit_pauli_channel(
                 local_px, local_py, local_pz, qubits
@@ -273,7 +281,7 @@ def steane7_initialize_with_noise(
         debug.info("Begin Steane7 Noisy Initialize")
 
         # U3 on column 6
-        col6 = get_rows(ilist.IList([6]))
+        col6 = get_cols_flattened(ilist.IList([6]))
 
         for i in range(len(theta)):
             squin.u3(theta[i], phi[i], lam[i], qubits[i][6])
@@ -313,7 +321,7 @@ def steane7_initialize_with_noise(
     AggressiveUnroll(noisy_initialize_broadcast.dialects).fixpoint(
         noisy_initialize_broadcast
     )
-    # noisy_initialize_broadcast.print()
+    noisy_initialize_broadcast.print()
     return steane7_initialize_broadcast, noisy_initialize_broadcast
 
 
