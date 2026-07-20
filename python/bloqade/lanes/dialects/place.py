@@ -14,6 +14,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteCZ,
     MoveToPlacementStrategyABC,
     PlacementAnalysis,
+    PlacementError,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.types import StateType
@@ -313,9 +314,11 @@ class PlacementMethods(interp.MethodTable):
     ):
         strategy = _interp.placement_strategy
         if not isinstance(strategy, MoveToPlacementStrategyABC):
-            # Strategy does not support user-directed movement; mark the path
-            # infeasible rather than calling an unavailable interface.
-            return (AtomState.bottom(),)
+            raise PlacementError(
+                f"placement strategy {type(strategy).__name__} does not support "
+                "user-directed movement (not a MoveToPlacementStrategyABC), but "
+                "the circuit contains a move_to statement"
+            )
         state = frame.get(stmt.state_before)
         if not isinstance(state, ConcreteState):
             return (state,)
@@ -331,8 +334,11 @@ class PlacementMethods(interp.MethodTable):
     ):
         strategy = _interp.placement_strategy
         if not isinstance(strategy, MoveToPlacementStrategyABC):
-            # Strategy does not support user-directed movement.
-            return (AtomState.bottom(),)
+            raise PlacementError(
+                f"placement strategy {type(strategy).__name__} does not support "
+                "user-directed movement (not a MoveToPlacementStrategyABC), but "
+                "the circuit contains a permute statement"
+            )
         state = frame.get(stmt.state_before)
         if not isinstance(state, ConcreteState):
             return (state,)

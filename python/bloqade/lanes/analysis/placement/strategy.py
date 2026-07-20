@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
+from .exceptions import PlacementError
 from .lattice import (
     AtomState,
     ConcreteState,
@@ -104,7 +105,10 @@ class PlacementStrategyABC(abc.ABC):
         if not isinstance(state, ConcreteState):
             return state
         if len(qubits) != len(state.layout):
-            return AtomState.bottom()  # all qubits must be measured
+            raise PlacementError(
+                f"terminal measurement must measure all {len(state.layout)} "
+                f"qubits in the block, got {len(qubits)}"
+            )
         return ExecuteMeasure(
             occupied=state.occupied,
             layout=state.layout,
@@ -194,14 +198,20 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
         #   2. destination overlaps an external atom in state.occupied,
         #   3. destination held by an unmoved qubit.
         if len(set(locations)) != len(locations):
-            return AtomState.bottom()
+            raise PlacementError(
+                f"move_to maps multiple qubits to the same destination: {locations}"
+            )
         moved_set = set(qubits)
         for dest in locations:
             if dest in state.occupied:
-                return AtomState.bottom()
+                raise PlacementError(
+                    f"move_to destination {dest} is occupied by an external atom"
+                )
             for idx, current_loc in enumerate(state.layout):
                 if current_loc == dest and idx not in moved_set:
-                    return AtomState.bottom()
+                    raise PlacementError(
+                        f"move_to destination {dest} is held by unmoved qubit {idx}"
+                    )
 
         new_layout = list(state.layout)
         for qubit_idx, dest in zip(qubits, locations):
@@ -214,8 +224,11 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
 
         try:
             new_layers = self.compute_moves(state, target_state)
-        except RuntimeError:
-            return AtomState.bottom()  # synthesizer failure
+        except RuntimeError as exc:
+            raise PlacementError(
+                f"move synthesizer could not route qubits {qubits} to {locations}: "
+                f"{exc}"
+            ) from exc
 
         # Accumulate across consecutive MoveTo calls in the same segment.
         if isinstance(state, UserMoved):
@@ -262,12 +275,18 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
         locations = _resolve_permute_locations(state.layout, qubits, permutation)
 
         # Occupancy check: destinations must not be held by unmoved qubits. In a
-        # permutation every destination is held by a moving qubit, so this passes.
+        # permutation every destination is held by a moving qubit, so this is
+        # only reachable via malformed input (``permutation`` is not a genuine
+        # permutation of ``qubits``).
         moved_set = set(qubits)
         for dest in locations:
             for idx, current_loc in enumerate(state.layout):
                 if current_loc == dest and idx not in moved_set:
-                    return AtomState.bottom()
+                    raise PlacementError(
+                        f"permute destination {dest} is held by unmoved qubit "
+                        f"{idx}; permutation {permutation} of qubits {qubits} is "
+                        "not a valid permutation"
+                    )
 
         relabeled_layout = list(state.layout)
         for qubit_idx, dest in zip(qubits, locations):
@@ -311,8 +330,11 @@ class MoveToPlacementStrategyABC(PlacementStrategyABC):
         )
         try:
             move_layers = self.compute_moves(state, target_state)
-        except RuntimeError:
-            return AtomState.bottom()  # synthesizer failure
+        except RuntimeError as exc:
+            raise PlacementError(
+                f"move synthesizer could not route the committed permutation "
+                f"{permutation} of qubits {qubits}: {exc}"
+            ) from exc
         return Permuted(
             occupied=state.occupied,
             layout=state.layout,
@@ -342,8 +364,13 @@ class SingleZonePlacementStrategyABC(MoveToPlacementStrategyABC):
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
         _ = lookahead_cz_layers
-        if len(controls) != len(targets) or state == AtomState.bottom():
+        if state == AtomState.bottom():
             return AtomState.bottom()
+        if len(controls) != len(targets):
+            raise PlacementError(
+                f"CZ has mismatched control/target counts: "
+                f"{len(controls)} controls, {len(targets)} targets"
+            )
         state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
@@ -466,7 +493,11 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
             # Under palindrome, a user-move is only committed by a following CZ
             # (stage + return). Reaching a measurement with a pending user-move
             # is invalid. (The base strategy concretises it instead.)
-            return AtomState.bottom()
+            raise PlacementError(
+                "PalindromePlacementStrategy reached a measurement with a "
+                "pending user-directed move; under palindrome a user-move must "
+                "be committed by a following CZ, not a measurement"
+            )
         return self.inner.measure_placements(self._unwrap(state), qubits)
 
     def compute_moves(
@@ -490,7 +521,12 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
         # Palindrome supports MoveTo only when its inner does; otherwise the
         # segment is infeasible for user-directed movement.
         if not isinstance(self.inner, MoveToPlacementStrategyABC):
-            return AtomState.bottom()
+            raise PlacementError(
+                f"PalindromePlacementStrategy inner strategy "
+                f"{type(self.inner).__name__} does not support user-directed "
+                "movement (not a MoveToPlacementStrategyABC), but a move_to was "
+                "requested"
+            )
         return self.inner.move_to_placements(self._unwrap(state), qubits, locations)
 
     def permute_placements(
@@ -514,7 +550,12 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
                 "placement strategy, or the default relabel-only permute."
             )
         if not isinstance(self.inner, MoveToPlacementStrategyABC):
-            return AtomState.bottom()
+            raise PlacementError(
+                f"PalindromePlacementStrategy inner strategy "
+                f"{type(self.inner).__name__} does not support user-directed "
+                "movement (not a MoveToPlacementStrategyABC), but a permute was "
+                "requested"
+            )
         return self.inner.permute_placements(
             self._unwrap(state), qubits, permutation, insert_moves=False
         )

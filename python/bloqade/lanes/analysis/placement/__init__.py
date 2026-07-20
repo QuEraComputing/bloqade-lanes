@@ -1,6 +1,9 @@
 from .analysis import (
     PlacementAnalysis as PlacementAnalysis,
 )
+from .exceptions import (
+    PlacementError as PlacementError,
+)
 from .lattice import (
     AtomState as AtomState,
     ConcreteState as ConcreteState,

@@ -1,7 +1,9 @@
 """Tests for UserMoved lattice element and ExecuteCZReturn user_move_layers extension."""
 
+import pytest
+
+from bloqade.lanes.analysis.placement.exceptions import PlacementError
 from bloqade.lanes.analysis.placement.lattice import (
-    AtomState,
     ConcreteState,
     ExecuteCZReturn,
     ExecuteMeasure,
@@ -60,7 +62,7 @@ def test_move_to_placements_returns_user_moved():
     assert result.accumulated_move_layers == result.move_layers
 
 
-def test_move_to_placements_occupancy_conflict_returns_bottom():
+def test_move_to_placements_occupancy_conflict_raises():
     strat = _make_strategy()
     layout = (
         _loc(0, 0, 0),
@@ -69,8 +71,8 @@ def test_move_to_placements_occupancy_conflict_returns_bottom():
     state = _concrete(layout)
     # Try to move qubit 0 into qubit 1's current slot — conflict
     dest = _loc(0, 2, 0)
-    result = strat.move_to_placements(state, qubits=(0,), locations=(dest,))
-    assert result == AtomState.bottom()
+    with pytest.raises(PlacementError, match="held by unmoved qubit"):
+        strat.move_to_placements(state, qubits=(0,), locations=(dest,))
 
 
 def test_sq_placements_user_moved_strips_to_concrete_state():
@@ -105,7 +107,7 @@ def test_measure_placements_user_moved_concretizes():
     assert result.layout == layout
 
 
-def test_palindrome_measure_placements_user_moved_returns_bottom():
+def test_palindrome_measure_placements_user_moved_raises():
     """Under PalindromePlacementStrategy a user-move must NOT reach a
     measurement: only a CZ commits a user-move (palindrome stage + return), so
     a UserMoved at measurement is invalid."""
@@ -117,8 +119,8 @@ def test_palindrome_measure_placements_user_moved_returns_bottom():
         accumulated_move_layers=((_lane(0, 0, 0),),),
         pre_user_layout=layout,
     )
-    result = strat.measure_placements(um, qubits=(0, 1))
-    assert result == AtomState.bottom()
+    with pytest.raises(PlacementError, match="pending user-directed move"):
+        strat.measure_placements(um, qubits=(0, 1))
 
 
 def test_consecutive_move_to_accumulates():
@@ -374,10 +376,10 @@ def test_palindrome_cz_after_permute_after_move_to_returns_all_the_way_home():
 # (Review findings 3 and 4). ----------------------------------------------
 
 
-def test_move_to_placements_target_in_occupied_returns_bottom():
+def test_move_to_placements_target_in_occupied_raises():
     """A MoveTo whose destination overlaps ``state.occupied`` (an external atom
     outside the static circuit) must be rejected as a placement conflict —
-    returning ``AtomState.bottom()`` — rather than tripping the ConcreteState
+    raising ``PlacementError`` — rather than tripping the ConcreteState
     invariant that ``layout`` and ``occupied`` are disjoint."""
     strat = _make_strategy()
     external = _loc(0, 4, 0)
@@ -387,20 +389,20 @@ def test_move_to_placements_target_in_occupied_returns_bottom():
         layout=layout,
         move_count=(0, 0),
     )
-    result = strat.move_to_placements(state, qubits=(0,), locations=(external,))
-    assert result == AtomState.bottom()
+    with pytest.raises(PlacementError, match="occupied by an external atom"):
+        strat.move_to_placements(state, qubits=(0,), locations=(external,))
 
 
-def test_move_to_placements_duplicate_destinations_returns_bottom():
+def test_move_to_placements_duplicate_destinations_raises():
     """A MoveTo call that names the same destination for two moving qubits
     would place two atoms at the same slot. The placement analysis must reject
-    this cleanly (bottom) rather than assert-fail inside ConcreteState."""
+    this by raising PlacementError rather than assert-fail inside ConcreteState."""
     strat = _make_strategy()
     layout = (_loc(0, 0, 0), _loc(0, 2, 0))
     state = _concrete(layout)
     dup = _loc(0, 4, 0)
-    result = strat.move_to_placements(state, qubits=(0, 1), locations=(dup, dup))
-    assert result == AtomState.bottom()
+    with pytest.raises(PlacementError, match="same destination"):
+        strat.move_to_placements(state, qubits=(0, 1), locations=(dup, dup))
 
 
 # NOTE: There is no permute analog for the ``occupied``-overlap MoveTo test.

@@ -26,6 +26,7 @@ from bloqade.lanes.analysis.placement import (
     ConcreteState,
     ExecuteCZ,
     MoveToPlacementStrategyABC,
+    PlacementError,
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
@@ -195,8 +196,13 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
-        if len(controls) != len(targets) or state == AtomState.bottom():
+        if state == AtomState.bottom():
             return AtomState.bottom()
+        if len(controls) != len(targets):
+            raise PlacementError(
+                f"CZ has mismatched control/target counts: "
+                f"{len(controls)} controls, {len(targets)} targets"
+            )
         state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
@@ -210,7 +216,12 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         # those bystanders too.
         if self._layout_satisfies_cz(state, controls, targets):
             if self._has_spurious_partner_pair(state, controls, targets):
-                return AtomState.bottom()
+                raise PlacementError(
+                    "a non-participating atom sits at a CZ partner site whose "
+                    "partner is also occupied; the global CZ pulse would "
+                    "spuriously entangle these bystanders alongside the intended "
+                    f"pairs (controls={controls}, targets={targets})"
+                )
             return ExecuteCZ(
                 occupied=state.occupied,
                 layout=state.layout,
@@ -237,7 +248,10 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
         if result.status != "solved":
-            return AtomState.bottom()
+            raise PlacementError(
+                f"CZ routing solver failed with status {result.status!r} for "
+                f"pairs {cz_pairs}; could not route atoms to valid partner sites"
+            )
 
         move_layers = convert_move_layers(result.move_layers)
         goal_map = {
@@ -261,7 +275,12 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
             move_count=move_count,
         )
         if self._has_spurious_partner_pair(goal_state, controls, targets):
-            return AtomState.bottom()
+            raise PlacementError(
+                "the CZ routing solver produced a layout in which a "
+                "non-participating atom sits at a CZ partner site whose partner "
+                "is also occupied; the global CZ pulse would spuriously entangle "
+                f"these bystanders (controls={controls}, targets={targets})"
+            )
 
         return ExecuteCZ(
             occupied=state.occupied,

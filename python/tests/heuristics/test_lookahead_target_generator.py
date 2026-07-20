@@ -193,10 +193,21 @@ def _ghz_ladder(n):
     return tuple(range(n)), [((i, i + 1),) for i in range(n - 1)]
 
 
-def test_lookahead_completes_on_ghz_n_80():
-    """Smoke test: both default and lookahead strategies complete on GHZ n=80."""
+def test_lookahead_completes_on_ghz_n_60():
+    """Smoke test: both default and lookahead strategies fully place a GHZ ladder.
+
+    n=60 sits comfortably below this processor's routability cliff (empirically
+    n=64 places, n=65 fails on ARM macOS at max_expansions=300 — the atoms are
+    near capacity and the connectivity is sparse). Larger GHZ ladders are a
+    genuine capacity limit, not a solver bug, and now raise PlacementError; a
+    completion smoke test therefore has to stay on the feasible side of that
+    cliff, with margin for cross-platform routing differences. Every CZ layer
+    must route — the assertion below is that all n-1 layers produce a move
+    (previously this only checked ``>= 0``, so silent bottoms went unnoticed).
+    """
+    n = 60
     arch = get_physical_arch_spec()
-    qubits, stages = _ghz_ladder(80)
+    qubits, stages = _ghz_ladder(n)
     layout = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=arch
     ).compute_layout(qubits, stages)
@@ -215,5 +226,8 @@ def test_lookahead_completes_on_ghz_n_80():
     _, default_trans = _run_strategy(default_strat, layout, stages)
     _, la_trans = _run_strategy(la_strat, layout, stages)
 
-    assert default_trans >= 0
-    assert la_trans >= 0
+    # Every one of the n-1 CZ layers must place (an unroutable layer now raises
+    # PlacementError, so reaching here already means no layer was silently
+    # dropped; assert the full count explicitly).
+    assert default_trans == n - 1
+    assert la_trans == n - 1

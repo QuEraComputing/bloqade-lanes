@@ -12,12 +12,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
     ExecuteMeasure,
     MoveToPlacementStrategyABC,
+    PlacementError,
     UserMoved,
 )
 from bloqade.lanes.arch.gemini import logical
@@ -46,11 +49,11 @@ def _make_state() -> ConcreteState:
 # ── cz_placements short-circuits ────────────────────────────────────
 
 
-def test_cz_placements_returns_bottom_for_mismatched_controls_targets():
-    """``len(controls) != len(targets)`` short-circuits to bottom."""
+def test_cz_placements_raises_for_mismatched_controls_targets():
+    """``len(controls) != len(targets)`` raises PlacementError (malformed CZ)."""
     strategy = _make_strategy()
-    out = strategy.cz_placements(_make_state(), controls=(0,), targets=(0, 1))
-    assert out == AtomState.bottom()
+    with pytest.raises(PlacementError, match="mismatched control/target"):
+        strategy.cz_placements(_make_state(), controls=(0,), targets=(0, 1))
 
 
 def test_cz_placements_returns_bottom_for_bottom_input():
@@ -67,9 +70,9 @@ def test_cz_placements_returns_top_for_non_concrete_input():
     assert out == AtomState.top()
 
 
-def test_cz_placements_returns_bottom_when_inner_solver_fails(monkeypatch):
-    """``result.status != "solved"`` returns bottom while still accumulating
-    nodes_expanded into the observability counter."""
+def test_cz_placements_raises_when_inner_solver_fails(monkeypatch):
+    """``result.status != "solved"`` raises PlacementError while still
+    accumulating nodes_expanded into the observability counter first."""
     strategy = _make_strategy()
     fake_result = SimpleNamespace(
         status="budget_exceeded",
@@ -83,8 +86,8 @@ def test_cz_placements_returns_bottom_when_inner_solver_fails(monkeypatch):
         lambda *args, **kwargs: fake_result,
     )
     before = strategy.rust_nodes_expanded_total
-    out = strategy.cz_placements(_make_state(), controls=(0,), targets=(1,))
-    assert out == AtomState.bottom()
+    with pytest.raises(PlacementError, match="routing solver failed"):
+        strategy.cz_placements(_make_state(), controls=(0,), targets=(1,))
     assert strategy.rust_nodes_expanded_total == before + 7
 
 
@@ -177,12 +180,12 @@ def test_measure_placements_passthrough_for_non_concrete():
     )
 
 
-def test_measure_placements_returns_bottom_for_partial_qubit_set():
-    """A measure of a strict subset of the laid-out qubits returns bottom
+def test_measure_placements_raises_for_partial_qubit_set():
+    """A measure of a strict subset of the laid-out qubits raises PlacementError
     (measurements must cover the full configuration)."""
     strategy = _make_strategy()
-    out = strategy.measure_placements(_make_state(), qubits=(0,))
-    assert out == AtomState.bottom()
+    with pytest.raises(PlacementError, match="must measure all"):
+        strategy.measure_placements(_make_state(), qubits=(0,))
 
 
 def test_measure_placements_returns_execute_measure_for_full_qubit_set():
@@ -302,8 +305,8 @@ def test_cz_fast_path_rejects_spurious_layout_partner_pair():
     """``_layout_satisfies_cz`` currently only checks the participating pairs.
     If any non-participating qubit in ``state.layout`` also sits at a CZ
     partner site of another non-participating qubit, the global CZ pulse
-    would entangle them too. Reject with bottom (or diagnose loudly) rather
-    than emit a silently over-broad CZ."""
+    would entangle them too. Reject by raising PlacementError rather than
+    emit a silently over-broad CZ."""
     from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 
     strategy = make_physical_placement_strategy(return_moves=False)
@@ -320,13 +323,8 @@ def test_cz_fast_path_rejects_spurious_layout_partner_pair():
         layout=(pair_a[0], pair_a[1], pair_b[0], pair_b[1]),
         move_count=(0, 0, 0, 0),
     )
-    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
-    assert out == AtomState.bottom(), (
-        "cz_placements fast-path emitted a CZ while a non-participating pair "
-        "(qubits 2 and 3) also sat at valid partner sites — the global CZ "
-        "pulse would entangle them. Analysis must either reject or expand "
-        "the participating set."
-    )
+    with pytest.raises(PlacementError, match="spuriously entangle"):
+        strategy.cz_placements(state, controls=(0,), targets=(1,))
 
 
 def test_cz_fast_path_rejects_spurious_occupied_partner_pair():
@@ -349,9 +347,5 @@ def test_cz_fast_path_rejects_spurious_occupied_partner_pair():
         layout=(pair_a[0], pair_a[1]),
         move_count=(0, 0),
     )
-    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
-    assert out == AtomState.bottom(), (
-        "cz_placements fast-path emitted a CZ while ``state.occupied`` held "
-        "atoms at partner-pair sites — the global CZ pulse would entangle "
-        "them. Analysis must consult ``occupied`` before taking the fast-path."
-    )
+    with pytest.raises(PlacementError, match="spuriously entangle"):
+        strategy.cz_placements(state, controls=(0,), targets=(1,))

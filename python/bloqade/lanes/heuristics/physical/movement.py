@@ -9,6 +9,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteCZ,
     MoveToPlacementStrategyABC,
     PalindromePlacementStrategy,
+    PlacementError,
     PlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
@@ -210,8 +211,13 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
-        if len(controls) != len(targets) or state == AtomState.bottom():
+        if state == AtomState.bottom():
             return AtomState.bottom()
+        if len(controls) != len(targets):
+            raise PlacementError(
+                f"CZ has mismatched control/target counts: "
+                f"{len(controls)} controls, {len(targets)} targets"
+            )
         state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
@@ -337,7 +343,10 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         self._cz_counter += 1
 
         if winning_result is None:
-            return AtomState.bottom()
+            raise PlacementError(
+                f"CZ routing solver failed for pairs {list(zip(controls, targets))}; "
+                "no candidate target layout was solved within the expansion budget"
+            )
 
         move_layers = convert_move_layers(winning_result.move_layers)
 

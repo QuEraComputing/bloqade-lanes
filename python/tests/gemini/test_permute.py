@@ -335,11 +335,13 @@ def test_permuted_state_is_measurable_but_user_move_is_not():
     """The committed Permuted state is measurable, whereas a palindrome-pending
     UserMoved is rejected at a terminal measure — Permuted is deliberately not a
     UserMoved, so palindrome never picks it up."""
+    import pytest
+
     from bloqade.lanes.analysis.placement import (
-        AtomState,
         ExecuteMeasure,
         PalindromePlacementStrategy,
         Permuted,
+        PlacementError,
         UserMoved,
     )
     from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
@@ -362,7 +364,8 @@ def test_permuted_state_is_measurable_but_user_move_is_not():
         accumulated_move_layers=(),
         pre_user_layout=layout,
     )
-    assert strat.measure_placements(user_moved, (0, 1)) == AtomState.bottom()
+    with pytest.raises(PlacementError, match="pending user-directed move"):
+        strat.measure_placements(user_moved, (0, 1))
 
 
 def test_permute_insert_moves_rejected_under_palindrome():

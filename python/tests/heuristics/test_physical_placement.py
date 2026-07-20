@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
+from bloqade.lanes.analysis.placement import (
+    AtomState,
+    ConcreteState,
+    ExecuteCZ,
+    PlacementError,
+)
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.bytecode.encoding import LocationAddress
@@ -86,7 +91,7 @@ def test_cz_placements_rust_returns_execute_cz():
     assert len(out.layout) == len(state.layout)
 
 
-def test_cz_placements_rust_returns_bottom_on_failure(monkeypatch):
+def test_cz_placements_rust_raises_on_failure(monkeypatch):
     strategy = PhysicalPlacementStrategy(
         arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
     )
@@ -105,8 +110,8 @@ def test_cz_placements_rust_returns_bottom_on_failure(monkeypatch):
         "_make_target_solver",
         lambda _self, _ms: _FakeSolver(),
     )
-    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
-    assert out == AtomState.bottom()
+    with pytest.raises(PlacementError, match="routing solver failed"):
+        strategy.cz_placements(state, controls=(0,), targets=(1,))
 
 
 def test_is_acceptable_solve_accepts_dsl_fallback_with_path():
@@ -281,7 +286,10 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
         "_make_target_solver",
         lambda _self, _ms: _FakeSolver(),
     )
-    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    # All candidates are unsolvable, so cz_placements raises after exhausting
+    # the shared budget across both candidates.
+    with pytest.raises(PlacementError):
+        strategy.cz_placements(state, controls=(0,), targets=(1,))
     # alt candidate first with full 10; default candidate second with 6.
     assert budgets_seen == [10, 6]
 
