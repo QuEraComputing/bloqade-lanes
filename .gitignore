@@ -37,6 +37,7 @@ debug/
 Thumbs.db
 .claude/worktrees
 .claire/worktrees
+.worktrees/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
