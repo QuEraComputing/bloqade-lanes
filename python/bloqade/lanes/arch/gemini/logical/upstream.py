@@ -107,6 +107,7 @@ def steane7_initialize(
     )
 
 
+# TODO: make this a class instead of a huge list
 def steane7_initialize_with_noise(
     local_px: float = 0.0,
     local_py: float = 0.0,
@@ -120,6 +121,9 @@ def steane7_initialize_with_noise(
     sitter_py: float = 0.0,
     sitter_pz: float = 0.0,
     sit_loss_prob: float = 0.0,
+    cz_unpaired_gate_px: float = 0.0,
+    cz_unpaired_gate_py: float = 0.0,
+    cz_unpaired_gate_pz: float = 0.0,
     cz_errors: Sequence[float] | None = None,
     cz_paired_loss: float = 0.0,
     cz_unpaired_loss: float = 0.0,
@@ -234,14 +238,22 @@ def steane7_initialize_with_noise(
             squin.broadcast.cz(movers, cz_sitters)
             squin.broadcast.two_qubit_pauli_channel(cz_errors_ilist, movers, cz_sitters)
             squin.broadcast.single_qubit_pauli_channel(
+                cz_unpaired_gate_px, cz_unpaired_gate_py, cz_unpaired_gate_pz, others
+            )
+            squin.broadcast.single_qubit_pauli_channel(
                 sitter_px, sitter_py, sitter_pz, sitters
             )
             squin.broadcast.single_qubit_pauli_channel(
                 mover_px, mover_py, mover_pz, movers
             )
+            def pair_qubit(i: int):
+                return ilist.IList([movers[i], sitters[i]])
+            
+            groups = ilist.map(pair_qubit, ilist.range(len(movers)))
+            
             if loss:
-                squin.broadcast.qubit_loss(cz_paired_loss, movers + cz_sitters)
                 squin.broadcast.qubit_loss(cz_unpaired_loss, others)
+                squin.broadcast.correlated_qubit_loss(cz_paired_loss, groups)
                 squin.broadcast.qubit_loss(sit_loss_prob, sitters)
                 squin.broadcast.qubit_loss(move_loss_prob, movers)
 
