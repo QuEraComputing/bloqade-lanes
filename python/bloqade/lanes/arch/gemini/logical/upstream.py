@@ -321,7 +321,6 @@ def steane7_initialize_with_noise(
     AggressiveUnroll(noisy_initialize_broadcast.dialects).fixpoint(
         noisy_initialize_broadcast
     )
-    noisy_initialize_broadcast.print()
     return steane7_initialize_broadcast, noisy_initialize_broadcast
 
 
