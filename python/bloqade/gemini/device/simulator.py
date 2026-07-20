@@ -29,6 +29,13 @@ if TYPE_CHECKING:
 RetType = TypeVar("RetType")
 
 
+def _validate_seed(seed: int | None) -> None:
+    if seed is not None and (
+        isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
+    ):
+        raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
+
+
 def _default_noise_model() -> "LogicalNoiseModelABC":
     from bloqade.lanes.noise_model import generate_logical_noise_model
 
@@ -308,6 +315,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Result[RetType]: ...
 
     @overload
@@ -317,6 +325,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> DetectorResult: ...
 
     @overload
@@ -326,6 +335,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult: ...
 
     def run(
@@ -334,6 +344,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult:
         """Run the kernel and get simulation results.
 
@@ -343,6 +354,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             run_detectors (bool): When ``True``, use the detector sampler instead of
                 the measurement sampler for faster detector/observable sampling.
                 Defaults to False.
+            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             Result[RetType]: When ``run_detectors=False``, the full simulation result
@@ -351,17 +363,24 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 detector and observable outcomes.
 
         """
-        if run_detectors:
-            return self._run_detectors(shots, with_noise)
+        _validate_seed(seed)
 
-        if self.tsim_circuit.is_clifford:
-            c = self.tsim_circuit if with_noise else self.noiseless_tsim_circuit
-            sampler = c.stim_circuit.compile_sampler()
+        if run_detectors:
+            return self._run_detectors(shots, with_noise, seed=seed)
+
+        c = self.tsim_circuit if with_noise else self.noiseless_tsim_circuit
+        if c.is_clifford:
+            sampler = c.stim_circuit.compile_sampler(seed=seed)
         else:
+            # TODO: for the seeded case, also cache the sampler for repeated sampling for the same seed.
             sampler = (
-                self.measurement_sampler
-                if with_noise
-                else self.noiseless_measurement_sampler
+                (
+                    self.measurement_sampler
+                    if with_noise
+                    else self.noiseless_measurement_sampler
+                )
+                if seed is None
+                else c.compile_sampler(seed=seed)
             )
 
         raw_results = sampler.sample(shots=shots).tolist()
@@ -375,7 +394,13 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             fidelity_max,
         )
 
-    def _run_detectors(self, shots: int = 1, with_noise: bool = True) -> DetectorResult:
+    def _run_detectors(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        seed: int | None = None,
+    ) -> DetectorResult:
         """Run the detector sampler for faster detector/observable sampling.
 
         This skips the full measurement sampler and directly samples detector
@@ -385,23 +410,32 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         Args:
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             DetectorResult: The result containing detector and observable outcomes.
 
         """
+        _validate_seed(seed)
+
         c = self.tsim_circuit if with_noise else self.noiseless_tsim_circuit
         if c.is_clifford:
             # Use Stim for the Clifford case. Since .detector_sampler uses a reference
             # sample which flips outcomes, we use the measurement sampler and convert to
             # detectors and observables while explicitly skipping the reference sample.
-            sampler = c.stim_circuit.compile_sampler()
+            sampler = c.stim_circuit.compile_sampler(seed=seed)
             m2det = c.compile_m2d_converter(skip_reference_sample=True)
             samples = sampler.sample(shots=shots)
             det_obs = m2det.convert(measurements=samples, separate_observables=True)
         else:
             sampler = (
-                self.detector_sampler if with_noise else self.noiseless_detector_sampler
+                (
+                    self.detector_sampler
+                    if with_noise
+                    else self.noiseless_detector_sampler
+                )
+                if seed is None
+                else c.compile_detector_sampler(seed=seed)
             )
             det_obs: tuple[np.ndarray, np.ndarray] = sampler.sample(
                 shots=shots, separate_observables=True
@@ -423,6 +457,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -432,6 +467,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> Future[DetectorResult]: ...
 
     def run_async(
@@ -440,6 +476,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the kernel asynchronously and get simulation results.
 
@@ -448,6 +485,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
             run_detectors (bool): When ``True``, use the detector sampler instead of
                 the measurement sampler. Defaults to False.
+            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             Future[Result[RetType]]: When ``run_detectors=False``, a future resolving
@@ -456,11 +494,13 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 to the detector result.
 
         """
+        _validate_seed(seed)
+
         if run_detectors:
             return self._thread_pool_executor.submit(
-                self._run_detectors, shots, with_noise
+                self._run_detectors, shots, with_noise, seed=seed
             )
-        return self._thread_pool_executor.submit(self.run, shots, with_noise)
+        return self._thread_pool_executor.submit(self.run, shots, with_noise, seed=seed)
 
 
 @dataclass
@@ -477,6 +517,7 @@ class GeminiLogicalSimulator:
     """The noise model used for simulation. Defaults to :func:`generate_logical_noise_model`."""
     backend: str = "tsim"
     """Sampling backend for tasks created by this simulator."""
+    # TODO: get rid of "seed" on the GeminiLogicalSimulator; we do NOT want to support it (was mainly for a shim to support CliffTSimulatorTask before)
     seed: int | None = None
     """Optional backend seed for task sampling."""
 
@@ -504,6 +545,9 @@ class GeminiLogicalSimulator:
             GeminiLogicalSimulatorTask[RetType]: The compiled simulation task.
 
         """
+        if self.backend == "clifft":
+            _validate_seed(self.seed)
+
         from bloqade.lanes.logical_mvp import compile_task
 
         (
@@ -544,6 +588,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Result[RetType]: ...
 
     @overload
@@ -554,6 +599,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> DetectorResult: ...
 
     @overload
@@ -564,6 +610,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult: ...
 
     def run(
@@ -573,6 +620,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult:
         """Run the kernel and get simulation results.
 
@@ -583,6 +631,7 @@ class GeminiLogicalSimulator:
             run_detectors (bool): When ``True``, use the detector sampler instead of
                 the measurement sampler for faster detector/observable sampling.
                 Defaults to False.
+            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             Result[RetType]: When ``run_detectors=False``, the full simulation result.
@@ -590,8 +639,9 @@ class GeminiLogicalSimulator:
                 detector and observable outcomes.
 
         """
+        _validate_seed(seed)
         return self.task(logical_squin_kernel).run(
-            shots, with_noise, run_detectors=run_detectors
+            shots, with_noise, run_detectors=run_detectors, seed=seed
         )
 
     @overload
@@ -602,6 +652,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -612,6 +663,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> Future[DetectorResult]: ...
 
     def run_async(
@@ -621,6 +673,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the kernel asynchronously and get simulation results.
 
@@ -630,6 +683,7 @@ class GeminiLogicalSimulator:
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
             run_detectors (bool): When ``True``, use the detector sampler instead of
                 the measurement sampler. Defaults to False.
+            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             Future[Result[RetType]]: When ``run_detectors=False``, a future resolving
@@ -638,10 +692,11 @@ class GeminiLogicalSimulator:
                 to the detector result.
 
         """
+        _validate_seed(seed)
         task = self.task(logical_squin_kernel)
         if run_detectors:
-            return task.run_async(shots, with_noise, run_detectors=True)
-        return task.run_async(shots, with_noise)
+            return task.run_async(shots, with_noise, run_detectors=True, seed=seed)
+        return task.run_async(shots, with_noise, seed=seed)
 
     def visualize(
         self,
