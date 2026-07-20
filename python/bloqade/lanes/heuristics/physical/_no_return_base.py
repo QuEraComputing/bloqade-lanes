@@ -21,6 +21,8 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
 
+from kirin.interp.exceptions import InterpreterError
+
 from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
@@ -167,26 +169,28 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
                 return False
         return True
 
-    def _has_spurious_partner_pair(
+    def _find_spurious_partner_pair(
         self,
         state: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
-    ) -> bool:
-        """True iff some non-participating atom (in ``state.layout`` or
-        ``state.occupied``) sits at a CZ partner site whose partner is also
-        occupied — a global CZ pulse would then entangle them alongside the
-        intended pairs."""
+    ) -> tuple[LocationAddress, LocationAddress] | None:
+        """Return a bystander pair at CZ partner sites, or ``None`` if the
+        layout is CZ-safe. A bystander pair is any location whose CZ partner
+        is also occupied (by an atom in layout or ``state.occupied``) but
+        neither endpoint is one of the participants — a global CZ pulse
+        would entangle them alongside the intended pairs."""
         participants: set[LocationAddress] = set()
         for control, target in zip(controls, targets):
             participants.add(state.layout[control])
             participants.add(state.layout[target])
         all_atoms = set(state.layout) | set(state.occupied)
-        for loc in all_atoms - participants:
+        # Sorted iteration keeps the reported pair deterministic across runs.
+        for loc in sorted(all_atoms - participants):
             partner = self.arch_spec.get_cz_partner(loc)
             if partner is not None and partner in all_atoms:
-                return True
-        return False
+                return (loc, partner)
+        return None
 
     def cz_placements(
         self,
@@ -209,8 +213,17 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         # partner is also occupied, since the global CZ pulse would entangle
         # those bystanders too.
         if self._layout_satisfies_cz(state, controls, targets):
-            if self._has_spurious_partner_pair(state, controls, targets):
-                return AtomState.bottom()
+            spurious = self._find_spurious_partner_pair(state, controls, targets)
+            if spurious is not None:
+                raise InterpreterError(
+                    "cz_placements: the input layout places a bystander atom "
+                    f"pair at CZ partner sites {spurious[0]} / {spurious[1]} "
+                    f"while emitting CZ on controls={controls} targets={targets}. "
+                    "A global CZ pulse would entangle those bystanders. Adjust "
+                    "the upstream move_to / permute so no non-participating "
+                    "atoms occupy a partner pair, or emit the CZ from a fresh "
+                    "home layout."
+                )
             return ExecuteCZ(
                 occupied=state.occupied,
                 layout=state.layout,
@@ -254,14 +267,24 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
 
         # Reject if the solver's output layout has a bystander pair at CZ
         # partner sites — same reasoning as the fast-path check, applied to
-        # the routed layout the CZ pulse actually acts on.
+        # the routed layout the CZ pulse actually acts on. This is a routing
+        # bug: the solver returned a layout that would fire the global CZ on
+        # atoms outside the participating pairs.
         goal_state = ConcreteState(
             occupied=state.occupied,
             layout=goal_layout,
             move_count=move_count,
         )
-        if self._has_spurious_partner_pair(goal_state, controls, targets):
-            return AtomState.bottom()
+        spurious = self._find_spurious_partner_pair(goal_state, controls, targets)
+        if spurious is not None:
+            raise InterpreterError(
+                "cz_placements: solver returned a layout with a bystander atom "
+                f"pair at CZ partner sites {spurious[0]} / {spurious[1]} while "
+                f"emitting CZ on controls={controls} targets={targets}. This "
+                "is a placement/routing bug — a global CZ pulse would entangle "
+                f"those bystanders. Solver goal_layout={goal_layout}, "
+                f"pre-solve layout={state.layout}, occupied={state.occupied}."
+            )
 
         return ExecuteCZ(
             occupied=state.occupied,

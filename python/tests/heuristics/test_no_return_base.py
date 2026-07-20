@@ -302,8 +302,11 @@ def test_cz_fast_path_rejects_spurious_layout_partner_pair():
     """``_layout_satisfies_cz`` currently only checks the participating pairs.
     If any non-participating qubit in ``state.layout`` also sits at a CZ
     partner site of another non-participating qubit, the global CZ pulse
-    would entangle them too. Reject with bottom (or diagnose loudly) rather
-    than emit a silently over-broad CZ."""
+    would entangle them too. ``cz_placements`` must raise a specific error
+    naming the offending pair rather than emit a silently over-broad CZ."""
+    import pytest
+    from kirin.interp.exceptions import InterpreterError
+
     from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 
     strategy = make_physical_placement_strategy(return_moves=False)
@@ -320,20 +323,18 @@ def test_cz_fast_path_rejects_spurious_layout_partner_pair():
         layout=(pair_a[0], pair_a[1], pair_b[0], pair_b[1]),
         move_count=(0, 0, 0, 0),
     )
-    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
-    assert out == AtomState.bottom(), (
-        "cz_placements fast-path emitted a CZ while a non-participating pair "
-        "(qubits 2 and 3) also sat at valid partner sites — the global CZ "
-        "pulse would entangle them. Analysis must either reject or expand "
-        "the participating set."
-    )
+    with pytest.raises(InterpreterError, match="bystander"):
+        strategy.cz_placements(state, controls=(0,), targets=(1,))
 
 
 def test_cz_fast_path_rejects_spurious_occupied_partner_pair():
     """Same concern via ``state.occupied``: an external atom sitting on a
-    CZ partner site of a participating qubit (or of another external atom)
-    would still receive the global CZ pulse. The fast-path must consult
-    ``occupied`` before emitting a zero-move CZ."""
+    CZ partner site of another external atom would still receive the global
+    CZ pulse. The fast-path must consult ``occupied`` before emitting a
+    zero-move CZ."""
+    import pytest
+    from kirin.interp.exceptions import InterpreterError
+
     from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 
     strategy = make_physical_placement_strategy(return_moves=False)
@@ -349,9 +350,5 @@ def test_cz_fast_path_rejects_spurious_occupied_partner_pair():
         layout=(pair_a[0], pair_a[1]),
         move_count=(0, 0),
     )
-    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
-    assert out == AtomState.bottom(), (
-        "cz_placements fast-path emitted a CZ while ``state.occupied`` held "
-        "atoms at partner-pair sites — the global CZ pulse would entangle "
-        "them. Analysis must consult ``occupied`` before taking the fast-path."
-    )
+    with pytest.raises(InterpreterError, match="bystander"):
+        strategy.cz_placements(state, controls=(0,), targets=(1,))
