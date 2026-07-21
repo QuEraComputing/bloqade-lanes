@@ -75,6 +75,24 @@ def test_simulator_backend_imports_are_lazy():
         """)
 
 
+def test_simulator_runtime_does_not_import_test_modules():
+    _run_import_guard("""
+        import sys
+
+        import bloqade.gemini.device
+
+        loaded_test_modules = sorted(
+            name
+            for name in sys.modules
+            if name == "tests" or name.startswith("tests.")
+        )
+        if loaded_test_modules:
+            raise SystemExit(
+                f"unexpected test-module imports: {loaded_test_modules}"
+            )
+        """)
+
+
 def test_composed_backends_fail_before_sampling_with_specific_tsim_guidance():
     code = textwrap.dedent("""
         import importlib.abc

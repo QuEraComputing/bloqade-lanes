@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 RetType = TypeVar("RetType")
 
 
+def _validate_seed(seed: int | None) -> None:
+    if seed is not None and (
+        isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
+    ):
+        raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
+
+
 @dataclass(frozen=True)
 class DetectorResult:
     """Detector and observable outcomes from simulator sampling."""
@@ -195,6 +202,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Result[RetType]: ...
 
     @overload
@@ -204,6 +212,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> DetectorResult: ...
 
     @overload
@@ -213,6 +222,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult: ...
 
     def run(
@@ -221,16 +231,18 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult:
         """Sample through the configured backend and normalize its result."""
         # Build the guaranteed DEM before beginning a potentially expensive
         # sampling request. This also fails early when Tsim is unavailable.
+        _validate_seed(seed)
         detector_error_model = self.detector_error_model
         physical_kernel = (
             self._physical_kernel if with_noise else self._noiseless_physical_kernel
         )
         sample = self._backend.sample(
-            physical_kernel, shots=shots, run_detectors=run_detectors
+            physical_kernel, shots=shots, run_detectors=run_detectors, seed=seed
         )
         fidelity_min, fidelity_max = self.fidelity_bounds()
 
@@ -302,6 +314,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -311,6 +324,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> Future[DetectorResult]: ...
 
     @overload
@@ -320,6 +334,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]: ...
 
     def run_async(
@@ -328,17 +343,19 @@ class _SimulatorTaskBase(Generic[RetType]):
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
+        _validate_seed(seed)
         if run_detectors:
             return cast(
                 Future[DetectorResult],
                 self._thread_pool_executor.submit(
-                    self.run, shots, with_noise, run_detectors=True
+                    self.run, shots, with_noise, run_detectors=True, seed=seed
                 ),
             )
         return cast(
             Future[Result[RetType]],
             self._thread_pool_executor.submit(
-                self.run, shots, with_noise, run_detectors=False
+                self.run, shots, with_noise, run_detectors=False, seed=seed
             ),
         )

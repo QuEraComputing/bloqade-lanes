@@ -46,6 +46,13 @@ def _one_physical_kernel():
     return squin.broadcast.measure(reg)
 
 
+@squin.kernel
+def _loss_physical_kernel():
+    reg = squin.qalloc(8)
+    squin.broadcast.qubit_loss(0.5, reg)
+    return squin.broadcast.measure(reg)
+
+
 def test_backend_contract_has_exactly_two_abstract_operations():
     assert AbstractSimulatorBackend.__abstractmethods__ == {
         "sample",
@@ -120,7 +127,7 @@ def test_tsim_clifford_measurement_sampling_uses_stim():
 
     assert sample.measurements is not None
     assert np.array_equal(sample.measurements, [[False, True]])
-    circuit.stim_circuit.compile_sampler.assert_called_once_with()
+    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=None)
     circuit.compile_sampler.assert_not_called()
 
 
@@ -133,7 +140,7 @@ def test_tsim_nonclifford_measurement_sampling_uses_tsim():
 
     assert sample.measurements is not None
     assert np.array_equal(sample.measurements, [[True]])
-    circuit.compile_sampler.assert_called_once_with()
+    circuit.compile_sampler.assert_called_once_with(seed=None)
     circuit.stim_circuit.compile_sampler.assert_not_called()
 
 
@@ -147,6 +154,7 @@ def test_tsim_clifford_detector_sampling_uses_measurement_converter():
 
     sample = backend.sample(_physical_kernel, shots=1, run_detectors=True)
 
+    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=None)
     circuit.compile_m2d_converter.assert_called_once_with(skip_reference_sample=True)
     converter.convert.assert_called_once_with(
         measurements=measurements, separate_observables=True
@@ -165,11 +173,80 @@ def test_tsim_nonclifford_detector_sampling_uses_detector_sampler():
 
     sample = backend.sample(_physical_kernel, shots=1, run_detectors=True)
 
+    circuit.compile_detector_sampler.assert_called_once_with(seed=None)
     sampler.sample.assert_called_once_with(shots=1, separate_observables=True)
     assert sample.detectors is not None
     assert sample.observables is not None
     assert np.array_equal(sample.detectors, [[False]])
     assert np.array_equal(sample.observables, [[True]])
+
+
+def test_tsim_clifford_measurement_sampling_forwards_seed_zero():
+    circuit = MagicMock(is_clifford=True)
+    circuit.stim_circuit.compile_sampler.return_value.sample.return_value = [[1]]
+    backend = _backend_with_circuit(circuit)
+
+    sample = backend.sample(_physical_kernel, shots=1, seed=0)
+
+    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
+    assert sample.measurements is not None
+    assert np.array_equal(sample.measurements, [[True]])
+
+
+def test_tsim_nonclifford_measurement_sampling_forwards_seed_zero():
+    circuit = MagicMock(is_clifford=False)
+    circuit.compile_sampler.return_value.sample.return_value = [[1]]
+    backend = _backend_with_circuit(circuit)
+
+    sample = backend.sample(_physical_kernel, shots=1, seed=0)
+
+    circuit.compile_sampler.assert_called_once_with(seed=0)
+    assert sample.measurements is not None
+    assert np.array_equal(sample.measurements, [[True]])
+
+
+def test_tsim_clifford_detector_sampling_forwards_seed_zero():
+    circuit = MagicMock(is_clifford=True)
+    sampler = circuit.stim_circuit.compile_sampler.return_value
+    measurements = np.array([[True]])
+    sampler.sample.return_value = measurements
+    converter = circuit.compile_m2d_converter.return_value
+    converter.convert.return_value = (np.array([[1]]), np.array([[0]]))
+    backend = _backend_with_circuit(circuit)
+
+    sample = backend.sample(_physical_kernel, shots=1, run_detectors=True, seed=0)
+
+    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
+    converter.convert.assert_called_once_with(
+        measurements=measurements, separate_observables=True
+    )
+    assert sample.detectors is not None
+    assert sample.observables is not None
+
+
+def test_tsim_nonclifford_detector_sampling_forwards_seed_zero():
+    circuit = MagicMock(is_clifford=False)
+    sampler = circuit.compile_detector_sampler.return_value
+    sampler.sample.return_value = (np.array([[1]]), np.array([[0]]))
+    backend = _backend_with_circuit(circuit)
+
+    sample = backend.sample(_physical_kernel, shots=1, run_detectors=True, seed=0)
+
+    circuit.compile_detector_sampler.assert_called_once_with(seed=0)
+    assert sample.detectors is not None
+    assert sample.observables is not None
+
+
+def test_tsim_seeded_sampling_reproduces_fixed_batch():
+    pytest.importorskip("tsim")
+    backend = TsimSimulatorBackend()
+
+    first = backend.sample(_random_physical_kernel, shots=64, seed=17)
+    second = backend.sample(_random_physical_kernel, shots=64, seed=17)
+
+    assert first.measurements is not None
+    assert second.measurements is not None
+    assert np.array_equal(first.measurements, second.measurements)
 
 
 def test_tsim_detector_error_model_and_structural_capability():
@@ -236,13 +313,39 @@ def test_clifft_backend_omits_missing_seed_and_returns_native_detectors(monkeypa
     tsim_backend._tsim_circuit.return_value = "M 0"
     backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
 
-    sample = backend.sample(_physical_kernel, shots=2, run_detectors=True)
+    sample = backend.sample(_physical_kernel, shots=2, run_detectors=True, seed=None)
 
     clifft.sample.assert_called_once_with("program", shots=2)  # type: ignore[attr-defined]
     assert sample.detectors is not None
     assert sample.observables is not None
     assert np.array_equal(sample.detectors, [[True]])
     assert np.array_equal(sample.observables, [[False]])
+
+
+def test_clifft_backend_per_call_seed_overrides_backend_seed(monkeypatch):
+    clifft = _fake_clifft(monkeypatch)
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "M 0"
+    backend = CliffTSimulatorBackend(seed=123, tsim_backend=tsim_backend)
+
+    backend.sample(_physical_kernel, shots=2, seed=0)
+
+    clifft.sample.assert_called_once_with(  # type: ignore[attr-defined]
+        "program", shots=2, seed=0
+    )
+
+
+def test_clifft_backend_none_seed_falls_back_to_backend_seed(monkeypatch):
+    clifft = _fake_clifft(monkeypatch)
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "M 0"
+    backend = CliffTSimulatorBackend(seed=123, tsim_backend=tsim_backend)
+
+    backend.sample(_physical_kernel, shots=2, seed=None)
+
+    clifft.sample.assert_called_once_with(  # type: ignore[attr-defined]
+        "program", shots=2, seed=123
+    )
 
 
 def test_clifft_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
@@ -320,6 +423,72 @@ def test_pyqrack_backend_real_deterministic_sampling_uses_fresh_shot_tasks():
     assert sample.measurements.shape == (16, 1)
     assert sample.measurements.dtype == np.bool_
     assert np.all(sample.measurements)
+
+
+def test_pyqrack_per_call_seed_reproduces_native_measurements():
+    pytest.importorskip("pyqrack")
+    backend = PyQrackSimulatorBackend()
+
+    first = backend.sample(_random_physical_kernel, shots=64, seed=441)
+    second = backend.sample(_random_physical_kernel, shots=64, seed=441)
+
+    assert first.measurements is not None
+    assert second.measurements is not None
+    assert np.array_equal(first.measurements, second.measurements)
+    assert np.any(first.measurements)
+    assert np.any(~first.measurements)
+
+
+def test_pyqrack_per_call_seed_reproduces_squin_loss_noise():
+    pytest.importorskip("pyqrack")
+    backend = PyQrackSimulatorBackend()
+
+    first = backend.sample(_loss_physical_kernel, shots=16, seed=442)
+    second = backend.sample(_loss_physical_kernel, shots=16, seed=442)
+
+    assert first.measurements is not None
+    assert second.measurements is not None
+    assert np.array_equal(first.measurements, second.measurements)
+    assert np.any(first.measurements)
+    assert np.any(~first.measurements)
+
+
+def test_pyqrack_derives_fresh_native_seed_for_each_shot(monkeypatch):
+    pyqrack = pytest.importorskip("pyqrack")
+    original_seed = pyqrack.QrackSimulator.seed
+    recorded_seeds: list[int] = []
+
+    def recording_seed(simulator, seed: int):
+        recorded_seeds.append(seed)
+        return original_seed(simulator, seed)
+
+    monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
+    call_seed = 443
+
+    PyQrackSimulatorBackend().sample(_one_physical_kernel, shots=4, seed=call_seed)
+
+    expected_rng = np.random.default_rng(call_seed)
+    expected_seeds = [int(expected_rng.integers(0, 2**63)) for _ in range(4)]
+    assert recorded_seeds == expected_seeds
+
+
+def test_pyqrack_per_call_seed_does_not_advance_persistent_stream():
+    pytest.importorskip("pyqrack")
+    control = PyQrackSimulatorBackend(seed=444)
+    subject = PyQrackSimulatorBackend(seed=444)
+
+    control_first = control.sample(_random_physical_kernel, shots=16)
+    subject_first = subject.sample(_random_physical_kernel, shots=16)
+    subject.sample(_random_physical_kernel, shots=16, seed=999)
+    control_second = control.sample(_random_physical_kernel, shots=16)
+    subject_second = subject.sample(_random_physical_kernel, shots=16)
+
+    assert control_first.measurements is not None
+    assert subject_first.measurements is not None
+    assert control_second.measurements is not None
+    assert subject_second.measurements is not None
+    assert np.array_equal(control_first.measurements, subject_first.measurements)
+    assert np.array_equal(control_second.measurements, subject_second.measurements)
 
 
 def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch):

@@ -34,13 +34,6 @@ RetType = TypeVar("RetType")
 LogicalKernel = Union[ir.Method[[], RetType], Callable[..., Any]]
 
 
-def _validate_seed(seed: int | None) -> None:
-    if seed is not None and (
-        isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
-    ):
-        raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
-
-
 def _default_noise_model() -> LogicalNoiseModelABC:
     from bloqade.lanes.noise_model import generate_logical_noise_model
 
@@ -118,6 +111,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Result[RetType]: ...
 
     @overload
@@ -128,6 +122,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> DetectorResult: ...
 
     @overload
@@ -138,6 +133,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult: ...
 
     def run(
@@ -147,9 +143,10 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult:
         return self.task(logical_kernel).run(
-            shots, with_noise, run_detectors=run_detectors
+            shots, with_noise, run_detectors=run_detectors, seed=seed
         )
 
     @overload
@@ -160,6 +157,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -170,6 +168,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> Future[DetectorResult]: ...
 
     @overload
@@ -180,6 +179,7 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]: ...
 
     def run_async(
@@ -189,11 +189,12 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
         task = self.task(logical_kernel)
         if run_detectors:
-            return task.run_async(shots, with_noise, run_detectors=True)
-        return task.run_async(shots, with_noise, run_detectors=False)
+            return task.run_async(shots, with_noise, run_detectors=True, seed=seed)
+        return task.run_async(shots, with_noise, run_detectors=False, seed=seed)
 
     def visualize(
         self,

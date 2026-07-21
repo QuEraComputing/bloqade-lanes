@@ -285,6 +285,7 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Result[RetType]: ...
 
     @overload
@@ -295,6 +296,7 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> DetectorResult: ...
 
     @overload
@@ -305,6 +307,7 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult: ...
 
     def run(
@@ -314,10 +317,11 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Result[RetType] | DetectorResult:
         """Compile and run a physical SQuIn kernel."""
         return self.task(physical_kernel).run(
-            shots, with_noise, run_detectors=run_detectors
+            shots, with_noise, run_detectors=run_detectors, seed=seed
         )
 
     @overload
@@ -328,6 +332,7 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[False] = ...,
+        seed: int | None = None,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -338,6 +343,7 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: Literal[True],
+        seed: int | None = None,
     ) -> Future[DetectorResult]: ...
 
     @overload
@@ -348,6 +354,7 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]: ...
 
     def run_async(
@@ -357,12 +364,13 @@ class GeminiPhysicalSimulator:
         with_noise: bool = True,
         *,
         run_detectors: bool = False,
+        seed: int | None = None,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Compile and run a physical SQuIn kernel asynchronously."""
         task = self.task(physical_kernel)
         if run_detectors:
-            return task.run_async(shots, with_noise, run_detectors=True)
-        return task.run_async(shots, with_noise, run_detectors=False)
+            return task.run_async(shots, with_noise, run_detectors=True, seed=seed)
+        return task.run_async(shots, with_noise, run_detectors=False, seed=seed)
 
     def visualize(
         self,

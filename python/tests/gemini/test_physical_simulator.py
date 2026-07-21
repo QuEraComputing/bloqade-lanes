@@ -90,7 +90,7 @@ def test_physical_task_run_routes_through_backend():
 
     task.simulator.backend.detector_error_model.assert_called_once_with("noisy-kernel")
     task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, run_detectors=False
+        "noisy-kernel", shots=1, run_detectors=False, seed=None
     )
     assert isinstance(result, PhysicalResult)
     assert result.measurements == [[True, False]]
@@ -109,6 +109,30 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
     assert not is_dataclass(_SimulatorTaskBase)
     assert issubclass(GeminiLogicalSimulatorTask, _SimulatorTaskBase)
     assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
+
+
+def test_task_cached_sampler_properties_compile_without_seed_argument():
+    task = object.__new__(PhysicalSimulatorTask)
+    noisy_circuit = MagicMock()
+    noiseless_circuit = MagicMock()
+    object.__setattr__(task, "tsim_circuit", noisy_circuit)
+    object.__setattr__(task, "noiseless_tsim_circuit", noiseless_circuit)
+
+    assert task.measurement_sampler is noisy_circuit.compile_sampler.return_value
+    assert task.detector_sampler is noisy_circuit.compile_detector_sampler.return_value
+    assert (
+        task.noiseless_measurement_sampler
+        is noiseless_circuit.compile_sampler.return_value
+    )
+    assert (
+        task.noiseless_detector_sampler
+        is noiseless_circuit.compile_detector_sampler.return_value
+    )
+
+    noisy_circuit.compile_sampler.assert_called_once_with()
+    noisy_circuit.compile_detector_sampler.assert_called_once_with()
+    noiseless_circuit.compile_sampler.assert_called_once_with()
+    noiseless_circuit.compile_detector_sampler.assert_called_once_with()
 
 
 def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
@@ -253,6 +277,53 @@ def test_pyqrack_physical_detector_run_uses_measurement_fallback():
     assert result.detectors == ((True,), (True,))
     assert result.observables == ((True,), (True,))
     assert result.detector_error_model is not None
+
+
+@pytest.mark.parametrize("seed", [None, 0])
+@pytest.mark.parametrize("run_detectors", [False, True])
+def test_physical_simulator_run_forwards_seed(
+    monkeypatch, seed: int | None, run_detectors: bool
+):
+    simulator = PhysicalSimulator()
+    task = MagicMock()
+    expected = object()
+    task.run.return_value = expected
+    monkeypatch.setattr(simulator, "task", MagicMock(return_value=task))
+
+    result = simulator.run(
+        small_physical_kernel,
+        shots=3,
+        with_noise=False,
+        run_detectors=run_detectors,
+        seed=seed,
+    )
+
+    assert result is expected
+    task.run.assert_called_once_with(3, False, run_detectors=run_detectors, seed=seed)
+
+
+@pytest.mark.parametrize("run_detectors", [False, True])
+def test_physical_simulator_run_async_forwards_seed(monkeypatch, run_detectors: bool):
+    simulator = PhysicalSimulator()
+    task = MagicMock()
+    expected = object()
+    future = Future()
+    future.set_result(expected)
+    task.run_async.return_value = future
+    monkeypatch.setattr(simulator, "task", MagicMock(return_value=task))
+
+    result = simulator.run_async(
+        small_physical_kernel,
+        shots=3,
+        with_noise=False,
+        run_detectors=run_detectors,
+        seed=0,
+    ).result()
+
+    assert result is expected
+    task.run_async.assert_called_once_with(
+        3, False, run_detectors=run_detectors, seed=0
+    )
 
 
 def test_append_measurements_and_annotations_physical_preserves_kernel_return():
