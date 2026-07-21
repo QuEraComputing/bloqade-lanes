@@ -525,14 +525,53 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 5: Migrate the non-test `upstream` consumers (metrics, tracer, benchmarks)
 
+> **GATE CORRECTION (from Task 4):** Task 4's characterization proved that legacy
+> `squin_to_move(logical_initialize=False)` is a **neutral** squin→place path — NOT
+> the physical pipeline. `PhysicalNativeToPlace` diverges (rejects measurement-free
+> kernels, emits `NewPinnedQubit` not `NewLogicalQubit`). So the correct mapping is:
+> - `logical_initialize=True`  → `LogicalNativeToPlace` + `PlaceToMove(insert_initialize=True)`
+> - `logical_initialize=False` → **generic** `NativeToPlace` + `PlaceToMove(insert_initialize=False)`
+>
+> and this task must FIRST add the generic `NativeToPlace` stage class (Step 0). In all
+> compositions run `SequentialPlacePass(place.dialects, no_raise=...)` on the place
+> kernel BETWEEN the native stage and `PlaceToMove` (legacy ran the place-opt pass
+> inside `NativeToPlace.emit`; the canonical stages do not, so the caller runs it).
+
 **Files:**
+- Modify: `python/bloqade/lanes/transform/native_to_place.py` (add generic `NativeToPlace`)
+- Modify: `python/bloqade/lanes/transform/__init__.py` (re-export `NativeToPlace`)
 - Modify: `python/bloqade/lanes/metrics.py` (3 `squin_to_move` calls @ 93,133,153; import @ 15)
 - Modify: `python/bloqade/lanes/visualize/entropy_tree/tracer.py` (@ 151,175,196)
 - Modify: `python/benchmarks/harness/runner.py` (@ 30 import, 136,160 calls)
-- Test: `python/tests/test_upstream_migration_characterization.py`, `python/tests/benchmarks/test_runner.py`, benchmark/metrics-touching tests
+- Modify: `python/tests/test_upstream_migration_characterization.py` (repoint the tracer test to the generic stage; it must now PASS)
+- Test: `python/tests/test_upstream_migration_characterization.py`, `python/tests/benchmarks/test_runner.py`, `python/tests/visualize/entropy_tree/test_tracer.py`
 
 **Interfaces:**
-- Consumes: `bloqade.lanes.transform.{LogicalNativeToPlace, PhysicalNativeToPlace, PlaceToMove, transversal_rewrites}`, `bloqade.lanes.passes.SequentialPlacePass`.
+- Produces: `bloqade.lanes.transform.NativeToPlace` — a concrete, neutral squin→place stage (no logical-initialize rewrites, no physical pinned-qubit lowering; reproduces legacy `upstream.NativeToPlace(logical_initialize=False)`).
+- Consumes: `bloqade.lanes.transform.{NativeToPlace, LogicalNativeToPlace, PlaceToMove, transversal_rewrites}`, `bloqade.lanes.passes.SequentialPlacePass`.
+
+- [ ] **Step 0: Add the generic `NativeToPlace` stage and re-export it**
+
+In `python/bloqade/lanes/transform/native_to_place.py` add a concrete subclass of `NativeToPlaceBase` whose only qubit-lowering step is `InitializeNewQubits` (this is what legacy `upstream.NativeToPlace(logical_initialize=False)` did; the base template runs `RewritePlaceOperations` afterward in the shared `emit`):
+
+```python
+@dataclass
+class NativeToPlace(NativeToPlaceBase):
+    """Neutral squin -> place lowering.
+
+    No logical-initialize rewrites and no physical pinned-qubit lowering — the
+    "generic" path that reproduces the legacy ``upstream.NativeToPlace(
+    logical_initialize=False)`` behavior. ``arch_spec`` defaults to ``None`` so
+    the post-unroll address/duplicate validation block is skipped (as the legacy
+    generic path did). Used by the entropy-trace visualizer and by callers that
+    want a plain squin->place lowering.
+    """
+
+    def _lower_qubits(self, out: Method) -> None:
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
+```
+
+Add `NativeToPlace as NativeToPlace` to the `native_to_place` re-export block in `python/bloqade/lanes/transform/__init__.py`.
 
 - [ ] **Step 1: Migrate `metrics.py`**
 
@@ -555,20 +594,20 @@ def _logical_squin_to_move(mt, *, layout_heuristic, placement_strategy):
 
 Replace the three `squin_to_move(...)` calls with `_logical_squin_to_move(...)`. (Behavior pinned by Task 4's metrics test.)
 
-- [ ] **Step 2: Migrate `tracer.py`**
+- [ ] **Step 2: Migrate `tracer.py`** (use the GENERIC `NativeToPlace`, per the gate correction)
 
-At line 151 change `from bloqade.lanes.upstream import NativeToPlace, squin_to_move` to import the canonical equivalents chosen in Task 4:
+At line 151 change `from bloqade.lanes.upstream import NativeToPlace, squin_to_move` to:
 
 ```python
 from bloqade.lanes.passes import SequentialPlacePass
-from bloqade.lanes.transform import PhysicalNativeToPlace, PlaceToMove
+from bloqade.lanes.transform import NativeToPlace, PlaceToMove
 ```
 
-Replace the `squin_to_move(kernel, layout_heuristic=..., placement_strategy=..., no_raise=False, logical_initialize=False)` call (line 175) with:
+Replace the `squin_to_move(kernel, layout_heuristic=..., placement_strategy=..., no_raise=False, logical_initialize=False)` call (line 175) with the neutral composition:
 
 ```python
-place_kernel = PhysicalNativeToPlace().emit(kernel, no_raise=False)
-SequentialPlacePass(place_kernel.dialects)(place_kernel)
+place_kernel = NativeToPlace().emit(kernel, no_raise=False)
+SequentialPlacePass(place_kernel.dialects, no_raise=False)(place_kernel)
 move_main = PlaceToMove(
     layout_heuristic=layout_heuristic,
     placement_strategy=placement_strategy,
@@ -576,15 +615,22 @@ move_main = PlaceToMove(
 ).emit(place_kernel, no_raise=False)
 ```
 
-Replace the `NativeToPlace(logical_initialize=False).emit(kernel, no_raise=False)` at line 196 with `PhysicalNativeToPlace().emit(kernel, no_raise=False)`. (If Task 4's tracer test required a different equivalent, use that instead.)
+Replace the `NativeToPlace(logical_initialize=False).emit(kernel, no_raise=False)` at line 196 with the generic stage followed by the place-opt pass (legacy `upstream.NativeToPlace.emit` ran the place-opt internally):
+
+```python
+place_main = NativeToPlace().emit(kernel, no_raise=False)
+SequentialPlacePass(place_main.dialects, no_raise=False)(place_main)
+```
+
+(The import name `NativeToPlace` is unchanged from the legacy call sites — only the source module changes — so the two `.emit` sites keep the same class name.) `python/tests/visualize/entropy_tree/test_tracer.py` is the regression gate; it must stay green.
 
 - [ ] **Step 3: Migrate `benchmarks/harness/runner.py`**
 
-Line 30 `from bloqade.lanes.upstream import squin_to_move` → `from bloqade.lanes.transform import LogicalNativeToPlace, PhysicalNativeToPlace, PlaceToMove` and add `from bloqade.lanes.passes import SequentialPlacePass`. Replace the two `squin_to_move(...)` calls (lines 136, 160) with a stage-composition helper mirroring the `logical_initialize` flag:
+Line 30 `from bloqade.lanes.upstream import squin_to_move` → `from bloqade.lanes.transform import LogicalNativeToPlace, NativeToPlace, PlaceToMove` and add `from bloqade.lanes.passes import SequentialPlacePass`. Replace the two `squin_to_move(...)` calls (lines 136, 160) with a stage-composition helper mirroring the `logical_initialize` flag (`False` → **generic** `NativeToPlace`, per the gate correction):
 
 ```python
 def _squin_to_move(mt, *, layout_heuristic, placement_strategy, logical_initialize):
-    NativeStage = LogicalNativeToPlace if logical_initialize else PhysicalNativeToPlace
+    NativeStage = LogicalNativeToPlace if logical_initialize else NativeToPlace
     place = NativeStage().emit(mt)
     SequentialPlacePass(place.dialects)(place)
     return PlaceToMove(
@@ -595,6 +641,23 @@ def _squin_to_move(mt, *, layout_heuristic, placement_strategy, logical_initiali
 ```
 
 Note: `python/tests/benchmarks/test_runner.py` monkeypatches `benchmarks.harness.runner.squin_to_move` (lines 73,180,246) and asserts kwargs (`logical_initialize`, absence of `insert_return_moves`). Update those patches/asserts to target the new `_squin_to_move` helper name and its kwargs.
+
+- [ ] **Step 3b: Repoint the tracer characterization test to the generic stage (it must now PASS)**
+
+In `python/tests/test_upstream_migration_characterization.py`, `test_tracer_physical_place_stage_matches_upstream` currently compares legacy `upstream.NativeToPlace(logical_initialize=False)` against `PhysicalNativeToPlace` (intentionally failing). Repoint the canonical side to the generic stage + place-opt so it reproduces the legacy output and passes:
+
+```python
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.transform import NativeToPlace
+from bloqade.lanes.upstream import NativeToPlace as LegacyNativeToPlace
+
+legacy = LegacyNativeToPlace(logical_initialize=False).emit(_bell_physical(), no_raise=False)
+canonical = NativeToPlace().emit(_bell_physical(), no_raise=False)
+SequentialPlacePass(canonical.dialects, no_raise=False)(canonical)
+assert _stmt_signature(legacy) == _stmt_signature(canonical)
+```
+
+Remove the `pytest.raises(ValidationErrorGroup)` block (it asserted the now-abandoned `PhysicalNativeToPlace` divergence). Rename the test to `test_tracer_neutral_place_stage_matches_upstream`. (This whole file is deleted in Task 7 once its equivalence job is done.)
 
 - [ ] **Step 4: Run the affected tests**
 
@@ -625,7 +688,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Add a shared test helper for stage composition**
 
-Create `python/tests/_squin_to_move_helper.py`:
+Create `python/tests/_squin_to_move_helper.py` (`logical_initialize=False` → **generic** `NativeToPlace`, per the Task 4 gate correction):
 
 ```python
 """Test-only replacement for the removed bloqade.lanes.upstream.squin_to_move,
@@ -636,7 +699,7 @@ from kirin import ir
 from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.transform import (
     LogicalNativeToPlace,
-    PhysicalNativeToPlace,
+    NativeToPlace,
     PlaceToMove,
 )
 
@@ -649,7 +712,7 @@ def squin_to_move(
     no_raise: bool = True,
     logical_initialize: bool = True,
 ) -> ir.Method:
-    NativeStage = LogicalNativeToPlace if logical_initialize else PhysicalNativeToPlace
+    NativeStage = LogicalNativeToPlace if logical_initialize else NativeToPlace
     place = NativeStage().emit(mt, no_raise=no_raise)
     SequentialPlacePass(place.dialects, no_raise=no_raise)(place)
     return PlaceToMove(
