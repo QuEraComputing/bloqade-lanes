@@ -34,7 +34,8 @@ labelled by the integer n = 4*x + 2*y + z:
 
 Gadgets implemented
 -------------------
-  * allocator + |000>_L init      : qubit.new_at + GHZ preparation.
+  * allocator + |000>_L init      : arch.loc-addressed qubit.new_at (each block
+                                    on a 2x4 grid rectangle) + GHZ preparation.
   * transversal CX (two blocks)   : CX^{(x)8} == logical CX-bar on all 3 logical
                                     pairs (CSS transversality).
   * logical CCZ (one block)       : T on even-parity vertices, T-dagger on odd
@@ -59,6 +60,7 @@ from kirin.dialects import ilist
 from bloqade import squin
 from bloqade.gemini import physical
 from bloqade.gemini.common.dialects import arrange, qubit
+from bloqade.lanes.dialects.arch import loc
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.passes import ASAPPlacePass
 from bloqade.lanes.pipeline import PhysicalPipeline
@@ -113,12 +115,14 @@ def flat(blocks: ilist.IList[LogicalBlock, Any]) -> ilist.IList[Qubit, Any]:
 def init_logical_zero(reg: LogicalBlock):
     """Prepare |000>_L = GHZ_8 on a freshly allocated block.
 
-    A Hadamard on vertex 0 followed by a CNOT chain along the vertices yields
+    A Hadamard on vertex 0 followed by a log-depth CNOT tree (doubling the
+    entangled prefix each layer: 0->1, {0,1}->{2,3}, {0..3}->{4..7}) yields
     (|0>^{(x)8} + |1>^{(x)8}) / sqrt(2). The move compiler stages the pairs.
     """
     squin.h(reg[0])
-    for i in range(7):
-        squin.cx(reg[i], reg[i + 1])
+    squin.cx(reg[0], reg[1])
+    squin.broadcast.cx(reg[0:2], reg[2:4])
+    squin.broadcast.cx(reg[0:4], reg[4:])
 
 
 # ---------------------------------------------------------------------------
@@ -127,20 +131,36 @@ def init_logical_zero(reg: LogicalBlock):
 def eight_three_two_allocator():
     """Build (qalloc, qalloc_slot) for [[8,3,2]] blocks.
 
-    Each canonical slot occupies one zone-0 word, with cube vertex n placed at
-    site n of that word; the words are spread out to give the placement engine
-    room for parallelism. The concrete word choice is a layout convenience, not
-    a correctness concern.
+    Each canonical slot occupies a 2x4 rectangle of zone-0 grid cells, resolved
+    via ``arch.loc(zone, row, col)`` rather than a single word. Cube vertex
+    n = 4x+2y+z is placed at grid ``(row = base_row + n // 4, col = base_col +
+    2 * (n % 4))`` — i.e. the x-bit selects the row and (y, z) the column,
+    embedding the cube on a 2-row x 4-col patch. The column stride is 2 because
+    only even grid columns are home positions (odd columns are the CZ-partner
+    interstitial sites). Slots are spread across rows and columns to give the
+    placement engine room for parallelism; the concrete origin choice is a
+    layout convenience, not a correctness concern.
+
+    ``loc`` returns a ``LocationAddress`` whose ``.zone_id`` / ``.word_id`` /
+    ``.site_id`` attribute reads fold to the constants ``qubit.new_at`` needs —
+    exercising the ``loc`` + location-attribute API end to end.
     """
-    slot_words = ilist.IList([0, 4, 8, 12, 16, 2, 6, 10])
+    # 2x4-rectangle origins: rows {0,1} for slots 0-3, rows {3,4} for slots 4-7.
+    # base_col is spaced by 8 home columns so each block's patch (4 even columns,
+    # spanning 6 grid columns) has room; both base_row and base_col are even.
+    slot_base_rows = ilist.IList([0, 0, 0, 0, 3, 3, 3, 3])
+    slot_base_cols = ilist.IList([0, 8, 16, 24, 0, 8, 16, 24])
 
     @physical.kernel(verify=False)
     def qalloc_slot(slot_index: int) -> LogicalBlock:
-        word = slot_words[slot_index]
+        base_row = slot_base_rows[slot_index]
+        base_col = slot_base_cols[slot_index]
 
-        def _alloc_vertex(site: int):
-            # vertex n -> (zone=0, this slot's word, site=n)
-            return qubit.new_at(0, word, site)
+        def _alloc_vertex(n: int):
+            # vertex n -> grid (base_row + n // 4, base_col + 2 * (n % 4)) in
+            # zone 0; the column stride of 2 lands on home positions only.
+            addr = loc(0, base_row + n // 4, base_col + 2 * (n % 4))
+            return qubit.new_at(addr.zone_id, addr.word_id, addr.site_id)
 
         reg = ilist.map(_alloc_vertex, ilist.range(8))
         init_logical_zero(reg)
@@ -251,23 +271,21 @@ def measure_logical_block(blocks: ilist.IList[LogicalBlock, Any]):
 
 
 # ---------------------------------------------------------------------------
-# Compose: two blocks, transversal CX, logical CCZ, logical SWAP
+# Compose: eight blocks, a logical SWAP, two layers of transversal CX
 # ---------------------------------------------------------------------------
 @physical.kernel(aggressive_unroll=True, verify=False)
 def main():
-    blocks = qalloc(ilist.IList([0, 1]))
-
-    # logical CX-bar(block 0 -> block 1) on all three logical pairs
-    transversal_cx(blocks[0:1], blocks[1:2])
+    blocks = qalloc(ilist.IList([0, 1, 2, 3, 4, 5, 6, 7]))
 
     # logical SWAP-bar_{12} on block 0 (passed as a 1-block list; physical moves
     # committed iff VIRTUAL is False). The relabel is tracked by the compiler, so
     # `blocks` keeps referring to the same qubits with block 0's labels swapped.
     logical_swap(blocks[0:1])
 
-    # logical CCZ-bar_{123} on every block (broadcast), acting on block 0's
-    # relabelled logical qubits produced by the swap above.
-    logical_ccz(blocks)
+    # Two transversal CX-bar layers across the eight blocks: first pairing
+    # neighbours (0->1, 2->3, 4->5, 6->7), then the two halves (0->4, ..., 3->7).
+    transversal_cx(blocks[0::2], blocks[1::2])
+    transversal_cx(blocks[0:4], blocks[4:])
 
     return measure_logical_block(blocks)
 
@@ -276,7 +294,10 @@ def main():
 # Compile through the physical pipeline and visualise the resulting moves
 # ---------------------------------------------------------------------------
 strat = make_physical_placement_strategy(
-    return_moves=False, move_solutions_per_layer=3, search_budget=None
+    return_moves=False,
+    move_solutions_per_layer=100,
+    search_budget=None,
+    strategy="entropy",
 )
 pipeline = PhysicalPipeline(placement_strategy=strat, place_opt_type=ASAPPlacePass)
 
