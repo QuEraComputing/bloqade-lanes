@@ -6,6 +6,7 @@ from kirin.dialects import func
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
+from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
@@ -45,6 +46,15 @@ def test_find_qubit_ssas_no_qubits():
         return 42
 
     assert len(_find_qubit_ssas(kernel)) == 0
+
+
+def test_find_qubit_ssas_includes_new_at_allocations():
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def kernel():
+        new_at(0, 0, 0)
+        qubit.qalloc(2)
+
+    assert len(_find_qubit_ssas(kernel)) == 3
 
 
 def test_find_return_stmt():

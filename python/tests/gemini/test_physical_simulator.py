@@ -5,7 +5,7 @@ import pytest
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from kirin import ir, types
 from kirin.decl import info, statement
-from kirin.dialects import func, ilist
+from kirin.dialects import func, ilist, ssacfg
 
 import bloqade.gemini.device.physical_simulator as physical_simulator_module
 from bloqade import squin, types as bloqade_types
@@ -14,11 +14,11 @@ from bloqade.gemini.device.physical_simulator import (
     PhysicalResult,
     PhysicalSimulator,
     PhysicalSimulatorTask,
-    _find_qubit_ssas,
     append_measurements_and_annotations_physical,
 )
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.logical_mvp import _find_qubit_ssas
 from bloqade.lanes.pipeline import PhysicalPipeline
 
 
@@ -167,6 +167,34 @@ def test_append_measurements_and_annotations_physical_preserves_kernel_return():
     assert list(post_processing.emit_observables(raw_shots)) == [[True, False]]
 
 
+def test_append_measurements_and_annotations_physical_uses_logical_mvp_helpers(
+    monkeypatch,
+):
+    import bloqade.lanes.logical_mvp as logical_mvp
+
+    find_qubit_ssas = MagicMock(wraps=logical_mvp._find_qubit_ssas)
+    find_return_stmt = MagicMock(wraps=logical_mvp._find_return_stmt)
+    insert_before = MagicMock(wraps=logical_mvp._insert_before)
+    monkeypatch.setattr(logical_mvp, "_find_qubit_ssas", find_qubit_ssas)
+    monkeypatch.setattr(logical_mvp, "_find_return_stmt", find_return_stmt)
+    monkeypatch.setattr(logical_mvp, "_insert_before", insert_before)
+
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(2)
+        squin.broadcast.measure(reg)
+
+    append_measurements_and_annotations_physical(
+        kernel,
+        m2dets=[[1], [1]],
+        m2obs=None,
+    )
+
+    find_qubit_ssas.assert_called_once_with(kernel)
+    find_return_stmt.assert_called_once_with(kernel)
+    assert insert_before.call_count > 0
+
+
 def test_append_measurements_and_annotations_physical_validates_block_size():
     @squin.kernel
     def kernel():
@@ -210,22 +238,17 @@ def test_append_measurements_and_annotations_physical_accepts_new_at_allocations
     )
 
 
-def test_find_qubit_ssas_collects_any_qubit_typed_statement_result():
+def test_find_qubit_ssas_ignores_qubit_typed_results_without_addresses():
     test_dialect = ir.Dialect("test.qubit_alloc")
 
     @statement(dialect=test_dialect)
     class CustomQubitAlloc(ir.Statement):
         result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
-    @statement(dialect=test_dialect)
-    class BottomTypedStatement(ir.Statement):
-        result: ir.ResultValue = info.result(types.Bottom)
-
     block = ir.Block(argtypes=(types.MethodType,))
     alloc = CustomQubitAlloc()
-    bottom = BottomTypedStatement()
     none_stmt = func.ConstantNone()
-    for stmt in (alloc, bottom, none_stmt, func.Return(none_stmt.result)):
+    for stmt in (alloc, none_stmt, func.Return(none_stmt.result)):
         block.stmts.append(stmt)
 
     function = func.Function(
@@ -235,10 +258,10 @@ def test_find_qubit_ssas_collects_any_qubit_typed_statement_result():
         body=ir.Region(blocks=block),
     )
     method = ir.Method(
-        dialects=ir.DialectGroup([func.dialect, test_dialect]),
+        dialects=ir.DialectGroup([func.dialect, ssacfg.dialect, test_dialect]),
         code=function,
         sym_name="custom_alloc",
         arg_names=[],
     )
 
-    assert _find_qubit_ssas(method) == [alloc.result]
+    assert _find_qubit_ssas(method) == []

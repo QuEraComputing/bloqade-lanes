@@ -15,10 +15,10 @@ import numpy as np
 from bloqade.analysis.fidelity import FidelityAnalysis
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.rewrite.passes import AggressiveUnroll
-from kirin import ir, passes, rewrite, types
-from kirin.dialects import func, ilist, py
+from kirin import ir, passes, rewrite
+from kirin.dialects import ilist, py
 
-from bloqade import qubit, types as bloqade_types
+from bloqade import qubit
 
 from .simulator import DetectorResult, Result
 
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 
 RetType = TypeVar("RetType")
 PhysicalResult = Result
-_S = TypeVar("_S", bound=ir.Statement)
 
 
 def _default_noise_model() -> "NoiseModelABC":
@@ -59,32 +58,6 @@ def _tsim():
     return tsim
 
 
-def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
-    """Walk the IR and collect SSA values for physical qubit allocations."""
-    qubits: list[ir.SSAValue] = []
-    for stmt in mt.callable_region.walk():
-        for result in stmt.results:
-            if result.type.is_subseteq(
-                bloqade_types.QubitType
-            ) and not result.type.is_subseteq(types.Bottom):
-                qubits.append(result)
-    return qubits
-
-
-def _find_return_stmt(mt: ir.Method) -> func.Return:
-    """Find the final return statement in a single-block kernel."""
-    block = mt.callable_region.blocks[0]
-    last = block.last_stmt
-    assert isinstance(last, func.Return), f"Expected func.Return, got {type(last)}"
-    return last
-
-
-def _insert_before(stmt: _S, anchor: ir.Statement) -> _S:
-    """Insert stmt before anchor and return stmt for chaining."""
-    stmt.insert_before(anchor)
-    return stmt
-
-
 def _validate_m2_matrix(matrix: list[list[int]], name: str) -> int:
     if len(matrix) == 0:
         raise ValueError(f"{name} must have at least one row")
@@ -107,6 +80,12 @@ def append_measurements_and_annotations_physical(
     the matrices are repeated block-by-block. The original return value is
     preserved.
     """
+    from bloqade.lanes.logical_mvp import (
+        _find_qubit_ssas,
+        _find_return_stmt,
+        _insert_before,
+    )
+
     if m2dets is None and m2obs is None:
         raise ValueError("At least one of m2dets or m2obs must be provided")
 

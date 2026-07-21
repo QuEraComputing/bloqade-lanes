@@ -1,5 +1,6 @@
 import math
-from typing import Any
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -327,7 +328,7 @@ def test_run_clifford_uses_stim_sampler():
 
     result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.tsim_circuit.stim_circuit.compile_sampler.assert_called_once_with()
+    task.tsim_circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=None)
     task.measurement_sampler.sample.assert_not_called()
     assert isinstance(result, Result)
     assert result._raw_measurements == samples.tolist()
@@ -341,6 +342,312 @@ def test_run_non_clifford_uses_measurement_sampler():
 
     task.measurement_sampler.sample.assert_called_once_with(shots=1)
     task.tsim_circuit.stim_circuit.compile_sampler.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("with_noise", "circuit_attribute"),
+    [(True, "tsim_circuit"), (False, "noiseless_tsim_circuit")],
+)
+def test_seed_zero_is_forwarded_to_stim_sampler(
+    with_noise: bool, circuit_attribute: str
+):
+    task = _mock_task(is_clifford=True)
+    circuit = getattr(task, circuit_attribute)
+    samples = np.array([[True]])
+    circuit.stim_circuit.compile_sampler.return_value.sample.return_value = samples
+
+    result = GeminiLogicalSimulatorTask.run(
+        task, shots=1, with_noise=with_noise, seed=0
+    )
+
+    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
+    assert isinstance(result, Result)
+    assert result._raw_measurements == samples.tolist()
+
+
+def test_seeded_stim_sampler_reproduces_fixed_batch():
+    import stim
+
+    task = _mock_task(is_clifford=True)
+    task.tsim_circuit.stim_circuit = stim.Circuit("H 0\nM 0")
+
+    first = GeminiLogicalSimulatorTask.run(task, shots=64, seed=17)
+    second = GeminiLogicalSimulatorTask.run(task, shots=64, seed=17)
+
+    assert first.measurements == second.measurements
+
+
+@pytest.mark.parametrize(
+    ("with_noise", "circuit_attribute"),
+    [(True, "tsim_circuit"), (False, "noiseless_tsim_circuit")],
+)
+@pytest.mark.parametrize(
+    ("run_detectors", "compile_method", "cached_sampler_attribute"),
+    [
+        (False, "compile_sampler", "measurement_sampler"),
+        (True, "compile_detector_sampler", "detector_sampler"),
+    ],
+)
+def test_seeded_non_clifford_run_compiles_fresh_sampler(
+    with_noise: bool,
+    circuit_attribute: str,
+    run_detectors: bool,
+    compile_method: str,
+    cached_sampler_attribute: str,
+):
+    task = _mock_task(is_clifford=False)
+    circuit = getattr(task, circuit_attribute)
+    sampler = getattr(circuit, compile_method).return_value
+    if run_detectors:
+        sampler.sample.return_value = (
+            np.array([[True]]),
+            np.array([[False]]),
+        )
+    else:
+        sampler.sample.return_value = np.array([[True]])
+
+    if run_detectors:
+        GeminiLogicalSimulatorTask._run_detectors(
+            task, shots=1, with_noise=with_noise, seed=17
+        )
+    else:
+        GeminiLogicalSimulatorTask.run(
+            task,
+            shots=1,
+            with_noise=with_noise,
+            run_detectors=False,
+            seed=17,
+        )
+
+    getattr(circuit, compile_method).assert_called_once_with(seed=17)
+    selected_cached_sampler_attribute = (
+        cached_sampler_attribute
+        if with_noise
+        else f"noiseless_{cached_sampler_attribute}"
+    )
+    getattr(task, selected_cached_sampler_attribute).sample.assert_not_called()
+
+
+def test_seeded_non_clifford_run_does_not_leak_into_unseeded_cache():
+    task = _mock_task(is_clifford=False)
+    seeded_sampler = task.tsim_circuit.compile_sampler.return_value
+    seeded_sampler.sample.return_value = np.array([[True]])
+    task.measurement_sampler.sample.return_value = np.array([[False]])
+
+    GeminiLogicalSimulatorTask.run(task, shots=1, seed=17)
+    result = GeminiLogicalSimulatorTask.run(task, shots=1, seed=None)
+
+    task.tsim_circuit.compile_sampler.assert_called_once_with(seed=17)
+    seeded_sampler.sample.assert_called_once_with(shots=1)
+    task.measurement_sampler.sample.assert_called_once_with(shots=1)
+    assert result.measurements == [[False]]
+
+
+@pytest.mark.parametrize(
+    ("with_noise", "cached_sampler_attribute"),
+    [(True, "measurement_sampler"), (False, "noiseless_measurement_sampler")],
+)
+@pytest.mark.parametrize("run_detectors", [False, True])
+def test_unseeded_non_clifford_run_uses_cached_sampler(
+    with_noise: bool, cached_sampler_attribute: str, run_detectors: bool
+):
+    task = _mock_task(is_clifford=False)
+    sampler_attribute = (
+        cached_sampler_attribute
+        if not run_detectors
+        else cached_sampler_attribute.replace("measurement", "detector")
+    )
+    sampler = getattr(task, sampler_attribute)
+    if run_detectors:
+        sampler.sample.return_value = (
+            np.array([[True]]),
+            np.array([[False]]),
+        )
+    else:
+        sampler.sample.return_value = np.array([[True]])
+
+    if run_detectors:
+        GeminiLogicalSimulatorTask._run_detectors(task, shots=1, with_noise=with_noise)
+    else:
+        GeminiLogicalSimulatorTask.run(
+            task, shots=1, with_noise=with_noise, run_detectors=False
+        )
+
+    sampler.sample.assert_called_once()
+    task.tsim_circuit.compile_sampler.assert_not_called()
+    task.noiseless_tsim_circuit.compile_sampler.assert_not_called()
+    task.tsim_circuit.compile_detector_sampler.assert_not_called()
+    task.noiseless_tsim_circuit.compile_detector_sampler.assert_not_called()
+
+
+@pytest.mark.parametrize("seed", [0, 2**63 - 1])
+def test_task_run_accepts_valid_seed_values(seed: int):
+    task = _mock_task(is_clifford=True)
+    task.tsim_circuit.stim_circuit.compile_sampler.return_value.sample.return_value = (
+        np.array([[True]])
+    )
+
+    GeminiLogicalSimulatorTask.run(task, shots=1, seed=seed)
+
+    task.tsim_circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=seed)
+
+
+@pytest.mark.parametrize("seed", [True, -1, 2**63, 1.5, "1"])
+def test_task_run_rejects_invalid_seed_before_sampling(seed: object):
+    task = _mock_task(is_clifford=True)
+
+    with pytest.raises((TypeError, ValueError), match="seed must be"):
+        GeminiLogicalSimulatorTask.run(task, shots=1, seed=cast(int | None, seed))
+
+    task.tsim_circuit.stim_circuit.compile_sampler.assert_not_called()
+
+
+def test_task_run_async_forwards_seed_and_returns_result():
+    task = _mock_task(is_clifford=True)
+    executor = ThreadPoolExecutor(max_workers=1)
+    task._thread_pool_executor = executor
+    expected_result = object()
+    task.run.return_value = expected_result
+
+    try:
+        result = GeminiLogicalSimulatorTask.run_async(
+            task, shots=3, with_noise=False, seed=0
+        ).result()
+    finally:
+        executor.shutdown()
+
+    assert result is expected_result
+    task.run.assert_called_once_with(3, False, seed=0)
+
+
+def test_task_run_async_forwards_seed_to_detector_path():
+    task = _mock_task(is_clifford=False)
+    executor = ThreadPoolExecutor(max_workers=1)
+    task._thread_pool_executor = executor
+    expected_result = object()
+    task._run_detectors.return_value = expected_result
+
+    try:
+        result = GeminiLogicalSimulatorTask.run_async(
+            task, shots=3, with_noise=False, run_detectors=True, seed=0
+        ).result()
+    finally:
+        executor.shutdown()
+
+    assert result is expected_result
+    task._run_detectors.assert_called_once_with(3, False, seed=0)
+
+
+def test_task_run_forwards_seed_to_detector_path():
+    task = _mock_task(is_clifford=False)
+    expected_result = object()
+    task._run_detectors.return_value = expected_result
+
+    result = GeminiLogicalSimulatorTask.run(
+        task, shots=3, with_noise=False, run_detectors=True, seed=0
+    )
+
+    assert result is expected_result
+    task._run_detectors.assert_called_once_with(3, False, seed=0)
+
+
+@pytest.mark.parametrize(
+    ("with_noise", "circuit_attribute"),
+    [(True, "tsim_circuit"), (False, "noiseless_tsim_circuit")],
+)
+def test_seeded_clifford_detector_sampling_uses_stim_seed_and_m2d(
+    with_noise: bool, circuit_attribute: str
+):
+    task = _mock_task(is_clifford=True)
+    samples = np.array([[True, False]])
+    detectors, observables = np.array([[True]]), np.array([[False]])
+    circuit = getattr(task, circuit_attribute)
+    sampler = circuit.stim_circuit.compile_sampler.return_value
+    sampler.sample.return_value = samples
+    m2d = circuit.compile_m2d_converter.return_value
+    m2d.convert.return_value = (detectors, observables)
+
+    result = GeminiLogicalSimulatorTask._run_detectors(
+        task, shots=1, with_noise=with_noise, seed=17
+    )
+
+    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=17)
+    sampler.sample.assert_called_once_with(shots=1)
+    circuit.compile_m2d_converter.assert_called_once_with(skip_reference_sample=True)
+    m2d.convert.assert_called_once_with(measurements=samples, separate_observables=True)
+    assert isinstance(result, DetectorResult)
+
+
+def test_task_run_accepts_explicit_none_seed():
+    task = _mock_task(is_clifford=True)
+    task.tsim_circuit.stim_circuit.compile_sampler.return_value.sample.return_value = (
+        np.array([[True]])
+    )
+
+    GeminiLogicalSimulatorTask.run(task, shots=1, seed=None)
+
+    task.tsim_circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=None)
+
+
+@pytest.mark.parametrize("seed", [0, None])
+@pytest.mark.parametrize("run_detectors", [False, True])
+def test_simulator_run_forwards_seed_to_task(
+    monkeypatch, seed: int | None, run_detectors: bool
+):
+    sim = GeminiLogicalSimulator()
+    task = MagicMock()
+    expected_result = object()
+    task.run.return_value = expected_result
+    monkeypatch.setattr(sim, "task", MagicMock(return_value=task))
+
+    result = sim.run(
+        main,
+        shots=3,
+        with_noise=False,
+        run_detectors=run_detectors,
+        seed=seed,
+    )
+
+    assert result is expected_result
+    task.run.assert_called_once_with(3, False, run_detectors=run_detectors, seed=seed)
+
+
+@pytest.mark.parametrize("run_detectors", [False, True])
+def test_simulator_run_async_forwards_seed_and_returns_result(
+    monkeypatch, run_detectors: bool
+):
+    sim = GeminiLogicalSimulator()
+    task = MagicMock()
+    expected_result = object()
+    future = Future()
+    future.set_result(expected_result)
+    task.run_async.return_value = future
+    monkeypatch.setattr(sim, "task", MagicMock(return_value=task))
+
+    result = sim.run_async(
+        main,
+        shots=3,
+        with_noise=False,
+        run_detectors=run_detectors,
+        seed=0,
+    ).result()
+
+    assert result is expected_result
+    if run_detectors:
+        task.run_async.assert_called_once_with(3, False, run_detectors=True, seed=0)
+    else:
+        task.run_async.assert_called_once_with(3, False, seed=0)
+
+
+def test_simulator_clifft_task_seed_rejected_before_compilation(monkeypatch):
+    sim = GeminiLogicalSimulator(backend="clifft", seed=-1)
+    compile_task = MagicMock()
+    monkeypatch.setattr("bloqade.lanes.logical_mvp.compile_task", compile_task)
+
+    with pytest.raises(ValueError, match="seed must be"):
+        sim.run(main, seed=None)
+
+    compile_task.assert_not_called()
 
 
 def test_run_detectors_clifford_converts_via_m2d():
