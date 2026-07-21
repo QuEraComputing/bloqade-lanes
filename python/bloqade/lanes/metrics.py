@@ -9,9 +9,14 @@ from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
-from bloqade.lanes.transform import MoveToSquinLogical, transversal_rewrites
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.transform import (
+    LogicalNativeToPlace,
+    MoveToSquinLogical,
+    PlaceToMove,
+    transversal_rewrites,
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,21 @@ class KernelMoveTimeMetrics:
     timing_model: str
 
 
+def _logical_squin_to_move(
+    mt: ir.Method,
+    *,
+    layout_heuristic: Any,
+    placement_strategy: PlacementStrategyABC,
+) -> ir.Method:
+    place = LogicalNativeToPlace().emit(mt)
+    SequentialPlacePass(place.dialects)(place)
+    return PlaceToMove(
+        layout_heuristic=layout_heuristic,
+        placement_strategy=placement_strategy,
+        insert_initialize=True,
+    ).emit(place)
+
+
 @dataclass
 class Metrics:
     """Unified metrics computation for the lanes pipeline.
@@ -89,7 +109,7 @@ class Metrics:
         else:
             noise_model = generate_logical_noise_model()
 
-        move_mt = squin_to_move(
+        move_mt = _logical_squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
@@ -129,7 +149,7 @@ class Metrics:
         *,
         placement_strategy: PlacementStrategyABC,
     ) -> KernelMoveMetrics:
-        move_mt = squin_to_move(
+        move_mt = _logical_squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
@@ -149,7 +169,7 @@ class Metrics:
         placement_strategy: PlacementStrategyABC,
         flair_amplitude_delta: float = 1.0,
     ) -> KernelMoveTimeMetrics:
-        move_mt = squin_to_move(
+        move_mt = _logical_squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,

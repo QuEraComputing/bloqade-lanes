@@ -148,7 +148,8 @@ def build_entropy_trace(
         PhysicalPlacementStrategy,
         RustPlacementTraversal,
     )
-    from bloqade.lanes.upstream import NativeToPlace, squin_to_move
+    from bloqade.lanes.passes import SequentialPlacePass
+    from bloqade.lanes.transform import NativeToPlace, PlaceToMove
 
     arch_spec = get_arch_spec()
     layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut(
@@ -172,13 +173,13 @@ def build_entropy_trace(
     )
     placement_strategy.trace_cz_index = layer_index
 
-    move_main = squin_to_move(
-        kernel,
+    place_kernel = NativeToPlace().emit(kernel, no_raise=False)
+    SequentialPlacePass(place_kernel.dialects, no_raise=False)(place_kernel)
+    move_main = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
-        no_raise=False,
-        logical_initialize=False,
-    )
+        insert_initialize=False,
+    ).emit(place_kernel, no_raise=False)
     executed_cz_count = sum(
         1 for stmt in move_main.callable_region.walk() if isinstance(stmt, move.CZ)
     )
@@ -193,7 +194,8 @@ def build_entropy_trace(
 
     traced_target: dict[int, LocationAddress] = placement_strategy.traced_target
 
-    place_main = NativeToPlace(logical_initialize=False).emit(kernel, no_raise=False)
+    place_main = NativeToPlace().emit(kernel, no_raise=False)
+    SequentialPlacePass(place_main.dialects, no_raise=False)(place_main)
     address_analysis = address.AddressAnalysis(place_main.dialects)
     address_frame, _ = address_analysis.run(place_main)
     all_qubits = tuple(range(address_analysis.next_address))

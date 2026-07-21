@@ -108,79 +108,33 @@ def test_metrics_logical_path_matches_upstream() -> None:
     )
 
 
-def test_tracer_physical_place_stage_matches_upstream() -> None:
+def test_tracer_neutral_place_stage_matches_upstream() -> None:
     """tracer.py uses upstream.NativeToPlace(logical_initialize=False).emit for
-    a raw physical place stage. Pin that the canonical stage reproduces the same
-    place-dialect statement sequence for a physical kernel.
-
-    EXPECTED: FAIL — real behavioral divergence between legacy and canonical.
-
-    Known divergences (as of Task 4 characterization):
-
-    1. Validation: PhysicalNativeToPlace adds PhysicalTerminalMeasurementValidation
-       (rejects kernels with no terminal measure when no_raise=False).  Legacy
-       NativeToPlace has no such check; it accepts measurement-free physical kernels
-       unconditionally.  Result: calling with no_raise=False raises
-       ValidationErrorGroup on the canonical side for the Bell-without-measure kernel
-       that the tracer routinely accepts.
-
-    2. Qubit lowering: Legacy uses InitializeNewQubits → NewLogicalQubit nodes;
-       canonical uses RewriteQubitsToPinnedQubits → NewPinnedQubit nodes.
-
-    3. SequentialPlacePass: Legacy runs it inside emit(), collapsing per-gate
-       StaticPlacement+Yield pairs into a single leading StaticPlacement.
-       Canonical does not run it, leaving each gate's StaticPlacement+Yield in place.
-
-    Statement-sequence diff (from no_raise=True comparison, bypassing validation):
-        Legacy  (15 stmts): ['Constant', 'Constant', 'NewLogicalQubit',
-            'NewLogicalQubit', 'Constant', 'StaticPlacement', 'Rz', 'R', 'Rz',
-            'R', 'CZ', 'R', 'Yield', 'ConstantNone', 'Return']
-        Canonical (25 stmts): ['Constant', 'Constant', 'Constant',
-            'NewPinnedQubit', 'NewPinnedQubit', 'StaticPlacement', 'Rz', 'Yield',
-            'StaticPlacement', 'R', 'Yield', 'StaticPlacement', 'Rz', 'Yield',
-            'StaticPlacement', 'R', 'Yield', 'StaticPlacement', 'CZ', 'Yield',
-            'StaticPlacement', 'R', 'Yield', 'ConstantNone', 'Return']
-
-    Task 5 implication: tracer.py must NOT be migrated to PhysicalNativeToPlace as
-    a direct swap.  Either keep it on NativeToPlace(logical_initialize=False), or
-    add a dedicated stage that matches legacy behavior (no terminal-measure
-    validation, InitializeNewQubits lowering, SequentialPlacePass applied inside).
+    a raw physical place stage. Pin that the new generic NativeToPlace +
+    SequentialPlacePass reproduces the same place-dialect statement sequence for
+    a physical kernel.
 
     Legacy: NativeToPlace(logical_initialize=False).emit(kernel, no_raise=False)
         → lowers qubits with InitializeNewQubits (→ NewLogicalQubit)
         → runs SequentialPlacePass internally
 
-    Canonical: PhysicalNativeToPlace().emit(kernel, no_raise=False)
-        → validates terminal measurement (raises for measurement-free kernels)
-        → lowers qubits with RewriteQubitsToPinnedQubits (→ NewPinnedQubit)
-        → does NOT run SequentialPlacePass internally
+    Canonical: NativeToPlace().emit(kernel, no_raise=False)
+        → lowers qubits with InitializeNewQubits (→ NewLogicalQubit)
+        → caller runs SequentialPlacePass(dialects, no_raise=False)(place)
     """
-    import pytest
-    from kirin.ir.exception import ValidationErrorGroup
+    from bloqade.lanes.passes import SequentialPlacePass
+    from bloqade.lanes.transform import NativeToPlace
+    from bloqade.lanes.upstream import NativeToPlace as LegacyNativeToPlace
 
-    from bloqade.lanes.transform import PhysicalNativeToPlace
-    from bloqade.lanes.upstream import NativeToPlace
-
-    # Legacy accepts a measurement-free physical kernel without error.
-    legacy = NativeToPlace(logical_initialize=False).emit(
+    legacy = LegacyNativeToPlace(logical_initialize=False).emit(
         _bell_physical(), no_raise=False
     )
-    legacy_sig = _stmt_signature(legacy)
 
-    # Canonical raises because the kernel has no terminal measurement.
-    with pytest.raises(ValidationErrorGroup):
-        PhysicalNativeToPlace().emit(_bell_physical(), no_raise=False)
+    canonical = NativeToPlace().emit(_bell_physical(), no_raise=False)
+    SequentialPlacePass(canonical.dialects, no_raise=False)(canonical)
 
-    # Compare structural differences with no_raise=True (bypasses the new validation).
-    canonical_no_validate = PhysicalNativeToPlace().emit(
-        _bell_physical(), no_raise=True
-    )
-    canonical_sig = _stmt_signature(canonical_no_validate)
-
-    # This assertion documents reality: the sequences differ.
-    # Do NOT change canonical/legacy code to force a pass.
-    assert legacy_sig == canonical_sig, (
-        f"Statement sequences differ (real behavioral divergence — see docstring).\n"
-        f"Legacy  ({len(legacy_sig)} stmts): {legacy_sig}\n"
-        f"Canonical ({len(canonical_sig)} stmts): {canonical_sig}"
+    assert _stmt_signature(legacy) == _stmt_signature(canonical), (
+        f"Statement sequences differ.\n"
+        f"Legacy  ({len(_stmt_signature(legacy))} stmts): {_stmt_signature(legacy)}\n"
+        f"Canonical ({len(_stmt_signature(canonical))} stmts): {_stmt_signature(canonical)}"
     )

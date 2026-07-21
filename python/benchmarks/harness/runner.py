@@ -9,8 +9,11 @@ from dataclasses import dataclass
 
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
+from kirin import ir
 
 from bloqade.lanes.analysis import atom
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
+from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.compile import (
     compile_to_physical_squin_noise_model as compile_physical_noise_model,
@@ -26,8 +29,30 @@ from bloqade.lanes.heuristics.physical.placement import (
 )
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_logical_noise_model
-from bloqade.lanes.transform import MoveToSquinLogical
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.transform import (
+    LogicalNativeToPlace,
+    MoveToSquinLogical,
+    NativeToPlace,
+    PlaceToMove,
+)
+
+
+def _squin_to_move(
+    mt: ir.Method,
+    *,
+    layout_heuristic: LayoutHeuristicABC,
+    placement_strategy: PlacementStrategyABC,
+    logical_initialize: bool,
+) -> ir.Method:
+    NativeStage = LogicalNativeToPlace if logical_initialize else NativeToPlace
+    place_mt = NativeStage().emit(mt)
+    SequentialPlacePass(place_mt.dialects)(place_mt)
+    return PlaceToMove(
+        layout_heuristic=layout_heuristic,
+        placement_strategy=placement_strategy,
+        insert_initialize=logical_initialize,
+    ).emit(place_mt)
 
 
 @dataclass(frozen=True)
@@ -133,7 +158,7 @@ class BenchmarkRunner:
         placement_strategy = self._build_placement_strategy(job)
         layout_heuristic = self._build_layout_heuristic(job)
 
-        move_mt = squin_to_move(
+        move_mt = _squin_to_move(
             job.case.kernel,
             layout_heuristic=layout_heuristic,
             placement_strategy=placement_strategy,
@@ -157,7 +182,7 @@ class BenchmarkRunner:
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:
         if job.case.logical_initialize:
             placement_strategy = self._build_placement_strategy(job)
-            move_mt = squin_to_move(
+            move_mt = _squin_to_move(
                 job.case.kernel,
                 layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
                 placement_strategy=placement_strategy,

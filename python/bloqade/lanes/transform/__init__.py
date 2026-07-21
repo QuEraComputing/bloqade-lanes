@@ -12,6 +12,7 @@ from bloqade.lanes.transform.move_to_squin import (
 from bloqade.lanes.transform.move_to_stack import MoveToStackMove as MoveToStackMove
 from bloqade.lanes.transform.native_to_place import (
     LogicalNativeToPlace as LogicalNativeToPlace,
+    NativeToPlace as NativeToPlace,
     NativeToPlaceBase as NativeToPlaceBase,
     PhysicalNativeToPlace as PhysicalNativeToPlace,
 )

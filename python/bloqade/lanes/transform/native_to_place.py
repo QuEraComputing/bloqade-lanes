@@ -123,6 +123,22 @@ class NativeToPlaceBase:
 
 
 @dataclass
+class NativeToPlace(NativeToPlaceBase):
+    """Neutral squin -> place lowering.
+
+    No logical-initialize rewrites and no physical pinned-qubit lowering — the
+    "generic" path that reproduces the legacy ``upstream.NativeToPlace(
+    logical_initialize=False)`` behavior. ``arch_spec`` defaults to ``None`` so
+    the post-unroll address/duplicate validation block is skipped (as the legacy
+    generic path did). Used by the entropy-trace visualizer and by callers that
+    want a plain squin->place lowering.
+    """
+
+    def _lower_qubits(self, out: Method) -> None:
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
+
+
+@dataclass
 class PhysicalNativeToPlace(NativeToPlaceBase):
     def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
         _, errors = PhysicalTerminalMeasurementValidation().run(out)

@@ -70,7 +70,7 @@ def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
         calls["transversal_input"] = move_mt
         return move_mt
 
-    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
     monkeypatch.setattr(
         "benchmarks.harness.runner.transversal_rewrites", _fake_transversal_rewrites
     )
@@ -177,7 +177,7 @@ def test_run_jobs_stamps_arch_spec_id_from_strategy(monkeypatch):
     def _fake_squin_to_move(*args, **kwargs):
         return _FakeMoveMethod()
 
-    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
     monkeypatch.setattr(BenchmarkRunner, "_estimate_fidelity", lambda self, job: 1.0)
 
     @dataclass
@@ -243,7 +243,7 @@ def test_compile_reads_rust_nodes_from_strategy(monkeypatch):
         placement_strategy._rust_nodes_expanded_total = 321
         return _FakeMoveMethod()
 
-    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
 
     job = BenchmarkJob(
         case=BenchmarkCase(
