@@ -2,6 +2,7 @@ import math
 
 import pytest
 from kirin.dialects import ilist
+from tests._squin_to_move_helper import squin_to_move
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
@@ -15,7 +16,6 @@ from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrateg
 from bloqade.lanes.logical_mvp import compile_squin_to_move
 from bloqade.lanes.passes import ALAPPlacePass, ASAPPlacePass
 from bloqade.lanes.transform import MoveToSquinPhysical
-from bloqade.lanes.upstream import squin_to_move
 from bloqade.lanes.utils import check_circuit
 
 
@@ -57,8 +57,10 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
     # lower-level squin_to_move API which does not enforce that requirement.
     physical_move = squin_to_move(
         ghz,
-        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=PalindromePlacementStrategy(
+            inner=PhysicalPlacementStrategy()
+        ),
         logical_initialize=False,
         no_raise=False,
     )
@@ -83,8 +85,10 @@ def test_asap_place_pass_roundtrip_state_vector():
 
     physical_move = squin_to_move(
         circuit,
-        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=PalindromePlacementStrategy(
+            inner=PhysicalPlacementStrategy()
+        ),
         logical_initialize=False,
         place_opt_type=ASAPPlacePass,
         no_raise=False,
@@ -118,8 +122,10 @@ def test_alap_place_pass_roundtrip_state_vector():
 
     physical_move = squin_to_move(
         circuit,
-        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=PalindromePlacementStrategy(
+            inner=PhysicalPlacementStrategy()
+        ),
         logical_initialize=False,
         place_opt_type=ALAPPlacePass,
         no_raise=False,

@@ -49,9 +49,11 @@ example_kernel.print()
 # of how the current move synthesis works the call graph is flattened out into a single kernel.
 
 # %%
-from bloqade.lanes.upstream import NativeToPlace  # noqa: E402
+from bloqade.lanes.passes import SequentialPlacePass  # noqa: E402
+from bloqade.lanes.transform import LogicalNativeToPlace as NativeToPlace  # noqa: E402
 
 example_kernel = NativeToPlace().emit(example_kernel)
+SequentialPlacePass(example_kernel.dialects)(example_kernel)
 example_kernel.print()
 
 # %% [markdown]
@@ -132,12 +134,12 @@ example_kernel.print(analysis=placement_frame.entries)
 
 
 # %%
-from bloqade.lanes.upstream import PlaceToMove  # noqa: E402
+from bloqade.lanes.transform import PlaceToMove  # noqa: E402
 
 example_kernel = PlaceToMove(
-    logical_layout.LogicalLayoutHeuristic(),
-    LogicalPlacementStrategy(),
-    True,
+    layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
+    placement_strategy=LogicalPlacementStrategy(),
+    insert_initialize=True,
 ).emit(example_kernel)
 
 example_kernel.print()

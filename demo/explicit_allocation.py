@@ -14,7 +14,8 @@ from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.transform import LogicalNativeToPlace, PlaceToMove
 
 
 @gemini_logical.kernel(aggressive_unroll=True)
@@ -30,11 +31,16 @@ def main():
     gemini_logical.terminal_measure(ilist.IList([a, b, reg[0], reg[1]]))
 
 
-compiled = squin_to_move(
-    main,
-    layout_heuristic=LogicalLayoutHeuristic(),
-    placement_strategy=LogicalPlacementStrategyNoHome(),
-)
+_heuristic = LogicalLayoutHeuristic()
+_strategy = LogicalPlacementStrategyNoHome()
+
+_place = LogicalNativeToPlace().emit(main)
+SequentialPlacePass(_place.dialects)(_place)
+compiled = PlaceToMove(
+    layout_heuristic=_heuristic,
+    placement_strategy=_strategy,
+    insert_initialize=True,
+).emit(_place)
 
 fills = [s for s in compiled.callable_region.walk() if isinstance(s, move.Fill)]
 assert len(fills) == 1
