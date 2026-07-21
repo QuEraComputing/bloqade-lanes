@@ -121,7 +121,7 @@ def test_composed_backends_fail_before_sampling_with_specific_tsim_guidance():
             (PyQrackSimulatorBackend, "PyQrack"),
         ):
             backend = backend_type()
-            backend.tsim_backend.detector_error_model = MagicMock(
+            backend._tsim_backend.detector_error_model = MagicMock(
                 side_effect=ImportError("blocked Tsim import")
             )
             backend.sample = MagicMock(

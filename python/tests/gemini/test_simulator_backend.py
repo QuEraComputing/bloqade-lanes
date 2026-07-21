@@ -66,6 +66,15 @@ def test_backend_sample_defaults_to_no_payloads():
     )
 
 
+@pytest.mark.parametrize(
+    "backend_type", [CliffTSimulatorBackend, PyQrackSimulatorBackend]
+)
+def test_composite_backend_exposes_only_private_tsim_backend(backend_type):
+    backend = backend_type()
+    assert isinstance(backend._tsim_backend, TsimSimulatorBackend)
+    assert not hasattr(backend, "tsim_backend")
+
+
 def test_tsim_circuit_cache_reuses_live_kernel_and_drops_dead_kernel(monkeypatch):
     class Kernel:
         def similar(self):
@@ -291,7 +300,7 @@ def test_clifft_backend_compiles_once_normalizes_measurements_and_passes_seed(
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "I_ERROR[loss](0)\nM 0"
-    backend = CliffTSimulatorBackend(seed=123, tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
 
     first = backend.sample(_physical_kernel, shots=2)
     second = backend.sample(_physical_kernel, shots=2)
@@ -311,7 +320,7 @@ def test_clifft_backend_omits_missing_seed_and_returns_native_detectors(monkeypa
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
     sample = backend.sample(_physical_kernel, shots=2, run_detectors=True, seed=None)
 
@@ -326,7 +335,7 @@ def test_clifft_backend_per_call_seed_overrides_backend_seed(monkeypatch):
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(seed=123, tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
 
     backend.sample(_physical_kernel, shots=2, seed=0)
 
@@ -339,7 +348,7 @@ def test_clifft_backend_none_seed_falls_back_to_backend_seed(monkeypatch):
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(seed=123, tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
 
     backend.sample(_physical_kernel, shots=2, seed=None)
 
@@ -352,7 +361,7 @@ def test_clifft_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "circuit"
     tsim_backend.detector_error_model.return_value = "dem"
-    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
     assert _get_tsim_circuit(backend, _physical_kernel) == "circuit"
     assert backend.detector_error_model(_physical_kernel) == "dem"
@@ -365,7 +374,7 @@ def test_clifft_backend_reframes_missing_tsim_dependency(monkeypatch):
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.side_effect = ImportError("missing tsim")
     tsim_backend.detector_error_model.side_effect = ImportError("missing tsim")
-    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
     with pytest.raises(ImportError, match=r"CliffT.*bloqade-lanes\[sim\]"):
         backend.sample(_physical_kernel, shots=1)
@@ -382,7 +391,7 @@ def test_clifft_program_cache_drops_dead_kernel(monkeypatch):
     kernel = Kernel()
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
     backend._clifft_program(cast(ir.Method, kernel))
     assert len(backend._programs) == 1
@@ -521,7 +530,7 @@ def test_pyqrack_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "circuit"
     tsim_backend.detector_error_model.return_value = "dem"
-    backend = PyQrackSimulatorBackend(tsim_backend=tsim_backend)
+    backend = PyQrackSimulatorBackend(_tsim_backend=tsim_backend)
 
     assert _get_tsim_circuit(backend, _physical_kernel) == "circuit"
     assert backend.detector_error_model(_physical_kernel) == "dem"
@@ -533,7 +542,7 @@ def test_pyqrack_backend_reframes_missing_tsim_dependency():
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.side_effect = ImportError("missing tsim")
     tsim_backend.detector_error_model.side_effect = ImportError("missing tsim")
-    backend = PyQrackSimulatorBackend(tsim_backend=tsim_backend)
+    backend = PyQrackSimulatorBackend(_tsim_backend=tsim_backend)
 
     with pytest.raises(ImportError, match=r"PyQrack.*bloqade-lanes\[sim\]"):
         _get_tsim_circuit(backend, _physical_kernel)

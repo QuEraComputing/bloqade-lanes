@@ -187,7 +187,7 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
     """Backend using Tsim for conversion/DEM generation and CliffT for sampling."""
 
     seed: int | None = None
-    tsim_backend: TsimSimulatorBackend = field(
+    _tsim_backend: TsimSimulatorBackend = field(
         default_factory=TsimSimulatorBackend, repr=False
     )
     _programs: WeakKeyDictionary[ir.Method, Any] = field(
@@ -196,7 +196,7 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         try:
-            return self.tsim_backend._tsim_circuit(physical_squin_kernel)
+            return self._tsim_backend._tsim_circuit(physical_squin_kernel)
         except ImportError as exc:
             raise _clifft_tsim_import_error(exc) from exc
 
@@ -241,7 +241,7 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
         self, physical_squin_kernel: ir.Method
     ) -> DetectorErrorModel:
         try:
-            return self.tsim_backend.detector_error_model(physical_squin_kernel)
+            return self._tsim_backend.detector_error_model(physical_squin_kernel)
         except ImportError as exc:
             raise _clifft_tsim_import_error(exc) from exc
 
@@ -274,7 +274,7 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
     seed: int | None = None
     options: dict[str, Any] | None = None
     min_qubits: int = 0
-    tsim_backend: TsimSimulatorBackend = field(
+    _tsim_backend: TsimSimulatorBackend = field(
         default_factory=TsimSimulatorBackend, repr=False
     )
     _rng_state: np.random.Generator = field(init=False, repr=False)
@@ -284,7 +284,7 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         try:
-            return self.tsim_backend._tsim_circuit(physical_squin_kernel)
+            return self._tsim_backend._tsim_circuit(physical_squin_kernel)
         except ImportError as exc:
             raise _pyqrack_tsim_import_error(exc) from exc
 
@@ -363,7 +363,7 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
         self, physical_squin_kernel: ir.Method
     ) -> DetectorErrorModel:
         try:
-            return self.tsim_backend.detector_error_model(physical_squin_kernel)
+            return self._tsim_backend.detector_error_model(physical_squin_kernel)
         except ImportError as exc:
             raise _pyqrack_tsim_import_error(exc) from exc
 
