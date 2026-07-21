@@ -21,6 +21,8 @@ from bloqade.gemini.device import (
     Result,
     TsimSimulatorBackend,
 )
+from bloqade.lanes.cudaq_integration import cudaq_to_squin
+from bloqade.lanes.logical_mvp import append_measurements_and_annotations
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
@@ -65,6 +67,10 @@ def small_backend_kernel():
     measurements = gemini_logical.terminal_measure(reg)
     set_detector(measurements[0])
     set_observable(measurements[0])
+
+
+def _plain_callable():
+    return None
 
 
 @pytest.mark.slow
@@ -308,6 +314,57 @@ def test_logical_simulator_run_async_forwards_seed(monkeypatch, run_detectors: b
     )
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"m2dets": [[1]]}, id="m2dets"),
+        pytest.param({"m2obs": [[1]]}, id="m2obs"),
+    ],
+)
+def test_logical_simulator_constructor_rejects_measurement_matrices(kwargs):
+    simulator_type: Any = GeminiLogicalSimulator
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        simulator_type(**kwargs)
+
+
+def test_logical_simulator_task_rejects_non_squin_before_compilation(monkeypatch):
+    import bloqade.lanes.logical_mvp as logical_mvp
+
+    compile_task = MagicMock()
+    monkeypatch.setattr(logical_mvp, "compile_task", compile_task)
+    invalid_kernel: Any = _plain_callable
+
+    with pytest.raises(TypeError, match="Squin ir.Method"):
+        GeminiLogicalSimulator().task(invalid_kernel)
+
+    compile_task.assert_not_called()
+
+
+@pytest.mark.parametrize("entrypoint", ["run", "run_async", "visualize"])
+def test_logical_simulator_rejects_non_squin_through_public_entrypoints(
+    monkeypatch, entrypoint
+):
+    simulator = GeminiLogicalSimulator()
+    task_spy = MagicMock(wraps=simulator.task)
+    monkeypatch.setattr(simulator, "task", task_spy)
+    invalid_kernel: Any = _plain_callable
+
+    with pytest.raises(TypeError, match="Squin ir.Method"):
+        getattr(simulator, entrypoint)(invalid_kernel)
+
+    task_spy.assert_called_once_with(invalid_kernel)
+
+
+def test_logical_simulator_task_preserves_source_kernel():
+    source_ir = small_backend_kernel.print_str()
+
+    task = GeminiLogicalSimulator().task(small_backend_kernel)
+
+    assert small_backend_kernel.print_str() == source_ir
+    assert task.logical_squin_kernel is not small_backend_kernel
+
+
 def _steane_matrices(num_qubits: int):
     return steane7_m2dets(num_qubits), steane7_m2obs(num_qubits)
 
@@ -323,7 +380,8 @@ def test_logical_x_observable_is_one(run_detectors: bool):
         squin.x(reg[0])
         gemini_logical.terminal_measure(reg)
 
-    task = GeminiLogicalSimulator(m2dets=m2dets, m2obs=m2obs).task(logical_x)
+    append_measurements_and_annotations(logical_x, m2dets, m2obs)
+    task = GeminiLogicalSimulator().task(logical_x)
     result = task.run(10, with_noise=False, run_detectors=run_detectors)
 
     assert all(all(obs) for obs in result.observables)
@@ -335,11 +393,10 @@ def test_logical_x_observable_is_one(run_detectors: bool):
     [(True, True), (True, False), (False, True)],
     ids=["both", "dets_only", "obs_only"],
 )
-def test_append_annotations_to_kernel_with_terminal_measure(
+def test_explicit_annotations_on_kernel_with_terminal_measure(
     use_dets: bool, use_obs: bool
 ):
-    """Append detectors/observables via the task() API to a squin kernel
-    that already has a terminal_measure."""
+    """Explicitly append annotations to a kernel with a terminal measure."""
     num_qubits = 2
     m2dets, m2obs = _steane_matrices(num_qubits)
 
@@ -350,20 +407,25 @@ def test_append_annotations_to_kernel_with_terminal_measure(
         squin.cx(reg[0], reg[1])
         gemini_logical.terminal_measure(reg)
 
-    task = GeminiLogicalSimulator(
-        m2dets=m2dets if use_dets else None,
-        m2obs=m2obs if use_obs else None,
-    ).task(kernel_with_measure)
+    selected_m2dets = m2dets if use_dets else None
+    selected_m2obs = m2obs if use_obs else None
+    append_measurements_and_annotations(
+        kernel_with_measure, selected_m2dets, selected_m2obs
+    )
+    task = GeminiLogicalSimulator().task(kernel_with_measure)
     result = task.run(10, with_noise=False)
 
+    expected_detector_width = len(m2dets[0]) if use_dets else 0
+    expected_observable_width = len(m2obs[0]) if use_obs else 0
+    assert len(result.detectors) == 10
+    assert all(len(det) == expected_detector_width for det in result.detectors)
+    assert len(result.observables) == 10
+    assert all(len(obs) == expected_observable_width for obs in result.observables)
+
     if use_dets:
-        assert len(result.detectors) == 10
-        assert all(len(det) == len(m2dets[0]) for det in result.detectors)
         assert all(isinstance(b, bool) for det in result.detectors for b in det)
 
     if use_obs:
-        assert len(result.observables) == 10
-        assert all(len(obs) == len(m2obs[0]) for obs in result.observables)
         assert all(isinstance(b, bool) for obs in result.observables for b in obs)
 
 
@@ -372,7 +434,7 @@ def test_append_annotations_to_kernel_with_terminal_measure(
     [(True, True), (True, False), (False, True)],
     ids=["both", "dets_only", "obs_only"],
 )
-def test_cudaq_kernel_integration(use_dets: bool, use_obs: bool):
+def test_cudaq_kernel_explicit_conversion_and_annotation(use_dets: bool, use_obs: bool):
     cudaq = pytest.importorskip("cudaq")
 
     num_qubits = 2
@@ -384,20 +446,24 @@ def test_cudaq_kernel_integration(use_dets: bool, use_obs: bool):
         h(q[0])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
         cx(q[0], q[1])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
 
-    task = GeminiLogicalSimulator(
-        m2dets=m2dets if use_dets else None,
-        m2obs=m2obs if use_obs else None,
-    ).task(bell_pair)
+    squin_kernel = cudaq_to_squin(bell_pair)
+    selected_m2dets = m2dets if use_dets else None
+    selected_m2obs = m2obs if use_obs else None
+    append_measurements_and_annotations(squin_kernel, selected_m2dets, selected_m2obs)
+    task = GeminiLogicalSimulator().task(squin_kernel)
     result = task.run(10, with_noise=False)
 
+    expected_detector_width = len(m2dets[0]) if use_dets else 0
+    expected_observable_width = len(m2obs[0]) if use_obs else 0
+    assert len(result.detectors) == 10
+    assert all(len(det) == expected_detector_width for det in result.detectors)
+    assert len(result.observables) == 10
+    assert all(len(obs) == expected_observable_width for obs in result.observables)
+
     if use_dets:
-        assert len(result.detectors) == 10
-        assert all(len(det) == len(m2dets[0]) for det in result.detectors)
         assert all(isinstance(b, bool) for det in result.detectors for b in det)
 
     if use_obs:
-        assert len(result.observables) == 10
-        assert all(len(obs) == len(m2obs[0]) for obs in result.observables)
         assert all(isinstance(b, bool) for obs in result.observables for b in obs)
 
 

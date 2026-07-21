@@ -5,12 +5,9 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
-    Any,
-    Callable,
     Generic,
     Literal,
     TypeVar,
-    Union,
     overload,
 )
 
@@ -31,7 +28,6 @@ if TYPE_CHECKING:
     from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 
 RetType = TypeVar("RetType")
-LogicalKernel = Union[ir.Method[[], RetType], Callable[..., Any]]
 
 
 def _default_noise_model() -> LogicalNoiseModelABC:
@@ -74,18 +70,27 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
 
 @dataclass
 class GeminiLogicalSimulator:
-    """Logical Gemini simulator configured with one reusable backend."""
+    """Simulator for caller-prepared logical Squin ``ir.Method`` kernels.
+
+    CUDA-Q users must convert kernels and add any desired detector/observable
+    annotations externally.
+    """
 
     noise_model: LogicalNoiseModelABC = field(default_factory=_default_noise_model)
     backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
-    m2dets: list[list[int]] | None = None
-    m2obs: list[list[int]] | None = None
 
     def task(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
     ) -> GeminiLogicalSimulatorTask[RetType]:
-        """Compile a logical SQuIn or CUDA-Q kernel into a reusable task."""
+        """Compile a caller-prepared logical Squin ``ir.Method`` into a task.
+
+        CUDA-Q conversion and any desired detector/observable annotations must be
+        completed externally.
+        """
+        if not isinstance(logical_kernel, ir.Method):
+            raise TypeError("GeminiLogicalSimulator.task() requires a Squin ir.Method")
+
         from bloqade.lanes.logical_mvp import compile_task
 
         (
@@ -93,7 +98,7 @@ class GeminiLogicalSimulator:
             physical_arch_spec,
             physical_move_kernel,
             post_processing,
-        ) = compile_task(logical_kernel, self.m2dets, self.m2obs)
+        ) = compile_task(logical_kernel)
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
@@ -106,7 +111,7 @@ class GeminiLogicalSimulator:
     @overload
     def run(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -117,7 +122,7 @@ class GeminiLogicalSimulator:
     @overload
     def run(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -128,7 +133,7 @@ class GeminiLogicalSimulator:
     @overload
     def run(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -138,7 +143,7 @@ class GeminiLogicalSimulator:
 
     def run(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -152,7 +157,7 @@ class GeminiLogicalSimulator:
     @overload
     def run_async(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -163,7 +168,7 @@ class GeminiLogicalSimulator:
     @overload
     def run_async(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -174,7 +179,7 @@ class GeminiLogicalSimulator:
     @overload
     def run_async(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -184,7 +189,7 @@ class GeminiLogicalSimulator:
 
     def run_async(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
@@ -198,24 +203,24 @@ class GeminiLogicalSimulator:
 
     def visualize(
         self,
-        logical_kernel: LogicalKernel[RetType],
+        logical_kernel: ir.Method[[], RetType],
         animated: bool = False,
         interactive: bool = True,
     ):
         self.task(logical_kernel).visualize(animated=animated, interactive=interactive)
 
     def physical_squin_kernel(
-        self, logical_kernel: LogicalKernel[RetType]
+        self, logical_kernel: ir.Method[[], RetType]
     ) -> ir.Method[[], RetType]:
         return self.task(logical_kernel).physical_squin_kernel
 
     def physical_move_kernel(
-        self, logical_kernel: LogicalKernel[RetType]
+        self, logical_kernel: ir.Method[[], RetType]
     ) -> ir.Method[[], RetType]:
         return self.task(logical_kernel).physical_move_kernel
 
     def tsim_circuit(
-        self, logical_kernel: LogicalKernel[RetType], with_noise: bool = True
+        self, logical_kernel: ir.Method[[], RetType], with_noise: bool = True
     ) -> tsim_backend.Circuit:
         task = self.task(logical_kernel)
         if with_noise:
@@ -223,6 +228,6 @@ class GeminiLogicalSimulator:
         return task.noiseless_tsim_circuit
 
     def fidelity_bounds(
-        self, logical_kernel: LogicalKernel[RetType]
+        self, logical_kernel: ir.Method[[], RetType]
     ) -> tuple[float, float]:
         return self.task(logical_kernel).fidelity_bounds()

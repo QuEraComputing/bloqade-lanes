@@ -192,7 +192,11 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
 
 @dataclass
 class GeminiPhysicalSimulator:
-    """Simulator for programs written directly at the physical SQuIn level."""
+    """Simulator for physical-pipeline-compatible ``ir.Method`` kernels.
+
+    Callers supply terminal physical measurement and any desired annotations. The
+    simulator performs no conversion or insertion.
+    """
 
     noise_model: NoiseModelABC = field(default_factory=_default_noise_model)
     """The physical noise model used for simulation."""
@@ -204,28 +208,26 @@ class GeminiPhysicalSimulator:
     """Optional placement pass used for compilation."""
     placement_strategy: PlacementStrategyABC | None = None
     """Optional physical placement strategy."""
-    m2dets: list[list[int]] | None = None
-    """Optional measurement-to-detector matrix."""
-    m2obs: list[list[int]] | None = None
-    """Optional measurement-to-observable matrix."""
 
     def task(
         self,
         physical_kernel: ir.Method[[], RetType],
     ) -> PhysicalSimulatorTask[RetType]:
-        """Compile a physical SQuIn kernel into a reusable simulation task."""
+        """Compile a physical-pipeline-compatible ``ir.Method`` into a task.
+
+        The method must already contain terminal physical measurement and any
+        desired annotations; no conversion or insertion is performed.
+        """
+        if not isinstance(physical_kernel, ir.Method):
+            raise TypeError("GeminiPhysicalSimulator.task() requires a Squin ir.Method")
+
         from bloqade.lanes.analysis import atom
         from bloqade.lanes.passes import SequentialPlacePass
         from bloqade.lanes.pipeline import PhysicalPipeline
 
-        # Annotation, unrolling, and physical compilation all mutate their
-        # input. Keep the method supplied by the caller reusable.
+        # Physical compilation mutates its input. Keep the method supplied by
+        # the caller reusable.
         source_squin_kernel = physical_kernel.similar()
-
-        if self.m2dets is not None or self.m2obs is not None:
-            append_measurements_and_annotations_physical(
-                source_squin_kernel, self.m2dets, self.m2obs
-            )
 
         place_opt_type = self.place_opt_type or SequentialPlacePass
 

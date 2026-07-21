@@ -11,7 +11,6 @@ from kirin import ir, types
 from kirin.decl import info, statement
 from kirin.dialects import func, ilist, ssacfg
 
-import bloqade.gemini.device.physical_simulator as physical_simulator_module
 from bloqade import squin, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.device import (
@@ -42,6 +41,10 @@ def small_physical_kernel():
     reg = squin.qalloc(1)
     squin.x(reg[0])
     return squin.broadcast.measure(reg)
+
+
+def _plain_callable():
+    return None
 
 
 def test_physical_result_uses_post_processing():
@@ -161,48 +164,35 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
             captured["post_processing_kernel"] = kernel
             return "post_processing"
 
-    def fake_append_measurements_and_annotations_physical(kernel, m2dets, m2obs):
-        captured["annotated_kernel"] = kernel
-        captured["m2dets"] = m2dets
-        captured["m2obs"] = m2obs
-
     monkeypatch.setattr(pipeline_module, "PhysicalPipeline", FakePhysicalPipeline)
     monkeypatch.setattr(atom, "AtomInterpreter", FakeAtomInterpreter)
-    monkeypatch.setattr(
-        physical_simulator_module,
-        "append_measurements_and_annotations_physical",
-        fake_append_measurements_and_annotations_physical,
-    )
 
-    kernel = MagicMock()
-    owned_kernel = MagicMock()
-    kernel.similar.return_value = owned_kernel
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(1)
+        return squin.broadcast.measure(reg)
+
+    source_ir = kernel.print_str()
     placement_strategy = MagicMock()
     place_opt_type: Any = MagicMock()
-    m2dets = [[1]]
-    m2obs = [[1]]
 
     simulator = PhysicalSimulator(
         place_opt_type=place_opt_type,
         placement_strategy=placement_strategy,
-        m2dets=m2dets,
-        m2obs=m2obs,
     )
     task = simulator.task(kernel)
 
     assert captured["place_opt_type"] is place_opt_type
     assert captured["placement_strategy"] is placement_strategy
-    kernel.similar.assert_called_once_with()
-    assert captured["annotated_kernel"] is owned_kernel
-    assert captured["m2dets"] is m2dets
-    assert captured["m2obs"] is m2obs
-    assert captured["kernel"] is owned_kernel
+    assert captured["kernel"] is task.source_squin_kernel
+    assert task.source_squin_kernel is not kernel
+    assert task.source_squin_kernel.print_str() == source_ir
+    assert kernel.print_str() == source_ir
     assert captured["no_raise"] is False
     assert captured["atom_dialects"] == "dialects"
     assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
     assert task._post_processing == "post_processing"
-    assert task.source_squin_kernel is owned_kernel
     assert task.simulator is simulator
 
 
@@ -212,14 +202,20 @@ def test_physical_task_preserves_source_kernel_across_repeated_compilation():
         reg = squin.qalloc(2)
         return squin.broadcast.measure(reg)
 
-    source_ir = kernel.print_str()
-    simulator = PhysicalSimulator(m2dets=[[1], [1]], m2obs=[[1], [0]])
-    first = simulator.task(kernel)
-    second = simulator.task(kernel)
+    prepared_kernel = kernel.similar()
+    append_measurements_and_annotations_physical(
+        prepared_kernel,
+        m2dets=[[1], [1]],
+        m2obs=[[1], [0]],
+    )
+    prepared_ir = prepared_kernel.print_str()
+    simulator = PhysicalSimulator()
+    first = simulator.task(prepared_kernel)
+    second = simulator.task(prepared_kernel)
 
-    assert kernel.print_str() == source_ir
-    assert first.source_squin_kernel is not kernel
-    assert second.source_squin_kernel is not kernel
+    assert prepared_kernel.print_str() == prepared_ir
+    assert first.source_squin_kernel is not prepared_kernel
+    assert second.source_squin_kernel is not prepared_kernel
     assert first.source_squin_kernel is not second.source_squin_kernel
     for task in (first, second):
         assert (
@@ -263,14 +259,16 @@ def test_builtin_backends_run_physical_workflow_with_guaranteed_dem(
 
 
 def test_pyqrack_physical_detector_run_uses_measurement_fallback():
-    simulator = PhysicalSimulator(
-        backend=PyQrackSimulatorBackend(seed=30),
+    prepared_kernel = small_physical_kernel.similar()
+    append_measurements_and_annotations_physical(
+        prepared_kernel,
         m2dets=[[1]],
         m2obs=[[1]],
     )
+    simulator = PhysicalSimulator(backend=PyQrackSimulatorBackend(seed=30))
 
     result = simulator.run(
-        small_physical_kernel, shots=2, with_noise=False, run_detectors=True
+        prepared_kernel, shots=2, with_noise=False, run_detectors=True
     )
 
     assert isinstance(result, DetectorResult)
@@ -324,6 +322,48 @@ def test_physical_simulator_run_async_forwards_seed(monkeypatch, run_detectors: 
     task.run_async.assert_called_once_with(
         3, False, run_detectors=run_detectors, seed=0
     )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"m2dets": [[1]]}, id="m2dets"),
+        pytest.param({"m2obs": [[1]]}, id="m2obs"),
+    ],
+)
+def test_physical_simulator_constructor_rejects_measurement_matrices(kwargs):
+    simulator_type: Any = PhysicalSimulator
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        simulator_type(**kwargs)
+
+
+def test_physical_simulator_task_rejects_non_squin_before_pipeline(monkeypatch):
+    import bloqade.lanes.pipeline as pipeline_module
+
+    physical_pipeline = MagicMock()
+    monkeypatch.setattr(pipeline_module, "PhysicalPipeline", physical_pipeline)
+    invalid_kernel: Any = _plain_callable
+
+    with pytest.raises(TypeError, match="Squin ir.Method"):
+        PhysicalSimulator().task(invalid_kernel)
+
+    physical_pipeline.assert_not_called()
+
+
+@pytest.mark.parametrize("entrypoint", ["run", "run_async", "visualize"])
+def test_physical_simulator_rejects_non_squin_through_public_entrypoints(
+    monkeypatch, entrypoint
+):
+    simulator = PhysicalSimulator()
+    task_spy = MagicMock(wraps=simulator.task)
+    monkeypatch.setattr(simulator, "task", task_spy)
+    invalid_kernel: Any = _plain_callable
+
+    with pytest.raises(TypeError, match="Squin ir.Method"):
+        getattr(simulator, entrypoint)(invalid_kernel)
+
+    task_spy.assert_called_once_with(invalid_kernel)
 
 
 def test_append_measurements_and_annotations_physical_preserves_kernel_return():
