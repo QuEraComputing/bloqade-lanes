@@ -3,11 +3,11 @@ from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func
 from kirin.rewrite import Walk
 
-from bloqade.lanes._prelude import kernel
 from bloqade.lanes.analysis.atom.lattice import MeasureFuture
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import ZoneAddress
 from bloqade.lanes.dialects import move
+from bloqade.lanes.prelude import kernel
 from bloqade.lanes.rewrite.measure_lower import MeasureLower
 
 

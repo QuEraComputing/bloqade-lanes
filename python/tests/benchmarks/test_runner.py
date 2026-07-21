@@ -8,7 +8,6 @@ from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfi
 from benchmarks.harness.runner import BenchmarkRunner, _count_moves
 from kirin import ir
 
-from bloqade.lanes._prelude import kernel as move_kernel
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
@@ -18,6 +17,7 @@ from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
+from bloqade.lanes.prelude import kernel as move_kernel
 
 
 def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
