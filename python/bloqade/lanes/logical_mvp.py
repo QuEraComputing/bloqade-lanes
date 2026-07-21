@@ -24,12 +24,14 @@ from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.noise_model import generate_logical_noise_model
-from bloqade.lanes.pipeline import LogicalPipeline
-from bloqade.lanes.pipeline.logical import transversal_rewrites
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.transform import MoveToSquinLogical
+from bloqade.lanes.transform import (
+    LogicalPipeline,
+    MoveToSquinLogical,
+    transversal_rewrites,
+)
 
 __all__ = [
     "run_squin_kernel_validation",

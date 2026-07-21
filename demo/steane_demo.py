@@ -12,8 +12,7 @@ from bloqade.lanes.arch.gemini.logical import steane7_initialize
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.passes import ASAPPlacePass
-from bloqade.lanes.pipeline import PhysicalPipeline
-from bloqade.lanes.transform import MoveToSquinPhysical
+from bloqade.lanes.transform import MoveToSquinPhysical, PhysicalPipeline
 
 kernel = squin.kernel.add(qubit)
 kernel.run_pass = squin.kernel.run_pass

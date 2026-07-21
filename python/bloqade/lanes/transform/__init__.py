@@ -10,3 +10,14 @@ from bloqade.lanes.transform.move_to_squin import (
     SimpleNoiseModel as SimpleNoiseModel,
 )
 from bloqade.lanes.transform.move_to_stack import MoveToStackMove as MoveToStackMove
+from bloqade.lanes.transform.native_to_place import (
+    LogicalNativeToPlace as LogicalNativeToPlace,
+    NativeToPlaceBase as NativeToPlaceBase,
+    PhysicalNativeToPlace as PhysicalNativeToPlace,
+)
+from bloqade.lanes.transform.pipeline import (
+    LogicalPipeline as LogicalPipeline,
+    PhysicalPipeline as PhysicalPipeline,
+    transversal_rewrites as transversal_rewrites,
+)
+from bloqade.lanes.transform.place_to_move import PlaceToMove as PlaceToMove

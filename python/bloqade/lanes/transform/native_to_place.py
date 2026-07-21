@@ -3,29 +3,42 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import bloqade.qubit as squin_qubit
-from bloqade.analysis import address
+from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.native.dialects import gate as native_gate
 from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
+from bloqade.rewrite.passes.callgraph import CallGraphPass
+from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
+from kirin.validation import ValidationSuite
 
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.common.validation.duplicate_address import (
     DuplicateAddressValidation,
 )
-from bloqade.lanes.analysis import layout, placement
+from bloqade.gemini.common.validation.terminal_measure import (
+    PhysicalTerminalMeasurementValidation,
+)
+from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
+from bloqade.gemini.logical.rewrite.steane_transversal import (
+    RewriteSteaneTransversalCliffordAdjoints,
+)
+from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
+from bloqade.gemini.logical.validation.measurement.analysis import (
+    GeminiTerminalMeasurementValidation,
+)
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects import move, place
-from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
+from bloqade.lanes.dialects import place
+from bloqade.lanes.rewrite import circuit2place
 from bloqade.lanes.validation.address import Validation as AddressValidation
 
 
 @dataclass
-class _NativeToPlaceBase:
+class NativeToPlaceBase:
     """Template-method base for the squin-native → place compilation stage.
 
     Subclasses override up to three hooks; all other steps are shared:
@@ -50,7 +63,7 @@ class _NativeToPlaceBase:
     ``PhysicalPipeline`` and ``LogicalPipeline`` always supply an
     ``arch_spec`` (defaulting to their respective Gemini arch specs), so this
     validation is unconditional for both pipelines.  Set ``arch_spec=None``
-    only when constructing a ``_NativeToPlaceBase`` subclass directly and
+    only when constructing a ``NativeToPlaceBase`` subclass directly and
     you explicitly want to skip address validation.
     """
 
@@ -110,92 +123,54 @@ class _NativeToPlaceBase:
 
 
 @dataclass
-class _PlaceToMove:
-    """Shared place → move compilation stage for both pipelines.
-
-    The only difference between the physical and logical pipelines at this
-    stage is whether ``InsertInitialize`` is included in the rewrite rules.
-    Pass ``insert_initialize=True`` for the logical pipeline.
-    """
-
-    layout_heuristic: layout.LayoutHeuristicABC
-    placement_strategy: placement.PlacementStrategyABC
-    insert_initialize: bool = False
-
-    def emit(self, mt: Method, no_raise: bool = True) -> Method:
-        out = mt.similar(mt.dialects.add(move))
-
-        address_analysis = address.AddressAnalysis(out.dialects)
-        if no_raise:
-            address_frame, _ = address_analysis.run_no_raise(out)
-            all_qubits = tuple(range(address_analysis.next_address))
-            initial_layout = layout.LayoutAnalysis(
-                out.dialects,
-                self.layout_heuristic,
-                address_frame.entries,
-                all_qubits,
-            ).get_layout_no_raise(out)
-        else:
-            address_frame, _ = address_analysis.run(out)
-            all_qubits = tuple(range(address_analysis.next_address))
-            initial_layout = layout.LayoutAnalysis(
-                out.dialects,
-                self.layout_heuristic,
-                address_frame.entries,
-                all_qubits,
-            ).get_layout(out)
-
-        rewrite.Walk(
-            resolve_pinned.ResolvePinnedAddresses(
-                address_entries=address_frame.entries,
-                initial_layout=initial_layout,
+class PhysicalNativeToPlace(NativeToPlaceBase):
+    def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
+        _, errors = PhysicalTerminalMeasurementValidation().run(out)
+        if errors and not no_raise:
+            raise ValidationErrorGroup(
+                f"Physical circuit validation failed with {len(errors)} error(s)",
+                errors=errors,
             )
-        ).rewrite(out.code)
 
-        placement_analysis = placement.PlacementAnalysis(
-            out.dialects,
-            initial_layout,
-            address_frame.entries,
-            self.placement_strategy,
+    def _lower_qubits(self, out: Method) -> None:
+        rewrite.Walk(circuit2place.RewriteQubitsToPinnedQubits()).rewrite(out.code)
+        rewrite.Walk(circuit2place.RewritePhysicalMeasure()).rewrite(out.code)
+
+
+@dataclass
+class LogicalNativeToPlace(NativeToPlaceBase):
+    transversal_rewrite: bool = False
+
+    def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
+        validator = ValidationSuite(
+            [
+                GeminiLogicalValidation,
+                GeminiTerminalMeasurementValidation,
+                FlatKernelNoCloningValidation,
+            ]
         )
-        if no_raise:
-            placement_frame, _ = placement_analysis.run_no_raise(out)
-        else:
-            placement_frame, _ = placement_analysis.run(out)
+        result = validator.validate(mt)
+        if not result.is_valid and not no_raise:
+            result.raise_if_invalid()
 
-        rules: list[RewriteRule] = [place2move.InsertFill()]
-        if self.insert_initialize:
-            rules.append(place2move.InsertInitialize())
+        rules: list[RewriteRule] = []
+        if self.transversal_rewrite:
+            # For [[7,1,3]] Steane code, logical sqrt-X and sqrt-Z are implemented
+            # as transversal sqrt-X-adj and sqrt-Z-adj, respectively.
+            rules.append(rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()))
         rules += [
-            place2move.InsertMoves(placement_frame.entries),
-            place2move.RewriteGates(placement_frame.entries),
-            place2move.InsertMeasure(placement_frame.entries),
+            rewrite.Walk(RewriteNonCliffordToU3()),
+            rewrite.Walk(_RewriteU3ToInitialize()),
         ]
-        rewrite.Walk(rewrite.Chain(*rules)).rewrite(out.code)
-
-        rewrite.Walk(
-            rewrite.Chain(
-                place2move.LiftMoveStatements(), place2move.DeleteInitialize()
-            )
-        ).rewrite(out.code)
-        rewrite.Walk(place2move.RemoveNoOpStaticPlacements()).rewrite(out.code)
-        rewrite.Fixpoint(rewrite.Walk(rewrite.CFGCompactify())).rewrite(out.code)
-
-        state.InsertBlockArgs().rewrite(out.code)
-        rewrite.Walk(state.RewriteBranches()).rewrite(out.code)
-        rewrite.Walk(state.RewriteLoadStore()).rewrite(out.code)
-
-        rewrite.Fixpoint(
-            rewrite.Walk(
-                rewrite.Chain(
-                    place2move.DeleteQubitNew(), rewrite.DeadCodeElimination()
-                )
-            )
-        ).rewrite(out.code)
-
-        passes.TypeInfer(out.dialects)(out)
-        if not no_raise:
-            out.verify()
-            out.verify_type()
-
+        CallGraphPass(mt.dialects, rewrite.Chain(*rules))(out)
         return out
+
+    def _lower_qubits(self, out: Method) -> None:
+        rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
+            out.code
+        )
+        rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
+            out.code
+        )
+        rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)

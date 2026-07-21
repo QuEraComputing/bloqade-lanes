@@ -413,7 +413,7 @@ class PhysicalSimulator:
         """Compile a physical SQuIn kernel into a reusable simulation task."""
         from bloqade.lanes.analysis import atom
         from bloqade.lanes.passes import SequentialPlacePass
-        from bloqade.lanes.pipeline import PhysicalPipeline
+        from bloqade.lanes.transform import PhysicalPipeline
 
         if m2dets is not None or m2obs is not None:
             append_measurements_and_annotations_physical(physical_kernel, m2dets, m2obs)

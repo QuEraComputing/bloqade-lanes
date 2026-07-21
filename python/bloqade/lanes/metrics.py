@@ -8,10 +8,9 @@ from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical import layout as logical_layout
-from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
-from bloqade.lanes.transform import MoveToSquinLogical
+from bloqade.lanes.transform import MoveToSquinLogical, transversal_rewrites
 from bloqade.lanes.upstream import squin_to_move
 
 

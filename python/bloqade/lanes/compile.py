@@ -11,10 +11,9 @@ from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-from bloqade.lanes.transform import MoveToSquinPhysical
+from bloqade.lanes.transform import MoveToSquinPhysical, PhysicalPipeline
 
 __all__ = [
     "compile_squin_to_move",

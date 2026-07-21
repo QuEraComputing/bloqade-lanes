@@ -8,8 +8,11 @@ import bloqade.gemini as gemini
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.pipeline import LogicalPipeline
-from bloqade.lanes.pipeline.logical import _LogicalNativeToPlace, transversal_rewrites
+from bloqade.lanes.transform import (
+    LogicalNativeToPlace,
+    LogicalPipeline,
+    transversal_rewrites,
+)
 
 
 def test_logical_pipeline_smoke():
@@ -42,7 +45,7 @@ def test_logical_pre_native_rewrites_steane_transversal_adjoints():
         gemini.logical.terminal_measure(reg)
 
     out = kernel.similar(kernel.dialects.add(place))
-    _LogicalNativeToPlace(transversal_rewrite=True)._pre_native_rewrites(
+    LogicalNativeToPlace(transversal_rewrite=True)._pre_native_rewrites(
         kernel, out, no_raise=True
     )
 
@@ -81,16 +84,16 @@ def test_logical_pipeline_resolves_none_to_logical_defaults(monkeypatch):
     """When layout_heuristic is None, LogicalPipeline passes LogicalLayoutHeuristic
     to the place→move stage."""
     from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
-    from bloqade.lanes.pipeline.base import _PlaceToMove
+    from bloqade.lanes.transform import PlaceToMove
 
     captured: dict = {}
-    _orig_emit = _PlaceToMove.emit
+    _orig_emit = PlaceToMove.emit
 
     def spy_emit(self_inner, mt, no_raise=True):
         captured["layout_heuristic_type"] = type(self_inner.layout_heuristic)
         return _orig_emit(self_inner, mt, no_raise=no_raise)
 
-    monkeypatch.setattr(_PlaceToMove, "emit", spy_emit)
+    monkeypatch.setattr(PlaceToMove, "emit", spy_emit)
 
     @gemini.logical.kernel(aggressive_unroll=True)
     def kernel():

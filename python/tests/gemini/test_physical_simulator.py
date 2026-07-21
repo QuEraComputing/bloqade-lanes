@@ -19,7 +19,7 @@ from bloqade.gemini.device.physical_simulator import (
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.logical_mvp import _find_qubit_ssas
-from bloqade.lanes.pipeline import PhysicalPipeline
+from bloqade.lanes.transform import PhysicalPipeline
 
 
 def test_physical_result_uses_post_processing():
@@ -72,7 +72,7 @@ def test_physical_simulator_exports_from_gemini_namespace():
 
 
 def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
-    import bloqade.lanes.pipeline as pipeline_module
+    import bloqade.lanes.transform as pipeline_module
     from bloqade.lanes.analysis import atom
 
     captured = {}

@@ -36,14 +36,14 @@ def test_logical_mvp_compile_to_move_passes_through_to_pipeline(monkeypatch):
 def test_logical_pipeline_defaults_built_from_arch_spec(monkeypatch):
     """LogicalPipeline.emit() constructs the default heuristic and strategy from
     self.arch_spec, not a hardcoded default — verifies the arch_spec propagation fix."""
-    import bloqade.lanes.pipeline.logical as logical_module
+    import bloqade.lanes.transform.pipeline as logical_module
     from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
     from bloqade.lanes.arch.gemini.logical import get_arch_spec
     from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
     from bloqade.lanes.heuristics.logical.placement import (
         LogicalPlacementStrategyNoHome,
     )
-    from bloqade.lanes.pipeline.logical import LogicalPipeline
+    from bloqade.lanes.transform import LogicalPipeline
 
     custom_spec = get_arch_spec()
     captured = {}
@@ -79,8 +79,8 @@ def test_logical_pipeline_defaults_built_from_arch_spec(monkeypatch):
         def emit(self, mt, no_raise=True):
             return fake_out
 
-    monkeypatch.setattr(logical_module, "_LogicalNativeToPlace", FakeNativeToPlace)
-    monkeypatch.setattr(logical_module, "_PlaceToMove", FakePlaceToMove)
+    monkeypatch.setattr(logical_module, "LogicalNativeToPlace", FakeNativeToPlace)
+    monkeypatch.setattr(logical_module, "PlaceToMove", FakePlaceToMove)
 
     pipeline = LogicalPipeline(arch_spec=custom_spec, place_opt_type=FakePassType)
     pipeline.emit(cast(ir.Method, object()))
