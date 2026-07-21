@@ -34,6 +34,13 @@ RetType = TypeVar("RetType")
 LogicalKernel = Union[ir.Method[[], RetType], Callable[..., Any]]
 
 
+def _validate_seed(seed: int | None) -> None:
+    if seed is not None and (
+        isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
+    ):
+        raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
+
+
 def _default_noise_model() -> LogicalNoiseModelABC:
     from bloqade.lanes.noise_model import generate_logical_noise_model
 
