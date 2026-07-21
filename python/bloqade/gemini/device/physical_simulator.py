@@ -11,11 +11,10 @@ from typing import (
     overload,
 )
 
-from bloqade.analysis.address import AddressAnalysis, AddressQubit
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.rewrite.passes import AggressiveUnroll
 from kirin import ir, passes
-from kirin.dialects import func, ilist, py
+from kirin.dialects import ilist, py
 
 from bloqade import qubit
 
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
 
 RetType = TypeVar("RetType")
 PhysicalResult = Result
-_S = TypeVar("_S", bound=ir.Statement)
 
 
 def _default_noise_model() -> "NoiseModelABC":
@@ -45,37 +43,6 @@ def _default_arch_spec() -> "ArchSpec":
     from bloqade.lanes.arch.gemini.physical import get_arch_spec
 
     return get_arch_spec()
-
-
-def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
-    """Return one physical-qubit SSA value per concrete qubit address."""
-    address_analysis = AddressAnalysis(mt.dialects)
-    frame, _ = address_analysis.run(mt)
-    qubits_by_address: dict[int, ir.SSAValue] = {}
-
-    for stmt in mt.callable_region.walk():
-        for result in stmt.results:
-            address = frame.get(result)
-            if isinstance(address, AddressQubit):
-                qubits_by_address.setdefault(address.data, result)
-
-    return [
-        qubits_by_address[address] for address in range(address_analysis.qubit_count)
-    ]
-
-
-def _find_return_stmt(mt: ir.Method) -> func.Return:
-    """Find the final return statement in a single-block kernel."""
-    block = mt.callable_region.blocks[0]
-    last = block.last_stmt
-    assert isinstance(last, func.Return), f"Expected func.Return, got {type(last)}"
-    return last
-
-
-def _insert_before(stmt: _S, anchor: ir.Statement) -> _S:
-    """Insert stmt before anchor and return stmt for chaining."""
-    stmt.insert_before(anchor)
-    return stmt
 
 
 def _validate_m2_matrix(matrix: list[list[int]], name: str) -> int:
@@ -100,6 +67,12 @@ def append_measurements_and_annotations_physical(
     the matrices are repeated block-by-block. The original return value is
     preserved.
     """
+    from bloqade.lanes.logical_mvp import (
+        _find_qubit_ssas,
+        _find_return_stmt,
+        _insert_before,
+    )
+
     if m2dets is None and m2obs is None:
         raise ValueError("At least one of m2dets or m2obs must be provided")
 
