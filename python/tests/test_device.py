@@ -470,7 +470,7 @@ def test_cudaq_kernel_explicit_conversion_and_annotation(use_dets: bool, use_obs
 def _mock_task() -> Any:
     task = object.__new__(GeminiLogicalSimulatorTask)
     backend = MagicMock()
-    backend.detector_error_model.return_value = "dem"
+    backend._detector_error_model.return_value = "dem"
     object.__setattr__(task, "physical_squin_kernel", "noisy-kernel")
     object.__setattr__(task, "noiseless_physical_squin_kernel", "noiseless-kernel")
     object.__setattr__(task, "simulator", SimpleNamespace(backend=backend))
@@ -486,7 +486,7 @@ def test_run_samples_noisy_kernel_through_backend_after_dem_generation():
 
     result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.simulator.backend.detector_error_model.assert_called_once_with("noisy-kernel")
+    task.simulator.backend._detector_error_model.assert_called_once_with("noisy-kernel")
     task.simulator.backend.sample.assert_called_once_with(
         "noisy-kernel", shots=1, run_detectors=False, seed=None
     )
@@ -573,7 +573,7 @@ def test_run_detectors_rejects_partial_native_payload():
 
 def test_run_fails_on_dem_before_sampling():
     task = _mock_task()
-    task.simulator.backend.detector_error_model.side_effect = ImportError("no tsim")
+    task.simulator.backend._detector_error_model.side_effect = ImportError("no tsim")
 
     with pytest.raises(ImportError, match="no tsim"):
         GeminiLogicalSimulatorTask.run(task, shots=1)
@@ -630,7 +630,7 @@ def test_task_run_rejects_invalid_seed_before_dem_or_sampling(seed: object):
     with pytest.raises(ValueError, match="seed must be"):
         GeminiLogicalSimulatorTask.run(task, seed=cast(int | None, seed))
 
-    task.simulator.backend.detector_error_model.assert_not_called()
+    task.simulator.backend._detector_error_model.assert_not_called()
     task.simulator.backend.sample.assert_not_called()
 
 

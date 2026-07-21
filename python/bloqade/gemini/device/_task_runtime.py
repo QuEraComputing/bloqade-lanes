@@ -152,7 +152,7 @@ class _SimulatorTaskBase(Generic[RetType]):
     @cached_property
     def detector_error_model(self) -> DetectorErrorModel:
         """Guaranteed detector error model for the noisy physical kernel."""
-        return self._backend.detector_error_model(self._physical_kernel)
+        return self._backend._detector_error_model(self._physical_kernel)
 
     def visualize(self, animated: bool = False, interactive: bool = True):
         from bloqade.lanes.visualize import animated_debugger, debugger

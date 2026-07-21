@@ -43,7 +43,7 @@ class AbstractSimulatorBackend(abc.ABC):
         """Sample a compiled physical SQuIn kernel."""
 
     @abc.abstractmethod
-    def detector_error_model(
+    def _detector_error_model(
         self, physical_squin_kernel: ir.Method
     ) -> DetectorErrorModel:
         """Build the detector error model for a physical SQuIn kernel."""
@@ -144,7 +144,7 @@ class TsimSimulatorBackend(AbstractSimulatorBackend):
             observables=np.asarray(observables, dtype=bool),
         )
 
-    def detector_error_model(
+    def _detector_error_model(
         self, physical_squin_kernel: ir.Method
     ) -> DetectorErrorModel:
         return self._tsim_circuit(physical_squin_kernel).detector_error_model(
@@ -237,11 +237,11 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
             measurements=np.asarray(sample_result.measurements, dtype=bool)
         )
 
-    def detector_error_model(
+    def _detector_error_model(
         self, physical_squin_kernel: ir.Method
     ) -> DetectorErrorModel:
         try:
-            return self._tsim_backend.detector_error_model(physical_squin_kernel)
+            return self._tsim_backend._detector_error_model(physical_squin_kernel)
         except ImportError as exc:
             raise _clifft_tsim_import_error(exc) from exc
 
@@ -359,11 +359,11 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
 
         return BackendSample(measurements=np.asarray(recorded_measurements, dtype=bool))
 
-    def detector_error_model(
+    def _detector_error_model(
         self, physical_squin_kernel: ir.Method
     ) -> DetectorErrorModel:
         try:
-            return self._tsim_backend.detector_error_model(physical_squin_kernel)
+            return self._tsim_backend._detector_error_model(physical_squin_kernel)
         except ImportError as exc:
             raise _pyqrack_tsim_import_error(exc) from exc
 

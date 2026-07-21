@@ -74,7 +74,7 @@ def test_physical_result_uses_post_processing():
 def _mock_physical_task() -> Any:
     task = object.__new__(PhysicalSimulatorTask)
     backend = MagicMock()
-    backend.detector_error_model.return_value = "dem"
+    backend._detector_error_model.return_value = "dem"
     object.__setattr__(task, "physical_squin_kernel", "noisy-kernel")
     object.__setattr__(task, "noiseless_physical_squin_kernel", "noiseless-kernel")
     object.__setattr__(task, "simulator", SimpleNamespace(backend=backend))
@@ -91,7 +91,7 @@ def test_physical_task_run_routes_through_backend():
 
     result = PhysicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.simulator.backend.detector_error_model.assert_called_once_with("noisy-kernel")
+    task.simulator.backend._detector_error_model.assert_called_once_with("noisy-kernel")
     task.simulator.backend.sample.assert_called_once_with(
         "noisy-kernel", shots=1, run_detectors=False, seed=None
     )
