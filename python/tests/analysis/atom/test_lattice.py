@@ -40,14 +40,16 @@ def test_measurefuture_copy_and_subset():
 def test_measureresult_copy_and_subset():
     addr = LocationAddress(0, 0, 0)
     other = LocationAddress(1, 0, 0)
-    mr1 = lattice.MeasureResult(1, addr)
-    mr2 = lattice.MeasureResult(1, addr)
-    mr3 = lattice.MeasureResult(2, addr)
-    mr4 = lattice.MeasureResult(1, other)
+    mr1 = lattice.MeasureResult(0, 1, addr)
+    mr2 = lattice.MeasureResult(0, 1, addr)
+    mr3 = lattice.MeasureResult(0, 2, addr)  # different qubit_id
+    mr4 = lattice.MeasureResult(0, 1, other)  # different location_address
+    mr5 = lattice.MeasureResult(1, 1, addr)  # different measurement_id
     assert mr1.copy() == mr1
     assert mr1.is_subseteq_MeasureResult(mr2)
     assert not mr1.is_subseteq_MeasureResult(mr3)
     assert not mr1.is_subseteq_MeasureResult(mr4)
+    assert not mr1.is_subseteq_MeasureResult(mr5)
 
 
 def test_detector_and_observable_result():

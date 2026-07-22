@@ -45,7 +45,7 @@ def test_atom_interpreter_simple():
     interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())
     frame, result = interp.run(main)
     assert result == atom.MeasureResult(
-        qubit_id=0, location_address=move.LocationAddress(1, 0)
+        measurement_id=0, qubit_id=0, location_address=move.LocationAddress(1, 0)
     )
 
 
@@ -140,8 +140,16 @@ def test_atom_interpreter_tracks_ilist_slice_getitem():
 
     assert result == atom.IListResult(
         (
-            atom.MeasureResult(qubit_id=1, location_address=move.LocationAddress(1, 0)),
-            atom.MeasureResult(qubit_id=2, location_address=move.LocationAddress(2, 0)),
+            atom.MeasureResult(
+                measurement_id=1,
+                qubit_id=1,
+                location_address=move.LocationAddress(1, 0),
+            ),
+            atom.MeasureResult(
+                measurement_id=2,
+                qubit_id=2,
+                location_address=move.LocationAddress(2, 0),
+            ),
         )
     )
 

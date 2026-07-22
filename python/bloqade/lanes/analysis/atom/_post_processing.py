@@ -22,7 +22,11 @@ def constructor_function(
     if isinstance(elem, MeasureResult):
 
         def _get_measurement(measurements: Sequence[bool]):
-            return measurements[elem.qubit_id]
+            # Index by measurement-record ID, not qubit ID: the raw array is
+            # ordered by measurement-execution order, which only coincides
+            # with qubit-allocation order when qubits are measured once in
+            # allocation order. See issue #815.
+            return measurements[elem.measurement_id]
 
         return _get_measurement
     elif isinstance(elem, (DetectorResult, ObservableResult)):
