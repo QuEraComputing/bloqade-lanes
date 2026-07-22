@@ -13,9 +13,8 @@ from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
-from bloqade.lanes.logical_mvp import compile_squin_to_move
 from bloqade.lanes.passes import ALAPPlacePass, ASAPPlacePass
-from bloqade.lanes.transform import MoveToSquinPhysical
+from bloqade.lanes.transform import LogicalPipeline, MoveToSquinPhysical
 from bloqade.lanes.utils import check_circuit
 
 
@@ -36,7 +35,7 @@ def test_logical_compilation():
         squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
         squin.broadcast.sqrt_y_adj(reg)
 
-    logical_move = compile_squin_to_move(main, no_raise=False)
+    logical_move = LogicalPipeline().emit(main, no_raise=False)
     decompiled_squin = MoveToSquinPhysical(get_arch_spec()).emit(logical_move)
 
     AggressiveUnroll(main.dialects).fixpoint(main)

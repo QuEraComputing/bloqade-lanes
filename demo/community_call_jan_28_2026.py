@@ -97,7 +97,7 @@ show_lanes(physical_arch)
 # ```
 
 # %%
-from bloqade.lanes.logical_mvp import transversal_rewrites  # noqa F402
+from bloqade.lanes.transform import transversal_rewrites  # noqa F402
 
 # rewrites to transversal moves on steane code
 main.print()

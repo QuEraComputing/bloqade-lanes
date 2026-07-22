@@ -10,6 +10,7 @@ from kirin.dialects import func, ilist, ssacfg
 import bloqade.gemini.device.physical_simulator as physical_simulator_module
 from bloqade import squin, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
+from bloqade.gemini.compile.task import _find_qubit_ssas
 from bloqade.gemini.device.physical_simulator import (
     PhysicalResult,
     PhysicalSimulator,
@@ -18,7 +19,6 @@ from bloqade.gemini.device.physical_simulator import (
 )
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
-from bloqade.lanes.logical_mvp import _find_qubit_ssas
 from bloqade.lanes.transform import PhysicalPipeline
 
 

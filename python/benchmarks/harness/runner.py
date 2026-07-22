@@ -14,10 +14,8 @@ from kirin import ir
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.compile import (
-    compile_to_physical_squin_noise_model as compile_physical_noise_model,
-)
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.heuristics.physical.layout import (
@@ -27,14 +25,19 @@ from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
-from bloqade.lanes.logical_mvp import transversal_rewrites
-from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.noise_model import (
+    generate_logical_noise_model,
+    generate_simple_noise_model,
+)
 from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.transform import (
     LogicalNativeToPlace,
     MoveToSquinLogical,
+    MoveToSquinPhysical,
     NativeToPlace,
+    PhysicalPipeline,
     PlaceToMove,
+    transversal_rewrites,
 )
 
 
@@ -208,11 +211,16 @@ class BenchmarkRunner:
 
         placement_strategy = self._build_placement_strategy(job)
         layout_heuristic = self._build_layout_heuristic(job)
-        physical_squin = compile_physical_noise_model(
-            job.case.kernel,
-            placement_strategy=placement_strategy,
+        move_mt = PhysicalPipeline(
+            arch_spec=get_physical_arch_spec(),
             layout_heuristic=layout_heuristic,
-        )
+            placement_strategy=placement_strategy,
+        ).emit(job.case.kernel)
+        physical_squin = MoveToSquinPhysical(
+            arch_spec=get_physical_arch_spec(),
+            noise_model=generate_simple_noise_model(),
+            aggressive_unroll=False,
+        ).emit(move_mt)
         analysis = FidelityAnalysis(physical_squin.dialects)
         analysis.run(physical_squin)
         fidelity_product = 1.0

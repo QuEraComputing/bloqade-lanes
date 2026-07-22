@@ -642,7 +642,7 @@ def test_simulator_run_async_forwards_seed_and_returns_result(
 def test_simulator_clifft_task_seed_rejected_before_compilation(monkeypatch):
     sim = GeminiLogicalSimulator(backend="clifft", seed=-1)
     compile_task = MagicMock()
-    monkeypatch.setattr("bloqade.lanes.logical_mvp.compile_task", compile_task)
+    monkeypatch.setattr("bloqade.gemini.compile.task.compile_task", compile_task)
 
     with pytest.raises(ValueError, match="seed must be"):
         sim.run(main, seed=None)

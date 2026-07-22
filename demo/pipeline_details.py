@@ -171,10 +171,10 @@ example_kernel.print(analysis=frame.entries)
 # on the logical architecture to physical squin on the physical architecture. Because all the gates
 # are clifford gates and can be implemented transversally we simply rewrite all logical addresses
 # to groups of physical addresses. If you are interested in how this is done please see the
-# `transversal_rewrites` function inside the `bloqade.lanes.logical_mvp` module.
+# `transversal_rewrites` function inside the `bloqade.lanes.transform` module.
 
 # %%
-from bloqade.lanes.logical_mvp import transversal_rewrites  # noqa: E402
+from bloqade.lanes.transform import transversal_rewrites  # noqa: E402
 
 example_kernel = transversal_rewrites(example_kernel)
 example_kernel.print()

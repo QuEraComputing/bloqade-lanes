@@ -4,10 +4,8 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
+from bloqade.gemini.compile import compile_to_stim_program
 from bloqade.gemini.logical.stdlib import default_post_processing
-from bloqade.lanes.logical_mvp import (
-    compile_to_stim_program,
-)
 
 
 @gemini_logical.kernel(aggressive_unroll=True)
@@ -28,6 +26,9 @@ def main():
 
 
 ### Visualize ###
-# from bloqade.lanes.logical_mvp import compile_squin_to_move_and_visualize
-# compile_squin_to_move_and_visualize(main, transversal_rewrite=True)
+# from bloqade.lanes import visualize
+# from bloqade.lanes.arch.gemini import physical
+# from bloqade.lanes.transform import LogicalPipeline
+# mt = LogicalPipeline(transversal_rewrite=True).emit(main)
+# visualize.debugger(mt, physical.get_arch_spec(), interactive=True, atom_marker="o")
 result = compile_to_stim_program(main)

@@ -136,9 +136,27 @@ def test_estimate_fidelity_runs_for_physical_mode(monkeypatch):
     class _FakePhysicalSquin:
         dialects = object()
 
+    class _FakePhysicalPipeline:
+        def __init__(self, **kwargs):
+            pass
+
+        def emit(self, kernel, **kwargs):
+            return cast(ir.Method, object())
+
+    class _FakeMoveToSquinPhysical:
+        def __init__(self, **kwargs):
+            pass
+
+        def emit(self, move_mt, **kwargs):
+            return _FakePhysicalSquin()
+
     monkeypatch.setattr(
-        "benchmarks.harness.runner.compile_physical_noise_model",
-        lambda *args, **kwargs: _FakePhysicalSquin(),
+        "benchmarks.harness.runner.PhysicalPipeline",
+        _FakePhysicalPipeline,
+    )
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.MoveToSquinPhysical",
+        _FakeMoveToSquinPhysical,
     )
     monkeypatch.setattr(
         "benchmarks.harness.runner.FidelityAnalysis", _FakeFidelityAnalysis
