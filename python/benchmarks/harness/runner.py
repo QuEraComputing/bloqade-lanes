@@ -49,7 +49,9 @@ def _squin_to_move(
     logical_initialize: bool,
 ) -> ir.Method:
     NativeStage = LogicalNativeToPlace if logical_initialize else NativeToPlace
-    place_mt = NativeStage().emit(mt)
+    place_mt = NativeStage(arch_spec=getattr(layout_heuristic, "arch_spec", None)).emit(
+        mt
+    )
     SequentialPlacePass(place_mt.dialects)(place_mt)
     return PlaceToMove(
         layout_heuristic=layout_heuristic,

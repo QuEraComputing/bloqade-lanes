@@ -4,6 +4,7 @@ from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir
 
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
@@ -19,8 +20,9 @@ def _to_physical_squin_noise_model(
     mt: ir.Method,
     noise_model: LogicalNoiseModelABC | None = None,
     no_raise: bool = True,
-    layout_heuristic=None,
+    layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> ir.Method:
+    """Compile a logical squin kernel to a physical squin kernel with noise inserted."""
     if noise_model is None:
         noise_model = generate_logical_noise_model()
     move_mt = LogicalPipeline(
@@ -38,7 +40,7 @@ def compile_to_stim_program(
     mt: ir.Method,
     noise_model: LogicalNoiseModelABC | None = None,
     no_raise: bool = True,
-    layout_heuristic=None,
+    layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> str:
     """Compile a logical squin kernel to a Stim program string with noise inserted."""
     noise_kernel = _to_physical_squin_noise_model(

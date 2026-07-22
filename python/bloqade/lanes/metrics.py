@@ -4,6 +4,7 @@ from typing import Any
 from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
 
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.dialects import move
@@ -65,10 +66,18 @@ class KernelMoveTimeMetrics:
 def _logical_squin_to_move(
     mt: ir.Method,
     *,
-    layout_heuristic: Any,
+    layout_heuristic: LayoutHeuristicABC,
     placement_strategy: PlacementStrategyABC,
 ) -> ir.Method:
-    place = LogicalNativeToPlace().emit(mt)
+    """Compile a logical squin kernel to the move dialect via the canonical stages.
+
+    Mirrors the removed ``upstream.squin_to_move`` logical path: the heuristic's
+    ``arch_spec`` is forwarded to the native stage so the post-unroll address and
+    duplicate-address validation runs, then place-optimize and lower to moves.
+    """
+    place = LogicalNativeToPlace(
+        arch_spec=getattr(layout_heuristic, "arch_spec", None)
+    ).emit(mt)
     SequentialPlacePass(place.dialects)(place)
     return PlaceToMove(
         layout_heuristic=layout_heuristic,
