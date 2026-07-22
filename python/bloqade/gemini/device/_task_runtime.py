@@ -72,10 +72,22 @@ class DetectorResult(Generic[ResultRetType]):
     _observables: list[list[bool]]
 
     def fidelity_bounds(self) -> tuple[float, float]:
+        """Return the upper and lower fidelity bounds.
+
+        Returns:
+            tuple[float, float]: The (min, max) fidelity bounds.
+
+        """
         return (self._fidelity_min, self._fidelity_max)
 
     @property
     def detector_error_model(self) -> DetectorErrorModel:
+        """The STIM detector error model corresponding to the physical noise circuit.
+
+        Returns:
+            DetectorErrorModel: The STIM detector error model.
+
+        """
         return self._detector_error_model
 
     @property
@@ -86,6 +98,12 @@ class DetectorResult(Generic[ResultRetType]):
 
     @property
     def detectors(self) -> tuple[tuple[bool, ...], ...]:
+        """The detector outcomes from the simulation.
+
+        Returns:
+            tuple[tuple[bool, ...], ...]: The detector outcomes, one tuple per shot.
+
+        """
         return tuple(tuple(shot) for shot in self._detectors)
 
     @property
@@ -94,6 +112,12 @@ class DetectorResult(Generic[ResultRetType]):
 
     @property
     def observables(self) -> tuple[tuple[bool, ...], ...]:
+        """The observable outcomes from the simulation.
+
+        Returns:
+            tuple[tuple[bool, ...], ...]: The observable outcomes, one tuple per shot.
+
+        """
         return tuple(tuple(shot) for shot in self._observables)
 
 
@@ -108,14 +132,34 @@ class Result(Generic[RetType]):
     _fidelity_max: float
 
     def fidelity_bounds(self) -> tuple[float, float]:
+        """Return the upper and lower fidelity bounds.
+
+        Note: The upper and lower bounds are related to branching logic in the kernel.
+
+        Returns:
+            tuple[float, float]: The (min, max) fidelity bounds.
+
+        """
         return (self._fidelity_min, self._fidelity_max)
 
     @property
     def detector_error_model(self) -> DetectorErrorModel:
+        """The STIM detector error model corresponding to the physical noise circuit.
+
+        Returns:
+            DetectorErrorModel: The STIM detector error model.
+
+        """
         return self._detector_error_model
 
     @property
     def return_values(self) -> list[RetType]:
+        """The return values of the kernel.
+
+        Returns:
+            list[RetType]: The return values, one per shot.
+
+        """
         return self._return_values
 
     @cached_property
@@ -124,6 +168,12 @@ class Result(Generic[RetType]):
 
     @property
     def detectors(self) -> list[list[bool]]:
+        """The detector outcomes from the simulation.
+
+        Returns:
+            list[list[bool]]: The detector outcomes, one list per shot.
+
+        """
         return self._detectors
 
     @cached_property
@@ -132,6 +182,12 @@ class Result(Generic[RetType]):
 
     @property
     def measurements(self) -> list[list[bool]]:
+        """The raw measurement outcomes used to compute detectors and observables.
+
+        Returns:
+            list[list[bool]]: The raw measurement outcomes, one list per shot.
+
+        """
         return self._measurements
 
     @cached_property
@@ -140,6 +196,12 @@ class Result(Generic[RetType]):
 
     @property
     def observables(self) -> list[list[bool]]:
+        """The observable outcomes from the simulation.
+
+        Returns:
+            list[list[bool]]: The observable outcomes, one list per shot.
+
+        """
         return self._observables
 
     @cached_property
@@ -182,18 +244,22 @@ class _SimulatorTaskBase(Generic[RetType]):
 
     @cached_property
     def measurement_sampler(self):
+        """The noisy tsim measurement sampler."""
         return self.tsim_circuit.compile_sampler()
 
     @cached_property
     def noiseless_measurement_sampler(self):
+        """The noiseless tsim measurement sampler."""
         return self.noiseless_tsim_circuit.compile_sampler()
 
     @cached_property
     def detector_sampler(self):
+        """The noisy tsim detector sampler."""
         return self.tsim_circuit.compile_detector_sampler()
 
     @cached_property
     def noiseless_detector_sampler(self):
+        """The noiseless tsim detector sampler."""
         return self.noiseless_tsim_circuit.compile_detector_sampler()
 
     @cached_property
@@ -202,6 +268,13 @@ class _SimulatorTaskBase(Generic[RetType]):
         return self._backend._detector_error_model(self._physical_kernel)
 
     def visualize(self, animated: bool = False, interactive: bool = True):
+        """Visualize the physical move kernel using the built-in debugger.
+
+        Args:
+            animated (bool): Whether to use the animated debugger. Defaults to False.
+            interactive (bool): Whether to enable interactive mode. Defaults to True.
+
+        """
         from bloqade.lanes.visualize import animated_debugger, debugger
 
         if animated:
@@ -218,6 +291,12 @@ class _SimulatorTaskBase(Generic[RetType]):
             )
 
     def fidelity_bounds(self) -> tuple[float, float]:
+        """Compute the fidelity bounds for the physical squin kernel.
+
+        Returns:
+            tuple[float, float]: The (min, max) fidelity bounds.
+
+        """
         analysis = FidelityAnalysis(self._physical_kernel.dialects)
         analysis.run(self._physical_kernel)
 
@@ -249,7 +328,17 @@ class _SimulatorTaskBase(Generic[RetType]):
         *,
         seed: int | None = None,
     ) -> SimulatorResult[RetType]:
-        """Sample through the configured backend and normalize its result."""
+        """Run the kernel and get simulation results.
+
+        Args:
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+            seed (int | None): Optional sampler seed. Defaults to None.
+
+        Returns:
+            SimulatorResult[RetType]: The simulation result containing measurements, detectors, and observables.
+
+        """
         # Build the guaranteed DEM before beginning a potentially expensive
         # sampling request. This also fails early when Tsim is unavailable.
         _validate_seed(seed)
@@ -305,6 +394,17 @@ class _SimulatorTaskBase(Generic[RetType]):
         *,
         seed: int | None = None,
     ) -> Future[SimulatorResult[RetType]]:
+        """Run the kernel asynchronously and get simulation results.
+
+        Args:
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+            seed (int | None): Optional sampler seed. Defaults to None.
+
+        Returns:
+            Future[SimulatorResult[RetType]]: A future resolving to the full simulation result.
+
+        """
         _validate_seed(seed)
         return cast(
             Future[SimulatorResult[RetType]],
