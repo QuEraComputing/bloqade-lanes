@@ -44,7 +44,7 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     physical_arch_spec: ArchSpec = field(repr=False)
     physical_move_kernel: ir.Method[[], RetType] = field(repr=False)
     _post_processing: atom.PostProcessing[RetType] = field(repr=False)
-    simulator: GeminiLogicalSimulator = field(repr=False)
+    backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
@@ -104,7 +104,7 @@ class GeminiLogicalSimulator:
             physical_arch_spec,
             physical_move_kernel,
             post_processing,
-            self,
+            self.backend,
         )
 
     def run(

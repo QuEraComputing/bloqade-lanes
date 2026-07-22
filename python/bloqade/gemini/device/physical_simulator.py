@@ -170,8 +170,8 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     """The physical move kernel compiled from the source SQuIn kernel."""
     _post_processing: atom.PostProcessing[RetType] = field(repr=False)
     """The post-processing object for extracting detectors, observables, and return values."""
-    simulator: GeminiPhysicalSimulator = field(repr=False)
-    """The simulator configuration that created this task."""
+    backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
+    """Sampling and detector-model backend used to perform sampling."""
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
@@ -252,7 +252,7 @@ class GeminiPhysicalSimulator:
             self.arch_spec,
             physical_move_kernel,
             post_processing,
-            self,
+            self.backend,
         )
 
     def run(

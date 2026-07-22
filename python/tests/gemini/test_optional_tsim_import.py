@@ -97,7 +97,6 @@ def test_composed_backends_fail_before_sampling_with_specific_tsim_guidance():
     code = textwrap.dedent("""
         import importlib.abc
         import sys
-        from types import SimpleNamespace
         from unittest.mock import MagicMock
 
         class BlockTsim(importlib.abc.MetaPathFinder):
@@ -129,7 +128,7 @@ def test_composed_backends_fail_before_sampling_with_specific_tsim_guidance():
             )
             task = object.__new__(GeminiLogicalSimulatorTask)
             object.__setattr__(task, "physical_squin_kernel", "kernel")
-            object.__setattr__(task, "simulator", SimpleNamespace(backend=backend))
+            object.__setattr__(task, "backend", backend)
             try:
                 task.run(shots=1)
             except ImportError as exc:

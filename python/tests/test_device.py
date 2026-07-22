@@ -1,7 +1,6 @@
 import inspect
 import math
 from concurrent.futures import Future
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, assert_type, cast
 from unittest.mock import MagicMock
 
@@ -410,11 +409,14 @@ def test_logical_simulator_rejects_non_squin_through_public_entrypoints(
 
 def test_logical_simulator_task_preserves_source_kernel():
     source_ir = small_backend_kernel.print_str()
+    backend = TsimSimulatorBackend(run_detectors=True)
 
-    task = GeminiLogicalSimulator().task(small_backend_kernel)
+    task = GeminiLogicalSimulator(backend=backend).task(small_backend_kernel)
 
     assert small_backend_kernel.print_str() == source_ir
     assert task.logical_squin_kernel is not small_backend_kernel
+    assert task.backend is backend
+    assert not hasattr(task, "simulator")
 
 
 def _steane_matrices(num_qubits: int):
@@ -538,7 +540,7 @@ def _mock_task() -> Any:
     backend._detector_error_model.return_value = "dem"
     object.__setattr__(task, "physical_squin_kernel", "noisy-kernel")
     object.__setattr__(task, "noiseless_physical_squin_kernel", "noiseless-kernel")
-    object.__setattr__(task, "simulator", SimpleNamespace(backend=backend))
+    object.__setattr__(task, "backend", backend)
     object.__setattr__(task, "fidelity_bounds", MagicMock(return_value=(0.5, 0.9)))
     object.__setattr__(task, "_post_processing", MagicMock())
     return task
@@ -547,14 +549,12 @@ def _mock_task() -> Any:
 def test_run_samples_noisy_kernel_through_backend_after_dem_generation():
     task = _mock_task()
     samples = np.array([[True, False]])
-    task.simulator.backend.sample.return_value = BackendSample(measurements=samples)
+    task.backend.sample.return_value = BackendSample(measurements=samples)
 
     result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.simulator.backend._detector_error_model.assert_called_once_with("noisy-kernel")
-    task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, seed=None
-    )
+    task.backend._detector_error_model.assert_called_once_with("noisy-kernel")
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
     assert isinstance(result, Result)
     assert result._raw_measurements == samples.tolist()
     assert result.detector_error_model == "dem"
@@ -562,29 +562,23 @@ def test_run_samples_noisy_kernel_through_backend_after_dem_generation():
 
 def test_run_samples_noiseless_kernel_through_backend():
     task = _mock_task()
-    task.simulator.backend.sample.return_value = BackendSample(
-        measurements=np.array([[True]])
-    )
+    task.backend.sample.return_value = BackendSample(measurements=np.array([[True]]))
 
     GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=False)
 
-    task.simulator.backend.sample.assert_called_once_with(
-        "noiseless-kernel", shots=1, seed=None
-    )
+    task.backend.sample.assert_called_once_with("noiseless-kernel", shots=1, seed=None)
 
 
 def test_run_uses_native_backend_detector_and_observable_samples():
     task = _mock_task()
     detectors, observables = np.array([[True]]), np.array([[False]])
-    task.simulator.backend.sample.return_value = BackendSample(
+    task.backend.sample.return_value = BackendSample(
         detectors=detectors, observables=observables
     )
 
     result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, seed=None
-    )
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
     assert isinstance(result, DetectorResult)
     assert result._detectors == detectors.tolist()
     assert result._observables == observables.tolist()
@@ -599,7 +593,7 @@ def test_run_uses_native_backend_detector_and_observable_samples():
 )
 def test_run_rejects_invalid_backend_measurement_payloads(sample, message):
     task = _mock_task()
-    task.simulator.backend.sample.return_value = sample
+    task.backend.sample.return_value = sample
 
     with pytest.raises(ValueError, match=message):
         GeminiLogicalSimulatorTask.run(task, shots=1)
@@ -622,7 +616,7 @@ def test_run_rejects_invalid_backend_measurement_payloads(sample, message):
 )
 def test_run_rejects_nonexclusive_backend_payload_shapes(sample):
     task = _mock_task()
-    task.simulator.backend.sample.return_value = sample
+    task.backend.sample.return_value = sample
 
     with pytest.raises(
         ValueError, match="measurement-only or detector\\+observable-only"
@@ -659,7 +653,7 @@ def test_run_rejects_nonexclusive_backend_payload_shapes(sample):
 )
 def test_run_rejects_invalid_backend_detector_payloads(sample, message):
     task = _mock_task()
-    task.simulator.backend.sample.return_value = sample
+    task.backend.sample.return_value = sample
 
     with pytest.raises(ValueError, match=message):
         GeminiLogicalSimulatorTask.run(task, shots=1)
@@ -667,53 +661,43 @@ def test_run_rejects_invalid_backend_detector_payloads(sample, message):
 
 def test_run_fails_on_dem_before_sampling():
     task = _mock_task()
-    task.simulator.backend._detector_error_model.side_effect = ImportError("no tsim")
+    task.backend._detector_error_model.side_effect = ImportError("no tsim")
 
     with pytest.raises(ImportError, match="no tsim"):
         GeminiLogicalSimulatorTask.run(task, shots=1)
 
-    task.simulator.backend.sample.assert_not_called()
+    task.backend.sample.assert_not_called()
 
 
 @pytest.mark.parametrize("seed", [0, 2**63 - 1])
 def test_task_run_accepts_valid_seed_values(seed: int):
     task = _mock_task()
-    task.simulator.backend.sample.return_value = BackendSample(
-        measurements=np.array([[True]])
-    )
+    task.backend.sample.return_value = BackendSample(measurements=np.array([[True]]))
 
     GeminiLogicalSimulatorTask.run(task, shots=1, seed=seed)
 
-    task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, seed=seed
-    )
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=seed)
 
 
 def test_task_run_accepts_explicit_none_seed():
     task = _mock_task()
-    task.simulator.backend.sample.return_value = BackendSample(
-        measurements=np.array([[True]])
-    )
+    task.backend.sample.return_value = BackendSample(measurements=np.array([[True]]))
 
     GeminiLogicalSimulatorTask.run(task, shots=1, seed=None)
 
-    task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, seed=None
-    )
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
 
 
 def test_task_run_forwards_seed_to_detector_backend():
     task = _mock_task()
-    task.simulator.backend.sample.return_value = BackendSample(
+    task.backend.sample.return_value = BackendSample(
         detectors=np.array([[True]]),
         observables=np.array([[False]]),
     )
 
     result = GeminiLogicalSimulatorTask.run(task, shots=1, seed=0)
 
-    task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, seed=0
-    )
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=0)
     assert isinstance(result, DetectorResult)
 
 
@@ -724,8 +708,8 @@ def test_task_run_rejects_invalid_seed_before_dem_or_sampling(seed: object):
     with pytest.raises(ValueError, match="seed must be"):
         GeminiLogicalSimulatorTask.run(task, seed=cast(int | None, seed))
 
-    task.simulator.backend._detector_error_model.assert_not_called()
-    task.simulator.backend.sample.assert_not_called()
+    task.backend._detector_error_model.assert_not_called()
+    task.backend.sample.assert_not_called()
 
 
 @pytest.mark.parametrize("seed", [True, -1, 2**63, 1.5, "1"])

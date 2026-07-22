@@ -1,7 +1,6 @@
 import inspect
 from concurrent.futures import Future
 from dataclasses import is_dataclass
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, assert_type
 from unittest.mock import MagicMock
 
@@ -80,7 +79,7 @@ def _mock_physical_task() -> Any:
     backend._detector_error_model.return_value = "dem"
     object.__setattr__(task, "physical_squin_kernel", "noisy-kernel")
     object.__setattr__(task, "noiseless_physical_squin_kernel", "noiseless-kernel")
-    object.__setattr__(task, "simulator", SimpleNamespace(backend=backend))
+    object.__setattr__(task, "backend", backend)
     object.__setattr__(task, "fidelity_bounds", MagicMock(return_value=(0.5, 0.9)))
     object.__setattr__(task, "_post_processing", MagicMock())
     return task
@@ -88,16 +87,14 @@ def _mock_physical_task() -> Any:
 
 def test_physical_task_run_routes_through_backend():
     task = _mock_physical_task()
-    task.simulator.backend.sample.return_value = BackendSample(
+    task.backend.sample.return_value = BackendSample(
         measurements=np.array([[True, False]])
     )
 
     result = PhysicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.simulator.backend._detector_error_model.assert_called_once_with("noisy-kernel")
-    task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, seed=None
-    )
+    task.backend._detector_error_model.assert_called_once_with("noisy-kernel")
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
     assert isinstance(result, PhysicalResult)
     assert result.measurements == [[True, False]]
     assert result.detector_error_model == "dem"
@@ -183,8 +180,10 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     source_ir = kernel.print_str()
     placement_strategy = MagicMock()
     place_opt_type: Any = MagicMock()
+    backend = TsimSimulatorBackend(run_detectors=True)
 
     simulator = PhysicalSimulator(
+        backend=backend,
         place_opt_type=place_opt_type,
         placement_strategy=placement_strategy,
     )
@@ -201,7 +200,8 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
     assert task._post_processing == "post_processing"
-    assert task.simulator is simulator
+    assert task.backend is backend
+    assert not hasattr(task, "simulator")
 
 
 def test_physical_task_preserves_source_kernel_across_repeated_compilation():
