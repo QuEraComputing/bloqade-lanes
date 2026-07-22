@@ -16,8 +16,8 @@ from bloqade.gemini.device import (
     GeminiLogicalSimulatorTask,
     Result,
 )
+from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.noise_model import generate_logical_noise_model
-from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
 
 @gemini_logical.kernel(verify=False)

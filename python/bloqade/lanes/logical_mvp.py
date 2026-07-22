@@ -18,6 +18,7 @@ from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalVal
 from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
+from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom, placement
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
@@ -26,7 +27,6 @@ from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import (
     LogicalPipeline,
     MoveToSquinLogical,
