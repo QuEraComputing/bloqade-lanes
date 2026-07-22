@@ -173,7 +173,7 @@ def build_entropy_trace(
     )
     placement_strategy.trace_cz_index = layer_index
 
-    place_kernel = NativeToPlace().emit(kernel, no_raise=False)
+    place_kernel = NativeToPlace(arch_spec=arch_spec).emit(kernel, no_raise=False)
     SequentialPlacePass(place_kernel.dialects, no_raise=False)(place_kernel)
     move_main = PlaceToMove(
         layout_heuristic=layout_heuristic,
@@ -194,7 +194,7 @@ def build_entropy_trace(
 
     traced_target: dict[int, LocationAddress] = placement_strategy.traced_target
 
-    place_main = NativeToPlace().emit(kernel, no_raise=False)
+    place_main = NativeToPlace(arch_spec=arch_spec).emit(kernel, no_raise=False)
     SequentialPlacePass(place_main.dialects, no_raise=False)(place_main)
     address_analysis = address.AddressAnalysis(place_main.dialects)
     address_frame, _ = address_analysis.run(place_main)
