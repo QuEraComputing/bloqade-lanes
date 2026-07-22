@@ -1,3 +1,4 @@
+import inspect
 from concurrent.futures import Future
 from dataclasses import is_dataclass
 from types import SimpleNamespace
@@ -21,10 +22,12 @@ from bloqade.gemini.device import (
     GeminiPhysicalSimulator,
     PyQrackSimulatorBackend,
     Result,
+    SimulatorResult,
     TsimSimulatorBackend,
 )
 from bloqade.gemini.device._task_runtime import _SimulatorTaskBase
 from bloqade.gemini.device.physical_simulator import (
+    DetectorResult as PhysicalDetectorResult,
     PhysicalResult,
     PhysicalSimulator,
     PhysicalSimulatorTask,
@@ -93,7 +96,7 @@ def test_physical_task_run_routes_through_backend():
 
     task.simulator.backend._detector_error_model.assert_called_once_with("noisy-kernel")
     task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, run_detectors=False, seed=None
+        "noisy-kernel", shots=1, seed=None
     )
     assert isinstance(result, PhysicalResult)
     assert result.measurements == [[True, False]]
@@ -106,6 +109,11 @@ def test_physical_simulator_exports_from_gemini_namespace():
 
     assert PhysicalSimulator is DevicePhysicalSimulator
     assert PhysicalSimulator is GeminiPhysicalSimulator
+
+
+def test_physical_simulator_result_aliases_are_public():
+    assert PhysicalResult is Result
+    assert PhysicalDetectorResult is DetectorResult
 
 
 def test_logical_and_physical_tasks_share_non_dataclass_runtime():
@@ -258,7 +266,26 @@ def test_builtin_backends_run_physical_workflow_with_guaranteed_dem(
         backend._programs.clear()
 
 
-def test_pyqrack_physical_detector_run_uses_measurement_fallback():
+def test_tsim_physical_detector_backend_returns_detector_result():
+    prepared_kernel = small_physical_kernel.similar()
+    append_measurements_and_annotations_physical(
+        prepared_kernel,
+        m2dets=[[1]],
+        m2obs=[[1]],
+    )
+    simulator = PhysicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
+
+    result = simulator.run(prepared_kernel, shots=2, with_noise=False)
+
+    assert isinstance(result, DetectorResult)
+    assert len(result.detectors) == 2
+    assert all(len(detectors) == 1 for detectors in result.detectors)
+    assert len(result.observables) == 2
+    assert all(len(observables) == 1 for observables in result.observables)
+    assert result.detector_error_model is not None
+
+
+def test_pyqrack_physical_returns_measurement_backed_result():
     prepared_kernel = small_physical_kernel.similar()
     append_measurements_and_annotations_physical(
         prepared_kernel,
@@ -267,21 +294,16 @@ def test_pyqrack_physical_detector_run_uses_measurement_fallback():
     )
     simulator = PhysicalSimulator(backend=PyQrackSimulatorBackend(seed=30))
 
-    result = simulator.run(
-        prepared_kernel, shots=2, with_noise=False, run_detectors=True
-    )
+    result = simulator.run(prepared_kernel, shots=2, with_noise=False)
 
-    assert isinstance(result, DetectorResult)
-    assert result.detectors == ((True,), (True,))
-    assert result.observables == ((True,), (True,))
+    assert isinstance(result, Result)
+    assert result.detectors == [[True], [True]]
+    assert result.observables == [[True], [True]]
     assert result.detector_error_model is not None
 
 
 @pytest.mark.parametrize("seed", [None, 0])
-@pytest.mark.parametrize("run_detectors", [False, True])
-def test_physical_simulator_run_forwards_seed(
-    monkeypatch, seed: int | None, run_detectors: bool
-):
+def test_physical_simulator_run_forwards_seed(monkeypatch, seed: int | None):
     simulator = PhysicalSimulator()
     task = MagicMock()
     expected = object()
@@ -292,16 +314,14 @@ def test_physical_simulator_run_forwards_seed(
         small_physical_kernel,
         shots=3,
         with_noise=False,
-        run_detectors=run_detectors,
         seed=seed,
     )
 
     assert result is expected
-    task.run.assert_called_once_with(3, False, run_detectors=run_detectors, seed=seed)
+    task.run.assert_called_once_with(3, False, seed=seed)
 
 
-@pytest.mark.parametrize("run_detectors", [False, True])
-def test_physical_simulator_run_async_forwards_seed(monkeypatch, run_detectors: bool):
+def test_physical_simulator_run_async_forwards_seed(monkeypatch):
     simulator = PhysicalSimulator()
     task = MagicMock()
     expected = object()
@@ -314,14 +334,24 @@ def test_physical_simulator_run_async_forwards_seed(monkeypatch, run_detectors: 
         small_physical_kernel,
         shots=3,
         with_noise=False,
-        run_detectors=run_detectors,
         seed=0,
     ).result()
 
     assert result is expected
-    task.run_async.assert_called_once_with(
-        3, False, run_detectors=run_detectors, seed=0
-    )
+    task.run_async.assert_called_once_with(3, False, seed=0)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        PhysicalSimulatorTask.run,
+        PhysicalSimulatorTask.run_async,
+        GeminiPhysicalSimulator.run,
+        GeminiPhysicalSimulator.run_async,
+    ],
+)
+def test_physical_simulator_run_methods_do_not_expose_run_detectors(method):
+    assert "run_detectors" not in inspect.signature(method).parameters
 
 
 @pytest.mark.parametrize(
@@ -501,34 +531,12 @@ def test_find_qubit_ssas_ignores_qubit_typed_results_without_addresses():
 
 if TYPE_CHECKING:
 
-    def _check_physical_run_overloads(
+    def _check_physical_run_results(
         simulator: GeminiPhysicalSimulator,
         task: PhysicalSimulatorTask[Any],
         kernel: ir.Method[[], Any],
-        dynamic: bool,
     ) -> None:
-        assert_type(task.run(run_detectors=False), Result[Any])
-        assert_type(task.run(run_detectors=True), DetectorResult)
-        assert_type(task.run(run_detectors=dynamic), Result[Any] | DetectorResult)
-        assert_type(task.run_async(run_detectors=False), Future[Result[Any]])
-        assert_type(task.run_async(run_detectors=True), Future[DetectorResult])
-        assert_type(
-            task.run_async(run_detectors=dynamic),
-            Future[Result[Any]] | Future[DetectorResult],
-        )
-        assert_type(simulator.run(kernel, run_detectors=False), Result[Any])
-        assert_type(simulator.run(kernel, run_detectors=True), DetectorResult)
-        assert_type(
-            simulator.run(kernel, run_detectors=dynamic),
-            Result[Any] | DetectorResult,
-        )
-        assert_type(
-            simulator.run_async(kernel, run_detectors=False), Future[Result[Any]]
-        )
-        assert_type(
-            simulator.run_async(kernel, run_detectors=True), Future[DetectorResult]
-        )
-        assert_type(
-            simulator.run_async(kernel, run_detectors=dynamic),
-            Future[Result[Any]] | Future[DetectorResult],
-        )
+        assert_type(task.run(), SimulatorResult[Any])
+        assert_type(task.run_async(), Future[SimulatorResult[Any]])
+        assert_type(simulator.run(kernel), SimulatorResult[Any])
+        assert_type(simulator.run_async(kernel), Future[SimulatorResult[Any]])

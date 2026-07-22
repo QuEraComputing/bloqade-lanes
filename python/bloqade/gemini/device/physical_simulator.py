@@ -6,9 +6,7 @@ from functools import cache, cached_property
 from typing import (
     TYPE_CHECKING,
     Generic,
-    Literal,
     TypeVar,
-    overload,
 )
 
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
@@ -18,7 +16,12 @@ from kirin.dialects import ilist, py
 
 from bloqade import qubit
 
-from ._task_runtime import DetectorResult, Result, _SimulatorTaskBase
+from ._task_runtime import (
+    DetectorResult as DetectorResult,
+    Result as Result,
+    SimulatorResult,
+    _SimulatorTaskBase,
+)
 from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
 
 if TYPE_CHECKING:
@@ -252,85 +255,16 @@ class GeminiPhysicalSimulator:
             self,
         )
 
-    @overload
     def run(
         self,
         physical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
-        run_detectors: Literal[False] = ...,
         seed: int | None = None,
-    ) -> Result[RetType]: ...
-
-    @overload
-    def run(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[True],
-        seed: int | None = None,
-    ) -> DetectorResult: ...
-
-    @overload
-    def run(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool,
-        seed: int | None = None,
-    ) -> Result[RetType] | DetectorResult: ...
-
-    def run(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool = False,
-        seed: int | None = None,
-    ) -> Result[RetType] | DetectorResult:
+    ) -> SimulatorResult[RetType]:
         """Compile and run a physical SQuIn kernel."""
-        return self.task(physical_kernel).run(
-            shots, with_noise, run_detectors=run_detectors, seed=seed
-        )
-
-    @overload
-    def run_async(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[False] = ...,
-        seed: int | None = None,
-    ) -> Future[Result[RetType]]: ...
-
-    @overload
-    def run_async(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[True],
-        seed: int | None = None,
-    ) -> Future[DetectorResult]: ...
-
-    @overload
-    def run_async(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool,
-        seed: int | None = None,
-    ) -> Future[Result[RetType]] | Future[DetectorResult]: ...
+        return self.task(physical_kernel).run(shots, with_noise, seed=seed)
 
     def run_async(
         self,
@@ -338,14 +272,10 @@ class GeminiPhysicalSimulator:
         shots: int = 1,
         with_noise: bool = True,
         *,
-        run_detectors: bool = False,
         seed: int | None = None,
-    ) -> Future[Result[RetType]] | Future[DetectorResult]:
+    ) -> Future[SimulatorResult[RetType]]:
         """Compile and run a physical SQuIn kernel asynchronously."""
-        task = self.task(physical_kernel)
-        if run_detectors:
-            return task.run_async(shots, with_noise, run_detectors=True, seed=seed)
-        return task.run_async(shots, with_noise, run_detectors=False, seed=seed)
+        return self.task(physical_kernel).run_async(shots, with_noise, seed=seed)
 
     def visualize(
         self,

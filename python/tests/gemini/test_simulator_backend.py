@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import inspect
 import sys
 import weakref
 from types import ModuleType, SimpleNamespace
@@ -62,6 +63,19 @@ def test_backend_contract_has_exactly_two_abstract_operations():
 
 @pytest.mark.parametrize(
     "backend_type",
+    [
+        AbstractSimulatorBackend,
+        TsimSimulatorBackend,
+        CliffTSimulatorBackend,
+        PyQrackSimulatorBackend,
+    ],
+)
+def test_backend_sample_does_not_expose_detector_mode(backend_type):
+    assert "run_detectors" not in inspect.signature(backend_type.sample).parameters
+
+
+@pytest.mark.parametrize(
+    "backend_type",
     [TsimSimulatorBackend, CliffTSimulatorBackend, PyQrackSimulatorBackend],
 )
 def test_backends_expose_only_private_detector_error_model(backend_type):
@@ -74,6 +88,14 @@ def test_backend_sample_defaults_to_no_payloads():
     assert BackendSample() == BackendSample(
         measurements=None, detectors=None, observables=None
     )
+
+
+def test_tsim_backend_detector_mode_defaults_to_false():
+    assert TsimSimulatorBackend().run_detectors is False
+
+
+def test_tsim_backend_accepts_detector_mode_configuration():
+    assert TsimSimulatorBackend(run_detectors=True).run_detectors is True
 
 
 @pytest.mark.parametrize(
@@ -131,8 +153,10 @@ def test_tsim_conversion_removes_return_from_owned_kernel(monkeypatch):
     assert isinstance(converted_return.value.owner, func.ConstantNone)
 
 
-def _backend_with_circuit(circuit: MagicMock) -> TsimSimulatorBackend:
-    backend = TsimSimulatorBackend()
+def _backend_with_circuit(
+    circuit: MagicMock, *, run_detectors: bool = False
+) -> TsimSimulatorBackend:
+    backend = TsimSimulatorBackend(run_detectors=run_detectors)
     backend._tsim_circuit = MagicMock(return_value=circuit)  # type: ignore[method-assign]
     return backend
 
@@ -169,9 +193,9 @@ def test_tsim_clifford_detector_sampling_uses_measurement_converter():
     circuit.stim_circuit.compile_sampler.return_value.sample.return_value = measurements
     converter = circuit.compile_m2d_converter.return_value
     converter.convert.return_value = (np.array([[1]]), np.array([[0]]))
-    backend = _backend_with_circuit(circuit)
+    backend = _backend_with_circuit(circuit, run_detectors=True)
 
-    sample = backend.sample(_physical_kernel, shots=1, run_detectors=True)
+    sample = backend.sample(_physical_kernel, shots=1)
 
     circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=None)
     circuit.compile_m2d_converter.assert_called_once_with(skip_reference_sample=True)
@@ -188,9 +212,9 @@ def test_tsim_nonclifford_detector_sampling_uses_detector_sampler():
     circuit = MagicMock(is_clifford=False)
     sampler = circuit.compile_detector_sampler.return_value
     sampler.sample.return_value = (np.array([[0]]), np.array([[1]]))
-    backend = _backend_with_circuit(circuit)
+    backend = _backend_with_circuit(circuit, run_detectors=True)
 
-    sample = backend.sample(_physical_kernel, shots=1, run_detectors=True)
+    sample = backend.sample(_physical_kernel, shots=1)
 
     circuit.compile_detector_sampler.assert_called_once_with(seed=None)
     sampler.sample.assert_called_once_with(shots=1, separate_observables=True)
@@ -231,9 +255,9 @@ def test_tsim_clifford_detector_sampling_forwards_seed_zero():
     sampler.sample.return_value = measurements
     converter = circuit.compile_m2d_converter.return_value
     converter.convert.return_value = (np.array([[1]]), np.array([[0]]))
-    backend = _backend_with_circuit(circuit)
+    backend = _backend_with_circuit(circuit, run_detectors=True)
 
-    sample = backend.sample(_physical_kernel, shots=1, run_detectors=True, seed=0)
+    sample = backend.sample(_physical_kernel, shots=1, seed=0)
 
     circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
     converter.convert.assert_called_once_with(
@@ -247,9 +271,9 @@ def test_tsim_nonclifford_detector_sampling_forwards_seed_zero():
     circuit = MagicMock(is_clifford=False)
     sampler = circuit.compile_detector_sampler.return_value
     sampler.sample.return_value = (np.array([[1]]), np.array([[0]]))
-    backend = _backend_with_circuit(circuit)
+    backend = _backend_with_circuit(circuit, run_detectors=True)
 
-    sample = backend.sample(_physical_kernel, shots=1, run_detectors=True, seed=0)
+    sample = backend.sample(_physical_kernel, shots=1, seed=0)
 
     circuit.compile_detector_sampler.assert_called_once_with(seed=0)
     assert sample.detectors is not None
@@ -326,19 +350,19 @@ def test_clifft_backend_compiles_once_normalizes_measurements_and_passes_seed(
     )
 
 
-def test_clifft_backend_omits_missing_seed_and_returns_native_detectors(monkeypatch):
+def test_clifft_backend_omits_missing_seed_and_returns_measurements(monkeypatch):
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
     backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
-    sample = backend.sample(_physical_kernel, shots=2, run_detectors=True, seed=None)
+    sample = backend.sample(_physical_kernel, shots=2, seed=None)
 
     clifft.sample.assert_called_once_with("program", shots=2)  # type: ignore[attr-defined]
-    assert sample.detectors is not None
-    assert sample.observables is not None
-    assert np.array_equal(sample.detectors, [[True]])
-    assert np.array_equal(sample.observables, [[False]])
+    assert sample.measurements is not None
+    assert np.array_equal(sample.measurements, [[False, True]])
+    assert sample.detectors is None
+    assert sample.observables is None
 
 
 def test_clifft_backend_per_call_seed_overrides_backend_seed(monkeypatch):
@@ -523,9 +547,7 @@ def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch)
     similar = MagicMock(wraps=annotated.similar)
     monkeypatch.setattr(annotated, "similar", similar)
 
-    sample = PyQrackSimulatorBackend(seed=2).sample(
-        annotated, shots=3, run_detectors=True
-    )
+    sample = PyQrackSimulatorBackend(seed=2).sample(annotated, shots=3)
 
     assert sample.measurements is not None
     assert sample.measurements.shape == (3, 1)

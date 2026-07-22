@@ -1,3 +1,4 @@
+import inspect
 import math
 from concurrent.futures import Future
 from types import SimpleNamespace
@@ -8,9 +9,13 @@ import numpy as np
 import pytest
 from bloqade.decoders.dialects import annotate
 from kirin.dialects import ilist
+from stim import DetectorErrorModel
 
 from bloqade import qubit, squin, types
-from bloqade.gemini import logical as gemini_logical
+from bloqade.gemini import (
+    SimulatorResult as GeminiSimulatorResult,
+    logical as gemini_logical,
+)
 from bloqade.gemini.device import (
     BackendSample,
     CliffTSimulatorBackend,
@@ -19,7 +24,12 @@ from bloqade.gemini.device import (
     GeminiLogicalSimulatorTask,
     PyQrackSimulatorBackend,
     Result,
+    SimulatorResult,
     TsimSimulatorBackend,
+)
+from bloqade.gemini.device.simulator import (
+    DetectorResult as SimulatorDetectorResult,
+    Result as SimulatorResultImplementation,
 )
 from bloqade.lanes.cudaq_integration import cudaq_to_squin
 from bloqade.lanes.logical_mvp import append_measurements_and_annotations
@@ -109,7 +119,7 @@ def test_physical_compilation(size: int):
 
 @pytest.mark.slow
 def test_run_default():
-    """Test that run() without run_detectors returns a Result."""
+    """Test that default measurement sampling returns a Result."""
     sim = GeminiLogicalSimulator()
     result = sim.run(main, shots=5, with_noise=False)
 
@@ -119,10 +129,10 @@ def test_run_default():
 
 
 @pytest.mark.slow
-def test_run_with_run_detectors_flag():
-    """Test that run(run_detectors=True) returns a DetectorResult."""
-    sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=10, with_noise=False, run_detectors=True)
+def test_run_with_detector_backend():
+    """Test that a detector-configured backend returns a DetectorResult."""
+    sim = GeminiLogicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
+    result = sim.run(main, shots=10, with_noise=False)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -132,10 +142,10 @@ def test_run_with_run_detectors_flag():
 
 
 @pytest.mark.slow
-def test_run_detectors_with_noise():
-    """Test run(run_detectors=True) with noise enabled uses the noisy detector sampler."""
-    sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=10, with_noise=True, run_detectors=True)
+def test_detector_backend_with_noise():
+    """Test a detector-configured backend samples the noisy circuit."""
+    sim = GeminiLogicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
+    result = sim.run(main, shots=10, with_noise=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -144,10 +154,10 @@ def test_run_detectors_with_noise():
 
 
 @pytest.mark.slow
-def test_run_async_with_run_detectors_flag():
-    """Test run_async(run_detectors=True) returns a Future[DetectorResult]."""
-    sim = GeminiLogicalSimulator()
-    future = sim.run_async(main, shots=5, with_noise=False, run_detectors=True)
+def test_run_async_with_detector_backend():
+    """Test a detector-configured backend returns a Future[DetectorResult]."""
+    sim = GeminiLogicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
+    future = sim.run_async(main, shots=5, with_noise=False)
     result = future.result()
 
     assert isinstance(result, DetectorResult)
@@ -156,11 +166,11 @@ def test_run_async_with_run_detectors_flag():
 
 
 @pytest.mark.slow
-def test_run_detectors_via_task():
-    """Test calling run(run_detectors=True) on a task directly."""
-    sim = GeminiLogicalSimulator()
+def test_detector_backend_via_task():
+    """Test a detector-configured backend when running a task directly."""
+    sim = GeminiLogicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
     task = sim.task(main)
-    result = task.run(shots=5, with_noise=False, run_detectors=True)
+    result = task.run(shots=5, with_noise=False)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 5
@@ -168,22 +178,30 @@ def test_run_detectors_via_task():
 
 
 @pytest.mark.slow
-def test_run_detectors_task_directly():
-    """Test creating a GeminiLogicalSimulatorTask and calling run(run_detectors=True)."""
-    sim = GeminiLogicalSimulator(noise_model=generate_logical_noise_model())
+def test_detector_backend_task_directly():
+    """Test creating a task with a detector-configured backend."""
+    sim = GeminiLogicalSimulator(
+        noise_model=generate_logical_noise_model(),
+        backend=TsimSimulatorBackend(run_detectors=True),
+    )
     task = sim.task(main)
-    result = task.run(shots=5, with_noise=False, run_detectors=True)
+    result = task.run(shots=5, with_noise=False)
+    assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
 
 
 @pytest.mark.slow
-def test_run_detectors_task_async():
-    """Test run_async(run_detectors=True) directly on GeminiLogicalSimulatorTask."""
-    sim = GeminiLogicalSimulator(noise_model=generate_logical_noise_model())
+def test_detector_backend_task_async():
+    """Test run_async directly on a task with a detector-configured backend."""
+    sim = GeminiLogicalSimulator(
+        noise_model=generate_logical_noise_model(),
+        backend=TsimSimulatorBackend(run_detectors=True),
+    )
     task = sim.task(main)
-    future = task.run_async(shots=5, with_noise=False, run_detectors=True)
+    future = task.run_async(shots=5, with_noise=False)
     result = future.result()
+    assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
 
@@ -226,6 +244,35 @@ def test_result_property_caching():
     assert return_values_first is return_values_second
 
 
+def test_detector_result_rejects_unavailable_values():
+    detector_error_model = DetectorErrorModel()
+    result = DetectorResult[None](
+        _detector_error_model=detector_error_model,
+        _fidelity_min=0.9,
+        _fidelity_max=1.0,
+        _detectors=[[True]],
+        _observables=[[False]],
+    )
+
+    assert result.fidelity_bounds() == (0.9, 1.0)
+    assert result.detector_error_model is detector_error_model
+    assert result.detectors == ((True,),)
+    assert result.observables == ((False,),)
+    with pytest.raises(ValueError, match="Raw measurements are unavailable"):
+        result.measurements
+    with pytest.raises(ValueError, match="kernel return values are unavailable"):
+        result.return_values
+
+
+def test_simulator_result_exports_are_public():
+    assert SimulatorResult is GeminiSimulatorResult
+
+
+def test_logical_simulator_result_aliases_are_public():
+    assert SimulatorResultImplementation is Result
+    assert SimulatorDetectorResult is DetectorResult
+
+
 def test_noiseless_tsim_circuit_compiles_samplers():
     sim = GeminiLogicalSimulator()
     task = sim.task(main)
@@ -256,22 +303,19 @@ def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
         backend._programs.clear()
 
 
-def test_pyqrack_logical_detector_run_uses_measurement_fallback():
+def test_pyqrack_logical_returns_measurement_backed_result():
     result = GeminiLogicalSimulator(backend=PyQrackSimulatorBackend(seed=18)).run(
-        small_backend_kernel, shots=2, with_noise=False, run_detectors=True
+        small_backend_kernel, shots=2, with_noise=False
     )
 
-    assert isinstance(result, DetectorResult)
+    assert isinstance(result, Result)
     assert len(result.detectors) == 2
     assert len(result.observables) == 2
     assert result.detector_error_model is not None
 
 
 @pytest.mark.parametrize("seed", [None, 0])
-@pytest.mark.parametrize("run_detectors", [False, True])
-def test_logical_simulator_run_forwards_seed(
-    monkeypatch, seed: int | None, run_detectors: bool
-):
+def test_logical_simulator_run_forwards_seed(monkeypatch, seed: int | None):
     simulator = GeminiLogicalSimulator()
     task = MagicMock()
     expected = object()
@@ -282,16 +326,14 @@ def test_logical_simulator_run_forwards_seed(
         main,
         shots=3,
         with_noise=False,
-        run_detectors=run_detectors,
         seed=seed,
     )
 
     assert result is expected
-    task.run.assert_called_once_with(3, False, run_detectors=run_detectors, seed=seed)
+    task.run.assert_called_once_with(3, False, seed=seed)
 
 
-@pytest.mark.parametrize("run_detectors", [False, True])
-def test_logical_simulator_run_async_forwards_seed(monkeypatch, run_detectors: bool):
+def test_logical_simulator_run_async_forwards_seed(monkeypatch):
     simulator = GeminiLogicalSimulator()
     task = MagicMock()
     expected = object()
@@ -304,14 +346,24 @@ def test_logical_simulator_run_async_forwards_seed(monkeypatch, run_detectors: b
         main,
         shots=3,
         with_noise=False,
-        run_detectors=run_detectors,
         seed=0,
     ).result()
 
     assert result is expected
-    task.run_async.assert_called_once_with(
-        3, False, run_detectors=run_detectors, seed=0
-    )
+    task.run_async.assert_called_once_with(3, False, seed=0)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        GeminiLogicalSimulatorTask.run,
+        GeminiLogicalSimulatorTask.run_async,
+        GeminiLogicalSimulator.run,
+        GeminiLogicalSimulator.run_async,
+    ],
+)
+def test_logical_simulator_run_methods_do_not_expose_run_detectors(method):
+    assert "run_detectors" not in inspect.signature(method).parameters
 
 
 @pytest.mark.parametrize(
@@ -370,8 +422,14 @@ def _steane_matrices(num_qubits: int):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("run_detectors", [False, True])
-def test_logical_x_observable_is_one(run_detectors: bool):
+@pytest.mark.parametrize(
+    "backend",
+    [
+        pytest.param(TsimSimulatorBackend(), id="measurement"),
+        pytest.param(TsimSimulatorBackend(run_detectors=True), id="detector"),
+    ],
+)
+def test_logical_x_observable_is_one(backend: TsimSimulatorBackend):
     m2dets, m2obs = _steane_matrices(1)
 
     @gemini_logical.kernel(aggressive_unroll=True)
@@ -381,9 +439,16 @@ def test_logical_x_observable_is_one(run_detectors: bool):
         gemini_logical.terminal_measure(reg)
 
     append_measurements_and_annotations(logical_x, m2dets, m2obs)
-    task = GeminiLogicalSimulator().task(logical_x)
-    result = task.run(10, with_noise=False, run_detectors=run_detectors)
+    task = GeminiLogicalSimulator(backend=backend).task(logical_x)
+    result = task.run(10, with_noise=False)
 
+    expected_observable_width = len(m2obs[0])
+    assert expected_observable_width > 0
+    assert len(result.observables) == 10
+    assert all(
+        len(observables) == expected_observable_width
+        for observables in result.observables
+    )
     assert all(all(obs) for obs in result.observables)
 
 
@@ -488,7 +553,7 @@ def test_run_samples_noisy_kernel_through_backend_after_dem_generation():
 
     task.simulator.backend._detector_error_model.assert_called_once_with("noisy-kernel")
     task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, run_detectors=False, seed=None
+        "noisy-kernel", shots=1, seed=None
     )
     assert isinstance(result, Result)
     assert result._raw_measurements == samples.tolist()
@@ -504,51 +569,30 @@ def test_run_samples_noiseless_kernel_through_backend():
     GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=False)
 
     task.simulator.backend.sample.assert_called_once_with(
-        "noiseless-kernel", shots=1, run_detectors=False, seed=None
+        "noiseless-kernel", shots=1, seed=None
     )
 
 
-def test_run_detectors_uses_native_backend_detector_samples():
+def test_run_uses_native_backend_detector_and_observable_samples():
     task = _mock_task()
     detectors, observables = np.array([[True]]), np.array([[False]])
     task.simulator.backend.sample.return_value = BackendSample(
         detectors=detectors, observables=observables
     )
 
-    result = GeminiLogicalSimulatorTask.run(
-        task, shots=1, with_noise=True, run_detectors=True
-    )
+    result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
 
     task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, run_detectors=True, seed=None
+        "noisy-kernel", shots=1, seed=None
     )
     assert isinstance(result, DetectorResult)
     assert result._detectors == detectors.tolist()
     assert result._observables == observables.tolist()
 
 
-def test_run_detectors_falls_back_to_postprocessing_measurements():
-    task = _mock_task()
-    task.simulator.backend.sample.return_value = BackendSample(
-        measurements=np.array([[True, False]])
-    )
-    task._post_processing.emit_detectors.return_value = [[True]]
-    task._post_processing.emit_observables.return_value = [[False]]
-
-    result = GeminiLogicalSimulatorTask.run(
-        task, shots=1, with_noise=True, run_detectors=True
-    )
-
-    task._post_processing.emit_detectors.assert_called_once_with([[True, False]])
-    task._post_processing.emit_observables.assert_called_once_with([[True, False]])
-    assert result._detectors == [[True]]
-    assert result._observables == [[False]]
-
-
 @pytest.mark.parametrize(
     "sample, message",
     [
-        (BackendSample(), "did not return measurement"),
         (BackendSample(measurements=np.array([True])), "two-dimensional"),
         (BackendSample(measurements=np.array([[True], [False]])), "rows"),
     ],
@@ -561,14 +605,64 @@ def test_run_rejects_invalid_backend_measurement_payloads(sample, message):
         GeminiLogicalSimulatorTask.run(task, shots=1)
 
 
-def test_run_detectors_rejects_partial_native_payload():
+@pytest.mark.parametrize(
+    "sample",
+    [
+        BackendSample(),
+        BackendSample(detectors=np.array([[True]])),
+        BackendSample(observables=np.array([[False]])),
+        BackendSample(measurements=np.array([[True]]), detectors=np.array([[True]])),
+        BackendSample(measurements=np.array([[True]]), observables=np.array([[False]])),
+        BackendSample(
+            measurements=np.array([[True]]),
+            detectors=np.array([[True]]),
+            observables=np.array([[False]]),
+        ),
+    ],
+)
+def test_run_rejects_nonexclusive_backend_payload_shapes(sample):
     task = _mock_task()
-    task.simulator.backend.sample.return_value = BackendSample(
-        detectors=np.array([[True]])
-    )
+    task.simulator.backend.sample.return_value = sample
 
-    with pytest.raises(ValueError, match="detector and observable.*together"):
-        GeminiLogicalSimulatorTask.run(task, shots=1, run_detectors=True)
+    with pytest.raises(
+        ValueError, match="measurement-only or detector\\+observable-only"
+    ):
+        GeminiLogicalSimulatorTask.run(task, shots=1)
+
+
+@pytest.mark.parametrize(
+    "sample, message",
+    [
+        (
+            BackendSample(detectors=np.array([True]), observables=np.array([[False]])),
+            "detector samples must be a two-dimensional",
+        ),
+        (
+            BackendSample(
+                detectors=np.array([[True], [False]]),
+                observables=np.array([[False], [True]]),
+            ),
+            "2 detector rows for 1 shots",
+        ),
+        (
+            BackendSample(detectors=np.array([[True]]), observables=np.array([False])),
+            "observable samples must be a two-dimensional",
+        ),
+        (
+            BackendSample(
+                detectors=np.array([[True]]),
+                observables=np.array([[False], [True]]),
+            ),
+            "2 observable rows for 1 shots",
+        ),
+    ],
+)
+def test_run_rejects_invalid_backend_detector_payloads(sample, message):
+    task = _mock_task()
+    task.simulator.backend.sample.return_value = sample
+
+    with pytest.raises(ValueError, match=message):
+        GeminiLogicalSimulatorTask.run(task, shots=1)
 
 
 def test_run_fails_on_dem_before_sampling():
@@ -591,7 +685,7 @@ def test_task_run_accepts_valid_seed_values(seed: int):
     GeminiLogicalSimulatorTask.run(task, shots=1, seed=seed)
 
     task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, run_detectors=False, seed=seed
+        "noisy-kernel", shots=1, seed=seed
     )
 
 
@@ -604,7 +698,7 @@ def test_task_run_accepts_explicit_none_seed():
     GeminiLogicalSimulatorTask.run(task, shots=1, seed=None)
 
     task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, run_detectors=False, seed=None
+        "noisy-kernel", shots=1, seed=None
     )
 
 
@@ -615,10 +709,10 @@ def test_task_run_forwards_seed_to_detector_backend():
         observables=np.array([[False]]),
     )
 
-    result = GeminiLogicalSimulatorTask.run(task, shots=1, run_detectors=True, seed=0)
+    result = GeminiLogicalSimulatorTask.run(task, shots=1, seed=0)
 
     task.simulator.backend.sample.assert_called_once_with(
-        "noisy-kernel", shots=1, run_detectors=True, seed=0
+        "noisy-kernel", shots=1, seed=0
     )
     assert isinstance(result, DetectorResult)
 
@@ -646,8 +740,7 @@ def test_task_run_async_rejects_invalid_seed_before_submission(seed: object):
     executor.submit.assert_not_called()
 
 
-@pytest.mark.parametrize("run_detectors", [False, True])
-def test_task_run_async_forwards_seed(run_detectors: bool):
+def test_task_run_async_forwards_seed():
     task = _mock_task()
     executor = MagicMock()
     future = Future()
@@ -661,7 +754,6 @@ def test_task_run_async_forwards_seed(run_detectors: bool):
         task,
         shots=3,
         with_noise=False,
-        run_detectors=run_detectors,
         seed=0,
     )
 
@@ -670,42 +762,28 @@ def test_task_run_async_forwards_seed(run_detectors: bool):
         run,
         3,
         False,
-        run_detectors=run_detectors,
         seed=0,
     )
 
 
 if TYPE_CHECKING:
 
-    def _check_task_run_overloads(
-        task: GeminiLogicalSimulatorTask[Any], dynamic: bool
-    ) -> None:
-        assert_type(task.run(run_detectors=False), Result[Any])
-        assert_type(task.run(run_detectors=True), DetectorResult)
-        assert_type(task.run(run_detectors=dynamic), Result[Any] | DetectorResult)
-        assert_type(task.run_async(run_detectors=False), Future[Result[Any]])
-        assert_type(task.run_async(run_detectors=True), Future[DetectorResult])
-        assert_type(
-            task.run_async(run_detectors=dynamic),
-            Future[Result[Any]] | Future[DetectorResult],
+    def _check_simulator_result_protocol(result: Result[Any]) -> None:
+        common_result: SimulatorResult[Any] = result
+        detector_result: SimulatorResult[Any] = DetectorResult[Any](
+            _detector_error_model=DetectorErrorModel(),
+            _fidelity_min=0.9,
+            _fidelity_max=1.0,
+            _detectors=[[True]],
+            _observables=[[False]],
         )
+        assert common_result is not None
+        assert detector_result is not None
 
-    def _check_simulator_run_overloads(
-        simulator: GeminiLogicalSimulator, dynamic: bool
-    ) -> None:
-        assert_type(simulator.run(main, run_detectors=False), Result[None])
-        assert_type(simulator.run(main, run_detectors=True), DetectorResult)
-        assert_type(
-            simulator.run(main, run_detectors=dynamic),
-            Result[None] | DetectorResult,
-        )
-        assert_type(
-            simulator.run_async(main, run_detectors=False), Future[Result[None]]
-        )
-        assert_type(
-            simulator.run_async(main, run_detectors=True), Future[DetectorResult]
-        )
-        assert_type(
-            simulator.run_async(main, run_detectors=dynamic),
-            Future[Result[None]] | Future[DetectorResult],
-        )
+    def _check_task_run_results(task: GeminiLogicalSimulatorTask[Any]) -> None:
+        assert_type(task.run(), SimulatorResult[Any])
+        assert_type(task.run_async(), Future[SimulatorResult[Any]])
+
+    def _check_simulator_run_results(simulator: GeminiLogicalSimulator) -> None:
+        assert_type(simulator.run(main), SimulatorResult[None])
+        assert_type(simulator.run_async(main), Future[SimulatorResult[None]])

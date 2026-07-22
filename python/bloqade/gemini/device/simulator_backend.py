@@ -37,7 +37,6 @@ class AbstractSimulatorBackend(abc.ABC):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        run_detectors: bool = False,
         seed: int | None = None,
     ) -> BackendSample:
         """Sample a compiled physical SQuIn kernel."""
@@ -82,6 +81,7 @@ def _tsim() -> Any:
 class TsimSimulatorBackend(AbstractSimulatorBackend):
     """Backend that uses Tsim for both sampling and DEM generation."""
 
+    run_detectors: bool = False
     _circuits: WeakKeyDictionary[ir.Method, TsimCircuit] = field(
         default_factory=WeakKeyDictionary, init=False, repr=False
     )
@@ -106,11 +106,10 @@ class TsimSimulatorBackend(AbstractSimulatorBackend):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        run_detectors: bool = False,
         seed: int | None = None,
     ) -> BackendSample:
         circuit = self._tsim_circuit(physical_squin_kernel)
-        if run_detectors:
+        if self.run_detectors:
             return self._sample_detectors(circuit, shots, seed=seed)
 
         if circuit.is_clifford:
@@ -217,7 +216,6 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        run_detectors: bool = False,
         seed: int | None = None,
     ) -> BackendSample:
         sample_kwargs: dict[str, int] = {"shots": int(shots)}
@@ -228,11 +226,6 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
         sample_result = _clifft().sample(
             self._clifft_program(physical_squin_kernel), **sample_kwargs
         )
-        if run_detectors:
-            return BackendSample(
-                detectors=np.asarray(sample_result.detectors, dtype=bool),
-                observables=np.asarray(sample_result.observables, dtype=bool),
-            )
         return BackendSample(
             measurements=np.asarray(sample_result.measurements, dtype=bool)
         )
@@ -293,7 +286,6 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        run_detectors: bool = False,
         seed: int | None = None,
     ) -> BackendSample:
         from bloqade.pyqrack.base import PyQrackInterpreter

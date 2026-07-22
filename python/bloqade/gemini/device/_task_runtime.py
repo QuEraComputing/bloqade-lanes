@@ -7,10 +7,10 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Literal,
+    Protocol,
+    Sequence,
     TypeVar,
     cast,
-    overload,
 )
 
 import numpy as np
@@ -20,7 +20,6 @@ from stim import DetectorErrorModel
 
 from .simulator_backend import (
     AbstractSimulatorBackend,
-    BackendSample,
     _get_tsim_circuit,
 )
 
@@ -31,6 +30,7 @@ if TYPE_CHECKING:
     from bloqade.lanes.arch.spec import ArchSpec
 
 RetType = TypeVar("RetType")
+ResultRetType = TypeVar("ResultRetType", covariant=True)
 
 
 def _validate_seed(seed: int | None) -> None:
@@ -40,8 +40,29 @@ def _validate_seed(seed: int | None) -> None:
         raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
 
 
+class SimulatorResult(Protocol[ResultRetType]):
+    """Common interface for simulator results."""
+
+    def fidelity_bounds(self) -> tuple[float, float]: ...
+
+    @property
+    def detector_error_model(self) -> DetectorErrorModel: ...
+
+    @property
+    def return_values(self) -> Sequence[ResultRetType]: ...
+
+    @property
+    def detectors(self) -> Sequence[Sequence[bool]]: ...
+
+    @property
+    def measurements(self) -> Sequence[Sequence[bool]]: ...
+
+    @property
+    def observables(self) -> Sequence[Sequence[bool]]: ...
+
+
 @dataclass(frozen=True)
-class DetectorResult:
+class DetectorResult(Generic[ResultRetType]):
     """Detector and observable outcomes from simulator sampling."""
 
     _detector_error_model: DetectorErrorModel
@@ -58,8 +79,18 @@ class DetectorResult:
         return self._detector_error_model
 
     @property
+    def return_values(self) -> Sequence[ResultRetType]:
+        raise ValueError(
+            "kernel return values are unavailable for detector-only results"
+        )
+
+    @property
     def detectors(self) -> tuple[tuple[bool, ...], ...]:
         return tuple(tuple(shot) for shot in self._detectors)
+
+    @property
+    def measurements(self) -> Sequence[Sequence[bool]]:
+        raise ValueError("Raw measurements are unavailable for detector-only results")
 
     @property
     def observables(self) -> tuple[tuple[bool, ...], ...]:
@@ -83,20 +114,36 @@ class Result(Generic[RetType]):
     def detector_error_model(self) -> DetectorErrorModel:
         return self._detector_error_model
 
-    @cached_property
+    @property
     def return_values(self) -> list[RetType]:
+        return self._return_values
+
+    @cached_property
+    def _return_values(self) -> list[RetType]:
         return list(self._post_processing.emit_return(self._raw_measurements))
 
-    @cached_property
+    @property
     def detectors(self) -> list[list[bool]]:
+        return self._detectors
+
+    @cached_property
+    def _detectors(self) -> list[list[bool]]:
         return list(self._post_processing.emit_detectors(self._raw_measurements))
 
-    @cached_property
+    @property
     def measurements(self) -> list[list[bool]]:
-        return list(map(list, self._raw_measurements))
+        return self._measurements
 
     @cached_property
+    def _measurements(self) -> list[list[bool]]:
+        return list(map(list, self._raw_measurements))
+
+    @property
     def observables(self) -> list[list[bool]]:
+        return self._observables
+
+    @cached_property
+    def _observables(self) -> list[list[bool]]:
         return list(self._post_processing.emit_observables(self._raw_measurements))
 
 
@@ -195,44 +242,13 @@ class _SimulatorTaskBase(Generic[RetType]):
             )
         return array.tolist()
 
-    @overload
     def run(
         self,
         shots: int = 1,
         with_noise: bool = True,
         *,
-        run_detectors: Literal[False] = ...,
         seed: int | None = None,
-    ) -> Result[RetType]: ...
-
-    @overload
-    def run(
-        self,
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[True],
-        seed: int | None = None,
-    ) -> DetectorResult: ...
-
-    @overload
-    def run(
-        self,
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool,
-        seed: int | None = None,
-    ) -> Result[RetType] | DetectorResult: ...
-
-    def run(
-        self,
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool = False,
-        seed: int | None = None,
-    ) -> Result[RetType] | DetectorResult:
+    ) -> SimulatorResult[RetType]:
         """Sample through the configured backend and normalize its result."""
         # Build the guaranteed DEM before beginning a potentially expensive
         # sampling request. This also fails early when Tsim is unavailable.
@@ -241,121 +257,56 @@ class _SimulatorTaskBase(Generic[RetType]):
         physical_kernel = (
             self._physical_kernel if with_noise else self._noiseless_physical_kernel
         )
-        sample = self._backend.sample(
-            physical_kernel, shots=shots, run_detectors=run_detectors, seed=seed
-        )
+        sample = self._backend.sample(physical_kernel, shots=shots, seed=seed)
         fidelity_min, fidelity_max = self.fidelity_bounds()
 
-        if run_detectors:
-            return self._detector_result(
-                sample,
-                shots=shots,
-                detector_error_model=detector_error_model,
-                fidelity_min=fidelity_min,
-                fidelity_max=fidelity_max,
-            )
-
-        if sample.measurements is None:
-            raise ValueError("Backend did not return measurement samples")
-        measurements = self._normalize_matrix(
-            sample.measurements, name="measurement", shots=shots
-        )
-        return Result(
-            measurements,
-            detector_error_model,
-            self._post_processing,
-            fidelity_min,
-            fidelity_max,
-        )
-
-    def _detector_result(
-        self,
-        sample: BackendSample,
-        *,
-        shots: int,
-        detector_error_model: DetectorErrorModel,
-        fidelity_min: float,
-        fidelity_max: float,
-    ) -> DetectorResult:
+        has_measurements = sample.measurements is not None
         has_detectors = sample.detectors is not None
         has_observables = sample.observables is not None
-        if has_detectors or has_observables:
-            if not (has_detectors and has_observables):
-                raise ValueError(
-                    "Backend must return detector and observable samples together"
-                )
+
+        if has_measurements and not has_detectors and not has_observables:
+            measurements = self._normalize_matrix(
+                sample.measurements, name="measurement", shots=shots
+            )
+            return cast(
+                SimulatorResult[RetType],
+                Result(
+                    measurements,
+                    detector_error_model,
+                    self._post_processing,
+                    fidelity_min,
+                    fidelity_max,
+                ),
+            )
+
+        if not has_measurements and has_detectors and has_observables:
             detectors = self._normalize_matrix(
                 sample.detectors, name="detector", shots=shots
             )
             observables = self._normalize_matrix(
                 sample.observables, name="observable", shots=shots
             )
-        elif sample.measurements is not None:
-            measurements = self._normalize_matrix(
-                sample.measurements, name="measurement", shots=shots
+            return DetectorResult(
+                _detector_error_model=detector_error_model,
+                _fidelity_min=fidelity_min,
+                _fidelity_max=fidelity_max,
+                _detectors=detectors,
+                _observables=observables,
             )
-            detectors = list(self._post_processing.emit_detectors(measurements))
-            observables = list(self._post_processing.emit_observables(measurements))
-        else:
-            raise ValueError("Backend did not return detector or measurement samples")
 
-        return DetectorResult(
-            _detector_error_model=detector_error_model,
-            _fidelity_min=fidelity_min,
-            _fidelity_max=fidelity_max,
-            _detectors=detectors,
-            _observables=observables,
+        raise ValueError(
+            "Backend samples must be measurement-only or detector+observable-only"
         )
 
-    @overload
     def run_async(
         self,
         shots: int = 1,
         with_noise: bool = True,
         *,
-        run_detectors: Literal[False] = ...,
         seed: int | None = None,
-    ) -> Future[Result[RetType]]: ...
-
-    @overload
-    def run_async(
-        self,
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[True],
-        seed: int | None = None,
-    ) -> Future[DetectorResult]: ...
-
-    @overload
-    def run_async(
-        self,
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool,
-        seed: int | None = None,
-    ) -> Future[Result[RetType]] | Future[DetectorResult]: ...
-
-    def run_async(
-        self,
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool = False,
-        seed: int | None = None,
-    ) -> Future[Result[RetType]] | Future[DetectorResult]:
+    ) -> Future[SimulatorResult[RetType]]:
         _validate_seed(seed)
-        if run_detectors:
-            return cast(
-                Future[DetectorResult],
-                self._thread_pool_executor.submit(
-                    self.run, shots, with_noise, run_detectors=True, seed=seed
-                ),
-            )
         return cast(
-            Future[Result[RetType]],
-            self._thread_pool_executor.submit(
-                self.run, shots, with_noise, run_detectors=False, seed=seed
-            ),
+            Future[SimulatorResult[RetType]],
+            self._thread_pool_executor.submit(self.run, shots, with_noise, seed=seed),
         )

@@ -6,16 +6,15 @@ from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Generic,
-    Literal,
     TypeVar,
-    overload,
 )
 
 from kirin import ir
 
 from ._task_runtime import (
-    DetectorResult,
-    Result,
+    DetectorResult as DetectorResult,
+    Result as Result,
+    SimulatorResult,
     _SimulatorTaskBase,
 )
 from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
@@ -108,84 +107,15 @@ class GeminiLogicalSimulator:
             self,
         )
 
-    @overload
     def run(
         self,
         logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
         *,
-        run_detectors: Literal[False] = ...,
         seed: int | None = None,
-    ) -> Result[RetType]: ...
-
-    @overload
-    def run(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[True],
-        seed: int | None = None,
-    ) -> DetectorResult: ...
-
-    @overload
-    def run(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool,
-        seed: int | None = None,
-    ) -> Result[RetType] | DetectorResult: ...
-
-    def run(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool = False,
-        seed: int | None = None,
-    ) -> Result[RetType] | DetectorResult:
-        return self.task(logical_kernel).run(
-            shots, with_noise, run_detectors=run_detectors, seed=seed
-        )
-
-    @overload
-    def run_async(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[False] = ...,
-        seed: int | None = None,
-    ) -> Future[Result[RetType]]: ...
-
-    @overload
-    def run_async(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: Literal[True],
-        seed: int | None = None,
-    ) -> Future[DetectorResult]: ...
-
-    @overload
-    def run_async(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-        *,
-        run_detectors: bool,
-        seed: int | None = None,
-    ) -> Future[Result[RetType]] | Future[DetectorResult]: ...
+    ) -> SimulatorResult[RetType]:
+        return self.task(logical_kernel).run(shots, with_noise, seed=seed)
 
     def run_async(
         self,
@@ -193,13 +123,9 @@ class GeminiLogicalSimulator:
         shots: int = 1,
         with_noise: bool = True,
         *,
-        run_detectors: bool = False,
         seed: int | None = None,
-    ) -> Future[Result[RetType]] | Future[DetectorResult]:
-        task = self.task(logical_kernel)
-        if run_detectors:
-            return task.run_async(shots, with_noise, run_detectors=True, seed=seed)
-        return task.run_async(shots, with_noise, run_detectors=False, seed=seed)
+    ) -> Future[SimulatorResult[RetType]]:
+        return self.task(logical_kernel).run_async(shots, with_noise, seed=seed)
 
     def visualize(
         self,

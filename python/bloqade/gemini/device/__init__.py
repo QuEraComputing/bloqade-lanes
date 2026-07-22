@@ -1,3 +1,8 @@
+from ._task_runtime import (
+    DetectorResult as DetectorResult,
+    Result as Result,
+    SimulatorResult as SimulatorResult,
+)
 from .logical import (
     GeminiLogicalDevice as GeminiLogicalDevice,
     GeminiLogicalFuture as GeminiLogicalFuture,
@@ -10,10 +15,8 @@ from .physical_simulator import (
     PhysicalSimulatorTask as PhysicalSimulatorTask,
 )
 from .simulator import (
-    DetectorResult as DetectorResult,
     GeminiLogicalSimulator as GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask as GeminiLogicalSimulatorTask,
-    Result as Result,
 )
 from .simulator_backend import (
     AbstractSimulatorBackend as AbstractSimulatorBackend,
