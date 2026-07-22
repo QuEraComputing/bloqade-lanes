@@ -468,18 +468,24 @@ def test_pyqrack_backend_real_deterministic_sampling_uses_fresh_shot_tasks():
     assert np.all(sample.measurements)
 
 
-def test_pyqrack_per_call_seed_reproduces_native_measurements():
-    pytest.importorskip("pyqrack")
+def test_pyqrack_per_call_seed_reproduces_native_seed_sequence(monkeypatch):
+    pyqrack = pytest.importorskip("pyqrack")
+    original_seed = pyqrack.QrackSimulator.seed
+    recorded_seeds: list[int] = []
+
+    def recording_seed(simulator, seed: int):
+        recorded_seeds.append(seed)
+        return original_seed(simulator, seed)
+
+    monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
     backend = PyQrackSimulatorBackend()
 
-    first = backend.sample(_random_physical_kernel, shots=64, seed=441)
-    second = backend.sample(_random_physical_kernel, shots=64, seed=441)
+    backend.sample(_random_physical_kernel, shots=4, seed=441)
+    backend.sample(_random_physical_kernel, shots=4, seed=441)
 
-    assert first.measurements is not None
-    assert second.measurements is not None
-    assert np.array_equal(first.measurements, second.measurements)
-    assert np.any(first.measurements)
-    assert np.any(~first.measurements)
+    expected_rng = np.random.default_rng(441)
+    expected_seeds = [int(expected_rng.integers(0, 2**63)) for _ in range(4)]
+    assert recorded_seeds == expected_seeds * 2
 
 
 def test_pyqrack_per_call_seed_reproduces_squin_loss_noise():
@@ -515,23 +521,30 @@ def test_pyqrack_derives_fresh_native_seed_for_each_shot(monkeypatch):
     assert recorded_seeds == expected_seeds
 
 
-def test_pyqrack_per_call_seed_does_not_advance_persistent_stream():
-    pytest.importorskip("pyqrack")
-    control = PyQrackSimulatorBackend(_seed=444)
-    subject = PyQrackSimulatorBackend(_seed=444)
+def test_pyqrack_per_call_seed_does_not_advance_persistent_seed_stream(monkeypatch):
+    pyqrack = pytest.importorskip("pyqrack")
 
-    control_first = control.sample(_random_physical_kernel, shots=16)
-    subject_first = subject.sample(_random_physical_kernel, shots=16)
-    subject.sample(_random_physical_kernel, shots=16, seed=999)
-    control_second = control.sample(_random_physical_kernel, shots=16)
-    subject_second = subject.sample(_random_physical_kernel, shots=16)
+    original_seed = pyqrack.QrackSimulator.seed
+    recorded_seeds: list[int] = []
 
-    assert control_first.measurements is not None
-    assert subject_first.measurements is not None
-    assert control_second.measurements is not None
-    assert subject_second.measurements is not None
-    assert np.array_equal(control_first.measurements, subject_first.measurements)
-    assert np.array_equal(control_second.measurements, subject_second.measurements)
+    def recording_seed(simulator, seed: int):
+        recorded_seeds.append(seed)
+        return original_seed(simulator, seed)
+
+    monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
+    backend = PyQrackSimulatorBackend(_seed=444)
+
+    backend.sample(_random_physical_kernel, shots=4)
+    backend.sample(_random_physical_kernel, shots=4, seed=999)
+    backend.sample(_random_physical_kernel, shots=4)
+
+    persistent_rng = np.random.default_rng(444)
+    first_persistent = [int(persistent_rng.integers(0, 2**63)) for _ in range(4)]
+    second_persistent = [int(persistent_rng.integers(0, 2**63)) for _ in range(4)]
+    call_rng = np.random.default_rng(999)
+    per_call = [int(call_rng.integers(0, 2**63)) for _ in range(4)]
+
+    assert recorded_seeds == first_persistent + per_call + second_persistent
 
 
 def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch):
