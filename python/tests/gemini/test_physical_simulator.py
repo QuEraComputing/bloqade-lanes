@@ -170,14 +170,14 @@ def test_append_measurements_and_annotations_physical_preserves_kernel_return():
 def test_append_measurements_and_annotations_physical_uses_logical_mvp_helpers(
     monkeypatch,
 ):
-    import bloqade.lanes.logical_mvp as logical_mvp
+    import bloqade.gemini.compile.task as compile_task_module
 
-    find_qubit_ssas = MagicMock(wraps=logical_mvp._find_qubit_ssas)
-    find_return_stmt = MagicMock(wraps=logical_mvp._find_return_stmt)
-    insert_before = MagicMock(wraps=logical_mvp._insert_before)
-    monkeypatch.setattr(logical_mvp, "_find_qubit_ssas", find_qubit_ssas)
-    monkeypatch.setattr(logical_mvp, "_find_return_stmt", find_return_stmt)
-    monkeypatch.setattr(logical_mvp, "_insert_before", insert_before)
+    find_qubit_ssas = MagicMock(wraps=compile_task_module._find_qubit_ssas)
+    find_return_stmt = MagicMock(wraps=compile_task_module._find_return_stmt)
+    insert_before = MagicMock(wraps=compile_task_module._insert_before)
+    monkeypatch.setattr(compile_task_module, "_find_qubit_ssas", find_qubit_ssas)
+    monkeypatch.setattr(compile_task_module, "_find_return_stmt", find_return_stmt)
+    monkeypatch.setattr(compile_task_module, "_insert_before", insert_before)
 
     @squin.kernel
     def kernel():

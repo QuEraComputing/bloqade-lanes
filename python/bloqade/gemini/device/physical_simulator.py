@@ -80,7 +80,7 @@ def append_measurements_and_annotations_physical(
     the matrices are repeated block-by-block. The original return value is
     preserved.
     """
-    from bloqade.lanes.logical_mvp import (
+    from bloqade.gemini.compile.task import (
         _find_qubit_ssas,
         _find_return_stmt,
         _insert_before,

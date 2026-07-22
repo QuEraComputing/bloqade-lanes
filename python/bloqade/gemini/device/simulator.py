@@ -548,7 +548,7 @@ class GeminiLogicalSimulator:
         if self.backend == "clifft":
             _validate_seed(self.seed)
 
-        from bloqade.lanes.logical_mvp import compile_task
+        from bloqade.gemini.compile import compile_task
 
         (
             logical_squin_kernel,
