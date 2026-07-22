@@ -334,10 +334,10 @@ def test_clifft_backend_compiles_once_normalizes_measurements_and_passes_seed(
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "I_ERROR[loss](0)\nM 0"
-    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
-    first = backend.sample(_physical_kernel, shots=2)
-    second = backend.sample(_physical_kernel, shots=2)
+    first = backend.sample(_physical_kernel, shots=2, seed=123)
+    second = backend.sample(_physical_kernel, shots=2, seed=123)
 
     assert first.measurements is not None
     assert first.measurements.dtype == np.bool_
@@ -365,11 +365,11 @@ def test_clifft_backend_omits_missing_seed_and_returns_measurements(monkeypatch)
     assert sample.observables is None
 
 
-def test_clifft_backend_per_call_seed_overrides_backend_seed(monkeypatch):
+def test_clifft_backend_passes_per_call_seed(monkeypatch):
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
     backend.sample(_physical_kernel, shots=2, seed=0)
 
@@ -378,11 +378,11 @@ def test_clifft_backend_per_call_seed_overrides_backend_seed(monkeypatch):
     )
 
 
-def test_clifft_backend_none_seed_falls_back_to_backend_seed(monkeypatch):
+def test_clifft_backend_none_seed_falls_back_to_private_seed(monkeypatch):
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
+    backend = CliffTSimulatorBackend(_seed=123, _tsim_backend=tsim_backend)
 
     backend.sample(_physical_kernel, shots=2, seed=None)
 
@@ -441,11 +441,11 @@ def test_clifft_program_cache_drops_dead_kernel(monkeypatch):
 def test_clifft_backend_real_seeded_sampling_and_dem():
     pytest.importorskip("clifft")
     pytest.importorskip("tsim")
-    first_backend = CliffTSimulatorBackend(seed=991)
-    second_backend = CliffTSimulatorBackend(seed=991)
+    first_backend = CliffTSimulatorBackend()
+    second_backend = CliffTSimulatorBackend()
 
-    first = first_backend.sample(_random_physical_kernel, shots=16)
-    second = second_backend.sample(_random_physical_kernel, shots=16)
+    first = first_backend.sample(_random_physical_kernel, shots=16, seed=991)
+    second = second_backend.sample(_random_physical_kernel, shots=16, seed=991)
 
     assert first.measurements is not None
     assert second.measurements is not None
@@ -458,9 +458,9 @@ def test_clifft_backend_real_seeded_sampling_and_dem():
 
 def test_pyqrack_backend_real_deterministic_sampling_uses_fresh_shot_tasks():
     pytest.importorskip("pyqrack")
-    backend = PyQrackSimulatorBackend(seed=441)
+    backend = PyQrackSimulatorBackend()
 
-    sample = backend.sample(_one_physical_kernel, shots=16)
+    sample = backend.sample(_one_physical_kernel, shots=16, seed=441)
 
     assert sample.measurements is not None
     assert sample.measurements.shape == (16, 1)
@@ -517,8 +517,8 @@ def test_pyqrack_derives_fresh_native_seed_for_each_shot(monkeypatch):
 
 def test_pyqrack_per_call_seed_does_not_advance_persistent_stream():
     pytest.importorskip("pyqrack")
-    control = PyQrackSimulatorBackend(seed=444)
-    subject = PyQrackSimulatorBackend(seed=444)
+    control = PyQrackSimulatorBackend(_seed=444)
+    subject = PyQrackSimulatorBackend(_seed=444)
 
     control_first = control.sample(_random_physical_kernel, shots=16)
     subject_first = subject.sample(_random_physical_kernel, shots=16)
@@ -547,7 +547,7 @@ def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch)
     similar = MagicMock(wraps=annotated.similar)
     monkeypatch.setattr(annotated, "similar", similar)
 
-    sample = PyQrackSimulatorBackend(seed=2).sample(annotated, shots=3)
+    sample = PyQrackSimulatorBackend().sample(annotated, shots=3, seed=2)
 
     assert sample.measurements is not None
     assert sample.measurements.shape == (3, 1)
@@ -556,6 +556,14 @@ def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch)
     assert any(
         isinstance(stmt, SetDetector) for stmt in annotated.callable_region.walk()
     )
+
+
+@pytest.mark.parametrize(
+    "backend_type", [CliffTSimulatorBackend, PyQrackSimulatorBackend]
+)
+def test_composed_backends_do_not_expose_a_public_seed_field(backend_type):
+    with pytest.raises(TypeError, match="seed"):
+        backend_type(seed=1)
 
 
 def test_pyqrack_backend_delegates_tsim_circuit_and_dem_to_injected_backend():

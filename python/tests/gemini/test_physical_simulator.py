@@ -246,8 +246,8 @@ def test_physical_task_preserves_source_kernel_across_repeated_compilation():
     "backend",
     [
         pytest.param(TsimSimulatorBackend(), id="tsim"),
-        pytest.param(CliffTSimulatorBackend(seed=29), id="clifft"),
-        pytest.param(PyQrackSimulatorBackend(seed=29), id="pyqrack"),
+        pytest.param(CliffTSimulatorBackend(), id="clifft"),
+        pytest.param(PyQrackSimulatorBackend(), id="pyqrack"),
     ],
 )
 @pytest.mark.parametrize("with_noise", [False, True], ids=["noiseless", "noisy"])
@@ -292,7 +292,7 @@ def test_pyqrack_physical_returns_measurement_backed_result():
         m2dets=[[1]],
         m2obs=[[1]],
     )
-    simulator = PhysicalSimulator(backend=PyQrackSimulatorBackend(seed=30))
+    simulator = PhysicalSimulator(backend=PyQrackSimulatorBackend())
 
     result = simulator.run(prepared_kernel, shots=2, with_noise=False)
 

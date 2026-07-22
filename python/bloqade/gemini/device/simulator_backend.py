@@ -185,7 +185,7 @@ def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
 class CliffTSimulatorBackend(AbstractSimulatorBackend):
     """Backend using Tsim for conversion/DEM generation and CliffT for sampling."""
 
-    seed: int | None = None
+    _seed: int | None = None
     _tsim_backend: TsimSimulatorBackend = field(
         default_factory=TsimSimulatorBackend, repr=False
     )
@@ -219,7 +219,7 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
         seed: int | None = None,
     ) -> BackendSample:
         sample_kwargs: dict[str, int] = {"shots": int(shots)}
-        effective_seed = self.seed if seed is None else seed
+        effective_seed = self._seed if seed is None else seed
         if effective_seed is not None:
             sample_kwargs["seed"] = effective_seed
 
@@ -264,7 +264,7 @@ class _RemovePyQrackAnnotations(RewriteRule):
 class PyQrackSimulatorBackend(AbstractSimulatorBackend):
     """Backend using PyQrack for sampling and Tsim for guaranteed DEM generation."""
 
-    seed: int | None = None
+    _seed: int | None = None
     options: dict[str, Any] | None = None
     min_qubits: int = 0
     _tsim_backend: TsimSimulatorBackend = field(
@@ -273,7 +273,7 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
     _rng_state: np.random.Generator = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._rng_state = np.random.default_rng(self.seed)
+        self._rng_state = np.random.default_rng(self._seed)
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         try:
