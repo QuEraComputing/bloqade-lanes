@@ -11,6 +11,7 @@ from kirin import ir
 from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
+from bloqade.gemini.cudaq import cudaq_to_squin, is_cudaq_kernel
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
@@ -23,7 +24,6 @@ from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom, placement
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical, physical
-from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
