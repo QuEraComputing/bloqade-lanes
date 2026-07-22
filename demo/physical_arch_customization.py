@@ -33,14 +33,12 @@
 #
 # Import utilities to define the SQuIN kernel dialect that we will be writing our programs in.
 
-import math
-
 # %%
+import math
 from typing import Any, Literal, TypeVar
 
-import matplotlib.pyplot as plt
-
 # For postprocessing
+import matplotlib.pyplot as plt
 import numpy as np
 from bloqade.types import Qubit
 from kirin.dialects import ilist
