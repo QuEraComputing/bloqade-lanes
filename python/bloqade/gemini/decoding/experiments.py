@@ -349,20 +349,15 @@ class PostSelectionExperiment:
     def get_samples(
         self,
         num_shots: int,
-        seed: int | None = None,
     ) -> dict[str, _BasisDataset]:
-        """Sample each basis and return its detector and observable data.
-
-        ``seed`` is forwarded to every task sampling request.
-        """
+        """For each basis, samples num_shots from the hardware. Returns the detector and observable information for each task."""
         actual_tasks = self._postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
         # In this implementation, we request samples for each basis in parallel, and then iteratively block
         # on X, Y, and then Z being finished.
         futures = {
-            basis: task.run_async(num_shots, seed=seed)
-            for basis, task in actual_tasks.items()
+            basis: task.run_async(num_shots) for basis, task in actual_tasks.items()
         }
         actual_data = {
             basis: _basis_dataset_from_task_result(future.result())

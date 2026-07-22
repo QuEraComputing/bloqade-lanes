@@ -286,8 +286,8 @@ def test_noiseless_tsim_circuit_compiles_samplers():
     "backend",
     [
         pytest.param(TsimSimulatorBackend(), id="tsim"),
-        pytest.param(CliffTSimulatorBackend(), id="clifft"),
-        pytest.param(PyQrackSimulatorBackend(), id="pyqrack"),
+        pytest.param(CliffTSimulatorBackend(seed=17), id="clifft"),
+        pytest.param(PyQrackSimulatorBackend(seed=17), id="pyqrack"),
     ],
 )
 def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
@@ -303,7 +303,7 @@ def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
 
 
 def test_pyqrack_logical_returns_measurement_backed_result():
-    result = GeminiLogicalSimulator(backend=PyQrackSimulatorBackend()).run(
+    result = GeminiLogicalSimulator(backend=PyQrackSimulatorBackend(seed=18)).run(
         small_backend_kernel, shots=2, with_noise=False
     )
 

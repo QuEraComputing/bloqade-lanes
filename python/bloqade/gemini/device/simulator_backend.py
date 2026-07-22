@@ -15,6 +15,13 @@ if TYPE_CHECKING:
     from tsim import Circuit as TsimCircuit  # type: ignore[reportMissingImports]
 
 
+def _validate_seed(seed: int | None) -> None:
+    if seed is not None and (
+        isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
+    ):
+        raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
+
+
 @dataclass(frozen=True)
 class BackendSample:
     """Raw samples returned by a simulator backend.
@@ -185,13 +192,16 @@ def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
 class CliffTSimulatorBackend(AbstractSimulatorBackend):
     """Backend using Tsim for conversion/DEM generation and CliffT for sampling."""
 
-    _seed: int | None = None
+    seed: int | None = None
     _tsim_backend: TsimSimulatorBackend = field(
         default_factory=TsimSimulatorBackend, repr=False
     )
     _programs: WeakKeyDictionary[ir.Method, Any] = field(
         default_factory=WeakKeyDictionary, init=False, repr=False
     )
+
+    def __post_init__(self) -> None:
+        _validate_seed(self.seed)
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         try:
@@ -219,7 +229,7 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
         seed: int | None = None,
     ) -> BackendSample:
         sample_kwargs: dict[str, int] = {"shots": int(shots)}
-        effective_seed = self._seed if seed is None else seed
+        effective_seed = self.seed if seed is None else seed
         if effective_seed is not None:
             sample_kwargs["seed"] = effective_seed
 
@@ -269,7 +279,7 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
     platform-specific random-number implementation.
     """
 
-    _seed: int | None = None
+    seed: int | None = None
     options: dict[str, Any] | None = None
     min_qubits: int = 0
     _tsim_backend: TsimSimulatorBackend = field(
@@ -278,7 +288,8 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
     _rng_state: np.random.Generator = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._rng_state = np.random.default_rng(self._seed)
+        _validate_seed(self.seed)
+        self._rng_state = np.random.default_rng(self.seed)
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         try:

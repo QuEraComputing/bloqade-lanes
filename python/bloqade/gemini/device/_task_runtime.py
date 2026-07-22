@@ -21,6 +21,7 @@ from stim import DetectorErrorModel
 from .simulator_backend import (
     AbstractSimulatorBackend,
     _get_tsim_circuit,
+    _validate_seed,
 )
 
 if TYPE_CHECKING:
@@ -31,13 +32,6 @@ if TYPE_CHECKING:
 
 RetType = TypeVar("RetType")
 ResultRetType = TypeVar("ResultRetType", covariant=True)
-
-
-def _validate_seed(seed: int | None) -> None:
-    if seed is not None and (
-        isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
-    ):
-        raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
 
 
 class SimulatorResult(Protocol[ResultRetType]):

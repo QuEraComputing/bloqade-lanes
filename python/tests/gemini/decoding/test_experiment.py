@@ -448,8 +448,7 @@ def test_basis_dataset_from_detector_result_preserves_samples():
     )
 
 
-@pytest.mark.parametrize("seed", [None, 23])
-def test_postselection_experiment_get_samples_forwards_seed_to_each_basis(seed):
+def test_postselection_experiment_get_samples_calls_run_async_once_per_basis():
     exp = object.__new__(PostSelectionExperiment)
     cast(Any, exp)._postselection_exp_cache = type(
         "Cache",
@@ -470,10 +469,10 @@ def test_postselection_experiment_get_samples_forwards_seed_to_each_basis(seed):
         tasks[basis] = _FakeTask(run_async=Mock(return_value=future))
     cast(Any, exp._postselection_exp_cache).hardware_tasks = tasks
 
-    exp.get_samples(num_shots=100, seed=seed)
+    exp.get_samples(num_shots=100)
 
     for task in tasks.values():
-        task.run_async.assert_called_once_with(100, seed=seed)
+        task.run_async.assert_called_once_with(100)
 
 
 def test_postselection_experiment_get_samples_shapes(msd_mld_samples):
