@@ -119,7 +119,8 @@ def plot_labeled_arch(
         for loc, (x, _y) in locations:
             site_id_to_xs.setdefault(loc.site_id, []).append(x)
 
-        site_box_colors = list(plt.get_cmap("tab10").colors)
+        site_box_cmap = plt.get_cmap("tab10")
+        site_box_colors = [site_box_cmap(i) for i in range(10)]
 
         for site_box_index, site_id in enumerate(sorted(site_id_to_xs)):
             site_xs = sorted(set(site_id_to_xs[site_id]))
