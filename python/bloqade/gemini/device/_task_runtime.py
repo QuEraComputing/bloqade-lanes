@@ -21,7 +21,6 @@ from stim import DetectorErrorModel
 from .simulator_backend import (
     AbstractSimulatorBackend,
     _get_tsim_circuit,
-    _validate_seed,
 )
 
 if TYPE_CHECKING:
@@ -319,15 +318,12 @@ class _SimulatorTaskBase(Generic[RetType]):
         self,
         shots: int = 1,
         with_noise: bool = True,
-        *,
-        seed: int | None = None,
     ) -> SimulatorResult[RetType]:
         """Run the kernel and get simulation results.
 
         Args:
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             SimulatorResult[RetType]: The simulation result containing measurements, detectors, and observables.
@@ -335,12 +331,11 @@ class _SimulatorTaskBase(Generic[RetType]):
         """
         # Build the guaranteed DEM before beginning a potentially expensive
         # sampling request. This also fails early when Tsim is unavailable.
-        _validate_seed(seed)
         detector_error_model = self.detector_error_model
         physical_kernel = (
             self._physical_kernel if with_noise else self._noiseless_physical_kernel
         )
-        sample = self._backend.sample(physical_kernel, shots=shots, seed=seed)
+        sample = self._backend.sample(physical_kernel, shots=shots)
         fidelity_min, fidelity_max = self.fidelity_bounds()
 
         has_measurements = sample.measurements is not None
@@ -385,22 +380,18 @@ class _SimulatorTaskBase(Generic[RetType]):
         self,
         shots: int = 1,
         with_noise: bool = True,
-        *,
-        seed: int | None = None,
     ) -> Future[SimulatorResult[RetType]]:
         """Run the kernel asynchronously and get simulation results.
 
         Args:
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             Future[SimulatorResult[RetType]]: A future resolving to the full simulation result.
 
         """
-        _validate_seed(seed)
         return cast(
             Future[SimulatorResult[RetType]],
-            self._thread_pool_executor.submit(self.run, shots, with_noise, seed=seed),
+            self._thread_pool_executor.submit(self.run, shots, with_noise),
         )

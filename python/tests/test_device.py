@@ -1,7 +1,7 @@
 import inspect
 import math
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, assert_type, cast
+from typing import TYPE_CHECKING, Any, assert_type
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -313,45 +313,6 @@ def test_pyqrack_logical_returns_measurement_backed_result():
     assert result.detector_error_model is not None
 
 
-@pytest.mark.parametrize("seed", [None, 0])
-def test_logical_simulator_run_forwards_seed(monkeypatch, seed: int | None):
-    simulator = GeminiLogicalSimulator()
-    task = MagicMock()
-    expected = object()
-    task.run.return_value = expected
-    monkeypatch.setattr(simulator, "task", MagicMock(return_value=task))
-
-    result = simulator.run(
-        main,
-        shots=3,
-        with_noise=False,
-        seed=seed,
-    )
-
-    assert result is expected
-    task.run.assert_called_once_with(3, False, seed=seed)
-
-
-def test_logical_simulator_run_async_forwards_seed(monkeypatch):
-    simulator = GeminiLogicalSimulator()
-    task = MagicMock()
-    expected = object()
-    future = Future()
-    future.set_result(expected)
-    task.run_async.return_value = future
-    monkeypatch.setattr(simulator, "task", MagicMock(return_value=task))
-
-    result = simulator.run_async(
-        main,
-        shots=3,
-        with_noise=False,
-        seed=0,
-    ).result()
-
-    assert result is expected
-    task.run_async.assert_called_once_with(3, False, seed=0)
-
-
 @pytest.mark.parametrize(
     "method",
     [
@@ -361,8 +322,9 @@ def test_logical_simulator_run_async_forwards_seed(monkeypatch):
         GeminiLogicalSimulator.run_async,
     ],
 )
-def test_logical_simulator_run_methods_do_not_expose_run_detectors(method):
+def test_logical_simulator_run_methods_do_not_expose_runtime_configuration(method):
     assert "run_detectors" not in inspect.signature(method).parameters
+    assert "seed" not in inspect.signature(method).parameters
 
 
 @pytest.mark.parametrize(
@@ -554,7 +516,7 @@ def test_run_samples_noisy_kernel_through_backend_after_dem_generation():
     result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
 
     task.backend._detector_error_model.assert_called_once_with("noisy-kernel")
-    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1)
     assert isinstance(result, Result)
     assert result._raw_measurements == samples.tolist()
     assert result.detector_error_model == "dem"
@@ -566,7 +528,7 @@ def test_run_samples_noiseless_kernel_through_backend():
 
     GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=False)
 
-    task.backend.sample.assert_called_once_with("noiseless-kernel", shots=1, seed=None)
+    task.backend.sample.assert_called_once_with("noiseless-kernel", shots=1)
 
 
 def test_run_uses_native_backend_detector_and_observable_samples():
@@ -578,7 +540,7 @@ def test_run_uses_native_backend_detector_and_observable_samples():
 
     result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1)
     assert isinstance(result, DetectorResult)
     assert result._detectors == detectors.tolist()
     assert result._observables == observables.tolist()
@@ -669,62 +631,7 @@ def test_run_fails_on_dem_before_sampling():
     task.backend.sample.assert_not_called()
 
 
-@pytest.mark.parametrize("seed", [0, 2**63 - 1])
-def test_task_run_accepts_valid_seed_values(seed: int):
-    task = _mock_task()
-    task.backend.sample.return_value = BackendSample(measurements=np.array([[True]]))
-
-    GeminiLogicalSimulatorTask.run(task, shots=1, seed=seed)
-
-    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=seed)
-
-
-def test_task_run_accepts_explicit_none_seed():
-    task = _mock_task()
-    task.backend.sample.return_value = BackendSample(measurements=np.array([[True]]))
-
-    GeminiLogicalSimulatorTask.run(task, shots=1, seed=None)
-
-    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
-
-
-def test_task_run_forwards_seed_to_detector_backend():
-    task = _mock_task()
-    task.backend.sample.return_value = BackendSample(
-        detectors=np.array([[True]]),
-        observables=np.array([[False]]),
-    )
-
-    result = GeminiLogicalSimulatorTask.run(task, shots=1, seed=0)
-
-    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=0)
-    assert isinstance(result, DetectorResult)
-
-
-@pytest.mark.parametrize("seed", [True, -1, 2**63, 1.5, "1"])
-def test_task_run_rejects_invalid_seed_before_dem_or_sampling(seed: object):
-    task = _mock_task()
-
-    with pytest.raises(ValueError, match="seed must be"):
-        GeminiLogicalSimulatorTask.run(task, seed=cast(int | None, seed))
-
-    task.backend._detector_error_model.assert_not_called()
-    task.backend.sample.assert_not_called()
-
-
-@pytest.mark.parametrize("seed", [True, -1, 2**63, 1.5, "1"])
-def test_task_run_async_rejects_invalid_seed_before_submission(seed: object):
-    task = _mock_task()
-    executor = MagicMock()
-    object.__setattr__(task, "_thread_pool_executor", executor)
-
-    with pytest.raises(ValueError, match="seed must be"):
-        GeminiLogicalSimulatorTask.run_async(task, seed=cast(int | None, seed))
-
-    executor.submit.assert_not_called()
-
-
-def test_task_run_async_forwards_seed():
+def test_task_run_async_submits_run_without_runtime_configuration():
     task = _mock_task()
     executor = MagicMock()
     future = Future()
@@ -734,20 +641,10 @@ def test_task_run_async_forwards_seed():
     object.__setattr__(task, "_thread_pool_executor", executor)
     object.__setattr__(task, "run", run)
 
-    result = GeminiLogicalSimulatorTask.run_async(
-        task,
-        shots=3,
-        with_noise=False,
-        seed=0,
-    )
+    result = GeminiLogicalSimulatorTask.run_async(task, shots=3, with_noise=False)
 
     assert result is future
-    executor.submit.assert_called_once_with(
-        run,
-        3,
-        False,
-        seed=0,
-    )
+    executor.submit.assert_called_once_with(run, 3, False)
 
 
 if TYPE_CHECKING:

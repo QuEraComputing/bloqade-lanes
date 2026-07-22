@@ -142,8 +142,6 @@ class GeminiLogicalSimulator:
         logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        *,
-        seed: int | None = None,
     ) -> SimulatorResult[RetType]:
         """Run the kernel and get simulation results.
 
@@ -151,21 +149,18 @@ class GeminiLogicalSimulator:
             logical_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             SimulatorResult[RetType]: The full simulation result.
 
         """
-        return self.task(logical_kernel).run(shots, with_noise, seed=seed)
+        return self.task(logical_kernel).run(shots, with_noise)
 
     def run_async(
         self,
         logical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        *,
-        seed: int | None = None,
     ) -> Future[SimulatorResult[RetType]]:
         """Run the kernel asynchronously and get simulation results.
 
@@ -173,13 +168,12 @@ class GeminiLogicalSimulator:
             logical_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-            seed (int | None): Optional sampler seed. Defaults to None.
 
         Returns:
             Future[SimulatorResult[RetType]]: A future resolving to the full simulation result.
 
         """
-        return self.task(logical_kernel).run_async(shots, with_noise, seed=seed)
+        return self.task(logical_kernel).run_async(shots, with_noise)
 
     def visualize(
         self,

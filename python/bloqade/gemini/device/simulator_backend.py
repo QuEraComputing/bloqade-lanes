@@ -44,7 +44,6 @@ class AbstractSimulatorBackend(abc.ABC):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        seed: int | None = None,
     ) -> BackendSample:
         """Sample a compiled physical SQuIn kernel."""
 
@@ -117,10 +116,8 @@ class TsimSimulatorBackend(AbstractSimulatorBackend):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        seed: int | None = None,
     ) -> BackendSample:
-        if seed is None:
-            seed = self.seed
+        seed = self.seed
         circuit = self._tsim_circuit(physical_squin_kernel)
         if self.run_detectors:
             return self._sample_detectors(circuit, shots, seed=seed)
@@ -232,10 +229,9 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        seed: int | None = None,
     ) -> BackendSample:
         sample_kwargs: dict[str, int] = {"shots": int(shots)}
-        effective_seed = self.seed if seed is None else seed
+        effective_seed = self.seed
         if effective_seed is not None:
             sample_kwargs["seed"] = effective_seed
 
@@ -280,7 +276,7 @@ class _RemovePyQrackAnnotations(RewriteRule):
 class PyQrackSimulatorBackend(AbstractSimulatorBackend):
     """Backend using PyQrack for sampling and Tsim for guaranteed DEM generation.
 
-    A per-call seed deterministically derives the seed for each native Qrack
+    The backend seed deterministically derives the seed for each native Qrack
     simulator. Exact native measurement outcomes remain dependent on Qrack's
     platform-specific random-number implementation.
     """
@@ -308,14 +304,13 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
         physical_squin_kernel: ir.Method,
         *,
         shots: int,
-        seed: int | None = None,
     ) -> BackendSample:
         from bloqade.pyqrack.base import PyQrackInterpreter
         from bloqade.pyqrack.device import StackMemorySimulator
         from bloqade.pyqrack.reg import MeasurementResultValue
         from bloqade.pyqrack.task import PyQrackSimulatorTask
 
-        rng_state = np.random.default_rng(seed) if seed is not None else self._rng_state
+        rng_state = self._rng_state
 
         class _RecordingPyQrackInterpreter(PyQrackInterpreter):
             measurements: list[MeasurementResultValue]
@@ -325,7 +320,8 @@ class PyQrackSimulatorBackend(AbstractSimulatorBackend):
                 # This resets memory and constructs the fresh QrackSimulator.
                 initialized = super().initialize()
 
-                # Give each one-shot Qrack simulator a distinct deterministic seed.
+                # Give each one-shot Qrack simulator a seed from this backend's
+                # persistent random-number stream.
                 qrack_seed = int(initialized.rng_state.integers(0, 2**63))
                 initialized.memory.sim_reg.seed(qrack_seed)
 

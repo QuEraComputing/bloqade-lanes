@@ -260,22 +260,18 @@ class GeminiPhysicalSimulator:
         physical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        *,
-        seed: int | None = None,
     ) -> SimulatorResult[RetType]:
         """Compile and run a physical SQuIn kernel."""
-        return self.task(physical_kernel).run(shots, with_noise, seed=seed)
+        return self.task(physical_kernel).run(shots, with_noise)
 
     def run_async(
         self,
         physical_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        *,
-        seed: int | None = None,
     ) -> Future[SimulatorResult[RetType]]:
         """Compile and run a physical SQuIn kernel asynchronously."""
-        return self.task(physical_kernel).run_async(shots, with_noise, seed=seed)
+        return self.task(physical_kernel).run_async(shots, with_noise)
 
     def visualize(
         self,

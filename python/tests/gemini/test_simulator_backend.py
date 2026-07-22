@@ -72,6 +72,7 @@ def test_backend_contract_has_exactly_two_abstract_operations():
 )
 def test_backend_sample_does_not_expose_detector_mode(backend_type):
     assert "run_detectors" not in inspect.signature(backend_type.sample).parameters
+    assert "seed" not in inspect.signature(backend_type.sample).parameters
 
 
 @pytest.mark.parametrize(
@@ -218,16 +219,6 @@ def test_tsim_backend_seed_defaults_measurement_sampling(is_clifford):
         circuit.stim_circuit.compile_sampler.assert_not_called()
 
 
-def test_tsim_per_call_seed_overrides_backend_seed():
-    circuit = MagicMock(is_clifford=True)
-    circuit.stim_circuit.compile_sampler.return_value.sample.return_value = [[1]]
-    backend = _backend_with_circuit(circuit, seed=23)
-
-    backend.sample(_physical_kernel, shots=1, seed=0)
-
-    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
-
-
 def test_tsim_clifford_detector_sampling_uses_measurement_converter():
     circuit = MagicMock(is_clifford=True)
     measurements = np.array([[True, False]])
@@ -290,68 +281,12 @@ def test_tsim_backend_seed_defaults_detector_sampling(is_clifford):
         circuit.stim_circuit.compile_sampler.assert_not_called()
 
 
-def test_tsim_clifford_measurement_sampling_forwards_seed_zero():
-    circuit = MagicMock(is_clifford=True)
-    circuit.stim_circuit.compile_sampler.return_value.sample.return_value = [[1]]
-    backend = _backend_with_circuit(circuit)
-
-    sample = backend.sample(_physical_kernel, shots=1, seed=0)
-
-    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
-    assert sample.measurements is not None
-    assert np.array_equal(sample.measurements, [[True]])
-
-
-def test_tsim_nonclifford_measurement_sampling_forwards_seed_zero():
-    circuit = MagicMock(is_clifford=False)
-    circuit.compile_sampler.return_value.sample.return_value = [[1]]
-    backend = _backend_with_circuit(circuit)
-
-    sample = backend.sample(_physical_kernel, shots=1, seed=0)
-
-    circuit.compile_sampler.assert_called_once_with(seed=0)
-    assert sample.measurements is not None
-    assert np.array_equal(sample.measurements, [[True]])
-
-
-def test_tsim_clifford_detector_sampling_forwards_seed_zero():
-    circuit = MagicMock(is_clifford=True)
-    sampler = circuit.stim_circuit.compile_sampler.return_value
-    measurements = np.array([[True]])
-    sampler.sample.return_value = measurements
-    converter = circuit.compile_m2d_converter.return_value
-    converter.convert.return_value = (np.array([[1]]), np.array([[0]]))
-    backend = _backend_with_circuit(circuit, run_detectors=True)
-
-    sample = backend.sample(_physical_kernel, shots=1, seed=0)
-
-    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
-    converter.convert.assert_called_once_with(
-        measurements=measurements, separate_observables=True
-    )
-    assert sample.detectors is not None
-    assert sample.observables is not None
-
-
-def test_tsim_nonclifford_detector_sampling_forwards_seed_zero():
-    circuit = MagicMock(is_clifford=False)
-    sampler = circuit.compile_detector_sampler.return_value
-    sampler.sample.return_value = (np.array([[1]]), np.array([[0]]))
-    backend = _backend_with_circuit(circuit, run_detectors=True)
-
-    sample = backend.sample(_physical_kernel, shots=1, seed=0)
-
-    circuit.compile_detector_sampler.assert_called_once_with(seed=0)
-    assert sample.detectors is not None
-    assert sample.observables is not None
-
-
 def test_tsim_seeded_sampling_reproduces_fixed_batch():
     pytest.importorskip("tsim")
-    backend = TsimSimulatorBackend()
+    backend = TsimSimulatorBackend(seed=17)
 
-    first = backend.sample(_random_physical_kernel, shots=64, seed=17)
-    second = backend.sample(_random_physical_kernel, shots=64, seed=17)
+    first = backend.sample(_random_physical_kernel, shots=64)
+    second = backend.sample(_random_physical_kernel, shots=64)
 
     assert first.measurements is not None
     assert second.measurements is not None
@@ -416,45 +351,19 @@ def test_clifft_backend_compiles_once_normalizes_measurements_and_passes_seed(
     )
 
 
-def test_clifft_backend_omits_missing_seed_and_returns_measurements(monkeypatch):
+def test_clifft_backend_omits_unconfigured_seed_and_returns_measurements(monkeypatch):
     clifft = _fake_clifft(monkeypatch)
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "M 0"
     backend = CliffTSimulatorBackend(_tsim_backend=tsim_backend)
 
-    sample = backend.sample(_physical_kernel, shots=2, seed=None)
+    sample = backend.sample(_physical_kernel, shots=2)
 
     clifft.sample.assert_called_once_with("program", shots=2)  # type: ignore[attr-defined]
     assert sample.measurements is not None
     assert np.array_equal(sample.measurements, [[False, True]])
     assert sample.detectors is None
     assert sample.observables is None
-
-
-def test_clifft_backend_per_call_seed_overrides_backend_seed(monkeypatch):
-    clifft = _fake_clifft(monkeypatch)
-    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
-    tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
-
-    backend.sample(_physical_kernel, shots=2, seed=0)
-
-    clifft.sample.assert_called_once_with(  # type: ignore[attr-defined]
-        "program", shots=2, seed=0
-    )
-
-
-def test_clifft_backend_none_seed_falls_back_to_backend_seed(monkeypatch):
-    clifft = _fake_clifft(monkeypatch)
-    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
-    tsim_backend._tsim_circuit.return_value = "M 0"
-    backend = CliffTSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
-
-    backend.sample(_physical_kernel, shots=2, seed=None)
-
-    clifft.sample.assert_called_once_with(  # type: ignore[attr-defined]
-        "program", shots=2, seed=123
-    )
 
 
 def test_clifft_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
@@ -534,7 +443,7 @@ def test_pyqrack_backend_real_deterministic_sampling_uses_fresh_shot_tasks():
     assert np.all(sample.measurements)
 
 
-def test_pyqrack_per_call_seed_reproduces_native_seed_sequence(monkeypatch):
+def test_pyqrack_backend_seed_reproduces_native_seed_sequence(monkeypatch):
     pyqrack = pytest.importorskip("pyqrack")
     original_seed = pyqrack.QrackSimulator.seed
     recorded_seeds: list[int] = []
@@ -544,22 +453,43 @@ def test_pyqrack_per_call_seed_reproduces_native_seed_sequence(monkeypatch):
         return original_seed(simulator, seed)
 
     monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
-    backend = PyQrackSimulatorBackend()
+    first_backend = PyQrackSimulatorBackend(seed=441)
+    second_backend = PyQrackSimulatorBackend(seed=441)
 
-    backend.sample(_random_physical_kernel, shots=4, seed=441)
-    backend.sample(_random_physical_kernel, shots=4, seed=441)
+    first_backend.sample(_random_physical_kernel, shots=4)
+    second_backend.sample(_random_physical_kernel, shots=4)
 
     expected_rng = np.random.default_rng(441)
     expected_seeds = [int(expected_rng.integers(0, 2**63)) for _ in range(4)]
     assert recorded_seeds == expected_seeds * 2
 
 
-def test_pyqrack_per_call_seed_reproduces_squin_loss_noise():
+@pytest.mark.xfail(
+    reason=(
+        "PyQrack native measurement sampling has not been reproducible from "
+        "seeded backend instances on Linux CI."
+    ),
+)
+def test_pyqrack_backend_seed_reproduces_native_measurements():
     pytest.importorskip("pyqrack")
-    backend = PyQrackSimulatorBackend()
+    first_backend = PyQrackSimulatorBackend(seed=441)
+    second_backend = PyQrackSimulatorBackend(seed=441)
 
-    first = backend.sample(_loss_physical_kernel, shots=16, seed=442)
-    second = backend.sample(_loss_physical_kernel, shots=16, seed=442)
+    first = first_backend.sample(_random_physical_kernel, shots=64)
+    second = second_backend.sample(_random_physical_kernel, shots=64)
+
+    assert first.measurements is not None
+    assert second.measurements is not None
+    assert np.array_equal(first.measurements, second.measurements)
+
+
+def test_pyqrack_backend_seed_reproduces_squin_loss_noise():
+    pytest.importorskip("pyqrack")
+    first_backend = PyQrackSimulatorBackend(seed=442)
+    second_backend = PyQrackSimulatorBackend(seed=442)
+
+    first = first_backend.sample(_loss_physical_kernel, shots=16)
+    second = second_backend.sample(_loss_physical_kernel, shots=16)
 
     assert first.measurements is not None
     assert second.measurements is not None
@@ -578,16 +508,16 @@ def test_pyqrack_derives_fresh_native_seed_for_each_shot(monkeypatch):
         return original_seed(simulator, seed)
 
     monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
-    call_seed = 443
+    backend_seed = 443
 
-    PyQrackSimulatorBackend().sample(_one_physical_kernel, shots=4, seed=call_seed)
+    PyQrackSimulatorBackend(seed=backend_seed).sample(_one_physical_kernel, shots=4)
 
-    expected_rng = np.random.default_rng(call_seed)
+    expected_rng = np.random.default_rng(backend_seed)
     expected_seeds = [int(expected_rng.integers(0, 2**63)) for _ in range(4)]
     assert recorded_seeds == expected_seeds
 
 
-def test_pyqrack_per_call_seed_does_not_advance_persistent_seed_stream(monkeypatch):
+def test_pyqrack_backend_seed_advances_persistent_seed_stream(monkeypatch):
     pyqrack = pytest.importorskip("pyqrack")
 
     original_seed = pyqrack.QrackSimulator.seed
@@ -601,16 +531,13 @@ def test_pyqrack_per_call_seed_does_not_advance_persistent_seed_stream(monkeypat
     backend = PyQrackSimulatorBackend(seed=444)
 
     backend.sample(_random_physical_kernel, shots=4)
-    backend.sample(_random_physical_kernel, shots=4, seed=999)
     backend.sample(_random_physical_kernel, shots=4)
 
     persistent_rng = np.random.default_rng(444)
     first_persistent = [int(persistent_rng.integers(0, 2**63)) for _ in range(4)]
     second_persistent = [int(persistent_rng.integers(0, 2**63)) for _ in range(4)]
-    call_rng = np.random.default_rng(999)
-    per_call = [int(call_rng.integers(0, 2**63)) for _ in range(4)]
 
-    assert recorded_seeds == first_persistent + per_call + second_persistent
+    assert recorded_seeds == first_persistent + second_persistent
 
 
 def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch):
@@ -626,7 +553,7 @@ def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch)
     similar = MagicMock(wraps=annotated.similar)
     monkeypatch.setattr(annotated, "similar", similar)
 
-    sample = PyQrackSimulatorBackend().sample(annotated, shots=3, seed=2)
+    sample = PyQrackSimulatorBackend(seed=2).sample(annotated, shots=3)
 
     assert sample.measurements is not None
     assert sample.measurements.shape == (3, 1)

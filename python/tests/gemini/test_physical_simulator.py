@@ -94,7 +94,7 @@ def test_physical_task_run_routes_through_backend():
     result = PhysicalSimulatorTask.run(task, shots=1, with_noise=True)
 
     task.backend._detector_error_model.assert_called_once_with("noisy-kernel")
-    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1, seed=None)
+    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1)
     assert isinstance(result, PhysicalResult)
     assert result.measurements == [[True, False]]
     assert result.detector_error_model == "dem"
@@ -302,45 +302,6 @@ def test_pyqrack_physical_returns_measurement_backed_result():
     assert result.detector_error_model is not None
 
 
-@pytest.mark.parametrize("seed", [None, 0])
-def test_physical_simulator_run_forwards_seed(monkeypatch, seed: int | None):
-    simulator = PhysicalSimulator()
-    task = MagicMock()
-    expected = object()
-    task.run.return_value = expected
-    monkeypatch.setattr(simulator, "task", MagicMock(return_value=task))
-
-    result = simulator.run(
-        small_physical_kernel,
-        shots=3,
-        with_noise=False,
-        seed=seed,
-    )
-
-    assert result is expected
-    task.run.assert_called_once_with(3, False, seed=seed)
-
-
-def test_physical_simulator_run_async_forwards_seed(monkeypatch):
-    simulator = PhysicalSimulator()
-    task = MagicMock()
-    expected = object()
-    future = Future()
-    future.set_result(expected)
-    task.run_async.return_value = future
-    monkeypatch.setattr(simulator, "task", MagicMock(return_value=task))
-
-    result = simulator.run_async(
-        small_physical_kernel,
-        shots=3,
-        with_noise=False,
-        seed=0,
-    ).result()
-
-    assert result is expected
-    task.run_async.assert_called_once_with(3, False, seed=0)
-
-
 @pytest.mark.parametrize(
     "method",
     [
@@ -350,8 +311,9 @@ def test_physical_simulator_run_async_forwards_seed(monkeypatch):
         GeminiPhysicalSimulator.run_async,
     ],
 )
-def test_physical_simulator_run_methods_do_not_expose_run_detectors(method):
+def test_physical_simulator_run_methods_do_not_expose_runtime_configuration(method):
     assert "run_detectors" not in inspect.signature(method).parameters
+    assert "seed" not in inspect.signature(method).parameters
 
 
 @pytest.mark.parametrize(
