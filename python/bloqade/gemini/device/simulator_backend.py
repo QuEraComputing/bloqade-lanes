@@ -88,10 +88,14 @@ def _tsim() -> Any:
 class TsimSimulatorBackend(AbstractSimulatorBackend):
     """Backend that uses Tsim for both sampling and DEM generation."""
 
+    seed: int | None = None
     run_detectors: bool = False
     _circuits: WeakKeyDictionary[ir.Method, TsimCircuit] = field(
         default_factory=WeakKeyDictionary, init=False, repr=False
     )
+
+    def __post_init__(self) -> None:
+        _validate_seed(self.seed)
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         """Convert a physical SQuIn kernel to a cached Tsim circuit."""
@@ -115,6 +119,8 @@ class TsimSimulatorBackend(AbstractSimulatorBackend):
         shots: int,
         seed: int | None = None,
     ) -> BackendSample:
+        if seed is None:
+            seed = self.seed
         circuit = self._tsim_circuit(physical_squin_kernel)
         if self.run_detectors:
             return self._sample_detectors(circuit, shots, seed=seed)

@@ -108,10 +108,11 @@ def test_composite_backend_exposes_only_private_tsim_backend(backend_type):
 
 
 @pytest.mark.parametrize(
-    "backend_type", [CliffTSimulatorBackend, PyQrackSimulatorBackend]
+    "backend_type",
+    [TsimSimulatorBackend, CliffTSimulatorBackend, PyQrackSimulatorBackend],
 )
 @pytest.mark.parametrize("seed", [True, -1, 2**63, 1.5, "1"])
-def test_composed_backends_reject_invalid_public_seed(backend_type, seed):
+def test_backends_reject_invalid_public_seed(backend_type, seed):
     with pytest.raises(ValueError, match="seed must be"):
         backend_type(seed=seed)
 
@@ -163,9 +164,9 @@ def test_tsim_conversion_removes_return_from_owned_kernel(monkeypatch):
 
 
 def _backend_with_circuit(
-    circuit: MagicMock, *, run_detectors: bool = False
+    circuit: MagicMock, *, seed: int | None = None, run_detectors: bool = False
 ) -> TsimSimulatorBackend:
-    backend = TsimSimulatorBackend(run_detectors=run_detectors)
+    backend = TsimSimulatorBackend(seed=seed, run_detectors=run_detectors)
     backend._tsim_circuit = MagicMock(return_value=circuit)  # type: ignore[method-assign]
     return backend
 
@@ -194,6 +195,37 @@ def test_tsim_nonclifford_measurement_sampling_uses_tsim():
     assert np.array_equal(sample.measurements, [[True]])
     circuit.compile_sampler.assert_called_once_with(seed=None)
     circuit.stim_circuit.compile_sampler.assert_not_called()
+
+
+@pytest.mark.parametrize("is_clifford", [True, False], ids=["stim", "tsim"])
+def test_tsim_backend_seed_defaults_measurement_sampling(is_clifford):
+    circuit = MagicMock(is_clifford=is_clifford)
+    sampler = (
+        circuit.stim_circuit.compile_sampler.return_value
+        if is_clifford
+        else circuit.compile_sampler.return_value
+    )
+    sampler.sample.return_value = [[1]]
+    backend = _backend_with_circuit(circuit, seed=0)
+
+    backend.sample(_physical_kernel, shots=1)
+
+    if is_clifford:
+        circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
+        circuit.compile_sampler.assert_not_called()
+    else:
+        circuit.compile_sampler.assert_called_once_with(seed=0)
+        circuit.stim_circuit.compile_sampler.assert_not_called()
+
+
+def test_tsim_per_call_seed_overrides_backend_seed():
+    circuit = MagicMock(is_clifford=True)
+    circuit.stim_circuit.compile_sampler.return_value.sample.return_value = [[1]]
+    backend = _backend_with_circuit(circuit, seed=23)
+
+    backend.sample(_physical_kernel, shots=1, seed=0)
+
+    circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
 
 
 def test_tsim_clifford_detector_sampling_uses_measurement_converter():
@@ -231,6 +263,31 @@ def test_tsim_nonclifford_detector_sampling_uses_detector_sampler():
     assert sample.observables is not None
     assert np.array_equal(sample.detectors, [[False]])
     assert np.array_equal(sample.observables, [[True]])
+
+
+@pytest.mark.parametrize("is_clifford", [True, False], ids=["stim", "tsim"])
+def test_tsim_backend_seed_defaults_detector_sampling(is_clifford):
+    circuit = MagicMock(is_clifford=is_clifford)
+    backend = _backend_with_circuit(circuit, seed=0, run_detectors=True)
+    if is_clifford:
+        sampler = circuit.stim_circuit.compile_sampler.return_value
+        sampler.sample.return_value = [[1]]
+        circuit.compile_m2d_converter.return_value.convert.return_value = (
+            [[1]],
+            [[0]],
+        )
+    else:
+        sampler = circuit.compile_detector_sampler.return_value
+        sampler.sample.return_value = ([[1]], [[0]])
+
+    backend.sample(_physical_kernel, shots=1)
+
+    if is_clifford:
+        circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
+        circuit.compile_detector_sampler.assert_not_called()
+    else:
+        circuit.compile_detector_sampler.assert_called_once_with(seed=0)
+        circuit.stim_circuit.compile_sampler.assert_not_called()
 
 
 def test_tsim_clifford_measurement_sampling_forwards_seed_zero():
