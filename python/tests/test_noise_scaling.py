@@ -172,3 +172,27 @@ def test_logical_init_kernels_honor_scaling_factor():
         assert _has(
             consts, expected
         ), f"logical init: expected scaled {getter}[0]={expected}, got {sorted(consts)}"
+
+
+def test_logical_init_cz_unpaired_rates_honor_scaling_factor():
+    """The Steane initializer must use the scaled unpaired-CZ getter."""
+    raw_rates = (0.011, 0.013, 0.017)
+    model = GeminiOneZoneNoiseModel(
+        scaling_factor=2.0,
+        cz_unpaired_gate_px=raw_rates[0],
+        cz_unpaired_gate_py=raw_rates[1],
+        cz_unpaired_gate_pz=raw_rates[2],
+    )
+
+    nm = generate_logical_noise_model(model)
+    _, noisy = nm.get_logical_initialize()
+    assert noisy is not None
+    consts = _float_constants(noisy)
+
+    for raw, expected in zip(raw_rates, model.cz_unpaired_pauli_rates):
+        assert _has(
+            consts, expected
+        ), f"logical init: expected scaled unpaired-CZ rate {expected}"
+        assert not _has(
+            consts, raw
+        ), f"logical init: unexpectedly baked raw unpaired-CZ rate {raw}"

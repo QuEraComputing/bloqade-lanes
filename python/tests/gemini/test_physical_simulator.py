@@ -1,3 +1,7 @@
+import inspect
+from concurrent.futures import Future
+from dataclasses import is_dataclass
+from typing import TYPE_CHECKING, Any, assert_type
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -7,19 +11,42 @@ from kirin import ir, types
 from kirin.decl import info, statement
 from kirin.dialects import func, ilist, ssacfg
 
-import bloqade.gemini.device.physical_simulator as physical_simulator_module
 from bloqade import squin, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.compile.task import _find_qubit_ssas
+from bloqade.gemini.device import (
+    BackendSample,
+    CliffTSimulatorBackend,
+    DetectorResult,
+    GeminiLogicalSimulator,
+    GeminiLogicalSimulatorTask,
+    Result,
+    SimulatorResult,
+    TsimSimulatorBackend,
+)
+from bloqade.gemini.device._task_runtime import _SimulatorTaskBase
 from bloqade.gemini.device.physical_simulator import (
+    DetectorResult as PhysicalDetectorResult,
     PhysicalResult,
     PhysicalSimulator,
     PhysicalSimulatorTask,
     append_measurements_and_annotations_physical,
 )
+from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.transform import PhysicalPipeline
+
+
+@squin.kernel
+def small_physical_kernel():
+    reg = squin.qalloc(1)
+    squin.x(reg[0])
+    return squin.broadcast.measure(reg)
+
+
+def _plain_callable():
+    return None
 
 
 def test_physical_result_uses_post_processing():
@@ -46,29 +73,93 @@ def test_physical_result_uses_post_processing():
     post_processing.emit_observables.assert_called_once_with(raw_measurements)
 
 
-def test_physical_task_run_clifford_returns_physical_result():
-    task = MagicMock()
-    task.tsim_circuit.is_clifford = True
-    task.tsim_circuit.stim_circuit.compile_sampler.return_value.sample.return_value = (
-        np.array([[True, False]])
+def _mock_physical_task() -> Any:
+    task = object.__new__(PhysicalSimulatorTask)
+    backend = MagicMock()
+    backend._detector_error_model.return_value = "dem"
+    object.__setattr__(task, "physical_squin_kernel", "noisy-kernel")
+    object.__setattr__(task, "noiseless_physical_squin_kernel", "noiseless-kernel")
+    object.__setattr__(task, "_simulator_backend", backend)
+    object.__setattr__(task, "fidelity_bounds", MagicMock(return_value=(0.5, 0.9)))
+    object.__setattr__(task, "_post_processing", MagicMock())
+    return task
+
+
+def test_physical_task_run_routes_through_backend():
+    task = _mock_physical_task()
+    task._backend.sample.return_value = BackendSample(
+        measurements=np.array([[True, False]])
     )
-    task.fidelity_bounds.return_value = (0.5, 0.9)
-    task.detector_error_model = MagicMock()
-    task._post_processing = MagicMock()
 
     result = PhysicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.tsim_circuit.stim_circuit.compile_sampler.assert_called_once_with()
-    task.measurement_sampler.sample.assert_not_called()
+    task._backend._detector_error_model.assert_called_once_with("noisy-kernel")
+    task._backend.sample.assert_called_once_with("noisy-kernel", shots=1)
     assert isinstance(result, PhysicalResult)
     assert result.measurements == [[True, False]]
+    assert result.detector_error_model == "dem"
 
 
 def test_physical_simulator_exports_from_gemini_namespace():
-    from bloqade.gemini import PhysicalSimulator
+    from bloqade.gemini import GeminiPhysicalSimulator, PhysicalSimulator
     from bloqade.gemini.device import PhysicalSimulator as DevicePhysicalSimulator
 
     assert PhysicalSimulator is DevicePhysicalSimulator
+    assert PhysicalSimulator is GeminiPhysicalSimulator
+
+
+def test_physical_simulator_result_aliases_are_public():
+    assert PhysicalResult is Result
+    assert PhysicalDetectorResult is DetectorResult
+
+
+def test_logical_and_physical_tasks_share_non_dataclass_runtime():
+    assert not is_dataclass(_SimulatorTaskBase)
+    assert issubclass(GeminiLogicalSimulatorTask, _SimulatorTaskBase)
+    assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
+
+
+@pytest.mark.parametrize("simulator_type", [GeminiLogicalSimulator, PhysicalSimulator])
+@pytest.mark.parametrize(
+    "method",
+    [
+        "run",
+        "run_async",
+        "visualize",
+        "physical_squin_kernel",
+        "physical_move_kernel",
+        "tsim_circuit",
+        "fidelity_bounds",
+    ],
+)
+def test_simulators_expose_task_only_execution_api(simulator_type, method):
+    assert method not in simulator_type.__dict__
+
+
+@pytest.mark.parametrize(
+    "task_type", [GeminiLogicalSimulatorTask, PhysicalSimulatorTask]
+)
+def test_simulator_tasks_store_backend_privately(task_type):
+    task = object.__new__(task_type)
+    backend = MagicMock()
+    object.__setattr__(task, "_simulator_backend", backend)
+
+    assert task._backend is backend
+    assert not hasattr(task, "backend")
+    assert not hasattr(task, "simulator_backend")
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "measurement_sampler",
+        "noiseless_measurement_sampler",
+        "detector_sampler",
+        "noiseless_detector_sampler",
+    ],
+)
+def test_task_base_does_not_expose_cached_samplers(attribute):
+    assert attribute not in _SimulatorTaskBase.__dict__
 
 
 def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
@@ -97,41 +188,180 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
             captured["post_processing_kernel"] = kernel
             return "post_processing"
 
-    def fake_append_measurements_and_annotations_physical(kernel, m2dets, m2obs):
-        captured["annotated_kernel"] = kernel
-        captured["m2dets"] = m2dets
-        captured["m2obs"] = m2obs
-
     monkeypatch.setattr(pipeline_module, "PhysicalPipeline", FakePhysicalPipeline)
     monkeypatch.setattr(atom, "AtomInterpreter", FakeAtomInterpreter)
-    monkeypatch.setattr(
-        physical_simulator_module,
-        "append_measurements_and_annotations_physical",
-        fake_append_measurements_and_annotations_physical,
-    )
 
-    kernel = MagicMock()
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(1)
+        return squin.broadcast.measure(reg)
+
+    source_ir = kernel.print_str()
     placement_strategy = MagicMock()
-    m2dets = [[1]]
-    m2obs = [[1]]
+    place_opt_type: Any = MagicMock()
+    backend = TsimSimulatorBackend(run_detectors=True)
 
-    task = PhysicalSimulator().task(
-        kernel,
+    simulator = PhysicalSimulator(
+        backend=backend,
+        place_opt_type=place_opt_type,
         placement_strategy=placement_strategy,
-        m2dets=m2dets,
-        m2obs=m2obs,
     )
+    task = simulator.task(kernel)
 
+    assert captured["place_opt_type"] is place_opt_type
     assert captured["placement_strategy"] is placement_strategy
-    assert captured["annotated_kernel"] is kernel
-    assert captured["m2dets"] is m2dets
-    assert captured["m2obs"] is m2obs
-    assert captured["kernel"] is kernel
+    assert captured["kernel"] is task.source_squin_kernel
+    assert task.source_squin_kernel is not kernel
+    assert task.source_squin_kernel.print_str() == source_ir
+    assert kernel.print_str() == source_ir
     assert captured["no_raise"] is False
     assert captured["atom_dialects"] == "dialects"
     assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
     assert task._post_processing == "post_processing"
+    assert task._backend is backend
+    assert not hasattr(task, "backend")
+    assert not hasattr(task, "simulator_backend")
+    assert not hasattr(task, "simulator")
+
+
+def test_physical_task_preserves_source_kernel_across_repeated_compilation():
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(2)
+        return squin.broadcast.measure(reg)
+
+    prepared_kernel = kernel.similar()
+    append_measurements_and_annotations_physical(
+        prepared_kernel,
+        m2dets=[[1], [1]],
+        m2obs=[[1], [0]],
+    )
+    prepared_ir = prepared_kernel.print_str()
+    simulator = PhysicalSimulator()
+    first = simulator.task(prepared_kernel)
+    second = simulator.task(prepared_kernel)
+
+    assert prepared_kernel.print_str() == prepared_ir
+    assert first.source_squin_kernel is not prepared_kernel
+    assert second.source_squin_kernel is not prepared_kernel
+    assert first.source_squin_kernel is not second.source_squin_kernel
+    for task in (first, second):
+        assert (
+            sum(
+                isinstance(stmt, SetDetector)
+                for stmt in task.source_squin_kernel.callable_region.walk()
+            )
+            == 1
+        )
+        assert (
+            sum(
+                isinstance(stmt, SetObservable)
+                for stmt in task.source_squin_kernel.callable_region.walk()
+            )
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        pytest.param(TsimSimulatorBackend(), id="tsim"),
+        pytest.param(CliffTSimulatorBackend(seed=29), id="clifft"),
+        pytest.param(_PyQrackSimulatorBackend(seed=29), id="pyqrack"),
+    ],
+)
+@pytest.mark.parametrize("with_noise", [False, True], ids=["noiseless", "noisy"])
+def test_builtin_backends_run_physical_workflow_with_guaranteed_dem(
+    backend, with_noise
+):
+    result = (
+        PhysicalSimulator(backend=backend)
+        .task(small_physical_kernel)
+        .run(shots=2, with_noise=with_noise)
+    )
+
+    assert isinstance(result, Result)
+    assert len(result.measurements) == 2
+    assert all(len(measurements) == 1 for measurements in result.measurements)
+    assert result.detector_error_model is not None
+    if isinstance(backend, CliffTSimulatorBackend):
+        backend._programs.clear()
+
+
+def test_tsim_physical_detector_backend_returns_detector_result():
+    prepared_kernel = small_physical_kernel.similar()
+    append_measurements_and_annotations_physical(
+        prepared_kernel,
+        m2dets=[[1]],
+        m2obs=[[1]],
+    )
+    simulator = PhysicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
+
+    result = simulator.task(prepared_kernel).run(shots=2, with_noise=False)
+
+    assert isinstance(result, DetectorResult)
+    assert len(result.detectors) == 2
+    assert all(len(detectors) == 1 for detectors in result.detectors)
+    assert len(result.observables) == 2
+    assert all(len(observables) == 1 for observables in result.observables)
+    assert result.detector_error_model is not None
+
+
+def test_pyqrack_physical_returns_measurement_backed_result():
+    prepared_kernel = small_physical_kernel.similar()
+    append_measurements_and_annotations_physical(
+        prepared_kernel,
+        m2dets=[[1]],
+        m2obs=[[1]],
+    )
+    simulator = PhysicalSimulator(backend=_PyQrackSimulatorBackend(seed=30))
+
+    result = simulator.task(prepared_kernel).run(shots=2, with_noise=False)
+
+    assert isinstance(result, Result)
+    assert result.detectors == [[True], [True]]
+    assert result.observables == [[True], [True]]
+    assert result.detector_error_model is not None
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        PhysicalSimulatorTask.run,
+        PhysicalSimulatorTask.run_async,
+    ],
+)
+def test_physical_task_run_methods_do_not_expose_runtime_configuration(method):
+    assert "run_detectors" not in inspect.signature(method).parameters
+    assert "seed" not in inspect.signature(method).parameters
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"m2dets": [[1]]}, id="m2dets"),
+        pytest.param({"m2obs": [[1]]}, id="m2obs"),
+    ],
+)
+def test_physical_simulator_constructor_rejects_measurement_matrices(kwargs):
+    simulator_type: Any = PhysicalSimulator
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        simulator_type(**kwargs)
+
+
+def test_physical_simulator_task_rejects_non_squin_before_pipeline(monkeypatch):
+    import bloqade.lanes.transform as pipeline_module
+
+    physical_pipeline = MagicMock()
+    monkeypatch.setattr(pipeline_module, "PhysicalPipeline", physical_pipeline)
+    invalid_kernel: Any = _plain_callable
+
+    with pytest.raises(TypeError, match="Squin ir.Method"):
+        PhysicalSimulator().task(invalid_kernel)
+
+    physical_pipeline.assert_not_called()
 
 
 def test_append_measurements_and_annotations_physical_preserves_kernel_return():
@@ -265,3 +495,12 @@ def test_find_qubit_ssas_ignores_qubit_typed_results_without_addresses():
     )
 
     assert _find_qubit_ssas(method) == []
+
+
+if TYPE_CHECKING:
+
+    def _check_physical_run_results(
+        task: PhysicalSimulatorTask[Any],
+    ) -> None:
+        assert_type(task.run(), SimulatorResult[Any])
+        assert_type(task.run_async(), Future[SimulatorResult[Any]])

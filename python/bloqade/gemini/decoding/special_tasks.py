@@ -27,10 +27,6 @@ def _clear_task_tsim_artifacts(task: object) -> None:
     for attr in (
         "tsim_circuit",
         "noiseless_tsim_circuit",
-        "measurement_sampler",
-        "noiseless_measurement_sampler",
-        "detector_sampler",
-        "noiseless_detector_sampler",
         "detector_error_model",
     ):
         task.__dict__.pop(attr, None)

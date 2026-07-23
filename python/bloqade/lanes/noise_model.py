@@ -205,6 +205,9 @@ def generate_logical_noise_model(
     cz_paired_error_probabilities = ilist.IList(
         [cz_paired_error_dict.get(k, 0.0) for k in PAIRED_KEYS]
     )
+    cz_unpaired_gate_px, cz_unpaired_gate_py, cz_unpaired_gate_pz = (
+        noise_model.cz_unpaired_pauli_rates
+    )
 
     clean_init, noisy_init = steane7_initialize_with_noise(
         local_px=local_px,
@@ -218,9 +221,9 @@ def generate_logical_noise_model(
         sitter_px=sitter_px,
         sitter_py=sitter_py,
         sitter_pz=sitter_pz,
-        cz_unpaired_gate_px=noise_model.cz_unpaired_gate_px,
-        cz_unpaired_gate_py=noise_model.cz_unpaired_gate_py,
-        cz_unpaired_gate_pz=noise_model.cz_unpaired_gate_pz,
+        cz_unpaired_gate_px=cz_unpaired_gate_px,
+        cz_unpaired_gate_py=cz_unpaired_gate_py,
+        cz_unpaired_gate_pz=cz_unpaired_gate_pz,
         sit_loss_prob=noise_model.sit_loss_prob,
         cz_errors=cz_paired_error_probabilities,
         cz_paired_loss=noise_model.cz_gate_loss_prob,
