@@ -117,7 +117,7 @@ class GeminiLogicalSimulator:
         if not isinstance(logical_kernel, ir.Method):
             raise TypeError("GeminiLogicalSimulator.task() requires a Squin ir.Method")
 
-        from bloqade.lanes.logical_mvp import compile_task
+        from bloqade.gemini.compile import compile_task
 
         (
             logical_squin_kernel,

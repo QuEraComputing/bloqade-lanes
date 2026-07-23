@@ -66,7 +66,7 @@ def append_measurements_and_annotations_physical(
     the matrices are repeated block-by-block. The original return value is
     preserved.
     """
-    from bloqade.lanes.logical_mvp import (
+    from bloqade.gemini.compile.task import (
         _find_qubit_ssas,
         _find_return_stmt,
         _insert_before,
@@ -224,7 +224,7 @@ class GeminiPhysicalSimulator:
 
         from bloqade.lanes.analysis import atom
         from bloqade.lanes.passes import SequentialPlacePass
-        from bloqade.lanes.pipeline import PhysicalPipeline
+        from bloqade.lanes.transform import PhysicalPipeline
 
         # Physical compilation mutates its input. Keep the method supplied by
         # the caller reusable.

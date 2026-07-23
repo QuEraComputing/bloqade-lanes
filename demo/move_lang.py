@@ -1,4 +1,3 @@
-from bloqade.lanes._prelude import kernel
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import (
     LocationAddress,
@@ -8,6 +7,7 @@ from bloqade.lanes.bytecode.encoding import (
 )
 from bloqade.lanes.dialects import move
 from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.prelude import kernel
 from bloqade.lanes.transform import MoveToSquinPhysical
 
 lane_word = WordLaneAddress(0, 1, 0)

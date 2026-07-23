@@ -13,6 +13,7 @@ from kirin.dialects import func, ilist, ssacfg
 
 from bloqade import squin, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
+from bloqade.gemini.compile.task import _find_qubit_ssas
 from bloqade.gemini.device import (
     BackendSample,
     CliffTSimulatorBackend,
@@ -34,8 +35,7 @@ from bloqade.gemini.device.physical_simulator import (
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
-from bloqade.lanes.logical_mvp import _find_qubit_ssas
-from bloqade.lanes.pipeline import PhysicalPipeline
+from bloqade.lanes.transform import PhysicalPipeline
 
 
 @squin.kernel
@@ -163,7 +163,7 @@ def test_task_base_does_not_expose_cached_samplers(attribute):
 
 
 def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
-    import bloqade.lanes.pipeline as pipeline_module
+    import bloqade.lanes.transform as pipeline_module
     from bloqade.lanes.analysis import atom
 
     captured = {}
@@ -352,7 +352,7 @@ def test_physical_simulator_constructor_rejects_measurement_matrices(kwargs):
 
 
 def test_physical_simulator_task_rejects_non_squin_before_pipeline(monkeypatch):
-    import bloqade.lanes.pipeline as pipeline_module
+    import bloqade.lanes.transform as pipeline_module
 
     physical_pipeline = MagicMock()
     monkeypatch.setattr(pipeline_module, "PhysicalPipeline", physical_pipeline)
@@ -400,14 +400,14 @@ def test_append_measurements_and_annotations_physical_preserves_kernel_return():
 def test_append_measurements_and_annotations_physical_uses_logical_mvp_helpers(
     monkeypatch,
 ):
-    import bloqade.lanes.logical_mvp as logical_mvp
+    import bloqade.gemini.compile.task as compile_task_module
 
-    find_qubit_ssas = MagicMock(wraps=logical_mvp._find_qubit_ssas)
-    find_return_stmt = MagicMock(wraps=logical_mvp._find_return_stmt)
-    insert_before = MagicMock(wraps=logical_mvp._insert_before)
-    monkeypatch.setattr(logical_mvp, "_find_qubit_ssas", find_qubit_ssas)
-    monkeypatch.setattr(logical_mvp, "_find_return_stmt", find_return_stmt)
-    monkeypatch.setattr(logical_mvp, "_insert_before", insert_before)
+    find_qubit_ssas = MagicMock(wraps=compile_task_module._find_qubit_ssas)
+    find_return_stmt = MagicMock(wraps=compile_task_module._find_return_stmt)
+    insert_before = MagicMock(wraps=compile_task_module._insert_before)
+    monkeypatch.setattr(compile_task_module, "_find_qubit_ssas", find_qubit_ssas)
+    monkeypatch.setattr(compile_task_module, "_find_return_stmt", find_return_stmt)
+    monkeypatch.setattr(compile_task_module, "_insert_before", insert_before)
 
     @squin.kernel
     def kernel():

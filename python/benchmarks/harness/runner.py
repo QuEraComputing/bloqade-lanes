@@ -9,12 +9,13 @@ from dataclasses import dataclass
 
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
+from kirin import ir
 
 from bloqade.lanes.analysis import atom
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
+from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.compile import (
-    compile_to_physical_squin_noise_model as compile_physical_noise_model,
-)
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.heuristics.physical.layout import (
@@ -24,10 +25,39 @@ from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
-from bloqade.lanes.logical_mvp import transversal_rewrites
-from bloqade.lanes.noise_model import generate_logical_noise_model
-from bloqade.lanes.transform import MoveToSquinLogical
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.noise_model import (
+    generate_logical_noise_model,
+    generate_simple_noise_model,
+)
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.transform import (
+    LogicalNativeToPlace,
+    MoveToSquinLogical,
+    MoveToSquinPhysical,
+    NativeToPlace,
+    PhysicalPipeline,
+    PlaceToMove,
+    transversal_rewrites,
+)
+
+
+def _squin_to_move(
+    mt: ir.Method,
+    *,
+    layout_heuristic: LayoutHeuristicABC,
+    placement_strategy: PlacementStrategyABC,
+    logical_initialize: bool,
+) -> ir.Method:
+    NativeStage = LogicalNativeToPlace if logical_initialize else NativeToPlace
+    place_mt = NativeStage(arch_spec=getattr(layout_heuristic, "arch_spec", None)).emit(
+        mt
+    )
+    SequentialPlacePass(place_mt.dialects)(place_mt)
+    return PlaceToMove(
+        layout_heuristic=layout_heuristic,
+        placement_strategy=placement_strategy,
+        insert_initialize=logical_initialize,
+    ).emit(place_mt)
 
 
 @dataclass(frozen=True)
@@ -133,7 +163,7 @@ class BenchmarkRunner:
         placement_strategy = self._build_placement_strategy(job)
         layout_heuristic = self._build_layout_heuristic(job)
 
-        move_mt = squin_to_move(
+        move_mt = _squin_to_move(
             job.case.kernel,
             layout_heuristic=layout_heuristic,
             placement_strategy=placement_strategy,
@@ -157,7 +187,7 @@ class BenchmarkRunner:
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:
         if job.case.logical_initialize:
             placement_strategy = self._build_placement_strategy(job)
-            move_mt = squin_to_move(
+            move_mt = _squin_to_move(
                 job.case.kernel,
                 layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
                 placement_strategy=placement_strategy,
@@ -183,11 +213,19 @@ class BenchmarkRunner:
 
         placement_strategy = self._build_placement_strategy(job)
         layout_heuristic = self._build_layout_heuristic(job)
-        physical_squin = compile_physical_noise_model(
-            job.case.kernel,
-            placement_strategy=placement_strategy,
+        # Construct one ArchSpec and reuse it for both the move compilation and
+        # the noise-insertion step so they cannot disagree on the target arch.
+        arch_spec = get_physical_arch_spec()
+        move_mt = PhysicalPipeline(
+            arch_spec=arch_spec,
             layout_heuristic=layout_heuristic,
-        )
+            placement_strategy=placement_strategy,
+        ).emit(job.case.kernel)
+        physical_squin = MoveToSquinPhysical(
+            arch_spec=arch_spec,
+            noise_model=generate_simple_noise_model(),
+            aggressive_unroll=False,
+        ).emit(move_mt)
         analysis = FidelityAnalysis(physical_squin.dialects)
         analysis.run(physical_squin)
         fidelity_product = 1.0
