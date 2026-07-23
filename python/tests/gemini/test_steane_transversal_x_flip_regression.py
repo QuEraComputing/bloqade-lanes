@@ -61,7 +61,7 @@ def _steane_p0(steane_kernel, n_anc: int) -> float:
     return P(obs[0] = 0) on the shots where all ``n_anc`` ancilla
     observables are 0."""
     sim = GeminiLogicalSimulator()
-    result = sim.run(steane_kernel, shots=STEANE_SHOTS, with_noise=False)
+    result = sim.task(steane_kernel).run(shots=STEANE_SHOTS, with_noise=False)
     obs = np.asarray(result.observables)
     successful = np.all(obs[:, 1 : 1 + n_anc] == 0, axis=1)
     assert successful.sum() > 20, (

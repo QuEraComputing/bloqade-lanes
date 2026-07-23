@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import Future
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import (
@@ -14,14 +13,11 @@ from kirin import ir
 from ._task_runtime import (
     DetectorResult as DetectorResult,
     Result as Result,
-    SimulatorResult,
     _SimulatorTaskBase,
 )
 from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
 
 if TYPE_CHECKING:
-    import tsim as tsim_backend  # type: ignore[reportMissingImports]
-
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
@@ -87,8 +83,7 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
 class GeminiLogicalSimulator:
     """This is the primary entry point for compiling and simulating logical quantum
     circuits on the Gemini architecture. Use :meth:`task` to compile a kernel into
-    a reusable :class:`GeminiLogicalSimulatorTask`, or :meth:`run` for one-shot
-    compile-and-execute convenience.
+    a reusable :class:`GeminiLogicalSimulatorTask`.
 
     CUDA-Q users must convert kernels and add any desired detector/observable
     annotations externally.
@@ -138,117 +133,3 @@ class GeminiLogicalSimulator:
             post_processing,
             self.backend,
         )
-
-    def run(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-    ) -> SimulatorResult[RetType]:
-        """Run the kernel and get simulation results.
-
-        Args:
-            logical_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
-            shots (int): Number of shots to run. Defaults to 1.
-            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-
-        Returns:
-            SimulatorResult[RetType]: The full simulation result.
-
-        """
-        return self.task(logical_kernel).run(shots, with_noise)
-
-    def run_async(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-    ) -> Future[SimulatorResult[RetType]]:
-        """Run the kernel asynchronously and get simulation results.
-
-        Args:
-            logical_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
-            shots (int): Number of shots to run. Defaults to 1.
-            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-
-        Returns:
-            Future[SimulatorResult[RetType]]: A future resolving to the full simulation result.
-
-        """
-        return self.task(logical_kernel).run_async(shots, with_noise)
-
-    def visualize(
-        self,
-        logical_kernel: ir.Method[[], RetType],
-        animated: bool = False,
-        interactive: bool = True,
-    ):
-        """Visualize the physical move kernel using the built-in debugger.
-
-        Args:
-            logical_kernel (ir.Method[[], RetType]): The logical squin kernel to visualize.
-            animated (bool): Whether to use the animated debugger. Defaults to False.
-            interactive (bool): Whether to enable interactive mode. Defaults to True.
-
-        """
-        self.task(logical_kernel).visualize(animated=animated, interactive=interactive)
-
-    def physical_squin_kernel(
-        self, logical_kernel: ir.Method[[], RetType]
-    ) -> ir.Method[[], RetType]:
-        """Compile the logical squin kernel to the physical squin kernel.
-
-        Args:
-            logical_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
-
-        Returns:
-            ir.Method[[], RetType]: The physical squin kernel.
-
-        """
-        return self.task(logical_kernel).physical_squin_kernel
-
-    def physical_move_kernel(
-        self, logical_kernel: ir.Method[[], RetType]
-    ) -> ir.Method[[], RetType]:
-        """Compile the logical squin kernel to the physical move kernel.
-
-        Args:
-            logical_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
-
-        Returns:
-            ir.Method[[], RetType]: The physical move kernel.
-
-        """
-        return self.task(logical_kernel).physical_move_kernel
-
-    def tsim_circuit(
-        self, logical_kernel: ir.Method[[], RetType], with_noise: bool = True
-    ) -> tsim_backend.Circuit:
-        """Compile the logical squin kernel to the tsim circuit.
-
-        Args:
-            logical_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
-            with_noise (bool): Whether to include noise in the tsim circuit. Defaults to True.
-
-        Returns:
-            tsim.Circuit: The compiled tsim circuit.
-
-        """
-        task = self.task(logical_kernel)
-        if with_noise:
-            return task.tsim_circuit
-        return task.noiseless_tsim_circuit
-
-    def fidelity_bounds(
-        self, logical_kernel: ir.Method[[], RetType]
-    ) -> tuple[float, float]:
-        """Get the fidelity bounds for the logical squin kernel.
-
-        Args:
-            logical_kernel (ir.Method[[], RetType]): The logical squin kernel to analyze.
-
-        Returns:
-            tuple[float, float]: The (min, max) fidelity bounds.
-
-        """
-        return self.task(logical_kernel).fidelity_bounds()

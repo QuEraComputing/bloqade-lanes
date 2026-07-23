@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import Future
 from dataclasses import dataclass, field
 from functools import cache, cached_property
 from typing import (
@@ -19,14 +18,11 @@ from bloqade import qubit
 from ._task_runtime import (
     DetectorResult as DetectorResult,
     Result as Result,
-    SimulatorResult,
     _SimulatorTaskBase,
 )
 from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
 
 if TYPE_CHECKING:
-    import tsim as tsim_backend  # type: ignore[reportMissingImports]
-
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.analysis.placement import PlacementStrategyABC
     from bloqade.lanes.arch.spec import ArchSpec
@@ -256,60 +252,6 @@ class GeminiPhysicalSimulator:
             post_processing,
             self.backend,
         )
-
-    def run(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-    ) -> SimulatorResult[RetType]:
-        """Compile and run a physical SQuIn kernel."""
-        return self.task(physical_kernel).run(shots, with_noise)
-
-    def run_async(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-    ) -> Future[SimulatorResult[RetType]]:
-        """Compile and run a physical SQuIn kernel asynchronously."""
-        return self.task(physical_kernel).run_async(shots, with_noise)
-
-    def visualize(
-        self,
-        physical_kernel: ir.Method[[], RetType],
-        animated: bool = False,
-        interactive: bool = True,
-    ):
-        """Visualize the compiled physical move kernel."""
-        self.task(physical_kernel).visualize(animated=animated, interactive=interactive)
-
-    def physical_squin_kernel(
-        self, physical_kernel: ir.Method[[], RetType]
-    ) -> ir.Method[[], RetType]:
-        """Compile the source physical SQuIn kernel to a noisy physical SQuIn kernel."""
-        return self.task(physical_kernel).physical_squin_kernel
-
-    def physical_move_kernel(
-        self, physical_kernel: ir.Method[[], RetType]
-    ) -> ir.Method[[], RetType]:
-        """Compile the source physical SQuIn kernel to the physical move dialect."""
-        return self.task(physical_kernel).physical_move_kernel
-
-    def tsim_circuit(
-        self, physical_kernel: ir.Method[[], RetType], with_noise: bool = True
-    ) -> tsim_backend.Circuit:
-        """Compile the physical SQuIn kernel to a tsim circuit."""
-        task = self.task(physical_kernel)
-        if with_noise:
-            return task.tsim_circuit
-        return task.noiseless_tsim_circuit
-
-    def fidelity_bounds(
-        self, physical_kernel: ir.Method[[], RetType]
-    ) -> tuple[float, float]:
-        """Get the fidelity bounds for the physical SQuIn kernel."""
-        return self.task(physical_kernel).fidelity_bounds()
 
 
 PhysicalSimulator = GeminiPhysicalSimulator

@@ -17,8 +17,8 @@ from bloqade.gemini.device import (
     BackendSample,
     CliffTSimulatorBackend,
     DetectorResult,
+    GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask,
-    GeminiPhysicalSimulator,
     Result,
     SimulatorResult,
     TsimSimulatorBackend,
@@ -117,6 +117,23 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
     assert not is_dataclass(_SimulatorTaskBase)
     assert issubclass(GeminiLogicalSimulatorTask, _SimulatorTaskBase)
     assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
+
+
+@pytest.mark.parametrize("simulator_type", [GeminiLogicalSimulator, PhysicalSimulator])
+@pytest.mark.parametrize(
+    "method",
+    [
+        "run",
+        "run_async",
+        "visualize",
+        "physical_squin_kernel",
+        "physical_move_kernel",
+        "tsim_circuit",
+        "fidelity_bounds",
+    ],
+)
+def test_simulators_expose_task_only_execution_api(simulator_type, method):
+    assert method not in simulator_type.__dict__
 
 
 @pytest.mark.parametrize(
@@ -258,8 +275,10 @@ def test_physical_task_preserves_source_kernel_across_repeated_compilation():
 def test_builtin_backends_run_physical_workflow_with_guaranteed_dem(
     backend, with_noise
 ):
-    result = PhysicalSimulator(backend=backend).run(
-        small_physical_kernel, shots=2, with_noise=with_noise
+    result = (
+        PhysicalSimulator(backend=backend)
+        .task(small_physical_kernel)
+        .run(shots=2, with_noise=with_noise)
     )
 
     assert isinstance(result, Result)
@@ -279,7 +298,7 @@ def test_tsim_physical_detector_backend_returns_detector_result():
     )
     simulator = PhysicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
 
-    result = simulator.run(prepared_kernel, shots=2, with_noise=False)
+    result = simulator.task(prepared_kernel).run(shots=2, with_noise=False)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 2
@@ -298,7 +317,7 @@ def test_pyqrack_physical_returns_measurement_backed_result():
     )
     simulator = PhysicalSimulator(backend=_PyQrackSimulatorBackend(seed=30))
 
-    result = simulator.run(prepared_kernel, shots=2, with_noise=False)
+    result = simulator.task(prepared_kernel).run(shots=2, with_noise=False)
 
     assert isinstance(result, Result)
     assert result.detectors == [[True], [True]]
@@ -311,11 +330,9 @@ def test_pyqrack_physical_returns_measurement_backed_result():
     [
         PhysicalSimulatorTask.run,
         PhysicalSimulatorTask.run_async,
-        GeminiPhysicalSimulator.run,
-        GeminiPhysicalSimulator.run_async,
     ],
 )
-def test_physical_simulator_run_methods_do_not_expose_runtime_configuration(method):
+def test_physical_task_run_methods_do_not_expose_runtime_configuration(method):
     assert "run_detectors" not in inspect.signature(method).parameters
     assert "seed" not in inspect.signature(method).parameters
 
@@ -345,21 +362,6 @@ def test_physical_simulator_task_rejects_non_squin_before_pipeline(monkeypatch):
         PhysicalSimulator().task(invalid_kernel)
 
     physical_pipeline.assert_not_called()
-
-
-@pytest.mark.parametrize("entrypoint", ["run", "run_async", "visualize"])
-def test_physical_simulator_rejects_non_squin_through_public_entrypoints(
-    monkeypatch, entrypoint
-):
-    simulator = PhysicalSimulator()
-    task_spy = MagicMock(wraps=simulator.task)
-    monkeypatch.setattr(simulator, "task", task_spy)
-    invalid_kernel: Any = _plain_callable
-
-    with pytest.raises(TypeError, match="Squin ir.Method"):
-        getattr(simulator, entrypoint)(invalid_kernel)
-
-    task_spy.assert_called_once_with(invalid_kernel)
 
 
 def test_append_measurements_and_annotations_physical_preserves_kernel_return():
@@ -498,11 +500,7 @@ def test_find_qubit_ssas_ignores_qubit_typed_results_without_addresses():
 if TYPE_CHECKING:
 
     def _check_physical_run_results(
-        simulator: GeminiPhysicalSimulator,
         task: PhysicalSimulatorTask[Any],
-        kernel: ir.Method[[], Any],
     ) -> None:
         assert_type(task.run(), SimulatorResult[Any])
         assert_type(task.run_async(), Future[SimulatorResult[Any]])
-        assert_type(simulator.run(kernel), SimulatorResult[Any])
-        assert_type(simulator.run_async(kernel), Future[SimulatorResult[Any]])

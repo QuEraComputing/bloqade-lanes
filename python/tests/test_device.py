@@ -111,7 +111,7 @@ def test_physical_compilation(size: int):
 
         return ilist.map(set_observable, ilist.range(len(reg)))
 
-    result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
+    result = GeminiLogicalSimulator().task(main).run(1000, with_noise=False)
     # checks to make sure logical GHZ state is created.
     assert all(len(set(rv)) == 1 for rv in result.observables)
 
@@ -120,7 +120,7 @@ def test_physical_compilation(size: int):
 def test_run_default():
     """Test that default measurement sampling returns a Result."""
     sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=5, with_noise=False)
+    result = sim.task(main).run(shots=5, with_noise=False)
 
     assert isinstance(result, Result)
     assert result.fidelity_bounds() is not None
@@ -131,7 +131,7 @@ def test_run_default():
 def test_run_with_detector_backend():
     """Test that a detector-configured backend returns a DetectorResult."""
     sim = GeminiLogicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
-    result = sim.run(main, shots=10, with_noise=False)
+    result = sim.task(main).run(shots=10, with_noise=False)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -144,7 +144,7 @@ def test_run_with_detector_backend():
 def test_detector_backend_with_noise():
     """Test a detector-configured backend samples the noisy circuit."""
     sim = GeminiLogicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
-    result = sim.run(main, shots=10, with_noise=True)
+    result = sim.task(main).run(shots=10, with_noise=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -156,7 +156,7 @@ def test_detector_backend_with_noise():
 def test_run_async_with_detector_backend():
     """Test a detector-configured backend returns a Future[DetectorResult]."""
     sim = GeminiLogicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
-    future = sim.run_async(main, shots=5, with_noise=False)
+    future = sim.task(main).run_async(shots=5, with_noise=False)
     result = future.result()
 
     assert isinstance(result, DetectorResult)
@@ -223,7 +223,7 @@ def test_result_property_caching():
         return ilist.map(set_observable, ilist.range(len(reg)))
 
     sim = GeminiLogicalSimulator()
-    result = sim.run(returning_kernel, shots=5, with_noise=False)
+    result = sim.task(returning_kernel).run(shots=5, with_noise=False)
 
     # Access each property twice to exercise the caching path
     detectors_first = result.detectors
@@ -291,8 +291,10 @@ def test_noiseless_tsim_circuit_compiles_samplers():
     ],
 )
 def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
-    result = GeminiLogicalSimulator(backend=backend).run(
-        small_backend_kernel, shots=2, with_noise=False
+    result = (
+        GeminiLogicalSimulator(backend=backend)
+        .task(small_backend_kernel)
+        .run(shots=2, with_noise=False)
     )
 
     assert isinstance(result, Result)
@@ -303,8 +305,10 @@ def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
 
 
 def test_pyqrack_logical_returns_measurement_backed_result():
-    result = GeminiLogicalSimulator(backend=_PyQrackSimulatorBackend(seed=18)).run(
-        small_backend_kernel, shots=2, with_noise=False
+    result = (
+        GeminiLogicalSimulator(backend=_PyQrackSimulatorBackend(seed=18))
+        .task(small_backend_kernel)
+        .run(shots=2, with_noise=False)
     )
 
     assert isinstance(result, Result)
@@ -318,11 +322,9 @@ def test_pyqrack_logical_returns_measurement_backed_result():
     [
         GeminiLogicalSimulatorTask.run,
         GeminiLogicalSimulatorTask.run_async,
-        GeminiLogicalSimulator.run,
-        GeminiLogicalSimulator.run_async,
     ],
 )
-def test_logical_simulator_run_methods_do_not_expose_runtime_configuration(method):
+def test_logical_task_run_methods_do_not_expose_runtime_configuration(method):
     assert "run_detectors" not in inspect.signature(method).parameters
     assert "seed" not in inspect.signature(method).parameters
 
@@ -352,21 +354,6 @@ def test_logical_simulator_task_rejects_non_squin_before_compilation(monkeypatch
         GeminiLogicalSimulator().task(invalid_kernel)
 
     compile_task.assert_not_called()
-
-
-@pytest.mark.parametrize("entrypoint", ["run", "run_async", "visualize"])
-def test_logical_simulator_rejects_non_squin_through_public_entrypoints(
-    monkeypatch, entrypoint
-):
-    simulator = GeminiLogicalSimulator()
-    task_spy = MagicMock(wraps=simulator.task)
-    monkeypatch.setattr(simulator, "task", task_spy)
-    invalid_kernel: Any = _plain_callable
-
-    with pytest.raises(TypeError, match="Squin ir.Method"):
-        getattr(simulator, entrypoint)(invalid_kernel)
-
-    task_spy.assert_called_once_with(invalid_kernel)
 
 
 def test_logical_simulator_task_preserves_source_kernel():
@@ -666,7 +653,3 @@ if TYPE_CHECKING:
     def _check_task_run_results(task: GeminiLogicalSimulatorTask[Any]) -> None:
         assert_type(task.run(), SimulatorResult[Any])
         assert_type(task.run_async(), Future[SimulatorResult[Any]])
-
-    def _check_simulator_run_results(simulator: GeminiLogicalSimulator) -> None:
-        assert_type(simulator.run(main), SimulatorResult[None])
-        assert_type(simulator.run_async(main), Future[SimulatorResult[None]])
