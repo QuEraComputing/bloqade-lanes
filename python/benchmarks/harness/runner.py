@@ -213,13 +213,16 @@ class BenchmarkRunner:
 
         placement_strategy = self._build_placement_strategy(job)
         layout_heuristic = self._build_layout_heuristic(job)
+        # Construct one ArchSpec and reuse it for both the move compilation and
+        # the noise-insertion step so they cannot disagree on the target arch.
+        arch_spec = get_physical_arch_spec()
         move_mt = PhysicalPipeline(
-            arch_spec=get_physical_arch_spec(),
+            arch_spec=arch_spec,
             layout_heuristic=layout_heuristic,
             placement_strategy=placement_strategy,
         ).emit(job.case.kernel)
         physical_squin = MoveToSquinPhysical(
-            arch_spec=get_physical_arch_spec(),
+            arch_spec=arch_spec,
             noise_model=generate_simple_noise_model(),
             aggressive_unroll=False,
         ).emit(move_mt)
