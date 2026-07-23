@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 """Measure command for autotune: run the DSL policy and emit aggregated metrics.
 
-Calls `bloqade.lanes.compile.compile_squin_to_move` directly with a
+Calls `bloqade.lanes.transform.PhysicalPipeline` directly with a
 `PolicyPlacementStrategy(traversal=PolicyTraversal(policy_path=...))`
 on each requested benchmark kernel. Prints `AUTOTUNE_METRIC <name> <value>`
 lines to stdout for autotune's RegexAdaptor to extract, and per-case
@@ -11,9 +11,9 @@ Deliberately bypasses `python -m benchmarks.cli` (and its
 `squin_to_move`/`_apply_architecture_mode` plumbing) because that path
 overrides each kernel's `logical_initialize` flag based on the
 `--architecture` argument, which is a logical-qubit concept that has no
-bearing on physical-arch move-policy search. `compile_squin_to_move` is
-the physical-only entry point (wraps `PhysicalPipeline` with the physical
-arch spec) and has no `logical_initialize` parameter.
+bearing on physical-arch move-policy search. `PhysicalPipeline` is
+the physical-only entry point (uses the physical arch spec) and has no
+`logical_initialize` parameter.
 
 Primary solution-quality metric is `move_layers` — sum of `move.Move` statement counts
 across kernels (one statement = one parallel move timestep on the arch).
@@ -42,7 +42,6 @@ from benchmarks.kernels import select_benchmark_cases
 
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.compile import compile_squin_to_move
 from bloqade.lanes.dialects import move as move_dialect, place as place_dialect
 from bloqade.lanes.heuristics.physical import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
@@ -51,6 +50,7 @@ from bloqade.lanes.heuristics.physical.policy_movement import (
     PolicyPlacementStrategy,
     PolicyTraversal,
 )
+from bloqade.lanes.transform import PhysicalPipeline
 
 DEFAULT_KERNELS = "steane_physical_35"
 
@@ -94,7 +94,7 @@ def _build_strategy(
 def _has_unlowered_place_cz(mt: object) -> bool:
     """True iff any `place.CZ` statements remain in the compiled IR.
 
-    `compile_squin_to_move` with `no_raise=True` returns silently even when
+    `PhysicalPipeline.emit` with `no_raise=True` returns silently even when
     a placement strategy fails to solve every CZ stage — the leftover
     `place.CZ` statements are the signal that the solve was incomplete.
     """
@@ -141,12 +141,10 @@ def main() -> int:
         events = 0
         unlowered = True
         try:
-            mt = compile_squin_to_move(
-                case.kernel,
-                no_raise=True,
+            mt = PhysicalPipeline(
                 layout_heuristic=layout_heuristic,
                 placement_strategy=wrapped_strategy,
-            )
+            ).emit(case.kernel, no_raise=True)
             unlowered = _has_unlowered_place_cz(mt)
             events = _count_move_events(mt)
         except Exception as exc:  # broad on purpose — surface unexpected errors
