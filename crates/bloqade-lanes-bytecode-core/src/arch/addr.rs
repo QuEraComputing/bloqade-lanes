@@ -22,8 +22,11 @@ pub struct ZonedWordRef {
 
 /// Atom movement direction along a transport bus.
 ///
-/// The `Ord` derive orders variants by their `#[repr(u8)]` discriminant
-/// (`Forward < Backward`), which downstream deterministic sort keys rely on.
+/// Variants are declared in ascending discriminant order
+/// (`Forward = 0 < Backward = 1`), so the derived `Ord` yields the same
+/// order as a comparison of the `#[repr(u8)]` values. Downstream
+/// deterministic sort keys rely on this — keep the declaration order aligned
+/// with the discriminants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Direction {
@@ -35,9 +38,11 @@ pub enum Direction {
 
 /// Type of transport bus used for an atom move operation.
 ///
-/// The `Ord` derive orders variants by their `#[repr(u8)]` discriminant
-/// (`SiteBus < WordBus < ZoneBus`), which downstream deterministic sort keys
-/// rely on.
+/// Variants are declared in ascending discriminant order
+/// (`SiteBus = 0 < WordBus = 1 < ZoneBus = 2`), so the derived `Ord` yields
+/// the same order as a comparison of the `#[repr(u8)]` values. Downstream
+/// deterministic sort keys rely on this — keep the declaration order aligned
+/// with the discriminants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum MoveType {

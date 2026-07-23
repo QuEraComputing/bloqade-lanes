@@ -8,12 +8,12 @@ use crate::primitives::graph::MoveSet;
 /// Deterministic sort/group key for a bus triplet: `(move_type, bus_id,
 /// direction)`.
 ///
-/// Derived `Ord` compares fields in declaration order, exactly as the former
-/// `(u8, u32, u8)` tuple did: `MoveType` and `Direction` order by their
-/// `#[repr(u8)]` discriminant, and those discriminants match the prior
-/// `as u8` casts — so `BTreeMap`/`sort` iteration order is preserved. Keeping
-/// the enums typed removes the encode-as-`u8` / decode-by-`match` round-trip
-/// at the use sites.
+/// Derived `Ord` compares the fields in declaration order, exactly as the
+/// former `(u8, u32, u8)` tuple did. `MoveType`/`Direction` declare their
+/// variants in ascending discriminant order, so their derived `Ord` matches
+/// the numeric `#[repr(u8)]` values — i.e. the prior `as u8` casts — and
+/// `BTreeMap`/`sort` iteration order is preserved. Keeping the enums typed
+/// removes the encode-as-`u8` / decode-by-`match` round-trip at the use sites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct TripletKey {
     pub(crate) move_type: MoveType,
