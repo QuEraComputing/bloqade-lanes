@@ -99,6 +99,9 @@ line-length = 88
 
 [tool.ruff]
 target-version = "py312"
+# Hand-maintained type stub mirroring the Rust _native extension; it trips a
+# large number of PYI/PIE rules that do not apply to a generated-style stub.
+extend-exclude = ["python/bloqade/lanes/bytecode/_native.pyi"]
 exclude = [
     ".bzr",
     ".direnv",
@@ -124,6 +127,41 @@ exclude = [
 
 [tool.ruff.lint]
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+ignore = [
+    # Import ordering is owned by the dedicated isort pre-commit hook (profile
+    # black); leaving it to ruff too would make the two tools fight.
+    "I001",
+    # `from x import y as y` is the explicit re-export idiom pyright requires;
+    # ruff would otherwise strip the alias and break re-export detection.
+    "PLC0414",
+    # PLR0402's autofix rewrites `import pkg.sub as sub` to `from pkg import
+    # sub`, which is NOT equivalent here: the former guarantees the submodule,
+    # the latter resolves via pkg/__init__ and makes pyright lose the
+    # submodule's types (breaks squin/gemini attribute typing).
+    "PLR0402",
+    # PEP 695 generics (`class C[T]` / `def f[T]()`) require Python 3.12+, but
+    # this project supports Python >= 3.10 (see requires-python) — adopting the
+    # syntax would fail to parse on 3.10/3.11. Keep deferred until those are
+    # dropped. (ruff target-version is py312, so it suggests these regardless.)
+    "UP046",
+    "UP047",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Dialect `_interface.py` frontends are declaration-only `@lowering.wraps`
+# stubs: the `...` after the docstring is the (required) body, so the
+# unnecessary-placeholder rule must not strip it.
+"**/_interface.py" = ["PIE790"]
+# Optional-cirq QASM->SQUIN benchmark utility: cirq must stay import-guarded so
+# the module imports without the optional `sim` extra (TC004 would force a hard
+# runtime import), and the QASM parser deliberately falls through on any parse
+# failure to a compatibility parser (S110/BLE001).
+"python/benchmarks/utils/qasm_to_squin_kernel.py" = ["TC004", "S110", "BLE001"]
+# Demos and one-off scripts intentionally catch broadly to surface errors to the
+# reader / stay robust; the shipped library (python/bloqade) still enforces
+# BLE001.
+"demo/**" = ["BLE001"]
+"scripts/**" = ["BLE001"]
 
 [tool.coverage.run]
 include = ["python/bloqade/*"]

@@ -142,7 +142,7 @@ class BenchmarkRunner:
                 arch_spec_id=job.strategy.arch_spec_id,
                 notes="; ".join([n for n in notes if n]),
             )
-        except Exception as exc:  # pragma: no cover - defensive output row
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover
             return BenchmarkRow(
                 case_id=job.case.case_id,
                 strategy_id=job.strategy.strategy_id,

@@ -12,7 +12,7 @@ from bloqade.lanes.bytecode._native import (
 from bloqade.lanes.bytecode._wrapper import KirinRustWrapper
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
+    from typing import Self
 
 
 class ZoneAddress(KirinRustWrapper[_RustZoneAddress]):
@@ -121,7 +121,7 @@ class LaneAddress(KirinRustWrapper[_RustLaneAddress]):
     def direction(self) -> Direction:
         return self._inner.direction
 
-    def reverse(self) -> "LaneAddress":
+    def reverse(self) -> LaneAddress:
         new_direction = (
             Direction.BACKWARD
             if self.direction == Direction.FORWARD

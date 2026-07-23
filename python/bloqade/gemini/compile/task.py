@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from functools import cache
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from bloqade.analysis.address import AddressAnalysis, AddressQubit
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
@@ -20,12 +21,12 @@ from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.transform import LogicalPipeline
 
 __all__ = [
-    "run_squin_kernel_validation",
-    "append_measurements_and_annotations",
-    "compile_task",
     "_find_qubit_ssas",
     "_find_return_stmt",
     "_insert_before",
+    "append_measurements_and_annotations",
+    "compile_task",
+    "run_squin_kernel_validation",
 ]
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import textwrap
 from collections import defaultdict
 
@@ -146,8 +147,8 @@ def _layout(nodes: dict[int, NodeState]) -> dict[int, tuple[float, float]]:
             children[parent_id].append(node_id)
 
     for child_ids in children.values():
-        child_ids.sort(key=lambda nid: (getattr(nodes[nid], "depth"), nid))
-    roots.sort(key=lambda nid: (getattr(nodes[nid], "depth"), nid))
+        child_ids.sort(key=lambda nid: (nodes[nid].depth, nid))
+    roots.sort(key=lambda nid: (nodes[nid].depth, nid))
 
     x_raw: dict[int, float] = {}
     next_leaf_x = 0.0
@@ -180,7 +181,7 @@ def _layout(nodes: dict[int, NodeState]) -> dict[int, tuple[float, float]]:
     positions: dict[int, tuple[float, float]] = {}
     for node_id, node in nodes.items():
         x = x_raw[node_id] * _X_STEP
-        y = -float(getattr(node, "depth")) * _DEPTH_Y_STEP
+        y = -float(node.depth) * _DEPTH_Y_STEP
         positions[node_id] = (x, y)
     return positions
 
@@ -193,7 +194,7 @@ def _min_horizontal_gap_per_depth(
     for node_id, node in nodes.items():
         if node_id not in positions:
             continue
-        depth = int(getattr(node, "depth"))
+        depth = int(node.depth)
         by_depth[depth].append(positions[node_id][0])
 
     min_gap: float | None = None
@@ -201,7 +202,7 @@ def _min_horizontal_gap_per_depth(
         if len(xs) < 2:
             continue
         xs.sort()
-        for left, right in zip(xs, xs[1:]):
+        for left, right in itertools.pairwise(xs):
             gap = right - left
             if gap <= 0:
                 continue
@@ -440,7 +441,7 @@ def _draw_moveset_path(  # type: ignore[no-untyped-def]
                 "",
                 xy=path[-1],
                 xytext=path[-2],
-                arrowprops=dict(arrowstyle="->", color="#C2477F", lw=1.8),
+                arrowprops={"arrowstyle": "->", "color": "#C2477F", "lw": 1.8},
                 zorder=10,
             )
     return positions

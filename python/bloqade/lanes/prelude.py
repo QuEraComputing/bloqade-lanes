@@ -1,8 +1,10 @@
+from typing import Annotated
+
 from kirin import ir
 from kirin.ir import Method
 from kirin.passes import Default
 from kirin.prelude import structural
-from typing_extensions import Annotated, Doc
+from typing_extensions import Doc
 
 from bloqade.lanes.dialects import move
 

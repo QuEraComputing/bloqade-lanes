@@ -94,10 +94,9 @@ ARCH_JSON = json.dumps(
 
 def write_policy(src: str) -> str:
     """Write a policy string to a temp file, return the path (caller deletes)."""
-    f = tempfile.NamedTemporaryFile("w", suffix=".star", delete=False)
-    f.write(src)
-    f.flush()
-    f.close()
+    with tempfile.NamedTemporaryFile("w", suffix=".star", delete=False) as f:
+        f.write(src)
+        f.flush()
     return f.name
 
 

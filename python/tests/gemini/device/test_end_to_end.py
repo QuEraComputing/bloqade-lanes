@@ -11,7 +11,7 @@ ResultsClient, AuthMixin.authenticate, and time.sleep. Everything else
 filtering/merging) runs for real.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import numpy as np
@@ -37,7 +37,7 @@ def make_task_response(task_id, *, status=TaskStatus.COMPLETED, **extras):
         id=task_id,
         task_status=status,
         created_by=uuid4(),
-        created_date=datetime.now(timezone.utc),
+        created_date=datetime.now(UTC),
         error_reasons=[],
         **extras,
     )

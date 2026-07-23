@@ -1,13 +1,12 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from bloqade.analysis.address.lattice import Address, AddressQubit
 from kirin import ir
 from kirin.analysis import Forward
 from kirin.analysis.forward import ForwardFrame
 from kirin.interp.exceptions import InterpreterError
-from typing_extensions import Self
 
 from bloqade.lanes.bytecode.encoding import LocationAddress
 

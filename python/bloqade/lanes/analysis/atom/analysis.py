@@ -1,11 +1,11 @@
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
-from typing import Callable, Generator, Generic, Sequence, TypeVar, cast
+from typing import Generic, Self, TypeVar, cast
 
 import numpy as np
 from kirin import ir
 from kirin.analysis import Forward
 from kirin.analysis.forward import ForwardFrame
-from typing_extensions import Self
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.utils import no_none_elements_tuple
@@ -25,10 +25,7 @@ def _default_best_state_cost(state: AtomState) -> float:
         return float("inf")
 
     move_counts = np.array(
-        list(
-            state.data.move_count.get(qubit, 0)
-            for qubit in state.data.qubit_to_locations.keys()
-        )
+        [state.data.move_count.get(qubit, 0) for qubit in state.data.qubit_to_locations]
     )
     return 0.1 * np.mean(move_counts).astype(float) + np.std(move_counts).astype(float)
 
@@ -137,7 +134,7 @@ class AtomInterpreter(Forward[MoveExecution]):
 
         def detectors(measurement_results: Sequence[Sequence[bool]]):
             yield from (
-                list(func(measurement_shot) for func in detector_funcs)
+                [func(measurement_shot) for func in detector_funcs]
                 for measurement_shot in measurement_results
             )
 
@@ -149,7 +146,7 @@ class AtomInterpreter(Forward[MoveExecution]):
 
         def observables(measurement_results: Sequence[Sequence[bool]]):
             yield from (
-                list(func(measurement_shot) for func in observable_funcs)
+                [func(measurement_shot) for func in observable_funcs]
                 for measurement_shot in measurement_results
             )
 

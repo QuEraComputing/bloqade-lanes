@@ -258,9 +258,9 @@ def test_detector_result_rejects_unavailable_values():
     assert result.detectors == ((True,),)
     assert result.observables == ((False,),)
     with pytest.raises(ValueError, match="Raw measurements are unavailable"):
-        result.measurements
+        _ = result.measurements
     with pytest.raises(ValueError, match="kernel return values are unavailable"):
-        result.return_values
+        _ = result.return_values
 
 
 def test_simulator_result_exports_are_public():

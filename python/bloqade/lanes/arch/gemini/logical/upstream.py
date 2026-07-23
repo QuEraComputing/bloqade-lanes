@@ -1,4 +1,5 @@
-from typing import Any, Iterator, Literal, Sequence, TypeVar
+from collections.abc import Iterator, Sequence
+from typing import Any, Literal, TypeVar
 
 from bloqade.rewrite.passes import AggressiveUnroll
 from kirin import ir, rewrite

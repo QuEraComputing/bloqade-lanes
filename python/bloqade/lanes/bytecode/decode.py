@@ -176,12 +176,12 @@ class BytecodeDecoder:
 
     frame: StackMachineFrame = field(default_factory=StackMachineFrame)
 
-    def decode(self, program: "Program", kernel_name: str = "main") -> ir.Method:
+    def decode(self, program: Program, kernel_name: str = "main") -> ir.Method:
         for idx, instr in enumerate(program.instructions):
             self._visit(idx, instr)
         return self._finalize(kernel_name)
 
-    def _visit(self, idx: int, instr: "Instruction") -> None:
+    def _visit(self, idx: int, instr: Instruction) -> None:
         name = instr.op_name()
         handler = getattr(self, f"_visit_{name}", None)
         if handler is None:
@@ -200,45 +200,45 @@ class BytecodeDecoder:
             # stack trace through Rust/PyO3.
             raise DecodingError(idx, name, self.frame.snapshot(), str(e)) from e
 
-    def _visit_return(self, idx: int, instr: "Instruction") -> None:
+    def _visit_return(self, idx: int, instr: Instruction) -> None:
         # The bytecode ``return`` opcode has no stack_move counterpart —
         # it maps directly to ``func.Return`` (overlap with the kirin.basic
         # dialect group's ``func`` dialect). The decoder emits it here.
         value = self.frame.pop_value()
         self.frame.push(func.Return(value))
 
-    def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
+    def _visit_const_float(self, idx: int, instr: Instruction) -> None:
         self.frame.push(stack_move.ConstFloat(value=instr.float_value()))
 
-    def _visit_const_int(self, idx: int, instr: "Instruction") -> None:
+    def _visit_const_int(self, idx: int, instr: Instruction) -> None:
         self.frame.push(stack_move.ConstInt(value=instr.int_value()))
 
-    def _visit_const_loc(self, idx: int, instr: "Instruction") -> None:
+    def _visit_const_loc(self, idx: int, instr: Instruction) -> None:
         self.frame.push(
             stack_move.ConstLoc(
                 value=LocationAddress.from_inner(instr.location_address())
             )
         )
 
-    def _visit_const_lane(self, idx: int, instr: "Instruction") -> None:
+    def _visit_const_lane(self, idx: int, instr: Instruction) -> None:
         self.frame.push(
             stack_move.ConstLane(value=LaneAddress.from_inner(instr.lane_address()))
         )
 
-    def _visit_const_zone(self, idx: int, instr: "Instruction") -> None:
+    def _visit_const_zone(self, idx: int, instr: Instruction) -> None:
         self.frame.push(
             stack_move.ConstZone(value=ZoneAddress.from_inner(instr.zone_address()))
         )
 
-    def _visit_pop(self, idx: int, instr: "Instruction") -> None:
+    def _visit_pop(self, idx: int, instr: Instruction) -> None:
         value = self.frame.pop_value()
         self.frame.push(stack_move.Pop(value=value))
 
-    def _visit_dup(self, idx: int, instr: "Instruction") -> None:
+    def _visit_dup(self, idx: int, instr: Instruction) -> None:
         top = self.frame.peek_value()
         self.frame.push(stack_move.Dup(value=top))
 
-    def _visit_swap(self, idx: int, instr: "Instruction") -> None:
+    def _visit_swap(self, idx: int, instr: Instruction) -> None:
         in_top = self.frame.pop_value()
         in_bot = self.frame.pop_value()
         # Swap declares results as (out_top, out_bot); auto-push in reverse
@@ -246,19 +246,19 @@ class BytecodeDecoder:
         # out_top on top — matching the previous explicit behaviour.
         self.frame.push(stack_move.Swap(in_top=in_top, in_bot=in_bot))
 
-    def _visit_initial_fill(self, idx: int, instr: "Instruction") -> None:
+    def _visit_initial_fill(self, idx: int, instr: Instruction) -> None:
         locs = self.frame.pop_n(instr.arity())
         self.frame.push(stack_move.InitialFill(locations=tuple(locs)))
 
-    def _visit_fill(self, idx: int, instr: "Instruction") -> None:
+    def _visit_fill(self, idx: int, instr: Instruction) -> None:
         locs = self.frame.pop_n(instr.arity())
         self.frame.push(stack_move.Fill(locations=tuple(locs)))
 
-    def _visit_move(self, idx: int, instr: "Instruction") -> None:
+    def _visit_move(self, idx: int, instr: Instruction) -> None:
         lanes = self.frame.pop_n(instr.arity())
         self.frame.push(stack_move.Move(lanes=tuple(lanes)))
 
-    def _visit_local_r(self, idx: int, instr: "Instruction") -> None:
+    def _visit_local_r(self, idx: int, instr: Instruction) -> None:
         # bytecode pops phi first (top of stack), then theta; after rename,
         # these map to axis_angle and rotation_angle respectively.
         axis_angle = self.frame.pop_value()
@@ -272,7 +272,7 @@ class BytecodeDecoder:
             )
         )
 
-    def _visit_local_rz(self, idx: int, instr: "Instruction") -> None:
+    def _visit_local_rz(self, idx: int, instr: Instruction) -> None:
         # bytecode pops theta (top of stack) -> rotation_angle after rename.
         rotation_angle = self.frame.pop_value()
         locs = self.frame.pop_n(instr.arity())
@@ -280,7 +280,7 @@ class BytecodeDecoder:
             stack_move.LocalRz(rotation_angle=rotation_angle, locations=tuple(locs))
         )
 
-    def _visit_global_r(self, idx: int, instr: "Instruction") -> None:
+    def _visit_global_r(self, idx: int, instr: Instruction) -> None:
         # bytecode pops phi first (top of stack), then theta; after rename,
         # these map to axis_angle and rotation_angle respectively.
         axis_angle = self.frame.pop_value()
@@ -289,27 +289,27 @@ class BytecodeDecoder:
             stack_move.GlobalR(axis_angle=axis_angle, rotation_angle=rotation_angle)
         )
 
-    def _visit_global_rz(self, idx: int, instr: "Instruction") -> None:
+    def _visit_global_rz(self, idx: int, instr: Instruction) -> None:
         # bytecode pops theta (top of stack) -> rotation_angle after rename.
         rotation_angle = self.frame.pop_value()
         self.frame.push(stack_move.GlobalRz(rotation_angle=rotation_angle))
 
-    def _visit_cz(self, idx: int, instr: "Instruction") -> None:
+    def _visit_cz(self, idx: int, instr: Instruction) -> None:
         zone = self.frame.pop_value()
         self.frame.push(stack_move.CZ(zone=zone))
 
-    def _visit_measure(self, idx: int, instr: "Instruction") -> None:
+    def _visit_measure(self, idx: int, instr: Instruction) -> None:
         zones = self.frame.pop_n(instr.arity())
         # Auto-push produces `arity` futures in reverse declaration order.
         self.frame.push(stack_move.Measure(zones=tuple(zones)))
 
-    def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
+    def _visit_await_measure(self, idx: int, instr: Instruction) -> None:
         future = self.frame.pop_value()
         # Bytecode consumes the future (linear) and pushes an array ref
         # of measurement results. frame.push auto-pushes the result.
         self.frame.push(stack_move.AwaitMeasure(future=future))
 
-    def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
+    def _visit_new_array(self, idx: int, instr: Instruction) -> None:
         dim0 = instr.dim0()
         dim1 = instr.dim1()
         count = dim0 * max(dim1, 1)
@@ -323,21 +323,21 @@ class BytecodeDecoder:
             )
         )
 
-    def _visit_get_item(self, idx: int, instr: "Instruction") -> None:
+    def _visit_get_item(self, idx: int, instr: Instruction) -> None:
         ndims = instr.ndims()
         indices = self.frame.pop_n(ndims)
         array = self.frame.pop_value()
         self.frame.push(stack_move.GetItem(array=array, indices=tuple(indices)))
 
-    def _visit_set_detector(self, idx: int, instr: "Instruction") -> None:
+    def _visit_set_detector(self, idx: int, instr: Instruction) -> None:
         array = self.frame.pop_value()
         self.frame.push(stack_move.SetDetector(array=array))
 
-    def _visit_set_observable(self, idx: int, instr: "Instruction") -> None:
+    def _visit_set_observable(self, idx: int, instr: Instruction) -> None:
         array = self.frame.pop_value()
         self.frame.push(stack_move.SetObservable(array=array))
 
-    def _visit_halt(self, idx: int, instr: "Instruction") -> None:
+    def _visit_halt(self, idx: int, instr: Instruction) -> None:
         # The bytecode ``halt`` opcode has no stack_move counterpart —
         # it maps directly to a ``func.ConstantNone`` + ``func.Return``
         # pair (overlap with kirin.basic's ``func`` dialect). The
@@ -368,7 +368,7 @@ class BytecodeDecoder:
         )
 
 
-def load_program(program: "Program", kernel_name: str = "main") -> ir.Method:
+def load_program(program: Program, kernel_name: str = "main") -> ir.Method:
     """Decode a bytecode Program into a stack_move ir.Method and run
     Kirin's type-inference pass on the result.
 

@@ -32,7 +32,7 @@ class _NewAtDuplicateMethods(interp.MethodTable):
     @interp.impl(qubit.stmts.NewAt)
     def check_duplicate(
         self,
-        _interp: "_DuplicateAddressValidationAnalysis",
+        _interp: _DuplicateAddressValidationAnalysis,
         frame: ForwardFrame[EmptyLattice],
         node: qubit.stmts.NewAt,
     ):

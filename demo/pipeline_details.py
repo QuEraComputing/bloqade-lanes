@@ -32,7 +32,7 @@ example_kernel.print()
 # this can be done by using the existing SquinToNative transformer inside bloqade-circuit.
 
 # %%
-from bloqade.native.upstream import SquinToNative  # noqa: E402
+from bloqade.native.upstream import SquinToNative
 
 example_kernel = SquinToNative().emit(example_kernel)
 example_kernel.print()
@@ -49,8 +49,8 @@ example_kernel.print()
 # of how the current move synthesis works the call graph is flattened out into a single kernel.
 
 # %%
-from bloqade.lanes.passes import SequentialPlacePass  # noqa: E402
-from bloqade.lanes.transform import LogicalNativeToPlace as NativeToPlace  # noqa: E402
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.transform import LogicalNativeToPlace as NativeToPlace
 
 example_kernel = NativeToPlace().emit(example_kernel)
 SequentialPlacePass(example_kernel.dialects)(example_kernel)
@@ -66,10 +66,10 @@ example_kernel.print()
 # is implemented in the `logical_layout` module inside bloqade-lanes.
 
 # %%
-from bloqade.analysis import address  # noqa: E402
+from bloqade.analysis import address
 
-from bloqade.lanes.analysis import layout  # noqa: E402
-from bloqade.lanes.heuristics.logical import layout as logical_layout  # noqa: E402
+from bloqade.lanes.analysis import layout
+from bloqade.lanes.heuristics.logical import layout as logical_layout
 
 address_frame, _ = address.AddressAnalysis(example_kernel.dialects).run(example_kernel)
 
@@ -88,8 +88,8 @@ print(initial_layout)
 # After running the layout analysis we can use it to plot the initial placement of logical qubits
 
 # %%
-from bloqade.lanes.arch.gemini.logical import get_arch_spec  # noqa: E402
-from bloqade.lanes.visualize.arch import ArchVisualizer  # noqa: E402
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.visualize.arch import ArchVisualizer
 
 logical_arch = get_arch_spec()
 
@@ -110,7 +110,7 @@ ax.scatter(
 # mapped onto the linear logic within the bodies of the StaticPlacement statements.
 
 # %%
-from bloqade.lanes.analysis import placement  # noqa: E402
+from bloqade.lanes.analysis import placement
 
 placement_analysis = placement.PlacementAnalysis(
     example_kernel.dialects,
@@ -134,7 +134,7 @@ example_kernel.print(analysis=placement_frame.entries)
 
 
 # %%
-from bloqade.lanes.transform import PlaceToMove  # noqa: E402
+from bloqade.lanes.transform import PlaceToMove
 
 example_kernel = PlaceToMove(
     layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
@@ -157,8 +157,8 @@ example_kernel.print()
 # run the analysis on the move dialect kernel.
 
 # %%
-from bloqade.lanes.analysis import atom  # noqa: E402
-from bloqade.lanes.arch.gemini.logical import get_arch_spec  # noqa: E402
+from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 
 frame, _ = atom.AtomInterpreter(example_kernel.dialects, arch_spec=logical_arch).run(
     example_kernel
@@ -174,7 +174,7 @@ example_kernel.print(analysis=frame.entries)
 # `transversal_rewrites` function inside the `bloqade.lanes.transform` module.
 
 # %%
-from bloqade.lanes.transform import transversal_rewrites  # noqa: E402
+from bloqade.lanes.transform import transversal_rewrites
 
 example_kernel = transversal_rewrites(example_kernel)
 example_kernel.print()
@@ -184,7 +184,7 @@ example_kernel.print()
 # architecture to get the atom states on physical qubits.
 
 # %%
-from bloqade.lanes.arch.gemini.physical import (  # noqa: E402
+from bloqade.lanes.arch.gemini.physical import (
     get_arch_spec as get_physical_arch_spec,
 )
 
@@ -203,8 +203,8 @@ example_kernel.print(analysis=frame.entries)
 
 # %%
 
-from bloqade.lanes.noise_model import generate_logical_noise_model  # noqa: E402
-from bloqade.lanes.transform import MoveToSquinLogical  # noqa: E402
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.transform import MoveToSquinLogical
 
 noise_model = generate_logical_noise_model()
 example_kernel = MoveToSquinLogical(

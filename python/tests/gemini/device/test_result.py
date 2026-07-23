@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -19,7 +19,7 @@ from bloqade import squin
 from bloqade.gemini import GeminiLogicalResult, logical
 from bloqade.gemini.device.logical import result as result_module
 
-CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
 # === real serialized kernels ===
 #
@@ -144,7 +144,7 @@ def test_arguments_returns_subtask_arguments(storage):
     )
 
     res = GeminiLogicalResult(storage=storage)
-    args = sorted(res.arguments(), key=lambda d: list(d.keys())[0])  # type: ignore
+    args = sorted(res.arguments(), key=lambda d: next(iter(d.keys())))  # type: ignore
     assert args == [{"a": 1}, {"b": 2}]
 
 

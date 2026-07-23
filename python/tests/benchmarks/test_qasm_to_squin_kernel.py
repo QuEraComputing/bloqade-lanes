@@ -12,16 +12,7 @@ from benchmarks.utils.qasm_to_squin_kernel import (
 
 
 def test_strip_qasm_barriers_handles_global_and_explicit_statements():
-    qasm = "\n".join(
-        [
-            "OPENQASM 2.0;",
-            'include "qelib1.inc";',
-            "qreg q[2];",
-            "barrier;",
-            "barrier q[0], q[1];",
-            "x q[0];",
-        ]
-    )
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nbarrier;\nbarrier q[0], q[1];\nx q[0];'
 
     stripped, dropped = _strip_qasm_barriers(qasm)
 
@@ -34,17 +25,7 @@ def test_strip_qasm_barriers_handles_global_and_explicit_statements():
 def test_load_qasm_circuit_accepts_barrier_forms():
     pytest.importorskip("cirq")
 
-    qasm = "\n".join(
-        [
-            "OPENQASM 2.0;",
-            'include "qelib1.inc";',
-            "qreg q[2];",
-            "barrier;",
-            "x q[0];",
-            "barrier q[0], q[1];",
-            "cz q[0], q[1];",
-        ]
-    )
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nbarrier;\nx q[0];\nbarrier q[0], q[1];\ncz q[0], q[1];'
 
     circuit, dropped = _load_qasm_circuit(qasm)
 
