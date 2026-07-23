@@ -98,7 +98,10 @@ src_paths = ["python/bloqade"]
 line-length = 88
 
 [tool.ruff]
-target-version = "py312"
+# Match requires-python (>= 3.10): a py312 target makes ruff "modernize" code to
+# 3.11/3.12-only constructs (datetime.UTC, typing.Self, PEP 695 generics) that
+# break on the 3.10/3.11 the project still supports.
+target-version = "py310"
 # Hand-maintained type stub mirroring the Rust _native extension; it trips a
 # large number of PYI/PIE rules that do not apply to a generated-style stub.
 extend-exclude = ["python/bloqade/lanes/bytecode/_native.pyi"]
@@ -139,12 +142,6 @@ ignore = [
     # the latter resolves via pkg/__init__ and makes pyright lose the
     # submodule's types (breaks squin/gemini attribute typing).
     "PLR0402",
-    # PEP 695 generics (`class C[T]` / `def f[T]()`) require Python 3.12+, but
-    # this project supports Python >= 3.10 (see requires-python) — adopting the
-    # syntax would fail to parse on 3.10/3.11. Keep deferred until those are
-    # dropped. (ruff target-version is py312, so it suggests these regardless.)
-    "UP046",
-    "UP047",
 ]
 
 [tool.ruff.lint.per-file-ignores]

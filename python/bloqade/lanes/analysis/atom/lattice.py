@@ -1,6 +1,6 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Any, Self, final
+from typing import Any, final
 
 from kirin.lattice import (
     BoundedLattice,
@@ -9,6 +9,7 @@ from kirin.lattice import (
     SimpleMeetMixin,
     SingletonMeta,
 )
+from typing_extensions import Self
 
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 

@@ -12,7 +12,7 @@ from bloqade.lanes.bytecode._native import (
 from bloqade.lanes.bytecode._wrapper import KirinRustWrapper
 
 if TYPE_CHECKING:
-    from typing import Self
+    from typing_extensions import Self
 
 
 class ZoneAddress(KirinRustWrapper[_RustZoneAddress]):

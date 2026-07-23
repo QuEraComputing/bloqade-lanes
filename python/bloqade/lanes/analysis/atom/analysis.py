@@ -1,11 +1,12 @@
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
-from typing import Generic, Self, TypeVar, cast
+from typing import Generic, TypeVar, cast
 
 import numpy as np
 from kirin import ir
 from kirin.analysis import Forward
 from kirin.analysis.forward import ForwardFrame
+from typing_extensions import Self
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.utils import no_none_elements_tuple

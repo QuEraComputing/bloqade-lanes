@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import numpy as np
 import pytest
@@ -19,7 +19,7 @@ from bloqade import squin
 from bloqade.gemini import GeminiLogicalResult, logical
 from bloqade.gemini.device.logical import result as result_module
 
-CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
 # === real serialized kernels ===
 #
