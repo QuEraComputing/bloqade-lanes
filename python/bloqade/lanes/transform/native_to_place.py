@@ -113,7 +113,7 @@ class NativeToPlaceBase:
         out = out.similar(
             out.dialects.discard(native_gate).discard(gemini_qubit).discard(squin_qubit)
         )
-        passes.TypeInfer(out.dialects, no_raise=True)(out)
+        passes.TypeInfer(out.dialects, no_raise=no_raise)(out)
 
         if not no_raise:
             out.verify()

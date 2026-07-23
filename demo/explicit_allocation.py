@@ -34,7 +34,7 @@ def main():
 _heuristic = LogicalLayoutHeuristic()
 _strategy = LogicalPlacementStrategyNoHome()
 
-_place = LogicalNativeToPlace().emit(main)
+_place = LogicalNativeToPlace(arch_spec=_heuristic.arch_spec).emit(main)
 SequentialPlacePass(_place.dialects)(_place)
 compiled = PlaceToMove(
     layout_heuristic=_heuristic,

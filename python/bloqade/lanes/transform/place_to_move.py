@@ -96,7 +96,7 @@ class PlaceToMove:
             )
         ).rewrite(out.code)
 
-        passes.TypeInfer(out.dialects)(out)
+        passes.TypeInfer(out.dialects, no_raise=no_raise)(out)
         if not no_raise:
             out.verify()
             out.verify_type()

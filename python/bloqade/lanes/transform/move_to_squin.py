@@ -84,9 +84,9 @@ class MoveToSquinBase(abc.ABC):
         rewrite.Walk(rewrite.Chain(*rules)).rewrite(main.code)
 
         if self.aggressive_unroll:
-            agg.AggressiveUnroll(main.dialects).fixpoint(main)
+            agg.AggressiveUnroll(main.dialects, no_raise=no_raise).fixpoint(main)
         else:
-            agg.Fold(main.dialects)(main)
+            agg.Fold(main.dialects, no_raise=no_raise)(main)
 
         rewrite.Walk(SquinU3ToClifford()).rewrite(main.code)
 
@@ -102,9 +102,10 @@ class MoveToSquinBase(abc.ABC):
 
         out = main.similar(main.dialects.discard(move.dialect))
 
-        TypeInfer(out.dialects)(out)
-        out.verify()
-        out.verify_type()
+        TypeInfer(out.dialects, no_raise=no_raise)(out)
+        if not no_raise:
+            out.verify()
+            out.verify_type()
 
         return out
 
