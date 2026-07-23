@@ -273,7 +273,7 @@ class _RemovePyQrackAnnotations(RewriteRule):
 
 
 @dataclass
-class PyQrackSimulatorBackend(AbstractSimulatorBackend):
+class _PyQrackSimulatorBackend(AbstractSimulatorBackend):
     """Backend using PyQrack for sampling and Tsim for guaranteed DEM generation.
 
     The backend seed deterministically derives the seed for each native Qrack

@@ -59,19 +59,23 @@ def test_simulator_backend_imports_are_lazy():
     _run_import_guard("""
         import sys
 
+        import bloqade.gemini as gemini
+        import bloqade.gemini.device as device
         from bloqade.gemini import (
             AbstractSimulatorBackend,
             BackendSample,
             CliffTSimulatorBackend,
-            PyQrackSimulatorBackend,
             TsimSimulatorBackend,
         )
+        from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 
         assert AbstractSimulatorBackend.__name__ == "AbstractSimulatorBackend"
         assert BackendSample.__name__ == "BackendSample"
         assert TsimSimulatorBackend.__name__ == "TsimSimulatorBackend"
         assert CliffTSimulatorBackend.__name__ == "CliffTSimulatorBackend"
-        assert PyQrackSimulatorBackend.__name__ == "PyQrackSimulatorBackend"
+        assert _PyQrackSimulatorBackend.__name__ == "_PyQrackSimulatorBackend"
+        assert not hasattr(gemini, "_PyQrackSimulatorBackend")
+        assert not hasattr(device, "_PyQrackSimulatorBackend")
         """)
 
 
@@ -109,15 +113,12 @@ def test_composed_backends_fail_before_sampling_with_specific_tsim_guidance():
 
         sys.meta_path.insert(0, BlockTsim())
 
-        from bloqade.gemini import (
-            CliffTSimulatorBackend,
-            GeminiLogicalSimulatorTask,
-            PyQrackSimulatorBackend,
-        )
+        from bloqade.gemini import CliffTSimulatorBackend, GeminiLogicalSimulatorTask
+        from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 
         for backend_type, label in (
             (CliffTSimulatorBackend, "CliffT"),
-            (PyQrackSimulatorBackend, "PyQrack"),
+            (_PyQrackSimulatorBackend, "PyQrack"),
         ):
             backend = backend_type()
             backend._tsim_backend._detector_error_model = MagicMock(

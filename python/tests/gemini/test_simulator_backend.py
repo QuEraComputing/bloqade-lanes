@@ -18,12 +18,12 @@ from bloqade.gemini.device import (
     AbstractSimulatorBackend,
     BackendSample,
     CliffTSimulatorBackend,
-    PyQrackSimulatorBackend,
     TsimSimulatorBackend,
 )
 from bloqade.gemini.device.simulator_backend import (
     _clifft_compatible_stim_text,
     _get_tsim_circuit,
+    _PyQrackSimulatorBackend,
 )
 
 
@@ -67,7 +67,7 @@ def test_backend_contract_has_exactly_two_abstract_operations():
         AbstractSimulatorBackend,
         TsimSimulatorBackend,
         CliffTSimulatorBackend,
-        PyQrackSimulatorBackend,
+        _PyQrackSimulatorBackend,
     ],
 )
 def test_backend_sample_does_not_expose_detector_mode(backend_type):
@@ -77,7 +77,7 @@ def test_backend_sample_does_not_expose_detector_mode(backend_type):
 
 @pytest.mark.parametrize(
     "backend_type",
-    [TsimSimulatorBackend, CliffTSimulatorBackend, PyQrackSimulatorBackend],
+    [TsimSimulatorBackend, CliffTSimulatorBackend, _PyQrackSimulatorBackend],
 )
 def test_backends_expose_only_private_detector_error_model(backend_type):
     backend = backend_type()
@@ -100,7 +100,7 @@ def test_tsim_backend_accepts_detector_mode_configuration():
 
 
 @pytest.mark.parametrize(
-    "backend_type", [CliffTSimulatorBackend, PyQrackSimulatorBackend]
+    "backend_type", [CliffTSimulatorBackend, _PyQrackSimulatorBackend]
 )
 def test_composite_backend_exposes_only_private_tsim_backend(backend_type):
     backend = backend_type()
@@ -110,7 +110,7 @@ def test_composite_backend_exposes_only_private_tsim_backend(backend_type):
 
 @pytest.mark.parametrize(
     "backend_type",
-    [TsimSimulatorBackend, CliffTSimulatorBackend, PyQrackSimulatorBackend],
+    [TsimSimulatorBackend, CliffTSimulatorBackend, _PyQrackSimulatorBackend],
 )
 @pytest.mark.parametrize("seed", [True, -1, 2**63, 1.5, "1"])
 def test_backends_reject_invalid_public_seed(backend_type, seed):
@@ -433,7 +433,7 @@ def test_clifft_backend_real_seeded_sampling_and_dem():
 
 def test_pyqrack_backend_real_deterministic_sampling_uses_fresh_shot_tasks():
     pytest.importorskip("pyqrack")
-    backend = PyQrackSimulatorBackend(seed=441)
+    backend = _PyQrackSimulatorBackend(seed=441)
 
     sample = backend.sample(_one_physical_kernel, shots=16)
 
@@ -453,8 +453,8 @@ def test_pyqrack_backend_seed_reproduces_native_seed_sequence(monkeypatch):
         return original_seed(simulator, seed)
 
     monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
-    first_backend = PyQrackSimulatorBackend(seed=441)
-    second_backend = PyQrackSimulatorBackend(seed=441)
+    first_backend = _PyQrackSimulatorBackend(seed=441)
+    second_backend = _PyQrackSimulatorBackend(seed=441)
 
     first_backend.sample(_random_physical_kernel, shots=4)
     second_backend.sample(_random_physical_kernel, shots=4)
@@ -472,8 +472,8 @@ def test_pyqrack_backend_seed_reproduces_native_seed_sequence(monkeypatch):
 )
 def test_pyqrack_backend_seed_reproduces_native_measurements():
     pytest.importorskip("pyqrack")
-    first_backend = PyQrackSimulatorBackend(seed=441)
-    second_backend = PyQrackSimulatorBackend(seed=441)
+    first_backend = _PyQrackSimulatorBackend(seed=441)
+    second_backend = _PyQrackSimulatorBackend(seed=441)
 
     first = first_backend.sample(_random_physical_kernel, shots=64)
     second = second_backend.sample(_random_physical_kernel, shots=64)
@@ -485,8 +485,8 @@ def test_pyqrack_backend_seed_reproduces_native_measurements():
 
 def test_pyqrack_backend_seed_reproduces_squin_loss_noise():
     pytest.importorskip("pyqrack")
-    first_backend = PyQrackSimulatorBackend(seed=442)
-    second_backend = PyQrackSimulatorBackend(seed=442)
+    first_backend = _PyQrackSimulatorBackend(seed=442)
+    second_backend = _PyQrackSimulatorBackend(seed=442)
 
     first = first_backend.sample(_loss_physical_kernel, shots=16)
     second = second_backend.sample(_loss_physical_kernel, shots=16)
@@ -510,7 +510,7 @@ def test_pyqrack_derives_fresh_native_seed_for_each_shot(monkeypatch):
     monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
     backend_seed = 443
 
-    PyQrackSimulatorBackend(seed=backend_seed).sample(_one_physical_kernel, shots=4)
+    _PyQrackSimulatorBackend(seed=backend_seed).sample(_one_physical_kernel, shots=4)
 
     expected_rng = np.random.default_rng(backend_seed)
     expected_seeds = [int(expected_rng.integers(0, 2**63)) for _ in range(4)]
@@ -528,7 +528,7 @@ def test_pyqrack_backend_seed_advances_persistent_seed_stream(monkeypatch):
         return original_seed(simulator, seed)
 
     monkeypatch.setattr(pyqrack.QrackSimulator, "seed", recording_seed)
-    backend = PyQrackSimulatorBackend(seed=444)
+    backend = _PyQrackSimulatorBackend(seed=444)
 
     backend.sample(_random_physical_kernel, shots=4)
     backend.sample(_random_physical_kernel, shots=4)
@@ -553,7 +553,7 @@ def test_pyqrack_backend_prepares_owned_annotation_free_kernel_once(monkeypatch)
     similar = MagicMock(wraps=annotated.similar)
     monkeypatch.setattr(annotated, "similar", similar)
 
-    sample = PyQrackSimulatorBackend(seed=2).sample(annotated, shots=3)
+    sample = _PyQrackSimulatorBackend(seed=2).sample(annotated, shots=3)
 
     assert sample.measurements is not None
     assert sample.measurements.shape == (3, 1)
@@ -568,7 +568,7 @@ def test_pyqrack_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.return_value = "circuit"
     tsim_backend._detector_error_model.return_value = "dem"
-    backend = PyQrackSimulatorBackend(_tsim_backend=tsim_backend)
+    backend = _PyQrackSimulatorBackend(_tsim_backend=tsim_backend)
 
     assert _get_tsim_circuit(backend, _physical_kernel) == "circuit"
     assert backend._detector_error_model(_physical_kernel) == "dem"
@@ -580,7 +580,7 @@ def test_pyqrack_backend_reframes_missing_tsim_dependency():
     tsim_backend = MagicMock(spec=TsimSimulatorBackend)
     tsim_backend._tsim_circuit.side_effect = ImportError("missing tsim")
     tsim_backend._detector_error_model.side_effect = ImportError("missing tsim")
-    backend = PyQrackSimulatorBackend(_tsim_backend=tsim_backend)
+    backend = _PyQrackSimulatorBackend(_tsim_backend=tsim_backend)
 
     with pytest.raises(ImportError, match=r"PyQrack.*bloqade-lanes\[sim\]"):
         _get_tsim_circuit(backend, _physical_kernel)
@@ -591,7 +591,7 @@ def test_pyqrack_backend_reframes_missing_tsim_dependency():
 def test_pyqrack_measurements_are_mapped_explicitly():
     values = SimpleNamespace(Zero=0, One=1, Lost=2)
 
-    assert PyQrackSimulatorBackend._measurement_to_bool(0, values) is False
-    assert PyQrackSimulatorBackend._measurement_to_bool(1, values) is True
+    assert _PyQrackSimulatorBackend._measurement_to_bool(0, values) is False
+    assert _PyQrackSimulatorBackend._measurement_to_bool(1, values) is True
     with pytest.raises(ValueError, match="Unsupported PyQrack measurement"):
-        PyQrackSimulatorBackend._measurement_to_bool(2, values)
+        _PyQrackSimulatorBackend._measurement_to_bool(2, values)

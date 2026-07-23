@@ -13,7 +13,6 @@ from .device import (
     PhysicalResult as PhysicalResult,
     PhysicalSimulator as PhysicalSimulator,
     PhysicalSimulatorTask as PhysicalSimulatorTask,
-    PyQrackSimulatorBackend as PyQrackSimulatorBackend,
     Result as Result,
     SimulatorResult as SimulatorResult,
     TsimSimulatorBackend as TsimSimulatorBackend,

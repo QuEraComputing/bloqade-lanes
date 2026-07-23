@@ -19,7 +19,6 @@ from bloqade.gemini.device import (
     DetectorResult,
     GeminiLogicalSimulatorTask,
     GeminiPhysicalSimulator,
-    PyQrackSimulatorBackend,
     Result,
     SimulatorResult,
     TsimSimulatorBackend,
@@ -32,6 +31,7 @@ from bloqade.gemini.device.physical_simulator import (
     PhysicalSimulatorTask,
     append_measurements_and_annotations_physical,
 )
+from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.logical_mvp import _find_qubit_ssas
@@ -247,7 +247,7 @@ def test_physical_task_preserves_source_kernel_across_repeated_compilation():
     [
         pytest.param(TsimSimulatorBackend(), id="tsim"),
         pytest.param(CliffTSimulatorBackend(seed=29), id="clifft"),
-        pytest.param(PyQrackSimulatorBackend(seed=29), id="pyqrack"),
+        pytest.param(_PyQrackSimulatorBackend(seed=29), id="pyqrack"),
     ],
 )
 @pytest.mark.parametrize("with_noise", [False, True], ids=["noiseless", "noisy"])
@@ -292,7 +292,7 @@ def test_pyqrack_physical_returns_measurement_backed_result():
         m2dets=[[1]],
         m2obs=[[1]],
     )
-    simulator = PhysicalSimulator(backend=PyQrackSimulatorBackend(seed=30))
+    simulator = PhysicalSimulator(backend=_PyQrackSimulatorBackend(seed=30))
 
     result = simulator.run(prepared_kernel, shots=2, with_noise=False)
 

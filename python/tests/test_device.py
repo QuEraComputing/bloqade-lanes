@@ -21,7 +21,6 @@ from bloqade.gemini.device import (
     DetectorResult,
     GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask,
-    PyQrackSimulatorBackend,
     Result,
     SimulatorResult,
     TsimSimulatorBackend,
@@ -30,6 +29,7 @@ from bloqade.gemini.device.simulator import (
     DetectorResult as SimulatorDetectorResult,
     Result as SimulatorResultImplementation,
 )
+from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.lanes.cudaq_integration import cudaq_to_squin
 from bloqade.lanes.logical_mvp import append_measurements_and_annotations
 from bloqade.lanes.noise_model import generate_logical_noise_model
@@ -287,7 +287,7 @@ def test_noiseless_tsim_circuit_compiles_samplers():
     [
         pytest.param(TsimSimulatorBackend(), id="tsim"),
         pytest.param(CliffTSimulatorBackend(seed=17), id="clifft"),
-        pytest.param(PyQrackSimulatorBackend(seed=17), id="pyqrack"),
+        pytest.param(_PyQrackSimulatorBackend(seed=17), id="pyqrack"),
     ],
 )
 def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
@@ -303,7 +303,7 @@ def test_builtin_backends_run_logical_workflow_with_guaranteed_dem(backend):
 
 
 def test_pyqrack_logical_returns_measurement_backed_result():
-    result = GeminiLogicalSimulator(backend=PyQrackSimulatorBackend(seed=18)).run(
+    result = GeminiLogicalSimulator(backend=_PyQrackSimulatorBackend(seed=18)).run(
         small_backend_kernel, shots=2, with_noise=False
     )
 
