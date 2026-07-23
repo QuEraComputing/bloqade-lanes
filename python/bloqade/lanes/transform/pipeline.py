@@ -3,33 +3,27 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass, field
 
-from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
-from bloqade.rewrite.passes.callgraph import CallGraphPass
-from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
-from kirin import passes, rewrite
+from kirin import passes
 from kirin.ir.method import Method
-from kirin.rewrite.abc import RewriteRule
-from kirin.validation import ValidationSuite
 
-from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
-from bloqade.gemini.logical.rewrite.steane_transversal import (
-    RewriteSteaneTransversalCliffordAdjoints,
-)
-from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
-from bloqade.gemini.logical.validation.measurement.analysis import (
-    GeminiTerminalMeasurementValidation,
-)
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
 from bloqade.lanes.arch.gemini.logical.upstream import steane7_transversal_map
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.heuristics.physical.layout import (
+    PhysicalLayoutHeuristicGraphPartitionCenterOut,
+)
+from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
 from bloqade.lanes.passes import SequentialPlacePass, TransversalRewritePass
-from bloqade.lanes.rewrite import circuit2place
-
-from .base import _NativeToPlaceBase, _PlaceToMove
+from bloqade.lanes.transform.native_to_place import (
+    LogicalNativeToPlace,
+    PhysicalNativeToPlace,
+)
+from bloqade.lanes.transform.place_to_move import PlaceToMove
 
 
 def transversal_rewrites(mt: Method, rewrite_logical_initialize: bool = True) -> Method:
@@ -56,42 +50,79 @@ def transversal_rewrites(mt: Method, rewrite_logical_initialize: bool = True) ->
 
 
 @dataclass
-class _LogicalNativeToPlace(_NativeToPlaceBase):
-    transversal_rewrite: bool = False
+class PhysicalPipeline:
+    """Compile a physical squin kernel to the move dialect.
 
-    def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
-        validator = ValidationSuite(
-            [
-                GeminiLogicalValidation,
-                GeminiTerminalMeasurementValidation,
-                FlatKernelNoCloningValidation,
-            ]
+    Qubits are lowered to place.NewPinnedQubit; no logical initialization
+    sequence is inserted.  Validates that the kernel has exactly one terminal
+    measure covering all allocated qubits (post-unroll).
+
+    ``arch_spec`` is the single source of truth: when ``layout_heuristic`` or
+    ``placement_strategy`` are ``None`` (the default), they are constructed in
+    ``emit`` using ``self.arch_spec``, guaranteeing consistency.  Pass explicit
+    instances only when you need a fully custom heuristic or strategy; in that
+    case the caller is responsible for arch-spec consistency.
+    """
+
+    arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
+    layout_heuristic: layout.LayoutHeuristicABC | None = None
+    placement_strategy: placement.PlacementStrategyABC | None = None
+    place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
+
+    @property
+    def resolved_layout_heuristic(self) -> layout.LayoutHeuristicABC:
+        """Return the active layout heuristic, constructing it from ``arch_spec`` if unset.
+
+        Emits a warning if an explicit heuristic is set whose ``arch_spec``
+        differs from the pipeline's ``arch_spec``.
+        """
+        if self.layout_heuristic is None:
+            return PhysicalLayoutHeuristicGraphPartitionCenterOut(
+                arch_spec=self.arch_spec
+            )
+        if self.layout_heuristic.arch_spec != self.arch_spec:
+            warnings.warn(
+                "PhysicalPipeline.layout_heuristic was constructed with a different "
+                "arch_spec than the pipeline. Initial qubit layout may not match the "
+                "pipeline architecture. Leave layout_heuristic=None to have it built "
+                "automatically from arch_spec.",
+                stacklevel=2,
+            )
+        return self.layout_heuristic
+
+    @property
+    def resolved_placement_strategy(self) -> placement.PlacementStrategyABC:
+        """Return the active placement strategy, constructing it from ``arch_spec`` if unset.
+
+        Emits a warning if an explicit strategy is set whose ``arch_spec``
+        differs from the pipeline's ``arch_spec``.
+        """
+        if self.placement_strategy is None:
+            return make_physical_placement_strategy(arch_spec=self.arch_spec)
+        if self.placement_strategy.arch_spec != self.arch_spec:
+            warnings.warn(
+                "PhysicalPipeline.placement_strategy was constructed with a different "
+                "arch_spec than the pipeline. Compiled moves may not match the pipeline "
+                "architecture. Leave placement_strategy=None to have it built automatically "
+                "from arch_spec, or pass arch_spec= explicitly to "
+                "make_physical_placement_strategy().",
+                stacklevel=2,
+            )
+        return self.placement_strategy
+
+    def emit(self, mt: Method, no_raise: bool = True) -> Method:
+        out = PhysicalNativeToPlace(arch_spec=self.arch_spec).emit(
+            mt, no_raise=no_raise
         )
-        result = validator.validate(mt)
-        if not result.is_valid and not no_raise:
-            result.raise_if_invalid()
+        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
-        rules: list[RewriteRule] = []
-        if self.transversal_rewrite:
-            # For [[7,1,3]] Steane code, logical sqrt-X and sqrt-Z are implemented
-            # as transversal sqrt-X-adj and sqrt-Z-adj, respectively.
-            rules.append(rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()))
-        rules += [
-            rewrite.Walk(RewriteNonCliffordToU3()),
-            rewrite.Walk(_RewriteU3ToInitialize()),
-        ]
-        CallGraphPass(mt.dialects, rewrite.Chain(*rules))(out)
+        out = PlaceToMove(
+            layout_heuristic=self.resolved_layout_heuristic,
+            placement_strategy=self.resolved_placement_strategy,
+            insert_initialize=False,
+        ).emit(out, no_raise=no_raise)
+
         return out
-
-    def _lower_qubits(self, out: Method) -> None:
-        rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
-            out.code
-        )
-        rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
-            out.code
-        )
-        rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
-        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
 
 
 @dataclass
@@ -156,19 +187,19 @@ class LogicalPipeline:
         return self.placement_strategy
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
-        out = _LogicalNativeToPlace(
+        out = LogicalNativeToPlace(
             arch_spec=self.arch_spec, transversal_rewrite=self.transversal_rewrite
         ).emit(mt, no_raise=no_raise)
         self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
-        out = _PlaceToMove(
+        out = PlaceToMove(
             layout_heuristic=self.resolved_layout_heuristic,
             placement_strategy=self.resolved_placement_strategy,
             insert_initialize=True,
         ).emit(out, no_raise=no_raise)
 
         if self.transversal_rewrite:
-            # If running this compilation for simulation pruposes we
+            # If running this compilation for simulation purposes we
             # need to rewrite the logical initialize statement
             transversal_rewrites(out, rewrite_logical_initialize=self.simulation)
 

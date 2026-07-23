@@ -11,6 +11,7 @@ import bloqade.squin as squin
 import pytest
 from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
+from tests._squin_to_move_helper import squin_to_move
 
 import bloqade.gemini as gemini
 from bloqade.gemini.common.dialects.qubit import new_at
@@ -18,7 +19,6 @@ from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.upstream import squin_to_move
 from bloqade.lanes.validation.address import get_validation
 
 _LAYOUT = LogicalLayoutHeuristic()

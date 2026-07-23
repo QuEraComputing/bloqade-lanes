@@ -13,7 +13,7 @@ from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import arch, move as move_dialect
 from bloqade.lanes.dialects.arch import CzPartner
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
-from bloqade.lanes.pipeline import PhysicalPipeline
+from bloqade.lanes.transform import PhysicalPipeline
 
 N = typing.TypeVar("N")
 

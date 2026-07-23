@@ -8,6 +8,7 @@ re-enter X.  Without the fix, A collides with B on the first return step.
 """
 
 from kirin.dialects import ilist
+from tests._squin_to_move_helper import squin_to_move
 
 from bloqade import squin
 from bloqade.lanes.analysis import atom
@@ -25,7 +26,6 @@ from bloqade.lanes.heuristics.logical import (
     LogicalLayoutHeuristic,
     LogicalPlacementStrategyNoHome,
 )
-from bloqade.lanes.upstream import squin_to_move
 
 # ---------------------------------------------------------------------------
 # Unit tests: ExecuteCZReturn.return_move_layers ordering
@@ -189,8 +189,8 @@ def test_no_collisions_in_multihop_cz_return():
 
     move_mt = squin_to_move(
         circuit,
-        LogicalLayoutHeuristic(arch_spec=arch_spec),
-        PalindromePlacementStrategy(
+        layout_heuristic=LogicalLayoutHeuristic(arch_spec=arch_spec),
+        placement_strategy=PalindromePlacementStrategy(
             inner=LogicalPlacementStrategyNoHome(arch_spec=arch_spec)
         ),
         logical_initialize=False,

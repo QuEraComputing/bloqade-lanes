@@ -180,7 +180,7 @@ def test_move_to_cz_full_pipeline_regression():
     from bloqade.gemini.logical import kernel as plain_kernel
     from bloqade.lanes.arch.gemini.logical import get_arch_spec
     from bloqade.lanes.dialects import move
-    from bloqade.lanes.logical_mvp import compile_squin_to_move
+    from bloqade.lanes.transform import LogicalPipeline
 
     arch = get_arch_spec()
 
@@ -206,8 +206,8 @@ def test_move_to_cz_full_pipeline_regression():
         move_to([q[1]], [q1_cz_slot])
         squin.cz(q[0], q[1])
 
-    move_plain = compile_squin_to_move(k_plain, no_raise=False)
-    move_prepos = compile_squin_to_move(k_prepos, no_raise=False)
+    move_plain = LogicalPipeline().emit(k_plain, no_raise=False)
+    move_prepos = LogicalPipeline().emit(k_prepos, no_raise=False)
 
     n_plain = sum(
         1 for s in move_plain.callable_region.walk() if isinstance(s, move.Move)

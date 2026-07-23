@@ -16,8 +16,8 @@ from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move as move_dialect, place
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
-from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
+from bloqade.lanes.transform import PhysicalPipeline
 
 
 def test_permute_statement_shape():

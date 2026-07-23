@@ -63,7 +63,7 @@ from bloqade.gemini.common.dialects import arrange, qubit
 from bloqade.lanes.dialects.arch import loc
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.passes import ASAPPlacePass
-from bloqade.lanes.pipeline import PhysicalPipeline
+from bloqade.lanes.transform import PhysicalPipeline
 from bloqade.lanes.visualize import debugger
 
 # ---------------------------------------------------------------------------

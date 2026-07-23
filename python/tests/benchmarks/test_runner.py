@@ -8,7 +8,6 @@ from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfi
 from benchmarks.harness.runner import BenchmarkRunner, _count_moves
 from kirin import ir
 
-from bloqade.lanes._prelude import kernel as move_kernel
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
@@ -18,6 +17,7 @@ from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
+from bloqade.lanes.prelude import kernel as move_kernel
 
 
 def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
@@ -70,7 +70,7 @@ def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
         calls["transversal_input"] = move_mt
         return move_mt
 
-    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
     monkeypatch.setattr(
         "benchmarks.harness.runner.transversal_rewrites", _fake_transversal_rewrites
     )
@@ -136,9 +136,27 @@ def test_estimate_fidelity_runs_for_physical_mode(monkeypatch):
     class _FakePhysicalSquin:
         dialects = object()
 
+    class _FakePhysicalPipeline:
+        def __init__(self, **kwargs):
+            pass
+
+        def emit(self, kernel, **kwargs):
+            return cast(ir.Method, object())
+
+    class _FakeMoveToSquinPhysical:
+        def __init__(self, **kwargs):
+            pass
+
+        def emit(self, move_mt, **kwargs):
+            return _FakePhysicalSquin()
+
     monkeypatch.setattr(
-        "benchmarks.harness.runner.compile_physical_noise_model",
-        lambda *args, **kwargs: _FakePhysicalSquin(),
+        "benchmarks.harness.runner.PhysicalPipeline",
+        _FakePhysicalPipeline,
+    )
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.MoveToSquinPhysical",
+        _FakeMoveToSquinPhysical,
     )
     monkeypatch.setattr(
         "benchmarks.harness.runner.FidelityAnalysis", _FakeFidelityAnalysis
@@ -177,7 +195,7 @@ def test_run_jobs_stamps_arch_spec_id_from_strategy(monkeypatch):
     def _fake_squin_to_move(*args, **kwargs):
         return _FakeMoveMethod()
 
-    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
     monkeypatch.setattr(BenchmarkRunner, "_estimate_fidelity", lambda self, job: 1.0)
 
     @dataclass
@@ -243,7 +261,7 @@ def test_compile_reads_rust_nodes_from_strategy(monkeypatch):
         placement_strategy._rust_nodes_expanded_total = 321
         return _FakeMoveMethod()
 
-    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
 
     job = BenchmarkJob(
         case=BenchmarkCase(

@@ -17,8 +17,7 @@ from kirin.dialects import ilist
 from bloqade import squin
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
-from bloqade.lanes.pipeline import PhysicalPipeline
-from bloqade.lanes.transform import MoveToSquinPhysical
+from bloqade.lanes.transform import MoveToSquinPhysical, PhysicalPipeline
 
 # Distinct per-qubit bits so any misordered readout changes the result vector.
 _BITS = (0, 1, 1, 0)
