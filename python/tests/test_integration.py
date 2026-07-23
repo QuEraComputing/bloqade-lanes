@@ -2,6 +2,7 @@ import math
 
 import pytest
 from kirin.dialects import ilist
+from tests._squin_to_move_helper import squin_to_move
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
@@ -12,10 +13,8 @@ from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
-from bloqade.lanes.logical_mvp import compile_squin_to_move
 from bloqade.lanes.passes import ALAPPlacePass, ASAPPlacePass
-from bloqade.lanes.transform import MoveToSquinPhysical
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.transform import LogicalPipeline, MoveToSquinPhysical
 from bloqade.lanes.utils import check_circuit
 
 
@@ -36,7 +35,7 @@ def test_logical_compilation():
         squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
         squin.broadcast.sqrt_y_adj(reg)
 
-    logical_move = compile_squin_to_move(main, no_raise=False)
+    logical_move = LogicalPipeline().emit(main, no_raise=False)
     decompiled_squin = MoveToSquinPhysical(get_arch_spec()).emit(logical_move)
 
     AggressiveUnroll(main.dialects).fixpoint(main)
@@ -57,8 +56,10 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
     # lower-level squin_to_move API which does not enforce that requirement.
     physical_move = squin_to_move(
         ghz,
-        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=PalindromePlacementStrategy(
+            inner=PhysicalPlacementStrategy()
+        ),
         logical_initialize=False,
         no_raise=False,
     )
@@ -83,8 +84,10 @@ def test_asap_place_pass_roundtrip_state_vector():
 
     physical_move = squin_to_move(
         circuit,
-        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=PalindromePlacementStrategy(
+            inner=PhysicalPlacementStrategy()
+        ),
         logical_initialize=False,
         place_opt_type=ASAPPlacePass,
         no_raise=False,
@@ -118,8 +121,10 @@ def test_alap_place_pass_roundtrip_state_vector():
 
     physical_move = squin_to_move(
         circuit,
-        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=PalindromePlacementStrategy(
+            inner=PhysicalPlacementStrategy()
+        ),
         logical_initialize=False,
         place_opt_type=ALAPPlacePass,
         no_raise=False,

@@ -168,11 +168,11 @@ def test_empty_logical_blocks():
     assert empty_outer.mapping == []
 
 
-# ── Integration: end-to-end via compile_squin_to_move ──────────────────
+# ── Integration: end-to-end via LogicalPipeline ──────────────────
 
 
 @pytest.mark.slow
-def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
+def test_get_shot_remapping_end_to_end_via_logical_pipeline():
     """End-to-end: compile a Steane logical kernel that returns its
     ``terminal_measure`` value, then run ``AtomInterpreter.get_shot_remapping``
     on the lowered move kernel and assert the flat index list matches
@@ -182,7 +182,7 @@ def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
     from bloqade.gemini import logical as gemini_logical
     from bloqade.lanes.analysis.atom import AtomInterpreter
     from bloqade.lanes.arch.gemini import physical
-    from bloqade.lanes.logical_mvp import compile_squin_to_move
+    from bloqade.lanes.transform import LogicalPipeline
 
     num_logical = 2
 
@@ -194,7 +194,7 @@ def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
         return gemini_logical.terminal_measure(reg)
 
     arch_spec = physical.get_arch_spec()
-    physical_move = compile_squin_to_move(main, transversal_rewrite=True)
+    physical_move = LogicalPipeline(transversal_rewrite=True).emit(main)
 
     interp = AtomInterpreter(physical_move.dialects, arch_spec=arch_spec)
     result = interp.get_shot_remapping(physical_move)

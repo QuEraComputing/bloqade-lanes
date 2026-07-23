@@ -23,8 +23,6 @@ def show_lanes(arch: ArchSpec):
 logical_arch = logical.get_arch_spec()
 show_lanes(logical_arch)
 
-# %%
-from bloqade.lanes._prelude import kernel  # noqa F402
 from bloqade.lanes.bytecode.encoding import (  # noqa F402
     Direction,
     LocationAddress,
@@ -33,6 +31,9 @@ from bloqade.lanes.bytecode.encoding import (  # noqa F402
     ZoneAddress,
 )
 from bloqade.lanes.dialects import move  # noqa F402
+
+# %%
+from bloqade.lanes.prelude import kernel  # noqa F402
 
 
 @kernel
@@ -96,7 +97,7 @@ show_lanes(physical_arch)
 # ```
 
 # %%
-from bloqade.lanes.logical_mvp import transversal_rewrites  # noqa F402
+from bloqade.lanes.transform import transversal_rewrites  # noqa F402
 
 # rewrites to transversal moves on steane code
 main.print()

@@ -2,11 +2,11 @@ from kirin import ir, rewrite
 from kirin.dialects import func
 
 from bloqade import qubit
-from bloqade.lanes._prelude import kernel
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
+from bloqade.lanes.prelude import kernel
 from bloqade.lanes.rewrite.move2squin import base
 
 

@@ -11,6 +11,7 @@ import pytest
 from bloqade.decoders import BaseDecoder
 from bloqade.squin.gate import stmts as gate_stmts
 from kirin.dialects import func, py
+from stim import DetectorErrorModel
 
 from bloqade.gemini.decoding import (
     GurobiDecoderWithConfidence,
@@ -22,8 +23,9 @@ from bloqade.gemini.decoding import (
     single_qubit_state_tomography,
 )
 from bloqade.gemini.decoding.confidence import ConfidenceDecoder
+from bloqade.gemini.decoding.experiments import _basis_dataset_from_task_result
 from bloqade.gemini.decoding.sampling import _BasisDataset
-from bloqade.gemini.device import GeminiLogicalSimulator
+from bloqade.gemini.device import DetectorResult, GeminiLogicalSimulator
 
 
 def _invoke_names(kernel) -> list[str]:
@@ -425,6 +427,27 @@ class _FakeTask:
     run_async: Mock
 
 
+def test_basis_dataset_from_detector_result_preserves_samples():
+    result = DetectorResult[Any](
+        _detector_error_model=DetectorErrorModel(),
+        _fidelity_min=0.9,
+        _fidelity_max=1.0,
+        _detectors=[[True, False], [False, True]],
+        _observables=[[False], [True]],
+    )
+
+    dataset = _basis_dataset_from_task_result(result)
+
+    np.testing.assert_array_equal(
+        dataset.detectors,
+        np.array([[1, 0], [0, 1]], dtype=np.uint8),
+    )
+    np.testing.assert_array_equal(
+        dataset.observables,
+        np.array([[0], [1]], dtype=np.uint8),
+    )
+
+
 def test_postselection_experiment_get_samples_calls_run_async_once_per_basis():
     exp = object.__new__(PostSelectionExperiment)
     cast(Any, exp)._postselection_exp_cache = type(
@@ -449,7 +472,7 @@ def test_postselection_experiment_get_samples_calls_run_async_once_per_basis():
     exp.get_samples(num_shots=100)
 
     for task in tasks.values():
-        task.run_async.assert_called_once_with(100, run_detectors=True)
+        task.run_async.assert_called_once_with(100)
 
 
 def test_postselection_experiment_get_samples_shapes(msd_mld_samples):

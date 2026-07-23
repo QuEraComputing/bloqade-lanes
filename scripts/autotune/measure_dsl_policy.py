@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 """Measure command for autotune: run the DSL policy and emit aggregated metrics.
 
-Calls `bloqade.lanes.compile.compile_squin_to_move` directly with a
+Calls `bloqade.lanes.transform.PhysicalPipeline` directly with a
 `PolicyPlacementStrategy(traversal=PolicyTraversal(policy_path=...))`
 on each requested benchmark kernel. Prints `AUTOTUNE_METRIC <name> <value>`
 lines to stdout for autotune's RegexAdaptor to extract, and per-case
@@ -11,9 +11,9 @@ Deliberately bypasses `python -m benchmarks.cli` (and its
 `squin_to_move`/`_apply_architecture_mode` plumbing) because that path
 overrides each kernel's `logical_initialize` flag based on the
 `--architecture` argument, which is a logical-qubit concept that has no
-bearing on physical-arch move-policy search. `compile_squin_to_move` is
-the physical-only entry point (wraps `PhysicalPipeline` with the physical
-arch spec) and has no `logical_initialize` parameter.
+bearing on physical-arch move-policy search. `PhysicalPipeline` is
+the physical-only entry point (uses the physical arch spec) and has no
+`logical_initialize` parameter.
 
 Primary solution-quality metric is `move_layers` — sum of `move.Move` statement counts
 across kernels (one statement = one parallel move timestep on the arch).
@@ -42,7 +42,7 @@ from benchmarks.kernels import select_benchmark_cases
 
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.compile import compile_squin_to_move
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move as move_dialect, place as place_dialect
 from bloqade.lanes.heuristics.physical import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
@@ -51,6 +51,7 @@ from bloqade.lanes.heuristics.physical.policy_movement import (
     PolicyPlacementStrategy,
     PolicyTraversal,
 )
+from bloqade.lanes.transform import PhysicalPipeline
 
 DEFAULT_KERNELS = "steane_physical_35"
 
@@ -75,13 +76,14 @@ def _count_move_events(mt: object) -> int:
 
 def _build_strategy(
     policy_path: str,
+    arch_spec: ArchSpec,
 ) -> tuple[PalindromePlacementStrategy, PolicyPlacementStrategy]:
     """Returns (wrapped, inner). The wrapped strategy is what the pipeline
     consumes (matches the default `PhysicalPipeline` wraps the inner strategy
     in PalindromePlacementStrategy). The inner is returned separately so the
     caller can read `rust_nodes_expanded_total` after the solve."""
     inner = PolicyPlacementStrategy(
-        arch_spec=get_physical_arch_spec(),
+        arch_spec=arch_spec,
         traversal=PolicyTraversal(
             policy_path=policy_path,
             max_expansions=1000,
@@ -94,7 +96,7 @@ def _build_strategy(
 def _has_unlowered_place_cz(mt: object) -> bool:
     """True iff any `place.CZ` statements remain in the compiled IR.
 
-    `compile_squin_to_move` with `no_raise=True` returns silently even when
+    `PhysicalPipeline.emit` with `no_raise=True` returns silently even when
     a placement strategy fails to solve every CZ stage — the leftover
     `place.CZ` statements are the signal that the solve was incomplete.
     """
@@ -132,21 +134,28 @@ def main() -> int:
     total_wall = 0.0
     num_cases = len(cases)
 
+    # Construct the physical ArchSpec once and reuse it across the strategy,
+    # layout heuristic, and pipeline for every case: the arch is identical for
+    # all cases, so this avoids redundant JSON->Rust spec parsing per case and
+    # keeps every stage on the same spec (no arch_spec mismatch warnings).
+    arch_spec = get_physical_arch_spec()
+
     for case in cases:
-        wrapped_strategy, inner_strategy = _build_strategy(policy)
-        layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut()
+        wrapped_strategy, inner_strategy = _build_strategy(policy, arch_spec)
+        layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut(
+            arch_spec=arch_spec
+        )
 
         start = time.perf_counter()
         err: str | None = None
         events = 0
         unlowered = True
         try:
-            mt = compile_squin_to_move(
-                case.kernel,
-                no_raise=True,
+            mt = PhysicalPipeline(
+                arch_spec=arch_spec,
                 layout_heuristic=layout_heuristic,
                 placement_strategy=wrapped_strategy,
-            )
+            ).emit(case.kernel, no_raise=True)
             unlowered = _has_unlowered_place_cz(mt)
             events = _count_move_events(mt)
         except Exception as exc:  # broad on purpose — surface unexpected errors

@@ -4,15 +4,20 @@ from typing import Any
 from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
 
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical import layout as logical_layout
-from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
-from bloqade.lanes.transform import MoveToSquinLogical
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.transform import (
+    LogicalNativeToPlace,
+    MoveToSquinLogical,
+    PlaceToMove,
+    transversal_rewrites,
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,29 @@ class KernelMoveTimeMetrics:
     timing_model: str
 
 
+def _logical_squin_to_move(
+    mt: ir.Method,
+    *,
+    layout_heuristic: LayoutHeuristicABC,
+    placement_strategy: PlacementStrategyABC,
+) -> ir.Method:
+    """Compile a logical squin kernel to the move dialect via the canonical stages.
+
+    Mirrors the removed ``upstream.squin_to_move`` logical path: the heuristic's
+    ``arch_spec`` is forwarded to the native stage so the post-unroll address and
+    duplicate-address validation runs, then place-optimize and lower to moves.
+    """
+    place = LogicalNativeToPlace(
+        arch_spec=getattr(layout_heuristic, "arch_spec", None)
+    ).emit(mt)
+    SequentialPlacePass(place.dialects)(place)
+    return PlaceToMove(
+        layout_heuristic=layout_heuristic,
+        placement_strategy=placement_strategy,
+        insert_initialize=True,
+    ).emit(place)
+
+
 @dataclass
 class Metrics:
     """Unified metrics computation for the lanes pipeline.
@@ -90,7 +118,7 @@ class Metrics:
         else:
             noise_model = generate_logical_noise_model()
 
-        move_mt = squin_to_move(
+        move_mt = _logical_squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
@@ -130,7 +158,7 @@ class Metrics:
         *,
         placement_strategy: PlacementStrategyABC,
     ) -> KernelMoveMetrics:
-        move_mt = squin_to_move(
+        move_mt = _logical_squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
@@ -150,7 +178,7 @@ class Metrics:
         placement_strategy: PlacementStrategyABC,
         flair_amplitude_delta: float = 1.0,
     ) -> KernelMoveTimeMetrics:
-        move_mt = squin_to_move(
+        move_mt = _logical_squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,

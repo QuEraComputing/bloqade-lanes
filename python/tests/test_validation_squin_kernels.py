@@ -1,4 +1,5 @@
 import pytest
+from tests._squin_to_move_helper import squin_to_move
 from tests._validation_squin_kernels import (
     KernelSpec,
     select_kernels,
@@ -11,7 +12,6 @@ from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
-from bloqade.lanes.upstream import squin_to_move
 from bloqade.lanes.validation.address import Validation
 
 
@@ -26,8 +26,8 @@ def _collect_move_nodes(move_kernel) -> list[move.StatefulStatement]:
 def _compile_physical_move(kernel):
     return squin_to_move(
         kernel,
-        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        make_physical_placement_strategy(),
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=make_physical_placement_strategy(),
         logical_initialize=False,
         no_raise=False,
     )

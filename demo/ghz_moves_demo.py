@@ -1,7 +1,9 @@
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes.logical_mvp import compile_squin_to_move_and_visualize
+from bloqade.lanes import visualize
+from bloqade.lanes.arch.gemini import logical, physical
+from bloqade.lanes.transform import LogicalPipeline
 
 
 @squin.kernel(typeinfer=True, fold=True)
@@ -37,8 +39,13 @@ def ghz_optimal():
     squin.sqrt_y_adj(qs[0])
 
 
-compile_squin_to_move_and_visualize(log_depth_ghz)
-compile_squin_to_move_and_visualize(ghz_optimal)
-compile_squin_to_move_and_visualize(
-    ghz_optimal, transversal_rewrite=True, animated=True
+mt = LogicalPipeline().emit(log_depth_ghz)
+visualize.debugger(mt, logical.get_arch_spec(), interactive=True, atom_marker="s")
+
+mt = LogicalPipeline().emit(ghz_optimal)
+visualize.debugger(mt, logical.get_arch_spec(), interactive=True, atom_marker="s")
+
+mt = LogicalPipeline(transversal_rewrite=True).emit(ghz_optimal)
+visualize.animated_debugger(
+    mt, physical.get_arch_spec(), interactive=True, atom_marker="o"
 )

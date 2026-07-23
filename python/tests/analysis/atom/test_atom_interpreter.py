@@ -3,11 +3,11 @@ from kirin import ir, types
 from kirin.dialects import func, ilist
 
 from bloqade import squin
-from bloqade.lanes._prelude import kernel
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import WordLaneAddress
 from bloqade.lanes.dialects import move
+from bloqade.lanes.prelude import kernel
 
 kernel = kernel.add(annotate)
 

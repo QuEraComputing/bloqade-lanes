@@ -1,6 +1,9 @@
 import cudaq  # type: ignore[reportMissingImports]
 
-from bloqade.lanes import GeminiLogicalSimulator, steane7_m2dets, steane7_m2obs
+from bloqade.gemini import GeminiLogicalSimulator
+from bloqade.gemini.compile import append_measurements_and_annotations
+from bloqade.gemini.cudaq import cudaq_to_squin
+from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
 
 m2dets, m2obs = steane7_m2dets(5), steane7_m2obs(5)
 
@@ -15,7 +18,9 @@ def main_cuda():
     h(q[4])  # noqa: F821  # pyright: ignore
 
 
-task = GeminiLogicalSimulator().task(main_cuda, m2dets=m2dets, m2obs=m2obs)
+prepared_squin = cudaq_to_squin(main_cuda)
+append_measurements_and_annotations(prepared_squin, m2dets, m2obs)
+task = GeminiLogicalSimulator().task(prepared_squin)
 
 result = task.run(10)
 print(result.detectors)
