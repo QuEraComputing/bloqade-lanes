@@ -10,10 +10,10 @@ from bloqade.decoders import BaseDecoder
 from kirin import ir
 
 from bloqade.gemini.device import (
-    DetectorResult,
     GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask,
-    Result,
+    SimulatorResult,
+    TsimSimulatorBackend,
 )
 
 from .confidence import ConfidenceDecoder
@@ -122,7 +122,7 @@ class _PostSelectionExperimentCache:
 
 
 def _basis_dataset_from_task_result(
-    result: _BasisDataset | DetectorResult | Result[_LogicalTomographyReturn],
+    result: _BasisDataset | SimulatorResult[_LogicalTomographyReturn],
 ) -> _BasisDataset:
     if isinstance(result, _BasisDataset):
         return result
@@ -222,8 +222,12 @@ class PostSelectionExperiment:
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before dem_circuits.")
+        dem_simulator = GeminiLogicalSimulator(
+            noise_model=self._simulator.noise_model,
+            backend=TsimSimulatorBackend(),
+        )
         dem_tasks = {
-            basis: self._simulator.task(kernel.similar(), None, None)
+            basis: dem_simulator.task(kernel.similar())
             for basis, kernel in dem_kernels.items()
         }
         dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)
@@ -353,8 +357,7 @@ class PostSelectionExperiment:
         # In this implementation, we request samples for each basis in parallel, and then iteratively block
         # on X, Y, and then Z being finished.
         futures = {
-            basis: task.run_async(num_shots, run_detectors=True)
-            for basis, task in actual_tasks.items()
+            basis: task.run_async(num_shots) for basis, task in actual_tasks.items()
         }
         actual_data = {
             basis: _basis_dataset_from_task_result(future.result())

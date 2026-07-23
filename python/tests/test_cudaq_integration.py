@@ -14,6 +14,7 @@ from bloqade.lanes.logical_mvp import (
     _find_qubit_ssas,
     _find_return_stmt,
     append_measurements_and_annotations,
+    compile_task,
 )
 
 DETS = [[1, 0], [0, 1]]  # 2 measurements, 2 detectors
@@ -115,3 +116,25 @@ def test_rewrites_return_when_terminal_exists():
     assert isinstance(_find_return_stmt(mt).value.owner, func.ConstantNone)
     append_measurements_and_annotations(mt, DETS, OBS)
     assert isinstance(_find_return_stmt(mt).value.owner, func.ConstantNone)
+
+
+def test_compile_task_preserves_source_kernel_across_repeated_compilation():
+    source = _make_kernel(1)
+    source_ir = source.print_str()
+
+    first, _, _, _ = compile_task(source, DETS, OBS)
+    second, _, _, _ = compile_task(source, DETS, OBS)
+
+    assert first is not source
+    assert second is not source
+    assert first is not second
+    assert source.print_str() == source_ir
+    assert _count_stmts(source, TerminalLogicalMeasurement) == 0
+    assert _count_stmts(source, SetDetector) == 0
+    assert _count_stmts(source, SetObservable) == 0
+    assert _count_stmts(first, TerminalLogicalMeasurement) == 1
+    assert _count_stmts(second, TerminalLogicalMeasurement) == 1
+    assert _count_stmts(first, SetDetector) == len(DETS[0])
+    assert _count_stmts(second, SetDetector) == len(DETS[0])
+    assert _count_stmts(first, SetObservable) == len(OBS[0])
+    assert _count_stmts(second, SetObservable) == len(OBS[0])

@@ -556,13 +556,13 @@ physical_sim_task.visualize()
 # We have implemented some basic circuit optimization through our ASAP and ALAP gate scheduling. These passes are classes that you can tell the compiler to use.
 
 # %%
-physical_sim_task_asap = simulator.task(main, place_opt_type=ASAPPlacePass)
+physical_sim_task_asap = PhysicalSimulator(place_opt_type=ASAPPlacePass).task(main)
 
 # %%
 physical_sim_task_asap.visualize()
 
 # %%
-physical_sim_task_alap = simulator.task(main, place_opt_type=ALAPPlacePass)
+physical_sim_task_alap = PhysicalSimulator(place_opt_type=ALAPPlacePass).task(main)
 
 # %%
 # For this use case, doesn't appear to produce a "nice" program. ASAP is what we want for this program.
@@ -604,11 +604,10 @@ placement_strategy = make_physical_placement_strategy(
 )
 
 # %%
-physical_msd_task = simulator.task(
-    allocate_five_qubits,
+physical_msd_task = PhysicalSimulator(
     place_opt_type=ASAPPlacePass,
     placement_strategy=placement_strategy,
-)
+).task(allocate_five_qubits)
 
 # %%
 physical_msd_task.visualize()
