@@ -211,7 +211,7 @@ default_alloc_task = GeminiLogicalSimulator().task(default_allocation)
 # %matplotlib qt
 
 # %%
-default_alloc_task.visualize()
+# default_alloc_task.visualize()
 
 # %% [markdown]
 # ## Example of Allocating Qubits at Specific Locations
@@ -236,6 +236,6 @@ def explicit_allocation():
 explicit_alloc_task = GeminiLogicalSimulator().task(explicit_allocation)
 
 # %%
-explicit_alloc_task.visualize()
+# explicit_alloc_task.visualize()
 
 # %%

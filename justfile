@@ -58,7 +58,22 @@ simulator-device-demo:
 demo-explicit-allocation:
     python demo/explicit_allocation.py
 
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation
+demo-logical-dialect:
+    python demo/logical_dialect_demo.py
+
+demo-logical-new-at:
+    python demo/logical_new_at_demo.py
+
+demo-msd-postselection-experiment:
+    python demo/msd_postselection_experiment.py
+
+demo-phys-arch-customization:
+    python demo/physical_arch_customization.py
+
+demo-star-logical-demo:
+    python demo/star_logical_demo.py
+
+demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo
 
 # Install mdBook at the pinned version
 install-mdbook:
