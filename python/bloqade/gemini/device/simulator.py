@@ -56,7 +56,9 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     """The physical move kernel that executes the logical squin kernel on the physical architecture."""
     _post_processing: atom.PostProcessing[RetType] = field(repr=False)
     """The post-processing object for extracting detectors, observables, and return values."""
-    backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
+    _simulator_backend: AbstractSimulatorBackend = field(
+        default_factory=TsimSimulatorBackend
+    )
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:

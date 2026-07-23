@@ -211,7 +211,7 @@ class _SimulatorTaskBase(Generic[RetType]):
 
     @property
     def _backend(self) -> AbstractSimulatorBackend:
-        return cast(Any, self).backend
+        return cast(Any, self)._simulator_backend
 
     @property
     def _physical_kernel(self) -> ir.Method[[], RetType]:

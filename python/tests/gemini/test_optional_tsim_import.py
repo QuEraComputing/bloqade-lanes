@@ -129,7 +129,7 @@ def test_composed_backends_fail_before_sampling_with_specific_tsim_guidance():
             )
             task = object.__new__(GeminiLogicalSimulatorTask)
             object.__setattr__(task, "physical_squin_kernel", "kernel")
-            object.__setattr__(task, "backend", backend)
+            object.__setattr__(task, "_simulator_backend", backend)
             try:
                 task.run(shots=1)
             except ImportError as exc:

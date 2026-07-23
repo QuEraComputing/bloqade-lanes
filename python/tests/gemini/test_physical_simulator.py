@@ -79,7 +79,7 @@ def _mock_physical_task() -> Any:
     backend._detector_error_model.return_value = "dem"
     object.__setattr__(task, "physical_squin_kernel", "noisy-kernel")
     object.__setattr__(task, "noiseless_physical_squin_kernel", "noiseless-kernel")
-    object.__setattr__(task, "backend", backend)
+    object.__setattr__(task, "_simulator_backend", backend)
     object.__setattr__(task, "fidelity_bounds", MagicMock(return_value=(0.5, 0.9)))
     object.__setattr__(task, "_post_processing", MagicMock())
     return task
@@ -87,14 +87,14 @@ def _mock_physical_task() -> Any:
 
 def test_physical_task_run_routes_through_backend():
     task = _mock_physical_task()
-    task.backend.sample.return_value = BackendSample(
+    task._backend.sample.return_value = BackendSample(
         measurements=np.array([[True, False]])
     )
 
     result = PhysicalSimulatorTask.run(task, shots=1, with_noise=True)
 
-    task.backend._detector_error_model.assert_called_once_with("noisy-kernel")
-    task.backend.sample.assert_called_once_with("noisy-kernel", shots=1)
+    task._backend._detector_error_model.assert_called_once_with("noisy-kernel")
+    task._backend.sample.assert_called_once_with("noisy-kernel", shots=1)
     assert isinstance(result, PhysicalResult)
     assert result.measurements == [[True, False]]
     assert result.detector_error_model == "dem"
@@ -117,6 +117,19 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
     assert not is_dataclass(_SimulatorTaskBase)
     assert issubclass(GeminiLogicalSimulatorTask, _SimulatorTaskBase)
     assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
+
+
+@pytest.mark.parametrize(
+    "task_type", [GeminiLogicalSimulatorTask, PhysicalSimulatorTask]
+)
+def test_simulator_tasks_store_backend_privately(task_type):
+    task = object.__new__(task_type)
+    backend = MagicMock()
+    object.__setattr__(task, "_simulator_backend", backend)
+
+    assert task._backend is backend
+    assert not hasattr(task, "backend")
+    assert not hasattr(task, "simulator_backend")
 
 
 @pytest.mark.parametrize(
@@ -189,7 +202,9 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
     assert task._post_processing == "post_processing"
-    assert task.backend is backend
+    assert task._backend is backend
+    assert not hasattr(task, "backend")
+    assert not hasattr(task, "simulator_backend")
     assert not hasattr(task, "simulator")
 
 

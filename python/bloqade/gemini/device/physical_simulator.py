@@ -170,7 +170,9 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     """The physical move kernel compiled from the source SQuIn kernel."""
     _post_processing: atom.PostProcessing[RetType] = field(repr=False)
     """The post-processing object for extracting detectors, observables, and return values."""
-    backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
+    _simulator_backend: AbstractSimulatorBackend = field(
+        default_factory=TsimSimulatorBackend, repr=False
+    )
     """Sampling and detector-model backend used to perform sampling."""
 
     @cached_property
