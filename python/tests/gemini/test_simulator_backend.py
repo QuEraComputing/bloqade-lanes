@@ -6,7 +6,7 @@ import sys
 import weakref
 from types import ModuleType, SimpleNamespace
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import numpy as np
 import pytest
@@ -172,6 +172,11 @@ def _backend_with_circuit(
     return backend
 
 
+def _derived_seeds(seed: int, count: int) -> list[int]:
+    rng = np.random.default_rng(seed)
+    return [int(rng.integers(0, 2**63)) for _ in range(count)]
+
+
 def test_tsim_clifford_measurement_sampling_uses_stim():
     circuit = MagicMock(is_clifford=True)
     circuit.stim_circuit.compile_sampler.return_value.sample.return_value = [[0, 1]]
@@ -199,7 +204,7 @@ def test_tsim_nonclifford_measurement_sampling_uses_tsim():
 
 
 @pytest.mark.parametrize("is_clifford", [True, False], ids=["stim", "tsim"])
-def test_tsim_backend_seed_defaults_measurement_sampling(is_clifford):
+def test_tsim_backend_seed_derives_child_seed_for_measurement_sampling(is_clifford):
     circuit = MagicMock(is_clifford=is_clifford)
     sampler = (
         circuit.stim_circuit.compile_sampler.return_value
@@ -211,11 +216,12 @@ def test_tsim_backend_seed_defaults_measurement_sampling(is_clifford):
 
     backend.sample(_physical_kernel, shots=1)
 
+    expected_seed = _derived_seeds(0, 1)[0]
     if is_clifford:
-        circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
+        circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=expected_seed)
         circuit.compile_sampler.assert_not_called()
     else:
-        circuit.compile_sampler.assert_called_once_with(seed=0)
+        circuit.compile_sampler.assert_called_once_with(seed=expected_seed)
         circuit.stim_circuit.compile_sampler.assert_not_called()
 
 
@@ -257,7 +263,7 @@ def test_tsim_nonclifford_detector_sampling_uses_detector_sampler():
 
 
 @pytest.mark.parametrize("is_clifford", [True, False], ids=["stim", "tsim"])
-def test_tsim_backend_seed_defaults_detector_sampling(is_clifford):
+def test_tsim_backend_seed_derives_child_seed_for_detector_sampling(is_clifford):
     circuit = MagicMock(is_clifford=is_clifford)
     backend = _backend_with_circuit(circuit, seed=0, run_detectors=True)
     if is_clifford:
@@ -273,24 +279,44 @@ def test_tsim_backend_seed_defaults_detector_sampling(is_clifford):
 
     backend.sample(_physical_kernel, shots=1)
 
+    expected_seed = _derived_seeds(0, 1)[0]
     if is_clifford:
-        circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=0)
+        circuit.stim_circuit.compile_sampler.assert_called_once_with(seed=expected_seed)
         circuit.compile_detector_sampler.assert_not_called()
     else:
-        circuit.compile_detector_sampler.assert_called_once_with(seed=0)
+        circuit.compile_detector_sampler.assert_called_once_with(seed=expected_seed)
         circuit.stim_circuit.compile_sampler.assert_not_called()
 
 
-def test_tsim_seeded_sampling_reproduces_fixed_batch():
-    pytest.importorskip("tsim")
-    backend = TsimSimulatorBackend(seed=17)
+def test_tsim_backend_seed_advances_child_seed_between_batches():
+    circuit = MagicMock(is_clifford=True)
+    circuit.stim_circuit.compile_sampler.return_value.sample.return_value = [[1]]
+    backend = _backend_with_circuit(circuit, seed=17)
 
-    first = backend.sample(_random_physical_kernel, shots=64)
-    second = backend.sample(_random_physical_kernel, shots=64)
+    backend.sample(_physical_kernel, shots=1)
+    backend.sample(_physical_kernel, shots=1)
+
+    assert circuit.stim_circuit.compile_sampler.call_args_list == [
+        call(seed=child_seed) for child_seed in _derived_seeds(17, 2)
+    ]
+
+
+def test_tsim_seeded_backends_reproduce_batch_sequence():
+    pytest.importorskip("tsim")
+    first_backend = TsimSimulatorBackend(seed=17)
+    second_backend = TsimSimulatorBackend(seed=17)
+
+    first = first_backend.sample(_random_physical_kernel, shots=64)
+    second = first_backend.sample(_random_physical_kernel, shots=64)
+    matching_first = second_backend.sample(_random_physical_kernel, shots=64)
+    matching_second = second_backend.sample(_random_physical_kernel, shots=64)
 
     assert first.measurements is not None
     assert second.measurements is not None
-    assert np.array_equal(first.measurements, second.measurements)
+    assert matching_first.measurements is not None
+    assert matching_second.measurements is not None
+    assert np.array_equal(first.measurements, matching_first.measurements)
+    assert np.array_equal(second.measurements, matching_second.measurements)
 
 
 def test_tsim_detector_error_model_and_structural_capability():
@@ -329,7 +355,7 @@ def test_clifft_compatible_stim_text_strips_instruction_tags_only():
     )
 
 
-def test_clifft_backend_compiles_once_normalizes_measurements_and_passes_seed(
+def test_clifft_backend_compiles_once_normalizes_measurements_and_derives_child_seed(
     monkeypatch,
 ):
     clifft = _fake_clifft(monkeypatch)
@@ -346,9 +372,10 @@ def test_clifft_backend_compiles_once_normalizes_measurements_and_passes_seed(
     assert second.measurements is not None
     clifft.compile.assert_called_once_with("I_ERROR(0)\nM 0")  # type: ignore[attr-defined]
     assert clifft.sample.call_count == 2  # type: ignore[attr-defined]
-    clifft.sample.assert_called_with(  # type: ignore[attr-defined]
-        "program", shots=2, seed=123
-    )
+    assert clifft.sample.call_args_list == [  # type: ignore[attr-defined]
+        call("program", shots=2, seed=child_seed)
+        for child_seed in _derived_seeds(123, 2)
+    ]
 
 
 def test_clifft_backend_omits_unconfigured_seed_and_returns_measurements(monkeypatch):

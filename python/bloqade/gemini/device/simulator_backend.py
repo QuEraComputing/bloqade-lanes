@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import abc
 import re
+from _thread import LockType
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from weakref import WeakKeyDictionary
 
@@ -20,6 +22,16 @@ def _validate_seed(seed: int | None) -> None:
         isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
     ):
         raise ValueError("seed must be a non-bool int in the range [0, 2**63).")
+
+
+def _next_child_seed(
+    rng_state: np.random.Generator | None, rng_lock: LockType
+) -> int | None:
+    """Reserve the next native-sampler seed from a backend's root stream."""
+    if rng_state is None:
+        return None
+    with rng_lock:
+        return int(rng_state.integers(0, 2**63))
 
 
 @dataclass(frozen=True)
@@ -85,16 +97,25 @@ def _tsim() -> Any:
 
 @dataclass
 class TsimSimulatorBackend(AbstractSimulatorBackend):
-    """Backend that uses Tsim for both sampling and DEM generation."""
+    """Backend that uses Tsim for both sampling and DEM generation.
+
+    ``seed`` is a construction-time root seed. Each seeded sampling request
+    receives the next derived child seed from this backend's private stream.
+    """
 
     seed: int | None = None
     run_detectors: bool = False
     _circuits: WeakKeyDictionary[ir.Method, TsimCircuit] = field(
         default_factory=WeakKeyDictionary, init=False, repr=False
     )
+    _rng_state: np.random.Generator | None = field(init=False, repr=False)
+    _rng_lock: LockType = field(default_factory=Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         _validate_seed(self.seed)
+        self._rng_state = (
+            np.random.default_rng(self.seed) if self.seed is not None else None
+        )
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         """Convert a physical SQuIn kernel to a cached Tsim circuit."""
@@ -117,7 +138,7 @@ class TsimSimulatorBackend(AbstractSimulatorBackend):
         *,
         shots: int,
     ) -> BackendSample:
-        seed = self.seed
+        seed = _next_child_seed(self._rng_state, self._rng_lock)
         circuit = self._tsim_circuit(physical_squin_kernel)
         if self.run_detectors:
             return self._sample_detectors(circuit, shots, seed=seed)
@@ -193,7 +214,11 @@ def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
 
 @dataclass
 class CliffTSimulatorBackend(AbstractSimulatorBackend):
-    """Backend using Tsim for conversion/DEM generation and CliffT for sampling."""
+    """Backend using Tsim for conversion/DEM generation and CliffT for sampling.
+
+    ``seed`` is a construction-time root seed. Each seeded sampling request
+    receives the next derived child seed from this backend's private stream.
+    """
 
     seed: int | None = None
     _tsim_backend: TsimSimulatorBackend = field(
@@ -202,9 +227,14 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
     _programs: WeakKeyDictionary[ir.Method, Any] = field(
         default_factory=WeakKeyDictionary, init=False, repr=False
     )
+    _rng_state: np.random.Generator | None = field(init=False, repr=False)
+    _rng_lock: LockType = field(default_factory=Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         _validate_seed(self.seed)
+        self._rng_state = (
+            np.random.default_rng(self.seed) if self.seed is not None else None
+        )
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         try:
@@ -231,7 +261,7 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
         shots: int,
     ) -> BackendSample:
         sample_kwargs: dict[str, int] = {"shots": int(shots)}
-        effective_seed = self.seed
+        effective_seed = _next_child_seed(self._rng_state, self._rng_lock)
         if effective_seed is not None:
             sample_kwargs["seed"] = effective_seed
 
