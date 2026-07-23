@@ -236,26 +236,6 @@ class _SimulatorTaskBase(Generic[RetType]):
         return _get_tsim_circuit(self._backend, self._noiseless_physical_kernel)
 
     @cached_property
-    def measurement_sampler(self):
-        """The noisy tsim measurement sampler."""
-        return self.tsim_circuit.compile_sampler()
-
-    @cached_property
-    def noiseless_measurement_sampler(self):
-        """The noiseless tsim measurement sampler."""
-        return self.noiseless_tsim_circuit.compile_sampler()
-
-    @cached_property
-    def detector_sampler(self):
-        """The noisy tsim detector sampler."""
-        return self.tsim_circuit.compile_detector_sampler()
-
-    @cached_property
-    def noiseless_detector_sampler(self):
-        """The noiseless tsim detector sampler."""
-        return self.noiseless_tsim_circuit.compile_detector_sampler()
-
-    @cached_property
     def detector_error_model(self) -> DetectorErrorModel:
         """Guaranteed detector error model for the noisy physical kernel."""
         return self._backend._detector_error_model(self._physical_kernel)

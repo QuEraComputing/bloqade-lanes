@@ -119,28 +119,17 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
     assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
 
 
-def test_task_cached_sampler_properties_compile_without_seed_argument():
-    task = object.__new__(PhysicalSimulatorTask)
-    noisy_circuit = MagicMock()
-    noiseless_circuit = MagicMock()
-    object.__setattr__(task, "tsim_circuit", noisy_circuit)
-    object.__setattr__(task, "noiseless_tsim_circuit", noiseless_circuit)
-
-    assert task.measurement_sampler is noisy_circuit.compile_sampler.return_value
-    assert task.detector_sampler is noisy_circuit.compile_detector_sampler.return_value
-    assert (
-        task.noiseless_measurement_sampler
-        is noiseless_circuit.compile_sampler.return_value
-    )
-    assert (
-        task.noiseless_detector_sampler
-        is noiseless_circuit.compile_detector_sampler.return_value
-    )
-
-    noisy_circuit.compile_sampler.assert_called_once_with()
-    noisy_circuit.compile_detector_sampler.assert_called_once_with()
-    noiseless_circuit.compile_sampler.assert_called_once_with()
-    noiseless_circuit.compile_detector_sampler.assert_called_once_with()
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "measurement_sampler",
+        "noiseless_measurement_sampler",
+        "detector_sampler",
+        "noiseless_detector_sampler",
+    ],
+)
+def test_task_base_does_not_expose_cached_samplers(attribute):
+    assert attribute not in _SimulatorTaskBase.__dict__
 
 
 def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
