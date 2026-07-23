@@ -15,8 +15,8 @@ from bloqade.gemini.star import (
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.logical_mvp import compile_squin_to_move
 from bloqade.lanes.rewrite.transversal import steane_star_theta
+from bloqade.lanes.transform import LogicalPipeline
 
 
 def test_star_rz_public_api_single_qubit_lowers_to_statement():
@@ -120,12 +120,10 @@ def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite()
         gemini.logical.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
-    physical_move = compile_squin_to_move(
-        kernel,
+    physical_move = LogicalPipeline(
         transversal_rewrite=True,
-        no_raise=False,
         placement_strategy=LogicalPlacementStrategyNoHome(),
-    )
+    ).emit(kernel, no_raise=False)
 
     assert not any(
         isinstance(stmt, move.StarRz) for stmt in physical_move.callable_region.walk()
@@ -162,12 +160,10 @@ def test_star_rz_pipeline_accepts_parameterized_theta():
         gemini.logical.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
-    physical_move = compile_squin_to_move(
-        kernel,
+    physical_move = LogicalPipeline(
         transversal_rewrite=True,
-        no_raise=False,
         placement_strategy=LogicalPlacementStrategyNoHome(),
-    )
+    ).emit(kernel, no_raise=False)
 
     assert not any(
         isinstance(stmt, move.StarRz) for stmt in physical_move.callable_region.walk()
@@ -191,12 +187,10 @@ def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():
         operations.star_rz(theta_turns, ilist.IList([reg[0]]), qubit_indices=(0, 2, 4))
         gemini.logical.terminal_measure(reg)
 
-    physical_move = compile_squin_to_move(
-        kernel,
+    physical_move = LogicalPipeline(
         transversal_rewrite=True,
-        no_raise=False,
         placement_strategy=LogicalPlacementStrategyNoHome(),
-    )
+    ).emit(kernel, no_raise=False)
 
     local_rz_nodes = [
         stmt
@@ -219,12 +213,10 @@ def test_star_rz_without_transversal_rewrite_remains_logical_move_statement():
         gemini.logical.star_rz(math.pi / 16, reg[0])
         gemini.logical.terminal_measure(reg)
 
-    logical_move = compile_squin_to_move(
-        kernel,
+    logical_move = LogicalPipeline(
         transversal_rewrite=False,
-        no_raise=False,
         placement_strategy=LogicalPlacementStrategyNoHome(),
-    )
+    ).emit(kernel, no_raise=False)
 
     star_nodes = [
         stmt

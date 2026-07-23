@@ -9,8 +9,8 @@ from kirin.ir.exception import ValidationErrorGroup
 from bloqade import qubit
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewriteQubitsToPinnedQubits
+from bloqade.lanes.transform import PhysicalPipeline
 
 
 def test_new_pinned_qubit_unpinned():
@@ -97,17 +97,17 @@ def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
         PhysicalLayoutHeuristicGraphPartitionCenterOut,
     )
     from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
-    from bloqade.lanes.pipeline.base import _PlaceToMove
+    from bloqade.lanes.transform import PlaceToMove
 
     captured: dict = {}
-    _orig_emit = _PlaceToMove.emit
+    _orig_emit = PlaceToMove.emit
 
     def spy_emit(self_inner, mt, no_raise=True):
         captured["layout_heuristic_type"] = type(self_inner.layout_heuristic)
         captured["placement_strategy"] = self_inner.placement_strategy
         return _orig_emit(self_inner, mt, no_raise=no_raise)
 
-    monkeypatch.setattr(_PlaceToMove, "emit", spy_emit)
+    monkeypatch.setattr(PlaceToMove, "emit", spy_emit)
 
     @squin.kernel
     def kernel():

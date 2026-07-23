@@ -15,6 +15,8 @@ from bloqade.gemini import (
     SimulatorResult as GeminiSimulatorResult,
     logical as gemini_logical,
 )
+from bloqade.gemini.compile import append_measurements_and_annotations
+from bloqade.gemini.cudaq import cudaq_to_squin
 from bloqade.gemini.device import (
     BackendSample,
     CliffTSimulatorBackend,
@@ -30,10 +32,8 @@ from bloqade.gemini.device.simulator import (
     Result as SimulatorResultImplementation,
 )
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
-from bloqade.lanes.cudaq_integration import cudaq_to_squin
-from bloqade.lanes.logical_mvp import append_measurements_and_annotations
+from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.noise_model import generate_logical_noise_model
-from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
 
 @gemini_logical.kernel(verify=False)
@@ -344,10 +344,10 @@ def test_logical_simulator_constructor_rejects_measurement_matrices(kwargs):
 
 
 def test_logical_simulator_task_rejects_non_squin_before_compilation(monkeypatch):
-    import bloqade.lanes.logical_mvp as logical_mvp
+    import bloqade.gemini.compile as gemini_compile
 
     compile_task = MagicMock()
-    monkeypatch.setattr(logical_mvp, "compile_task", compile_task)
+    monkeypatch.setattr(gemini_compile, "compile_task", compile_task)
     invalid_kernel: Any = _plain_callable
 
     with pytest.raises(TypeError, match="Squin ir.Method"):

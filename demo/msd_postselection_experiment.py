@@ -9,6 +9,7 @@
 # Import utilities for running MSD Experiment
 import numpy as np
 
+from bloqade.gemini import GeminiLogicalSimulator
 from bloqade.gemini.decoding import (
     GurobiDecoderWithConfidence,
     PostSelectionExperiment,
@@ -18,7 +19,7 @@ from bloqade.gemini.decoding import (
     single_qubit_state_tomography,
 )
 from bloqade.gemini.decoding.workflow import _plot_decoder_curves
-from bloqade.gemini.device import GeminiLogicalSimulator, TsimSimulatorBackend
+from bloqade.gemini.device import TsimSimulatorBackend
 
 # %% [markdown]
 # ## Define Circuits to Run

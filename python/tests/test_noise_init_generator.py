@@ -126,9 +126,8 @@ def test_no_double_init_in_compiled_output():
     from bloqade import qubit, squin
     from bloqade.gemini import logical as gemini_logical
     from bloqade.lanes.arch.gemini.physical import get_arch_spec
-    from bloqade.lanes.logical_mvp import compile_squin_to_move
     from bloqade.lanes.noise_model import generate_logical_noise_model
-    from bloqade.lanes.transform import MoveToSquinLogical
+    from bloqade.lanes.transform import LogicalPipeline, MoveToSquinLogical
 
     @gemini_logical.kernel
     def main():
@@ -138,7 +137,7 @@ def test_no_double_init_in_compiled_output():
     model = generate_logical_noise_model()
     clean, noisy = model.get_logical_initialize()
 
-    move_mt = compile_squin_to_move(main, transversal_rewrite=True, no_raise=True)
+    move_mt = LogicalPipeline(transversal_rewrite=True).emit(main, no_raise=True)
 
     for add_noise in (False, True):
         squin_kernel = MoveToSquinLogical(
