@@ -50,6 +50,8 @@ just doc-rust          # Build Rust API docs only
 just doc-deploy <ver>  # Deploy versioned docs (e.g. dev, v0.5.0)
 just install-mdbook    # Install pinned mdBook version
 just test-python       # Run Python tests via pytest
+just benchmark-physical # Run + compare the physical routing benchmark suite
+just benchmark-logical  # Run + compare the logical routing benchmark suite
 
 # Rust
 just test-rust         # Run Rust tests (core + cli crates)
@@ -72,6 +74,67 @@ just develop           # Dev install with bundled CLI + C lib
 ```
 
 Direct test run: `uv run coverage run -m pytest python/tests`
+
+## Benchmarks
+
+The routing benchmark harness (`python/benchmarks/`) compiles a fixed set of
+kernels across every search strategy and records per-case metrics. CI runs
+`just benchmark-physical` and `just benchmark-logical`, each of which compares
+the fresh run against a committed baseline CSV and **exits non-zero on any
+difference** — so a change that shifts routing behaviour will fail CI until its
+baselines are regenerated and committed.
+
+Committed baselines:
+
+- `python/benchmarks/harness/latest_physical.csv`
+- `python/benchmarks/harness/latest_logical.csv`
+
+### When to regenerate
+
+Regenerate whenever a change alters the deterministic benchmark metrics
+(`success`, `move_count_events`, `move_count_lanes`, `estimated_fidelity`,
+`nodes_explored`, `max_depth_reached`). Common triggers:
+
+- Changes to the bundled Gemini ArchSpecs (`python/bloqade/lanes/arch/gemini/`),
+  including lane transport paths — `MoveMetricCalculator` derives lane durations
+  from path segment lengths, which the entropy strategies use to weight bus
+  selection.
+- Changes to move metrics, search strategies, the Rust solver, or the benchmark
+  kernels/registry.
+
+`wall_time_ms` varies run-to-run and is **not** part of the comparison; do not
+treat wall-time noise as a real diff.
+
+### How to regenerate
+
+1. Ensure a complete environment — the benchmark kernels need the optional
+   extras (e.g. `cirq`), or cases fail with import errors that look like solver
+   regressions:
+
+   ```bash
+   uv sync --dev --all-extras --index-strategy=unsafe-best-match
+   ```
+
+2. Run each suite. The recipes write the default CSVs in place while comparing
+   against them, so the working copy is updated even when they report an exit-1
+   difference:
+
+   ```bash
+   just benchmark-physical
+   just benchmark-logical
+   ```
+
+   To regenerate without the compare gate (e.g. to a scratch file), call the CLI
+   directly: `uv run python -m benchmarks.cli --architecture physical --output <path>`.
+
+3. Inspect the diff. Confirm the `success` column is unchanged (no new failures)
+   and that metric shifts are explained by your change. The physical suite
+   includes large cases that are expected to fail for some strategies — those
+   pre-existing failures should stay put.
+
+4. Confirm determinism before committing: re-run once and diff the deterministic
+   columns — they must be identical run-to-run. Then commit both CSVs alongside
+   the change that caused them.
 
 ## Move Policy DSL
 
