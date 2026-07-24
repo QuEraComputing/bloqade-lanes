@@ -12,7 +12,9 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
+    MoveToPlacementStrategyABC,
     PlacementAnalysis,
+    PlacementError,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.types import StateType
@@ -149,6 +151,45 @@ class StarRz(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class MoveTo(QuantumStmt):
+    """User-directed atom placement directive at the place layer.
+
+    Produced by RewritePlaceOperations.rewrite_MoveTo from movement.MoveTo.
+    Consumed by placement analysis (produces UserMoved state) and then
+    deleted by RewriteGates after InsertMoves emits the forward Move IR.
+    """
+
+    qubits: tuple[int, ...] = info.attribute()
+    locations: tuple[LocationAddress, ...] = info.attribute()
+    multi_move_warning: bool = info.attribute(default=True)
+
+
+@statement(dialect=dialect)
+class Permute(QuantumStmt):
+    """Place-layer permute directive.
+
+    Produced by RewritePlaceOperations.rewrite_Permute from movement.Permute.
+    Consumed by placement analysis and deleted by RewriteGates after InsertMoves
+    emits any forward Move IR. ``perm`` is a permutation over the positions of
+    ``qubits``: ``qubits[i]`` ends up referring to what was ``qubits[perm[i]]``.
+
+    ``insert_moves`` selects how the permutation is realized (see
+    ``MoveToPlacementStrategyABC.permute_placements``):
+
+    - ``False`` (default): relabel only — the qubit references are permuted with
+      no physical moves (the layout is permuted; the quantum information is
+      permuted for free). Valid under any strategy, including palindrome.
+    - ``True``: also commit the physical moves that route the atoms so the
+      permutation is realized in place (``Permuted``; layout pinned to the
+      pre-permute layout). Rejected by ``PalindromePlacementStrategy``.
+    """
+
+    qubits: tuple[int, ...] = info.attribute()
+    perm: tuple[int, ...] = info.attribute()
+    insert_moves: bool = info.attribute(default=False)
+
+
+@statement(dialect=dialect)
 class EndMeasure(QuantumStmt):
     state_before: ir.SSAValue = info.argument(StateType)
 
@@ -263,6 +304,60 @@ class PlacementMethods(interp.MethodTable):
         ):
             raise interp.InterpreterError("Invalid moves detected")
         return (state,)
+
+    @interp.impl(MoveTo)
+    def impl_move_to(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: MoveTo,
+    ):
+        strategy = _interp.placement_strategy
+        if not isinstance(strategy, MoveToPlacementStrategyABC):
+            raise PlacementError(
+                f"placement strategy {type(strategy).__name__} does not support "
+                "user-directed movement (not a MoveToPlacementStrategyABC), but "
+                "the circuit contains a move_to statement"
+            )
+        state = frame.get(stmt.state_before)
+        if not isinstance(state, ConcreteState):
+            return (state,)
+        new_state = strategy.move_to_placements(state, stmt.qubits, stmt.locations)
+        return (new_state,)
+
+    @interp.impl(Permute)
+    def impl_permute(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: Permute,
+    ):
+        strategy = _interp.placement_strategy
+        if not isinstance(strategy, MoveToPlacementStrategyABC):
+            raise PlacementError(
+                f"placement strategy {type(strategy).__name__} does not support "
+                "user-directed movement (not a MoveToPlacementStrategyABC), but "
+                "the circuit contains a permute statement"
+            )
+        state = frame.get(stmt.state_before)
+        if not isinstance(state, ConcreteState):
+            return (state,)
+        # relabel by default (no moves); commit the physical permutation when
+        # ``insert_moves`` is set. The strategy resolves the permutation to
+        # target locations and picks the right lattice state.
+        new_state = strategy.permute_placements(
+            state, stmt.qubits, stmt.perm, stmt.insert_moves
+        )
+        return (new_state,)
+
+    @interp.impl(Initialize)
+    def impl_initialize(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: Initialize,
+    ):
+        return (frame.get(stmt.state_before),)
 
     @interp.impl(R)
     @interp.impl(Rz)

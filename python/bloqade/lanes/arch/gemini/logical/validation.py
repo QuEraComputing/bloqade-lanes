@@ -1,14 +1,8 @@
-from dataclasses import dataclass, field
-
-from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.validation.address import Validation
+from bloqade.lanes.validation.address import get_validation
 
 from .spec import get_arch_spec
 
-
-@dataclass
-class AddressValidation(Validation):
-    arch_spec: "ArchSpec" = field(default_factory=get_arch_spec)
-
-    def name(self) -> str:
-        return "Gemini Logical Address Validation"
+# A no-arg-constructible address-validation pass pre-bound to the Gemini
+# logical arch spec, suitable for use in a kirin ``ValidationSuite`` (which
+# instantiates passes via ``pass_cls()``).
+AddressValidation = get_validation(get_arch_spec())

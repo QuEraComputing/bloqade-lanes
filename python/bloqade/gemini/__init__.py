@@ -1,4 +1,9 @@
-from . import common as common, decoding as decoding, logical as logical
+from . import (
+    common as common,
+    decoding as decoding,
+    logical as logical,
+    physical as physical,
+)
 from .device import (
     AbstractSimulatorBackend as AbstractSimulatorBackend,
     BackendSample as BackendSample,

@@ -708,3 +708,114 @@ def test_gate_only_merge_rejects_end_measure_block():
 
     remaining = [s for s in test_block.stmts if isinstance(s, place.StaticPlacement)]
     assert len(remaining) == 2
+
+
+# --- Regression: every non-default attribute of a place op must survive a
+# StaticPlacement merge. Both merge sites (MergePlacementRegions and
+# MergeStaticPlacement) rebuild each inner statement from a hand-curated
+# per-op attribute dict; missing a key silently drops the attribute (see
+# review finding 5 and commit 345e4542). ---------------------------------
+
+
+def _build_placement_with_move_ops() -> ir.Block:
+    """Build a block with two adjacent StaticPlacements, each carrying a
+    place.MoveTo and a place.Permute with distinctive attribute values so a
+    dropped attribute is visible in the merged output."""
+    qubits = tuple(ir.TestValue() for _ in range(2))
+    outer = ir.Block()
+
+    def _one_sp(qbit, loc, perm, insert_moves, multi_move_warning):
+        body_block = ir.Block()
+        entry_state = body_block.args.append_from(types.StateType, "entry_state")
+        m = place.MoveTo(
+            entry_state,
+            qubits=(0,),
+            locations=(loc,),
+            multi_move_warning=multi_move_warning,
+        )
+        body_block.stmts.append(m)
+        p = place.Permute(
+            m.state_after,
+            qubits=(0,),
+            perm=perm,
+            insert_moves=insert_moves,
+        )
+        body_block.stmts.append(p)
+        body_block.stmts.append(place.Yield(p.state_after))
+        outer.stmts.append(
+            place.StaticPlacement(qubits=(qbit,), body=ir.Region(body_block))
+        )
+
+    _one_sp(
+        qubits[0],
+        LocationAddress(3, 0),
+        perm=(0,),
+        insert_moves=True,
+        multi_move_warning=True,
+    )
+    _one_sp(
+        qubits[1],
+        LocationAddress(5, 0),
+        perm=(0,),
+        insert_moves=False,
+        multi_move_warning=False,
+    )
+    return outer
+
+
+def test_merge_static_placement_preserves_move_to_and_permute_attrs():
+    """After ``MergeStaticPlacement(always_merge)`` every ``locations``,
+    ``multi_move_warning``, ``perm``, and ``insert_moves`` on the inner
+    MoveTo/Permute statements must survive with the values from the source
+    ops. A missing key in the per-op attribute dict inside
+    ``MergeStaticPlacement.rewrite_Statement`` silently drops the attribute
+    to its default (the bug 345e4542 fixed for ``insert_moves``); this test
+    guards against a regression for the full attribute set."""
+    outer = _build_placement_with_move_ops()
+
+    rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(outer)
+
+    merged = [s for s in outer.stmts if isinstance(s, place.StaticPlacement)]
+    assert len(merged) == 1
+    body_stmts = list(merged[0].body.blocks[0].stmts)
+    move_tos = [s for s in body_stmts if isinstance(s, place.MoveTo)]
+    permutes = [s for s in body_stmts if isinstance(s, place.Permute)]
+    assert len(move_tos) == 2
+    assert len(permutes) == 2
+
+    # MoveTo attributes preserved (locations + multi_move_warning).
+    assert move_tos[0].locations == (LocationAddress(3, 0),)
+    assert move_tos[0].multi_move_warning is True
+    assert move_tos[1].locations == (LocationAddress(5, 0),)
+    assert move_tos[1].multi_move_warning is False
+
+    # Permute attributes preserved (perm + insert_moves).
+    assert permutes[0].perm == (0,)
+    assert permutes[0].insert_moves is True
+    assert permutes[1].perm == (0,)
+    assert permutes[1].insert_moves is False
+
+
+def test_merge_placement_regions_preserves_move_to_and_permute_attrs():
+    """Same guarantee for the legacy ``MergePlacementRegions`` rewrite: both
+    merge sites hand-curate the per-op attribute dict and must be kept in
+    sync (see review finding 5)."""
+    outer = _build_placement_with_move_ops()
+
+    rewrite.Fixpoint(rewrite.Walk(MergePlacementRegions())).rewrite(outer)
+
+    merged = [s for s in outer.stmts if isinstance(s, place.StaticPlacement)]
+    assert len(merged) == 1
+    body_stmts = list(merged[0].body.blocks[0].stmts)
+    move_tos = [s for s in body_stmts if isinstance(s, place.MoveTo)]
+    permutes = [s for s in body_stmts if isinstance(s, place.Permute)]
+    assert len(move_tos) == 2
+    assert len(permutes) == 2
+    assert move_tos[0].locations == (LocationAddress(3, 0),)
+    assert move_tos[0].multi_move_warning is True
+    assert move_tos[1].locations == (LocationAddress(5, 0),)
+    assert move_tos[1].multi_move_warning is False
+    assert permutes[0].perm == (0,)
+    assert permutes[0].insert_moves is True
+    assert permutes[1].perm == (0,)
+    assert permutes[1].insert_moves is False

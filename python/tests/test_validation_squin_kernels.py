@@ -12,7 +12,7 @@ from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
-from bloqade.lanes.validation.address import Validation
+from bloqade.lanes.validation.address import get_validation
 
 
 def _collect_move_nodes(move_kernel) -> list[move.StatefulStatement]:
@@ -73,9 +73,7 @@ def test_kernel_catalog_compiles_to_valid_physical_move(spec: KernelSpec):
     kernel = spec.build_kernel()
     move_kernel = _compile_physical_move(kernel)
 
-    _, validation_errors = Validation(arch_spec=get_physical_arch_spec()).run(
-        move_kernel
-    )
+    _, validation_errors = get_validation(get_physical_arch_spec())().run(move_kernel)
     assert (
         not validation_errors
     ), f"{spec.name} produced invalid physical addresses: {validation_errors}"

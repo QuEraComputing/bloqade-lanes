@@ -19,6 +19,7 @@ from bloqade.lanes.analysis.placement import (
     ConcreteState,
     ExecuteCZ,
     ExecuteMeasure,
+    PlacementError,
     PlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
@@ -160,8 +161,13 @@ class PolicyPlacementStrategy(PlacementStrategyABC):
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
-        if len(controls) != len(targets) or state == AtomState.bottom():
+        if state == AtomState.bottom():
             return AtomState.bottom()
+        if len(controls) != len(targets):
+            raise PlacementError(
+                f"CZ has mismatched control/target counts: "
+                f"{len(controls)} controls, {len(targets)} targets"
+            )
         if not isinstance(state, ConcreteState):
             return AtomState.top()
         return self._cz_placements_rust(state, controls, targets, lookahead_cz_layers)
@@ -212,7 +218,10 @@ class PolicyPlacementStrategy(PlacementStrategyABC):
         self._cz_counter += 1
 
         if winning_result is None:
-            return AtomState.bottom()
+            raise PlacementError(
+                f"CZ policy solver failed for pairs {list(zip(controls, targets))}; "
+                "no candidate target layout produced an acceptable solve"
+            )
 
         move_layers = convert_move_layers(winning_result.move_layers)
         goal_map = {
@@ -250,7 +259,10 @@ class PolicyPlacementStrategy(PlacementStrategyABC):
         if not isinstance(state, ConcreteState):
             return state
         if len(qubits) != len(state.layout):
-            return AtomState.bottom()
+            raise PlacementError(
+                f"terminal measurement must measure all {len(state.layout)} "
+                f"qubits in the block, got {len(qubits)}"
+            )
         return ExecuteMeasure(
             occupied=state.occupied,
             layout=state.layout,

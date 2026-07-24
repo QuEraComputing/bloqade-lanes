@@ -109,11 +109,18 @@ def test_kirinwrapper_from_inner_runs_post_init() -> None:
     assert isinstance(x.type, types.PyClass)
 
 
-def test_kirinwrapper_unwrap_returns_rust_object() -> None:
-    """unwrap() returns the Rust object, matching ir.Data[T] semantics."""
+def test_kirinwrapper_unwrap_returns_self() -> None:
+    """unwrap() returns the Python wrapper, not the inner Rust object.
+
+    Kirin's py.Constant interpreter calls unwrap() to obtain the value stored
+    in const.Value during constprop.  Returning self._inner (the raw PyO3 type)
+    would cause downstream code to receive a native object that lacks ._inner,
+    breaking any call-site that does loc._inner.  Returning self preserves the
+    full wrapper through the pipeline.
+    """
     x = _KirinWrapped(1, 2, 3)
-    assert x.unwrap() is x._inner
-    assert isinstance(x.unwrap(), RustLocationAddress)
+    assert x.unwrap() is x
+    assert isinstance(x.unwrap(), _KirinWrapped)
 
 
 def test_kirinwrapper_encode_delegates_to_inner() -> None:

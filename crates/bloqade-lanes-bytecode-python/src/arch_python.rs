@@ -1076,6 +1076,18 @@ impl PyArchSpec {
             .map(|l| PyLocationAddr { inner: l })
     }
 
+    /// Resolve a ``(zone, row, col)`` grid coordinate to a ``LocationAddress``.
+    ///
+    /// ``col`` is the grid x-index and ``row`` the grid y-index within ``zone``.
+    /// Returns the location whose word site sits at that grid position (a unique
+    /// ``(word_id, site_id)`` within the zone), or None if no atom occupies it.
+    #[pyo3(text_signature = "(self, zone, row, col)")]
+    fn location_at(&self, zone: u32, row: u32, col: u32) -> Option<PyLocationAddr> {
+        self.inner
+            .location_at(zone, row, col)
+            .map(|l| PyLocationAddr { inner: l })
+    }
+
     // -- Derived topology queries (#464 phase 2) --
 
     /// Build a bidirectional word-partner map from entangling pairs.

@@ -515,6 +515,40 @@ impl ArchSpec {
         })
     }
 
+    /// Resolve a `(zone_id, row, col)` grid coordinate to a `LocationAddr`.
+    ///
+    /// `col` is the grid x-index and `row` the grid y-index within `zone_id`.
+    /// Returns the location whose word site sits at that grid position — a
+    /// unique `(word_id, site_id)` within the zone — or `None` if no atom
+    /// occupies it (or the zone doesn't exist). This is the authoritative
+    /// `(row, col) -> (word_id, site_id)` mapping for the architecture's
+    /// addressing scheme; callers depend only on this, not on the word/site
+    /// layout.
+    pub fn location_at(&self, zone_id: u32, row: u32, col: u32) -> Option<LocationAddr> {
+        // TODO: this does an O(words * sites) linear scan and rebuilds
+        // `word_zone_map()` on every call. Replace with a lazily-evaluated,
+        // cached `HashMap` keyed by `(zone_id, row, col) -> LocationAddr` so
+        // repeated lookups during compilation are O(1).
+        self.zones.get(zone_id as usize)?;
+        let word_zone = self.word_zone_map();
+        for (word_id, word) in self.words.iter().enumerate() {
+            let wid = word_id as u32;
+            if word_zone.get(&wid).copied().unwrap_or(0) != zone_id {
+                continue;
+            }
+            for (site_id, site) in word.sites.iter().enumerate() {
+                if site[0] == col && site[1] == row {
+                    return Some(LocationAddr {
+                        zone_id,
+                        word_id: wid,
+                        site_id: site_id as u32,
+                    });
+                }
+            }
+        }
+        None
+    }
+
     // -- Address validation --
 
     /// Check whether a location address (zone_id, word_id, site_id) is valid.

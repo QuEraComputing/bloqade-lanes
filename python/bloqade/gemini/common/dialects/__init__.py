@@ -1,1 +1,1 @@
-from . import qubit as qubit
+from . import arrange as arrange, qubit as qubit

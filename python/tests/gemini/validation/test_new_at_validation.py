@@ -1,7 +1,5 @@
 """Tests for per-statement validation of gemini.operations.NewAt."""
 
-from dataclasses import dataclass, field
-
 import pytest
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
@@ -12,30 +10,17 @@ from bloqade.gemini.common.validation.duplicate_address import (
     DuplicateAddressValidation,
 )
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
-from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.validation.address import Validation
+from bloqade.lanes.validation.address import get_validation
 
 # ---------------------------------------------------------------------------
 # Validator fixture
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _PhysicalAddressValidation(Validation):
-    """Validation subclass pre-wired with the physical layout arch spec.
-
-    ValidationSuite instantiates passes with pass_cls(), so `arch_spec` must
-    have a default — this subclass provides it via default_factory.
-    """
-
-    arch_spec: ArchSpec = field(default_factory=get_physical_layout_arch_spec)
-
-    def name(self) -> str:
-        return "Gemini Physical Address Validation"
-
-
 def _make_validator() -> ValidationSuite:
-    return ValidationSuite([_PhysicalAddressValidation])
+    # ``get_validation(arch_spec)`` bakes the arch spec into a ClassVar so the
+    # returned pass is a no-arg-constructible class usable in a ValidationSuite.
+    return ValidationSuite([get_validation(get_physical_layout_arch_spec())])
 
 
 # ---------------------------------------------------------------------------
