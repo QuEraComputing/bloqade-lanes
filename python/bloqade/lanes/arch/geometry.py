@@ -46,7 +46,7 @@ class ArchSpecGeometry:
     layer of the stack.
     """
 
-    def __init__(self, arch_spec: "ArchSpec | _RustArchSpec") -> None:
+    def __init__(self, arch_spec: ArchSpec | _RustArchSpec) -> None:
         if isinstance(arch_spec, _RustArchSpec):
             self._inner = arch_spec
         else:
@@ -235,10 +235,10 @@ class ArchSpecGeometry:
         else:
             raise ValueError(f"Unsupported move_type: {move_type}")
 
-        src_xs = sorted(set(p[0] for p in src_positions))
-        src_ys = sorted(set(p[1] for p in src_positions))
-        dst_xs = sorted(set(p[0] for p in dst_positions))
-        dst_ys = sorted(set(p[1] for p in dst_positions))
+        src_xs = sorted({p[0] for p in src_positions})
+        src_ys = sorted({p[1] for p in src_positions})
+        dst_xs = sorted({p[0] for p in dst_positions})
+        dst_ys = sorted({p[1] for p in dst_positions})
 
         return (
             GeoGrid.from_positions(tuple(src_xs), tuple(src_ys)),

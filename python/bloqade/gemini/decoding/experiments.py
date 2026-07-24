@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Callable, cast
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import stim

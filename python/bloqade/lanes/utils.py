@@ -1,4 +1,5 @@
-from typing import Sequence, TypeGuard, TypeVar
+from collections.abc import Sequence
+from typing import TypeGuard, TypeVar
 
 import numpy as np
 from kirin import ir

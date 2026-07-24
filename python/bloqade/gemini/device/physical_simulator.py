@@ -32,13 +32,13 @@ RetType = TypeVar("RetType")
 PhysicalResult = Result
 
 
-def _default_noise_model() -> "NoiseModelABC":
+def _default_noise_model() -> NoiseModelABC:
     from bloqade.lanes.noise_model import generate_simple_noise_model
 
     return generate_simple_noise_model()
 
 
-def _default_arch_spec() -> "ArchSpec":
+def _default_arch_spec() -> ArchSpec:
     from bloqade.lanes.arch.gemini.physical import get_arch_spec
 
     return get_arch_spec()

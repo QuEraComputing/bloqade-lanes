@@ -218,22 +218,7 @@ def test_render_comparison_report_includes_arch_spec_id():
 def test_load_baseline_csv_rejects_invalid_bool(tmp_path: Path):
     path = tmp_path / "invalid.csv"
     path.write_text(
-        ",".join(
-            (
-                "case_id",
-                "strategy_id",
-                "backend",
-                "generator_id",
-                "success",
-                "wall_time_ms",
-                "move_count_events",
-                "move_count_lanes",
-                "estimated_fidelity",
-                "nodes_explored",
-                "max_depth_reached",
-                "notes",
-            )
-        )
+        "case_id,strategy_id,backend,generator_id,success,wall_time_ms,move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,max_depth_reached,notes"
         + "\n"
         + "ghz_4,python_entropy,python,heuristic,notabool,1.0,1,1,0.9,1,1,\n",
         encoding="utf-8",

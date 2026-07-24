@@ -12,8 +12,8 @@ raises :class:`ValueError` from the underlying runner.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import TargetPolicyRunner

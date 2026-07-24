@@ -4,12 +4,12 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless
 
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
-from bloqade.lanes.visualize.entropy_tree import (  # noqa: E402
+from bloqade.lanes.visualize.entropy_tree import (
     renderer as renderer_module,
 )
-from bloqade.lanes.visualize.entropy_tree.renderer import (  # noqa: E402
+from bloqade.lanes.visualize.entropy_tree.renderer import (
     _apply_view_bounds,
     _draw_architecture_background,
     _draw_moveset_path,
@@ -19,7 +19,7 @@ from bloqade.lanes.visualize.entropy_tree.renderer import (  # noqa: E402
     draw_tree_frame,
     format_entropy_reason,
 )
-from bloqade.lanes.visualize.entropy_tree.state import (  # noqa: E402
+from bloqade.lanes.visualize.entropy_tree.state import (
     NodeState,
     TreeStateReducer,
 )

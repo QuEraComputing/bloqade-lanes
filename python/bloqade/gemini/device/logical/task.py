@@ -39,18 +39,12 @@ class GeminiTaskMixin:
 class GeminiSingleKernelTask(GeminiTaskMixin, SingleKernelTask[GeminiLogicalFuture]):
     """`SingleKernelTask` preconfigured for the Gemini logical backend."""
 
-    pass
-
 
 @dataclass(kw_only=True)
 class GeminiParameterScanTask(GeminiTaskMixin, ParameterScanTask[GeminiLogicalFuture]):
     """`ParameterScanTask` preconfigured for the Gemini logical backend."""
 
-    pass
-
 
 @dataclass(kw_only=True)
 class GeminiKernelBatchTask(GeminiTaskMixin, KernelBatchTask[GeminiLogicalFuture]):
     """`KernelBatchTask` preconfigured for the Gemini logical backend."""
-
-    pass

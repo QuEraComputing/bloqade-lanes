@@ -59,7 +59,6 @@ def test_remove_move():
     @kernel
     def test():
         move.load()
-        return
 
     rewrite.Walk(base.CleanUpMoveDialect()).rewrite(test.code)
 

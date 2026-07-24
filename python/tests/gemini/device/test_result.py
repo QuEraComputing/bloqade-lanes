@@ -144,7 +144,7 @@ def test_arguments_returns_subtask_arguments(storage):
     )
 
     res = GeminiLogicalResult(storage=storage)
-    args = sorted(res.arguments(), key=lambda d: list(d.keys())[0])  # type: ignore
+    args = sorted(res.arguments(), key=lambda d: next(iter(d.keys())))  # type: ignore
     assert args == [{"a": 1}, {"b": 2}]
 
 

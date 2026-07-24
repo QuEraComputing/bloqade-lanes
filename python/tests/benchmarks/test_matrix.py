@@ -76,6 +76,6 @@ def test_default_strategy_configs_factory_is_called_per_build():
     for strategy in strategies:
         try:
             strategy.build_placement_strategy()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass  # PlacementStrategy construction may fail on object() arch, ok.
     assert len(calls) == len(strategies)

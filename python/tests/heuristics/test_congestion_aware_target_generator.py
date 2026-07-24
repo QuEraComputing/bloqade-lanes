@@ -120,7 +120,7 @@ class _WeightCtx:
         self.shared_site_factor = site
 
 
-def _first_lane(pf: "PathFinder") -> "LaneAddress":
+def _first_lane(pf: PathFinder) -> LaneAddress:
     # Pick any lane in the physical graph for tests.
     return next(iter(pf.end_points_cache))
 
@@ -227,7 +227,7 @@ def test_weight_fn_direction_and_shared_site_stack(arch):
     """
     pf = PathFinder(arch)
     lane = _first_lane(pf)
-    src, dst = pf.get_endpoints(lane)
+    src, _dst = pf.get_endpoints(lane)
     assert src is not None
     committed_lanes = {_lane_key(lane): _counts((lane.direction, 1))}
     weight = _make_weight_fn(pf, committed_lanes, {src}, _WeightCtx(0.5, 1.1))
@@ -445,7 +445,7 @@ def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
         DefaultTargetGenerator,
     )
 
-    loc0, loc1 = _pick_cz_pair(arch)
+    _loc0, _loc1 = _pick_cz_pair(arch)
     # Seed a fresh pair of qubits at non-partnered storage locations so
     # both directions have non-trivial paths (not already-partnered).
     scenario = _find_blocker_scenario(arch)
@@ -472,7 +472,6 @@ def test_multi_pair_avoids_opposite_direction_reuse(arch):
     enough, the second-committed pair picks its more-expensive direction
     to avoid the conflict.
     """
-    ...
 
 
 @pytest.mark.skip(
@@ -484,7 +483,6 @@ def test_move_count_tiebreak_at_commit_end_to_end(arch):
     commit. Unit test `test_choose_control_cost_tie_uses_length`
     already covers the logic directly.
     """
-    ...
 
 
 def test_direction_factor_zero_or_negative_raises():
@@ -524,4 +522,3 @@ def test_both_directions_infeasible_returns_empty_list():
     lane's two endpoints. The all-paths-infeasible property follows
     from the arch's topology.
     """
-    ...

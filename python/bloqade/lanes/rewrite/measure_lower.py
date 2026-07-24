@@ -41,7 +41,7 @@ class MeasureLower(RewriteRule):
     frame: ForwardFrame[MoveExecution]
 
     @classmethod
-    def from_method(cls, method: ir.Method, arch_spec) -> "MeasureLower":
+    def from_method(cls, method: ir.Method, arch_spec) -> MeasureLower:
         """Build a MeasureLower by running AtomAnalysis on the given method.
 
         Stashes the returned ForwardFrame so that ``rewrite_Statement``

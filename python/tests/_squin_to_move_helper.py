@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 def squin_to_move(
     mt: ir.Method,
     *,
-    layout_heuristic: "layout.LayoutHeuristicABC",
-    placement_strategy: "placement.PlacementStrategyABC",
+    layout_heuristic: layout.LayoutHeuristicABC,
+    placement_strategy: placement.PlacementStrategyABC,
     no_raise: bool = True,
     logical_initialize: bool = True,
     place_opt_type: type[passes.Pass] = SequentialPlacePass,
@@ -43,7 +43,7 @@ def squin_to_move(
     ``SequentialPlacePass`` (or ``place_opt_type`` when overridden) runs between
     the native→place stage and ``PlaceToMove``.
     """
-    arch_spec: "ArchSpec | None" = getattr(layout_heuristic, "arch_spec", None)
+    arch_spec: ArchSpec | None = getattr(layout_heuristic, "arch_spec", None)
     if logical_initialize:
         native_stage: LogicalNativeToPlace | NativeToPlace = LogicalNativeToPlace(
             arch_spec=arch_spec

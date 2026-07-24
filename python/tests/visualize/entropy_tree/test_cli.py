@@ -4,7 +4,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from bloqade.lanes.visualize.entropy_tree.cli import run  # noqa: E402
+from bloqade.lanes.visualize.entropy_tree.cli import run
 
 
 def test_run_no_interactive_with_default_kernel_succeeds():
