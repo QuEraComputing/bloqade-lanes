@@ -125,7 +125,7 @@ class _MoveToValidationMethods(interp.MethodTable):
     @interp.impl(Permute)
     def check_permute(
         self,
-        _interp: "_ValidationAnalysis",
+        _interp: _ValidationAnalysis,
         frame: ForwardFrame[EmptyLattice],
         node: Permute,
     ):

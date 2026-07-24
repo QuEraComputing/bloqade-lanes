@@ -16,8 +16,8 @@ from bloqade.lanes.bytecode.encoding import Direction, LocationAddress, SiteLane
 from bloqade.lanes.dialects import place
 from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
 
-_loc = lambda z, w, s: LocationAddress(zone_id=z, word_id=w, site_id=s)  # noqa: E731
-_lane = lambda z, w, s, d=Direction.FORWARD: SiteLaneAddress(z, w, s, d)  # noqa: E731
+_loc = lambda z, w, s: LocationAddress(zone_id=z, word_id=w, site_id=s)
+_lane = lambda z, w, s, d=Direction.FORWARD: SiteLaneAddress(z, w, s, d)
 
 
 def _make_user_moved(home_layout, dest_layout, layers):

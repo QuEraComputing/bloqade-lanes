@@ -81,9 +81,11 @@ def test_existing_kernel_unaffected():
 def test_movement_kernel_rejects_move_to_on_plain_kernel():
     """Plain @kernel does not support movement.move_to."""
 
+    from kirin.lowering.exception import BuildError
+
     loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
 
-    with pytest.raises(Exception):
+    with pytest.raises(BuildError, match="unsupported dialect"):
 
         @gemini.logical.kernel(aggressive_unroll=True)
         def k():
