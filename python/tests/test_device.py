@@ -1,7 +1,7 @@
 import inspect
 import math
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, assert_type
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -9,6 +9,7 @@ import pytest
 from bloqade.decoders.dialects import annotate
 from kirin.dialects import ilist
 from stim import DetectorErrorModel
+from typing_extensions import assert_type
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import (
