@@ -1,3 +1,6 @@
+from bloqade.gemini.common.dialects.arrange import move_to as move_to
+from bloqade.lanes.dialects.arch import loc as loc
+
 from . import dialects as dialects, impl as impl, validation as validation
 from .dialects.operations import terminal_measure as terminal_measure
 from .group import kernel as kernel

@@ -8,11 +8,11 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
+    MoveToPlacementStrategyABC,
     SingleZonePlacementStrategyABC,
 )
-from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
+from bloqade.lanes.analysis.placement.lattice import UserMoved
 from bloqade.lanes.analysis.placement.strategy import (
-    PlacementStrategyABC,
     assert_single_cz_zone,
 )
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -24,7 +24,6 @@ from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    ZoneAddress,
 )
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
 
@@ -189,7 +188,9 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
 
 
 @dataclass
-class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
+class LogicalPlacementStrategyNoHome(
+    LogicalPlacementMethods, MoveToPlacementStrategyABC
+):
     arch_spec: ArchSpec = field(default_factory=get_arch_spec)
     H_lookahead: int = 4
     gamma: float = 0.85
@@ -299,8 +300,29 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             self._get_lane_cost(lane) + self.lane_move_overhead_cost for lane in path
         )
 
+    def _prestaged_qubits(
+        self,
+        state: ConcreteState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> frozenset[int]:
+        """Return indices of qubits already at their desired CZ position.
+
+        These atoms were placed by move_to and should not be returned home
+        before the CZ — skipping the redundant return + re-forward cycle.
+        """
+        desired = self.desired_cz_layout(state, controls, targets)
+        return frozenset(
+            qid
+            for qid in range(len(state.layout))
+            if state.layout[qid] == desired.layout[qid]
+            and not self.arch_spec.is_home_position(state.layout[qid])
+        )
+
     def _nearest_home_layout(
-        self, state_before: ConcreteState
+        self,
+        state_before: ConcreteState,
+        skip_qubits: frozenset[int] = frozenset(),
     ) -> tuple[LocationAddress, ...]:
         home_sites = self._home_sites()
         used_home = {
@@ -317,6 +339,8 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return_layout = list(state_before.layout)
 
         for qid, addr in enumerate(state_before.layout):
+            if qid in skip_qubits:
+                continue  # pre-staged; leave in place
             if self.arch_spec.is_home_position(addr):
                 continue
             if not available_home:
@@ -469,9 +493,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         self,
         state_before: ConcreteState,
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+        skip_qubits: frozenset[int] = frozenset(),
     ) -> list[tuple[LocationAddress, ...]]:
         if not lookahead_layers:
-            return [self._nearest_home_layout(state_before)]
+            return [self._nearest_home_layout(state_before, skip_qubits)]
 
         home_sites = self._home_sites()
         used_home = {
@@ -488,7 +513,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         returners = [
             qid
             for qid, addr in enumerate(state_before.layout)
-            if not self.arch_spec.is_home_position(addr)
+            if not self.arch_spec.is_home_position(addr) and qid not in skip_qubits
         ]
         if not returners:
             return [state_before.layout]
@@ -496,7 +521,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             raise ValueError("No empty home site available for return move")
 
         partner_weights = self._partner_weights(lookahead_layers)
-        baseline_layout = self._nearest_home_layout(state_before)
+        baseline_layout = self._nearest_home_layout(state_before, skip_qubits)
         baseline_guess = {
             qid: baseline_layout[qid]
             for qid in returners
@@ -507,7 +532,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             for qid, addr in enumerate(state_before.layout)
             if self.arch_spec.is_home_position(addr)
         }
-        reference_positions = {**home_stayers, **baseline_guess}
+        # Pre-staged positions stay in place; include them in the lookahead
+        # reference so partner-weight scoring accounts for their locations.
+        skip_positions = {qid: state_before.layout[qid] for qid in skip_qubits}
+        reference_positions = {**home_stayers, **baseline_guess, **skip_positions}
 
         edge_costs: dict[tuple[int, int], float] = {}
         edge_sigs: dict[tuple[int, int], frozenset[tuple[MoveType, int, Direction]]] = (
@@ -630,8 +658,11 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         self,
         state_before: ConcreteState,
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+        skip_qubits: frozenset[int] = frozenset(),
     ) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...], float]:
-        candidate_layouts = self._candidate_layouts(state_before, lookahead_layers)
+        candidate_layouts = self._candidate_layouts(
+            state_before, lookahead_layers, skip_qubits
+        )
         best: (
             tuple[
                 float,
@@ -670,6 +701,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         controls: tuple[int, ...],
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
+        skip_qubits: frozenset[int] = frozenset(),
     ) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...]]:
         _ = controls, targets
         if self.H_lookahead <= 0:
@@ -677,7 +709,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         else:
             bounded_lookahead = lookahead_cz_layers[: self.H_lookahead]
         mid_state, left_move_layers, _ = self._single_step_return_choice(
-            state_before, bounded_lookahead
+            state_before, bounded_lookahead, skip_qubits
         )
         return mid_state, left_move_layers
 
@@ -694,8 +726,12 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
+        skip_qubits: frozenset[int] = frozenset()
+        if isinstance(state, UserMoved):
+            skip_qubits = self._prestaged_qubits(state, controls, targets)
+
         mid_state, left_move_layers = self.choose_return_layout(
-            state, controls, targets, lookahead_cz_layers
+            state, controls, targets, lookahead_cz_layers, skip_qubits=skip_qubits
         )
         state_after = self.desired_cz_layout(mid_state, controls, targets)
         final_move_layers = self.compute_moves(mid_state, state_after)
@@ -709,30 +745,4 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        if isinstance(state, ConcreteState):
-            return ConcreteState(
-                occupied=state.occupied,
-                layout=state.layout,
-                move_count=state.move_count,
-            )
-        return state
-
-    def measure_placements(
-        self, state: AtomState, qubits: tuple[int, ...]
-    ) -> AtomState:
-        if not isinstance(state, ConcreteState):
-            return state
-
-        if len(qubits) != len(state.layout):
-            return AtomState.bottom()
-
-        # ``layout`` stays canonical (indexed by qubit id). The measurement
-        # order is carried by ``place.EndMeasure.qubits`` and applied when the
-        # measurement is lowered (see ``place2move.InsertMeasure``), so we do
-        # not permute the layout here (that would relabel qubits).
-        return ExecuteMeasure(
-            occupied=state.occupied,
-            layout=state.layout,
-            move_count=state.move_count,
-            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
-        )
+        return self._strip_user_moved(state)

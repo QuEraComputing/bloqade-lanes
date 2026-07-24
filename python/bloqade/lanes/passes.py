@@ -67,7 +67,7 @@ class SequentialPlacePass(passes.Pass):
 class ASAPPlacePass(passes.Pass):
     """ASAP scheduling optimization for the place dialect.
 
-    Merges all pure-gate placements (R, Rz, CZ), reorders gates by ASAP
+    Merges all adjacent StaticPlacement blocks, reorders gates by ASAP
     dependency scheduling, then fuses adjacent compatible gates.
 
     ``debug.Info`` statements are stripped at the start of this pass.
@@ -110,8 +110,8 @@ class ALAPPlacePass(passes.Pass):
 
     Same pipeline as ``ASAPPlacePass`` but uses ALAP (As-Late-As-Possible)
     dependency scheduling.  Deferring single-qubit gates to their latest
-    valid layer reduces the qubit footprint of early CZ-anchored
-    StaticPlacement regions, lowering atom-move overhead compared to ASAP.
+    valid layer reduces the qubit footprint of early CZ-anchored regions,
+    lowering atom-move overhead compared to ASAP.
 
     ``debug.Info`` statements are stripped at the start of this pass (same
     reason as ``ASAPPlacePass``).

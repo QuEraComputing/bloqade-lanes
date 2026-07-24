@@ -11,7 +11,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -411,7 +411,7 @@ impl MoveGenerator for HeuristicGenerator {
                     );
                 }
 
-                let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+                let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
                 all_scores.push((
                     triplet_key,
                     ScoredTriple {
@@ -432,7 +432,7 @@ impl MoveGenerator for HeuristicGenerator {
         for &(qid, loc_enc) in &accidental_cz_qubits {
             let loc = LocationAddr::decode(loc_enc);
             for (lane, dst) in escape_targets(loc, &occupied, ctx.index) {
-                let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+                let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
                 spectator_escapes.push((
                     triplet_key,
                     ScoredTriple {
@@ -503,7 +503,7 @@ impl MoveGenerator for HeuristicGenerator {
                 let (qid, loc_enc) = accidental_cz_qubits[0];
                 let loc = LocationAddr::decode(loc_enc);
                 if let Some((lane, dst)) = escape_targets(loc, &occupied, ctx.index).next() {
-                    let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+                    let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
                     selected.push((
                         triplet_key,
                         ScoredTriple {
@@ -536,20 +536,15 @@ impl MoveGenerator for HeuristicGenerator {
         // `candidates` is irrelevant — Step 6 re-sorts by score.
         let mut seen_movesets: HashSet<MoveSet> = HashSet::new();
 
-        for ((mt_u8, bus_id, dir_u8), qubits) in groups {
-            // Reconstruct typed triplet from u8 discriminants.
-            let mt = match mt_u8 {
-                x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
-                x if x == MoveType::WordBus as u8 => MoveType::WordBus,
-                x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
-                _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
-            };
-            let dir = match dir_u8 {
-                x if x == Direction::Forward as u8 => Direction::Forward,
-                x if x == Direction::Backward as u8 => Direction::Backward,
-                _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
-            };
-
+        for (
+            TripletKey {
+                move_type: mt,
+                bus_id,
+                direction: dir,
+            },
+            qubits,
+        ) in groups
+        {
             // Build grid context from ALL lanes on this bus group (cross-zone).
             let grid_ctx = crate::ops::aod_grid::BusGridContext::new(
                 ctx.index, mt, bus_id, None, dir, &occupied,
@@ -646,6 +641,7 @@ impl MoveGenerator for HeuristicGenerator {
 mod tests {
     use std::collections::HashSet;
 
+    use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     use super::*;
@@ -1477,9 +1473,11 @@ mod tests {
 
     #[test]
     fn scored_triple_tie_break_is_deterministic() {
+        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, Direction::Backward);
+        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, Direction::Backward);
         let mut entries = [
             (
-                (1, 2, 3),
+                key_bus2,
                 ScoredTriple {
                     qubit_id: 9,
                     score: 7,
@@ -1488,7 +1486,7 @@ mod tests {
                 },
             ),
             (
-                (1, 1, 3),
+                key_bus1,
                 ScoredTriple {
                     qubit_id: 2,
                     score: 7,
@@ -1497,7 +1495,7 @@ mod tests {
                 },
             ),
             (
-                (1, 1, 3),
+                key_bus1,
                 ScoredTriple {
                     qubit_id: 1,
                     score: 7,
@@ -1509,11 +1507,11 @@ mod tests {
 
         entries.sort_by(cmp_scored_triples);
 
-        assert_eq!(entries[0].0, (1, 1, 3));
+        assert_eq!(entries[0].0, key_bus1);
         assert_eq!(entries[0].1.lane_encoded, 13);
-        assert_eq!(entries[1].0, (1, 1, 3));
+        assert_eq!(entries[1].0, key_bus1);
         assert_eq!(entries[1].1.lane_encoded, 15);
-        assert_eq!(entries[2].0, (1, 2, 3));
+        assert_eq!(entries[2].0, key_bus2);
     }
 
     #[test]

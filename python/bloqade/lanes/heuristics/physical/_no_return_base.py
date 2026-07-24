@@ -25,8 +25,8 @@ from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
-    ExecuteMeasure,
-    PlacementStrategyABC,
+    MoveToPlacementStrategyABC,
+    PlacementError,
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
@@ -36,12 +36,12 @@ from bloqade.lanes.bytecode._native import (
     SearchEngine,
     SearchStrategy,
 )
-from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.heuristics.physical.movement import convert_move_layers
 
 
 @dataclass
-class NoReturnStrategyBase(PlacementStrategyABC):
+class NoReturnStrategyBase(MoveToPlacementStrategyABC):
     """Abstract base for Rust-solver-driven no-return placement strategies.
 
     Parameters
@@ -154,6 +154,41 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         # same no-op pattern used by :class:`PhysicalPlacementStrategy`.
         _ = initial_layout
 
+    def _layout_satisfies_cz(
+        self,
+        state: ConcreteState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> bool:
+        """True iff every ``(control, target)`` pair already sits at valid CZ
+        entangling partner sites in ``state.layout`` (no moves needed)."""
+        for control, target in zip(controls, targets):
+            partner = self.arch_spec.get_cz_partner(state.layout[control])
+            if partner != state.layout[target]:
+                return False
+        return True
+
+    def _has_spurious_partner_pair(
+        self,
+        state: ConcreteState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> bool:
+        """True iff some non-participating atom (in ``state.layout`` or
+        ``state.occupied``) sits at a CZ partner site whose partner is also
+        occupied — a global CZ pulse would then entangle them alongside the
+        intended pairs."""
+        participants: set[LocationAddress] = set()
+        for control, target in zip(controls, targets):
+            participants.add(state.layout[control])
+            participants.add(state.layout[target])
+        all_atoms = set(state.layout) | set(state.occupied)
+        for loc in all_atoms - participants:
+            partner = self.arch_spec.get_cz_partner(loc)
+            if partner is not None and partner in all_atoms:
+                return True
+        return False
+
     def cz_placements(
         self,
         state: AtomState,
@@ -161,10 +196,39 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
-        if len(controls) != len(targets) or state == AtomState.bottom():
+        if state == AtomState.bottom():
             return AtomState.bottom()
+        if len(controls) != len(targets):
+            raise PlacementError(
+                f"CZ has mismatched control/target counts: "
+                f"{len(controls)} controls, {len(targets)} targets"
+            )
+        state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
+
+        # If the current layout already places every CZ pair at valid
+        # entangling partner sites (e.g. the user staged them there with
+        # move_to / permute), the solver would needlessly relocate the
+        # atoms to its own generated target. Emit the CZ in place instead —
+        # provided no non-participating atom sits at a partner site whose
+        # partner is also occupied, since the global CZ pulse would entangle
+        # those bystanders too.
+        if self._layout_satisfies_cz(state, controls, targets):
+            if self._has_spurious_partner_pair(state, controls, targets):
+                raise PlacementError(
+                    "a non-participating atom sits at a CZ partner site whose "
+                    "partner is also occupied; the global CZ pulse would "
+                    "spuriously entangle these bystanders alongside the intended "
+                    f"pairs (controls={controls}, targets={targets})"
+                )
+            return ExecuteCZ(
+                occupied=state.occupied,
+                layout=state.layout,
+                move_count=state.move_count,
+                active_cz_zones=self.arch_spec.cz_zone_addresses,
+                move_layers=(),
+            )
 
         engine = self._get_engine()
         move_search = self._build_move_search()
@@ -184,18 +248,39 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
         if result.status != "solved":
-            return AtomState.bottom()
+            raise PlacementError(
+                f"CZ routing solver failed with status {result.status!r} for "
+                f"pairs {cz_pairs}; could not route atoms to valid partner sites"
+            )
 
         move_layers = convert_move_layers(result.move_layers)
         goal_map = {
             qid: LocationAddress(loc.word_id, loc.site_id, loc.zone_id)
             for qid, loc in result.goal_config.items()
         }
-        goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
+        goal_layout = tuple(
+            goal_map.get(qid, state.layout[qid]) for qid in range(len(state.layout))
+        )
         move_count = tuple(
             mc + int(src != dst)
             for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
         )
+
+        # Reject if the solver's output layout has a bystander pair at CZ
+        # partner sites — same reasoning as the fast-path check, applied to
+        # the routed layout the CZ pulse actually acts on.
+        goal_state = ConcreteState(
+            occupied=state.occupied,
+            layout=goal_layout,
+            move_count=move_count,
+        )
+        if self._has_spurious_partner_pair(goal_state, controls, targets):
+            raise PlacementError(
+                "the CZ routing solver produced a layout in which a "
+                "non-participating atom sits at a CZ partner site whose partner "
+                "is also occupied; the global CZ pulse would spuriously entangle "
+                f"these bystanders (controls={controls}, targets={targets})"
+            )
 
         return ExecuteCZ(
             occupied=state.occupied,
@@ -206,29 +291,28 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        _ = qubits
-        if isinstance(state, ConcreteState):
-            return ConcreteState(
-                occupied=state.occupied,
-                layout=state.layout,
-                move_count=state.move_count,
-            )
-        return state
+        return self._strip_user_moved(state)
 
-    def measure_placements(
-        self, state: AtomState, qubits: tuple[int, ...]
-    ) -> AtomState:
-        if not isinstance(state, ConcreteState):
-            return state
-        if len(qubits) != len(state.layout):
-            return AtomState.bottom()
-        # ``layout`` stays canonical (indexed by qubit id). The measurement
-        # order is carried by ``place.EndMeasure.qubits`` and applied when the
-        # measurement is lowered (see ``place2move.InsertMeasure``), so we do
-        # not permute the layout here (that would relabel qubits).
-        return ExecuteMeasure(
-            occupied=state.occupied,
-            layout=state.layout,
-            move_count=state.move_count,
-            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
+    def compute_moves(
+        self,
+        state_before: ConcreteState,
+        state_after: ConcreteState,
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
+        """Route atoms between two fixed layouts for user-directed ``MoveTo``.
+
+        Fixed-target routing (both layouts are given) is a different problem
+        from the no-return CZ solve, which generates the target layout itself.
+        We therefore delegate to the shared ``compute_move_layers`` primitive
+        (the same path :class:`LogicalPlacementStrategy` uses), reusing this
+        strategy's cached :class:`SearchEngine` so MoveTo routing shares the
+        per-arch lane index with ``cz_placements``.
+
+        The ``compute_move_layers`` import is deferred to call time: it pulls in
+        ``heuristics.move_synthesis``, which imports ``physical.movement`` and
+        would otherwise form an import cycle through ``physical/__init__``.
+        """
+        from bloqade.lanes.heuristics.move_synthesis import compute_move_layers
+
+        return compute_move_layers(
+            self.arch_spec, state_before, state_after, engine=self._get_engine()
         )

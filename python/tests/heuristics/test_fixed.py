@@ -1,6 +1,6 @@
 import pytest
 
-from bloqade.lanes.analysis.placement import AtomState, ConcreteState
+from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementError
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
@@ -104,7 +104,7 @@ def cz_placement_cases():
         None,
     )
 
-    # Mismatched control/target counts → bottom
+    # Mismatched control/target counts → PlacementError (malformed CZ IR)
     yield (
         "mismatched_counts",
         ConcreteState(
@@ -119,7 +119,7 @@ def cz_placement_cases():
         ),
         (0, 1, 4),
         (2, 3),
-        AtomState.bottom(),
+        PlacementError,
     )
 
 
@@ -133,14 +133,21 @@ def test_fixed_cz_placement(
     state_before: AtomState,
     targets: tuple[int, ...],
     controls: tuple[int, ...],
-    state_after: AtomState | None,
+    state_after: AtomState | type[PlacementError] | None,
 ):
     placement_strategy = LogicalPlacementStrategy()
     arch = placement_strategy.arch_spec
+
+    if state_after is PlacementError:
+        # Malformed input raises rather than returning a lattice value.
+        with pytest.raises(PlacementError):
+            placement_strategy.cz_placements(state_before, controls, targets)
+        return
+
     state_result = placement_strategy.cz_placements(state_before, controls, targets)
 
     if state_after is not None:
-        # Exact match for trivial cases (top, bottom, mismatched)
+        # Exact match for trivial cases (top, bottom)
         assert state_result == state_after
         return
 
