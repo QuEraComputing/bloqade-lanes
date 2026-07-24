@@ -66,8 +66,12 @@ def _ll(*items):
 
 
 def _mr(qubit_id: int, site_id: int) -> MeasureResult:
-    """Helper to build a ``MeasureResult`` at a Zone-0 ``site_id``."""
-    return MeasureResult(qubit_id, LocationAddress(0, site_id, 0))
+    """Helper to build a ``MeasureResult`` at a Zone-0 ``site_id``.
+
+    ``get_shot_remapping`` projects on ``location_address`` and ignores
+    ``measurement_id``, so a placeholder ``0`` record index is fine here.
+    """
+    return MeasureResult(0, qubit_id, LocationAddress(0, site_id, 0))
 
 
 def test_zone0_location_order_matches_arch_iteration():
@@ -144,7 +148,7 @@ def test_unknown_location_address_returns_diagnostic():
     architecture's Zone-0 iteration is a sign of analysis/arch
     disagreement; return a diagnostic carrying the offending address."""
     out_of_arch = LocationAddress(99, 0, 0)
-    return_value = _ll(_ll(MeasureResult(0, out_of_arch)))
+    return_value = _ll(_ll(MeasureResult(0, 0, out_of_arch)))
     result = get_shot_remapping(return_value, _ARCH)
     assert isinstance(result, ShotRemappingErr)
     assert "logical[0].physical[0]" in result.diagnostic.message
