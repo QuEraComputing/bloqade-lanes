@@ -20,7 +20,11 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical
-from bloqade.gemini.device import GeminiLogicalSimulator, PhysicalSimulator
+from bloqade.gemini.device import (
+    GeminiLogicalSimulator,
+    PhysicalSimulator,
+    TsimSimulatorBackend,
+)
 
 SHOTS = 20
 
@@ -36,8 +40,11 @@ def _assert_postprocessed_matches_native(task) -> tuple[list, list]:
     Returns the (detectors, observables) post-processed rows for any
     further value assertions.
     """
-    postprocessed = task.run(shots=SHOTS, with_noise=False, run_detectors=False)
-    native = task.run(shots=SHOTS, with_noise=False, run_detectors=True)
+    postprocessed = task.run(shots=SHOTS, with_noise=False)
+    native = TsimSimulatorBackend(run_detectors=True).sample(
+        task.noiseless_physical_squin_kernel,
+        shots=SHOTS,
+    )
 
     pp_dets = _as_rows(postprocessed.detectors)
     pp_obs = _as_rows(postprocessed.observables)
@@ -102,7 +109,7 @@ def test_physical_permutation(kernel, expected_return, expected_m0):
     assert all(row == [expected_m0] for row in obs)
 
     # Return values reconstruct the measured bits in the order listed.
-    result = task.run(shots=SHOTS, with_noise=False, run_detectors=False)
+    result = task.run(shots=SHOTS, with_noise=False)
     for ret in result.return_values:
         assert [bool(x) for x in ret] == expected_return
 

@@ -4,12 +4,36 @@ from kirin.dialects import func, ilist
 
 from bloqade import squin
 from bloqade.lanes.analysis import atom
+from bloqade.lanes.analysis.atom._post_processing import constructor_function
+from bloqade.lanes.analysis.atom.lattice import TupleResult
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import WordLaneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.prelude import kernel
 
 kernel = kernel.add(annotate)
+
+
+def test_constructor_function_can_index_measurements_by_qubit_id():
+    measurement = atom.MeasureResult(
+        measurement_id=0,
+        qubit_id=2,
+        location_address=move.LocationAddress(0, 0),
+    )
+    raw_measurements = [False, False, True]
+
+    record_id_function = constructor_function(measurement)
+    qubit_id_function = constructor_function(measurement, use_qubit_id=True)
+    tuple_function = constructor_function(
+        TupleResult((measurement,)), use_qubit_id=True
+    )
+    assert record_id_function is not None
+    assert qubit_id_function is not None
+    assert tuple_function is not None
+
+    assert record_id_function(raw_measurements) is False
+    assert qubit_id_function(raw_measurements) is True
+    assert tuple_function(raw_measurements) == (True,)
 
 
 def test_atom_interpreter_simple():
