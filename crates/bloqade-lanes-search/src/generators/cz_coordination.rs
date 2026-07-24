@@ -111,7 +111,18 @@ impl CzCoordination for EntanglingCoordination<'_> {
 
 #[cfg(test)]
 mod tests {
+    use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
+
     use super::*;
+
+    // Two distinct bus triplets for boost tests; the specific variants are
+    // irrelevant — only triplet equality/inequality matters.
+    fn key_a() -> TripletKey {
+        TripletKey::new(MoveType::WordBus, 1, Direction::Backward)
+    }
+    fn key_b() -> TripletKey {
+        TripletKey::new(MoveType::ZoneBus, 2, Direction::Backward)
+    }
 
     fn triple(qubit_id: u32, score: i32) -> ScoredTriple {
         ScoredTriple {
@@ -155,12 +166,9 @@ mod tests {
 
     #[test]
     fn fixed_target_boost_is_noop() {
-        // key (1,1,1) shared by qubits 0 and 1 — would be boosted in entangling
+        // key_a shared by qubits 0 and 1 — would be boosted in entangling
         // mode, must be untouched in fixed mode.
-        let mut selected = vec![
-            ((1u8, 1u32, 1u8), triple(0, 5)),
-            ((1u8, 1u32, 1u8), triple(1, 5)),
-        ];
+        let mut selected = vec![(key_a(), triple(0, 5)), (key_a(), triple(1, 5))];
         let before = selected.iter().map(|e| e.1.score).collect::<Vec<_>>();
         FixedTargetCoordination.boost_coordinated_pairs(&mut selected);
         let after = selected.iter().map(|e| e.1.score).collect::<Vec<_>>();
@@ -170,14 +178,14 @@ mod tests {
     #[test]
     fn entangling_boosts_shared_triplet_for_both_pair_members() {
         // qubits 0 and 1 form a CZ pair and both have an entry on triplet
-        // key (1,1,1): both get +1. The (2,2,2) entry for qubit 0 is not
+        // key_a: both get +1. The key_b entry for qubit 0 is not
         // shared and must NOT be boosted.
         let pairs = [(0u32, 1u32)];
         let policy = EntanglingCoordination { pairs: &pairs };
         let mut selected = vec![
-            ((1u8, 1u32, 1u8), triple(0, 5)),
-            ((1u8, 1u32, 1u8), triple(1, 7)),
-            ((2u8, 2u32, 2u8), triple(0, 3)),
+            (key_a(), triple(0, 5)),
+            (key_a(), triple(1, 7)),
+            (key_b(), triple(0, 3)),
         ];
         policy.boost_coordinated_pairs(&mut selected);
         assert_eq!(selected[0].1.score, 6, "shared entry for q0 boosted");
@@ -190,10 +198,7 @@ mod tests {
         // qubits 0 and 1 are paired but sit on different triplets: no boost.
         let pairs = [(0u32, 1u32)];
         let policy = EntanglingCoordination { pairs: &pairs };
-        let mut selected = vec![
-            ((1u8, 1u32, 1u8), triple(0, 5)),
-            ((2u8, 2u32, 2u8), triple(1, 7)),
-        ];
+        let mut selected = vec![(key_a(), triple(0, 5)), (key_b(), triple(1, 7))];
         policy.boost_coordinated_pairs(&mut selected);
         assert_eq!(selected[0].1.score, 5);
         assert_eq!(selected[1].1.score, 7);
@@ -205,10 +210,7 @@ mod tests {
         // (1) is absent, so nothing is boosted.
         let pairs = [(0u32, 1u32)];
         let policy = EntanglingCoordination { pairs: &pairs };
-        let mut selected = vec![
-            ((1u8, 1u32, 1u8), triple(0, 5)),
-            ((1u8, 1u32, 1u8), triple(2, 7)),
-        ];
+        let mut selected = vec![(key_a(), triple(0, 5)), (key_a(), triple(2, 7))];
         policy.boost_coordinated_pairs(&mut selected);
         assert_eq!(selected[0].1.score, 5);
         assert_eq!(selected[1].1.score, 7);

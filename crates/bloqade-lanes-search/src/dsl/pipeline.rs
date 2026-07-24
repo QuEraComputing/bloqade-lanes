@@ -23,13 +23,13 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
 use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 use crate::primitives::lane_index::LaneIndex;
-use crate::primitives::ordering::cmp_moveset_config_tiebreak;
+use crate::primitives::ordering::{TripletKey, cmp_moveset_config_tiebreak};
 
 /// One scored `(qubit, lane)` pair produced by Stage 1 of the pipeline.
 #[derive(Debug, Clone)]
@@ -38,9 +38,6 @@ pub(crate) struct ScoredLane {
     pub lane: LaneAddr,
     pub score: f64,
 }
-
-/// Triplet key `(move_type, bus_id, direction)` as encoded `u8`/`u32`.
-pub(crate) type TripletKey = (u8, u32, u8);
 
 /// Group of [`ScoredLane`]s sharing the same triplet key.
 #[derive(Debug, Clone)]
@@ -63,10 +60,10 @@ pub(crate) struct PackedCandidate {
 pub(crate) fn group_by_triplet(scored: Vec<ScoredLane>) -> Vec<TripletGroup> {
     let mut groups: BTreeMap<TripletKey, Vec<ScoredLane>> = BTreeMap::new();
     for entry in scored {
-        let key = (
-            entry.lane.move_type as u8,
+        let key = TripletKey::new(
+            entry.lane.move_type,
             entry.lane.bus_id,
-            entry.lane.direction as u8,
+            entry.lane.direction,
         );
         groups.entry(key).or_default().push(entry);
     }
@@ -100,13 +97,11 @@ pub(crate) fn pack_aod_rectangles(
         if entries.is_empty() {
             continue;
         }
-        let (mt_u8, bus_id, dir_u8) = key;
-        let Some(mt) = decode_move_type(mt_u8) else {
-            continue;
-        };
-        let Some(dir) = decode_direction(dir_u8) else {
-            continue;
-        };
+        let TripletKey {
+            move_type: mt,
+            bus_id,
+            direction: dir,
+        } = key;
 
         // Build the grid context across all zones for the bus.
         let grid_ctx = BusGridContext::new(index, mt, bus_id, None, dir, &occupied);
@@ -171,28 +166,6 @@ pub(crate) fn pack_aod_rectangles(
     });
 
     candidates
-}
-
-fn decode_move_type(v: u8) -> Option<MoveType> {
-    if v == MoveType::SiteBus as u8 {
-        Some(MoveType::SiteBus)
-    } else if v == MoveType::WordBus as u8 {
-        Some(MoveType::WordBus)
-    } else if v == MoveType::ZoneBus as u8 {
-        Some(MoveType::ZoneBus)
-    } else {
-        None
-    }
-}
-
-fn decode_direction(v: u8) -> Option<Direction> {
-    if v == Direction::Forward as u8 {
-        Some(Direction::Forward)
-    } else if v == Direction::Backward as u8 {
-        Some(Direction::Backward)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]

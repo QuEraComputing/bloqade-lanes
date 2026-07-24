@@ -29,7 +29,7 @@ use crate::primitives::ordering::{
 };
 use crate::primitives::path::find_path_occupied;
 use crate::traits::Goal;
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -371,21 +371,6 @@ fn cmp_group_entries(a: &ScoredEntry, b: &ScoredEntry) -> Ordering {
     })
 }
 
-fn decode_triplet_key(mt_u8: u8, dir_u8: u8) -> (MoveType, Direction) {
-    let mt = match mt_u8 {
-        x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
-        x if x == MoveType::WordBus as u8 => MoveType::WordBus,
-        x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
-        _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
-    };
-    let dir = match dir_u8 {
-        x if x == Direction::Forward as u8 => Direction::Forward,
-        x if x == Direction::Backward as u8 => Direction::Backward,
-        _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
-    };
-    (mt, dir)
-}
-
 fn build_deadlock_breaker_candidate(
     config: &Config,
     occupied: &HashSet<u64>,
@@ -411,9 +396,16 @@ fn build_deadlock_breaker_candidate(
     }
 
     let mut best: Option<(usize, f64, MoveSet, Config)> = None;
-    for ((mt_u8, bus_id, dir_u8), mut qubits) in groups {
+    for (
+        TripletKey {
+            move_type: mt,
+            bus_id,
+            direction: dir,
+        },
+        mut qubits,
+    ) in groups
+    {
         qubits.sort_by(cmp_group_entries);
-        let (mt, dir) = decode_triplet_key(mt_u8, dir_u8);
         let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
@@ -879,7 +871,7 @@ pub(crate) fn generate_candidates(
             let delta_d = d_now - effective_d_after;
             let delta_m = m_after - m_now;
 
-            let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+            let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
             raw_deltas.push((
                 triplet_key,
                 qid,
@@ -955,9 +947,16 @@ pub(crate) fn generate_candidates(
     // Step 5: per group, build AOD-compatible rectangular grids.
     let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
 
-    for ((mt_u8, bus_id, dir_u8), mut qubits) in groups {
+    for (
+        TripletKey {
+            move_type: mt,
+            bus_id,
+            direction: dir,
+        },
+        mut qubits,
+    ) in groups
+    {
         qubits.sort_by(cmp_group_entries);
-        let (mt, dir) = decode_triplet_key(mt_u8, dir_u8);
 
         let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
 
@@ -1810,6 +1809,7 @@ fn get_next_candidate(
 mod tests {
     use super::*;
     use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
     use bloqade_lanes_bytecode_core::arch::types::TransportPath;
 
     fn make_index() -> LaneIndex {
@@ -2194,9 +2194,11 @@ mod tests {
 
     #[test]
     fn scored_entry_tie_break_is_deterministic() {
+        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, Direction::Backward);
+        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, Direction::Backward);
         let mut entries = [
             (
-                (1, 2, 1),
+                key_bus2,
                 ScoredEntry {
                     qubit_id: 8,
                     score: 3.0,
@@ -2205,7 +2207,7 @@ mod tests {
                 },
             ),
             (
-                (1, 1, 1),
+                key_bus1,
                 ScoredEntry {
                     qubit_id: 4,
                     score: 3.0,
@@ -2214,7 +2216,7 @@ mod tests {
                 },
             ),
             (
-                (1, 1, 1),
+                key_bus1,
                 ScoredEntry {
                     qubit_id: 4,
                     score: 3.0,
@@ -2226,11 +2228,11 @@ mod tests {
 
         entries.sort_by(cmp_scored_entries);
 
-        assert_eq!(entries[0].0, (1, 1, 1));
+        assert_eq!(entries[0].0, key_bus1);
         assert_eq!(entries[0].1.lane_encoded, 10);
-        assert_eq!(entries[1].0, (1, 1, 1));
+        assert_eq!(entries[1].0, key_bus1);
         assert_eq!(entries[1].1.lane_encoded, 12);
-        assert_eq!(entries[2].0, (1, 2, 1));
+        assert_eq!(entries[2].0, key_bus2);
     }
 
     #[test]
