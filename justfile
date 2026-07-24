@@ -8,7 +8,7 @@ default:
 # ── Python ──────────────────────────────────────────────────────────
 
 coverage-run:
-    uv run pytest python/tests --cov --cov-report= -n auto
+    uv run pytest python/tests --cov --cov-report= -n auto -m "not msd_numerical_regression"
 
 coverage-xml: coverage-run
     uv run coverage xml

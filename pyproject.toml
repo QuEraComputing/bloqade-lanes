@@ -171,3 +171,6 @@ exclude_also = [
 
 [tool.pytest.ini_options]
 testpaths = "python/tests/"
+markers = [
+    "msd_numerical_regression: optional long-running, environment-specific MSD numerical regression",
+]
