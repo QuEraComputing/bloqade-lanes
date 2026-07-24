@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, TypeGuard
+from typing import TypeGuard
 
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir, types
@@ -364,7 +365,7 @@ class RewritePhysicalMeasure(abc.RewriteRule):
     def _collect_inputs(self, node: qubit.stmts.Measure) -> list[ir.SSAValue]:
         owner = node.qubits.owner
         if not isinstance(owner, ilist.New):
-            raise ValueError(
+            raise TypeError(
                 f"RewritePhysicalMeasure: expected qubits owner to be ilist.New, "
                 f"got {type(owner).__name__}. Ensure AggressiveUnroll ran before "
                 f"this rewrite pass."

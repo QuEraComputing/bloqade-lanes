@@ -1,3 +1,5 @@
+import itertools
+
 import pytest
 
 from bloqade.lanes.arch.gemini import logical
@@ -35,7 +37,7 @@ def test_metrics_get_lane_duration_cost_monotonic():
         (move_calc.get_lane_duration_us(lane), move_calc.get_lane_duration_cost(lane))
         for lane in lanes
     )
-    for (_, left_cost), (_, right_cost) in zip(pairs, pairs[1:]):
+    for (_, left_cost), (_, right_cost) in itertools.pairwise(pairs):
         assert left_cost <= right_cost + 1e-12
 
 

@@ -31,7 +31,7 @@ class _DuplicateAddressValidationAnalysis(Forward[EmptyLattice]):
     keys = ("gemini.common.qubit.duplicates",)
     lattice = EmptyLattice
 
-    seen: dict["LocationAddress", "NewAt"] = field(init=False, default_factory=dict)
+    seen: dict[LocationAddress, NewAt] = field(init=False, default_factory=dict)
 
     def initialize(self):
         self.seen.clear()

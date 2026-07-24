@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cached_property
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 from bloqade.lanes.bytecode._native import (
     ArchSpec as _RustArchSpec,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
@@ -121,19 +123,19 @@ def test_is_acceptable_solve_accepts_dsl_fallback_with_path():
 
     class _DslSolvedResult:
         policy_status = "solved"
-        move_layers = [["lane1"]]
+        move_layers: ClassVar = [["lane1"]]
 
     class _DslFallbackResult:
         policy_status = "fallback: policy-requested"
-        move_layers = [["lane1", "lane2"]]  # non-empty path
+        move_layers: ClassVar = [["lane1", "lane2"]]  # non-empty path
 
     class _DslFallbackNoPath:
         policy_status = "fallback: policy-requested"
-        move_layers = []  # no path found
+        move_layers: ClassVar = []  # no path found
 
     class _DslUnsolvable:
         policy_status = "unsolvable"
-        move_layers = []
+        move_layers: ClassVar = []
 
     assert _is_acceptable_solve(_DslSolvedResult())
     assert _is_acceptable_solve(_DslFallbackResult())
@@ -176,10 +178,10 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
         status = "solved"
         nodes_expanded = 1
         # move_layers: list[list[LaneAddress]] — MoveType.ZONE variant
-        move_layers = [
+        move_layers: ClassVar = [
             [NativeLane(MoveType.ZONE, 0, 0, 0, 0, BytecodeDirection.FORWARD)]
         ]
-        goal_config = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
+        goal_config: ClassVar = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
 
     class _FakeSolver:
         def solve(self, *_args):
@@ -212,13 +214,13 @@ def test_cz_placements_counts_entropy_fallback_trace(monkeypatch):
         event = "fallback_start"
 
     class _FakeTrace:
-        steps = [_FakeTraceStep()]
+        steps: ClassVar = [_FakeTraceStep()]
 
     class _FakeResult:
         status = "solved"
         nodes_expanded = 1
-        move_layers = []
-        goal_config = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
+        move_layers: ClassVar = []
+        goal_config: ClassVar = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
         entropy_trace = _FakeTrace()
 
     class _FakeSolver:

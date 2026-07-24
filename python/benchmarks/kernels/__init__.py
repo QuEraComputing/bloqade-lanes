@@ -87,4 +87,4 @@ def select_benchmark_cases(case_filter: set[str] | None) -> tuple[BenchmarkCase,
     return tuple(sorted(selected.values(), key=lambda case: case.case_id))
 
 
-__all__ = ["BENCHMARK_CASES", "BenchmarkCase", "SIZE_BUCKETS", "select_benchmark_cases"]
+__all__ = ["BENCHMARK_CASES", "SIZE_BUCKETS", "BenchmarkCase", "select_benchmark_cases"]

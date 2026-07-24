@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# coding: utf-8
 # %% [markdown]
 # # MSD Postselection Experiment
 #

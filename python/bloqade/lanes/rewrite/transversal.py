@@ -1,10 +1,10 @@
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import chain
 
 from kirin import ir, types
 from kirin.dialects import func, ilist, math as kmath
 from kirin.rewrite import abc as rewrite_abc
-from typing_extensions import Callable, Iterable
 
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place

@@ -26,6 +26,8 @@
 # Below is the architecture specification used by the logical compiler. The index of the locations that a logical qubit can occupy in the logical architecture is defined below.
 # > A logical qubit can only initially occupy *left* sites of each column (corresponding to the blue circles in the below diagram).
 
+import itertools
+
 # %%
 import matplotlib.pyplot as plt
 
@@ -63,8 +65,8 @@ def plot_labeled_arch(
 
     x_values = sorted({pos[0] for _, pos in locations})
     y_values = sorted({pos[1] for _, pos in locations})
-    dx = min((b - a for a, b in zip(x_values, x_values[1:])), default=2.0)
-    dy = min((b - a for a, b in zip(y_values, y_values[1:])), default=10.0)
+    dx = min((b - a for a, b in itertools.pairwise(x_values)), default=2.0)
+    dy = min((b - a for a, b in itertools.pairwise(y_values)), default=10.0)
 
     fig_width = max(6, 0.75 * len(x_values))
     fig_height = max(5, 0.95 * len(y_values) + 2)

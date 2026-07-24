@@ -14,8 +14,9 @@ The ``ArchSpec`` shims (``arch_spec.plot``, ``.show``, ``.x_bounds``,
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cached_property
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 from bloqade.lanes.bytecode.encoding import (
     Direction,

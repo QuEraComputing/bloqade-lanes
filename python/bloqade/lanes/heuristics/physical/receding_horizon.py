@@ -178,9 +178,9 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
         self,
         engine: SearchEngine,
         move_search: MoveSearch,
-        initial: dict[int, "_native.LocationAddress"],
+        initial: dict[int, _native.LocationAddress],
         cz_pairs: list[tuple[int, int]],
-        blocked: list["_native.LocationAddress"],
+        blocked: list[_native.LocationAddress],
         future_cz_layers: list[list[tuple[int, int]]] | None,
     ) -> SolveResult:
         placement = RecedingHorizonCzPlacement(

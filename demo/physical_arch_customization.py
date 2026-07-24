@@ -33,6 +33,8 @@
 #
 # Import utilities to define the SQuIN kernel dialect that we will be writing our programs in.
 
+import itertools
+
 # %%
 import math
 from typing import Any, Literal, TypeVar
@@ -80,8 +82,8 @@ def plot_labeled_arch(
 
     x_values = sorted({pos[0] for _, pos in locations})
     y_values = sorted({pos[1] for _, pos in locations})
-    dx = min((b - a for a, b in zip(x_values, x_values[1:])), default=2.0)
-    dy = min((b - a for a, b in zip(y_values, y_values[1:])), default=10.0)
+    dx = min((b - a for a, b in itertools.pairwise(x_values)), default=2.0)
+    dy = min((b - a for a, b in itertools.pairwise(y_values)), default=10.0)
 
     fig_width = max(6, 0.75 * len(x_values))
     fig_height = max(5, 0.95 * len(y_values) + 2)

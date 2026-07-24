@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import itertools
 from abc import ABC
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from types import MappingProxyType
-from typing import Any, Callable, Sequence
+from typing import Any
 
 import numpy as np
 from kirin import ir
@@ -406,7 +408,7 @@ class StateArtist:
         self, move_execution: AtomState, last_xs: list[float], last_ys: list[float]
     ) -> tuple[list[int], list[int], list[int]]:
         moving_atom_data: list[tuple[int, int, int]] = []
-        for qubit in move_execution.data.prev_lanes.keys():
+        for qubit in move_execution.data.prev_lanes:
             x, y = self.arch_spec.get_position(
                 move_execution.data.qubit_to_locations[qubit]
             )
@@ -425,7 +427,7 @@ class StateArtist:
         stationary_atom_data = [
             (*self.arch_spec.get_position(location), qubit)
             for qubit, location in move_execution.data.qubit_to_locations.items()
-            if qubit not in move_execution.data.prev_lanes.keys()
+            if qubit not in move_execution.data.prev_lanes
         ]
         if len(stationary_atom_data) == 0:
             return [], [], []
@@ -510,7 +512,7 @@ class StateArtist:
         cmap = colormaps["viridis"]
         for lane in state.data.prev_lanes.values():
             path = self.arch_spec.get_path(lane)
-            steps = list(zip(path, path[1:]))
+            steps = list(itertools.pairwise(path))
             color_indices = np.linspace(0, 1, len(steps))
             for cl_val, ((x_start, y_start), (x_end, y_end)) in zip(
                 color_indices, steps
@@ -528,10 +530,10 @@ class StateArtist:
                 )
 
     def _show_local(self, stmt: move.LocalR | move.LocalRz, color: str):
-        positions = list(
+        positions = [
             self.arch_spec.get_position(location)
             for location in stmt.location_addresses
-        )
+        ]
         x_pos, y_pos = zip(*positions) if len(positions) > 0 else ([], [])
         self.ax.scatter(x_pos, y_pos, color=color, **self.plot_params.gate_spot_args)
 

@@ -8,7 +8,7 @@ from bloqade.lanes.visualize.arch import ArchVisualizer
 def show_lanes(arch: ArchSpec):
     from matplotlib import pyplot as plt
 
-    f, axs = plt.subplots(1, 2, figsize=(12, 5))
+    _f, axs = plt.subplots(1, 2, figsize=(12, 5))
     ArchVisualizer(arch).plot(
         show_words=range(min(4, len(arch.words))), show_site_bus=(0,), ax=axs[0]
     )
@@ -23,17 +23,17 @@ def show_lanes(arch: ArchSpec):
 logical_arch = logical.get_arch_spec()
 show_lanes(logical_arch)
 
-from bloqade.lanes.bytecode.encoding import (  # noqa F402
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LocationAddress,
     SiteLaneAddress,
     WordLaneAddress,
     ZoneAddress,
 )
-from bloqade.lanes.dialects import move  # noqa F402
+from bloqade.lanes.dialects import move
 
 # %%
-from bloqade.lanes.prelude import kernel  # noqa F402
+from bloqade.lanes.prelude import kernel
 
 
 @kernel
@@ -66,7 +66,7 @@ main.print()
 
 # %%
 # %matplotlib qt
-from bloqade.lanes.visualize import debugger  # noqa F402
+from bloqade.lanes.visualize import debugger
 
 debugger(main, arch_spec=logical_arch, atom_marker="s")
 
@@ -97,7 +97,7 @@ show_lanes(physical_arch)
 # ```
 
 # %%
-from bloqade.lanes.transform import transversal_rewrites  # noqa F402
+from bloqade.lanes.transform import transversal_rewrites
 
 # rewrites to transversal moves on steane code
 main.print()
@@ -110,8 +110,8 @@ transversal_main.print()
 debugger(transversal_main, arch_spec=physical_arch)
 
 # %%
-from bloqade.lanes.noise_model import generate_simple_noise_model  # noqa F402
-from bloqade.lanes.transform import MoveToSquinPhysical  # noqa F402
+from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.transform import MoveToSquinPhysical
 
 squin_kernel = MoveToSquinPhysical(
     physical_arch, noise_model=generate_simple_noise_model()
@@ -120,8 +120,8 @@ squin_kernel.print()
 
 
 # %%
-from bloqade.cirq_utils import emit_circuit  # noqa F402
-from cirq.contrib.svg import SVGCircuit  # noqa F402
+from bloqade.cirq_utils import emit_circuit
+from cirq.contrib.svg import SVGCircuit
 
 circ = emit_circuit(squin_kernel)
 SVGCircuit(circ)

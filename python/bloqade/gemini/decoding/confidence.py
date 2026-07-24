@@ -129,9 +129,9 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
         detector_vertices = self._detector_vertices
         observable_indices = self._observable_indices
 
-        error_variables: list["gp.Var"] = []
-        detector_variables: list["gp.Var"] = []
-        logical_variables: list["gp.Var"] = []
+        error_variables: list[gp.Var] = []
+        detector_variables: list[gp.Var] = []
+        logical_variables: list[gp.Var] = []
         objective: gp.LinExpr = gp.LinExpr(0)
 
         for i, weight in enumerate(weights):
@@ -174,7 +174,7 @@ class GurobiDecoderWithConfidence(GurobiDecoder, ConfidenceDecoder):
             m.addConstr(constraint == logical_var, name="lpar" + str(obs_idx))
 
         if forbidden_logical is not None:
-            diff_variables: list["gp.Var"] = []
+            diff_variables: list[gp.Var] = []
             for obs_idx, forbidden_bit in enumerate(forbidden_logical.astype(int)):
                 diff_var = m.addVar(vtype=GRB.BINARY, name="d" + str(obs_idx))
                 diff_variables.append(diff_var)

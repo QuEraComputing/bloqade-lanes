@@ -287,7 +287,7 @@ def render_steane_code_qubit(
     ax: Axes | None = None, center: tuple[float, float] = (0, 0), figsize=(5, 5)
 ) -> Axes:
     if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
+        _fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect("equal")
         ax.set_xlim((-2 + center[0], 2 + center[0]))
         ax.set_ylim((-2 + center[1], 2 + center[1]))
@@ -482,7 +482,7 @@ print(
 # %%
 # helper functions to analyze statistical distribution of logical measurements
 def get_hist(obs_array: np.ndarray):
-    return Counter(map(lambda x: tuple(map(int, x)), obs_array[:]))
+    return Counter(tuple(map(int, x)) for x in obs_array[:])
 
 
 def kl_divergence(p_hist: Counter, q_hist: Counter) -> float:

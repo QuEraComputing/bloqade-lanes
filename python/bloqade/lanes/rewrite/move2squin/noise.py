@@ -1,8 +1,9 @@
 import abc
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import singledispatchmethod
-from typing import Any, Sequence, TypeGuard, TypeVar
+from typing import Any, TypeGuard, TypeVar
 
 from kirin import ir
 from kirin.analysis.forward import ForwardFrame

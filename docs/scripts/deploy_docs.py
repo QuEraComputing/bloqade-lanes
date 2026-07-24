@@ -97,7 +97,9 @@ def restore_book_toml(original: str) -> None:
 def build_docs() -> None:
     """Build the mdBook site and Rust API docs via `just doc-all`."""
     log.info("Building documentation with `just doc-all`...")
-    result = subprocess.run(["just", "doc-all"], capture_output=True, text=True)
+    result = subprocess.run(
+        ["just", "doc-all"], capture_output=True, text=True, check=False
+    )
     if result.stdout:
         log.info(result.stdout.rstrip())
     if result.returncode != 0:

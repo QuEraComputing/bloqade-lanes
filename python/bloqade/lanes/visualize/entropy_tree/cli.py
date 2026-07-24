@@ -121,14 +121,14 @@ def _export_animation(
         fig,
         animate,
         frames=reducer.frame_count,
-        interval=max(1, int(round(1000 / max(fps, 0.1)))),
+        interval=max(1, round(1000 / max(fps, 0.1))),
         blit=False,
         repeat=True,
     )
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     suffix = output_path.suffix.lower()
-    writer_fps = max(1, int(round(fps)))
+    writer_fps = max(1, round(fps))
     if suffix == ".gif":
         writer = animation.PillowWriter(fps=writer_fps)
     elif suffix == ".mp4":
