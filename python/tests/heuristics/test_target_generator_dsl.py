@@ -36,10 +36,9 @@ def generate(ctx, lib):
 
 
 def _write_policy(src: str) -> str:
-    f = tempfile.NamedTemporaryFile("w", suffix=".star", delete=False)
-    f.write(src)
-    f.flush()
-    f.close()
+    with tempfile.NamedTemporaryFile("w", suffix=".star", delete=False) as f:
+        f.write(src)
+        f.flush()
     return f.name
 
 

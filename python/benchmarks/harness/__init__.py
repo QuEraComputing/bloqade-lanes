@@ -17,14 +17,14 @@ from benchmarks.harness.output import (
 from benchmarks.harness.runner import BenchmarkRunner
 
 __all__ = [
-    "BenchmarkRunner",
+    "CSV_COLUMNS",
     "BenchmarkComparisonReport",
     "BenchmarkDiff",
-    "CSV_COLUMNS",
+    "BenchmarkRunner",
     "compare_against_baseline",
     "default_strategy_configs",
-    "load_baseline_csv",
     "expand_benchmark_jobs",
+    "load_baseline_csv",
     "render_comparison_report",
     "render_console_table",
     "sort_rows",

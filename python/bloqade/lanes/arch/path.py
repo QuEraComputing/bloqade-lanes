@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from itertools import product
-from typing import Callable
+from itertools import pairwise, product
 
 import rustworkx as nx
 
@@ -134,7 +134,7 @@ class PathFinder:
         if len(path) < 2:
             raise ValueError("Path must have at least two nodes to extract lanes.")
         lanes = []
-        for start_node, end_node in zip(path, path[1:]):
+        for start_node, end_node in pairwise(path):
             lane = self.site_graph.get_edge_data(start_node, end_node)
             if lane is None:
                 raise ValueError(

@@ -79,7 +79,7 @@ def test_physical_pipeline_missing_measure_raises():
 
     @squin.kernel
     def kernel():
-        _reg = squin.qalloc(1)  # noqa: F841
+        _reg = squin.qalloc(1)
 
     import pytest
 

@@ -486,7 +486,7 @@ def test_idempotence_second_application_is_noop():
 
 def test_empty_body_is_unchanged():
     """An empty body is a no-op."""
-    body_block, entry_state = _new_body_block()
+    body_block, _entry_state = _new_body_block()
 
     sp, outer = _wrap_in_static_placement(body_block)
 

@@ -459,7 +459,7 @@ def run_benchmarks(
         total_sites = len(arch.words) * arch_cfg.sites_per_word
         max_q = total_sites // 2
         fractions = arch_fractions[arch_name]
-        qubit_counts = sorted(set(max(4, int(max_q * f)) for f in fractions))
+        qubit_counts = sorted({max(4, int(max_q * f)) for f in fractions})
 
         rust_engine = SearchEngine.from_arch_spec(arch._inner)
 

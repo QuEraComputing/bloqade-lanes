@@ -1,4 +1,5 @@
-from typing import Callable
+import itertools
+from collections.abc import Callable
 
 import pytest
 
@@ -35,7 +36,7 @@ def _path_duration(
     path_finder: PathFinder, locations: tuple[LocationAddress, ...]
 ) -> float:
     duration = 0.0
-    for src, dst in zip(locations, locations[1:]):
+    for src, dst in itertools.pairwise(locations):
         lane = path_finder.spec.get_lane_address(src, dst)
         assert lane is not None
         duration += path_finder.metrics.get_lane_duration_us(lane)
@@ -48,7 +49,7 @@ def _path_weight(
     edge_weight: Callable[[LaneAddress], float],
 ) -> float:
     weight = 0.0
-    for src, dst in zip(locations, locations[1:]):
+    for src, dst in itertools.pairwise(locations):
         lane = path_finder.spec.get_lane_address(src, dst)
         assert lane is not None
         weight += edge_weight(lane)

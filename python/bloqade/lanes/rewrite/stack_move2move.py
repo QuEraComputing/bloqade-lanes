@@ -104,7 +104,6 @@ class RewriteStackMoveToMove(RewriteRule):
     @singledispatchmethod
     def _rewrite(self, stmt: ir.Statement, to_delete: list[ir.Statement]) -> None:
         """Default: non-stack_move statements pass through unchanged."""
-        pass
 
     # Note: no handlers for Return / Halt. The decoder emits
     # ``func.Return`` and ``func.ConstantNone`` + ``func.Return``

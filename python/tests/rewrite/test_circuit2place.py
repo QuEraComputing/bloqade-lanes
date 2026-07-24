@@ -295,10 +295,8 @@ def test_merge_regions():
     body_block = ir.Block()
     entry_state = body_block.args.append_from(types.StateType, name="entry_state")
     body_block.stmts.append(
-        (
-            gate_stmt := place.Rz(
-                entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
-            )
+        gate_stmt := place.Rz(
+            entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
         )
     )
     body_block.stmts.append(

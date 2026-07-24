@@ -46,7 +46,6 @@ def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
 
         def run(self, kernel):
             calls["analysis_kernel"] = kernel
-            return None
 
     class _FakeMoveToSquinLogical:
         def __init__(self, *, arch_spec, noise_model, add_noise, aggressive_unroll):

@@ -289,7 +289,7 @@ class TreeStateReducer:
                 hardware_move_source_configuration=hardware_move_source_configuration,
                 hardware_moveset=hardware_moveset,
                 seen_link=None,
-                best_buffer_node_display_ids=tuple(),
+                best_buffer_node_display_ids=(),
             )
 
         last_reason: str | None = None

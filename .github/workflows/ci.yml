@@ -94,7 +94,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        # `uv python pin` overrides the committed .python-version (3.12) so the
+        # venv and test run actually use the matrix interpreter — otherwise every
+        # matrix job silently runs on 3.12.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv python pin ${{ matrix.python-version }}
       - name: Install the project
         run: uv sync --all-extras --dev
       - name: Run all tests with coverage
@@ -135,7 +140,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        # `uv python pin` overrides the committed .python-version (3.12) so the
+        # venv and test run actually use the matrix interpreter — otherwise every
+        # matrix job silently runs on 3.12.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv python pin ${{ matrix.python-version }}
       - name: Install the project
         run: uv sync --all-extras --dev
       - name: Run demos

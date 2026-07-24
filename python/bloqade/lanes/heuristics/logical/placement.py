@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
-from itertools import starmap
 
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -55,9 +54,12 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
         return dir_src != dir_dst
 
     return any(
-        starmap(
+        map(
             check_coord_conflict,
-            zip(m0.src_position, m1.src_position, m0.dst_position, m1.dst_position),
+            m0.src_position,
+            m1.src_position,
+            m0.dst_position,
+            m1.dst_position,
         )
     )
 

@@ -294,8 +294,8 @@ def _add_numeric_delta(
     strategy_id: str,
     arch_spec_id: str,
     field: str,
-    baseline: int | float | None,
-    current: int | float | None,
+    baseline: float | None,
+    current: float | None,
     lower_is_better: bool,
     float_compare_decimals: int | None = None,
     percent_tolerance: float | None = None,
@@ -314,9 +314,12 @@ def _add_numeric_delta(
         current_cmp = _round_float_for_compare(current, decimals=float_compare_decimals)
     if baseline_cmp == current_cmp:
         return
-    if percent_tolerance is not None and baseline != 0:
-        if abs(current - baseline) / abs(baseline) <= percent_tolerance:
-            return
+    if (
+        percent_tolerance is not None
+        and baseline != 0
+        and abs(current - baseline) / abs(baseline) <= percent_tolerance
+    ):
+        return
     if lower_is_better:
         kind = "degraded" if current > baseline else "improved"
     else:
@@ -334,7 +337,7 @@ def _add_numeric_delta(
     )
 
 
-def _round_float_for_compare(value: int | float, *, decimals: int) -> float:
+def _round_float_for_compare(value: float, *, decimals: int) -> float:
     return round(float(value), decimals)
 
 

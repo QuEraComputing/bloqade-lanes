@@ -299,7 +299,7 @@ class TestFullCzPipeline:
         placement = _make_nohome(word_size_y)
         arch = placement.arch_spec
         # Start with 2 qubits on same home word
-        home_word = sorted(arch._home_words)[0]
+        home_word = min(arch._home_words)
         state = ConcreteState(
             occupied=frozenset(),
             layout=(LocationAddress(home_word, 0), LocationAddress(home_word, 1)),

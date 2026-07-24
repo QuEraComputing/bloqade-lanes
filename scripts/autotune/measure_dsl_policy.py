@@ -1,4 +1,3 @@
-# ruff: noqa: E402
 """Measure command for autotune: run the DSL policy and emit aggregated metrics.
 
 Calls `bloqade.lanes.transform.PhysicalPipeline` directly with a

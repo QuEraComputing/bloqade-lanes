@@ -1,7 +1,7 @@
 """ReorderStaticPlacement rewrite rule."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from kirin import ir
 from kirin.rewrite import abc

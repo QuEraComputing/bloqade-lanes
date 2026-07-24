@@ -12,7 +12,7 @@ from bloqade.gemini.logical.stdlib import default_post_processing
 
 # helper functions to analyze statistical distribution of logical measurements
 def get_hist(obs_array: np.ndarray):
-    return Counter(map(lambda x: tuple(map(int, x)), obs_array[:]))
+    return Counter(tuple(map(int, x)) for x in obs_array[:])
 
 
 def kl_divergence(p_hist: Counter, q_hist: Counter) -> float:
