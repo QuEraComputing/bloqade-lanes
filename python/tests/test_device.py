@@ -1,3 +1,4 @@
+import importlib.util
 import inspect
 import math
 from concurrent.futures import Future
@@ -35,6 +36,10 @@ from bloqade.gemini.device.simulator import (
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.noise_model import generate_logical_noise_model
+
+_HAS_CLIFFT = importlib.util.find_spec("clifft") is not None
+"""clifft is an optional dependency gated to Python >= 3.12 (see the
+msd-reprod extra); backends using it must be skipped when it is absent."""
 
 
 @gemini_logical.kernel(verify=False)
@@ -287,7 +292,13 @@ def test_noiseless_tsim_circuit_compiles_samplers():
     "backend",
     [
         pytest.param(TsimSimulatorBackend(), id="tsim"),
-        pytest.param(CliffTSimulatorBackend(seed=17), id="clifft"),
+        pytest.param(
+            CliffTSimulatorBackend(seed=17),
+            id="clifft",
+            marks=pytest.mark.skipif(
+                not _HAS_CLIFFT, reason="clifft requires Python >= 3.12"
+            ),
+        ),
         pytest.param(_PyQrackSimulatorBackend(seed=17), id="pyqrack"),
     ],
 )

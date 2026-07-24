@@ -1,3 +1,4 @@
+import importlib.util
 import inspect
 from concurrent.futures import Future
 from dataclasses import is_dataclass
@@ -37,6 +38,10 @@ from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.transform import PhysicalPipeline
+
+_HAS_CLIFFT = importlib.util.find_spec("clifft") is not None
+"""clifft is an optional dependency gated to Python >= 3.12 (see the
+msd-reprod extra); backends using it must be skipped when it is absent."""
 
 
 @squin.kernel
@@ -268,7 +273,13 @@ def test_physical_task_preserves_source_kernel_across_repeated_compilation():
     "backend",
     [
         pytest.param(TsimSimulatorBackend(), id="tsim"),
-        pytest.param(CliffTSimulatorBackend(seed=29), id="clifft"),
+        pytest.param(
+            CliffTSimulatorBackend(seed=29),
+            id="clifft",
+            marks=pytest.mark.skipif(
+                not _HAS_CLIFFT, reason="clifft requires Python >= 3.12"
+            ),
+        ),
         pytest.param(_PyQrackSimulatorBackend(seed=29), id="pyqrack"),
     ],
 )
