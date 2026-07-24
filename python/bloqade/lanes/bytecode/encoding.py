@@ -121,7 +121,7 @@ class LaneAddress(KirinRustWrapper[_RustLaneAddress]):
     def direction(self) -> Direction:
         return self._inner.direction
 
-    def reverse(self) -> "LaneAddress":
+    def reverse(self) -> LaneAddress:
         new_direction = (
             Direction.BACKWARD
             if self.direction == Direction.FORWARD

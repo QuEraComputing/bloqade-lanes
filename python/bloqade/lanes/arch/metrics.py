@@ -1,3 +1,4 @@
+import itertools
 import math
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -29,7 +30,8 @@ class MoveMetricCalculator:
         if len(path) <= 1:
             return ()
         return tuple(
-            math.hypot(x1 - x0, y1 - y0) for (x0, y0), (x1, y1) in zip(path, path[1:])
+            math.hypot(x1 - x0, y1 - y0)
+            for (x0, y0), (x1, y1) in itertools.pairwise(path)
         )
 
     def _const_jerk_min_duration_us(self, max_dist_um: float) -> float:

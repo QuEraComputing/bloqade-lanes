@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cached_property
@@ -8,7 +9,6 @@ from typing import (
     Any,
     Generic,
     Protocol,
-    Sequence,
     TypeVar,
     cast,
 )
@@ -30,10 +30,10 @@ if TYPE_CHECKING:
     from bloqade.lanes.arch.spec import ArchSpec
 
 RetType = TypeVar("RetType")
-ResultRetType = TypeVar("ResultRetType", covariant=True)
+ResultRetType_co = TypeVar("ResultRetType_co", covariant=True)
 
 
-class SimulatorResult(Protocol[ResultRetType]):
+class SimulatorResult(Protocol[ResultRetType_co]):
     """Common interface for simulator results."""
 
     def fidelity_bounds(self) -> tuple[float, float]: ...
@@ -42,7 +42,7 @@ class SimulatorResult(Protocol[ResultRetType]):
     def detector_error_model(self) -> DetectorErrorModel: ...
 
     @property
-    def return_values(self) -> Sequence[ResultRetType]: ...
+    def return_values(self) -> Sequence[ResultRetType_co]: ...
 
     @property
     def detectors(self) -> Sequence[Sequence[bool]]: ...
@@ -55,7 +55,7 @@ class SimulatorResult(Protocol[ResultRetType]):
 
 
 @dataclass(frozen=True)
-class DetectorResult(Generic[ResultRetType]):
+class DetectorResult(Generic[ResultRetType_co]):
     """Detector and observable outcomes from simulator sampling."""
 
     _detector_error_model: DetectorErrorModel
@@ -84,7 +84,7 @@ class DetectorResult(Generic[ResultRetType]):
         return self._detector_error_model
 
     @property
-    def return_values(self) -> Sequence[ResultRetType]:
+    def return_values(self) -> Sequence[ResultRetType_co]:
         raise ValueError(
             "kernel return values are unavailable for detector-only results"
         )

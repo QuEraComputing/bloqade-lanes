@@ -87,7 +87,7 @@ def test_get_path_and_position():
     )
     path = arch_spec.get_path(lane)
     assert isinstance(path, tuple)
-    src, dst = arch_spec.get_endpoints(lane)
+    src, _dst = arch_spec.get_endpoints(lane)
     pos_src = arch_spec.get_position(src)
     assert isinstance(pos_src, tuple)
 

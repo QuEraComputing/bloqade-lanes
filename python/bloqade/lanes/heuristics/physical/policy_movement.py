@@ -73,12 +73,10 @@ def _is_acceptable_solve(result: object) -> bool:
         return False
     if policy_status == "solved":
         return True
-    if (
+    return bool(
         policy_status.startswith("fallback:")
         and len(getattr(result, "move_layers", [])) > 0
-    ):
-        return True
-    return False
+    )
 
 
 @dataclass

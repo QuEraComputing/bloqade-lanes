@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from kirin import ir
 from matplotlib import pyplot as plt

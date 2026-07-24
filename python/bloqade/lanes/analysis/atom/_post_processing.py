@@ -1,6 +1,7 @@
+from collections.abc import Callable, Sequence
 from functools import reduce
 from operator import xor
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from kirin.dialects import ilist
 

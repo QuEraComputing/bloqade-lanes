@@ -243,9 +243,7 @@ def _choose_control(cost_c: float, cost_t: float, len_c: float, len_t: float) ->
         return False
     if len_c < len_t:
         return True
-    if len_t < len_c:
-        return False
-    return True
+    return not len_t < len_c
 
 
 class _HasFactors(Protocol):

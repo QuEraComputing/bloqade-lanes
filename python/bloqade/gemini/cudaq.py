@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from kirin import ir
 
@@ -35,7 +36,8 @@ def cudaq_to_squin(kernel: Callable[..., Any]) -> ir.Method:
     qir_str = cudaq_module.translate(kernel, format="qir-base")
     mt: ir.Method = load(qir_str, dialects=logical.kernel)
 
-    assert (run_pass := logical.kernel.run_pass) is not None
+    run_pass = logical.kernel.run_pass
+    assert run_pass is not None
     run_pass(mt, aggressive_unroll=True, verify=False)
 
     return mt

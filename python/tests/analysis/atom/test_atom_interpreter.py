@@ -67,7 +67,7 @@ def test_atom_interpreter_simple():
         return results
 
     interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())
-    frame, result = interp.run(main)
+    _frame, result = interp.run(main)
     assert result == atom.MeasureResult(
         measurement_id=0, qubit_id=0, location_address=move.LocationAddress(1, 0)
     )

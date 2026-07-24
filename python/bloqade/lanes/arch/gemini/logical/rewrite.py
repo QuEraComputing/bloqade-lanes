@@ -132,7 +132,7 @@ class RewriteInitialize(rewrite_abc.RewriteRule):
             return ilist.IList(list_of_tuples, elem=types.Tuple[types.Int, types.Int])
 
         thetas, phis, lams = (
-            [ssa_map.get(key[i], key[i]) for key in groups.keys()] for i in range(3)
+            [ssa_map.get(key[i], key[i]) for key in groups] for i in range(3)
         )
         logical_addresses = ilist.IList(list(map(make_ilist, groups.values())))
 
