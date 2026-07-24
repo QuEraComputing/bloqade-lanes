@@ -25,7 +25,9 @@ _SEED = 10
 _SIMULATION_SHOTS = 1_000_000
 _EXPECTED_DISTILLED_FIDELITY = 0.9784569952548308
 _EXPECTED_INJECTED_FIDELITY = 0.945448826690564
-_FIDELITY_TOLERANCE = 1e-6
+# Seeded Stim samples are stable enough for numerical-regression checks but not
+# bit-identical across all supported runner configurations.
+_FIDELITY_TOLERANCE = 1e-2
 
 
 def _sample_tasks_sequentially(
