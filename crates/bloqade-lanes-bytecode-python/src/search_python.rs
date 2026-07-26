@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 
 // `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
 // so the attempts-list getter's return signature stays legible.
-type PyObject = Py<PyAny>;
+pub(crate) type PyObject = Py<PyAny>;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
