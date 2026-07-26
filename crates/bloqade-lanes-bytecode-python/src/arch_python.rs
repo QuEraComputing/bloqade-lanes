@@ -1,5 +1,9 @@
 use pyo3::prelude::*;
 
+// `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
+// so `check_locations` / `check_lanes` return-type signatures stay legible.
+type PyObject = Py<PyAny>;
+
 use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::arch::types as rs;
 use bloqade_lanes_bytecode_core::version::Version;

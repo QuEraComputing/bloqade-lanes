@@ -9,6 +9,10 @@ use std::sync::Arc;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+// `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
+// so the attempts-list getter's return signature stays legible.
+type PyObject = Py<PyAny>;
+
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::drivers::entropy::{
@@ -1214,7 +1218,7 @@ impl PyMultiSolveResult {
     /// `candidate_index`, `status`, `nodes_expanded`.
     #[getter]
     fn attempts(&self) -> PyResult<Vec<PyObject>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             self.inner
                 .attempts
                 .iter()
@@ -1521,7 +1525,7 @@ impl PyTargetSolver {
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner
                     .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
             })
@@ -1578,7 +1582,7 @@ impl PySingleHeuristicCzPlacement {
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve(
                     &initial_pairs,
                     &controls,
@@ -1608,7 +1612,7 @@ impl PySingleHeuristicCzPlacement {
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve_with_attempts(
                     initial_pairs,
                     &controls,
@@ -1676,7 +1680,7 @@ impl PyLooseGoalCzPlacement {
         let future = future_cz_layers.unwrap_or_default();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve_pairs(
                     initial_pairs,
                     &cz_pairs,
@@ -1706,7 +1710,7 @@ impl PyLooseGoalCzPlacement {
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve(
                     &initial_pairs,
                     &controls,
@@ -1781,7 +1785,7 @@ impl PyRecedingHorizonCzPlacement {
         let future = future_cz_layers.unwrap_or_default();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve_pairs(
                     initial_pairs,
                     &cz_pairs,
@@ -1811,7 +1815,7 @@ impl PyRecedingHorizonCzPlacement {
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve(
                     &initial_pairs,
                     &controls,
@@ -1875,7 +1879,7 @@ impl PyNoHomeCzPlacement {
         let future = future_cz_layers.unwrap_or_default();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve_pairs(
                     initial_pairs,
                     &cz_pairs,
@@ -1905,7 +1909,7 @@ impl PyNoHomeCzPlacement {
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 self.inner.solve(
                     &initial_pairs,
                     &controls,
