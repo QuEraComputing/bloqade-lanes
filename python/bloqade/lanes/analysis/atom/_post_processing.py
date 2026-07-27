@@ -19,15 +19,18 @@ from .lattice import (
 
 def constructor_function(
     elem: MoveExecution,
+    *,
+    use_qubit_id: bool = False,
 ) -> Callable[[Sequence[bool]], Any] | None:
     if isinstance(elem, MeasureResult):
 
         def _get_measurement(measurements: Sequence[bool]):
-            return measurements[elem.qubit_id]
+            measurement_index = elem.qubit_id if use_qubit_id else elem.measurement_id
+            return measurements[measurement_index]
 
         return _get_measurement
     elif isinstance(elem, (DetectorResult, ObservableResult)):
-        inner_func = constructor_function(elem.data)
+        inner_func = constructor_function(elem.data, use_qubit_id=use_qubit_id)
         if inner_func is None:
             return None
 
@@ -37,7 +40,10 @@ def constructor_function(
         return _get_detector
 
     elif isinstance(elem, IListResult):
-        inner_funcs = tuple(constructor_function(sub_elem) for sub_elem in elem.data)
+        inner_funcs = tuple(
+            constructor_function(sub_elem, use_qubit_id=use_qubit_id)
+            for sub_elem in elem.data
+        )
         if not no_none_elements_tuple(inner_funcs):
             return None
 
@@ -46,7 +52,10 @@ def constructor_function(
 
         return _get_ilist
     elif isinstance(elem, TupleResult):
-        inner_funcs = tuple(constructor_function(sub_elem) for sub_elem in elem.data)
+        inner_funcs = tuple(
+            constructor_function(sub_elem, use_qubit_id=use_qubit_id)
+            for sub_elem in elem.data
+        )
         if not no_none_elements_tuple(inner_funcs):
             return None
 

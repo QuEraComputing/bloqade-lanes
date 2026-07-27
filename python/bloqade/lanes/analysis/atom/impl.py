@@ -278,7 +278,18 @@ class Move(interp.MethodTable):
         if qubit_id is None:
             return (Bottom(),)
 
-        return (MeasureResult(qubit_id, stmt.location_address),)
+        # Assign the global measurement-record index. Each GetFutureResult
+        # that resolves to a real qubit corresponds to exactly one
+        # ``qubit.measure`` emitted downstream by ``InsertMeasurements``
+        # (in this same IR order), which in turn is one column of the raw
+        # per-shot measurement array. Incrementing here — only on the
+        # branch that yields a MeasureResult — keeps the record index in
+        # lockstep with that emission order. GetFutureResults that resolve
+        # to Bottom emit no measurement and must not consume an index.
+        measurement_id = interp_.measurement_record_count
+        interp_.measurement_record_count += 1
+
+        return (MeasureResult(measurement_id, qubit_id, stmt.location_address),)
 
 
 @py.constant.dialect.register(key="atom")

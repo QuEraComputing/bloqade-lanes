@@ -128,15 +128,34 @@ class MeasureFuture(MoveExecution):
 @final
 @dataclass
 class MeasureResult(MoveExecution):
+    """A single terminal-measurement result.
+
+    Attributes:
+        measurement_id: Global measurement-record index, i.e. the order in
+            which the physical measurement operation executes (the first
+            measurement is ``0``, the second ``1``, ...). This is the column
+            index into the raw per-shot measurement array returned by the
+            simulator/hardware backend and is what post-processing must use
+            to look up the result. It coincides with ``qubit_id`` only when
+            qubits happen to be measured once in allocation order.
+        qubit_id: Physical qubit that occupied ``location_address`` at
+            measurement time. Selects which physical qubit SSA value to
+            measure during lowering, but is *not* a valid index into the raw
+            measurement array.
+        location_address: Hardware location that was measured.
+    """
+
+    measurement_id: int
     qubit_id: int
     location_address: LocationAddress
 
     def copy(self):
-        return MeasureResult(self.qubit_id, self.location_address)
+        return MeasureResult(self.measurement_id, self.qubit_id, self.location_address)
 
     def is_subseteq_MeasureResult(self, elem: "MeasureResult") -> bool:
         return (
-            self.qubit_id == elem.qubit_id
+            self.measurement_id == elem.measurement_id
+            and self.qubit_id == elem.qubit_id
             and self.location_address == elem.location_address
         )
 
