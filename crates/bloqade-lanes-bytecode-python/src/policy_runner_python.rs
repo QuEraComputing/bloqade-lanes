@@ -47,10 +47,10 @@ fn pyany_to_json(v: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         Ok(serde_json::json!(f))
     } else if let Ok(s) = v.extract::<String>() {
         Ok(serde_json::Value::String(s))
-    } else if let Ok(list) = v.downcast::<PyList>() {
+    } else if let Ok(list) = v.cast::<PyList>() {
         let items: PyResult<Vec<_>> = list.iter().map(|x| pyany_to_json(&x)).collect();
         Ok(serde_json::Value::Array(items?))
-    } else if let Ok(dict) = v.downcast::<PyDict>() {
+    } else if let Ok(dict) = v.cast::<PyDict>() {
         pydict_to_json(dict)
     } else {
         Err(PyValueError::new_err(format!(
@@ -292,7 +292,7 @@ impl PyPolicyRunner {
 
         let index = Arc::clone(&self.index);
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 solve_with_policy(
                     initial_pairs,
                     target_pairs,

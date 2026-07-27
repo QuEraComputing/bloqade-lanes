@@ -55,7 +55,7 @@ impl PyTargetPolicyRunner {
         };
 
         let result = py
-            .allow_threads(|| {
+            .detach(|| {
                 let mut observer =
                     bloqade_lanes_search::dsl::target_generator_dsl::NoOpTargetObserver;
                 self.inner.generate(
