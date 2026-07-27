@@ -1,6 +1,12 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
+// `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
+// so error-conversion helpers below stay legible. `pub(crate)` matches the
+// visibility of the `pub fn` items that use it in their signatures — a
+// private alias here would risk `private_interfaces` under stricter lints.
+pub(crate) type PyObject = Py<PyAny>;
+
 use bloqade_lanes_bytecode_core::arch::query::{LaneGroupError, LocationGroupError};
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 use bloqade_lanes_bytecode_core::isa::INSTRUCTION_WIDTH;
