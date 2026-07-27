@@ -151,6 +151,32 @@ jobs:
       - name: Run demos
         run: uv run just demo
 
+  msd-numerical-regression:
+    name: MSD numerical regression (optional)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.1"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Set up Python 3.12
+        run: |
+          uv python install 3.12
+          uv python pin 3.12
+      - name: Install the numerical-regression environment
+        run: uv sync --locked --dev --extra sim --extra msd-reprod
+      - name: Run long MSD numerical regression
+        run: uv run pytest -m msd_numerical_regression -v
+
   benchmarks:
     name: benchmarks (${{ matrix.architecture }})
     runs-on: ubuntu-latest

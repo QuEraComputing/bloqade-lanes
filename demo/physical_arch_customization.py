@@ -551,7 +551,7 @@ physical_sim_task = simulator.task(main)
 # %matplotlib qt
 
 # %%
-physical_sim_task.visualize()
+# physical_sim_task.visualize()
 
 # %% [markdown]
 # ## Compiler Feature: ASAP/ALAP Scheduling
@@ -561,14 +561,14 @@ physical_sim_task.visualize()
 physical_sim_task_asap = PhysicalSimulator(place_opt_type=ASAPPlacePass).task(main)
 
 # %%
-physical_sim_task_asap.visualize()
+# physical_sim_task_asap.visualize()
 
 # %%
 physical_sim_task_alap = PhysicalSimulator(place_opt_type=ALAPPlacePass).task(main)
 
 # %%
 # For this use case, doesn't appear to produce a "nice" program. ASAP is what we want for this program.
-physical_sim_task_alap.visualize()
+# physical_sim_task_alap.visualize()
 
 
 # %% [markdown]
@@ -612,7 +612,7 @@ physical_msd_task = PhysicalSimulator(
 ).task(allocate_five_qubits)
 
 # %%
-physical_msd_task.visualize()
+# physical_msd_task.visualize()
 
 # %% [markdown]
 # ## Running Tasks using Physical Simulator

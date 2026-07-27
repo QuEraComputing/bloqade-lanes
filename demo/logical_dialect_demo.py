@@ -82,7 +82,7 @@ task_state_prep.noiseless_tsim_circuit.diagram(width=500)
 
 # %%
 # We visualize the atom move program on physical qubits.
-task_state_prep.visualize()
+# task_state_prep.visualize()
 
 
 # %% [markdown]
@@ -106,7 +106,7 @@ task_hadamard = GeminiLogicalSimulator().task(simple_transversal_hadamard)
 task_hadamard.noiseless_tsim_circuit.diagram(width=500)
 
 # %%
-task_hadamard.visualize()
+# task_hadamard.visualize()
 
 
 # %% [markdown]
@@ -165,7 +165,7 @@ task_bell = GeminiLogicalSimulator().task(simple_bell_state_prep)
 task_bell.noiseless_tsim_circuit.diagram(width=500)
 
 # %%
-task_bell.visualize()
+# task_bell.visualize()
 
 
 # %% [markdown]
@@ -203,7 +203,7 @@ task_bell_4q = GeminiLogicalSimulator().task(four_qubit_bell_state)
 task_bell_4q.noiseless_tsim_circuit.diagram(width=700)
 
 # %%
-task_bell_4q.visualize()
+# task_bell_4q.visualize()
 
 # %% [markdown]
 # You might wonder why there appear to be intermediate, potentially "unnecessary" atom movements. That is because, for the Gemini-QEC machine, our machine has a small calibrated move-set, defined below.
@@ -257,7 +257,7 @@ task_bell_4q_parallel = GeminiLogicalSimulator().task(four_qubit_bell_state_para
 task_bell_4q_parallel.noiseless_tsim_circuit.diagram(width=700)
 
 # %%
-task_bell_4q_parallel.visualize()
+# task_bell_4q_parallel.visualize()
 
 # %%
 # We again print the probability of no errors in the circuit and observe that it is higher
@@ -633,4 +633,4 @@ msd_logical_parallel = GeminiLogicalSimulator().task(msd_logical_parallel_kernel
 msd_logical_parallel.noiseless_tsim_circuit.diagram(width=700)
 
 # %%
-msd_logical_parallel.visualize()
+# msd_logical_parallel.visualize()
