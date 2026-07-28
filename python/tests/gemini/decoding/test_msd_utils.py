@@ -5,6 +5,8 @@ import numpy as np
 
 from bloqade.gemini.decoding import (
     ConfidenceDecoder,
+    PauliMapping,
+    PauliString,
     PostselectionCurveData,
     TableDecoderWithConfidence,
     TomographyResult,
@@ -30,6 +32,20 @@ def test_public_facade_exports_simplified_decoder_and_tomography_types():
     assert result.density_matrix.shape == (2, 2)
 
 
+def test_tomography_accepts_canonical_pauli_mapping():
+    result = TomographyResult(
+        PauliMapping(
+            {
+                PauliString.coerce("X"): np.array([[0], [0]], dtype=np.uint8),
+                PauliString.coerce("Y"): np.array([[0], [1]], dtype=np.uint8),
+                PauliString.coerce("Z"): np.array([[0], [1]], dtype=np.uint8),
+            }
+        )
+    )
+
+    assert result.density_matrix.shape == (2, 2)
+
+
 def test_build_decoder_kernel_bundle_contains_basis_tomography_kernels():
     tomography_kernels = single_qubit_state_tomography()
     kernels = _build_decoder_kernel_bundle(
@@ -41,7 +57,14 @@ def test_build_decoder_kernel_bundle_contains_basis_tomography_kernels():
         tomography_kernels=tomography_kernels,
     )
 
-    assert set(kernels) == {"X", "Y", "Z"}
+    assert isinstance(tomography_kernels, PauliMapping)
+    assert isinstance(kernels, PauliMapping)
+    assert set(kernels) == {
+        PauliString.coerce("X"),
+        PauliString.coerce("Y"),
+        PauliString.coerce("Z"),
+    }
+    assert kernels["X"] is kernels[PauliString.coerce("X")]
 
 
 def test_plot_decoder_curves_handles_curves_without_uncertainty_bands():

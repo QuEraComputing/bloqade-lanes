@@ -9,6 +9,7 @@ from kirin import ir
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
+from bloqade.lanes.pauli import PauliMapping
 
 _LogicalTomographyReturn = tuple[
     ilist.IList[Detector, Any],
@@ -36,7 +37,7 @@ class _DecoderPrimitiveSet:
 
 def _build_tomography_primitives(
     *, output_qubit: int
-) -> dict[str, ir.Method[..., None]]:
+) -> PauliMapping[ir.Method[..., None]]:
     """Build X/Y/Z tomography-basis Squin kernels for one output qubit."""
 
     @squin.kernel
@@ -52,8 +53,7 @@ def _build_tomography_primitives(
     def tomography_z(reg):
         return
 
-    # TODO: stick to X, Y, Z for now. Work with pauli strings by default.
-    return {"X": tomography_x, "Y": tomography_y, "Z": tomography_z}
+    return PauliMapping({"X": tomography_x, "Y": tomography_y, "Z": tomography_z})
 
 
 # TODO: validate that the tomography kernels ONLY contain clifford operations (and no non-clifford
@@ -62,12 +62,12 @@ def _build_tomography_primitives(
 def _produce_tomography_kernels(
     num_qubits: int,
     logical_kernel: ir.Method[..., None],
-    tomography_kernels: Mapping[str, ir.Method[..., None]],
+    tomography_kernels: Mapping[Any, ir.Method[..., None]],
     return_val_fn: ir.Method[..., _ReturnT] | Callable[[object], _ReturnT],
     kernel_name: str,
     *,
     supply_reg: bool = True,
-) -> Mapping[str, ir.Method[..., _ReturnT]]:
+) -> PauliMapping[ir.Method[..., _ReturnT]]:
     """Compose logical and tomography kernels into labeled tomography kernels.
 
     Args:
@@ -117,10 +117,14 @@ def _produce_tomography_kernels(
             gemini_logical.kernel(aggressive_unroll=True)(alloc_kernel),
         )
 
-    return {
-        tomog_kernel_key: make_kernel(
-            tomog_kernel,
-            f"{kernel_name}_{tomog_kernel_key.lower()}",
+    normalized_tomography_kernels = PauliMapping(tomography_kernels)
+    return PauliMapping(
+        (
+            tomog_pauli,
+            make_kernel(
+                tomog_kernel,
+                f"{kernel_name}_{str(tomog_pauli).lower()}",
+            ),
         )
-        for tomog_kernel_key, tomog_kernel in tomography_kernels.items()
-    }
+        for tomog_pauli, tomog_kernel in normalized_tomography_kernels.items()
+    )

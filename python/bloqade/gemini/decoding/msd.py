@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 from kirin import ir
 from kirin.dialects import ilist
 
 from bloqade import squin
+from bloqade.lanes.pauli import PauliMapping
 
 from .kernels import (
     _build_tomography_primitives,
@@ -68,8 +69,8 @@ def _build_msd_primitives(
 def _build_decoder_kernel_bundle(
     primitive_set: _DecoderPrimitiveSet,
     num_logical_qubits: int = 5,
-    tomography_kernels: Mapping[str, ir.Method[..., None]] | None = None,
-) -> dict[str, ir.Method[..., _LogicalTomographyReturn]]:
+    tomography_kernels: Mapping[Any, ir.Method[..., None]] | None = None,
+) -> PauliMapping[ir.Method[..., _LogicalTomographyReturn]]:
     """Build basis-labeled MSD tomography kernels.
 
     Args:
@@ -82,7 +83,7 @@ def _build_decoder_kernel_bundle(
     """
 
     tomography_primitives = (
-        dict(tomography_kernels)
+        PauliMapping(tomography_kernels)
         if tomography_kernels is not None
         else _build_tomography_primitives(output_qubit=0)
     )
@@ -103,4 +104,4 @@ def _build_decoder_kernel_bundle(
         "msd_actual",
     )
 
-    return dict(actual_kernels)
+    return actual_kernels

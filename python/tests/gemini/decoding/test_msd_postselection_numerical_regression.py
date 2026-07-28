@@ -19,6 +19,7 @@ from bloqade.gemini.decoding import (
 )
 from bloqade.gemini.decoding.experiments import _basis_dataset_from_task_result
 from bloqade.gemini.device import CliffTSimulatorBackend, GeminiLogicalSimulator
+from bloqade.lanes.pauli import PauliMapping
 
 _TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 _SEED = 10
@@ -36,10 +37,13 @@ def _sample_tasks_sequentially(
 ) -> None:
     """Sample tomography bases in a deterministic child-seed order."""
     tasks = experiment.make_tasks(simulator)
-    experiment._postselection_exp_cache.raw_results = {
-        basis: _basis_dataset_from_task_result(tasks[basis].run(_SIMULATION_SHOTS))
+    experiment._postselection_exp_cache.raw_results = PauliMapping(
+        (
+            basis,
+            _basis_dataset_from_task_result(tasks[basis].run(_SIMULATION_SHOTS)),
+        )
         for basis in ("X", "Y", "Z")
-    }
+    )
 
 
 def _run_distilled_msd() -> float:

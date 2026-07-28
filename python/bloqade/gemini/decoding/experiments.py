@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import stim
@@ -15,6 +15,7 @@ from bloqade.gemini.device import (
     SimulatorResult,
     TsimSimulatorBackend,
 )
+from bloqade.lanes.pauli import PauliMapping, PauliString
 
 from .confidence import ConfidenceDecoder
 from .dem import _sub_detector_error_model
@@ -73,12 +74,13 @@ def magic_state_dist_steane(
     return primitive_set.state_injection_circuit, primitive_set.logical_circuit
 
 
-def single_qubit_state_tomography() -> dict[str, ir.Method[..., None]]:
+def single_qubit_state_tomography() -> PauliMapping[ir.Method[..., None]]:
     """
     Returns X, Y, and Z basis kernels used to perform single-qubit tomography. Note that the kernels take in the register as the input.
 
     Returns:
-        dict[str, ir.Method[..., None]]: A dictionary mapping "X", "Y", and "Z" to the respective tomography kernels.
+        PauliMapping: A mapping from X, Y, and Z Pauli strings to their
+            respective tomography kernels.
     """
     # return a list?
     # should return (X, Y, Z) in order, but can check this.
@@ -99,15 +101,15 @@ def empty_logical_circuit() -> ir.Method[..., None]:
 
 # TODO: make this "cache" class abstract as well?
 class _PostSelectionExperimentCache:
-    dem_kernels: dict[str, ir.Method[..., _LogicalTomographyReturn]] | None
-    dem_circuits: Mapping[str, tsim_backend.Circuit] | None
-    dems: Mapping[str, stim.DetectorErrorModel] | None
-    decoders_with_confidence: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]] | None
-    raw_results: Mapping[str, _BasisDataset] | None
-    decoded_results: Mapping[str, _DecodedPostselectionResult] | None
+    dem_kernels: PauliMapping[ir.Method[..., _LogicalTomographyReturn]] | None
+    dem_circuits: PauliMapping[tsim_backend.Circuit] | None
+    dems: PauliMapping[stim.DetectorErrorModel] | None
+    decoders_with_confidence: PauliMapping[tuple[ConfidenceDecoder, BaseDecoder]] | None
+    raw_results: PauliMapping[_BasisDataset] | None
+    decoded_results: PauliMapping[_DecodedPostselectionResult] | None
     thresholded_data: PostselectionCurveData | None
     hardware_tasks: (
-        Mapping[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]] | None
+        PauliMapping[GeminiLogicalSimulatorTask[_LogicalTomographyReturn]] | None
     )
 
     def __init__(self):
@@ -145,7 +147,8 @@ class PostSelectionExperiment:
     Attributes:
         nonclifford_prefix (ir.Method[..., None]): A SQuIN kernel consisting of a single layer of single-qubit gates applied to the physical qubits before the state-preparation circuit is applied.
         clifford_circuit (ir.Method[..., None]): A SQuIN kernel consisting of a Clifford circuit applied to the logical qubits (after logical encoding).
-        tomography_circuits (ir.Method[..., None]): A mapping of basis strings to SQuIN kernels consisting of a clifford circuit applied to your logical qubits.
+        tomography_circuits: A mapping of Pauli strings to SQuIN kernels
+            consisting of a Clifford circuit applied to your logical qubits.
         These kernels will be appended to your circuits in the following fashion, for each `basis_label in tomography_circuits`:
             `nonclifford_prefix + clifford_circuit + tomography_circuits[basis_label]`
             From these circuits in each basis, a DEM will be extracted to initialize decoders in each basis.
@@ -157,13 +160,13 @@ class PostSelectionExperiment:
         self,
         nonclifford_prefix: ir.Method[..., None],
         clifford_circuit: ir.Method[..., None],
-        tomography_circuits: Mapping[str, ir.Method[..., None]],
+        tomography_circuits: Mapping[Any, ir.Method[..., None]],
         decoder: type[ConfidenceDecoder],
         decoder_init_args: Mapping[str, object] | None = None,
     ):
         self.nonclifford_prefix = nonclifford_prefix
         self.clifford_circuit = clifford_circuit
-        self.tomography_circuits = dict(tomography_circuits)
+        self.tomography_circuits = PauliMapping(tomography_circuits)
         self.decoder = decoder
         self.decoder_init_args = (
             {} if decoder_init_args is None else dict(decoder_init_args)
@@ -182,7 +185,7 @@ class PostSelectionExperiment:
     def kernels(
         self,
         num_logical_qubits: int = 5,
-    ) -> dict[str, ir.Method[..., _LogicalTomographyReturn]]:
+    ) -> PauliMapping[ir.Method[..., _LogicalTomographyReturn]]:
         """
         Composes the nonclifford, clifford, and tomography kernels into a dictionary mapping each basis label to
         the respective nonclifford + clifford + tomography kernel.
@@ -191,7 +194,8 @@ class PostSelectionExperiment:
             num_logical_qubits (int): An integer corresponding to the number of logical qubits allocated in the kernels.
 
         Returns:
-            dict[str, ir.Method[..., _LogicalTomographyReturn]]: A dictionary mapping the tomography basis labels to the respective kernel used for tomography.
+            PauliMapping: A mapping from tomography Pauli strings to their
+                respective kernels.
         """
         # TODO: change the name of _DecoderPrimitiveSet --> whole_circuit
         decoder_primitive_set = _DecoderPrimitiveSet(
@@ -206,7 +210,7 @@ class PostSelectionExperiment:
         self._postselection_exp_cache.dem_kernels = dem_kernels
         return dem_kernels
 
-    def dem_circuits(self) -> dict[str, tsim_backend.Circuit]:
+    def dem_circuits(self) -> PauliMapping[tsim_backend.Circuit]:
         """
         Constructs TSIM circuits annotated with error channels for each basis from the tomography kernels, which will later
         be used to construct detector error models.
@@ -216,7 +220,7 @@ class PostSelectionExperiment:
         we take our whole circuit, strip away the noise, and prepend it to our circuit so that the noiseless behavior is U^dagU = I.
 
         Returns:
-            dict[str, tsim_backend.Circuit]: A dictionary mapping each basis label to a compiled TSIM circuit with noise channels, where the observables
+            PauliMapping: A mapping from each basis to a compiled TSIM circuit with noise channels, where the observables
             in noiseless simulation are all 0.
         """
         dem_kernels = self._postselection_exp_cache.dem_kernels
@@ -226,38 +230,43 @@ class PostSelectionExperiment:
             noise_model=self._simulator.noise_model,
             backend=TsimSimulatorBackend(),
         )
-        dem_tasks = {
-            basis: dem_simulator.task(kernel.similar())
+        dem_tasks = PauliMapping(
+            (basis, dem_simulator.task(kernel.similar()))
             for basis, kernel in dem_kernels.items()
-        }
+        )
         dem_tasks = _apply_special_tsim_circuit_strategy(dem_tasks)
-        special_tsim_circuits: dict[str, tsim_backend.Circuit] = {
-            basis: task.tsim_circuit for basis, task in dem_tasks.items()
-        }
+        special_tsim_circuits = PauliMapping(
+            (basis, task.tsim_circuit) for basis, task in dem_tasks.items()
+        )
         self._postselection_exp_cache.dem_circuits = special_tsim_circuits
         return special_tsim_circuits
 
-    def dems(self) -> dict[str, stim.DetectorErrorModel]:
+    def dems(self) -> PauliMapping[stim.DetectorErrorModel]:
         """
         Constructs detector error models from the noisy circuits in each basis. Defaults to approximating disjoint errors.
 
         Note: this function depends on dem_circuits() being called.
 
         Returns:
-            dict[str, stim.DetectorErrorModel]: A dictionary mapping each basis label to the detector error model for the tomography
+            PauliMapping: A mapping from each basis to the detector error model for the tomography
             circuit in that basis.
         """
         dem_circuits = self._postselection_exp_cache.dem_circuits
         if dem_circuits is None:
             raise RuntimeError("dem_circuits must be called before dems.")
-        dems = {
-            basis: circ.detector_error_model(approximate_disjoint_errors=True)  # type: ignore[attr-defined]
+        dems = PauliMapping(
+            (
+                basis,
+                circ.detector_error_model(approximate_disjoint_errors=True),  # type: ignore[attr-defined]
+            )
             for basis, circ in dem_circuits.items()
-        }
+        )
         self._postselection_exp_cache.dems = dems
         return dems
 
-    def initialize_decoders(self) -> dict[str, tuple[ConfidenceDecoder, BaseDecoder]]:
+    def initialize_decoders(
+        self,
+    ) -> PauliMapping[tuple[ConfidenceDecoder, BaseDecoder]]:
         """
         Initializes the decoders for the tomography circuits in each basis from the detector error models.
         This function utilizes correlated decoding (https://arxiv.org/abs/2403.03272).
@@ -270,13 +279,15 @@ class PostSelectionExperiment:
         Note: this function depends on dems() being called.
 
         Returns:
-            dict[str, tuple[ConfidenceDecoder, BaseDecoder]]: A dictionary mapping each basis label to (factory_decoder, full_decoder), where factory_decoder
+            PauliMapping: A mapping from each basis to (factory_decoder, full_decoder), where factory_decoder
             decodes the ancilla qubits jointly and full_decoder decodes the output qubit jointly with the information on all logical qubits.
         """
         dems_bases = self._postselection_exp_cache.dems
         if dems_bases is None:
             raise RuntimeError("dems must be called before initialize_decoders.")
-        decoders_bases: dict[str, tuple[ConfidenceDecoder, BaseDecoder]] = {}
+        decoders_bases: list[
+            tuple[PauliString, tuple[ConfidenceDecoder, BaseDecoder]]
+        ] = []
         # NOTE: there is a question of if we want to support multi-qubit
         # tomography in this experiment. For now, probably not; if we did, we
         # would have to specify the number of output qubits and their locations
@@ -314,9 +325,10 @@ class PostSelectionExperiment:
                 decoder_constructor(full_dem, **self.decoder_init_args),
             )
             factory_decoder = decoder_constructor(factory_dem, **self.decoder_init_args)
-            decoders_bases[basis_label] = (factory_decoder, full_decoder)
-        self._postselection_exp_cache.decoders_with_confidence = decoders_bases
-        return decoders_bases
+            decoders_bases.append((basis_label, (factory_decoder, full_decoder)))
+        result = PauliMapping(decoders_bases)
+        self._postselection_exp_cache.decoders_with_confidence = result
+        return result
 
     def make_tasks(
         self,
@@ -327,17 +339,15 @@ class PostSelectionExperiment:
         # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
         # TaskABC[GeminiLogicalFuture]. However, currently, GeminiLogicalSimulatorTask does not inherit from the abstract "task" types in
         # bloqade-core.
-    ) -> dict[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]]:
+    ) -> PauliMapping[GeminiLogicalSimulatorTask[_LogicalTomographyReturn]]:
         """Prepares tasks for submission to the hardware device."""
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
-        actual_tasks: dict[
-            str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]
-        ] = {
-            basis: device.task(kernel.similar())
+        actual_tasks = PauliMapping(
+            (basis, device.task(kernel.similar()))
             for basis, kernel in dem_kernels.items()
-        }
+        )
         self._postselection_exp_cache.hardware_tasks = actual_tasks
         return actual_tasks
 
@@ -349,20 +359,20 @@ class PostSelectionExperiment:
     def get_samples(
         self,
         num_shots: int,
-    ) -> dict[str, _BasisDataset]:
+    ) -> PauliMapping[_BasisDataset]:
         """For each basis, samples num_shots from the hardware. Returns the detector and observable information for each task."""
         actual_tasks = self._postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
         # In this implementation, we request samples for each basis in parallel, and then iteratively block
         # on X, Y, and then Z being finished.
-        futures = {
-            basis: task.run_async(num_shots) for basis, task in actual_tasks.items()
-        }
-        actual_data = {
-            basis: _basis_dataset_from_task_result(future.result())
+        futures = PauliMapping(
+            (basis, task.run_async(num_shots)) for basis, task in actual_tasks.items()
+        )
+        actual_data = PauliMapping(
+            (basis, _basis_dataset_from_task_result(future.result()))
             for basis, future in futures.items()
-        }
+        )
         self._postselection_exp_cache.raw_results = actual_data
         return actual_data
 
@@ -370,7 +380,7 @@ class PostSelectionExperiment:
         self,
         postselection_condition: np.ndarray,
         progress_label: str | bool = False,
-    ) -> dict[str, _DecodedPostselectionResult]:
+    ) -> PauliMapping[_DecodedPostselectionResult]:
         """
         With the resulting shot data from the hardware samples, runs the following steps:
         1. Decoding and correction on the ancilla qubits
@@ -387,7 +397,7 @@ class PostSelectionExperiment:
                 string is used as the progress-bar label. Defaults to False.
 
         Returns:
-            dict[str, _DecodedPostselectionResult]: A dictionary that maps each basis to postselected observables and confidence scores per shot.
+            PauliMapping: A mapping from each basis to postselected observables and confidence scores per shot.
         """
         actual_data = self._postselection_exp_cache.raw_results
         decoder_map = self._postselection_exp_cache.decoders_with_confidence

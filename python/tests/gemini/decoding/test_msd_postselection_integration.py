@@ -11,6 +11,7 @@ from bloqade.gemini.decoding import (
 )
 from bloqade.gemini.decoding.experiments import _basis_dataset_from_task_result
 from bloqade.gemini.device import GeminiLogicalSimulator, TsimSimulatorBackend
+from bloqade.lanes.pauli import PauliMapping
 
 _TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 _DECODER_SEED = 10
@@ -31,10 +32,13 @@ def _sample_tasks_sequentially(
     the same compiled tasks and post-processing synchronously instead.
     """
     tasks = experiment.make_tasks(simulator)
-    experiment._postselection_exp_cache.raw_results = {
-        basis: _basis_dataset_from_task_result(tasks[basis].run(_SIMULATION_SHOTS))
+    experiment._postselection_exp_cache.raw_results = PauliMapping(
+        (
+            basis,
+            _basis_dataset_from_task_result(tasks[basis].run(_SIMULATION_SHOTS)),
+        )
         for basis in ("X", "Y", "Z")
-    }
+    )
 
 
 def _run_seeded_distilled_msd() -> float:

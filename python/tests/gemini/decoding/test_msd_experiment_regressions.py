@@ -18,6 +18,7 @@ from bloqade.gemini.decoding.postselection import (
 )
 from bloqade.gemini.decoding.sampling import _BasisDataset
 from bloqade.gemini.decoding.tomography import TomographyResult
+from bloqade.lanes.pauli import PauliMapping, PauliString
 
 
 def _dataset() -> _BasisDataset:
@@ -83,6 +84,12 @@ def test_build_generic_threshold_tables_returns_decoded_shots_with_confidence():
         basis_labels=("X", "Y", "Z"),
     )
 
+    assert isinstance(decoded, PauliMapping)
+    assert set(decoded) == {
+        PauliString.coerce("X"),
+        PauliString.coerce("Y"),
+        PauliString.coerce("Z"),
+    }
     assert decoded["X"].observables.shape == (3, 1)
     assert decoded["X"].confidence.shape == (3,)
     np.testing.assert_array_equal(decoded["X"].observables[:, 0], np.array([0, 1, 0]))
@@ -220,12 +227,12 @@ def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
 def test_postselection_experiment_decode_and_tomography_result_with_cached_data():
     exp = object.__new__(PostSelectionExperiment)
     exp._postselection_exp_cache = _PostSelectionExperimentCache()
-    exp._postselection_exp_cache.raw_results = {
-        basis: _dataset() for basis in ("X", "Y", "Z")
-    }
-    exp._postselection_exp_cache.decoders_with_confidence = {
-        basis: _decoder_pair() for basis in ("X", "Y", "Z")
-    }
+    exp._postselection_exp_cache.raw_results = PauliMapping(
+        (basis, _dataset()) for basis in ("X", "Y", "Z")
+    )
+    exp._postselection_exp_cache.decoders_with_confidence = PauliMapping(
+        (basis, _decoder_pair()) for basis in ("X", "Y", "Z")
+    )
     exp._postselection_exp_cache.decoded_results = None
 
     decoded = exp.decode_and_postselect(
@@ -245,12 +252,12 @@ def test_postselection_experiment_decode_progress_label_true_uses_decoder_class_
     exp = object.__new__(PostSelectionExperiment)
     exp.decoder = _FactoryDecoder
     exp._postselection_exp_cache = _PostSelectionExperimentCache()
-    exp._postselection_exp_cache.raw_results = {
-        basis: _dataset() for basis in ("X", "Y", "Z")
-    }
-    exp._postselection_exp_cache.decoders_with_confidence = {
-        basis: _decoder_pair() for basis in ("X", "Y", "Z")
-    }
+    exp._postselection_exp_cache.raw_results = PauliMapping(
+        (basis, _dataset()) for basis in ("X", "Y", "Z")
+    )
+    exp._postselection_exp_cache.decoders_with_confidence = PauliMapping(
+        (basis, _decoder_pair()) for basis in ("X", "Y", "Z")
+    )
 
     captured_progress_labels: list[str | bool] = []
 
@@ -291,4 +298,5 @@ def test_shots_at_accepted_fraction_is_relative_to_postselected_shots():
         basis_labels=("X", "Y", "Z"),
     )
 
+    assert isinstance(accepted, PauliMapping)
     assert sum(shots.shape[0] for shots in accepted.values()) == 3

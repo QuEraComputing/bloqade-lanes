@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, cast
@@ -26,6 +27,7 @@ from bloqade.gemini.decoding.confidence import ConfidenceDecoder
 from bloqade.gemini.decoding.experiments import _basis_dataset_from_task_result
 from bloqade.gemini.decoding.sampling import _BasisDataset
 from bloqade.gemini.device import DetectorResult, GeminiLogicalSimulator
+from bloqade.lanes.pauli import PauliMapping, PauliString
 
 
 def _invoke_names(kernel) -> list[str]:
@@ -163,7 +165,11 @@ def test_magic_state_dist_steane_offset_angles_in_ir():
 
 
 def test_single_qubit_state_tomography_keys(tomography_circuits):
-    assert set(tomography_circuits) == {"X", "Y", "Z"}
+    assert set(tomography_circuits) == {
+        PauliString.coerce("X"),
+        PauliString.coerce("Y"),
+        PauliString.coerce("Z"),
+    }
 
 
 def test_single_qubit_state_tomography_ir(tomography_circuits):
@@ -269,12 +275,14 @@ def test_postselection_experiment_decode_requires_decoders_after_samples(
     tomography_circuits,
 ):
     exp = _new_mld_experiment(msd_circuits, tomography_circuits)
-    exp._postselection_exp_cache.raw_results = {
-        "X": _BasisDataset(
-            detectors=np.zeros((2, 15), dtype=np.uint8),
-            observables=np.zeros((2, 5), dtype=np.uint8),
-        )
-    }
+    exp._postselection_exp_cache.raw_results = PauliMapping(
+        {
+            "X": _BasisDataset(
+                detectors=np.zeros((2, 15), dtype=np.uint8),
+                observables=np.zeros((2, 5), dtype=np.uint8),
+            )
+        }
+    )
 
     with pytest.raises(
         RuntimeError,
@@ -324,7 +332,11 @@ def test_postselection_experiment_visualization_requires_analysis(
 def test_postselection_experiment_kernels_basis_keys_and_tomography_suffix(
     msd_mld_kernels,
 ):
-    assert set(msd_mld_kernels) == {"X", "Y", "Z"}
+    assert set(msd_mld_kernels) == {
+        PauliString.coerce("X"),
+        PauliString.coerce("Y"),
+        PauliString.coerce("Z"),
+    }
 
     x_gates = _gate_statements(msd_mld_kernels["X"])
     y_gates = _gate_statements(msd_mld_kernels["Y"])
@@ -370,9 +382,9 @@ def test_postselection_experiment_dems_have_expected_shape(msd_mld_dems):
 
 
 def _assert_decoders_validate_detector_width(
-    decoders: dict[str, tuple[ConfidenceDecoder, BaseDecoder]],
+    decoders: Mapping[PauliString, tuple[ConfidenceDecoder, BaseDecoder]],
 ) -> None:
-    factory_decoder, full_decoder = decoders["X"]
+    factory_decoder, full_decoder = decoders[PauliString.coerce("X")]
     factory_detector_count = int(cast(Any, factory_decoder).num_detectors)
     full_detector_count = int(cast(Any, full_decoder).num_detectors)
 

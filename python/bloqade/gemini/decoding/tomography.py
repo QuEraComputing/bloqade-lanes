@@ -5,19 +5,26 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
+from bloqade.lanes.pauli import PauliMapping, PauliString
+
 _DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
+_SINGLE_QUBIT_PAULIS = tuple(PauliString.coerce(label) for label in ("X", "Y", "Z"))
 
 
-def _density_matrix_from_bloch(bloch: Mapping[str, float]) -> np.ndarray:
+def _density_matrix_from_bloch(
+    bloch: Mapping[Any, float],
+) -> np.ndarray:
+    bloch = PauliMapping(bloch)
     if len(bloch) != 3:
         raise ValueError(
             f"Bloch vectors with {len(bloch)} keys are not supported; "
             "single-qubit tomography requires X, Y, and Z keys."
         )
-    required_keys = {"X", "Y", "Z"}
+    required_keys = set(_SINGLE_QUBIT_PAULIS)
     if set(bloch) != required_keys:
         raise ValueError("Single-qubit tomography requires X, Y, and Z keys.")
 
@@ -32,22 +39,18 @@ def _density_matrix_from_bloch(bloch: Mapping[str, float]) -> np.ndarray:
 
 def _bloch_mapping_from_sequence(
     bloch: np.ndarray | Sequence[float],
-) -> dict[str, float]:
+) -> PauliMapping[float]:
     bloch_arr = np.asarray(bloch, dtype=np.float64)
     if bloch_arr.shape != (3,):
         raise ValueError("bloch must be a length-3 vector.")
-    return {
-        "X": float(bloch_arr[0]),
-        "Y": float(bloch_arr[1]),
-        "Z": float(bloch_arr[2]),
-    }
+    return PauliMapping(zip(_SINGLE_QUBIT_PAULIS, map(float, bloch_arr)))
 
 
 def _validate_single_qubit_bloch_vector(
     bloch: np.ndarray | Sequence[float],
     *,
     tol: float,
-) -> dict[str, float]:
+) -> PauliMapping[float]:
     if tol < 0:
         raise ValueError("tol must be non-negative.")
     bloch_arr = np.asarray(bloch, dtype=np.float64)
@@ -79,18 +82,19 @@ class TomographyResult:
 
     def __init__(
         self,
-        shots_by_basis: Mapping[str, np.ndarray],
+        shots_by_basis: Mapping[Any, np.ndarray],
     ) -> None:
         """
         Create a tomography result by computing the density matrix from the shots per basis.
 
         Args:
-            shots_by_basis (Mapping[str, np.ndarray]): A mapping of each basis to an array of shots (0/1's) in each basis.
+            shots_by_basis: A mapping of Pauli strings to arrays of 0/1 shots.
         """
-        zero_counts: dict[str, int] = {}
-        one_counts: dict[str, int] = {}
-        totals: dict[str, int] = {}
-        bloch: dict[str, float] = {}
+        shots_by_basis = PauliMapping(shots_by_basis)
+        zero_counts: dict[PauliString, int] = {}
+        one_counts: dict[PauliString, int] = {}
+        totals: dict[PauliString, int] = {}
+        bloch: dict[PauliString, float] = {}
         for basis in shots_by_basis:
             shots = np.asarray(shots_by_basis[basis], dtype=np.uint8)
             if shots.ndim != 2 or shots.shape[1] != 1:

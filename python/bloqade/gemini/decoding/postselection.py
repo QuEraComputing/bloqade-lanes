@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from bloqade.decoders import BaseDecoder
+
+from bloqade.lanes.pauli import PauliMapping, PauliString, PauliStringLike
 
 from .confidence import ConfidenceDecoder
 from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
 from .sampling import _BasisDataset
 from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 
-_DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
+_DEFAULT_BASIS_LABELS = tuple(PauliString.coerce(label) for label in ("X", "Y", "Z"))
 _ProgressLabel = str | bool
 
 
@@ -103,7 +106,7 @@ def _decode_confidence_batch(
 
 def _resolve_progress_label(
     progress_label: _ProgressLabel,
-    decoder_map: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]],
+    decoder_map: Mapping[PauliString, tuple[ConfidenceDecoder, BaseDecoder]],
 ) -> str | None:
     if progress_label is False:
         return None
@@ -116,13 +119,13 @@ def _resolve_progress_label(
 
 
 def _build_generic_threshold_tables(
-    actual_data: Mapping[str, _BasisDataset],
-    decoder_map: Mapping[str, tuple[ConfidenceDecoder, BaseDecoder]],
+    actual_data: Mapping[Any, _BasisDataset],
+    decoder_map: Mapping[Any, tuple[ConfidenceDecoder, BaseDecoder]],
     *,
     targets: np.ndarray,
-    basis_labels: Sequence[str],
+    basis_labels: Sequence[PauliStringLike],
     progress_label: _ProgressLabel = False,
-) -> dict[str, _DecodedPostselectionResult]:
+) -> PauliMapping[_DecodedPostselectionResult]:
     """Decode, factory-postselect, and keep output bits with confidence.
 
     Each basis result stores decoded output observable shots with shape
@@ -130,10 +133,13 @@ def _build_generic_threshold_tables(
     ``(shots,)``.
     """
 
+    actual_data = PauliMapping(actual_data)
+    decoder_map = PauliMapping(decoder_map)
+    basis_labels = tuple(PauliString.coerce(label) for label in basis_labels)
     packed_targets = {
         int(x) for x in _pack_boolean_array(np.asarray(targets, dtype=np.uint8))
     }
-    decoded_results: dict[str, _DecodedPostselectionResult] = {}
+    decoded_results: dict[PauliString, _DecodedPostselectionResult] = {}
     progress_bars = {}
     resolved_progress_label = _resolve_progress_label(progress_label, decoder_map)
 
@@ -222,29 +228,33 @@ def _build_generic_threshold_tables(
         for progress_bar in progress_bars.values():
             progress_bar.close()
 
-    return decoded_results
+    return PauliMapping(decoded_results)
 
 
 def _shots_at_accepted_fraction(
-    decoded_results: Mapping[str, _DecodedPostselectionResult],
+    decoded_results: Mapping[Any, _DecodedPostselectionResult],
     accepted_fraction: float,
     *,
-    basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
-) -> dict[str, np.ndarray]:
+    basis_labels: Sequence[PauliStringLike] = _DEFAULT_BASIS_LABELS,
+) -> PauliMapping[np.ndarray]:
     """Return decoded observable shots after a global confidence top-k cut."""
 
     if not 0.0 <= accepted_fraction <= 1.0:
         raise ValueError("accepted_fraction must be between 0 and 1.")
 
+    decoded_results = PauliMapping(decoded_results)
+    basis_labels = tuple(PauliString.coerce(label) for label in basis_labels)
+
     total_postselected = sum(
         int(decoded_results[basis].observables.shape[0]) for basis in basis_labels
     )
-    empty = {
-        basis: np.zeros(
-            (0, decoded_results[basis].observables.shape[1]), dtype=np.uint8
+    empty = PauliMapping(
+        (
+            basis,
+            np.zeros((0, decoded_results[basis].observables.shape[1]), dtype=np.uint8),
         )
         for basis in basis_labels
-    }
+    )
     if total_postselected == 0 or accepted_fraction == 0.0:
         return empty
 
@@ -267,36 +277,43 @@ def _shots_at_accepted_fraction(
     all_shot_ids = np.concatenate(shot_ids)
     order = np.argsort(-all_confidences, kind="stable")[:target_count]
 
-    selected: dict[str, list[np.ndarray]] = {basis: [] for basis in basis_labels}
+    selected: dict[PauliString, list[np.ndarray]] = {
+        basis: [] for basis in basis_labels
+    }
     for flat_index in order:
         basis = basis_labels[int(all_basis_ids[flat_index])]
         shot_index = int(all_shot_ids[flat_index])
         selected[basis].append(decoded_results[basis].observables[shot_index])
 
-    return {
-        basis: (
-            np.asarray(selected[basis], dtype=np.uint8)
-            if selected[basis]
-            else np.zeros(
-                (0, decoded_results[basis].observables.shape[1]), dtype=np.uint8
-            )
+    return PauliMapping(
+        (
+            basis,
+            (
+                np.asarray(selected[basis], dtype=np.uint8)
+                if selected[basis]
+                else np.zeros(
+                    (0, decoded_results[basis].observables.shape[1]), dtype=np.uint8
+                )
+            ),
         )
         for basis in basis_labels
-    }
+    )
 
 
 # NOTE: We can consider moving this function to bloqade-core if it is "generic" enough.
 def _evaluate_cached_threshold_curve(
-    decoded_results: Mapping[str, _DecodedPostselectionResult],
+    decoded_results: Mapping[Any, _DecodedPostselectionResult],
     *,
     total_shots: int,
     threshold_points: int = 64,
     target_bloch: np.ndarray = _DEFAULT_TARGET_BLOCH,
-    basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
+    basis_labels: Sequence[PauliStringLike] = _DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
 ) -> PostselectionCurveData:
     """Evaluate a point-fidelity curve from decoded shots and confidences."""
 
+    decoded_results = PauliMapping(decoded_results)
+    basis_labels = tuple(PauliString.coerce(label) for label in basis_labels)
     confidence_arrays = [
         decoded_results[basis].confidence
         for basis in basis_labels
@@ -313,7 +330,7 @@ def _evaluate_cached_threshold_curve(
     accepted_fractions: list[float] = []
     fidelities: list[float] = []
     for threshold in thresholds:
-        shots_by_basis: dict[str, np.ndarray] = {}
+        shots_by_basis: dict[PauliString, np.ndarray] = {}
         accepted_count = 0
         for basis in basis_labels:
             basis_results = decoded_results[basis]

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from bloqade.gemini.device import GeminiLogicalSimulatorTask
+from bloqade.lanes.pauli import PauliMapping, PauliString
 
 if TYPE_CHECKING:
     import tsim as tsim_backend  # type: ignore[reportMissingImports]
@@ -40,11 +41,11 @@ def _first_nonunitary_instruction_index(circuit: tsim_backend.Circuit) -> int:
 
 
 def _apply_special_tsim_circuit_strategy(
-    task_map: Mapping[str, _TaskT],
-) -> dict[str, _TaskT]:
+    task_map: Mapping[PauliString, _TaskT],
+) -> PauliMapping[_TaskT]:
     """Prepend the inverse compiled unitary prefix to each task's circuits."""
 
-    transformed = dict(task_map)
+    transformed = PauliMapping(task_map)
     for task in transformed.values():
         compiled_prefix = task.tsim_circuit[
             : _first_nonunitary_instruction_index(task.tsim_circuit)

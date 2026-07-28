@@ -15,10 +15,14 @@ from bloqade.gemini.decoding.experiments import (
 from bloqade.gemini.decoding.postselection import PostselectionCurveData
 from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
 from bloqade.gemini.decoding.tomography import TomographyResult
+from bloqade.lanes.pauli import Pauli, PauliMapping, PauliString
 
 __all__ = [
     "ConfidenceDecoder",
     "GurobiDecoderWithConfidence",
+    "Pauli",
+    "PauliMapping",
+    "PauliString",
     "PostSelectionExperiment",
     "PostselectionCurveData",
     "TableDecoderWithConfidence",
