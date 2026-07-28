@@ -125,6 +125,15 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
     assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
 
 
+@pytest.mark.parametrize(
+    "task_type", [GeminiLogicalSimulatorTask, PhysicalSimulatorTask]
+)
+def test_simulator_tasks_normalize_lost_measurements_as_true(task_type):
+    assert task_type._normalize_matrix(
+        [[False, None], [None, True]], name="measurement", shots=2
+    ) == [[False, True], [True, True]]
+
+
 @pytest.mark.parametrize("simulator_type", [GeminiLogicalSimulator, PhysicalSimulator])
 @pytest.mark.parametrize(
     "method",

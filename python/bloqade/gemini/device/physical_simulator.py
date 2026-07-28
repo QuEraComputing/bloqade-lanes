@@ -4,10 +4,12 @@ from dataclasses import dataclass, field
 from functools import cache, cached_property
 from typing import (
     TYPE_CHECKING,
+    Any,
     Generic,
     TypeVar,
 )
 
+import numpy as np
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.rewrite.passes import AggressiveUnroll
 from kirin import ir, passes
@@ -189,6 +191,38 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
         return MoveToSquinPhysical(
             arch_spec=self.physical_arch_spec,
         ).emit(self.physical_move_kernel)
+
+    @staticmethod
+    def _normalize_matrix(
+        payload: Any,
+        *,
+        name: str,
+        shots: int,
+    ) -> list[list[bool]]:
+        try:
+            array = np.asarray(payload, dtype=object)
+
+            # NOTE: this is to model a lack of loss-resolved readout; atom loss is indistinguishable from measuring the |1> state
+            none_mask = np.fromiter(
+                (value is None for value in array.flat),
+                dtype=bool,
+                count=array.size,
+            ).reshape(array.shape)
+
+            array[none_mask] = True
+            array = array.astype(bool)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Backend returned invalid {name} samples") from exc
+
+        if array.ndim != 2:
+            raise ValueError(f"Backend {name} samples must be a two-dimensional array")
+
+        if array.shape[0] != shots:
+            raise ValueError(
+                f"Backend returned {array.shape[0]} {name} rows for {shots} shots"
+            )
+
+        return array.tolist()
 
 
 @dataclass

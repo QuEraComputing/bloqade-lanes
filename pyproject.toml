@@ -45,6 +45,9 @@ msd-reprod = [
     "clifft; python_version >= '3.12'",
     "ipywidgets"
 ]
+ppvm = [
+    "ppvm"
+]
 
 [tool.maturin]
 manifest-path = "crates/bloqade-lanes-bytecode-python/Cargo.toml"
@@ -174,3 +177,6 @@ testpaths = "python/tests/"
 markers = [
     "msd_numerical_regression: optional long-running, environment-specific MSD numerical regression",
 ]
+
+[tool.uv.sources]
+ppvm = { git = "https://github.com/QuEraComputing/ppvm.git", subdirectory = "ppvm-python" }
