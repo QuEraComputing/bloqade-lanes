@@ -35,10 +35,11 @@ sim = [
     "bloqade-tsim~=0.1.3",
 ]
 decoding = [
-    # GurobiDecoder (and its Gurobi MLE confidence wrapper) lives behind the
-    # `mle` extra of bloqade-decoders, which also pulls in gurobipy. Keeping it
-    # optional means the base install never requires Gurobi to import.
-    "bloqade-decoders[mle]>=0.6.0",
+    # Optional confidence decoders (Gurobi MLE + table/MLD) live behind the
+    # `mle`/`mld` extras of bloqade-decoders, which also pull in their solver
+    # backends (gurobipy, polars, ...). Keeping them optional means the base
+    # install never requires a decoder backend to import.
+    "bloqade-decoders[mle, mld]>=0.6.0",
 ]
 visualization = [
     "matplotlib>=3.9.4",
@@ -47,7 +48,9 @@ visualization = [
     "pyqt5>=5.15.11;  sys_platform == 'linux'",
 ]
 msd-reprod = [
-    "bloqade-decoders[mle, mld]>=0.6.0",
+    # Decoder backends come from the shared `decoding` extra; this adds the
+    # extras specific to the MSD reproduction notebooks.
+    "bloqade-lanes[decoding]",
     "clifft; python_version >= '3.12'",
     "ipywidgets"
 ]

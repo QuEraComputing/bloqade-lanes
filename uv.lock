@@ -359,7 +359,7 @@ cudaq = [
     { name = "qbraid-qir", extra = ["squin"], marker = "sys_platform != 'win32'" },
 ]
 decoding = [
-    { name = "bloqade-decoders", extra = ["mle"] },
+    { name = "bloqade-decoders", extra = ["mld", "mle"] },
 ]
 msd-reprod = [
     { name = "bloqade-decoders", extra = ["mld", "mle"] },
@@ -420,8 +420,8 @@ requires-dist = [
     { name = "bloqade-circuit", extras = ["cirq", "tsim"], marker = "extra == 'sim'", specifier = "~=0.15.0" },
     { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.0" },
     { name = "bloqade-core", specifier = "~=0.6.4" },
-    { name = "bloqade-decoders", extras = ["mle"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
-    { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'msd-reprod'", specifier = ">=0.6.0" },
+    { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
+    { name = "bloqade-lanes", extras = ["decoding"], marker = "extra == 'msd-reprod'" },
     { name = "bloqade-tsim", marker = "extra == 'sim'", specifier = "~=0.1.3" },
     { name = "clifft", marker = "python_full_version >= '3.12' and extra == 'msd-reprod'" },
     { name = "cudaq", marker = "sys_platform != 'win32' and extra == 'cudaq'", specifier = ">=0.13.0" },
