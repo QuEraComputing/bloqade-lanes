@@ -14,7 +14,7 @@ from .confidence import ConfidenceDecoder, _validate_detector_bits
 
 _TABLE_DECODER_MISSING_MSG = (
     "Table confidence decoding requires the optional table decoder. Install it "
-    "with `bloqade-lanes[msd-reprod]`."
+    "with `bloqade-lanes[decoding]`."
 )
 
 if TYPE_CHECKING:

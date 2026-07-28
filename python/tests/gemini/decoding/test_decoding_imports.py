@@ -29,7 +29,40 @@ def test_gemini_imports_without_table_decoder():
         try:
             TableDecoderWithConfidence(stim.DetectorErrorModel(""), num_shots=0)
         except ImportError as exc:
-            assert "bloqade-lanes[msd-reprod]" in str(exc)
+            assert "bloqade-lanes[decoding]" in str(exc)
+        else:
+            raise AssertionError("expected the optional-dependency error")
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_gemini_imports_without_gurobi_decoder():
+    """Missing optional GurobiDecoder is reported only when it is constructed.
+
+    Regression test for #840: `bloqade-decoders` only exports `GurobiDecoder`
+    with its `mle` extra installed, and an eager top-level import broke the
+    whole `bloqade.gemini` / `bloqade.lanes` import chain for consumers without
+    that extra.
+    """
+
+    script = """
+        import bloqade.decoders
+
+        del bloqade.decoders.GurobiDecoder
+
+        from bloqade.gemini.decoding.confidence import GurobiDecoderWithConfidence
+
+        try:
+            GurobiDecoderWithConfidence()
+        except ImportError as exc:
+            assert "bloqade-lanes[decoding]" in str(exc)
         else:
             raise AssertionError("expected the optional-dependency error")
     """
