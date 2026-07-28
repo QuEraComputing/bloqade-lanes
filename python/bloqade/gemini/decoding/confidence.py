@@ -7,21 +7,37 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 import numpy as np
 import numpy.typing as npt
-from bloqade.decoders import GurobiDecoder
+
+_GUROBI_MISSING_MSG = (
+    "Gurobi confidence decoding requires the optional Gurobi decoder. Install "
+    "it with `bloqade-lanes[decoding]` (which pulls in `bloqade-decoders[mle]` "
+    "and `gurobipy`)."
+)
 
 if TYPE_CHECKING:
     import gurobipy as gp  # type: ignore[reportMissingImports]
+    from bloqade.decoders import GurobiDecoder
+else:
+    try:
+        # `GurobiDecoder` is only exported by `bloqade-decoders` when its
+        # optional `mle` extra (and `gurobipy`) are installed. Keep it off the
+        # eager import path so importing `bloqade.gemini` / `bloqade.lanes`
+        # never requires the Gurobi decoder; defer the error to construction.
+        from bloqade.decoders import GurobiDecoder
+    except ImportError:
+
+        class GurobiDecoder:  # type: ignore[no-redef]
+            """Runtime stub used when the optional Gurobi decoder is absent."""
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                raise ImportError(_GUROBI_MISSING_MSG)
 
 
 def _gurobipy() -> Any:
     try:
         import gurobipy as gp  # type: ignore[reportMissingImports]
     except ImportError as exc:
-        raise ImportError(
-            "Gurobi confidence decoding requires the optional `gurobipy` "
-            "dependency. Install it with `bloqade-lanes[msd-reprod]` or "
-            "include `gurobipy` in your environment."
-        ) from exc
+        raise ImportError(_GUROBI_MISSING_MSG) from exc
 
     return gp
 

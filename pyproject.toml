@@ -34,6 +34,12 @@ sim = [
     "bloqade-circuit[cirq, tsim]~=0.15.0",
     "bloqade-tsim~=0.1.3",
 ]
+decoding = [
+    # GurobiDecoder (and its Gurobi MLE confidence wrapper) lives behind the
+    # `mle` extra of bloqade-decoders, which also pulls in gurobipy. Keeping it
+    # optional means the base install never requires Gurobi to import.
+    "bloqade-decoders[mle]>=0.6.0",
+]
 visualization = [
     "matplotlib>=3.9.4",
     "scipy>=1.15.3",
