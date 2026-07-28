@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.10.0-dev"
+version = "0.12.0-dev"
 
 [workspace.dependencies]
 # vihaco — virtual ISA + machine framework (QuEra, MIT).
