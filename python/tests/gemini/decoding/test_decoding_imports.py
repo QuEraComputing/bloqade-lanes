@@ -1,7 +1,6 @@
-import builtins
-import importlib
-
-import pytest
+import subprocess
+import sys
+import textwrap
 
 
 def test_gemini_decoding_public_imports():
@@ -16,36 +15,62 @@ def test_gemini_decoding_public_imports():
     assert not hasattr(decoding, "plot_decoder_curves")
 
 
-def test_confidence_imports_without_gurobi_decoder(monkeypatch):
-    """`bloqade.gemini` (hence `bloqade.lanes`) must import even when the
-    optional Gurobi decoder is unavailable; the error is deferred to use.
+def test_gemini_imports_without_table_decoder():
+    """Missing optional TableDecoder is reported only when it is constructed."""
+
+    script = """
+        import bloqade.decoders
+
+        del bloqade.decoders.TableDecoder
+
+        import stim
+        from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
+
+        try:
+            TableDecoderWithConfidence(stim.DetectorErrorModel(""), num_shots=0)
+        except ImportError as exc:
+            assert "bloqade-lanes[msd-reprod]" in str(exc)
+        else:
+            raise AssertionError("expected the optional-dependency error")
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_gemini_imports_without_gurobi_decoder():
+    """Missing optional GurobiDecoder is reported only when it is constructed.
 
     Regression test for #840: `bloqade-decoders` only exports `GurobiDecoder`
     with its `mle` extra installed, and an eager top-level import broke the
-    whole import chain for downstream consumers without that extra.
+    whole `bloqade.gemini` / `bloqade.lanes` import chain for consumers without
+    that extra.
     """
-    real_import = builtins.__import__
 
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "bloqade.decoders" and fromlist and "GurobiDecoder" in fromlist:
-            raise ImportError("cannot import name 'GurobiDecoder'")
-        return real_import(name, globals, locals, fromlist, level)
+    script = """
+        import bloqade.decoders
 
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+        del bloqade.decoders.GurobiDecoder
 
-    confidence = importlib.reload(
-        importlib.import_module("bloqade.gemini.decoding.confidence")
+        from bloqade.gemini.decoding.confidence import GurobiDecoderWithConfidence
+
+        try:
+            GurobiDecoderWithConfidence()
+        except ImportError as exc:
+            assert "bloqade-lanes[decoding]" in str(exc)
+        else:
+            raise AssertionError("expected the optional-dependency error")
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        check=False,
+        capture_output=True,
+        text=True,
     )
 
-    # Import succeeds and the public symbol is still present...
-    cls = confidence.GurobiDecoderWithConfidence
-    # ...but constructing it without the optional dependency raises clearly.
-    with pytest.raises(ImportError, match="bloqade-lanes\\[decoding\\]"):
-        cls()
-
-
-@pytest.fixture(autouse=True)
-def _restore_confidence_module():
-    """Reload confidence after the missing-Gurobi test so real state is back."""
-    yield
-    importlib.reload(importlib.import_module("bloqade.gemini.decoding.confidence"))
+    assert result.returncode == 0, result.stderr

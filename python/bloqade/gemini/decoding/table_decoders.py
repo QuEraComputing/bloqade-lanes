@@ -3,15 +3,46 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import stim
-from bloqade.decoders import TableDecoder
-from bloqade.decoders._decoders.mld.utils import pack_boolean_array, shots_to_counts
 
 from .confidence import ConfidenceDecoder, _validate_detector_bits
 
 # NOTE: We will plan to move this code to bloqade-decoders.
+
+_TABLE_DECODER_MISSING_MSG = (
+    "Table confidence decoding requires the optional table decoder. Install it "
+    "with `bloqade-lanes[msd-reprod]`."
+)
+
+if TYPE_CHECKING:
+    from bloqade.decoders import TableDecoder
+    from bloqade.decoders._decoders.mld.utils import (
+        pack_boolean_array,
+        shots_to_counts,
+    )
+else:
+    try:
+        from bloqade.decoders import TableDecoder
+        from bloqade.decoders._decoders.mld.utils import (
+            pack_boolean_array,
+            shots_to_counts,
+        )
+    except ImportError:
+
+        class TableDecoder:  # type: ignore[no-redef]
+            """Runtime stub used when the optional TableDecoder is absent."""
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                raise ImportError(_TABLE_DECODER_MISSING_MSG)
+
+        def _missing_table_decoder(*args: Any, **kwargs: Any) -> Any:
+            raise ImportError(_TABLE_DECODER_MISSING_MSG)
+
+        pack_boolean_array = _missing_table_decoder
+        shots_to_counts = _missing_table_decoder
 
 logger = logging.getLogger(__name__)
 
