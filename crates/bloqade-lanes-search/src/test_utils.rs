@@ -32,6 +32,53 @@ pub fn full_arch_json() -> &'static str {
     include_str!("../../../examples/arch/full.json")
 }
 
+/// Minimal two-zone architecture with a single inter-zone `zone_bus`.
+///
+/// Zone 0 ("gate") holds word 0 and zone 1 ("memory") holds word 1, each a
+/// single-site word. A one-to-one `zone_bus` connects (zone 1, word 1) ->
+/// (zone 0, word 0). There are no intra-zone buses, so the only edges in the
+/// search graph come from the zone bus — making this arch a focused regression
+/// fixture for inter-zone graph construction (issue #845).
+#[allow(dead_code)]
+pub fn two_zone_bus_arch_json() -> &'static str {
+    r#"{
+        "version": "2.0",
+        "words": [
+            { "sites": [[0, 0]] },
+            { "sites": [[0, 0]] }
+        ],
+        "zones": [
+            {
+                "name": "gate",
+                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [], "y_spacing": [] },
+                "site_buses": [],
+                "word_buses": [],
+                "words_with_site_buses": [],
+                "sites_with_word_buses": [],
+                "entangling_pairs": []
+            },
+            {
+                "name": "memory",
+                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [], "y_spacing": [] },
+                "site_buses": [],
+                "word_buses": [],
+                "words_with_site_buses": [],
+                "sites_with_word_buses": [],
+                "entangling_pairs": []
+            }
+        ],
+        "zone_buses": [
+            {
+                "src": [{ "zone_id": 1, "word_id": 1 }],
+                "dst": [{ "zone_id": 0, "word_id": 0 }]
+            }
+        ],
+        "modes": [
+            { "name": "default", "zones": [0, 1], "bitstring_order": [] }
+        ]
+    }"#
+}
+
 /// Example two-word architecture JSON for tests.
 ///
 /// Zone-centric schema: words at top level, zones own grids and buses.
