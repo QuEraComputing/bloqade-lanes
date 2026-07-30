@@ -241,6 +241,18 @@ def _clifft() -> Any:
     return clifft
 
 
+def _ppvm() -> Any:
+    try:
+        import ppvm  # type: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise ImportError(
+            "PPVM simulation requires the optional `ppvm` dependency. "
+            "Install it with `bloqade-lanes[ppvm,sim]`."
+        ) from exc
+
+    return ppvm
+
+
 def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
     return ImportError(
         "CliffT simulation also requires `bloqade-lanes[sim]`: Tsim performs "
@@ -366,17 +378,18 @@ class PPVMSimulatorBackend(AbstractSimulatorBackend):
             raise _ppvm_tsim_import_error(exc) from exc
 
     def _ppvm_program(self, physical_squin_kernel: ir.Method) -> Any:
-        from ppvm import StimProgram
-
         try:
             return self._programs[physical_squin_kernel]
         except KeyError:
             pass
 
+        ppvm = _ppvm()
         tsim_circuit = self._tsim_circuit(physical_squin_kernel)
         stim_text = _ppvm_compatible_stim_text(tsim_circuit.stim_circuit)
 
-        program = StimProgram.parse(stim_text)  # parses and validates compatibility
+        program = ppvm.StimProgram.parse(
+            stim_text
+        )  # parses and validates compatibility
         self._programs[physical_squin_kernel] = program
         return program
 
@@ -386,13 +399,12 @@ class PPVMSimulatorBackend(AbstractSimulatorBackend):
         *,
         shots: int,
     ) -> BackendSample:
-        from ppvm import MeasurementResult, sample_stim
-
         effective_seed = _next_child_seed(self._rng_state, self._rng_lock)
 
         program = self._ppvm_program(physical_squin_kernel)
 
-        samples = sample_stim(
+        ppvm = _ppvm()
+        samples = ppvm.sample_stim(
             program,
             n_qubits=program.num_qubits,
             num_shots=int(shots),
@@ -402,9 +414,9 @@ class PPVMSimulatorBackend(AbstractSimulatorBackend):
         raw_measurements = np.asarray(samples)
 
         measurements = np.empty(raw_measurements.shape, dtype=object)
-        measurements[raw_measurements == MeasurementResult.ZERO] = False
-        measurements[raw_measurements == MeasurementResult.ONE] = True
-        measurements[raw_measurements == MeasurementResult.LOST] = None
+        measurements[raw_measurements == ppvm.MeasurementResult.ZERO] = False
+        measurements[raw_measurements == ppvm.MeasurementResult.ONE] = True
+        measurements[raw_measurements == ppvm.MeasurementResult.LOST] = None
 
         return BackendSample(measurements=measurements)
 

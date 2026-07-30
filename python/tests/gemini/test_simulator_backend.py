@@ -24,6 +24,7 @@ from bloqade.gemini.device import (
 from bloqade.gemini.device.simulator_backend import (
     _clifft_compatible_stim_text,
     _get_tsim_circuit,
+    _ppvm,
     _ppvm_compatible_stim_text,
     _PyQrackSimulatorBackend,
 )
@@ -404,6 +405,13 @@ def _fake_ppvm(monkeypatch, *, samples):
     ppvm.sample_stim = MagicMock(return_value=samples)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "ppvm", ppvm)
     return ppvm
+
+
+def test_ppvm_missing_dependency_has_installation_guidance(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ppvm", None)
+
+    with pytest.raises(ImportError, match=r"bloqade-lanes\[ppvm,sim\]"):
+        _ppvm()
 
 
 def test_ppvm_backend_caches_program_maps_losses_and_derives_child_seed(monkeypatch):
