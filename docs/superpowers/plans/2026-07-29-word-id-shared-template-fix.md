@@ -1,6 +1,6 @@
 # Fix: builder must emit shared-template word IDs (LocationAddress convention)
 
-**Status:** planned (not started)
+**Status:** implemented — branch `fix/word-id-shared-template`, PR #849 (labeled `backport v0.11`). Python + Rust suites green.
 **Date:** 2026-07-29
 **Author:** Phillip Weinberg (with Claude)
 
@@ -185,3 +185,37 @@ templates, so validation is cheap and the public API is preserved.
   `_word_id_offsets` / `_total_words` usage is confined to the three `build/`
   files (`imperative.py`, `word_factory.py`, `blueprint.py`); nothing in
   `visualize/`, `analysis/`, or `heuristics/` references the offset machinery.
+
+## Implementation status (done — 2026-07-29)
+
+Implemented on branch `fix/word-id-shared-template` (PR #849, `backport v0.11`).
+Steps 1–4 and 6–7 landed as written; step 5 was intentionally skipped (see
+below). Deviations from the plan discovered during execution:
+
+- **"No bundled multi-zone specs" was wrong.** Two bundled architectures are
+  built through `build_arch` as genuine multi-zone specs: `generic_full`
+  (3 zones, 32-word template) and `gemini_full` (3 zones, 10-word template).
+  They are latent — imported only by their own tests, not by demos, notebooks,
+  benchmarks, or production — so word counts change from the concatenated
+  totals (96, 30) to the shared-template sizes (32, 10) with no downstream
+  blast radius. Their source docstrings were updated too.
+- **Test blast radius was 7 files, not 1.** Beyond `test_arch_builder.py`, the
+  offset convention was codified in `test_builder.py`, `test_topology.py`,
+  `test_word_factory.py`, `test_generic_full.py`, `test_gemini_full.py`, and
+  `layout/test_path.py`. `layout/test_path.py` needed a genuine rewrite (its
+  cross-zone "bare word-id union" check is meaningless under the shared
+  template; the zone-aware `get_lane_address(...) is None` assertion preserves
+  the real invariant).
+- **Step 5 skipped.** No Rust changes were made; the validator cannot
+  distinguish the two models, as documented above.
+- **`ArchBlueprint.total_words` removed.** It summed per-zone counts, which no
+  longer equals `len(ArchSpec.words)` under the shared template and had no
+  production consumer. `words_per_zone` (which now equals the template size) is
+  the correct accessor.
+- **`_compute_paths(zone_id, word_offset)` → `_compute_paths(zone_id)`.** The
+  `word_offset` parameter was dropped; lane addresses now carry zone-local
+  `word_id` for both SITE and WORD move types.
+
+Verification: `pytest python/tests` — all green (1815 passed at first full run,
+`total_words` cleanup applied after); `just test-rust` — 213 passed, 0 failed;
+black / isort / ruff / pyright clean.

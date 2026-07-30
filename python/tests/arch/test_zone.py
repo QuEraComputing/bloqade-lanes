@@ -75,7 +75,6 @@ class TestArchBlueprint:
             zones={"proc": ZoneSpec(num_rows=2, num_cols=4, entangling=True)}
         )
         assert bp.words_per_zone == 8
-        assert bp.total_words == 8
         assert bp.zone_names == ("proc",)
 
     def test_valid_two_zones(self) -> None:
@@ -85,8 +84,8 @@ class TestArchBlueprint:
                 "mem": ZoneSpec(num_rows=2, num_cols=4),
             }
         )
+        # Shared template: all zones reuse ONE 8-word list.
         assert bp.words_per_zone == 8
-        assert bp.total_words == 16
         assert bp.zone_names == ("proc", "mem")
 
     def test_valid_three_zones(self) -> None:
@@ -97,7 +96,8 @@ class TestArchBlueprint:
                 "mem": ZoneSpec(num_rows=2, num_cols=4),
             }
         )
-        assert bp.total_words == 24
+        # Shared template: 3 zones reuse ONE 8-word list.
+        assert bp.words_per_zone == 8
         assert bp.zone_names == ("proc", "buffer", "mem")
 
     def test_empty_zones_raises(self) -> None:

@@ -143,13 +143,13 @@ class ArchBlueprint:
 
     @property
     def words_per_zone(self) -> int:
-        """Number of words per zone (all zones have equal grid dimensions)."""
-        return next(iter(self.zones.values())).num_words
+        """Number of words per zone (all zones have equal grid dimensions).
 
-    @property
-    def total_words(self) -> int:
-        """Total number of words across all zones."""
-        return sum(spec.num_words for spec in self.zones.values())
+        Under the shared-template convention this is also the size of the
+        single global word list (``len(ArchSpec.words)``): every zone reuses
+        the same ``0..Nw-1`` template.
+        """
+        return next(iter(self.zones.values())).num_words
 
     @property
     def zone_names(self) -> tuple[str, ...]:
