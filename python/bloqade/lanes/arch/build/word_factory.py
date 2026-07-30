@@ -58,8 +58,6 @@ class WordGrid:
 def create_zone_words(
     zone_spec: ZoneSpec,
     layout: DeviceLayout,
-    x_offset: float = 0.0,
-    y_offset: float = 0.0,
 ) -> WordGrid:
     """Create all words for a zone in a 2D grid layout.
 

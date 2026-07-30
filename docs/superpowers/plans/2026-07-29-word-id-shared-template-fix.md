@@ -7,8 +7,13 @@
 ## Problem
 
 The zone-centric ArchSpec model has one correct convention for `word_id`, but
-the Python architecture *builder* implements a different, legacy one. They only
-coexist today because every bundled spec is single-zone (all offsets are 0).
+the Python architecture *builder* implements a different, legacy one. The bug
+stayed invisible because every zone reuses a byte-identical word template, so
+the per-zone offsets were pure round-tripping (see "Why it's redundant"). The
+bundled *multi-zone* builder specs (`generic_full`, `gemini_full`) **do** flow
+through the offset path with non-zero offsets, but their concatenated word
+counts were only ever asserted by their own tests; the shipped Gemini device
+specs are single-zone JSON (`from_json`) and never touch the builder at all.
 
 ### The correct convention (LocationAddress / shared template)
 
