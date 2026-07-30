@@ -24,25 +24,29 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class WordGrid:
-    """2D grid of words within a zone, preserving row/col structure."""
+    """2D grid of words within a zone, preserving row/col structure.
+
+    Word IDs are zone-local (``0..Nw-1``) under the shared-template
+    convention: every zone reuses the same word IDs, disambiguated by
+    ``zone_id`` at the ArchSpec level.
+    """
 
     words: tuple[Word, ...]
     num_rows: int
     num_cols: int
-    word_id_offset: int
 
     def word_at(self, row: int, col: int) -> Word:
         """Get the word at a given grid position."""
         return self.words[row * self.num_cols + col]
 
     def word_id_at(self, row: int, col: int) -> int:
-        """Get the global word ID at a given grid position."""
-        return self.word_id_offset + row * self.num_cols + col
+        """Get the zone-local word ID at a given grid position."""
+        return row * self.num_cols + col
 
     @property
     def all_word_ids(self) -> range:
-        """All word IDs in this grid (contiguous range)."""
-        return range(self.word_id_offset, self.word_id_offset + len(self.words))
+        """All zone-local word IDs in this grid (``0..Nw-1``)."""
+        return range(len(self.words))
 
     def cz_pairs(self) -> Iterator[tuple[int, int]]:
         """Yield (word_id_a, word_id_b) for all CZ entangling pairs."""
@@ -56,7 +60,6 @@ def create_zone_words(
     layout: DeviceLayout,
     x_offset: float = 0.0,
     y_offset: float = 0.0,
-    word_id_offset: int = 0,
 ) -> WordGrid:
     """Create all words for a zone in a 2D grid layout.
 
@@ -90,5 +93,4 @@ def create_zone_words(
         words=tuple(words),
         num_rows=zone_spec.num_rows,
         num_cols=zone_spec.num_cols,
-        word_id_offset=word_id_offset,
     )

@@ -1,8 +1,10 @@
 """Generic full architecture: 3-zone neutral atom processor.
 
 Layout: storage_top → entangling → storage_bottom.
-Each zone has 8 rows x 4 columns = 32 words, with 8 sites per word.
-Total: 96 words, 768 sites, 16 entangling pairs.
+Each zone has 8 rows x 4 columns = 32 words, with 8 sites per word. All
+zones share ONE 32-word template (256 template sites) addressed by
+zone-local word IDs; ``zone_id`` disambiguates. The entangling zone
+declares 16 entangling pairs.
 
 All zones have full site (hypercube) and word (diagonal) connectivity.
 """
