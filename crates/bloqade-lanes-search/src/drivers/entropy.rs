@@ -1770,37 +1770,41 @@ fn get_next_candidate(
     let es = entropy_map.entry(node_id).or_default();
 
     // Regenerate if we've exhausted max_candidates from current cache.
-    if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
+    let mut regenerated =
+        if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
+            es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
+            es.candidates_tried = 0;
+            true
+        } else {
+            false
+        };
+
+    loop {
+        // Find first untried, non-failed candidate.
+        while es.candidates_tried < es.candidate_cache.len() {
+            let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
+            let move_key = ms.encoded_lanes();
+            if !es.tried_moves.contains(move_key) && !es.failed_candidates.contains(move_key) {
+                let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
+                return Some(result);
+            }
+            es.candidates_tried += 1;
+        }
+
+        // All cached candidates already tried. If we generated this cache
+        // during this call, regenerating again is pointless:
+        // `generate_candidates` is a pure function of
+        // `(config, entropy, params, ctx, seed)` and none of those changed,
+        // so a second call yields an identical cache with the same
+        // all-tried outcome. Only regenerate once, when the cache we just
+        // scanned was stale (carried over from a lower entropy).
+        if regenerated {
+            return None;
+        }
         es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
         es.candidates_tried = 0;
+        regenerated = true;
     }
-
-    // Find first untried, non-failed candidate.
-    while es.candidates_tried < es.candidate_cache.len() {
-        let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
-        let move_key = ms.encoded_lanes().to_vec();
-        if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
-            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
-            return Some(result);
-        }
-        es.candidates_tried += 1;
-    }
-
-    // All cached candidates already tried — regenerate and try again.
-    es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
-    es.candidates_tried = 0;
-
-    while es.candidates_tried < es.candidate_cache.len() {
-        let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
-        let move_key = ms.encoded_lanes().to_vec();
-        if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
-            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
-            return Some(result);
-        }
-        es.candidates_tried += 1;
-    }
-
-    None // all candidates exhausted
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
