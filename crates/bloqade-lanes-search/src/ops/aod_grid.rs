@@ -7,61 +7,15 @@
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
 
+use crate::primitives::bus_grid_maps::BusGridMaps;
 use crate::primitives::lane_index::LaneIndex;
 
 /// A cluster represented by its X and Y coordinate sets.
 /// The rectangle covers the Cartesian product X × Y.
 /// Coordinates are stored as `f64::to_bits()` for cheap equality.
 type Cluster = (BTreeSet<u64>, BTreeSet<u64>);
-
-/// Occupancy-independent lookup maps for one bus group.
-///
-/// These are a pure function of the architecture (`LaneIndex`) and the bus
-/// group `(move_type, bus_id, direction)` — they do **not** depend on which
-/// locations are currently occupied. [`LaneIndex`] precomputes and caches one
-/// of these per bus group so [`BusGridContext::new`] can borrow it instead of
-/// rebuilding all four maps (an all-lanes scan) on every call. That scan sits
-/// in the entropy driver's hottest loop (`generate_candidates` builds a
-/// context per bus-triplet group, thousands of times per solve).
-#[derive(Debug, Clone, Default)]
-pub(crate) struct BusGridMaps {
-    /// `(x_bits, y_bits) → encoded source location` for ALL bus positions.
-    pub(crate) pos_to_src: HashMap<(u64, u64), u64>,
-    /// `encoded source → encoded lane address` for ALL bus lanes.
-    pub(crate) src_to_lane: HashMap<u64, u64>,
-    /// `encoded source → encoded destination location` for ALL bus lanes.
-    pub(crate) src_to_dst: HashMap<u64, u64>,
-    /// `encoded source → (x_bits, y_bits)` reverse lookup.
-    pub(crate) src_to_pos: HashMap<u64, (u64, u64)>,
-}
-
-impl BusGridMaps {
-    /// Build the maps for one bus group from the given lanes.
-    ///
-    /// Shared by the [`LaneIndex`] all-zones precompute and the per-zone
-    /// fallback in [`BusGridContext::new`]. Lanes whose endpoints or source
-    /// position are unknown are skipped (matches the legacy behaviour).
-    pub(crate) fn from_lanes(index: &LaneIndex, lanes: impl IntoIterator<Item = LaneAddr>) -> Self {
-        let mut maps = Self::default();
-        for lane in lanes {
-            let Some((src, dst)) = index.endpoints(&lane) else {
-                continue;
-            };
-            let Some((x, y)) = index.position(src) else {
-                continue;
-            };
-            let src_enc = src.encode();
-            let pos = (x.to_bits(), y.to_bits());
-            maps.pos_to_src.insert(pos, src_enc);
-            maps.src_to_lane.insert(src_enc, lane.encode_u64());
-            maps.src_to_dst.insert(src_enc, dst.encode());
-            maps.src_to_pos.insert(src_enc, pos);
-        }
-        maps
-    }
-}
 
 /// Context for building AOD-compatible rectangular grids on one bus group.
 ///

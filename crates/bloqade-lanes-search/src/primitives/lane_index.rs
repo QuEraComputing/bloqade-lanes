@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
-use crate::ops::aod_grid::BusGridMaps;
+use crate::primitives::bus_grid_maps::BusGridMaps;
 
 /// Precomputed lane lookups for an architecture.
 ///
