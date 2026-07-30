@@ -12,12 +12,10 @@ from bloqade.lanes.arch.build.topology import (
 from bloqade.lanes.arch.build.word_factory import WordGrid, create_zone_words
 
 
-def _make_grid(
-    num_rows: int = 2, num_cols: int = 4, word_id_offset: int = 0
-) -> WordGrid:
+def _make_grid(num_rows: int = 2, num_cols: int = 4) -> WordGrid:
     spec = ZoneSpec(num_rows=num_rows, num_cols=num_cols, entangling=True)
     layout = DeviceLayout(sites_per_word=4)
-    return create_zone_words(spec, layout, word_id_offset=word_id_offset)
+    return create_zone_words(spec, layout)
 
 
 # ── Site topologies ──
@@ -132,20 +130,21 @@ class TestHypercubeWordTopology:
         assert col_bus.src == [grid.word_id_at(0, 0), grid.word_id_at(1, 0)]
         assert col_bus.dst == [grid.word_id_at(0, 1), grid.word_id_at(1, 1)]
 
-    def test_word_id_offset(self) -> None:
-        grid = _make_grid(num_rows=2, num_cols=2, word_id_offset=10)
+    def test_word_ids_are_zone_local(self) -> None:
+        grid = _make_grid(num_rows=2, num_cols=2)
         topo = HypercubeWordTopology()
         buses = topo.generate_word_buses(grid)
         all_ids = set()
         for bus in buses:
             all_ids.update(bus.src)
             all_ids.update(bus.dst)
-        assert all_ids == {10, 11, 12, 13}
+        # Zone-local IDs 0..Nw-1 (shared template; no per-zone offset).
+        assert all_ids == {0, 1, 2, 3}
 
     def test_non_power_of_two_rows_raises(self) -> None:
         grid = _make_grid(num_rows=2, num_cols=4)
         # Hack the grid to have 3 rows
-        bad_grid = WordGrid(words=grid.words, num_rows=3, num_cols=4, word_id_offset=0)
+        bad_grid = WordGrid(words=grid.words, num_rows=3, num_cols=4)
         topo = HypercubeWordTopology()
         with pytest.raises(ValueError, match="power of 2"):
             topo.generate_word_buses(bad_grid)
@@ -156,8 +155,8 @@ class TestHypercubeWordTopology:
 
 class TestMatchingTopology:
     def test_1_to_1_matching(self) -> None:
-        grid_a = _make_grid(num_rows=2, num_cols=2, word_id_offset=0)
-        grid_b = _make_grid(num_rows=2, num_cols=2, word_id_offset=4)
+        grid_a = _make_grid(num_rows=2, num_cols=2)
+        grid_b = _make_grid(num_rows=2, num_cols=2)
         topo = MatchingTopology()
         buses = topo.generate_word_buses(grid_a, grid_b)
         assert len(buses) == 1
@@ -172,8 +171,8 @@ class TestMatchingTopology:
                 assert bus.dst[idx] == grid_b.word_id_at(r, c)
 
     def test_mismatched_dimensions_raises(self) -> None:
-        grid_a = _make_grid(num_rows=2, num_cols=2, word_id_offset=0)
-        grid_b = _make_grid(num_rows=2, num_cols=4, word_id_offset=4)
+        grid_a = _make_grid(num_rows=2, num_cols=2)
+        grid_b = _make_grid(num_rows=2, num_cols=4)
         topo = MatchingTopology()
         with pytest.raises(ValueError, match="Grid dimensions must match"):
             topo.generate_word_buses(grid_a, grid_b)
