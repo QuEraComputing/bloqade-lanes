@@ -210,13 +210,14 @@ def test_find_path_respects_per_bus_word_scoping():
     result = build_arch(bp, connections={("a", "b"): MatchingTopology()})
     arch = result.arch
 
-    # Zone B words should not have site bus moves
+    # Zone B has no site topology, so its OWN words_with_site_buses must be
+    # empty. Under the shared template, word IDs are zone-local and reused
+    # across zones, so site-bus scoping is only meaningful per zone — a bare
+    # union of word IDs across zones can no longer distinguish "zone A word 0"
+    # from "zone B word 0".
+    b_zone_id = result.zone_indices["b"]
+    assert arch.zones[b_zone_id].words_with_site_buses == []
     zone_b_words = set(result.zone_grids["b"].all_word_ids)
-    all_site_bus_words = frozenset(
-        w for z in arch.zones for w in z.words_with_site_buses
-    )
-    for word_id in zone_b_words:
-        assert word_id not in all_site_bus_words
 
     # Attempting an intra-word site move in zone B should fail (no site bus)
     b_word = min(zone_b_words)

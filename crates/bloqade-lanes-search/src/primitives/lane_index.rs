@@ -161,6 +161,52 @@ impl LaneIndex {
             }
         }
 
+        // Zone buses: inter-zone word movement. Unlike site/word buses these
+        // live on the spec itself (not per-zone), so they are registered after
+        // the per-zone loop. Each `(src_ref, dst_ref)` pair moves a word across
+        // a zone boundary; the destination zone/word is derived by
+        // `lane_endpoints` from the zone-bus table, so we only encode the
+        // forward source here. Mirrors Python's `PathFinder` zone-bus loop.
+        //
+        // Both the source and destination word sets of a zone bus are validated
+        // to form AOD-compatible rectangles at arch-build time (see
+        // `ArchBuilder.connect`), so the AOD rectangle builder can treat zone
+        // buses exactly like intra-zone buses.
+        let sites_per_word = arch_spec
+            .words
+            .iter()
+            .map(|w| w.sites.len())
+            .max()
+            .unwrap_or(0) as u32;
+        for (bus_idx, bus) in arch_spec.zone_buses.iter().enumerate() {
+            let bus_id = bus_idx as u32;
+            for direction in [Direction::Forward, Direction::Backward] {
+                for src_ref in &bus.src {
+                    let zone_id = src_ref.zone_id as u32;
+                    let word_id = src_ref.word_id as u32;
+                    for site_id in 0..sites_per_word {
+                        let lane = LaneAddr {
+                            move_type: MoveType::ZoneBus,
+                            zone_id,
+                            word_id,
+                            site_id,
+                            bus_id,
+                            direction,
+                        };
+                        register_lane(
+                            lane,
+                            bus_id,
+                            zone_id,
+                            direction,
+                            MoveType::ZoneBus,
+                            &mut positions,
+                            &arch_spec,
+                        );
+                    }
+                }
+            }
+        }
+
         // Build lane duration cache from transport paths.
         let mut lane_durations: HashMap<u64, f64> = HashMap::new();
         let mut fastest: Option<f64> = None;
@@ -404,6 +450,49 @@ mod tests {
         // Site bus 0, zone 0, forward: src=[0,1,2,3,4] in words [0,1] → 5*2=10 lanes
         let lanes = index.lanes_for(MoveType::SiteBus, 0, 0, Direction::Forward);
         assert_eq!(lanes.len(), 10);
+    }
+
+    #[test]
+    fn zone_bus_edges_are_registered() {
+        // Regression for #845: inter-zone `zone_buses` must appear as edges in
+        // the search graph, mirroring Python's PathFinder.
+        let spec: ArchSpec =
+            serde_json::from_str(crate::test_utils::two_zone_bus_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+
+        // The zone bus connects (zone 1, word 1, site 0) -> (zone 0, word 0, site 0).
+        let src = LocationAddr {
+            zone_id: 1,
+            word_id: 1,
+            site_id: 0,
+        };
+        let dst = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+
+        // A forward ZoneBus lane should originate from the memory-zone source.
+        let outgoing = index.outgoing_lanes(src);
+        let zone_lane = outgoing
+            .iter()
+            .find(|l| l.move_type == MoveType::ZoneBus)
+            .copied()
+            .expect("zone bus lane must be present in outgoing edges");
+
+        let (lsrc, ldst) = index.endpoints(&zone_lane).unwrap();
+        assert_eq!(lsrc, src);
+        assert_eq!(ldst, dst);
+
+        // The reverse (backward) edge must also exist so the graph is traversable
+        // in both directions, matching PathFinder's forward+reverse edge pair.
+        let back = index.outgoing_lanes(dst);
+        assert!(
+            back.iter().any(|l| {
+                l.move_type == MoveType::ZoneBus && index.endpoints(l).map(|(_, d)| d) == Some(src)
+            }),
+            "reverse zone bus edge (gate -> memory) must be present"
+        );
     }
 
     #[test]

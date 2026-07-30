@@ -111,8 +111,9 @@ class ArchBlueprint:
     """High-level architecture definition composed of named zones and layout.
 
     Zones are ordered by insertion order of the ``zones`` dict, which
-    determines word ID assignment (contiguous per zone) and vertical
-    layout (top to bottom).
+    determines ``zone_id`` assignment and vertical layout (top to bottom).
+    All zones share one word template addressed by zone-local word IDs
+    (``0..Nw-1``); ``zone_id`` disambiguates.
 
     Args:
         zones: Named zones with their specifications.
@@ -142,13 +143,13 @@ class ArchBlueprint:
 
     @property
     def words_per_zone(self) -> int:
-        """Number of words per zone (all zones have equal grid dimensions)."""
-        return next(iter(self.zones.values())).num_words
+        """Number of words per zone (all zones have equal grid dimensions).
 
-    @property
-    def total_words(self) -> int:
-        """Total number of words across all zones."""
-        return sum(spec.num_words for spec in self.zones.values())
+        Under the shared-template convention this is also the size of the
+        single global word list (``len(ArchSpec.words)``): every zone reuses
+        the same ``0..Nw-1`` template.
+        """
+        return next(iter(self.zones.values())).num_words
 
     @property
     def zone_names(self) -> tuple[str, ...]:
@@ -236,16 +237,10 @@ def build_arch(
             raise ValueError(f"Unknown zone '{zone_b}' in connection")
 
     # 1. Create word grids (preserves row/col structure for topology generators).
+    # Word IDs are zone-local (0..Nw-1) and shared identically across zones.
     zone_grids: dict[str, WordGrid] = {}
-    word_id_offset = 0
     for zone_name, zone_spec in blueprint.zones.items():
-        grid = create_zone_words(
-            zone_spec,
-            layout,
-            word_id_offset=word_id_offset,
-        )
-        zone_grids[zone_name] = grid
-        word_id_offset += zone_spec.num_words
+        zone_grids[zone_name] = create_zone_words(zone_spec, layout)
 
     # 2. Build ZoneBuilders from blueprint zones.
     zone_builders: dict[str, ZoneBuilder] = {}
@@ -283,23 +278,17 @@ def build_arch(
             ):
                 zone.add_site_bus(list(bus.src), list(bus.dst))
 
-        # Intra-zone word buses from topology.
+        # Intra-zone word buses from topology (already zone-local IDs).
         if zone_spec.word_topology is not None:
             for bus in zone_spec.word_topology.generate_word_buses(word_grid):
-                # Topology generators use global word IDs; convert to zone-local.
-                offset = word_grid.word_id_offset
-                zone.add_word_bus(
-                    src=[w - offset for w in bus.src],
-                    dst=[w - offset for w in bus.dst],
-                )
+                zone.add_word_bus(src=list(bus.src), dst=list(bus.dst))
 
-        # Entangling pairs.
+        # Entangling pairs (cz_pairs yields zone-local word IDs).
         if zone_spec.entangling:
-            offset = word_grid.word_id_offset
             pairs = list(word_grid.cz_pairs())
             zone.add_entangling_pairs(
-                [a - offset for a, _ in pairs],
-                [b - offset for _, b in pairs],
+                [a for a, _ in pairs],
+                [b for _, b in pairs],
             )
 
         zone_builders[zone_name] = zone
@@ -316,16 +305,12 @@ def build_arch(
     for (zone_a_name, zone_b_name), topology in connections.items():
         grid_a = zone_grids[zone_a_name]
         grid_b = zone_grids[zone_b_name]
-        offset_a = grid_a.word_id_offset
-        offset_b = grid_b.word_id_offset
 
         for bus in topology.generate_word_buses(grid_a, grid_b):
-            # Convert global word IDs to zone-local for connect().
-            src_local = [w - offset_a for w in bus.src]
-            dst_local = [w - offset_b for w in bus.dst]
+            # Topology generators already emit zone-local word IDs.
             arch_builder.connect(
-                src=(zone_a_name, src_local),
-                dst=(zone_b_name, dst_local),
+                src=(zone_a_name, list(bus.src)),
+                dst=(zone_b_name, list(bus.dst)),
             )
 
     # 5. Modes.

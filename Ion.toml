@@ -16,6 +16,7 @@ verification-before-completion = { source = "obra/superpowers/skills/verificatio
 writing-plans = { source = "obra/superpowers/skills/writing-plans" }
 writing-skills = { source = "obra/superpowers/skills/writing-skills" }
 rust-crate-review = { type = "local" }
+m10-performance = { source = "zhanghandong/rust-skills/m10-performance" }
 
 [options]
 
