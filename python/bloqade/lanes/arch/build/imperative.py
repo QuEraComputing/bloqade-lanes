@@ -899,7 +899,7 @@ class ZoneBuilder:
         return tuple((w[0] / _NM_PER_UM, w[1] / _NM_PER_UM) for w in path_nm)
 
     def _compute_paths(
-        self, zone_id: int, word_offset: int
+        self, zone_id: int
     ) -> dict[LaneAddress, tuple[tuple[float, float], ...]]:
         """Compute axis-aligned AOD waypoint paths for all buses.
 
@@ -965,11 +965,10 @@ class ZoneBuilder:
                     lane_src = self._site_nm(local_word, src_s)
                     lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
                     lane_path = self._path_nm_to_um(lane_path_nm)
-                    global_word = word_offset + local_word
                     for direction in (Direction.FORWARD, Direction.BACKWARD):
                         lane = LaneAddress(
                             MoveType.SITE,
-                            global_word,
+                            local_word,
                             src_s,
                             bus_id,
                             direction,
@@ -1031,11 +1030,10 @@ class ZoneBuilder:
                     lane_src = self._site_nm(src_w, site_id)
                     lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
                     lane_path = self._path_nm_to_um(lane_path_nm)
-                    global_src = word_offset + src_w
                     for direction in (Direction.FORWARD, Direction.BACKWARD):
                         lane = LaneAddress(
                             MoveType.WORD,
-                            global_src,
+                            src_w,
                             site_id,
                             bus_id,
                             direction,
@@ -1056,25 +1054,27 @@ class ZoneBuilder:
 class ArchBuilder:
     """Compose ``ZoneBuilder``s into a complete ``ArchSpec``.
 
-    Each zone added gets assigned global word IDs. Inter-zone connections
-    go into ``zone_buses``. Calls Rust validation on ``build()``.
+    All zones share ONE word template: ``word_id`` is zone-local
+    (``0..Nw-1``) and reused identically by every zone, disambiguated by
+    ``zone_id`` (the LocationAddress convention). Inter-zone connections go
+    into ``zone_buses``. Calls Rust validation on ``build()``.
     """
 
     def __init__(self) -> None:
         self._zones: list[ZoneBuilder] = []
         self._zone_name_to_id: dict[str, int] = {}
-        self._word_id_offsets: list[int] = []
         self._connections: list[
             tuple[tuple[str, Sequence[int]], tuple[str, Sequence[int]]]
         ] = []
         self._modes: list[tuple[str, list[str]]] = []
-        self._total_words: int = 0
         self._blockade_radius: float | None = None
 
     def add_zone(self, zone: ZoneBuilder) -> int:
-        """Add a zone. Returns zone_id. Assigns global word IDs.
+        """Add a zone. Returns zone_id.
 
-        Validates that sites_per_word matches across all zones.
+        Validates that sites_per_word matches across all zones. The word
+        template itself is validated for cross-zone identity at
+        :meth:`build` time.
         """
         if zone.name in self._zone_name_to_id:
             raise ValueError(f"Duplicate zone name: '{zone.name}'")
@@ -1088,8 +1088,6 @@ class ArchBuilder:
                 )
         zone_id = len(self._zones)
         self._zone_name_to_id[zone.name] = zone_id
-        self._word_id_offsets.append(self._total_words)
-        self._total_words += zone.num_words
         self._zones.append(zone)
         return zone_id
 
@@ -1197,45 +1195,46 @@ class ArchBuilder:
         Raises:
             ValueError: If Rust validation fails.
         """
-        # 1. Collect all words with global IDs.
+        # 1. All zones share ONE word template (LocationAddress convention):
+        # word_id is zone-local (0..Nw-1) and reused identically by every
+        # zone; zone_id disambiguates. Validate that every zone declares the
+        # same template, then emit that single Nw-length list.
         all_words: list[Word] = []
-        for zone in self._zones:
-            for positions in zone._words:
-                all_words.append(Word(tuple(positions)))
+        if self._zones:
+            template = self._zones[0]._words
+            for zone in self._zones[1:]:
+                if zone._words != template:
+                    raise ValueError(
+                        f"zone '{zone.name}' declares a different word "
+                        f"template than zone '{self._zones[0].name}'; all "
+                        f"zones must share the same word template (word_id is "
+                        f"zone-local and reused identically across zones)."
+                    )
+            all_words = [Word(tuple(positions)) for positions in template]
 
         # 2. Build Rust Zone objects.
-        # Zone-local word IDs must be translated to global IDs for the Rust
-        # ArchSpec, which uses global word indices everywhere.
+        # Word IDs are zone-local (0..Nw-1): every zone addresses the same
+        # shared template, so no offset translation is applied. zone_id
+        # disambiguates identical word_ids across zones.
         rust_zones: list[_RustZone] = []
-        for zone_idx, zone in enumerate(self._zones):
-            offset = self._word_id_offsets[zone_idx]
+        for zone in self._zones:
             site_buses = [_RustSiteBus(src=s, dst=d) for s, d in zone._site_buses]
             word_buses = [
-                _RustWordBus(
-                    src=[offset + w for w in s],
-                    dst=[offset + w for w in d],
-                )
-                for s, d in zone._word_buses
+                _RustWordBus(src=list(s), dst=list(d)) for s, d in zone._word_buses
             ]
             # Only words flagged at add_word(has_site_bus=True) are
             # eligible for site-bus transport. Default is True, so the
             # historical "all words opt-in when any site bus exists"
             # behavior is preserved unless the caller overrides.
             words_with_site_buses = (
-                [
-                    offset + w
-                    for w in range(zone.num_words)
-                    if zone._word_has_site_bus[w]
-                ]
+                [w for w in range(zone.num_words) if zone._word_has_site_bus[w]]
                 if site_buses
                 else []
             )
             sites_with_word_buses = (
                 list(range(zone.sites_per_word)) if word_buses else []
             )
-            entangling_pairs = [
-                (offset + a, offset + b) for a, b in zone._entangling_pairs
-            ]
+            entangling_pairs = list(zone._entangling_pairs)
             rust_zones.append(
                 _RustZone(
                     name=zone.name,
@@ -1249,16 +1248,16 @@ class ArchBuilder:
             )
 
         # 3. Build zone_buses from connect() calls.
+        # word_ids stay zone-local; the (zone_id, word_id) pair addresses the
+        # shared template within each endpoint zone.
         zone_buses: list[_RustZoneBus] = []
         for (src_name, src_words), (dst_name, dst_words) in self._connections:
             src_zid = self._zone_name_to_id[src_name]
             dst_zid = self._zone_name_to_id[dst_name]
-            src_offset = self._word_id_offsets[src_zid]
-            dst_offset = self._word_id_offsets[dst_zid]
             zone_buses.append(
                 _RustZoneBus(
-                    src=[(src_zid, src_offset + w) for w in src_words],
-                    dst=[(dst_zid, dst_offset + w) for w in dst_words],
+                    src=[(src_zid, w) for w in src_words],
+                    dst=[(dst_zid, w) for w in dst_words],
                 )
             )
 
@@ -1268,11 +1267,10 @@ class ArchBuilder:
             zone_ids = [self._zone_name_to_id[z] for z in zone_names]
             bitstring_order: list[_RustLocAddr] = []
             for zid in zone_ids:
-                offset = self._word_id_offsets[zid]
                 zone = self._zones[zid]
                 for w in range(zone.num_words):
                     for s in range(zone.sites_per_word):
-                        bitstring_order.append(_RustLocAddr(zid, offset + w, s))
+                        bitstring_order.append(_RustLocAddr(zid, w, s))
             modes.append(
                 _RustMode(
                     name=mode_name,
@@ -1284,8 +1282,7 @@ class ArchBuilder:
         # 5. Compute AOD waypoint paths for site and word buses.
         all_paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
         for zone_idx, zone in enumerate(self._zones):
-            offset = self._word_id_offsets[zone_idx]
-            all_paths.update(zone._compute_paths(zone_idx, offset))
+            all_paths.update(zone._compute_paths(zone_idx))
 
         # 6. Determine the blockade radius to record on the ArchSpec.
         # Precedence: explicit build(blockade_radius=...) argument >

@@ -538,7 +538,8 @@ class TestArchBuilder:
         arch.add_mode("all", ["proc", "mem"])
         spec = arch.build()
         assert len(spec.zones) == 2
-        assert len(spec.words) == 4
+        # Shared template: both zones reuse the same 2-word list.
+        assert len(spec.words) == 2
         assert len(spec.zone_buses) == 1
 
     def test_unknown_zone_in_connect_raises(self):
@@ -569,7 +570,7 @@ class TestArchBuilder:
         with pytest.raises(ValueError, match="Unknown zone"):
             arch.add_mode("test", ["missing"])
 
-    def test_global_word_ids_assigned(self):
+    def test_shared_template_word_ids_assigned(self):
         z1 = ZoneBuilder(
             "a",
             _make_grid(4, 1),
@@ -594,7 +595,8 @@ class TestArchBuilder:
         arch.add_zone(z2)
         arch.add_mode("all", ["a", "b"])
         spec = arch.build()
-        assert len(spec.words) == 4
+        # Both zones share ONE 2-word template addressed as 0..1.
+        assert len(spec.words) == 2
 
     def test_entangling_pairs_in_single_zone(self):
         zone = ZoneBuilder(
@@ -677,8 +679,18 @@ class TestArchBuilder:
         assert spec is not None
 
 
-class TestArchBuilderMultiZoneOffsets:
-    """Verify global word ID translation for second+ zones."""
+class TestArchBuilderSharedTemplate:
+    """Zones share ONE word template; word_id is zone-local (0..Nw-1).
+
+    This is the LocationAddress convention the Rust model and docs assume:
+    ``words`` is a single global template addressed by every zone as
+    ``0..Nw-1``, disambiguated by ``zone_id``.  See
+    ``docs/superpowers/plans/2026-07-29-word-id-shared-template-fix.md``.
+    """
+
+    @staticmethod
+    def _bus_pairs(zone) -> list[tuple[tuple[int, ...], tuple[int, ...]]]:
+        return [(tuple(b.src), tuple(b.dst)) for b in zone.word_buses]
 
     def _make_two_zone_arch(self):
         proc = ZoneBuilder(
@@ -703,6 +715,7 @@ class TestArchBuilderMultiZoneOffsets:
             x_clearance=_DEFAULT_CL,
             y_clearance=_DEFAULT_CL,
         )
+        # Identical word template to proc (same slices / grid indices).
         mem.add_word(slice(0, 2), [0])
         mem.add_word(slice(2, 4), [0])
         mem.add_word(slice(0, 2), [1])
@@ -717,49 +730,85 @@ class TestArchBuilderMultiZoneOffsets:
         arch.add_mode("all", ["proc", "mem"])
         return arch.build()
 
-    def test_second_zone_word_buses_use_global_ids(self):
+    def test_single_shared_word_template(self):
+        """Two zones with an identical 4-word template → ONE 4-word list."""
         spec = self._make_two_zone_arch()
-        # proc is zone 0 (words 0-3), mem is zone 1 (words 4-7)
-        mem_zone = spec.zones[1]
-        for bus in mem_zone.word_buses:
-            for w in bus.src:
-                assert w >= 4, f"mem word bus src {w} should be >= 4 (global)"
-            for w in bus.dst:
-                assert w >= 4, f"mem word bus dst {w} should be >= 4 (global)"
+        assert len(spec.words) == 4
+        assert len(spec.zones) == 2
 
-    def test_second_zone_entangling_pairs_use_global_ids(self):
+    def test_word_buses_are_zone_local(self):
         spec = self._make_two_zone_arch()
-        mem_zone = spec.zones[1]
-        for a, b in mem_zone.entangling_pairs:
-            assert a >= 4, f"mem entangling pair word {a} should be >= 4"
-            assert b >= 4, f"mem entangling pair word {b} should be >= 4"
+        for zone in spec.zones:
+            for bus in zone.word_buses:
+                for w in list(bus.src) + list(bus.dst):
+                    assert 0 <= w < 4, f"word bus id {w} must be zone-local (0..3)"
 
-    def test_second_zone_words_with_site_buses_use_global_ids(self):
+    def test_both_zones_word_buses_identical(self):
+        """Shared template ⇒ every zone's word_buses reference the same IDs."""
         spec = self._make_two_zone_arch()
-        # proc zone has site buses → words_with_site_buses should be [0,1,2,3]
-        assert all(w < 4 for w in spec.zones[0].words_with_site_buses)
-        # mem zone has no site buses → empty
-        assert spec.zones[1].words_with_site_buses == []
+        assert self._bus_pairs(spec.zones[0]) == self._bus_pairs(spec.zones[1])
 
-    def test_zone_bus_tuples_correct(self):
+    def test_entangling_pairs_are_zone_local(self):
+        spec = self._make_two_zone_arch()
+        for zone in spec.zones:
+            for a, b in zone.entangling_pairs:
+                assert 0 <= a < 4
+                assert 0 <= b < 4
+
+    def test_zone_bus_word_ids_are_zone_local(self):
         spec = self._make_two_zone_arch()
         assert len(spec.zone_buses) == 1
         zb = spec.zone_buses[0]
-        # src should be zone 0, words 0-3
         for zone_id, word_id in zb.src:
             assert zone_id == 0
             assert 0 <= word_id < 4
-        # dst should be zone 1, words 4-7
         for zone_id, word_id in zb.dst:
             assert zone_id == 1
-            assert 4 <= word_id < 8
+            # zone-local under the shared template, NOT global 4..7
+            assert 0 <= word_id < 4
+
+    def test_words_with_site_buses_are_zone_local(self):
+        spec = self._make_two_zone_arch()
+        # proc has a site bus → all four template words opt in (zone-local).
+        assert spec.zones[0].words_with_site_buses == [0, 1, 2, 3]
+        # mem has no site bus → empty.
+        assert spec.zones[1].words_with_site_buses == []
 
     def test_rust_validation_passes_multi_zone(self):
-        """Multi-zone with buses and entangling pairs on both zones passes Rust validation."""
         spec = self._make_two_zone_arch()
         assert spec is not None
         assert len(spec.zones) == 2
-        assert len(spec.words) == 8
+        assert len(spec.words) == 4
+
+    def test_mismatched_templates_raise(self):
+        """Zones declaring different word templates are rejected at build()."""
+        proc = ZoneBuilder(
+            "proc",
+            _make_grid(4, 2),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        proc.add_word(slice(0, 2), [0])
+        proc.add_word(slice(2, 4), [0])
+
+        mem = ZoneBuilder(
+            "mem",
+            _make_grid(4, 2, y_offset=10.0),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        # Different template: second word occupies a different grid region.
+        mem.add_word(slice(0, 2), [0])
+        mem.add_word(slice(0, 2), [1])
+
+        arch = ArchBuilder()
+        arch.add_zone(proc)
+        arch.add_zone(mem)
+        arch.add_mode("all", ["proc", "mem"])
+        with pytest.raises(ValueError, match="same word template"):
+            arch.build()
 
 
 class TestBuilderEdgeCases:
@@ -933,7 +982,7 @@ class TestInconsistentBusDisplacement:
         zone.add_word_bus(src=[0, 2], dst=[1, 5])
 
         with pytest.warns(UserWarning, match="inconsistent word displacements"):
-            paths = zone._compute_paths(zone_id=0, word_offset=0)
+            paths = zone._compute_paths(zone_id=0)
 
         assert not any(k.move_type == MoveType.WORD for k in paths)
 
@@ -960,7 +1009,7 @@ class TestSearchFailureWarning:
 
         with _w.catch_warnings(record=True) as w:
             _w.simplefilter("always")
-            paths = zone._compute_paths(zone_id=0, word_offset=0)
+            paths = zone._compute_paths(zone_id=0)
             # Either warning fires (search failed) or paths found
             if any("no valid path" in str(warning.message) for warning in w):
                 assert not any(k.move_type == MoveType.WORD for k in paths)
@@ -996,50 +1045,52 @@ class TestComputePaths:
 
     def test_site_bus_forward_path(self):
         zone = self._make_zone_with_site_bus()
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         lane = LaneAddress(MoveType.SITE, 0, 0, 0, Direction.FORWARD, 0)
         assert lane in paths
         assert paths[lane] == ((0.0, 0.0), (10.0, 0.0))
 
     def test_site_bus_backward_is_reversed(self):
         zone = self._make_zone_with_site_bus()
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         fwd = LaneAddress(MoveType.SITE, 0, 0, 0, Direction.FORWARD, 0)
         bwd = LaneAddress(MoveType.SITE, 0, 0, 0, Direction.BACKWARD, 0)
         assert paths[bwd] == paths[fwd][::-1]
 
     def test_site_bus_applies_to_all_words(self):
         zone = self._make_zone_with_site_bus()
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         lane = LaneAddress(MoveType.SITE, 1, 0, 0, Direction.FORWARD, 0)
         assert lane in paths
         assert paths[lane] == ((20.0, 0.0), (30.0, 0.0))
 
     def test_word_bus_forward_path(self):
         zone = self._make_zone_with_word_bus()
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         lane = LaneAddress(MoveType.WORD, 0, 0, 0, Direction.FORWARD, 0)
         assert lane in paths
         assert paths[lane] == ((0.0, 0.0), (0.0, 20.0))
 
     def test_word_bus_backward_is_reversed(self):
         zone = self._make_zone_with_word_bus()
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         fwd = LaneAddress(MoveType.WORD, 0, 0, 0, Direction.FORWARD, 0)
         bwd = LaneAddress(MoveType.WORD, 0, 0, 0, Direction.BACKWARD, 0)
         assert paths[bwd] == paths[fwd][::-1]
 
     def test_word_bus_all_sites_get_paths(self):
         zone = self._make_zone_with_word_bus()
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         for site_id in range(2):
             lane = LaneAddress(MoveType.WORD, 0, site_id, 0, Direction.FORWARD, 0)
             assert lane in paths
 
-    def test_word_offset_applied(self):
+    def test_paths_use_zone_local_word_ids(self):
+        # Word IDs in lane addresses are zone-local (0..Nw-1); zone_id
+        # disambiguates. No per-zone offset is applied.
         zone = self._make_zone_with_site_bus()
-        paths = zone._compute_paths(zone_id=1, word_offset=4)
-        lane = LaneAddress(MoveType.SITE, 4, 0, 0, Direction.FORWARD, 1)
+        paths = zone._compute_paths(zone_id=1)
+        lane = LaneAddress(MoveType.SITE, 0, 0, 0, Direction.FORWARD, 1)
         assert lane in paths
 
     def test_no_buses_returns_empty(self):
@@ -1048,7 +1099,7 @@ class TestComputePaths:
             "z", grid, word_shape=(2, 1), x_clearance=5.0, y_clearance=5.0
         )
         zone.add_word(slice(0, 2), [0])
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         assert paths == {}
 
     def test_cross_column_word_bus_uses_clearance(self):
@@ -1059,7 +1110,7 @@ class TestComputePaths:
         zone.add_word(slice(0, 2), [0])
         zone.add_word(slice(2, 4), [0])
         zone.add_word_bus(src=[0], dst=[1])
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         lane = LaneAddress(MoveType.WORD, 0, 0, 0, Direction.FORWARD, 0)
         path = paths[lane]
         # col_diff=2 > 1 → routing via y-clearance
@@ -1076,7 +1127,7 @@ class TestComputePaths:
         zone.add_word(slice(0, 2), [1])
         zone.add_word(slice(2, 4), [1])
         zone.add_word_bus(src=[0, 1], dst=[2, 3])
-        paths = zone._compute_paths(zone_id=0, word_offset=0)
+        paths = zone._compute_paths(zone_id=0)
         lane = LaneAddress(MoveType.WORD, 0, 0, 0, Direction.FORWARD, 0)
         # col_diff=0, row_diff=1 → straight
         assert paths[lane] == ((0.0, 0.0), (0.0, 20.0))
@@ -1127,7 +1178,7 @@ class TestArchBuilderPaths:
         path = spec.get_path(lane)
         assert path == ((0.0, 0.0), (10.0, 0.0))
 
-    def test_multi_zone_paths_use_correct_offsets(self):
+    def test_multi_zone_paths_use_zone_local_ids(self):
         proc = ZoneBuilder(
             "proc",
             _make_spaced_grid(4, 1, x_spacing=10.0),
@@ -1157,10 +1208,12 @@ class TestArchBuilderPaths:
         arch.add_mode("all", ["proc", "mem"])
         spec = arch.build()
 
-        lane0 = LaneAddress(MoveType.SITE, 0, 0, 0, Direction.FORWARD, 0)
-        assert lane0 in spec.paths
-        lane2 = LaneAddress(MoveType.SITE, 2, 0, 0, Direction.FORWARD, 1)
-        assert lane2 in spec.paths
+        # Both zones' site-bus lanes address zone-local word 0; only the
+        # zone_id differs (shared template).
+        lane_proc = LaneAddress(MoveType.SITE, 0, 0, 0, Direction.FORWARD, 0)
+        assert lane_proc in spec.paths
+        lane_mem = LaneAddress(MoveType.SITE, 0, 0, 0, Direction.FORWARD, 1)
+        assert lane_mem in spec.paths
 
     def test_no_buses_no_paths(self):
         zone = ZoneBuilder(

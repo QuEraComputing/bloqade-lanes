@@ -38,8 +38,9 @@ class TestDiagonalWordTopologyMultiColumn:
         topo = DiagonalWordTopology()
         buses = topo.generate_word_buses(grid)
         for bus in buses:
-            src_cols = {(w - grid.word_id_offset) % 4 for w in bus.src}
-            dst_cols = {(w - grid.word_id_offset) % 4 for w in bus.dst}
+            # Word IDs are zone-local (0..Nw-1); column = id % num_cols.
+            src_cols = {w % 4 for w in bus.src}
+            dst_cols = {w % 4 for w in bus.dst}
             # src and dst should each be from a single column
             assert len(src_cols) == 1
             assert len(dst_cols) == 1
@@ -58,11 +59,14 @@ def generic_full():
 
 class TestGenericFull:
     def test_word_count(self, generic_full):
-        assert len(generic_full.arch.words) == 96
+        # Shared template: all 3 zones reuse ONE 32-word list (8 rows x 4
+        # cols), addressed zone-locally.
+        assert len(generic_full.arch.words) == 32
 
     def test_site_count(self, generic_full):
+        # Template sites: 32 words x 8 sites.
         total_sites = sum(len(w.sites) for w in generic_full.arch.words)
-        assert total_sites == 768
+        assert total_sites == 256
 
     def test_zone_count(self, generic_full):
         assert len(generic_full.arch.zones) == 3
