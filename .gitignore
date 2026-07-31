@@ -244,3 +244,5 @@ bench/
 
 # Autotune task state (per-run, recoverable via ledger.json; not for commit)
 .autotune/
+.agents/skills/m10-performance
+.claude/skills/m10-performance

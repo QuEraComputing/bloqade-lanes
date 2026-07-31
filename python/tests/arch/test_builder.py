@@ -95,7 +95,9 @@ class TestBuildArchTwoZones:
     def test_two_zones_no_connection(self) -> None:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
-        assert len(result.arch.words) == 8  # 4 + 4
+        # Shared word template: both zones reuse the SAME 4-word list
+        # (zone-local IDs 0..3), so the global list has 4 entries, not 8.
+        assert len(result.arch.words) == 4
         assert result.zone_indices == {"proc": 0, "mem": 1}
         # Only proc has word topology → 2 word buses (1 zone, no split)
         assert len(result.arch.word_buses) == 2
@@ -118,8 +120,8 @@ class TestBuildArchTwoZones:
         result = build_arch(bp)
         proc_grid = result.zone_grids["proc"]
         mem_grid = result.zone_grids["mem"]
-        assert proc_grid.word_id_offset == 0
-        assert mem_grid.word_id_offset == 4
+        # Shared template: both zones expose the same zone-local word IDs.
+        assert list(proc_grid.all_word_ids) == list(mem_grid.all_word_ids)
         assert proc_grid.num_rows == 2
         assert mem_grid.num_rows == 2
 
@@ -182,7 +184,8 @@ class TestBuildArchThreeZones:
                 ("buffer", "mem"): MatchingTopology(),
             },
         )
-        assert len(result.arch.words) == 12
+        # Shared template: 3 zones reuse the SAME 4-word list (2x2).
+        assert len(result.arch.words) == 4
         # 1:1 mapping: proc=0, buffer=1, mem=2
         assert result.zone_indices == {"proc": 0, "buffer": 1, "mem": 2}
         # Proc: 2 hypercube word buses (no split)
@@ -275,13 +278,12 @@ class TestBuildArchPerBusWords:
         # AllToAll(4 sites) = 6 buses for mem → 8 total
         assert len(arch.site_buses) == 8
 
-        # Proc is zone 0 with words [0, 1], mem is zone 1 with words [2, 3]
-        # words_with_site_buses uses global IDs
+        # Shared template: both zones address zone-local words [0, 1].
         assert arch.zones[0].words_with_site_buses == [0, 1]
-        assert arch.zones[1].words_with_site_buses == [2, 3]
+        assert arch.zones[1].words_with_site_buses == [0, 1]
 
-        # has_site_buses = union across zones (global IDs)
-        assert _has_site_buses(arch) == frozenset({0, 1, 2, 3})
+        # Union across zones collapses to the shared zone-local IDs.
+        assert _has_site_buses(arch) == frozenset({0, 1})
 
     def test_single_zone_site_buses_have_words(self) -> None:
         """Single zone with site topology → all words have site buses."""
@@ -379,13 +381,15 @@ class TestPathFinderIntegration:
         )
         pf = PathFinder(result.arch)
 
-        # proc word 0 (zone 0) → mem word 2 (zone 1, same site): reachable via zone bus
+        # proc word 0 (zone 0) → mem word 0 (zone 1, same zone-local ID and
+        # site): reachable via the matching zone bus. Under the shared
+        # template the destination word_id is zone-local (0), not global (2).
         proc_zone_id = result.zone_indices["proc"]
         mem_zone_id = result.zone_indices["mem"]
         assert (
             pf.find_path(
                 LocationAddress(0, 0, proc_zone_id),
-                LocationAddress(2, 0, mem_zone_id),
+                LocationAddress(0, 0, mem_zone_id),
             )
             is not None
         )

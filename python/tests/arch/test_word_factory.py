@@ -6,24 +6,24 @@ from bloqade.lanes.arch.build.word_factory import WordGrid, create_zone_words
 
 class TestWordGrid:
     def _make_grid(self) -> WordGrid:
-        """Create a 2x4 entangling grid with offset 10."""
+        """Create a 2x4 entangling grid with zone-local word IDs."""
         spec = ZoneSpec(num_rows=2, num_cols=4, entangling=True)
         layout = DeviceLayout(sites_per_word=3)
-        return create_zone_words(spec, layout, word_id_offset=10)
+        return create_zone_words(spec, layout)
 
     def test_word_count(self) -> None:
         grid = self._make_grid()
         assert len(grid.words) == 8
         assert grid.num_rows == 2
         assert grid.num_cols == 4
-        assert grid.word_id_offset == 10
 
     def test_word_id_at(self) -> None:
+        # Word IDs are zone-local (0..Nw-1) under the shared template.
         grid = self._make_grid()
-        assert grid.word_id_at(0, 0) == 10
-        assert grid.word_id_at(0, 3) == 13
-        assert grid.word_id_at(1, 0) == 14
-        assert grid.word_id_at(1, 3) == 17
+        assert grid.word_id_at(0, 0) == 0
+        assert grid.word_id_at(0, 3) == 3
+        assert grid.word_id_at(1, 0) == 4
+        assert grid.word_id_at(1, 3) == 7
 
     def test_word_at_has_correct_sites(self) -> None:
         grid = self._make_grid()
@@ -35,14 +35,14 @@ class TestWordGrid:
     def test_cz_pairs(self) -> None:
         grid = self._make_grid()
         pairs = list(grid.cz_pairs())
-        assert pairs == [(10, 11), (12, 13), (14, 15), (16, 17)]
+        assert pairs == [(0, 1), (2, 3), (4, 5), (6, 7)]
 
 
 class TestCreateZoneWords:
     def test_entangling_zone_cz_pairing(self) -> None:
         spec = ZoneSpec(num_rows=1, num_cols=2, entangling=True)
         layout = DeviceLayout(sites_per_word=3)
-        grid = create_zone_words(spec, layout, word_id_offset=0)
+        grid = create_zone_words(spec, layout)
 
         assert len(grid.words) == 2
         # CZ pairing is now at the architecture level via cz_pairs()
@@ -65,12 +65,3 @@ class TestCreateZoneWords:
 
         for word in grid.words:
             assert len(word.site_indices) == 5
-
-    def test_word_id_offset_in_cz(self) -> None:
-        spec = ZoneSpec(num_rows=1, num_cols=2, entangling=True)
-        layout = DeviceLayout(sites_per_word=3)
-        grid = create_zone_words(spec, layout, word_id_offset=10)
-
-        # CZ pairing uses word IDs with offset
-        pairs = list(grid.cz_pairs())
-        assert pairs == [(10, 11)]
