@@ -71,11 +71,14 @@ def gemini_full():
 
 class TestGeminiFull:
     def test_word_count(self, gemini_full):
-        assert len(gemini_full.arch.words) == 30
+        # Shared template: all 3 zones reuse ONE 10-word list (5 rows x 2
+        # cols), addressed zone-locally.
+        assert len(gemini_full.arch.words) == 10
 
     def test_site_count(self, gemini_full):
+        # Template sites: 10 words x 17 sites.
         total_sites = sum(len(w.sites) for w in gemini_full.arch.words)
-        assert total_sites == 510
+        assert total_sites == 170
 
     def test_zone_count(self, gemini_full):
         assert len(gemini_full.arch.zones) == 3
