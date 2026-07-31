@@ -164,6 +164,9 @@ jobs:
             ./dist/*.tar.gz
             ./dist/*.whl
 
+      # --generate-notes calls GitHub's "generate release notes" API to build
+      # the body from merged PRs since the previous tag, grouped per the
+      # categories defined in .github/release.yml.
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -171,7 +174,7 @@ jobs:
           gh release create
           '${{ github.ref_name }}'
           --repo '${{ github.repository }}'
-          --notes ""
+          --generate-notes
 
       - name: Upload artifacts to GitHub Release
         env:
