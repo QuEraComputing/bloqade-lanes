@@ -5,6 +5,7 @@
 //! (`SearchContext`, `SearchState`, `MoveCandidate`) and the
 //! deterministic tie-break comparators (`ordering`).
 
+pub(crate) mod bus_grid_maps;
 pub mod config;
 pub mod context;
 pub mod distance;
