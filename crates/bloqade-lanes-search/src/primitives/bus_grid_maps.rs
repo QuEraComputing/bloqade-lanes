@@ -47,20 +47,26 @@ impl BusGridMaps {
     /// position are unknown are skipped (matches the legacy behaviour).
     ///
     /// The all-zones precompute merges every zone's lanes for a
-    /// `(move_type, bus_id, direction)` group. The reviewer's concern is that
-    /// dropping `zone_id` from the group key could collapse two lanes that
-    /// share a source location but point at different destinations. That is the
-    /// *source*-keyed direction (`src_to_lane`, `src_to_dst`, `src_to_pos`),
-    /// and it is collision-free for the move types that actually reach here —
-    /// SiteBus and WordBus, the only kinds [`LaneIndex`] registers as lanes —
-    /// because a source's *encoded* location already carries its `zone_id` (and
-    /// `word_id`/`site_id`), so distinct lanes never share a source key. A
-    /// ZoneBus move *would* break this (a backward ZoneBus lane's source lives
-    /// in the destination zone, so two lanes could share a source while
-    /// pointing at different zones), but ZoneBus lanes are not registered
-    /// today. [`insert_unique`] pins that invariant with a `debug_assert!` on
-    /// the source-keyed maps so a future ZoneBus surfaces loudly rather than as
-    /// a silent last-insert-wins over `HashMap` order.
+    /// `(move_type, bus_id, direction)` group, so dropping `zone_id` from the
+    /// group key could in principle collapse two lanes that share a source
+    /// location but point at different destinations. That is the *source*-keyed
+    /// direction (`src_to_lane`, `src_to_dst`, `src_to_pos`):
+    ///
+    /// * SiteBus / WordBus never collide, because a source's *encoded* location
+    ///   already carries its `zone_id` (and `word_id`/`site_id`), so lanes from
+    ///   different zones map to distinct source keys.
+    /// * ZoneBus (registered since #846) is the interesting case: a *backward*
+    ///   ZoneBus lane's source is the forward destination, which lives in the
+    ///   destination zone, so two lanes whose forward moves target the same word
+    ///   would share a source key. That only happens for a non-injective
+    ///   (many-to-one) zone bus; the AOD-rectangle zone buses in the current
+    ///   specs are injective, so no collision occurs.
+    ///
+    /// [`insert_unique`] pins this with a `debug_assert!` on the source-keyed
+    /// maps, so a non-injective zone bus surfaces loudly instead of resolving to
+    /// a silent last-insert-wins over `HashMap` order. The search test suite —
+    /// including the ZoneBus coverage added by #846 — runs with these
+    /// assertions active.
     ///
     /// `pos_to_src` is deliberately *not* guarded: distinct sources can
     /// legitimately share a physical position in some geometries (e.g. the
@@ -96,13 +102,13 @@ impl BusGridMaps {
 /// conflicting overwrite on a source-keyed map means the all-zones merge
 /// collapsed two semantically distinct lanes onto one source — see
 /// [`BusGridMaps::from_lanes`] for why that cannot happen for SiteBus/WordBus
-/// and would indicate a ZoneBus regression.
+/// and would indicate a non-injective (many-to-one) zone bus.
 fn insert_unique<K: Eq + Hash, V: PartialEq>(map: &mut HashMap<K, V>, key: K, value: V) {
     if let Some(existing) = map.get(&key) {
         debug_assert!(
             *existing == value,
             "BusGridMaps merge conflict: a source key resolved to two different \
-             values (unexpected for SiteBus/WordBus; indicates a ZoneBus lane)"
+             values (unexpected for SiteBus/WordBus; indicates a non-injective zone bus)"
         );
     }
     map.insert(key, value);
