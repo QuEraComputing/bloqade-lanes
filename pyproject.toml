@@ -54,6 +54,9 @@ msd-reprod = [
     "clifft; python_version >= '3.12'",
     "ipywidgets"
 ]
+clifft = [
+    "clifft; python_version >= '3.12'"
+]
 
 [tool.maturin]
 manifest-path = "crates/bloqade-lanes-bytecode-python/Cargo.toml"

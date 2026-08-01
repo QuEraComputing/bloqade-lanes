@@ -4,10 +4,12 @@
 //! sequential pass forms initial rectangular clusters, then an iterative
 //! merge pass combines compatible clusters into larger rectangles.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
 
+use crate::primitives::bus_grid_maps::BusGridMaps;
 use crate::primitives::lane_index::LaneIndex;
 
 /// A cluster represented by its X and Y coordinate sets.
@@ -21,66 +23,46 @@ type Cluster = (BTreeSet<u64>, BTreeSet<u64>);
 /// the scored/selected triples. The `movers` set passed to grid construction
 /// identifies which sources correspond to selected moving atoms; empty
 /// non-mover sources may still fill out the complete AOD rectangle.
-pub(crate) struct BusGridContext {
-    /// `(x_bits, y_bits) → encoded source location` for ALL bus positions.
-    pos_to_src: HashMap<(u64, u64), u64>,
-    /// `encoded source → encoded lane address` for ALL bus lanes.
-    src_to_lane: HashMap<u64, u64>,
-    /// `encoded source → encoded destination location` for ALL bus lanes.
-    src_to_dst: HashMap<u64, u64>,
-    /// `encoded source → (x_bits, y_bits)` reverse lookup.
-    src_to_pos: HashMap<u64, (u64, u64)>,
+///
+/// The arch-derived lookup maps are borrowed from [`LaneIndex`]'s precomputed
+/// cache when possible (the common all-zones case); only occupancy is
+/// per-call state.
+pub(crate) struct BusGridContext<'a> {
+    /// Occupancy-independent bus lookups, borrowed from the `LaneIndex`
+    /// cache in the all-zones case, or freshly built for a single zone.
+    maps: Cow<'a, BusGridMaps>,
     /// Locations occupied by atoms or blocked locations in the current config.
     occupied_locs: HashSet<u64>,
 }
 
-impl BusGridContext {
+impl<'a> BusGridContext<'a> {
     /// Build a grid context from all lanes on a bus group.
     ///
     /// `occupied` is the set of encoded locations currently occupied by atoms.
-    /// When `zone_id` is `None`, lanes from all zones are included.
+    /// When `zone_id` is `None`, lanes from all zones are included and the
+    /// arch maps are borrowed from the `LaneIndex` cache (zero rebuild). When
+    /// `zone_id` is `Some`, the maps are built for that zone only.
     pub(crate) fn new(
-        index: &LaneIndex,
+        index: &'a LaneIndex,
         mt: MoveType,
         bus_id: u32,
         zone_id: Option<u32>,
         dir: Direction,
         occupied: &HashSet<u64>,
     ) -> Self {
-        let mut pos_to_src: HashMap<(u64, u64), u64> = HashMap::new();
-        let mut src_to_lane: HashMap<u64, u64> = HashMap::new();
-        let mut src_to_dst: HashMap<u64, u64> = HashMap::new();
-        let mut src_to_pos: HashMap<u64, (u64, u64)> = HashMap::new();
-
-        let lanes_vec: Vec<LaneAddr> = match zone_id {
-            Some(z) => index.lanes_for(mt, bus_id, z, dir).to_vec(),
-            None => index
-                .lanes_for_all_zones(mt, bus_id, dir)
-                .copied()
-                .collect(),
+        let maps = match zone_id {
+            None => match index.bus_grid_maps(mt, bus_id, dir) {
+                Some(cached) => Cow::Borrowed(cached),
+                None => Cow::Owned(BusGridMaps::default()),
+            },
+            Some(z) => Cow::Owned(BusGridMaps::from_lanes(
+                index,
+                index.lanes_for(mt, bus_id, z, dir).iter().copied(),
+            )),
         };
-        for &lane in &lanes_vec {
-            let Some((src, dst)) = index.endpoints(&lane) else {
-                continue;
-            };
-            let Some((x, y)) = index.position(src) else {
-                continue;
-            };
-            let src_enc = src.encode();
-            let lane_enc = lane.encode_u64();
-            let pos = (x.to_bits(), y.to_bits());
-
-            pos_to_src.insert(pos, src_enc);
-            src_to_lane.insert(src_enc, lane_enc);
-            src_to_dst.insert(src_enc, dst.encode());
-            src_to_pos.insert(src_enc, pos);
-        }
 
         Self {
-            pos_to_src,
-            src_to_lane,
-            src_to_dst,
-            src_to_pos,
+            maps,
             occupied_locs: occupied.clone(),
         }
     }
@@ -95,7 +77,7 @@ impl BusGridContext {
         let mut rect_sources = HashSet::new();
         for &x in xs {
             for &y in ys {
-                let Some(&src_enc) = self.pos_to_src.get(&(x, y)) else {
+                let Some(&src_enc) = self.maps.pos_to_src.get(&(x, y)) else {
                     return false;
                 };
                 rect_sources.insert(src_enc);
@@ -104,10 +86,10 @@ impl BusGridContext {
 
         for &x in xs {
             for &y in ys {
-                let Some(&src_enc) = self.pos_to_src.get(&(x, y)) else {
+                let Some(&src_enc) = self.maps.pos_to_src.get(&(x, y)) else {
                     return false;
                 };
-                let Some(&dst_enc) = self.src_to_dst.get(&src_enc) else {
+                let Some(&dst_enc) = self.maps.src_to_dst.get(&src_enc) else {
                     return false;
                 };
                 let src_is_mover = movers.contains(&src_enc);
@@ -130,8 +112,8 @@ impl BusGridContext {
         let mut lanes = Vec::with_capacity(xs.len() * ys.len());
         for &x in xs {
             for &y in ys {
-                if let Some(&src_enc) = self.pos_to_src.get(&(x, y))
-                    && let Some(&lane_enc) = self.src_to_lane.get(&src_enc)
+                if let Some(&src_enc) = self.maps.pos_to_src.get(&(x, y))
+                    && let Some(&lane_enc) = self.maps.src_to_lane.get(&src_enc)
                 {
                     lanes.push(lane_enc);
                 }
@@ -182,7 +164,7 @@ impl BusGridContext {
             let mut leftover: Vec<(u64, u64)> = Vec::new();
 
             for &(src_enc, lane_enc) in &remaining {
-                let Some(&(x, y)) = self.src_to_pos.get(&src_enc) else {
+                let Some(&(x, y)) = self.maps.src_to_pos.get(&src_enc) else {
                     leftover.push((src_enc, lane_enc));
                     continue;
                 };
@@ -284,7 +266,7 @@ mod tests {
         positions: &[((u64, u64), u64)], // ((x, y), src_encoded)
         lanes: &[(u64, u64)],            // (src_encoded, lane_encoded)
         collisions: &[u64],              // src_encoded values with occupied destinations
-    ) -> BusGridContext {
+    ) -> BusGridContext<'static> {
         make_context_with_occupied(positions, lanes, collisions, &[])
     }
 
@@ -293,7 +275,7 @@ mod tests {
         lanes: &[(u64, u64)],            // (src_encoded, lane_encoded)
         collisions: &[u64],              // src_encoded values with stationary occupied destinations
         occupied: &[u64],                // encoded locations occupied by stationary atoms
-    ) -> BusGridContext {
+    ) -> BusGridContext<'static> {
         const TEST_DST_OFFSET: u64 = 1_000_000;
 
         let lanes_with_dst: Vec<(u64, u64, u64)> = lanes
@@ -309,7 +291,7 @@ mod tests {
         positions: &[((u64, u64), u64)], // ((x, y), src_encoded)
         lanes: &[(u64, u64, u64)],       // (src_encoded, lane_encoded, dst_encoded)
         occupied_locs_input: &[u64],     // all encoded occupied locations
-    ) -> BusGridContext {
+    ) -> BusGridContext<'static> {
         let mut pos_to_src = HashMap::new();
         let mut src_to_pos = HashMap::new();
         for &(pos, src_enc) in positions {
@@ -327,10 +309,12 @@ mod tests {
         let occupied_locs: HashSet<u64> = occupied_locs_input.iter().copied().collect();
 
         BusGridContext {
-            pos_to_src,
-            src_to_lane,
-            src_to_dst,
-            src_to_pos,
+            maps: Cow::Owned(BusGridMaps {
+                pos_to_src,
+                src_to_lane,
+                src_to_dst,
+                src_to_pos,
+            }),
             occupied_locs,
         }
     }
