@@ -33,9 +33,8 @@
 #
 # Import utilities to define the SQuIN kernel dialect that we will be writing our programs in.
 
-import itertools
-
 # %%
+import itertools
 import math
 from typing import Any, Literal, TypeVar
 
