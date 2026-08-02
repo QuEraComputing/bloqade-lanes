@@ -46,19 +46,18 @@ impl LaneGraph {
     /// intentionally absent; a location whose lanes have all been cut by
     /// blocking is retained as an isolated vertex.
     pub fn build(index: &LaneIndex, blocked: &HashSet<u64>) -> Self {
+        // Collect endpoints first, then assign vertex ids in sorted order.
+        //
+        // `LaneIndex::bus_groups` iterates a `HashMap`, so discovery order
+        // varies between processes. Numbering vertices as they are discovered
+        // would make the ids — and therefore every neighbour list, every
+        // BFS tie-break, and every downstream traversal order — differ run to
+        // run. The feasibility *verdict* is order-independent, but consumers
+        // that pick among equally-good options (a planner choosing which lane
+        // to take) would silently produce a different answer each run.
+        let mut endpoint_pairs: Vec<(u64, u64)> = Vec::new();
+        let mut seen: HashSet<u64> = HashSet::new();
         let mut locations: Vec<u64> = Vec::new();
-        let mut by_location: HashMap<u64, VertexId> = HashMap::new();
-        let mut edges: Vec<(VertexId, VertexId)> = Vec::new();
-
-        let intern = |loc: u64,
-                      locations: &mut Vec<u64>,
-                      by_location: &mut HashMap<u64, VertexId>|
-         -> VertexId {
-            *by_location.entry(loc).or_insert_with(|| {
-                locations.push(loc);
-                locations.len() - 1
-            })
-        };
 
         for (mt, bus_id, zone_id, dir) in index.bus_groups() {
             for lane in index.lanes_for(mt, bus_id, zone_id, dir) {
@@ -66,27 +65,34 @@ impl LaneGraph {
                     continue;
                 };
                 let (src_enc, dst_enc) = (src.encode(), dst.encode());
-                // Intern each unblocked endpoint even when the lane itself is
+                // Keep each unblocked endpoint even when the lane itself is
                 // dropped. A location whose every lane leads to a blocked
                 // site is still a location: an atom can sit on it, and it
                 // counts toward `m`. Dropping it would both misreport such an
                 // atom as "not on the graph" and understate the empty count.
-                let a = (!blocked.contains(&src_enc))
-                    .then(|| intern(src_enc, &mut locations, &mut by_location));
-                let b = (!blocked.contains(&dst_enc))
-                    .then(|| intern(dst_enc, &mut locations, &mut by_location));
-                if let (Some(a), Some(b)) = (a, b)
-                    && a != b
-                {
-                    edges.push((a, b));
+                for enc in [src_enc, dst_enc] {
+                    if !blocked.contains(&enc) && seen.insert(enc) {
+                        locations.push(enc);
+                    }
+                }
+                if !blocked.contains(&src_enc) && !blocked.contains(&dst_enc) {
+                    endpoint_pairs.push((src_enc, dst_enc));
                 }
             }
         }
+        locations.sort_unstable();
+
+        let by_location: HashMap<u64, VertexId> =
+            locations.iter().enumerate().map(|(i, &l)| (l, i)).collect();
 
         let mut adj: Vec<Vec<VertexId>> = vec![Vec::new(); locations.len()];
-        for (a, b) in edges {
-            adj[a].push(b);
-            adj[b].push(a);
+        for (src_enc, dst_enc) in endpoint_pairs {
+            let a = by_location[&src_enc];
+            let b = by_location[&dst_enc];
+            if a != b {
+                adj[a].push(b);
+                adj[b].push(a);
+            }
         }
         for list in &mut adj {
             list.sort_unstable();
