@@ -28,7 +28,18 @@
 //! AOD parallelism changes the schedule, not what is reachable. Point 2 is a
 //! property of the shipped architecture specs rather than of the format, so
 //! [`validate_bus_disjointness`] checks it explicitly; if it ever fails, the
-//! reduction in this module is invalid.
+//! reduction in this module is invalid. In debug builds, [`check`] and
+//! [`build_decomposition`] assert it on entry (together with
+//! `ArchSpec::validate`); release builds skip the check and trust the caller
+//! to pass a validated spec.
+//!
+//! Strictly, the reduction needs less than disjointness: a bus is by
+//! definition a set of explicit transports along graph edges, never a
+//! permutation, so the load-bearing property is that no bus's src→dst
+//! relation contains a cycle (a chain `x→y, y→z` serializes in reverse
+//! topological order and is pebble-equivalent; only a rotation is not).
+//! Overlapping-but-acyclic buses, and relaxing this module's guard
+//! accordingly, are tracked in issue #866.
 //!
 //! ## What this does and does not prove
 //!
@@ -201,6 +212,29 @@ pub fn validate_bus_disjointness(arch: &ArchSpec) -> Vec<String> {
     errors
 }
 
+/// Debug-build guard for the assumptions the pebble-motion reduction rests
+/// on: a structurally valid architecture whose buses keep their source and
+/// destination sets disjoint (see the module docs).
+///
+/// Release builds skip this entirely — callers are expected to pass a
+/// validated spec (e.g. loaded via `ArchSpec::from_json_validated`). The
+/// disjointness requirement relaxes to per-bus acyclicity once that becomes
+/// a validated format invariant (issue #866).
+fn debug_assert_valid_arch(_index: &LaneIndex) {
+    #[cfg(debug_assertions)]
+    {
+        if let Err(errors) = _index.arch_spec().validate() {
+            panic!("feasibility requires a structurally valid ArchSpec: {errors:?}");
+        }
+        let overlaps = validate_bus_disjointness(_index.arch_spec());
+        assert!(
+            overlaps.is_empty(),
+            "feasibility reduction requires src/dst-disjoint buses \
+             (relaxation to acyclicity tracked in issue #866): {overlaps:?}"
+        );
+    }
+}
+
 /// Build the undirected graph and the Kornhauser decomposition for an
 /// instance, without evaluating any obstruction.
 ///
@@ -215,6 +249,7 @@ pub fn build_decomposition(
     initial: &Config,
     blocked: &HashSet<u64>,
 ) -> Option<(LaneGraph, Decomposition)> {
+    debug_assert_valid_arch(index);
     let graph = LaneGraph::build(index, blocked);
     let occupant = occupancy(&graph, initial)?;
     let empty_count = graph.len().checked_sub(initial.len())?;
@@ -255,6 +290,7 @@ pub fn check(
     targets: &[(u32, u64)],
     blocked: &HashSet<u64>,
 ) -> Feasibility {
+    debug_assert_valid_arch(index);
     let graph = LaneGraph::build(index, blocked);
 
     // ── Well-formedness ────────────────────────────────────────────
@@ -403,6 +439,25 @@ mod tests {
                 "{name} spec must have src/dst-disjoint buses"
             );
         }
+    }
+
+    /// The debug-build guard must refuse a spec whose bus endpoints overlap:
+    /// the reduction is not justified there, so silently returning verdicts
+    /// would be unsound. Relaxing this to per-bus acyclicity is issue #866.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "src/dst-disjoint")]
+    fn debug_guard_rejects_overlapping_bus() {
+        let mut spec: ArchSpec =
+            serde_json::from_str(example_arch_json()).expect("arch json parses");
+        // Point the first destination back at the first source. Structural
+        // validation still passes (lengths and index ranges are unchanged);
+        // disjointness does not.
+        let bus = &mut spec.zones[0].site_buses[0];
+        bus.dst[0] = bus.src[0];
+        let index = LaneIndex::new(spec);
+        let initial = Config::new([(0, loc(0, 0))]).expect("config");
+        let _ = check(&index, &initial, &[], &HashSet::new());
     }
 
     #[test]
