@@ -334,6 +334,12 @@ Breaking changes map to SemVer MAJOR.
 - Footers, if present, MUST begin one blank line after the body
 - Use imperative mood in the description ("add", not "added" or "adds")
 
+### Pull Request Titles
+
+- Every PR title MUST follow the Conventional Commits format above (`<type>[optional scope]: <description>`) — the same `type`, `scope`, `!`, and imperative-mood rules apply.
+- The title is the source of truth for automation: the PR labeler derives `category:` labels from its `type` prefix, and those labels drive the generated release-notes sections. A non-conforming title gets no label and falls into "Other Changes."
+- Examples: `feat(bytecode): add SWAP instruction encoding`, `fix(python): correct exception mapping`, `perf(search): speed up entropy driver`.
+
 ### Pull Request Labels
 
 - Tag PRs with the `category: breaking change` label when they contain breaking changes. A Conventional Commit title (`feat!:` / `fix!:` or a `BREAKING CHANGE` footer) applies this label automatically via the PR labeler workflow.
