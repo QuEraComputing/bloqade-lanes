@@ -76,9 +76,12 @@ use crate::feasibility::graph::{LaneGraph, VertexId};
 use crate::primitives::config::Config;
 use crate::primitives::lane_index::LaneIndex;
 
-/// Minimum number of empty vertices for the decomposition-based obstructions
-/// to apply. Push and Rotate is complete only at or above this threshold, and
-/// below it Wilson's parity exceptions come into play.
+/// Minimum number of empty vertices — per connected component — for the
+/// decomposition-based obstructions to apply to that component. Push and
+/// Rotate is complete only at or above this threshold, and below it Wilson's
+/// parity exceptions come into play. Empties are counted per component
+/// because a disconnected instance is a product of independent pebble-motion
+/// instances: an empty vertex in another component cannot help maneuvering.
 pub const MIN_EMPTY_VERTICES: usize = 2;
 
 /// A proven reason the instance cannot be solved.
@@ -240,10 +243,12 @@ fn debug_assert_valid_arch(_index: &LaneIndex) {
 ///
 /// Exposed because the Push and Rotate planner needs exactly this: the
 /// subgraphs drive its `swap` feasibility, and the precedence order drives its
-/// agent priorities. Returns `None` when there are fewer than
-/// [`MIN_EMPTY_VERTICES`] empty vertices (the decomposition's guarantees do
-/// not hold there), and for malformed input — an atom off the graph, or two
-/// atoms sharing a location — which [`check`] reports as its own obstruction.
+/// agent priorities. Each connected component is analysed with its own empty
+/// count; components below [`MIN_EMPTY_VERTICES`] contribute no subgraphs.
+/// Returns `None` when the whole graph has fewer than [`MIN_EMPTY_VERTICES`]
+/// empty vertices (no component can qualify), and for malformed input — an
+/// atom off the graph, or two atoms sharing a location — which [`check`]
+/// reports as its own obstruction.
 pub fn build_decomposition(
     index: &LaneIndex,
     initial: &Config,
@@ -257,7 +262,7 @@ pub fn build_decomposition(
         return None;
     }
 
-    let decomp = Decomposition::build(&graph, &occupant, empty_count);
+    let decomp = Decomposition::build(&graph, &occupant);
     Some((graph, decomp))
 }
 
@@ -360,19 +365,36 @@ pub fn check(
     }
 
     // ── Decomposition-based obstructions ────────────────────────────
-    let atom_count = initial.len();
-    let Some(empty_count) = graph.len().checked_sub(atom_count) else {
-        // More atoms than vertices is caught by DuplicateOccupancy above,
-        // so this is unreachable in practice; stay conservative anyway.
-        return Feasibility::NoObstructionFound;
-    };
+    match decomposition_obstruction(&graph, &occupant, &target_vertex) {
+        Some(obstruction) => Feasibility::Infeasible(obstruction),
+        None => Feasibility::NoObstructionFound,
+    }
+}
+
+/// Decomposition-phase obstructions (goal containment and Proposition 2) on
+/// a well-formed instance.
+///
+/// `occupant` must be injective over the graph's vertices, and
+/// `target_vertex` must map only qubits that occupy a vertex — [`check`]
+/// establishes both before calling. Kept separate from [`check`] so the
+/// brute-force soundness tests can exercise the decomposition verdict on
+/// synthetic [`LaneGraph`]s directly.
+fn decomposition_obstruction(
+    graph: &LaneGraph,
+    occupant: &[Option<u32>],
+    target_vertex: &HashMap<u32, VertexId>,
+) -> Option<Obstruction> {
+    let atom_count = occupant.iter().filter(|o| o.is_some()).count();
+    let empty_count = graph.len().saturating_sub(atom_count);
     if empty_count < MIN_EMPTY_VERTICES {
-        // Below the Push and Rotate regime the decomposition's guarantees do
-        // not hold, so we report only what the cheap checks established.
-        return Feasibility::NoObstructionFound;
+        // No component can be in the Push and Rotate regime, so only the
+        // cheap checks stand. Fast path — `build` would produce an empty
+        // decomposition anyway, since components below the threshold get no
+        // subgraphs.
+        return None;
     }
 
-    let decomp = Decomposition::build(&graph, &occupant, empty_count);
+    let decomp = Decomposition::build(graph, occupant);
 
     // Goal containment: Proposition 1 confines an assigned agent to its
     // subgraph and planks, so a goal outside that region is unreachable.
@@ -381,7 +403,7 @@ pub fn check(
             continue;
         };
         if !decomp.contains_in_subgraph_or_planks(sub, goal_v) {
-            return Feasibility::Infeasible(Obstruction::GoalOutsideSubgraph {
+            return Some(Obstruction::GoalOutsideSubgraph {
                 qubit,
                 subgraph: sub,
                 goal: graph.location_of(goal_v),
@@ -390,19 +412,17 @@ pub fn check(
     }
 
     // Proposition 2: a cyclic precedence relation proves unsolvability.
-    // `target_vertex` only holds qubits present in `initial` (phantom
-    // targets were dropped up front), so every goal here is a real one.
     let unassigned_goal_vertices: HashSet<VertexId> = target_vertex
         .iter()
         .filter(|(q, _)| !decomp.assignment.contains_key(q))
         .map(|(_, &v)| v)
         .collect();
-    let edges = subgraph_priorities(&decomp, &target_vertex, &unassigned_goal_vertices);
+    let edges = subgraph_priorities(&decomp, target_vertex, &unassigned_goal_vertices);
     if let Some(cycle) = find_precedence_cycle(decomp.subgraphs.len(), &edges) {
-        return Feasibility::Infeasible(Obstruction::CyclicPrecedence { subgraphs: cycle });
+        return Some(Obstruction::CyclicPrecedence { subgraphs: cycle });
     }
 
-    Feasibility::NoObstructionFound
+    None
 }
 
 #[cfg(test)]
@@ -410,6 +430,182 @@ mod tests {
     use super::*;
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+    /// Brute force over the configuration space: is there a reachable state
+    /// where every targeted agent sits on its goal simultaneously? Ground
+    /// truth for the decomposition verdict.
+    fn instance_solvable(
+        graph: &LaneGraph,
+        occupant: &[Option<u32>],
+        targets: &HashMap<u32, VertexId>,
+    ) -> bool {
+        use std::collections::VecDeque;
+        let satisfied =
+            |state: &[Option<u32>]| targets.iter().all(|(&q, &goal)| state[goal] == Some(q));
+        let start: Vec<Option<u32>> = occupant.to_vec();
+        if satisfied(&start) {
+            return true;
+        }
+        let mut seen: HashSet<Vec<Option<u32>>> = HashSet::new();
+        let mut queue: VecDeque<Vec<Option<u32>>> = VecDeque::new();
+        seen.insert(start.clone());
+        queue.push_back(start);
+        while let Some(state) = queue.pop_front() {
+            for v in graph.vertices() {
+                let Some(q) = state[v] else { continue };
+                for &w in graph.neighbors(v) {
+                    if state[w].is_some() {
+                        continue;
+                    }
+                    let mut next = state.clone();
+                    next[v] = None;
+                    next[w] = Some(q);
+                    if satisfied(&next) {
+                        return true;
+                    }
+                    if seen.insert(next.clone()) {
+                        queue.push_back(next);
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// End-to-end soundness property: whenever the decomposition phase
+    /// reports an obstruction, exhaustive search must confirm the instance
+    /// unsolvable. Random graphs are frequently disconnected, and half the
+    /// seeds append an extra all-empty component — probing that empties
+    /// stranded in one component cannot weaken or fabricate verdicts in
+    /// another.
+    #[test]
+    fn decomposition_verdicts_match_brute_force_on_random_graphs() {
+        use rand::rngs::SmallRng;
+        use rand::{Rng, SeedableRng};
+
+        let mut fired = 0usize;
+        for seed in 0..400u64 {
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let n_core = rng.random_range(4..=8);
+            let density = if seed % 2 == 0 { 0.25 } else { 0.4 };
+            let mut edges: Vec<(VertexId, VertexId)> = Vec::new();
+            for a in 0..n_core {
+                for b in (a + 1)..n_core {
+                    if rng.random_bool(density) {
+                        edges.push((a, b));
+                    }
+                }
+            }
+            // Half the seeds: strand extra empties in a separate component.
+            let stranded = if seed % 2 == 0 { 3 } else { 0 };
+            let n = n_core + stranded;
+            if stranded > 0 {
+                edges.push((n_core, n_core + 1));
+                edges.push((n_core + 1, n_core + 2));
+            }
+            let graph = LaneGraph::from_edges(n, &edges);
+
+            // Atoms only on core vertices, ≥ 2 empties among them.
+            let mut verts: Vec<VertexId> = (0..n_core).collect();
+            for i in (1..n_core).rev() {
+                let j = rng.random_range(0..=i);
+                verts.swap(i, j);
+            }
+            let n_atoms = rng.random_range(1..=(n_core - 2));
+            let mut occupant: Vec<Option<u32>> = vec![None; n];
+            for (q, &v) in verts.iter().take(n_atoms).enumerate() {
+                occupant[v] = Some(q as u32);
+            }
+
+            // Arbitrary targets (not necessarily solvable): a random subset
+            // of agents onto random distinct core vertices.
+            let n_targets = rng.random_range(1..=n_atoms);
+            let mut goal_verts: Vec<VertexId> = (0..n_core).collect();
+            for i in (1..n_core).rev() {
+                let j = rng.random_range(0..=i);
+                goal_verts.swap(i, j);
+            }
+            let target_vertex: HashMap<u32, VertexId> =
+                (0..n_targets as u32).zip(goal_verts.into_iter()).collect();
+
+            if let Some(obstruction) = decomposition_obstruction(&graph, &occupant, &target_vertex)
+            {
+                fired += 1;
+                assert!(
+                    !instance_solvable(&graph, &occupant, &target_vertex),
+                    "seed {seed}: {obstruction:?} claimed for a brute-force-solvable \
+                     instance (occupant {occupant:?}, targets {target_vertex:?})"
+                );
+            }
+        }
+        // The property is vacuous if obstructions rarely fire; keep the
+        // fixture generator honest.
+        eprintln!("obstructions fired on {fired}/400 seeds");
+        assert!(
+            fired > 0,
+            "no seed produced an obstruction — weaken density"
+        );
+    }
+
+    /// Adversarial per-component-m fixture: a dumbbell with 2 local empties
+    /// plus 3 empties stranded in a separate component. Goals sit on plank
+    /// positions that only exist if `m` were counted globally — under a
+    /// global `m` this produced a precedence cycle; under per-component `m`
+    /// the same instance is caught by goal containment instead. Either way
+    /// the verdict must agree with exhaustive search (the instance is
+    /// genuinely unsolvable: crossing the corridor needs more than the two
+    /// local empties).
+    #[test]
+    fn stranded_empties_verdict_agrees_with_brute_force() {
+        let graph = LaneGraph::from_edges(
+            12,
+            &[
+                // dumbbell: triangles {0,1,2} and {6,7,8}, corridor 3-4-5
+                (0, 1),
+                (1, 2),
+                (2, 0),
+                (2, 3),
+                (3, 4),
+                (4, 5),
+                (5, 6),
+                (6, 7),
+                (7, 8),
+                (8, 6),
+                // stranded all-empty component
+                (9, 10),
+                (10, 11),
+            ],
+        );
+        // Atoms at 0(B),2,3,4(X),5,6,8(A); empties 1,7 locally + 9,10,11.
+        let occupant: Vec<Option<u32>> = vec![
+            Some(0), // B
+            None,
+            Some(1),
+            Some(2),
+            Some(3), // X
+            Some(4),
+            Some(5),
+            None,
+            Some(6), // A
+            None,
+            None,
+            None,
+        ];
+        // B: 0→6 (case-1 precedence edge S1≺S0, m-independent).
+        // A: 8→4 (on S0's plank only under inflated m → edge S0≺S1).
+        // X: 4→3 (unassigned goal filling the 'between' slot for A's edge).
+        let target_vertex: HashMap<u32, VertexId> =
+            [(0u32, 6usize), (6u32, 4usize), (3u32, 3usize)]
+                .into_iter()
+                .collect();
+        let verdict = decomposition_obstruction(&graph, &occupant, &target_vertex);
+        let solvable = instance_solvable(&graph, &occupant, &target_vertex);
+        assert!(!solvable, "fixture must be unsolvable — corridor too tight");
+        assert!(
+            verdict.is_some(),
+            "the decomposition should catch this unsolvable instance"
+        );
+    }
 
     fn index_from(json: &str) -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(json).expect("arch json parses");

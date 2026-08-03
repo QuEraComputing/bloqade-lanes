@@ -67,9 +67,11 @@ impl LaneGraph {
                 let (src_enc, dst_enc) = (src.encode(), dst.encode());
                 // Keep each unblocked endpoint even when the lane itself is
                 // dropped. A location whose every lane leads to a blocked
-                // site is still a location: an atom can sit on it, and it
-                // counts toward `m`. Dropping it would both misreport such an
-                // atom as "not on the graph" and understate the empty count.
+                // site is still a location: an atom can sit on it. Dropping
+                // it would misreport such an atom as "not on the graph". As
+                // an isolated vertex it forms its own connected component, so
+                // it counts toward that component's `m` only — never toward
+                // anyone else's maneuvering room.
                 for enc in [src_enc, dst_enc] {
                     if !blocked.contains(&enc) && seen.insert(enc) {
                         locations.push(enc);

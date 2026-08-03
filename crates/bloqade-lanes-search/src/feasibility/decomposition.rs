@@ -11,8 +11,12 @@
 //!    subgraphs; a cycle in it proves the instance unsolvable (Proposition 2).
 //!
 //! Throughout, `m` is the number of empty vertices, matching the paper's
-//! notation. Everything here assumes the ≥ 2 empty-vertex regime that
-//! Push and Rotate is complete for.
+//! notation — counted **per connected component**. A disconnected instance
+//! decomposes into independent pebble-motion instances (atoms cannot cross
+//! components, and an empty vertex in another component cannot help
+//! maneuvering), so each component is analysed with its own `m`, and only
+//! components in the ≥ 2 empty-vertex regime that Push and Rotate is
+//! complete for get subgraphs at all.
 //!
 //! ## Soundness bias
 //!
@@ -28,6 +32,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::feasibility::MIN_EMPTY_VERTICES;
 use crate::feasibility::graph::{Biconnected, LaneGraph, VertexId};
 
 /// Sentinel for "this vertex belongs to no subgraph".
@@ -55,26 +60,46 @@ pub struct Decomposition {
     /// Qubit id → the subgraph it is confined to. Absent means the agent is
     /// confined to an isthmus and belongs to no subgraph.
     pub assignment: HashMap<u32, usize>,
-    /// Number of empty vertices, `m`.
+    /// Total number of empty vertices across the whole graph. The algorithms
+    /// never use this directly — they work with the per-component counts
+    /// below, since empties in another component cannot help maneuvering.
     pub empty_count: usize,
+    /// Vertex id → connected-component id.
+    pub component_of_vertex: Vec<usize>,
+    /// Component id → number of empty vertices in that component, `m`.
+    pub empties_in_component: Vec<usize>,
 }
 
 impl Decomposition {
     /// Build the full decomposition for an occupancy pattern.
     ///
-    /// `occupant[v]` is the qubit at vertex `v`, if any, and `empty_count` is
-    /// the number of empty vertices `m`. Assumes the `m ≥ 2` regime — callers
-    /// gate on [`crate::feasibility::MIN_EMPTY_VERTICES`].
-    pub fn build(graph: &LaneGraph, occupant: &[Option<u32>], empty_count: usize) -> Self {
+    /// `occupant[v]` is the qubit at vertex `v`, if any. Each connected
+    /// component is analysed with its own empty count `m`; components with
+    /// fewer than [`MIN_EMPTY_VERTICES`] empties are outside the Push and
+    /// Rotate regime and contribute no subgraphs.
+    pub fn build(graph: &LaneGraph, occupant: &[Option<u32>]) -> Self {
+        let (component_of_vertex, n_components) = graph.connected_components();
+        let mut empties_in_component = vec![0usize; n_components];
+        for v in graph.vertices() {
+            if occupant[v].is_none() {
+                empties_in_component[component_of_vertex[v]] += 1;
+            }
+        }
+        let m_of_vertex: Vec<usize> = graph
+            .vertices()
+            .map(|v| empties_in_component[component_of_vertex[v]])
+            .collect();
+        let empty_count = empties_in_component.iter().sum();
+
         let bcc = graph.biconnected();
-        let (subgraphs, subgraph_of_vertex) = find_subgraphs(graph, &bcc, empty_count);
-        let planks = find_planks(graph, &subgraphs, &subgraph_of_vertex, empty_count);
+        let (subgraphs, subgraph_of_vertex) = find_subgraphs(graph, &bcc, &m_of_vertex);
+        let planks = find_planks(graph, &subgraphs, &subgraph_of_vertex, &m_of_vertex);
         let assignment = assign_agents(
             graph,
             &subgraphs,
             &subgraph_of_vertex,
             occupant,
-            empty_count,
+            &m_of_vertex,
         );
         Self {
             subgraphs,
@@ -82,6 +107,8 @@ impl Decomposition {
             planks,
             assignment,
             empty_count,
+            component_of_vertex,
+            empties_in_component,
         }
     }
 
@@ -105,6 +132,10 @@ impl Decomposition {
 /// `m ≥ 2`, so vertex-sharing classes always merge in the regime this
 /// decomposition runs in.
 ///
+/// `m_of_vertex[v]` is the empty count of `v`'s connected component; classes
+/// in components below [`MIN_EMPTY_VERTICES`] are outside the Push and
+/// Rotate regime and are not created at all.
+///
 /// The merge loop is `O(rounds × |S| × (V + E))`. The result depends only on
 /// the architecture, the blocked set, and `m`, so callers that solve many
 /// layers against one architecture should cache it rather than recomputing
@@ -112,7 +143,7 @@ impl Decomposition {
 pub fn find_subgraphs(
     graph: &LaneGraph,
     bcc: &Biconnected,
-    empty_count: usize,
+    m_of_vertex: &[usize],
 ) -> (Vec<Vec<VertexId>>, Vec<usize>) {
     let n = graph.len();
     let mut owner = vec![NO_SUBGRAPH; n];
@@ -124,6 +155,9 @@ pub fn find_subgraphs(
             continue;
         }
         let verts = bcc.components[comp_id].clone();
+        if m_of_vertex[verts[0]] < MIN_EMPTY_VERTICES {
+            continue;
+        }
         let id = sets.len();
         for &v in &verts {
             owner[v] = id;
@@ -133,7 +167,7 @@ pub fn find_subgraphs(
 
     // Line 2: degree-≥3 vertices not already inside a nontrivial component.
     for v in graph.vertices() {
-        if graph.degree(v) >= 3 && owner[v] == NO_SUBGRAPH {
+        if graph.degree(v) >= 3 && owner[v] == NO_SUBGRAPH && m_of_vertex[v] >= MIN_EMPTY_VERTICES {
             let id = sets.len();
             owner[v] = id;
             sets.push(Some(vec![v]));
@@ -141,10 +175,10 @@ pub fn find_subgraphs(
     }
 
     // Lines 3–5: merge classes within `m - 2` hops of each other, pulling in
-    // the vertices of the connecting shortest path. `m < 2` makes the
-    // threshold vacuous, so the loop is skipped entirely.
-    if empty_count >= 2 {
-        let radius = empty_count - 2;
+    // the vertices of the connecting shortest path. The radius is per class,
+    // from its component's own empty count; a BFS never leaves the
+    // component, so the count is the right one for every vertex it visits.
+    {
         let mut changed = true;
         while changed {
             changed = false;
@@ -155,6 +189,7 @@ pub fn find_subgraphs(
                 // Multi-source BFS out of class `i`, bounded by `radius`,
                 // recording parents so the connecting path can be absorbed.
                 let sources = sets[i].as_ref().expect("checked above").clone();
+                let radius = m_of_vertex[sources[0]].saturating_sub(2);
                 let mut dist = vec![u32::MAX; n];
                 let mut parent = vec![usize::MAX; n];
                 let mut queue: VecDeque<VertexId> = VecDeque::new();
@@ -273,18 +308,19 @@ fn walk_plank(
 ///
 /// From each subgraph vertex with a neighbour outside the subgraph, walk
 /// outward along the forced continuation ([`walk_plank`]). Length is capped
-/// at `m - 1` edges.
+/// at `m - 1` edges, with `m` taken from the subgraph's own connected
+/// component (`m_of_vertex`).
 pub fn find_planks(
     graph: &LaneGraph,
     subgraphs: &[Vec<VertexId>],
     subgraph_of_vertex: &[usize],
-    empty_count: usize,
+    m_of_vertex: &[usize],
 ) -> Vec<Vec<Plank>> {
-    let max_len = empty_count.saturating_sub(1);
     let mut all = Vec::with_capacity(subgraphs.len());
 
     for (sub_id, verts) in subgraphs.iter().enumerate() {
         let mut planks = Vec::new();
+        let max_len = m_of_vertex[verts[0]].saturating_sub(1);
         if max_len == 0 {
             all.push(planks);
             continue;
@@ -349,18 +385,20 @@ fn count_unoccupied_reachable(
 /// Returns the map from qubit id to the subgraph that agent is confined to.
 /// Agents confined to an isthmus are absent from the map.
 ///
-/// `occupant[v]` is the qubit at vertex `v`, if any.
+/// `occupant[v]` is the qubit at vertex `v`, if any; `m_of_vertex[v]` is the
+/// empty count of `v`'s connected component.
 pub fn assign_agents(
     graph: &LaneGraph,
     subgraphs: &[Vec<VertexId>],
     subgraph_of_vertex: &[usize],
     occupant: &[Option<u32>],
-    empty_count: usize,
+    m_of_vertex: &[usize],
 ) -> HashMap<u32, usize> {
     let occupied: Vec<bool> = occupant.iter().map(|o| o.is_some()).collect();
     let mut assignment: HashMap<u32, usize> = HashMap::new();
 
     for (sub_id, verts) in subgraphs.iter().enumerate() {
+        let empty_count = m_of_vertex[verts[0]];
         for &v in verts {
             let outside: Vec<VertexId> = graph
                 .neighbors(v)
@@ -560,8 +598,12 @@ mod tests {
     }
 
     fn decompose(graph: &LaneGraph, occupant: &[Option<u32>]) -> Decomposition {
-        let empty_count = occupant.iter().filter(|o| o.is_none()).count();
-        Decomposition::build(graph, occupant, empty_count)
+        Decomposition::build(graph, occupant)
+    }
+
+    /// Uniform per-vertex `m` for direct calls on connected fixtures.
+    fn uniform_m(graph: &LaneGraph, m: usize) -> Vec<usize> {
+        vec![m; graph.len()]
     }
 
     /// Exhaustive BFS over the configuration space: for every agent, the set
@@ -725,11 +767,11 @@ mod tests {
         // Gap between the two triangles' join vertices (2 and 6) is 4 hops,
         // so they merge exactly when m - 2 >= 4, i.e. m >= 6.
         for m in 2..=5 {
-            let (subs, _) = find_subgraphs(&graph, &bcc, m);
+            let (subs, _) = find_subgraphs(&graph, &bcc, &uniform_m(&graph, m));
             assert_eq!(subs.len(), 2, "m={m} should keep the triangles separate");
         }
         for m in 6..=9 {
-            let (subs, _) = find_subgraphs(&graph, &bcc, m);
+            let (subs, _) = find_subgraphs(&graph, &bcc, &uniform_m(&graph, m));
             assert_eq!(subs.len(), 1, "m={m} should merge the triangles");
         }
     }
@@ -843,12 +885,64 @@ mod tests {
         );
         for m in 2..=6 {
             let bcc = graph.biconnected();
-            let (subs, sub_of_vertex) = find_subgraphs(&graph, &bcc, m);
+            let (subs, sub_of_vertex) = find_subgraphs(&graph, &bcc, &uniform_m(&graph, m));
             assert_eq!(subs.len(), 1, "m={m}: all three cycles must merge");
             assert!(
                 graph.vertices().all(|v| sub_of_vertex[v] == 0),
                 "m={m}: every vertex belongs to the merged subgraph"
             );
+        }
+    }
+
+    /// Empties stranded in a separate connected component must not change
+    /// the decomposition of another component: `m` is per component, so the
+    /// dumbbell's subgraphs, planks, and assignment are identical with and
+    /// without an extra all-empty component. Under a global `m` this fails —
+    /// the merge radius and plank caps inflate.
+    #[test]
+    fn stranded_empties_do_not_change_the_decomposition() {
+        let occupant_core: Vec<Option<u32>> = vec![
+            Some(0),
+            None,
+            Some(1),
+            Some(2),
+            Some(3),
+            Some(4),
+            Some(5),
+            None,
+            Some(6),
+        ];
+        let base = decompose(&dumbbell(), &occupant_core);
+
+        // Same dumbbell plus a disconnected 3-vertex path, all empty.
+        let mut edges = vec![
+            (0, 1),
+            (1, 2),
+            (2, 0),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 8),
+            (8, 6),
+        ];
+        edges.push((9, 10));
+        edges.push((10, 11));
+        let graph = LaneGraph::from_edges(12, &edges);
+        let mut occupant = occupant_core.clone();
+        occupant.extend([None, None, None]);
+        let extended = decompose(&graph, &occupant);
+
+        assert_eq!(base.subgraphs, extended.subgraphs);
+        assert_eq!(base.assignment, extended.assignment);
+        assert_eq!(base.planks.len(), extended.planks.len());
+        for (a, b) in base.planks.iter().zip(&extended.planks) {
+            let a: Vec<(VertexId, &[VertexId])> =
+                a.iter().map(|p| (p.start, p.vertices.as_slice())).collect();
+            let b: Vec<(VertexId, &[VertexId])> =
+                b.iter().map(|p| (p.start, p.vertices.as_slice())).collect();
+            assert_eq!(a, b);
         }
     }
 
