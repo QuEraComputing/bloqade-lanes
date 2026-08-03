@@ -92,6 +92,11 @@ jobs:
               core.info(`PR #${prNum} matched backport versions: ${versions.join(', ')}`);
             }
             core.setOutput('versions', versions.join('\n'));
+            // Carry the original PR's title + non-backport labels to the create
+            // step so each backport PR is a faithful proxy of the original in the
+            // release notes generated on the release branch (see .github/release.yml).
+            core.setOutput('orig_title', pr.data.title);
+            core.setOutput('orig_labels', JSON.stringify(labels.filter(l => !/backport/i.test(l))));
         env:
           PR_NUM: ${{ steps.prnum.outputs.pr_num }}
       - name: Cherry-pick and create PRs
@@ -103,6 +108,8 @@ jobs:
             const versions = process.env.VERSIONS.split('\n').filter(Boolean);
             const commit = process.env.GITHUB_SHA;
             const prNum = process.env.PR_NUM;
+            const origTitle = process.env.ORIG_TITLE || '';
+            const carryLabels = JSON.parse(process.env.ORIG_LABELS || '[]');
 
             execSync('git config user.name "github-actions[bot]"');
             execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
@@ -161,15 +168,31 @@ jobs:
                 // Commit, push, and create PR
                 execSync(`git commit -m "Backport PR #${prNum} (${commit}) to ${branch}"`);
                 execSync(`git push --force-with-lease origin ${backportBranch}`);
+                // Lead with the original (Conventional Commit) title so the
+                // release notes on the release branch read well and stay
+                // categorizable; mark it as a backport for the PR list.
+                const backportTitle = origTitle
+                  ? `${origTitle} (backport of #${prNum})`
+                  : `Backport PR #${prNum} to ${branch}`;
                 const pr = await github.rest.pulls.create({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  title: `Backport PR #${prNum} to ${branch}`,
+                  title: backportTitle,
                   head: backportBranch,
                   base: branch,
                   body: `Automated backport of PR #${prNum} (${commit}) to \`${branch}\`.`
                 });
                 core.info(`Created backport PR #${pr.data.number} for ${branch}`);
+                // Carry the original PR's labels so the backport is categorized
+                // into the right release-notes section on the release branch.
+                if (carryLabels.length) {
+                  await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.data.number,
+                    labels: carryLabels,
+                  });
+                }
                 successes.push({ version, branch, backportPrNum: pr.data.number });
 
               } catch (e) {
@@ -234,3 +257,7 @@ jobs:
           VERSIONS: ${{ steps.versions.outputs.versions }}
           GITHUB_SHA: ${{ github.sha }}
           PR_NUM: ${{ steps.prnum.outputs.pr_num }}
+          # Passed via env (not inline ${{ }} in the script) so a PR title can
+          # never inject into the github-script body.
+          ORIG_TITLE: ${{ steps.versions.outputs.orig_title }}
+          ORIG_LABELS: ${{ steps.versions.outputs.orig_labels }}
