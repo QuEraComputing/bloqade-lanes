@@ -42,6 +42,7 @@ SearchStrategyName = Literal[
     "cascade-dfs",
     "cascade-entropy",
     "entropy",
+    "push-rotate",
 ]
 
 

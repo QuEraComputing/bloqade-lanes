@@ -19,11 +19,13 @@ use crate::goals::AllAtTarget;
 use crate::primitives::config::{Config, ConfigError};
 use crate::primitives::context::SearchContext;
 use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
+use crate::push_rotate::{DEFAULT_MOVE_BUDGET, solve_push_rotate};
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::{EntropyOptions, SolveOptions};
+use crate::search::options::{EntropyOptions, SolveOptions, Strategy};
 use crate::search::restarts::run_with_components;
 use crate::search::result::SolveResult;
+use crate::search::result::SolveStatus;
 
 /// Single-target move-synthesis solver.
 ///
@@ -105,6 +107,19 @@ pub(crate) fn solve_with_engine(
     let root = Config::new(initial)?;
     let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+    let initial_pairs: Vec<(u32, LocationAddr)> = root.iter().collect();
+
+    // Push and Rotate is not a search, so it bypasses the whole
+    // frontier/generator apparatus below rather than being a `Frontier`.
+    if opts.strategy == Strategy::PushRotate {
+        return solve_push_rotate(
+            engine.index(),
+            &initial_pairs,
+            &target_pairs,
+            &blocked_locs,
+            DEFAULT_MOVE_BUDGET,
+        );
+    }
 
     // Build goal predicate.
     let target_encoded: Vec<(u32, u64)> =
@@ -138,8 +153,8 @@ pub(crate) fn solve_with_engine(
         HeuristicGenerator::configured(seed, policy, lookahead, top_c)
     };
 
-    Ok(run_with_components(
-        root,
+    let result = run_with_components(
+        root.clone(),
         &goal_obj,
         make_generator,
         h_max,
@@ -148,7 +163,30 @@ pub(crate) fn solve_with_engine(
         max_expansions,
         opts,
         entropy_opts,
-    ))
+    );
+
+    // Opt-in reliability net. Push and Rotate is complete, so this converts
+    // "the search gave up" into either a schedule or a proof that none
+    // exists. Only the *failure* path pays for it.
+    if opts.fallback_push_rotate && result.status != SolveStatus::Solved {
+        let fallback = solve_push_rotate(
+            engine.index(),
+            &initial_pairs,
+            &target_pairs,
+            &blocked_locs,
+            DEFAULT_MOVE_BUDGET,
+        )?;
+        if fallback.status == SolveStatus::Solved {
+            return Ok(fallback);
+        }
+        // Both failed. Prefer the planner's verdict when it is a *proof* of
+        // unsolvability; the search's `Unsolvable` only means its frontier
+        // drained, which says nothing.
+        if fallback.status == SolveStatus::Unsolvable {
+            return Ok(fallback);
+        }
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
