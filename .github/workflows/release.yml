@@ -151,6 +151,12 @@ jobs:
       id-token: write
 
     steps:
+      # Full history + tags are needed to compute the previous-tag comparison
+      # base below; the release job otherwise has no checkout.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
@@ -164,14 +170,43 @@ jobs:
             ./dist/*.tar.gz
             ./dist/*.whl
 
+      # Generate the release body from GitHub's "generate release notes" API
+      # (grouped per .github/release.yml), but pin the comparison base to the
+      # previous tag on this release line and strip author attribution before
+      # publishing.
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create
-          '${{ github.ref_name }}'
-          --repo '${{ github.repository }}'
-          --notes ""
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Deterministic comparison base = the previous tag on this release
+          # line. Tier 1: the newest tag that is an ancestor of the released
+          # commit (the previous patch on a release branch). Tier 2: for a .0
+          # release with no earlier tag on its own branch, the global
+          # version-sorted predecessor.
+          PREV_TAG="$(git tag --sort=-v:refname --merged HEAD | grep -vFx "$TAG" | head -n1 || true)"
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG="$(git tag --sort=-v:refname | awk -v t="$TAG" 'found{print; exit} $0==t{found=1}')"
+          fi
+
+          # Generate notes for TAG (respecting .github/release.yml categories),
+          # pinned to PREV_TAG so the range never drifts to an unrelated tag.
+          if [ -n "$PREV_TAG" ]; then
+            echo "Generating notes for ${PREV_TAG}..${TAG}"
+            gh api --method POST "repos/${REPO}/releases/generate-notes" \
+              -f tag_name="$TAG" -f previous_tag_name="$PREV_TAG" --jq '.body' > notes.raw.md
+          else
+            echo "No previous tag found; generating notes from repository start"
+            gh api --method POST "repos/${REPO}/releases/generate-notes" \
+              -f tag_name="$TAG" --jq '.body' > notes.raw.md
+          fi
+
+          python3 scripts/clean_release_notes.py < notes.raw.md > notes.md
+
+          gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes-file notes.md
 
       - name: Upload artifacts to GitHub Release
         env:
