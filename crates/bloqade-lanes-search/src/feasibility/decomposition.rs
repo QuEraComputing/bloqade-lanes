@@ -60,6 +60,31 @@ pub struct Decomposition {
 }
 
 impl Decomposition {
+    /// Build the full decomposition for an occupancy pattern.
+    ///
+    /// `occupant[v]` is the qubit at vertex `v`, if any, and `empty_count` is
+    /// the number of empty vertices `m`. Assumes the `m ≥ 2` regime — callers
+    /// gate on [`crate::feasibility::MIN_EMPTY_VERTICES`].
+    pub fn build(graph: &LaneGraph, occupant: &[Option<u32>], empty_count: usize) -> Self {
+        let bcc = graph.biconnected();
+        let (subgraphs, subgraph_of_vertex) = find_subgraphs(graph, &bcc, empty_count);
+        let planks = find_planks(graph, &subgraphs, &subgraph_of_vertex, empty_count);
+        let assignment = assign_agents(
+            graph,
+            &subgraphs,
+            &subgraph_of_vertex,
+            occupant,
+            empty_count,
+        );
+        Self {
+            subgraphs,
+            subgraph_of_vertex,
+            planks,
+            assignment,
+            empty_count,
+        }
+    }
+
     /// Whether `v` lies in subgraph `sub` or on one of its planks — the
     /// region Proposition 1 confines an assigned agent to.
     pub fn contains_in_subgraph_or_planks(&self, sub: usize, v: VertexId) -> bool {
@@ -75,7 +100,10 @@ impl Decomposition {
 /// Starts from the nontrivial biconnected components plus the isolated
 /// degree-≥3 vertices, then repeatedly merges any two classes whose vertex
 /// sets come within `m - 2` hops, absorbing the connecting shortest path
-/// (Definition 3 condition 3, and Definition 4 condition 3).
+/// (Definition 3 condition 3, and Definition 4 condition 3). Distance 0 —
+/// two components sharing a cut vertex — is within `m - 2` hops for every
+/// `m ≥ 2`, so vertex-sharing classes always merge in the regime this
+/// decomposition runs in.
 ///
 /// The merge loop is `O(rounds × |S| × (V + E))`. The result depends only on
 /// the architecture, the blocked set, and `m`, so callers that solve many
@@ -130,11 +158,20 @@ pub fn find_subgraphs(
                 let mut dist = vec![u32::MAX; n];
                 let mut parent = vec![usize::MAX; n];
                 let mut queue: VecDeque<VertexId> = VecDeque::new();
+                let mut hits: Vec<VertexId> = Vec::new();
                 for &s in &sources {
                     dist[s] = 0;
+                    // Distance 0: a vertex this class shares with another
+                    // class (a cut vertex common to two nontrivial biconnected
+                    // components). The BFS below can only discover vertices at
+                    // distance ≥ 1, so shared vertices must be caught here —
+                    // missing them left vertex-sharing components unmerged and
+                    // produced provably wrong confinement claims at `m = 2`.
+                    if owner[s] != i && owner[s] != NO_SUBGRAPH {
+                        hits.push(s);
+                    }
                     queue.push_back(s);
                 }
-                let mut hits: Vec<VertexId> = Vec::new();
                 while let Some(u) = queue.pop_front() {
                     if dist[u] as usize >= radius {
                         continue;
@@ -190,12 +227,53 @@ pub fn find_subgraphs(
     (subgraphs, subgraph_of_vertex)
 }
 
+/// Walk the unique path leaving `start` through its neighbour `first`,
+/// collecting at most `max_len` vertices (`start` itself excluded).
+///
+/// A plank (Definition 5) is a *unique* path, so the walk stops after a
+/// branch vertex (degree ≠ 2 has no forced continuation) or a vertex that
+/// belongs to a subgraph; that terminal vertex is included in the result.
+/// This is the single definition of "the plank leaving `start` via `first`" —
+/// both [`find_planks`] and [`assign_agents`] traverse it, so the region an
+/// agent is confined to and the set of agents claimed by a subgraph cannot
+/// drift apart.
+fn walk_plank(
+    graph: &LaneGraph,
+    subgraph_of_vertex: &[usize],
+    start: VertexId,
+    first: VertexId,
+    max_len: usize,
+) -> Vec<VertexId> {
+    let mut path = Vec::new();
+    if max_len == 0 {
+        return path;
+    }
+    let mut prev = start;
+    let mut cur = first;
+    loop {
+        path.push(cur);
+        if path.len() >= max_len {
+            break;
+        }
+        // A plank is a *unique* path: stop at any branch, and at any vertex
+        // that belongs to a subgraph.
+        if graph.degree(cur) != 2 || subgraph_of_vertex[cur] != NO_SUBGRAPH {
+            break;
+        }
+        let Some(&next) = graph.neighbors(cur).iter().find(|&&w| w != prev) else {
+            break;
+        };
+        prev = cur;
+        cur = next;
+    }
+    path
+}
+
 /// Compute the planks of every subgraph (Definition 5).
 ///
 /// From each subgraph vertex with a neighbour outside the subgraph, walk
-/// outward along the forced continuation — a plank is a *unique* path, so the
-/// walk stops as soon as it reaches a vertex of degree ≥ 3 (a branch) or a
-/// vertex belonging to a subgraph. Length is capped at `m - 1` edges.
+/// outward along the forced continuation ([`walk_plank`]). Length is capped
+/// at `m - 1` edges.
 pub fn find_planks(
     graph: &LaneGraph,
     subgraphs: &[Vec<VertexId>],
@@ -216,28 +294,9 @@ pub fn find_planks(
                 if subgraph_of_vertex[u] == sub_id {
                     continue;
                 }
-                let mut path = Vec::new();
-                let mut prev = s;
-                let mut cur = u;
-                loop {
-                    path.push(cur);
-                    if path.len() >= max_len {
-                        break;
-                    }
-                    // A plank is a *unique* path: stop at any branch, and at
-                    // any vertex that belongs to a subgraph.
-                    if graph.degree(cur) != 2 || subgraph_of_vertex[cur] != NO_SUBGRAPH {
-                        break;
-                    }
-                    let Some(&next) = graph.neighbors(cur).iter().find(|&&w| w != prev) else {
-                        break;
-                    };
-                    prev = cur;
-                    cur = next;
-                }
                 planks.push(Plank {
                     start: s,
-                    vertices: path,
+                    vertices: walk_plank(graph, subgraph_of_vertex, s, u, max_len),
                 });
             }
         }
@@ -341,29 +400,27 @@ pub fn assign_agents(
                 assignment.insert(join_agent, sub_id);
 
                 // Line 10: follow the plank outward from `u`, assigning the
-                // first `m' - 1` agents found along it.
+                // first `m' - 1` agents found along it. Only vertices that
+                // belong to no subgraph count as plank vertices: an occupant
+                // of a neighbouring subgraph's vertex is that subgraph's to
+                // assign, and claiming it here would be over-assignment —
+                // the unsound direction (see the module-level note).
                 let mut budget = m_prime.saturating_sub(1);
                 if budget == 0 {
                     continue;
                 }
-                let mut prev = v;
-                let mut cur = u;
-                loop {
-                    if let Some(a) = occupant[cur] {
+                let max_len = empty_count.saturating_sub(1);
+                for &w in &walk_plank(graph, subgraph_of_vertex, v, u, max_len) {
+                    if subgraph_of_vertex[w] != NO_SUBGRAPH {
+                        break;
+                    }
+                    if let Some(a) = occupant[w] {
                         assignment.insert(a, sub_id);
                         budget -= 1;
                         if budget == 0 {
                             break;
                         }
                     }
-                    if graph.degree(cur) != 2 {
-                        break;
-                    }
-                    let Some(&next) = graph.neighbors(cur).iter().find(|&&w| w != prev) else {
-                        break;
-                    };
-                    prev = cur;
-                    cur = next;
                 }
             }
         }
@@ -504,23 +561,48 @@ mod tests {
 
     fn decompose(graph: &LaneGraph, occupant: &[Option<u32>]) -> Decomposition {
         let empty_count = occupant.iter().filter(|o| o.is_none()).count();
-        let bcc = graph.biconnected();
-        let (subgraphs, subgraph_of_vertex) = find_subgraphs(graph, &bcc, empty_count);
-        let planks = find_planks(graph, &subgraphs, &subgraph_of_vertex, empty_count);
-        let assignment = assign_agents(
-            graph,
-            &subgraphs,
-            &subgraph_of_vertex,
-            occupant,
-            empty_count,
-        );
-        Decomposition {
-            subgraphs,
-            subgraph_of_vertex,
-            planks,
-            assignment,
-            empty_count,
+        Decomposition::build(graph, occupant, empty_count)
+    }
+
+    /// Exhaustive BFS over the configuration space: for every agent, the set
+    /// of vertices it can ever occupy from `occupant`, moving one atom at a
+    /// time into an empty neighbour. Ground truth for the confinement claims.
+    fn reachable_vertices(
+        graph: &LaneGraph,
+        occupant: &[Option<u32>],
+    ) -> HashMap<u32, HashSet<VertexId>> {
+        let mut reach: HashMap<u32, HashSet<VertexId>> = HashMap::new();
+        let record = |reach: &mut HashMap<u32, HashSet<VertexId>>, state: &[Option<u32>]| {
+            for (v, o) in state.iter().enumerate() {
+                if let Some(q) = o {
+                    reach.entry(*q).or_default().insert(v);
+                }
+            }
+        };
+        let start: Vec<Option<u32>> = occupant.to_vec();
+        let mut seen: HashSet<Vec<Option<u32>>> = HashSet::new();
+        let mut queue: VecDeque<Vec<Option<u32>>> = VecDeque::new();
+        record(&mut reach, &start);
+        seen.insert(start.clone());
+        queue.push_back(start);
+        while let Some(state) = queue.pop_front() {
+            for v in graph.vertices() {
+                let Some(q) = state[v] else { continue };
+                for &w in graph.neighbors(v) {
+                    if state[w].is_some() {
+                        continue;
+                    }
+                    let mut next = state.clone();
+                    next[v] = None;
+                    next[w] = Some(q);
+                    if seen.insert(next.clone()) {
+                        record(&mut reach, &next);
+                        queue.push_back(next);
+                    }
+                }
+            }
         }
+        reach
     }
 
     /// Exhaustive BFS over the configuration space: can `agent` ever reach
@@ -667,5 +749,144 @@ mod tests {
     #[test]
     fn precedence_self_loop_is_a_cycle() {
         assert_eq!(find_precedence_cycle(2, &[(1, 1)]), Some(vec![1]));
+    }
+
+    /// Soundness invariants every decomposition must satisfy, checked against
+    /// exhaustive configuration-space search:
+    ///
+    /// 1. The subgraphs partition their vertices — no vertex in two subgraphs.
+    /// 2. Every confinement claim over-approximates reachability: an assigned
+    ///    agent must never be able to reach a vertex outside its claimed
+    ///    region, or goal containment would report a solvable instance as
+    ///    infeasible.
+    fn assert_confinement_sound(graph: &LaneGraph, occupant: &[Option<u32>], context: &str) {
+        let decomp = decompose(graph, occupant);
+
+        let mut owner_count = vec![0usize; graph.len()];
+        for verts in &decomp.subgraphs {
+            for &v in verts {
+                owner_count[v] += 1;
+            }
+        }
+        for (v, &count) in owner_count.iter().enumerate() {
+            assert!(
+                count <= 1,
+                "{context}: vertex {v} appears in {count} subgraphs — not a partition"
+            );
+        }
+
+        let reach = reachable_vertices(graph, occupant);
+        for (&agent, &sub) in &decomp.assignment {
+            for &v in &reach[&agent] {
+                assert!(
+                    decomp.contains_in_subgraph_or_planks(sub, v),
+                    "{context}: agent {agent} (assigned subgraph {sub}) can reach \
+                     v{v} by brute force, but the claimed region excludes it"
+                );
+            }
+        }
+    }
+
+    /// Regression test: two 4-cycles sharing a cut vertex, `m = 2`.
+    ///
+    /// Vertex-sharing nontrivial biconnected components are at distance 0 —
+    /// within `m - 2` hops for every `m ≥ 2` — so they must merge into one
+    /// subgraph. Before that merge existed, the decomposition kept the cycles
+    /// separate and confined the agent at v4 to the right cycle, while brute
+    /// force shows it can cross through the shared vertex — i.e. `check`
+    /// returned a false `Infeasible(GoalOutsideSubgraph)` for a solvable
+    /// instance.
+    #[test]
+    fn shared_cut_vertex_merges_and_confinement_is_sound() {
+        // Cycle A: 0-1-2-3-0. Cycle B: 0-4-5-6-0. Shared cut vertex 0.
+        let graph = LaneGraph::from_edges(
+            7,
+            &[
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 0),
+                (0, 4),
+                (4, 5),
+                (5, 6),
+                (6, 0),
+            ],
+        );
+        // Atoms at 0, 1, 4, 5, 6; empties at 2, 3.
+        let occupant: Vec<Option<u32>> =
+            vec![Some(0), Some(1), None, None, Some(2), Some(3), Some(4)];
+        let decomp = decompose(&graph, &occupant);
+        assert_eq!(
+            decomp.subgraphs.len(),
+            1,
+            "cycles sharing a cut vertex must merge at m = 2"
+        );
+        assert_confinement_sound(&graph, &occupant, "shared cut vertex");
+    }
+
+    /// Three cycles sharing one cut vertex must merge transitively.
+    #[test]
+    fn three_cycles_sharing_a_vertex_merge_transitively() {
+        let graph = LaneGraph::from_edges(
+            7,
+            &[
+                (0, 1),
+                (1, 2),
+                (2, 0),
+                (0, 3),
+                (3, 4),
+                (4, 0),
+                (0, 5),
+                (5, 6),
+                (6, 0),
+            ],
+        );
+        for m in 2..=6 {
+            let bcc = graph.biconnected();
+            let (subs, sub_of_vertex) = find_subgraphs(&graph, &bcc, m);
+            assert_eq!(subs.len(), 1, "m={m}: all three cycles must merge");
+            assert!(
+                graph.vertices().all(|v| sub_of_vertex[v] == 0),
+                "m={m}: every vertex belongs to the merged subgraph"
+            );
+        }
+    }
+
+    /// Property test: on random small graphs, the decomposition's confinement
+    /// claims must over-approximate brute-force reachability. This is the
+    /// generalization of the hand-built fixtures above — it is what caught
+    /// the vertex-sharing merge bug.
+    #[test]
+    fn confinement_never_underestimates_reachability_on_random_graphs() {
+        use rand::rngs::SmallRng;
+        use rand::{Rng, SeedableRng};
+
+        for seed in 0..120u64 {
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let n = rng.random_range(4..=8);
+            let mut edges: Vec<(VertexId, VertexId)> = Vec::new();
+            for a in 0..n {
+                for b in (a + 1)..n {
+                    if rng.random_bool(0.4) {
+                        edges.push((a, b));
+                    }
+                }
+            }
+            let graph = LaneGraph::from_edges(n, &edges);
+
+            // Scatter atoms over distinct vertices, leaving at least 2 empty.
+            let mut verts: Vec<VertexId> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = rng.random_range(0..=i);
+                verts.swap(i, j);
+            }
+            let n_atoms = rng.random_range(1..=(n - 2));
+            let mut occupant: Vec<Option<u32>> = vec![None; n];
+            for (q, &v) in verts.iter().take(n_atoms).enumerate() {
+                occupant[v] = Some(q as u32);
+            }
+
+            assert_confinement_sound(&graph, &occupant, &format!("seed {seed}"));
+        }
     }
 }

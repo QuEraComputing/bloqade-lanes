@@ -59,8 +59,7 @@ use std::collections::{HashMap, HashSet};
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::feasibility::decomposition::{
-    Decomposition, assign_agents, find_planks, find_precedence_cycle, find_subgraphs,
-    subgraph_priorities,
+    Decomposition, find_precedence_cycle, subgraph_priorities,
 };
 use crate::feasibility::graph::{LaneGraph, VertexId};
 use crate::primitives::config::Config;
@@ -208,8 +207,9 @@ pub fn validate_bus_disjointness(arch: &ArchSpec) -> Vec<String> {
 /// Exposed because the Push and Rotate planner needs exactly this: the
 /// subgraphs drive its `swap` feasibility, and the precedence order drives its
 /// agent priorities. Returns `None` when there are fewer than
-/// [`MIN_EMPTY_VERTICES`] empty vertices, since the decomposition's guarantees
-/// do not hold there.
+/// [`MIN_EMPTY_VERTICES`] empty vertices (the decomposition's guarantees do
+/// not hold there), and for malformed input — an atom off the graph, or two
+/// atoms sharing a location — which [`check`] reports as its own obstruction.
 pub fn build_decomposition(
     index: &LaneIndex,
     initial: &Config,
@@ -217,41 +217,26 @@ pub fn build_decomposition(
 ) -> Option<(LaneGraph, Decomposition)> {
     let graph = LaneGraph::build(index, blocked);
     let occupant = occupancy(&graph, initial)?;
-    let atom_count = occupant.iter().filter(|o| o.is_some()).count();
-    let empty_count = graph.len().checked_sub(atom_count)?;
+    let empty_count = graph.len().checked_sub(initial.len())?;
     if empty_count < MIN_EMPTY_VERTICES {
         return None;
     }
 
-    let bcc = graph.biconnected();
-    let (subgraphs, subgraph_of_vertex) = find_subgraphs(&graph, &bcc, empty_count);
-    let planks = find_planks(&graph, &subgraphs, &subgraph_of_vertex, empty_count);
-    let assignment = assign_agents(
-        &graph,
-        &subgraphs,
-        &subgraph_of_vertex,
-        &occupant,
-        empty_count,
-    );
-
-    let decomp = Decomposition {
-        subgraphs,
-        subgraph_of_vertex,
-        planks,
-        assignment,
-        empty_count,
-    };
+    let decomp = Decomposition::build(&graph, &occupant, empty_count);
     Some((graph, decomp))
 }
 
 /// Map each graph vertex to the qubit occupying it, or `None`.
 ///
-/// Returns `None` if any atom sits off the graph — the caller reports that as
-/// its own obstruction.
+/// Returns `None` if any atom sits off the graph or two atoms share a
+/// location — the caller reports those as its own obstructions.
 fn occupancy(graph: &LaneGraph, initial: &Config) -> Option<Vec<Option<u32>>> {
     let mut occupant = vec![None; graph.len()];
     for (qubit, loc) in initial.iter() {
         let v = graph.vertex_of(loc.encode())?;
+        if occupant[v].is_some() {
+            return None;
+        }
         occupant[v] = Some(qubit);
     }
     Some(occupant)
@@ -260,8 +245,10 @@ fn occupancy(graph: &LaneGraph, initial: &Config) -> Option<Vec<Option<u32>>> {
 /// Check an instance for a proven obstruction.
 ///
 /// `targets` is the desired `(qubit, encoded location)` assignment; qubits
-/// absent from it are unconstrained. `blocked` locations are treated as
-/// removed from the graph entirely.
+/// absent from it are unconstrained. A target for a qubit that is not in
+/// `initial` is checked for well-formedness but otherwise ignored — there is
+/// no atom to move. `blocked` locations are treated as removed from the
+/// graph entirely.
 pub fn check(
     index: &LaneIndex,
     initial: &Config,
@@ -339,23 +326,7 @@ pub fn check(
         return Feasibility::NoObstructionFound;
     }
 
-    let bcc = graph.biconnected();
-    let (subgraphs, subgraph_of_vertex) = find_subgraphs(&graph, &bcc, empty_count);
-    let planks = find_planks(&graph, &subgraphs, &subgraph_of_vertex, empty_count);
-    let assignment = assign_agents(
-        &graph,
-        &subgraphs,
-        &subgraph_of_vertex,
-        &occupant,
-        empty_count,
-    );
-    let decomp = Decomposition {
-        subgraphs,
-        subgraph_of_vertex,
-        planks,
-        assignment,
-        empty_count,
-    };
+    let decomp = Decomposition::build(&graph, &occupant, empty_count);
 
     // Goal containment: Proposition 1 confines an assigned agent to its
     // subgraph and planks, so a goal outside that region is unreachable.
@@ -373,9 +344,14 @@ pub fn check(
     }
 
     // Proposition 2: a cyclic precedence relation proves unsolvability.
+    // A target for a qubit absent from `initial` constrains nothing — there
+    // is no atom to move. It is well-formedness-checked above, but excluded
+    // here so a phantom goal cannot fabricate precedence edges (and, in the
+    // worst case, a spurious cycle).
+    let initial_qubits: HashSet<u32> = initial.iter().map(|(q, _)| q).collect();
     let unassigned_goal_vertices: HashSet<VertexId> = target_vertex
         .iter()
-        .filter(|(q, _)| !decomp.assignment.contains_key(q))
+        .filter(|(q, _)| initial_qubits.contains(q) && !decomp.assignment.contains_key(q))
         .map(|(_, &v)| v)
         .collect();
     let edges = subgraph_priorities(&decomp, &target_vertex, &unassigned_goal_vertices);
@@ -475,6 +451,28 @@ mod tests {
             verdict,
             Feasibility::Infeasible(Obstruction::DuplicateOccupancy { .. })
         ));
+    }
+
+    #[test]
+    fn build_decomposition_rejects_duplicate_occupancy() {
+        let index = index_from(example_arch_json());
+        // `Config` only rejects duplicate qubit ids, not duplicate locations;
+        // rather than silently dropping an atom, decline to decompose.
+        let initial = Config::new([(0, loc(0, 0)), (1, loc(0, 0))]).expect("config");
+        assert!(build_decomposition(&index, &initial, &HashSet::new()).is_none());
+    }
+
+    #[test]
+    fn target_for_absent_qubit_is_ignored() {
+        let index = index_from(example_arch_json());
+        let initial = Config::new([(0, loc(0, 0))]).expect("config");
+        // Qubit 7 is not in `initial`: its target is well-formedness checked
+        // but must not constrain feasibility (there is no atom to move).
+        let targets = [(7u32, loc(0, 5).encode())];
+        assert_eq!(
+            check(&index, &initial, &targets, &HashSet::new()),
+            Feasibility::NoObstructionFound
+        );
     }
 
     #[test]
