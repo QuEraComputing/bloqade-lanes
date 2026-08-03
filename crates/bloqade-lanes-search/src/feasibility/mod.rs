@@ -526,7 +526,7 @@ mod tests {
                 goal_verts.swap(i, j);
             }
             let target_vertex: HashMap<u32, VertexId> =
-                (0..n_targets as u32).zip(goal_verts.into_iter()).collect();
+                (0..n_targets as u32).zip(goal_verts).collect();
 
             if let Some(obstruction) = decomposition_obstruction(&graph, &occupant, &target_vertex)
             {

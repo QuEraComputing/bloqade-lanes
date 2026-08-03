@@ -31,9 +31,7 @@ pub use solver::{DEFAULT_MOVE_BUDGET, solve_push_rotate, solve_push_rotate_with}
 
 use std::collections::HashMap;
 
-use crate::feasibility::decomposition::{
-    Decomposition, assign_agents, find_planks, find_subgraphs,
-};
+use crate::feasibility::decomposition::{Decomposition, assign_agents};
 use crate::feasibility::graph::{LaneGraph, VertexId};
 use crate::primitives::lane_index::LaneIndex;
 
@@ -123,10 +121,6 @@ pub fn plan_with(
     }
 
     // ── Algorithm 7 ────────────────────────────────────────────────
-    let bcc = graph.biconnected();
-    let (subgraphs, subgraph_of_vertex) = find_subgraphs(graph, &bcc, empty_count);
-    let planks = find_planks(graph, &subgraphs, &subgraph_of_vertex, empty_count);
-
     let occupancy = |placement: &[VertexId]| -> Vec<Option<u32>> {
         let mut occ = vec![None; graph.len()];
         for (a, &v) in placement.iter().enumerate() {
@@ -135,38 +129,37 @@ pub fn plan_with(
         occ
     };
 
-    let f_initial = assign_agents(
-        graph,
-        &subgraphs,
-        &subgraph_of_vertex,
-        &occupancy(&start),
-        empty_count,
-    );
+    // The decomposition (subgraphs, planks, per-component empty counts, and
+    // the start-side assignment `f`) comes from the shared feasibility
+    // builder, so the planner and the infeasibility oracle can never
+    // disagree about the structure of an instance.
+    let decomp = Decomposition::build(graph, &occupancy(&start));
+
+    // Goal-side assignment `f'` reuses the same subgraphs and per-component
+    // `m` — those depend on the graph and the empty counts, not on where
+    // the atoms sit, and any solvable instance keeps each agent (and thus
+    // each component's empty count) in its own component.
+    let m_of_vertex: Vec<usize> = graph
+        .vertices()
+        .map(|v| decomp.empties_in_component[decomp.component_of_vertex[v]])
+        .collect();
     let f_goal = assign_agents(
         graph,
-        &subgraphs,
-        &subgraph_of_vertex,
+        &decomp.subgraphs,
+        &decomp.subgraph_of_vertex,
         &occupancy(&goal),
-        empty_count,
+        &m_of_vertex,
     );
 
     // Line 5: `if f = f'`. A mismatch means some agent is confined to one
     // subgraph at the start and a different one at the goal, which
     // Proposition 1 forbids — so the instance is unsolvable.
     for a in 0..n_agents as u32 {
-        if f_initial.get(&a) != f_goal.get(&a) {
+        if decomp.assignment.get(&a) != f_goal.get(&a) {
             let qubit = initial[a as usize].0;
             return Err(PlanError::Unsolvable { agent: qubit });
         }
     }
-
-    let decomp = Decomposition {
-        subgraphs,
-        subgraph_of_vertex,
-        planks,
-        assignment: f_initial,
-        empty_count,
-    };
 
     let ctx = PlanCtx::new(graph, index, &decomp, &goal, heuristics);
     solve(&ctx, &start, budget)
