@@ -281,9 +281,11 @@ fn occupancy(graph: &LaneGraph, initial: &Config) -> Option<Vec<Option<u32>>> {
 ///
 /// `targets` is the desired `(qubit, encoded location)` assignment; qubits
 /// absent from it are unconstrained. A target for a qubit that is not in
-/// `initial` is checked for well-formedness but otherwise ignored — there is
-/// no atom to move. `blocked` locations are treated as removed from the
-/// graph entirely.
+/// `initial` is ignored entirely — there is no atom to move, so it cannot
+/// constrain anything, and it must not be able to produce an obstruction
+/// (a duplicate target, an off-graph target, or a precedence edge) for an
+/// otherwise solvable instance. `blocked` locations are treated as removed
+/// from the graph entirely.
 pub fn check(
     index: &LaneIndex,
     initial: &Config,
@@ -312,9 +314,17 @@ pub fn check(
         occupant[v] = Some(qubit);
     }
 
+    // Targets for qubits absent from `initial` are dropped before any check:
+    // there is no atom to move, so such a target is vacuous, and letting it
+    // reach the duplicate/off-graph checks below (or the precedence relation
+    // later) could manufacture an obstruction for a solvable instance.
+    let initial_qubits: HashSet<u32> = initial.iter().map(|(q, _)| q).collect();
     let mut target_vertex: HashMap<u32, VertexId> = HashMap::new();
     let mut target_seen: HashMap<u64, u32> = HashMap::new();
     for &(qubit, enc) in targets {
+        if !initial_qubits.contains(&qubit) {
+            continue;
+        }
         let Some(v) = graph.vertex_of(enc) else {
             return Feasibility::Infeasible(Obstruction::TargetNotOnGraph {
                 qubit,
@@ -380,14 +390,11 @@ pub fn check(
     }
 
     // Proposition 2: a cyclic precedence relation proves unsolvability.
-    // A target for a qubit absent from `initial` constrains nothing — there
-    // is no atom to move. It is well-formedness-checked above, but excluded
-    // here so a phantom goal cannot fabricate precedence edges (and, in the
-    // worst case, a spurious cycle).
-    let initial_qubits: HashSet<u32> = initial.iter().map(|(q, _)| q).collect();
+    // `target_vertex` only holds qubits present in `initial` (phantom
+    // targets were dropped up front), so every goal here is a real one.
     let unassigned_goal_vertices: HashSet<VertexId> = target_vertex
         .iter()
-        .filter(|(q, _)| initial_qubits.contains(q) && !decomp.assignment.contains_key(q))
+        .filter(|(q, _)| !decomp.assignment.contains_key(q))
         .map(|(_, &v)| v)
         .collect();
     let edges = subgraph_priorities(&decomp, &target_vertex, &unassigned_goal_vertices);
@@ -518,12 +525,18 @@ mod tests {
     }
 
     #[test]
-    fn target_for_absent_qubit_is_ignored() {
+    fn targets_for_absent_qubits_are_ignored_entirely() {
         let index = index_from(example_arch_json());
         let initial = Config::new([(0, loc(0, 0))]).expect("config");
-        // Qubit 7 is not in `initial`: its target is well-formedness checked
-        // but must not constrain feasibility (there is no atom to move).
-        let targets = [(7u32, loc(0, 5).encode())];
+        // Qubits 7 and 8 are not in `initial`: their targets are vacuous and
+        // must not produce an obstruction of any kind — not a collision with
+        // a real target (qubit 0's), and not an off-graph location. The
+        // instance is solvable without moving anything for them.
+        let targets = [
+            (0u32, loc(0, 5).encode()),
+            (7u32, loc(0, 5).encode()),  // collides with qubit 0's target
+            (8u32, loc(99, 0).encode()), // word 99 is off the graph
+        ];
         assert_eq!(
             check(&index, &initial, &targets, &HashSet::new()),
             Feasibility::NoObstructionFound
