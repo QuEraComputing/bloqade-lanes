@@ -304,6 +304,16 @@ where
             let mut f = PriorityFrontier::greedy(heuristic_fn);
             run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
         }
+        // Push and Rotate needs a concrete target placement, which this path
+        // does not have: `run_with_components` is reached with a `Goal`
+        // predicate, and the loose-goal callers deliberately leave the target
+        // open for the Hungarian assignment to choose. Fall back to A* rather
+        // than panicking, and note it in `Strategy::PushRotate`'s docs so the
+        // substitution is not a surprise.
+        Strategy::PushRotate => {
+            let mut f = PriorityFrontier::astar(heuristic_fn, weight);
+            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+        }
         _ => {
             unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")
         }
