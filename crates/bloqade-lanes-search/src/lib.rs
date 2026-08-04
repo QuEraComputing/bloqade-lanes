@@ -32,6 +32,7 @@ pub mod observer;
 pub mod ops;
 pub mod placement;
 pub mod primitives;
+pub mod push_rotate;
 pub mod scorers;
 pub mod search;
 #[cfg(test)]
@@ -62,6 +63,7 @@ pub use primitives::context::{MoveCandidate, SearchContext, SearchState};
 pub use primitives::distance::PairDistanceHeuristic;
 pub use primitives::graph::{MoveSet, NodeId, SearchGraph};
 pub use primitives::lane_index::LaneIndex;
+pub use push_rotate::{solve_push_rotate, solve_push_rotate_with};
 pub use scorers::{DistanceScorer, EntropyScorer};
 pub use search::engine::SearchEngine;
 pub use search::move_search::MoveSearch;

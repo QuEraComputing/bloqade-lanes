@@ -71,6 +71,8 @@ pub enum PySearchStrategy {
     CascadeEntropy = 7,
     #[pyo3(name = "ENTROPY")]
     Entropy = 8,
+    #[pyo3(name = "PUSH_ROTATE")]
+    PushRotate = 9,
 }
 
 #[pymethods]
@@ -87,6 +89,7 @@ impl PySearchStrategy {
             Self::CascadeDfs => "CASCADE_DFS",
             Self::CascadeEntropy => "CASCADE_ENTROPY",
             Self::Entropy => "ENTROPY",
+            Self::PushRotate => "PUSH_ROTATE",
         }
     }
 }
@@ -109,6 +112,7 @@ impl PySearchStrategy {
                 inner: InnerStrategy::Entropy,
             } => Self::CascadeEntropy,
             Strategy::Entropy => Self::Entropy,
+            Strategy::PushRotate => Self::PushRotate,
         }
     }
 
@@ -129,6 +133,7 @@ impl PySearchStrategy {
                 inner: InnerStrategy::Entropy,
             },
             Self::Entropy => Strategy::Entropy,
+            Self::PushRotate => Strategy::PushRotate,
         }
     }
 }
@@ -777,7 +782,7 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false))]
     fn new(
         strategy: PySearchStrategy,
         weight: f64,
@@ -785,6 +790,7 @@ impl PySolveOptions {
         deadlock_policy: PyDeadlockPolicy,
         lookahead: bool,
         top_c: Option<usize>,
+        fallback_push_rotate: bool,
     ) -> PyResult<Self> {
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
@@ -804,6 +810,7 @@ impl PySolveOptions {
                 deadlock_policy: deadlock_policy.to_rs(),
                 lookahead,
                 top_c,
+                fallback_push_rotate,
             },
         })
     }
