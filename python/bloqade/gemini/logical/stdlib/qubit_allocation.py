@@ -11,7 +11,7 @@ from .. import kernel
 
 N = TypeVar("N")
 
-PositionIndex = types.Union(types.Int, types.NoneType)
+PositionIndex: Alias = int | None
 
 
 @kernel(aggressive_unroll=True, verify=False)
@@ -31,9 +31,9 @@ def qalloc_at(
         position: PositionIndex,  # pyright: ignore[reportInvalidTypeForm]
     ) -> Qubit:
         if position is None:
-            qubit = squin.qalloc(1)[0]
+            q = qubit.new()
         else:
-            qubit = new_at(0, position * 2, 0)
-        return qubit
+            q = new_at(0, position * 2, 0)
+        return q
 
     return ilist.map(position_to_new_at, positions)
