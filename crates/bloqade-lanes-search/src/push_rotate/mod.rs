@@ -1,9 +1,20 @@
 //! Push and Rotate: a complete multi-agent pathfinding planner.
 //!
 //! de Wilde, ter Mors & Witteveen, *Push and Rotate: a Complete Multi-agent
-//! Pathfinding Algorithm*, JAIR 51 (2014) 443–492. Complete for instances with
-//! at least two empty vertices (Theorem 1): it finds a solution whenever one
-//! exists, and returns [`PlanError::Unsolvable`] otherwise.
+//! Pathfinding Algorithm*, JAIR 51 (2014) 443–492. Theorem 1: complete for
+//! instances with at least two empty vertices per connected component where
+//! an atom moves.
+//!
+//! This implementation meets the *solving* half of that claim (validated by
+//! the brute-force property tests) and a **sound but partial** proving half:
+//! [`PlanError::Unsolvable`] and [`PlanError::UnknownQubit`] are genuine
+//! proofs, but some unsolvable in-regime instances come back as
+//! [`PlanError::Stuck`] instead of a proof. The gap is deliberate — the
+//! paper's `f = f'` test is only sound with its full-strength agent
+//! assignment, and the shared decomposition in `crate::feasibility`
+//! intentionally under-assigns (see the containment-form check in
+//! [`plan_with`]). Closing it would need a planner-specific,
+//! paper-faithful `assign_agents`.
 //!
 //! The Kornhauser decomposition it runs on (Algorithms 1–3) lives in the open
 //! `crate::feasibility` module — it is the paper's own content
@@ -41,25 +52,46 @@ use crate::push_rotate::ops::{no_blocked, push, rotate, swap};
 use crate::push_rotate::state::{Move, PlanState};
 
 /// Why planning stopped without a solution.
+///
+/// The variants split into **proofs** and **non-proofs**, and the
+/// distinction is load-bearing: the fallback path in the target solver
+/// promotes the planner's verdict over the search's, so only
+/// [`PlanError::Unsolvable`] and [`PlanError::UnknownQubit`] — the two
+/// variants that genuinely prove no solution exists — may be surfaced as
+/// [`SolveStatus::Unsolvable`](crate::search::result::SolveStatus::Unsolvable).
+/// Everything else means "the planner did not find a plan", which proves
+/// nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
-    /// Proven unsolvable. Algorithm 7 line 5: the agent→subgraph assignment
-    /// computed from the initial placement differs from the one computed from
-    /// the goal, so some agent would have to leave the region Proposition 1
-    /// confines it to.
+    /// **Proof.** No solution exists: either the agent→subgraph assignment
+    /// differs between the initial and goal placements (Algorithm 7 line 5 —
+    /// the agent would have to leave the region Proposition 1 confines it
+    /// to), or no path to the target exists at all.
+    #[error("instance is unsolvable: {reason} (qubit {qubit})")]
+    Unsolvable { qubit: u32, reason: &'static str },
+    /// **Proof.** A target was given for a qubit that is not in the initial
+    /// placement. No sequence of moves creates an atom that does not exist,
+    /// so a goal that requires placing one is unsatisfiable. (This is a
+    /// caller bug — but a loud verdict beats fabricating a placement.)
+    #[error("target given for qubit {qubit}, which is not in the initial placement")]
+    UnknownQubit { qubit: u32 },
+    /// **Not a proof.** Fewer than two empty vertices in a connected
+    /// component where an atom must move. Push and Rotate's completeness
+    /// result does not cover this regime — the instance may still be
+    /// solvable (single-hole 15-puzzle instances are).
     #[error(
-        "instance is unsolvable: agent {agent} is confined to a different subgraph in the goal"
+        "push and rotate requires at least 2 empty vertices in every component \
+         where an atom moves, found {found}"
     )]
-    Unsolvable { agent: u32 },
-    /// Fewer than two empty vertices. Push and Rotate's completeness result
-    /// does not cover this regime.
-    #[error("push and rotate requires at least 2 empty vertices, found {found}")]
     TooFewEmpty { found: usize },
-    /// An atom or target is not a vertex of the lane graph.
-    #[error("location {location:#x} for qubit {agent} is blocked or not on any lane")]
-    OffGraph { agent: u32, location: u64 },
-    /// The planner exceeded its step budget. Distinct from `Unsolvable`: this
-    /// says nothing about whether a solution exists.
+    /// **Not a proof.** An operation the completeness argument says must
+    /// succeed in-regime (rotate, swap, or the final placement check)
+    /// failed. Either the instance slipped outside the regime in a way the
+    /// gates did not catch, or this is a planner bug; in neither case is it
+    /// evidence that no solution exists.
+    #[error("planner stuck: {reason} (qubit {qubit}) — not a proof of unsolvability")]
+    Stuck { qubit: u32, reason: &'static str },
+    /// **Not a proof.** The planner exceeded its step budget.
     #[error("exceeded step budget of {budget} moves")]
     BudgetExceeded { budget: usize },
 }
@@ -101,23 +133,25 @@ pub fn plan_with(
     heuristics: &dyn PlanHeuristics,
 ) -> Result<Plan, PlanError> {
     let n_agents = initial.len();
-    let empty_count = graph.len().saturating_sub(n_agents);
-    if empty_count < 2 {
-        return Err(PlanError::TooFewEmpty { found: empty_count });
-    }
 
     // Dense agent indexing: the planner works with 0..n_agents internally.
     let mut agent_of_qubit: HashMap<u32, u32> = HashMap::new();
     let mut start = vec![0usize; n_agents];
+    let mut qubit_of_agent = vec![0u32; n_agents];
     for (i, &(qubit, v)) in initial.iter().enumerate() {
         agent_of_qubit.insert(qubit, i as u32);
+        qubit_of_agent[i] = qubit;
         start[i] = v;
     }
     let mut goal = start.clone();
     for &(qubit, v) in target {
-        if let Some(&a) = agent_of_qubit.get(&qubit) {
-            goal[a as usize] = v;
-        }
+        let Some(&a) = agent_of_qubit.get(&qubit) else {
+            // A target for an atom that does not exist can never be
+            // satisfied; silently dropping it would let the solver report
+            // `Solved` for a goal it did not (and cannot) meet.
+            return Err(PlanError::UnknownQubit { qubit });
+        };
+        goal[a as usize] = v;
     }
 
     // ── Algorithm 7 ────────────────────────────────────────────────
@@ -135,6 +169,19 @@ pub fn plan_with(
     // disagree about the structure of an instance.
     let decomp = Decomposition::build(graph, &occupancy(&start));
 
+    // Regime gate, per connected component: Theorem 1 covers each
+    // pebble-motion instance separately, and empties in another component
+    // cannot help maneuvering. A component where nothing needs to move is
+    // fine with any empty count.
+    for a in 0..n_agents {
+        if start[a] != goal[a] {
+            let found = decomp.empties_in_component[decomp.component_of_vertex[start[a]]];
+            if found < 2 {
+                return Err(PlanError::TooFewEmpty { found });
+            }
+        }
+    }
+
     // Goal-side assignment `f'` reuses the same subgraphs and per-component
     // `m` — those depend on the graph and the empty counts, not on where
     // the atoms sit, and any solvable instance keeps each agent (and thus
@@ -151,17 +198,41 @@ pub fn plan_with(
         &m_of_vertex,
     );
 
-    // Line 5: `if f = f'`. A mismatch means some agent is confined to one
-    // subgraph at the start and a different one at the goal, which
-    // Proposition 1 forbids — so the instance is unsolvable.
-    for a in 0..n_agents as u32 {
-        if decomp.assignment.get(&a) != f_goal.get(&a) {
-            let qubit = initial[a as usize].0;
-            return Err(PlanError::Unsolvable { agent: qubit });
+    // Line 5, in region-containment form rather than the paper's `f = f'`
+    // equality. Our `assign_agents` deliberately under-assigns relative to
+    // the paper (see the soundness note in the decomposition module), which
+    // breaks the symmetry the equality test relies on: the two placements
+    // can gate differently for an agent that is confined the same way in
+    // both, turning `Some(S) != None` into a false proof. What Proposition 1
+    // actually licenses — and what the feasibility module's brute-force
+    // tests validate — is the region claim, applied in both time directions
+    // since pebble moves are reversible:
+    //
+    // * an agent confined at the start must have its goal inside that
+    //   region, and
+    // * an agent confined at the goal must have its start inside that
+    //   region (running the plan backwards).
+    //
+    // Subgraphs and planks depend only on the graph and the per-component
+    // empty counts, so the one decomposition serves both directions.
+    for (&a, &sub) in &decomp.assignment {
+        if !decomp.contains_in_subgraph_or_planks(sub, goal[a as usize]) {
+            return Err(PlanError::Unsolvable {
+                qubit: qubit_of_agent[a as usize],
+                reason: "the atom is confined to a region that excludes its goal",
+            });
+        }
+    }
+    for (&a, &sub) in &f_goal {
+        if !decomp.contains_in_subgraph_or_planks(sub, start[a as usize]) {
+            return Err(PlanError::Unsolvable {
+                qubit: qubit_of_agent[a as usize],
+                reason: "the atom's goal is confined to a region that excludes its start",
+            });
         }
     }
 
-    let ctx = PlanCtx::new(graph, index, &decomp, &goal, heuristics);
+    let ctx = PlanCtx::new(graph, index, &decomp, &goal, &qubit_of_agent, heuristics);
     solve(&ctx, &start, budget)
 }
 
@@ -182,8 +253,16 @@ fn solve(ctx: &PlanCtx, start: &[VertexId], budget: usize) -> Result<Plan, PlanE
     let mut current: Option<u32> = None;
 
     // Line 5: on a polygon every vertex has degree 2, so no swap vertex
-    // exists and paths must avoid finished agents entirely.
-    let is_polygon = graph.vertices().all(|v| graph.degree(v) == 2);
+    // exists and paths must avoid finished agents entirely. Decided per
+    // connected component — a graph mixing a polygon component with a
+    // branching one must treat each by its own rule.
+    let n_components = ctx.decomp.empties_in_component.len();
+    let mut polygon_component = vec![true; n_components];
+    for v in graph.vertices() {
+        if graph.degree(v) != 2 {
+            polygon_component[ctx.decomp.component_of_vertex[v]] = false;
+        }
+    }
 
     // Agents are planned in subgraph-precedence order; within that, agents
     // assigned to no subgraph go last (§3.1.3).
@@ -222,6 +301,7 @@ fn solve(ctx: &PlanCtx, start: &[VertexId], budget: usize) -> Result<Plan, PlanE
         }
 
         // Lines 9-12: choose the path.
+        let is_polygon = polygon_component[ctx.decomp.component_of_vertex[state.position_of(r)]];
         let path_block = if is_polygon {
             blocked_finished.clone()
         } else {
@@ -233,7 +313,14 @@ fn solve(ctx: &PlanCtx, start: &[VertexId], budget: usize) -> Result<Plan, PlanE
                 ctx.heuristics.score_step(ctx, &state, r, from, to)
             })
         else {
-            return Err(PlanError::Unsolvable { agent: r });
+            // With no blocking (non-polygon) this is graph disconnection —
+            // a genuine proof. On a polygon, settled agents can never be
+            // displaced, so a path avoiding them failing to exist is the
+            // paper's line 9-12 unsolvability criterion.
+            return Err(PlanError::Unsolvable {
+                qubit: ctx.qubits[r as usize],
+                reason: "no path to the target exists",
+            });
         };
         q.push(state.position_of(r));
 
@@ -251,7 +338,10 @@ fn solve(ctx: &PlanCtx, start: &[VertexId], budget: usize) -> Result<Plan, PlanE
                     &path_block,
                     |from, to| ctx.heuristics.score_step(ctx, &state, r, from, to),
                 ) else {
-                    return Err(PlanError::Unsolvable { agent: r });
+                    return Err(PlanError::Unsolvable {
+                        qubit: ctx.qubits[r as usize],
+                        reason: "no path to the target exists",
+                    });
                 };
                 path = p;
                 step_i = 0;
@@ -266,12 +356,17 @@ fn solve(ctx: &PlanCtx, start: &[VertexId], budget: usize) -> Result<Plan, PlanE
                 // Lines 16-19: a cycle of displaced agents.
                 let cycle: Vec<VertexId> = q[pos..].to_vec();
                 q.truncate(pos);
-                if !rotate(ctx, &mut state, &cycle) {
-                    return Err(PlanError::Unsolvable { agent: r });
+                if rotate(ctx, &mut state, &cycle) {
+                    // The rotate moved r; recompute the path.
+                    step_i = usize::MAX;
+                    continue;
                 }
-                // The rotate moved r; recompute the path.
-                step_i = usize::MAX;
-                continue;
+                // Not a rotatable cycle. `q` accumulates vertices across
+                // successive agents (the return loop below can break early
+                // on purpose), so a repeated vertex can be a stale artifact
+                // of an earlier agent's path rather than a closed walk of
+                // displaced atoms. Fall through to the ordinary push/swap
+                // handling of `v` instead of aborting the whole plan.
             }
 
             let mut blocked_now = no_blocked(graph.len());
@@ -282,12 +377,20 @@ fn solve(ctx: &PlanCtx, start: &[VertexId], budget: usize) -> Result<Plan, PlanE
             }
             if !push(ctx, &mut state, r, v, &blocked_now) {
                 // Line 22: push failed, so (Lemma 1) the blocker shares r's
-                // subgraph and swap must succeed.
+                // subgraph and swap must succeed. If either expectation
+                // fails, that is the planner losing its footing — not
+                // evidence about the instance.
                 let Some(s) = state.agent_at(v) else {
-                    return Err(PlanError::Unsolvable { agent: r });
+                    return Err(PlanError::Stuck {
+                        qubit: ctx.qubits[r as usize],
+                        reason: "push failed with no blocking atom to swap with",
+                    });
                 };
                 if !swap(ctx, &mut state, r, s) {
-                    return Err(PlanError::Unsolvable { agent: r });
+                    return Err(PlanError::Stuck {
+                        qubit: ctx.qubits[r as usize],
+                        reason: "swap failed where Lemma 1 requires it to succeed",
+                    });
                 }
                 step_i = usize::MAX;
             }
@@ -328,10 +431,15 @@ fn solve(ctx: &PlanCtx, start: &[VertexId], budget: usize) -> Result<Plan, PlanE
         }
     }
 
-    // Only a genuine success if every agent actually reached its goal.
+    // Only a genuine success if every agent actually reached its goal. On a
+    // correct implementation this is unreachable for in-regime instances —
+    // if it fires, it is a planner-bug sentinel, never a proof.
     for (a, &want) in goal.iter().enumerate() {
         if state.position_of(a as u32) != want {
-            return Err(PlanError::Unsolvable { agent: a as u32 });
+            return Err(PlanError::Stuck {
+                qubit: ctx.qubits[a],
+                reason: "final placement check failed after planning completed",
+            });
         }
     }
 

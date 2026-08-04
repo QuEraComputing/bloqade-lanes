@@ -112,17 +112,28 @@ substitutes A* there rather than reaching the `unreachable!` in
 
 ### The three-way answer
 
-Because the planner is complete, its `Unsolvable` is a **proof**, unlike a
-search whose frontier merely drained. With the fallback on:
+The planner's `Unsolvable` is a **proof**, unlike a search whose frontier
+merely drained — only genuinely proven verdicts (subgraph confinement, no
+path, a target for a nonexistent qubit) surface as `Unsolvable`; everything
+else the planner cannot do (out of its ≥ 2-empties-per-component regime,
+internal give-ups, scheduling artifacts) is reported as `BudgetExceeded`,
+which proves nothing. With the fallback on:
 
 | outcome | meaning |
 |---|---|
 | search succeeds | normal path |
 | search fails, planner succeeds | recovered; worse ops, but a schedule where there was none |
-| both fail | provably impossible on this device |
+| both fail, planner proves | provably impossible **given the blocked set** |
+| both fail, no proof | gave up — says nothing about solvability |
 
-On the double-failure path the planner's verdict is returned for exactly that
-reason.
+Two footnotes on the proof row. First, it is relative to `blocked`: with
+`block_spectators`, spectator atoms arrive encoded as blocked locations, so
+the honest reading is "no solution that leaves spectators untouched" —
+unblocking a spectator may make the instance solvable. Second, the planner
+does not prove every unsolvable in-regime instance: its proof checks use the
+containment form of the paper's line 5 (the `f = f'` equality is unsound
+under the feasibility module's deliberately conservative agent assignment),
+so some unsolvable instances land in the no-proof row.
 
 ### Structure
 

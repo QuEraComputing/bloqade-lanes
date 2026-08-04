@@ -52,6 +52,9 @@ pub struct PlanCtx<'a> {
     pub decomp: &'a Decomposition,
     /// Goal vertex per agent, indexed by dense agent id.
     pub goal: &'a [VertexId],
+    /// Qubit id per agent, indexed by dense agent id. Errors report qubit
+    /// ids — the caller's vocabulary — never the internal dense index.
+    pub qubits: &'a [u32],
     /// The strategy in force for this solve.
     pub heuristics: &'a dyn PlanHeuristics,
     edges: HashMap<(VertexId, VertexId), EdgeInfo>,
@@ -63,6 +66,7 @@ impl<'a> PlanCtx<'a> {
         index: &'a LaneIndex,
         decomp: &'a Decomposition,
         goal: &'a [VertexId],
+        qubits: &'a [u32],
         heuristics: &'a dyn PlanHeuristics,
     ) -> Self {
         let mut edges = HashMap::new();
@@ -95,6 +99,7 @@ impl<'a> PlanCtx<'a> {
             index,
             decomp,
             goal,
+            qubits,
             heuristics,
             edges,
         }

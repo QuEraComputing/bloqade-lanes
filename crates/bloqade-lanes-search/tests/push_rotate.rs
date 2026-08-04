@@ -37,7 +37,8 @@ use bloqade_lanes_search::push_rotate::heuristics::{
 use bloqade_lanes_search::push_rotate::instances::generate;
 use bloqade_lanes_search::push_rotate::schedule::schedule;
 use bloqade_lanes_search::push_rotate::state::PlanState;
-use bloqade_lanes_search::push_rotate::{PlanError, plan, plan_with};
+use bloqade_lanes_search::push_rotate::{PlanError, plan, plan_with, solve_push_rotate};
+use bloqade_lanes_search::search::result::SolveStatus;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -271,8 +272,10 @@ fn identity_target_produces_no_operations() {
     assert_eq!((ops, moves), (0, 0), "identity should require no moves");
 }
 
-/// Guard the failure path too: a fully packed graph is outside Push and
-/// Rotate's regime and must be reported distinctly, not as unsolvable.
+/// Guard the failure path too: a fully packed graph where an atom must
+/// move is outside Push and Rotate's regime and must be reported
+/// distinctly, not as unsolvable — zero empties does not prove the
+/// instance impossible.
 #[test]
 fn packed_graph_is_reported_as_out_of_regime() {
     let fx = fixture(LOGICAL);
@@ -282,8 +285,312 @@ fn packed_graph_is_reported_as_out_of_regime() {
         .enumerate()
         .map(|(i, v)| (i as u32, v))
         .collect();
-    let err = plan(&fx.index, &fx.graph, &all, &all, 10_000).expect_err("should refuse");
+
+    // Swap the targets of two adjacent atoms so movement is required.
+    let v0 = all[0].1;
+    let &neighbor = fx
+        .graph
+        .neighbors(v0)
+        .first()
+        .expect("vertex 0 has a lane neighbour");
+    let mut target = all.clone();
+    let j = target
+        .iter()
+        .position(|&(_, v)| v == neighbor)
+        .expect("the neighbour is occupied on a packed graph");
+    target[0].1 = neighbor;
+    target[j].1 = v0;
+
+    let err = plan(&fx.index, &fx.graph, &all, &target, 10_000).expect_err("should refuse");
     assert!(matches!(err, PlanError::TooFewEmpty { .. }), "got {err:?}");
+}
+
+/// The regime gate is per component *and* per moving atom: an identity
+/// target on a fully packed graph needs nothing moved, so it must succeed
+/// with an empty plan rather than being refused.
+#[test]
+fn packed_graph_with_identity_target_is_a_trivial_success() {
+    let fx = fixture(LOGICAL);
+    let all: Vec<(u32, VertexId)> = fx
+        .graph
+        .vertices()
+        .enumerate()
+        .map(|(i, v)| (i as u32, v))
+        .collect();
+    let plan = plan(&fx.index, &fx.graph, &all, &all, 10_000).expect("identity is solvable");
+    assert!(plan.moves.is_empty(), "identity should require no moves");
+}
+
+// ── Verdict semantics ──────────────────────────────────────────────
+//
+// `SolveStatus::Unsolvable` from this router is documented as a *proof*, and
+// the fallback path promotes it over the search's verdict on that basis.
+// These tests pin the two directions: proofs stay proofs, and everything
+// that is not a proof must not claim to be one.
+
+/// A target for a qubit absent from `initial` is unsatisfiable — no move
+/// sequence creates an atom that does not exist. It must be reported as
+/// `Unsolvable` (a genuine proof), never as `Solved` with a fabricated
+/// placement.
+#[test]
+fn phantom_target_is_unsolvable_not_a_fabricated_success() {
+    let fx = fixture(LOGICAL);
+    let loc_a = LocationAddr::decode(fx.graph.location_of(0));
+    let loc_b = LocationAddr::decode(fx.graph.location_of(1));
+
+    let result = solve_push_rotate(&fx.index, &[(0, loc_a)], &[(7, loc_b)], &[], 10_000)
+        .expect("valid config");
+    assert_eq!(result.status, SolveStatus::Unsolvable);
+}
+
+/// A nearly-packed register asking for a single legal slide into the hole is
+/// trivially solvable — but with one empty vertex it is outside Push and
+/// Rotate's completeness regime, so the honest verdict is `BudgetExceeded`
+/// ("gave up"), never `Unsolvable` ("proof").
+#[test]
+fn out_of_regime_reports_budget_exceeded_not_unsolvable() {
+    let fx = fixture(LOGICAL);
+    let n = fx.graph.len();
+    // Occupy every vertex except the last; ask the hole's neighbour to
+    // slide in.
+    let hole = n - 1;
+    let initial: Vec<(u32, LocationAddr)> = (0..n - 1)
+        .map(|v| (v as u32, LocationAddr::decode(fx.graph.location_of(v))))
+        .collect();
+    let &mover = fx
+        .graph
+        .neighbors(hole)
+        .first()
+        .expect("the hole has a lane neighbour");
+    let target = [(
+        mover as u32,
+        LocationAddr::decode(fx.graph.location_of(hole)),
+    )];
+
+    let result =
+        solve_push_rotate(&fx.index, &initial, &target, &[], 10_000).expect("valid config");
+    assert_eq!(
+        result.status,
+        SolveStatus::BudgetExceeded,
+        "a solvable out-of-regime instance must not be reported as proven unsolvable"
+    );
+}
+
+/// Spectators encoded as blocked locations — the primary production wiring —
+/// are routed around: the solve succeeds and no emitted lane touches a
+/// blocked location.
+#[test]
+fn blocked_spectators_are_routed_around() {
+    let fx = fixture(LOGICAL);
+    // Block the three highest-numbered vertices, then plan a move between
+    // two vertices that remain connected in the carved graph.
+    let n = fx.graph.len();
+    let blocked_locs: Vec<LocationAddr> = (n - 3..n)
+        .map(|v| LocationAddr::decode(fx.graph.location_of(v)))
+        .collect();
+    let blocked_enc: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+    let carved = LaneGraph::build(&fx.index, &blocked_enc);
+    assert!(!carved.is_empty(), "carving must leave a graph");
+
+    // Pick a start with a neighbour and route to a vertex reachable from it.
+    let start = carved
+        .vertices()
+        .find(|&v| carved.degree(v) > 0)
+        .expect("carved graph has edges");
+    let dist = carved.distances_from(start, |_| false);
+    let dest = carved
+        .vertices()
+        .filter(|&v| dist[v] != u32::MAX && v != start)
+        .max_by_key(|&v| dist[v])
+        .expect("something is reachable");
+
+    let initial = [(0u32, LocationAddr::decode(carved.location_of(start)))];
+    let target = [(0u32, LocationAddr::decode(carved.location_of(dest)))];
+    let result = solve_push_rotate(&fx.index, &initial, &target, &blocked_locs, 10_000)
+        .expect("valid config");
+    assert_eq!(result.status, SolveStatus::Solved);
+
+    for layer in &result.move_layers {
+        for lane in layer.decode() {
+            let (src, dst) = fx.index.endpoints(&lane).expect("lane resolves");
+            assert!(
+                !blocked_enc.contains(&src.encode()) && !blocked_enc.contains(&dst.encode()),
+                "emitted lane touches a blocked location"
+            );
+        }
+    }
+}
+
+/// Verdicts agree with exhaustive search on small carved instances.
+///
+/// The graph is carved down to ≤ 8 vertices with a blocked set (often
+/// disconnecting it), atoms and targets are random, and a configuration-space
+/// BFS is the ground truth. Two directions:
+///
+/// * **Soundness — hard assertions.** `Unsolvable` must imply the oracle
+///   finds no solution, and `Solved` must imply it does. A violation of
+///   either is a bug, full stop.
+/// * **Completeness (solving) — asserted.** In-regime and oracle-solvable
+///   must mean `Solved`; currently clean across all seeds.
+///
+/// One Theorem 1 obligation is deliberately *not* asserted: proving
+/// unsolvability of every in-regime unsolvable instance. The planner's
+/// proof checks are containment-form (weaker than the paper's `f = f'`,
+/// which is unsound under our conservative `assign_agents`), so some
+/// unsolvable instances return an honest `BudgetExceeded` instead of a
+/// proof. One-sidedness is preserved — the fallback then simply keeps the
+/// search's own verdict.
+#[test]
+fn verdicts_match_brute_force_on_carved_instances() {
+    let fx = fixture(LOGICAL);
+    let n_full = fx.graph.len();
+    let keep = 8.min(n_full);
+
+    let mut proofs = 0usize;
+    let mut completeness_misses = 0usize;
+    for seed in 0..120u64 {
+        let mut rng = SmallRng::seed_from_u64(seed);
+
+        // Carve: keep a random set of `keep` vertices, block the rest.
+        let mut verts: Vec<VertexId> = (0..n_full).collect();
+        verts.shuffle(&mut rng);
+        let blocked_locs: Vec<LocationAddr> = verts[keep..]
+            .iter()
+            .map(|&v| LocationAddr::decode(fx.graph.location_of(v)))
+            .collect();
+        let blocked_enc: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+        let carved = LaneGraph::build(&fx.index, &blocked_enc);
+        let n = carved.len();
+        if n < 4 {
+            continue;
+        }
+
+        // Random occupancy (1..=n-2 atoms) and random distinct targets.
+        let mut order: Vec<VertexId> = carved.vertices().collect();
+        order.shuffle(&mut rng);
+        let n_atoms = rng.random_range(1..=n - 2);
+        let initial_v: Vec<(u32, VertexId)> = order[..n_atoms]
+            .iter()
+            .enumerate()
+            .map(|(q, &v)| (q as u32, v))
+            .collect();
+        let mut goal_order: Vec<VertexId> = carved.vertices().collect();
+        goal_order.shuffle(&mut rng);
+        let target_v: Vec<(u32, VertexId)> = goal_order[..n_atoms]
+            .iter()
+            .enumerate()
+            .map(|(q, &v)| (q as u32, v))
+            .collect();
+
+        let to_locs = |pairs: &[(u32, VertexId)]| -> Vec<(u32, LocationAddr)> {
+            pairs
+                .iter()
+                .map(|&(q, v)| (q, LocationAddr::decode(carved.location_of(v))))
+                .collect()
+        };
+        let result = solve_push_rotate(
+            &fx.index,
+            &to_locs(&initial_v),
+            &to_locs(&target_v),
+            &blocked_locs,
+            50_000,
+        )
+        .expect("valid config");
+
+        let solvable = oracle_solvable(&carved, &initial_v, &target_v);
+        match result.status {
+            SolveStatus::Unsolvable => {
+                proofs += 1;
+                assert!(
+                    !solvable,
+                    "seed {seed}: Unsolvable claimed for an oracle-solvable instance \
+                     (n={n}, initial={initial_v:?}, target={target_v:?})"
+                );
+            }
+            SolveStatus::Solved => {}
+            SolveStatus::BudgetExceeded => {
+                // In-regime give-ups are the known completeness gap —
+                // counted and bounded, not asserted away (see the test doc).
+                if in_regime(&carved, &initial_v, &target_v) && solvable {
+                    completeness_misses += 1;
+                }
+            }
+        }
+        if result.status != SolveStatus::Solved {
+            continue;
+        }
+        assert!(
+            solvable,
+            "seed {seed}: Solved returned for an oracle-unsolvable instance"
+        );
+    }
+    assert!(proofs > 0, "no seed exercised the proof path");
+    assert_eq!(
+        completeness_misses, 0,
+        "{completeness_misses} in-regime oracle-solvable instances returned \
+         BudgetExceeded — the planner must solve these (Theorem 1)"
+    );
+}
+
+/// Ground truth: BFS over the configuration space.
+fn oracle_solvable(
+    graph: &LaneGraph,
+    initial: &[(u32, VertexId)],
+    target: &[(u32, VertexId)],
+) -> bool {
+    use std::collections::VecDeque;
+    let mut occupant: Vec<Option<u32>> = vec![None; graph.len()];
+    for &(q, v) in initial {
+        occupant[v] = Some(q);
+    }
+    let goals: HashMap<u32, VertexId> = target.iter().copied().collect();
+    let satisfied = |state: &[Option<u32>]| goals.iter().all(|(&q, &goal)| state[goal] == Some(q));
+
+    if satisfied(&occupant) {
+        return true;
+    }
+    let mut seen: HashSet<Vec<Option<u32>>> = HashSet::new();
+    let mut queue: VecDeque<Vec<Option<u32>>> = VecDeque::new();
+    seen.insert(occupant.clone());
+    queue.push_back(occupant);
+    while let Some(state) = queue.pop_front() {
+        for v in graph.vertices() {
+            let Some(q) = state[v] else { continue };
+            for &w in graph.neighbors(v) {
+                if state[w].is_some() {
+                    continue;
+                }
+                let mut next = state.clone();
+                next[v] = None;
+                next[w] = Some(q);
+                if satisfied(&next) {
+                    return true;
+                }
+                if seen.insert(next.clone()) {
+                    queue.push_back(next);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// In Push and Rotate's completeness regime: every component where an atom
+/// must move has at least two empties.
+fn in_regime(graph: &LaneGraph, initial: &[(u32, VertexId)], target: &[(u32, VertexId)]) -> bool {
+    let (component, n_components) = graph.connected_components();
+    let occupied: HashSet<VertexId> = initial.iter().map(|&(_, v)| v).collect();
+    let mut empties = vec![0usize; n_components];
+    for v in graph.vertices() {
+        if !occupied.contains(&v) {
+            empties[component[v]] += 1;
+        }
+    }
+    let start: HashMap<u32, VertexId> = initial.iter().copied().collect();
+    target.iter().all(|&(q, goal)| match start.get(&q) {
+        Some(&s) if s != goal => empties[component[s]] >= 2,
+        _ => true,
+    })
 }
 
 // ── The heuristic seam ─────────────────────────────────────────────
@@ -550,6 +857,23 @@ mod solver_surface {
             "the fallback should have recovered this"
         );
         assert!(!with.move_layers.is_empty());
+    }
+
+    /// On double failure, the planner's verdict is promoted only when it is
+    /// a genuine proof. A target for a qubit that does not exist is one: no
+    /// move sequence creates an atom, so the budget-starved search's
+    /// non-answer is upgraded to `Unsolvable`.
+    #[test]
+    fn fallback_promotes_a_genuine_proof_on_double_failure() {
+        let initial = [(0, at(0, 0))];
+        let target = [(7, at(0, 4))]; // qubit 7 is not in `initial`
+        let result = solver(SolveOptions {
+            fallback_push_rotate: true,
+            ..Default::default()
+        })
+        .solve(initial, target, [], Some(1))
+        .expect("valid placement");
+        assert_eq!(result.status, SolveStatus::Unsolvable);
     }
 
     /// The fallback must not disturb a search that already succeeded.

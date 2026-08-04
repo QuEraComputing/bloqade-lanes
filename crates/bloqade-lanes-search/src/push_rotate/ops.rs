@@ -225,6 +225,9 @@ fn clear(ctx: &PlanCtx, state: &mut PlanState, r: u32, s: u32, v: VertexId) -> b
     let eps = current[0];
 
     // Stage 2: vacate a neighbour, then re-clear the empty one behind it.
+    // Every eligible neighbour is attempted — Algorithm 12 picks *a*
+    // neighbour, and giving up after the first failed candidate turned
+    // `clear` incomplete (a false-`Stuck` channel via `swap`).
     for &n in &neighbours {
         if n == v_prime || n == eps {
             continue;
@@ -243,10 +246,10 @@ fn clear(ctx: &PlanCtx, state: &mut PlanState, r: u32, s: u32, v: VertexId) -> b
             }
         }
         state.rollback(cp);
-        break;
     }
 
-    // Stage 3: move r and s back a step so a neighbour can vacate through v'.
+    // Stage 3: move r and s back a step so a neighbour can vacate through
+    // v'. As in stage 2, every eligible neighbour is attempted.
     for &n in &neighbours {
         if n == v_prime || n == eps {
             continue;
@@ -267,7 +270,6 @@ fn clear(ctx: &PlanCtx, state: &mut PlanState, r: u32, s: u32, v: VertexId) -> b
             }
         }
         state.rollback(cp);
-        break;
     }
 
     // Stage 4: make room behind eps by routing a neighbour through v.
@@ -323,21 +325,21 @@ fn clear(ctx: &PlanCtx, state: &mut PlanState, r: u32, s: u32, v: VertexId) -> b
 /// Proposition 3: this succeeds iff `r` and `s` are assigned to the same
 /// subgraph.
 pub fn swap(ctx: &PlanCtx, state: &mut PlanState, r: u32, s: u32) -> bool {
-    let Some(&sub) = ctx.decomp.assignment.get(&r) else {
-        return false;
-    };
-    if ctx.decomp.assignment.get(&s) != Some(&sub) {
-        return false;
-    }
-
-    // Candidate swap vertices: degree ≥ 3 within r's subgraph, nearest first
-    // (the paper: "we evaluate the vertices closest to r and s first").
+    // Candidate swap vertices: any reachable vertex of degree ≥ 3, nearest
+    // first (the paper: "we evaluate the vertices closest to r and s
+    // first"). The paper restricts candidates to the subgraph the agents
+    // are assigned to (Proposition 3), but our `assign_agents` deliberately
+    // under-assigns relative to the paper — gating the swap on that map
+    // made it refuse instances the completeness argument requires it to
+    // solve. Reachable degree-≥3 vertices are a superset of every subgraph
+    // restriction, and a failed candidate rolls back cleanly, so widening
+    // costs attempts, never correctness.
     let from = state.position_of(r);
     let dist = state.graph().distances_from(from, |_| false);
     // Which swap vertex to use is §5 decision 2.
-    let mut candidates: Vec<VertexId> = ctx.decomp.subgraphs[sub]
-        .iter()
-        .copied()
+    let mut candidates: Vec<VertexId> = state
+        .graph()
+        .vertices()
         .filter(|&x| state.graph().degree(x) >= 3 && dist[x] != u32::MAX)
         .collect();
     candidates.sort_by_key(|&x| {

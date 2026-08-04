@@ -326,10 +326,12 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:
-                # Invariant: the Rust solver expands ≥ 1 node per call (even
-                # when unsolvable), so the shared budget makes forward progress
-                # across candidates and this loop terminates.
-                remaining -= int(result.nodes_expanded)
+                # The search strategies expand ≥ 1 node per call (even when
+                # unsolvable), but PUSH_ROTATE is not a search and always
+                # reports 0 — charge at least 1 so the shared budget makes
+                # forward progress across candidates and this loop
+                # terminates under every strategy.
+                remaining -= max(1, int(result.nodes_expanded))
             if result.status == "solved":
                 winning_result = result
                 if should_trace and self.traversal.collect_entropy_trace:

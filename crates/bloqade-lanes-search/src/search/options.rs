@@ -86,11 +86,24 @@ pub struct SolveOptions {
     /// Retry with [`Strategy::PushRotate`] when the chosen strategy returns
     /// anything other than [`SolveStatus::Solved`](crate::search::result::SolveStatus::Solved).
     ///
-    /// Off by default, so no existing caller changes behaviour. Push and
-    /// Rotate is complete, so enabling this converts "the search gave up"
-    /// into either a valid schedule or a *proof* that none exists. The
-    /// recovered schedule uses more AOD operations than a search would have,
-    /// but it only ever applies where the search produced nothing at all.
+    /// Off by default, so no existing caller changes behaviour. Enabling it
+    /// usually converts "the search gave up" into a valid schedule or a
+    /// *proof* that none exists
+    /// ([`SolveStatus::Unsolvable`](crate::search::result::SolveStatus::Unsolvable)
+    /// from the planner is a proof, unlike from the search) — with two
+    /// caveats:
+    ///
+    /// * The proof is **relative to `blocked`**. Callers that encode
+    ///   spectator atoms as blocked locations (`block_spectators` in the
+    ///   Python placement strategy) get "no solution that leaves spectators
+    ///   untouched"; unblocking a spectator may make the instance solvable.
+    /// * The planner does not prove every unsolvable instance: outside its
+    ///   completeness regime, or when its proof checks come up short, it
+    ///   reports `BudgetExceeded` and the search's own result stands.
+    ///
+    /// The recovered schedule uses more AOD operations than a search would
+    /// have, but it only ever applies where the search produced nothing at
+    /// all.
     ///
     /// Cheap to leave on: the planner is rule-based and runs in well under a
     /// millisecond on Gemini-sized instances, and it only runs after a
