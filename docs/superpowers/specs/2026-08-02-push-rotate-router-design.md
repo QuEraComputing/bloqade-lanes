@@ -85,7 +85,10 @@ paths of different atoms are chosen in separate BFS calls that never see each
 other. `AlignmentHeuristics` implements the best available version of it —
 score a step by how many other unfinished atoms could also progress on that
 bus — and buys 163 → 159 on physical/k16 and 257 → 240 on logical/k16. Real,
-but not the win.
+but not the win. (A separate flat preference for word buses was also tried;
+ablation showed it contributed nothing on top of the support term — identical
+operation counts with and without — so the support term is the whole
+heuristic.)
 
 Closing the gap needs parallelism in the **move alphabet**, not in a
 heuristic. That is what the open entropy generator already does by proposing

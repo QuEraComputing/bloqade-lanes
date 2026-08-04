@@ -164,10 +164,12 @@ impl PlanHeuristics for DefaultHeuristics {}
 /// `O(agents x degree)`, a few hundred operations, against the thousands of
 /// `score_step` calls a single BFS makes.
 pub struct AlignmentHeuristics {
-    /// Weight on routing onto a bus other atoms can also use.
+    /// Weight on routing onto a bus other atoms can also use. This is the
+    /// whole heuristic: a separate flat preference for word buses was tried
+    /// and ablation showed it contributed nothing on top of the support
+    /// term (physical/logical k16 operation counts identical with and
+    /// without it), so it was removed.
     pub bus_weight: f64,
-    /// Weight on preferring word buses, where most parallelism lives.
-    pub word_bus_weight: f64,
     cache: RefCell<Cache>,
 }
 
@@ -186,7 +188,6 @@ impl Default for AlignmentHeuristics {
     fn default() -> Self {
         Self {
             bus_weight: 1.0,
-            word_bus_weight: 0.25,
             cache: RefCell::new(Cache {
                 clock: usize::MAX,
                 ..Default::default()
@@ -196,10 +197,9 @@ impl Default for AlignmentHeuristics {
 }
 
 impl AlignmentHeuristics {
-    pub fn new(bus_weight: f64, word_bus_weight: f64) -> Self {
+    pub fn new(bus_weight: f64) -> Self {
         Self {
             bus_weight,
-            word_bus_weight,
             ..Default::default()
         }
     }
@@ -249,11 +249,13 @@ impl AlignmentHeuristics {
 }
 
 impl PlanHeuristics for AlignmentHeuristics {
+    // `_agent` is part of the trait signature (a heuristic may score by
+    // agent identity); this one scores purely by bus-group company.
     fn score_step(
         &self,
         ctx: &PlanCtx,
         state: &PlanState,
-        agent: u32,
+        _agent: u32,
         from: VertexId,
         to: VertexId,
     ) -> f64 {
@@ -271,9 +273,6 @@ impl PlanHeuristics for AlignmentHeuristics {
             .copied()
             .unwrap_or(0)
             .saturating_sub(1);
-        let _ = agent;
-
-        let word_bus = if info.group.0 == 1 { 1.0 } else { 0.0 };
-        self.bus_weight * peers as f64 + self.word_bus_weight * word_bus
+        self.bus_weight * peers as f64
     }
 }

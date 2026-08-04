@@ -49,6 +49,21 @@
 //! returned to is untouched by anyone else, which is exactly what the
 //! redundancy condition guarantees. Plans are replayed against the graph in
 //! the tests regardless.
+//!
+//! ## Ordering relative to the scheduler
+//!
+//! Smoothing runs *before* the batch scheduler. Could it strip moves a
+//! heuristic added to improve parallelism? No — heuristics cannot add moves
+//! at all: `score_step` is only consulted among steps already on a shortest
+//! path (rank, don't choose), so every move smoothing removes is a
+//! `clear`/swap side effect, never a parallelism investment. There remains a
+//! theoretical interaction in the other direction: a removed leg could have
+//! been incidentally completing an AOD rectangle, so deleting it can in
+//! principle cost more operations than it saves. Empirically this has no
+//! surface — smoothing's contribution on Gemini instances is near zero
+//! (compare [`Plan::raw_move_count`](crate::push_rotate::Plan) against the
+//! smoothed count). If that ever changes, the cheap airtight fix is to
+//! schedule both the smoothed and unsmoothed plans and keep the shallower.
 
 use std::collections::VecDeque;
 
