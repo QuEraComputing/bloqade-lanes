@@ -10,20 +10,69 @@ use std::hash::{Hash, Hasher};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
-/// Error returned when a [`Config`] cannot be constructed.
-#[derive(Debug, Clone)]
-pub struct ConfigError {
-    /// The qubit ID that appeared more than once.
-    pub duplicate_qubit_id: u32,
+/// A malformed solve request.
+///
+/// These are rejected at the solver entry points — before feasibility,
+/// search, or planning runs — because they are nonsensical for *any*
+/// architecture and any occupancy. They are caller errors, never verdicts:
+/// a request that cannot be well-posed must not produce `Unsolvable` (which
+/// is documented as a proof about a well-posed instance) or, worse, a
+/// fabricated success.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigError {
+    /// A qubit ID appeared more than once in a placement.
+    DuplicateQubitId { qubit_id: u32 },
+    /// Two qubits were assigned the same target location.
+    DuplicateTargetLocation { location: u64, qubits: (u32, u32) },
+    /// One qubit was assigned two target locations.
+    DuplicateTargetQubit { qubit_id: u32 },
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "duplicate qubit_id: {}", self.duplicate_qubit_id)
+        match self {
+            Self::DuplicateQubitId { qubit_id } => {
+                write!(f, "duplicate qubit_id: {qubit_id}")
+            }
+            Self::DuplicateTargetLocation { location, qubits } => write!(
+                f,
+                "invalid request: qubits {} and {} are both assigned target location {location:#x}",
+                qubits.0, qubits.1
+            ),
+            Self::DuplicateTargetQubit { qubit_id } => write!(
+                f,
+                "invalid request: qubit {qubit_id} is assigned more than one target location"
+            ),
+        }
     }
 }
 
 impl std::error::Error for ConfigError {}
+
+/// Reject a target assignment that is not injective in both directions:
+/// two qubits on one location, or one qubit with two locations.
+///
+/// Runs at the solve entry points, ahead of every feasibility, search, or
+/// planning pass — such an assignment is an invalid request, not an
+/// instance to produce a verdict about.
+pub fn validate_target_assignment(targets: &[(u32, LocationAddr)]) -> Result<(), ConfigError> {
+    let mut by_location: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
+    let mut seen_qubits: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for &(qubit, loc) in targets {
+        if !seen_qubits.insert(qubit) {
+            return Err(ConfigError::DuplicateTargetQubit { qubit_id: qubit });
+        }
+        let enc = loc.encode();
+        if let Some(&other) = by_location.get(&enc) {
+            return Err(ConfigError::DuplicateTargetLocation {
+                location: enc,
+                qubits: (other.min(qubit), other.max(qubit)),
+            });
+        }
+        by_location.insert(enc, qubit);
+    }
+    Ok(())
+}
 
 /// Compute a hash for a sorted entries slice.
 ///
@@ -76,8 +125,8 @@ impl Config {
         // Check for duplicates (adjacent after sort).
         for window in entries.windows(2) {
             if window[0].0 == window[1].0 {
-                return Err(ConfigError {
-                    duplicate_qubit_id: window[0].0,
+                return Err(ConfigError::DuplicateQubitId {
+                    qubit_id: window[0].0,
                 });
             }
         }
@@ -287,7 +336,28 @@ mod tests {
     #[test]
     fn duplicate_qubit_id_returns_error() {
         let err = Config::new([(0, loc(0, 0)), (0, loc(0, 1))]).unwrap_err();
-        assert_eq!(err.duplicate_qubit_id, 0);
+        assert_eq!(err, ConfigError::DuplicateQubitId { qubit_id: 0 });
+    }
+
+    #[test]
+    fn target_assignment_rejects_shared_location() {
+        let err = validate_target_assignment(&[(0, loc(0, 5)), (1, loc(0, 5))]).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::DuplicateTargetLocation { qubits: (0, 1), .. }
+        ));
+    }
+
+    #[test]
+    fn target_assignment_rejects_double_assignment() {
+        let err = validate_target_assignment(&[(3, loc(0, 1)), (3, loc(0, 2))]).unwrap_err();
+        assert_eq!(err, ConfigError::DuplicateTargetQubit { qubit_id: 3 });
+    }
+
+    #[test]
+    fn target_assignment_accepts_injective_maps() {
+        assert!(validate_target_assignment(&[(0, loc(0, 1)), (1, loc(0, 2))]).is_ok());
+        assert!(validate_target_assignment(&[]).is_ok());
     }
 
     #[test]

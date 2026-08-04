@@ -343,6 +343,20 @@ fn phantom_target_is_unsolvable_not_a_fabricated_success() {
     assert_eq!(result.status, SolveStatus::Unsolvable);
 }
 
+/// A request assigning two qubits to one target location is malformed —
+/// rejected as an error at the entry point, before any planning runs,
+/// rather than surfacing as a verdict about a nonsensical instance.
+#[test]
+fn duplicate_target_location_is_an_invalid_request() {
+    let fx = fixture(LOGICAL);
+    let loc_of = |v: VertexId| LocationAddr::decode(fx.graph.location_of(v));
+    let initial = [(0u32, loc_of(0)), (1u32, loc_of(1))];
+    let target = [(0u32, loc_of(5)), (1u32, loc_of(5))];
+    let err = solve_push_rotate(&fx.index, &initial, &target, &[], 10_000)
+        .expect_err("must reject the request");
+    assert!(err.to_string().contains("invalid request"), "got {err}");
+}
+
 /// A nearly-packed register asking for a single legal slide into the hole is
 /// trivially solvable — but with one empty vertex it is outside Push and
 /// Rotate's completeness regime, so the honest verdict is `BudgetExceeded`
@@ -874,6 +888,22 @@ mod solver_surface {
         .solve(initial, target, [], Some(1))
         .expect("valid placement");
         assert_eq!(result.status, SolveStatus::Unsolvable);
+    }
+
+    /// Malformed requests error out at the solver surface, ahead of every
+    /// strategy and the fallback — never a verdict for nonsense.
+    #[test]
+    fn duplicate_target_location_errors_at_the_solver_surface() {
+        let s = solver(SolveOptions::default());
+        let err = s
+            .solve(
+                [(0, at(0, 0)), (1, at(1, 0))],
+                [(0, at(2, 0)), (1, at(2, 0))],
+                [],
+                None,
+            )
+            .expect_err("must reject the request");
+        assert!(err.to_string().contains("invalid request"), "got {err}");
     }
 
     /// The fallback must not disturb a search that already succeeded.

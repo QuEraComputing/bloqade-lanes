@@ -16,7 +16,7 @@ use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use crate::generators::HeuristicGenerator;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::goals::AllAtTarget;
-use crate::primitives::config::{Config, ConfigError};
+use crate::primitives::config::{Config, ConfigError, validate_target_assignment};
 use crate::primitives::context::SearchContext;
 use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
 use crate::push_rotate::{DEFAULT_MOVE_BUDGET, solve_push_rotate};
@@ -106,6 +106,11 @@ pub(crate) fn solve_with_engine(
 ) -> Result<SolveResult, ConfigError> {
     let root = Config::new(initial)?;
     let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
+    // A non-injective target assignment (two qubits on one location, or one
+    // qubit given two locations) is a malformed request. Reject it here —
+    // ahead of every strategy, the Push and Rotate branch, and any
+    // feasibility pass — rather than letting it surface as a verdict.
+    validate_target_assignment(&target_pairs)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
     let initial_pairs: Vec<(u32, LocationAddr)> = root.iter().collect();
 

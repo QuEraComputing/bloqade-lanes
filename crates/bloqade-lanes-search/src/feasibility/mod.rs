@@ -95,7 +95,10 @@ pub enum Obstruction {
     /// Two atoms occupy the same location. The move semantics assume an
     /// injective placement; [`Config`] only rejects duplicate *qubit ids*.
     DuplicateOccupancy { location: u64, qubits: (u32, u32) },
-    /// Two atoms are assigned the same target location.
+    /// Two atoms are assigned the same target location. The solve entry
+    /// points reject such requests as errors before any pass runs
+    /// (`validate_target_assignment`); this obstruction remains as defence
+    /// in depth for direct callers of [`check`].
     DuplicateTarget { location: u64, qubits: (u32, u32) },
     /// An atom's target lies in a different connected component of the lane
     /// graph — no sequence of moves can ever cross between them.
