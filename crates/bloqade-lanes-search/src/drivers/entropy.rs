@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::drivers::result::SearchResult;
+use crate::feasibility::graph::LaneGraph;
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
@@ -28,6 +29,7 @@ use crate::primitives::ordering::{
     cmp_triplet_entry_tiebreak,
 };
 use crate::primitives::path::find_path_occupied;
+use crate::push_rotate::{DEFAULT_MOVE_BUDGET, plan as push_rotate_plan};
 use crate::traits::Goal;
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 use rand::rngs::SmallRng;
@@ -1301,6 +1303,96 @@ fn fire_fallback_start_event(
     });
 }
 
+/// Budget-exhaustion fallback: Push and Rotate first, greedy sequential as
+/// the out-of-regime tertiary.
+///
+/// The planner is complete for instances with ≥ 2 empties per moving
+/// component and can displace atoms out of each other's way, so it solves
+/// everything the greedy router can and more (permutations, congestion).
+/// The greedy router's residual value is narrow and worth stating exactly:
+/// it cannot enter an occupied vertex, so at `m = 0` it never succeeds, and
+/// at `m = 1` it can only realize direct slides into the unique hole (any
+/// longer path would need a second empty). That single-hole slide is the
+/// one case the planner refuses (`TooFewEmpty`) that remains solvable here,
+/// so keeping the tertiary makes this a strict behavioural superset of the
+/// old greedy-only fallback.
+fn budget_exhaustion_fallback(
+    graph: &mut SearchGraph,
+    start: NodeId,
+    ctx: &SearchContext,
+    goal: &impl Goal,
+) -> (Option<NodeId>, u32) {
+    let config = graph.config(start).clone();
+    let lane_graph = LaneGraph::build(ctx.index, ctx.blocked);
+
+    // Any location off the carved graph makes the instance inexpressible for
+    // the planner; let the greedy router report what it can.
+    let initial_v: Option<Vec<(u32, usize)>> = config
+        .iter()
+        .map(|(q, loc)| lane_graph.vertex_of(loc.encode()).map(|v| (q, v)))
+        .collect();
+    let target_v: Option<Vec<(u32, usize)>> = ctx
+        .targets
+        .iter()
+        .map(|&(q, enc)| lane_graph.vertex_of(enc).map(|v| (q, v)))
+        .collect();
+    let (Some(initial_v), Some(target_v)) = (initial_v, target_v) else {
+        return sequential_fallback(graph, start, ctx, goal);
+    };
+
+    let Ok(p) = push_rotate_plan(
+        ctx.index,
+        &lane_graph,
+        &initial_v,
+        &target_v,
+        DEFAULT_MOVE_BUDGET,
+    ) else {
+        return sequential_fallback(graph, start, ctx, goal);
+    };
+
+    // Graft the plan onto the search graph as a chain of single-lane moves —
+    // the same currency the greedy router emits.
+    let mut current = start;
+    let mut nodes_expanded: u32 = 0;
+    for mv in &p.moves {
+        let src = LocationAddr::decode(lane_graph.location_of(mv.from));
+        let dst_enc = lane_graph.location_of(mv.to);
+        // Any lane realizing this edge works; one exists because the plan
+        // only steps along lane-graph adjacencies. Take the smallest
+        // encoding so the choice is deterministic.
+        let Some(lane) = ctx
+            .index
+            .outgoing_lanes(src)
+            .iter()
+            .filter(|l| {
+                ctx.index
+                    .endpoints(l)
+                    .is_some_and(|(_, d)| d.encode() == dst_enc)
+            })
+            .min_by_key(|l| l.encode_u64())
+            .copied()
+        else {
+            return (None, nodes_expanded);
+        };
+
+        let cur_config = graph.config(current).clone();
+        let Some(moving_qid) = cur_config.qubit_at(src) else {
+            return (None, nodes_expanded);
+        };
+        let new_config = cur_config.with_moves(&[(moving_qid, LocationAddr::decode(dst_enc))]);
+        let new_g = graph.g_score(current) + 1.0;
+        let (child_id, _) = graph.insert(current, MoveSet::new([lane]), new_config, new_g);
+        nodes_expanded += 1;
+        current = child_id;
+    }
+
+    if goal.is_goal(graph.config(current)) {
+        (Some(current), nodes_expanded)
+    } else {
+        (None, nodes_expanded)
+    }
+}
+
 /// Greedy sequential fallback: move each unresolved qubit along its shortest path.
 fn sequential_fallback(
     graph: &mut SearchGraph,
@@ -1753,7 +1845,7 @@ pub fn entropy_search(
 
     if found_goals.is_empty() && budget_exhausted {
         fire_fallback_start_event(observer, &graph, root_id, ctx, &resume_buffer);
-        let (goal_id, fb_expanded) = sequential_fallback(&mut graph, root_id, ctx, goal);
+        let (goal_id, fb_expanded) = budget_exhaustion_fallback(&mut graph, root_id, ctx, goal);
         nodes_expanded += fb_expanded;
         if let Some(gid) = goal_id {
             found_goals.push(gid);
@@ -2163,12 +2255,50 @@ mod tests {
     }
 
     #[test]
-    fn budget_exhaustion_runs_sequential_fallback() {
+    fn budget_exhaustion_runs_fallback() {
         let r = run_entropy([(0, loc(0, 0))], [(0, loc(0, 5))], Some(0));
+        let goal = r.goal.expect("fallback should find reachable target");
+        assert_eq!(r.graph.config(goal).location_of(0), Some(loc(0, 5)));
+    }
+
+    /// Interference the greedy sequential fallback cannot handle: qubit 0's
+    /// only route runs through qubit 1's current site, so a path avoiding
+    /// every occupied vertex does not exist — the atom in the way must be
+    /// displaced ahead, which is exactly what Push and Rotate does. (The
+    /// example arch's components are 4-vertex paths `(0,0)-(0,5)-(1,5)-(1,0)`,
+    /// so the targets preserve the atoms' order — a true swap would be
+    /// genuinely unsolvable here.)
+    #[test]
+    fn budget_exhaustion_fallback_solves_interference() {
+        let r = run_entropy(
+            [(0, loc(0, 0)), (1, loc(0, 5))],
+            [(0, loc(1, 5)), (1, loc(1, 0))],
+            Some(0),
+        );
         let goal = r
             .goal
-            .expect("sequential fallback should find reachable target");
-        assert_eq!(r.graph.config(goal).location_of(0), Some(loc(0, 5)));
+            .expect("the planner fallback should displace the blocker");
+        assert_eq!(r.graph.config(goal).location_of(0), Some(loc(1, 5)));
+        assert_eq!(r.graph.config(goal).location_of(1), Some(loc(1, 0)));
+    }
+
+    /// The greedy tertiary's one residual case: a component with a single
+    /// hole where an unresolved qubit slides directly into it. `m = 1` is
+    /// outside the planner's regime (`TooFewEmpty`), and the greedy router
+    /// can do nothing more than this — it cannot enter occupied vertices,
+    /// so at `m = 1` only direct slides into the hole are realizable.
+    #[test]
+    fn budget_exhaustion_fallback_out_of_regime_hole_slide() {
+        // Component (0,0)-(0,5)-(1,5)-(1,0), three atoms, hole at (1,0).
+        let r = run_entropy(
+            [(0, loc(0, 0)), (1, loc(0, 5)), (2, loc(1, 5))],
+            [(2, loc(1, 0))],
+            Some(0),
+        );
+        let goal = r
+            .goal
+            .expect("the greedy tertiary should slide into the hole");
+        assert_eq!(r.graph.config(goal).location_of(2), Some(loc(1, 0)));
     }
 
     #[test]
