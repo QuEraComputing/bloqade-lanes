@@ -241,7 +241,9 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
 
     @property
     def rust_entropy_fallback_count(self) -> int:
-        """Number of solved Rust entropy stages that used sequential fallback."""
+        """Number of solved Rust entropy stages that used the budget-exhaustion
+        fallback (Push and Rotate, with the greedy sequential router as the
+        out-of-regime tertiary)."""
         return self._rust_entropy_fallback_count
 
     @property
