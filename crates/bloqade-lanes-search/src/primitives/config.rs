@@ -26,6 +26,8 @@ pub enum ConfigError {
     DuplicateTargetLocation { location: u64, qubits: (u32, u32) },
     /// One qubit was assigned two target locations.
     DuplicateTargetQubit { qubit_id: u32 },
+    /// Two qubits were placed on the same initial location.
+    DuplicateOccupancy { location: u64, qubits: (u32, u32) },
 }
 
 impl fmt::Display for ConfigError {
@@ -42,6 +44,11 @@ impl fmt::Display for ConfigError {
             Self::DuplicateTargetQubit { qubit_id } => write!(
                 f,
                 "invalid request: qubit {qubit_id} is assigned more than one target location"
+            ),
+            Self::DuplicateOccupancy { location, qubits } => write!(
+                f,
+                "invalid request: qubits {} and {} are both placed at location {location:#x}",
+                qubits.0, qubits.1
             ),
         }
     }
@@ -65,6 +72,26 @@ pub fn validate_target_assignment(targets: &[(u32, LocationAddr)]) -> Result<(),
         let enc = loc.encode();
         if let Some(&other) = by_location.get(&enc) {
             return Err(ConfigError::DuplicateTargetLocation {
+                location: enc,
+                qubits: (other.min(qubit), other.max(qubit)),
+            });
+        }
+        by_location.insert(enc, qubit);
+    }
+    Ok(())
+}
+
+/// Reject an initial placement with two qubits on one location.
+///
+/// Qubit-id uniqueness is already enforced by [`Config::new`]; this checks
+/// the other direction of injectivity, symmetric with
+/// [`validate_target_assignment`], and runs at the same solve entry points.
+pub fn validate_initial_placement(config: &Config) -> Result<(), ConfigError> {
+    let mut by_location: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
+    for (qubit, loc) in config.iter() {
+        let enc = loc.encode();
+        if let Some(&other) = by_location.get(&enc) {
+            return Err(ConfigError::DuplicateOccupancy {
                 location: enc,
                 qubits: (other.min(qubit), other.max(qubit)),
             });
@@ -352,6 +379,22 @@ mod tests {
     fn target_assignment_rejects_double_assignment() {
         let err = validate_target_assignment(&[(3, loc(0, 1)), (3, loc(0, 2))]).unwrap_err();
         assert_eq!(err, ConfigError::DuplicateTargetQubit { qubit_id: 3 });
+    }
+
+    #[test]
+    fn initial_placement_rejects_shared_location() {
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 0))]).expect("qubit ids distinct");
+        let err = validate_initial_placement(&config).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::DuplicateOccupancy { qubits: (0, 1), .. }
+        ));
+    }
+
+    #[test]
+    fn initial_placement_accepts_injective_maps() {
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).expect("config");
+        assert!(validate_initial_placement(&config).is_ok());
     }
 
     #[test]

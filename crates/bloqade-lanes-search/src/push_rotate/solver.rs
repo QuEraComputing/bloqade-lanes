@@ -18,7 +18,9 @@ use std::collections::HashSet;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
 use crate::feasibility::graph::{LaneGraph, VertexId};
-use crate::primitives::config::{Config, ConfigError, validate_target_assignment};
+use crate::primitives::config::{
+    Config, ConfigError, validate_initial_placement, validate_target_assignment,
+};
 use crate::primitives::graph::MoveSet;
 use crate::primitives::lane_index::LaneIndex;
 use crate::push_rotate::heuristics::{DefaultHeuristics, PlanHeuristics};
@@ -69,7 +71,8 @@ pub fn solve_push_rotate_with(
 ) -> Result<SolveResult, ConfigError> {
     let root = Config::new(initial.iter().copied())?;
     // Malformed requests are rejected before planning; see
-    // `validate_target_assignment`.
+    // `validate_initial_placement` and `validate_target_assignment`.
+    validate_initial_placement(&root)?;
     validate_target_assignment(target)?;
 
     let blocked_set: HashSet<u64> = blocked.iter().map(|l| l.encode()).collect();
