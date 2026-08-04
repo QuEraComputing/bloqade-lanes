@@ -38,7 +38,7 @@ use bloqade_lanes_search::push_rotate::instances::generate;
 use bloqade_lanes_search::push_rotate::schedule::schedule;
 use bloqade_lanes_search::push_rotate::state::PlanState;
 use bloqade_lanes_search::push_rotate::{PlanError, plan, plan_with, solve_push_rotate};
-use bloqade_lanes_search::search::result::SolveStatus;
+use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -148,6 +148,74 @@ fn check_end_to_end(
     );
 
     (batches.len(), p.moves.len())
+}
+
+/// Replay a `Solved` [`SolveResult`] through `AtomStateData` and assert the
+/// final placement matches the requested target.
+///
+/// Complements [`check_end_to_end`], which drives `plan` + `schedule`
+/// directly on an unblocked graph: this one validates the packaged
+/// `move_layers` from the `solve_push_rotate` surface — the path production
+/// callers consume — including instances with a non-empty blocked set,
+/// which no lane may touch.
+fn assert_solved_result_rearranges(
+    fx: &Fixture,
+    initial: &[(u32, LocationAddr)],
+    target: &[(u32, LocationAddr)],
+    blocked: &HashSet<u64>,
+    result: &SolveResult,
+    label: &str,
+) {
+    assert_eq!(result.status, SolveStatus::Solved, "{label}: not solved");
+
+    let mut state = AtomStateData::from_locations(initial);
+    let mut lanes_issued = 0usize;
+    for (bi, layer) in result.move_layers.iter().enumerate() {
+        let lanes = layer.decode();
+        lanes_issued += lanes.len();
+
+        let errors = fx.spec.check_lanes(&lanes);
+        assert!(
+            errors.is_empty(),
+            "{label}: operation {bi} is not a valid AOD move: {errors:?}"
+        );
+        let srcs: HashSet<u64> = lanes
+            .iter()
+            .map(|l| fx.index.endpoints(l).expect("lane resolves").0.encode())
+            .collect();
+        for lane in &lanes {
+            let (src, dst) = fx.index.endpoints(lane).expect("lane resolves");
+            assert!(
+                !blocked.contains(&src.encode()) && !blocked.contains(&dst.encode()),
+                "{label}: operation {bi} touches a blocked location"
+            );
+            assert!(
+                !srcs.contains(&dst.encode()),
+                "{label}: operation {bi} moves into a location another move leaves"
+            );
+        }
+
+        state = state
+            .apply_moves(&lanes, &fx.spec)
+            .unwrap_or_else(|| panic!("{label}: operation {bi} has an unresolvable lane"));
+        assert!(
+            state.collision.is_empty(),
+            "{label}: operation {bi} collided atoms: {:?}",
+            state.collision
+        );
+    }
+
+    let moved: u32 = state.move_count.values().sum();
+    assert_eq!(
+        moved as usize, lanes_issued,
+        "{label}: {lanes_issued} lanes issued but only {moved} atom moves took effect"
+    );
+
+    let want: HashMap<u32, LocationAddr> = target.iter().copied().collect();
+    assert_eq!(
+        state.qubit_to_locations, want,
+        "{label}: final placement does not match the requested target"
+    );
 }
 
 /// Instance from the reachable-by-construction generator: atoms are displaced
@@ -422,17 +490,7 @@ fn blocked_spectators_are_routed_around() {
     let target = [(0u32, LocationAddr::decode(carved.location_of(dest)))];
     let result = solve_push_rotate(&fx.index, &initial, &target, &blocked_locs, 10_000)
         .expect("valid config");
-    assert_eq!(result.status, SolveStatus::Solved);
-
-    for layer in &result.move_layers {
-        for lane in layer.decode() {
-            let (src, dst) = fx.index.endpoints(&lane).expect("lane resolves");
-            assert!(
-                !blocked_enc.contains(&src.encode()) && !blocked_enc.contains(&dst.encode()),
-                "emitted lane touches a blocked location"
-            );
-        }
-    }
+    assert_solved_result_rearranges(&fx, &initial, &target, &blocked_enc, &result, "spectators");
 }
 
 /// Verdicts agree with exhaustive search on small carved instances.
@@ -521,7 +579,19 @@ fn verdicts_match_brute_force_on_carved_instances() {
                      (n={n}, initial={initial_v:?}, target={target_v:?})"
                 );
             }
-            SolveStatus::Solved => {}
+            SolveStatus::Solved => {
+                // Not just "a solution exists" — the emitted layers must
+                // actually rearrange the atoms, through the same replay
+                // harness as the unblocked end-to-end tests.
+                assert_solved_result_rearranges(
+                    &fx,
+                    &to_locs(&initial_v),
+                    &to_locs(&target_v),
+                    &blocked_enc,
+                    &result,
+                    &format!("seed {seed}"),
+                );
+            }
             SolveStatus::BudgetExceeded => {
                 // In-regime give-ups are the known completeness gap —
                 // counted and bounded, not asserted away (see the test doc).
