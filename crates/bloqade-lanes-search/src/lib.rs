@@ -24,6 +24,7 @@
 pub mod cost;
 pub mod drivers;
 pub mod dsl;
+pub mod feasibility;
 pub mod generators;
 pub mod goals;
 pub mod heuristics;
@@ -39,6 +40,7 @@ pub mod traits;
 
 pub use cost::UniformCost;
 pub use drivers::result::SearchResult;
+pub use feasibility::{Feasibility, Obstruction, check as check_feasibility};
 pub use generators::{
     DeadlockPolicy, ExhaustiveGenerator, GreedyGenerator, HeuristicGenerator, LooseTargetGenerator,
 };
