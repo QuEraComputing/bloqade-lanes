@@ -1,22 +1,23 @@
-from typing import TypeVar
+from typing import Optional, TypeAlias, TypeVar
 
 from bloqade.types import Qubit
-from kirin import types
 from kirin.dialects import ilist
 
-from bloqade import squin
+from bloqade import qubit
 from bloqade.gemini.common.dialects.qubit import new_at
 
 from .. import kernel
 
 N = TypeVar("N")
 
-PositionIndex: Alias = int | None
+# Kirin preserves the static ``IList`` length through ``ilist.map`` for
+# ``typing.Optional`` but not the equivalent PEP 604 ``int | None`` spelling.
+PositionIndex: TypeAlias = Optional[int]  # noqa: UP045
 
 
 @kernel(aggressive_unroll=True, verify=False)
 def qalloc_at(
-    positions: ilist.IList[PositionIndex, N],  # pyright: ignore[reportInvalidTypeForm]
+    positions: ilist.IList[PositionIndex, N],
 ) -> ilist.IList[Qubit, N]:
     """Allocate logical qubits at optional linear logical positions.
 
@@ -28,7 +29,7 @@ def qalloc_at(
     """
 
     def position_to_new_at(
-        position: PositionIndex,  # pyright: ignore[reportInvalidTypeForm]
+        position: PositionIndex,
     ) -> Qubit:
         if position is None:
             q = qubit.new()
