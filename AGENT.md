@@ -334,7 +334,14 @@ Breaking changes map to SemVer MAJOR.
 - Footers, if present, MUST begin one blank line after the body
 - Use imperative mood in the description ("add", not "added" or "adds")
 
+### Pull Request Titles
+
+- Every PR title MUST follow the Conventional Commits format above (`<type>[optional scope]: <description>`) — the same `type`, `scope`, `!`, and imperative-mood rules apply.
+- The title is the source of truth for automation: the PR labeler derives `category:` labels from its `type` prefix, and those labels drive the generated release-notes sections. A non-conforming title gets no label and falls into "Other Changes."
+- Examples: `feat(bytecode): add SWAP instruction encoding`, `fix(python): correct exception mapping`, `perf(search): speed up entropy driver`.
+
 ### Pull Request Labels
 
-- Tag PRs with the `breaking` label when they contain breaking changes
-- Tag non-breaking PRs with `backport v0.10` label for cherry-picking into the current release branch (`release-0-10`)
+- Tag PRs with the `category: breaking change` label when they contain breaking changes. A Conventional Commit title (`feat!:` / `fix!:` or a `BREAKING CHANGE` footer) applies this label automatically via the PR labeler workflow.
+- The PR labeler mirrors a Conventional Commit title prefix into the matching `category:` label (`feat:` → `category: feature`, `fix:` → `category: bug`, `perf:` → `performance: optimization`, `docs:` → `category: documentation`, `deps` scope → `category: dependencies`, `ci:`/`build:`/`chore:` → `devops: core`). These labels drive the release-notes sections defined in `.github/release.yml`; add them by hand when a title doesn't follow the convention.
+- Tag non-breaking PRs with the appropriate `status: backport` label for cherry-picking into the current release branch (`release-0-11`).

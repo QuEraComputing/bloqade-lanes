@@ -938,6 +938,7 @@ class SearchStrategy:
     CASCADE_DFS: SearchStrategy
     CASCADE_ENTROPY: SearchStrategy
     ENTROPY: SearchStrategy
+    PUSH_ROTATE: SearchStrategy
 
     @property
     def name(self) -> str: ...
