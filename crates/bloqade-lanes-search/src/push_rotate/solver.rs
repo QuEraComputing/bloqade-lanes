@@ -49,7 +49,10 @@ pub const DEFAULT_MOVE_BUDGET: usize = 500_000;
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError`] if `initial` contains duplicate qubit IDs.
+/// Returns [`ConfigError`] for a malformed request, rejected before any
+/// planning runs: a duplicate qubit ID in `initial`, two qubits placed on
+/// one initial location, two qubits sharing a target location, or one
+/// qubit assigned two targets.
 pub fn solve_push_rotate(
     index: &LaneIndex,
     initial: &[(u32, LocationAddr)],

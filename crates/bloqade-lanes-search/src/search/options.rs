@@ -52,6 +52,10 @@ pub enum Strategy {
     /// and the placements that compose it). The loose-goal path leaves the
     /// target open for the Hungarian assignment to choose, so there is nothing
     /// for a fixed-target router to aim at; it substitutes A* there.
+    ///
+    /// `max_expansions` is ignored under this strategy: it budgets search
+    /// node expansions, and the planner is rule-based with its own runaway
+    /// guard on emitted moves.
     PushRotate,
 }
 

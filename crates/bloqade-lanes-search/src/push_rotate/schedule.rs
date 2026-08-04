@@ -34,6 +34,7 @@ use crate::feasibility::graph::{LaneGraph, VertexId};
 use crate::primitives::lane_index::LaneIndex;
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
+use crate::push_rotate::context::GroupKey;
 use crate::push_rotate::state::Move;
 
 /// One AOD operation: moves executed simultaneously, with the lanes realising
@@ -43,9 +44,6 @@ pub struct Batch {
     pub moves: Vec<Move>,
     pub lanes: Vec<LaneAddr>,
 }
-
-/// Bus-group key. Matches `LaneIndex`'s own grouping.
-type GroupKey = (u8, u32, u32, u8);
 
 /// Strategy for choosing which AOD operation to emit next.
 ///

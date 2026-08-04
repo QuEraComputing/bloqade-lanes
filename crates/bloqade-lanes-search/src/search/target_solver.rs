@@ -119,6 +119,13 @@ pub(crate) fn solve_with_engine(
 
     // Push and Rotate is not a search, so it bypasses the whole
     // frontier/generator apparatus below rather than being a `Frontier`.
+    //
+    // `max_expansions` is deliberately NOT mapped onto the planner's move
+    // budget: it caps search *node expansions*, a knob for frontier
+    // strategies, while the planner is rule-based and needs no exploration
+    // budget — its `DEFAULT_MOVE_BUDGET` is a runaway guard, not a search
+    // budget. Mapping the (often small) expansion cap onto emitted moves
+    // would strangle exactly the solves this strategy exists to finish.
     if opts.strategy == Strategy::PushRotate {
         return solve_push_rotate(
             engine.index(),
