@@ -304,7 +304,9 @@ Pops `n` location addresses and refills atoms at those sites.
 
 Pops `n` lane addresses and performs atom moves along those lanes. All lanes in a single `move` instruction are executed simultaneously as one AOD transport operation: every endpoint is resolved against the pre-move atom state, so the result is independent of lane order, and a multi-hop route (`x→y` then `y→z` for the *same* atom) must be split across separate `move` instructions.
 
-A lane whose source holds no atom is a no-op (AOD rectangle filler), but the trap site still arrives at its destination — so an occupied destination is only legal when its occupant is itself moved by another lane in the same instruction (conveyor chains such as `x→y, y→z` executed as one shot). A destination occupied by an atom that does not move in the group is invalid.
+A lane whose source holds no atom is a no-op (AOD rectangle filler), but the trap site still arrives at its destination — so an occupied destination is only legal when its occupant is itself moved by another lane in the same instruction (conveyor chains such as `x→y, y→z` executed as one shot). A destination occupied by an atom that does not move in the group makes the group **not executable**.
+
+This executability rule is state-dependent, so it is *not* checked by the static program validator below (which has no atom-occupancy state). It is enforced by `AtomStateData::validate_moves`, which reports it as `MoveValidationError::DestinationOccupiedByStationaryAtom`. An implementation that applies an unvalidated group (`AtomStateData::apply_moves`) instead models a mover landing on a stationary atom as a collision: both atoms are removed from the location maps and recorded in the state's `collision` field.
 
 ##### Lane group validation
 
