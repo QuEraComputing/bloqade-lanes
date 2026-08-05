@@ -24,7 +24,7 @@ use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
 use crate::push_rotate::{DEFAULT_MOVE_BUDGET, solve_push_rotate};
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::{EntropyOptions, SolveOptions, Strategy};
+use crate::search::options::{EntropyOptions, InnerStrategy, SolveOptions, Strategy};
 use crate::search::restarts::run_with_components;
 use crate::search::result::SolveResult;
 use crate::search::result::SolveStatus;
@@ -168,6 +168,27 @@ pub(crate) fn solve_with_engine(
         HeuristicGenerator::configured(seed, policy, lookahead, top_c)
     };
 
+    // For entropy strategies, build the heuristic tables once here — shared
+    // across restarts (which previously each rebuilt them) and assembled
+    // from the engine's cross-solve blended-column cache, so repeated solves
+    // against recurring target locations (one solve per candidate layout per
+    // CZ layer) skip the distance-column fill entirely.
+    let entropy_tables = matches!(
+        opts.strategy,
+        Strategy::Entropy
+            | Strategy::Cascade {
+                inner: InnerStrategy::Entropy
+            }
+    )
+    .then(|| {
+        crate::drivers::entropy::HeuristicTables::build_cached(
+            &ctx,
+            w_t,
+            opts.lookahead,
+            engine.blended_cache(),
+        )
+    });
+
     let result = run_with_components(
         root.clone(),
         &goal_obj,
@@ -178,6 +199,7 @@ pub(crate) fn solve_with_engine(
         max_expansions,
         opts,
         entropy_opts,
+        entropy_tables.as_ref(),
     );
 
     // Opt-in reliability net. Push and Rotate is complete, so this converts

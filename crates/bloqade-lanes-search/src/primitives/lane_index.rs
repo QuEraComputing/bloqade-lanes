@@ -271,6 +271,18 @@ impl LaneIndex {
         self.positions.len()
     }
 
+    /// Iterate the encoded endpoints (src, dst) of every registered lane.
+    ///
+    /// Yields duplicates; callers dedupe. Unlike `positions`, which only
+    /// covers endpoints whose grid position resolves, this is the same
+    /// location universe `DistanceTable` interns — use it when a lookup
+    /// structure must answer for every location the distance table can.
+    pub(crate) fn lane_endpoint_encs(&self) -> impl Iterator<Item = u64> + '_ {
+        self.endpoints
+            .values()
+            .flat_map(|(src, dst)| [src.encode(), dst.encode()])
+    }
+
     /// Get all lanes for a `(move_type, bus_id, zone_id, direction)` triplet.
     pub fn lanes_for(
         &self,

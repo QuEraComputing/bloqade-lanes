@@ -271,6 +271,9 @@ pub(crate) fn solve_loose_goal(
             max_expansions,
             opts,
             None,
+            // Loose-goal targets come from a fresh Hungarian assignment per
+            // solve; the entropy branch builds its tables internally.
+            None,
         )
     };
 

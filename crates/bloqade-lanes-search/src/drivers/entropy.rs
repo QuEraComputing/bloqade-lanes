@@ -14,6 +14,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use crate::drivers::result::SearchResult;
 use crate::feasibility::graph::LaneGraph;
@@ -343,7 +344,19 @@ struct ScoredEntry {
     dst_encoded: u64,
 }
 
-type CandidateEntry = (MoveSet, Config, f64, bool);
+/// A generated candidate cached on its node.
+///
+/// `score` is the unperturbed level-2 moveset score, cached at generation
+/// time so the resume buffer can rank untried candidates without re-running
+/// `score_moveset` on every descend.
+#[derive(Debug, Clone)]
+pub(crate) struct CandidateEntry {
+    pub(crate) move_set: MoveSet,
+    pub(crate) new_config: Config,
+    pub(crate) cost: f64,
+    pub(crate) deadlock_breaker: bool,
+    pub(crate) score: f64,
+}
 
 fn cmp_scored_entries(a: &(TripletKey, ScoredEntry), b: &(TripletKey, ScoredEntry)) -> Ordering {
     b.1.score.total_cmp(&a.1.score).then_with(|| {
@@ -633,21 +646,18 @@ fn select_best_goal_with_tiebreak(
         .map(|(id, _, _)| id)
 }
 
-fn best_untried_moveset_score(
-    es: &EntropyState,
-    config: &Config,
-    occupied: &HashSet<u64>,
-    ctx: &SearchContext,
-    params: &EntropyParams,
-) -> Option<f64> {
+fn best_untried_moveset_score(es: &EntropyState) -> Option<f64> {
     es.candidate_cache
         .iter()
-        .filter_map(|(moveset, candidate_cfg, _, _)| {
-            let move_key = moveset.encoded_lanes().to_vec();
-            if es.tried_moves.contains(&move_key) || es.failed_candidates.contains(&move_key) {
+        .filter_map(|entry| {
+            let move_key = entry.move_set.encoded_lanes();
+            if es.tried_moves.contains(move_key) || es.failed_candidates.contains(move_key) {
                 return None;
             }
-            Some(score_moveset(config, candidate_cfg, occupied, ctx, params))
+            // Cached at generation time; identical to re-running
+            // `score_moveset` because the score depends only on the node's
+            // config (fixed for this cache) and per-solve context.
+            Some(entry.score)
         })
         .max_by(|a, b| a.total_cmp(b))
 }
@@ -680,6 +690,311 @@ fn blended_distance(
     };
     let normalized_time_d = time_d / fastest;
     (1.0 - w_t) * hop_dist + w_t * normalized_time_d
+}
+
+/// Static (occupancy-independent) mobility of `loc_enc` toward `target_enc`:
+/// sum of `1/(1+d)` over outgoing lanes whose destination is unblocked and can
+/// reach the target. A pure function of `(location, target)` for a fixed solve
+/// — atom positions never enter, only the static `blocked` set — which is what
+/// makes [`HeuristicTables`] a valid memoization.
+fn static_mobility(loc_enc: u64, target_enc: u64, ctx: &SearchContext, w_t: f64) -> f64 {
+    let loc = LocationAddr::decode(loc_enc);
+    let mut m = 0.0_f64;
+    for &lane in ctx.index.outgoing_lanes(loc) {
+        let Some((_, dst)) = ctx.index.endpoints(&lane) else {
+            continue;
+        };
+        let dst_e = dst.encode();
+        if ctx.blocked.contains(&dst_e) {
+            continue;
+        }
+        let d = ctx
+            .dist_table
+            .distance(dst_e, target_enc)
+            .map_or(f64::MAX, |d| {
+                blended_distance(d as f64, dst_e, target_enc, w_t, ctx.dist_table)
+            });
+        if d < f64::MAX {
+            m += 1.0 / (1.0 + d);
+        }
+    }
+    m
+}
+
+/// Minimum blended distance to `target_enc` over the unblocked successors of
+/// `loc_enc`. Returns `f64::MAX` when no successor reaches the target. Pure
+/// per solve, like [`static_mobility`]. Used for 2-step lookahead.
+fn min_successor_distance(loc_enc: u64, target_enc: u64, ctx: &SearchContext, w_t: f64) -> f64 {
+    let loc = LocationAddr::decode(loc_enc);
+    let mut best = f64::MAX;
+    for &lane in ctx.index.outgoing_lanes(loc) {
+        let Some((_, dst)) = ctx.index.endpoints(&lane) else {
+            continue;
+        };
+        let dst_e = dst.encode();
+        if ctx.blocked.contains(&dst_e) {
+            continue;
+        }
+        let d = ctx
+            .dist_table
+            .distance(dst_e, target_enc)
+            .map_or(f64::MAX, |d| {
+                blended_distance(d as f64, dst_e, target_enc, w_t, ctx.dist_table)
+            });
+        if d < f64::MAX {
+            best = best.min(d);
+        }
+    }
+    best
+}
+
+/// Engine-lifetime cache of blended-distance columns, keyed
+/// `(target location, w_t bits)`.
+///
+/// A blended column is a pure function of the architecture alone —
+/// `DistanceTable` ignores occupancy and `blocked` entirely — so columns
+/// computed during one solve are valid for every later solve on the same
+/// engine. The physical pipeline issues one solve per candidate target
+/// layout per CZ layer, and the target *locations* (entangling slots, home
+/// sites) recur heavily across those solves; caching the columns turns the
+/// per-solve `d_blend` fill from `n_loc × n_targets` distance evaluations
+/// into per-column memcpys after first touch.
+///
+/// Lives in [`SearchEngine`](crate::search::engine::SearchEngine) behind a
+/// `OnceLock`; shared by every `TargetSolver` cloned from that engine.
+/// Memory is bounded by `n_locations` columns × `n_locations` entries.
+pub(crate) struct BlendedColumnCache {
+    /// Shared location interning — every lane endpoint, fixed per arch.
+    /// Tables built through this cache adopt it so cached columns can be
+    /// copied by row index.
+    interner: Arc<HashMap<u64, u32>>,
+    /// `(target_enc, w_t.to_bits())` → column indexed by `interner` rows.
+    cols: std::sync::RwLock<ColumnMap>,
+}
+
+/// Cached blended columns keyed `(target_enc, w_t.to_bits())`.
+type ColumnMap = HashMap<(u64, u64), Arc<Vec<f64>>>;
+
+impl BlendedColumnCache {
+    pub(crate) fn new(index: &LaneIndex) -> Self {
+        let mut interner: HashMap<u64, u32> = HashMap::with_capacity(index.num_locations());
+        for loc_enc in index.lane_endpoint_encs() {
+            let next = interner.len() as u32;
+            interner.entry(loc_enc).or_insert(next);
+        }
+        Self {
+            interner: Arc::new(interner),
+            cols: std::sync::RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+/// Per-solve memoization of the occupancy-independent parts of the level-1
+/// scoring heuristic: blended distance, static mobility, and lookahead
+/// minima, all keyed `(location, target)`.
+///
+/// Everything here is a pure function of `(targets, blocked, w_t)` — fixed
+/// for one `entropy_search` call — computed with the same formulas, gates,
+/// and successor iteration order as the fallback path's free functions
+/// ([`blended_distance`], [`static_mobility`], [`min_successor_distance`]),
+/// so table reads are bit-identical to direct computation and search
+/// behavior is unchanged. The `generate_candidates_tables_match_direct_computation`
+/// test enforces this.
+///
+/// Sizing: `n_locations × n_targets` f64 entries per table (~tens of KB on
+/// the physical Gemini spec); build cost is comparable to a single node
+/// expansion, and [`Self::build_cached`] amortizes the distance columns
+/// across solves via [`BlendedColumnCache`].
+pub(crate) struct HeuristicTables {
+    loc_idx: Arc<HashMap<u64, u32>>,
+    target_col: HashMap<u64, u32>,
+    n_targets: usize,
+    /// Blended distance, `f64::MAX` = unreachable.
+    d_blend: Vec<f64>,
+    /// Static (blocked-only) mobility.
+    mobility: Vec<f64>,
+    /// Min blended distance over unblocked successors (`f64::MAX` = none).
+    /// Only built when lookahead scoring is enabled.
+    lookahead_min: Option<Vec<f64>>,
+}
+
+impl HeuristicTables {
+    /// Build without a cross-solve cache (tests, bench, trait paths).
+    pub(crate) fn build(ctx: &SearchContext, w_t: f64, lookahead: bool) -> Self {
+        Self::build_inner(ctx, w_t, lookahead, None)
+    }
+
+    /// Build reusing engine-cached blended columns where available.
+    pub(crate) fn build_cached(
+        ctx: &SearchContext,
+        w_t: f64,
+        lookahead: bool,
+        cache: &BlendedColumnCache,
+    ) -> Self {
+        Self::build_inner(ctx, w_t, lookahead, Some(cache))
+    }
+
+    fn build_inner(
+        ctx: &SearchContext,
+        w_t: f64,
+        lookahead: bool,
+        cache: Option<&BlendedColumnCache>,
+    ) -> Self {
+        let mut target_col: HashMap<u64, u32> = HashMap::new();
+        for &(_, t_enc) in ctx.targets {
+            let next = target_col.len() as u32;
+            target_col.entry(t_enc).or_insert(next);
+        }
+        let n_targets = target_col.len();
+
+        // Same location universe as `DistanceTable` (every lane endpoint),
+        // so table lookups can never miss where the direct path would hit.
+        // With a cache, adopt its interner so cached columns copy by row.
+        let loc_idx: Arc<HashMap<u64, u32>> = match cache {
+            Some(c) => c.interner.clone(),
+            None => {
+                let mut m: HashMap<u64, u32> = HashMap::with_capacity(ctx.index.num_locations());
+                for loc_enc in ctx.index.lane_endpoint_encs() {
+                    let next = m.len() as u32;
+                    m.entry(loc_enc).or_insert(next);
+                }
+                Arc::new(m)
+            }
+        };
+        let n_loc = loc_idx.len();
+
+        let mut d_blend = vec![f64::MAX; n_loc * n_targets];
+        for (&t_enc, &tc) in &target_col {
+            let key = (t_enc, w_t.to_bits());
+            let cached = cache.and_then(|c| c.cols.read().expect("poisoned").get(&key).cloned());
+            let column = match cached {
+                Some(column) => column,
+                None => {
+                    // Compute the column from this solve's distance table.
+                    // Values are pure per (arch, target, w_t): `DistanceTable`
+                    // ignores occupancy/blocked, and shortest distances are
+                    // unique — so a column computed now is bit-identical for
+                    // any later solve that shares the target location.
+                    let mut v = vec![f64::MAX; n_loc];
+                    for (&loc_enc, &li) in loc_idx.iter() {
+                        if let Some(d) = ctx.dist_table.distance(loc_enc, t_enc) {
+                            v[li as usize] =
+                                blended_distance(d as f64, loc_enc, t_enc, w_t, ctx.dist_table);
+                        }
+                    }
+                    let column = Arc::new(v);
+                    if let Some(c) = cache {
+                        c.cols
+                            .write()
+                            .expect("poisoned")
+                            .entry(key)
+                            .or_insert_with(|| column.clone());
+                    }
+                    column
+                }
+            };
+            for (li, &d) in column.iter().enumerate() {
+                d_blend[li * n_targets + tc as usize] = d;
+            }
+        }
+
+        // Mobility and lookahead are folds over each location's unblocked
+        // successors' blended distances — read them from the freshly built
+        // `d_blend` rows rather than re-deriving each through the distance
+        // tables (`d_blend` stores exactly what [`static_mobility`] /
+        // [`min_successor_distance`] would recompute, in the same successor
+        // order, so the folds are bit-identical). Successor resolution is
+        // hoisted out of the target loop; this matters because the physical
+        // pipeline issues many short solves and each pays the build.
+        let mut mobility = vec![0.0_f64; n_loc * n_targets];
+        let mut lookahead_min = lookahead.then(|| vec![f64::MAX; n_loc * n_targets]);
+        let mut successor_rows: Vec<u32> = Vec::new();
+        for (&loc_enc, &li) in loc_idx.iter() {
+            successor_rows.clear();
+            for &lane in ctx.index.outgoing_lanes(LocationAddr::decode(loc_enc)) {
+                let Some((_, dst)) = ctx.index.endpoints(&lane) else {
+                    continue;
+                };
+                let dst_e = dst.encode();
+                if ctx.blocked.contains(&dst_e) {
+                    continue;
+                }
+                // Every lane endpoint is interned above, so the lookup holds.
+                successor_rows.push(loc_idx[&dst_e]);
+            }
+
+            let row = li as usize * n_targets;
+            for tc in 0..n_targets {
+                let mut m = 0.0_f64;
+                let mut best = f64::MAX;
+                for &dst_li in &successor_rows {
+                    let d = d_blend[dst_li as usize * n_targets + tc];
+                    if d < f64::MAX {
+                        m += 1.0 / (1.0 + d);
+                        best = best.min(d);
+                    }
+                }
+                mobility[row + tc] = m;
+                if let Some(la) = &mut lookahead_min {
+                    la[row + tc] = best;
+                }
+            }
+        }
+
+        Self {
+            loc_idx,
+            target_col,
+            n_targets,
+            d_blend,
+            mobility,
+            lookahead_min,
+        }
+    }
+
+    /// Resolve a target's column index. `None` if the location was never a
+    /// target of this solve.
+    #[inline]
+    fn col(&self, target_enc: u64) -> Option<usize> {
+        self.target_col.get(&target_enc).map(|&c| c as usize)
+    }
+
+    /// Blended distance by pre-resolved column. `f64::MAX` = unreachable or
+    /// unknown location.
+    #[inline]
+    fn d(&self, loc_enc: u64, col: usize) -> f64 {
+        match self.loc_idx.get(&loc_enc) {
+            Some(&li) => self.d_blend[li as usize * self.n_targets + col],
+            None => f64::MAX,
+        }
+    }
+
+    /// Static mobility by pre-resolved column. `0.0` for unknown locations
+    /// (no outgoing lanes).
+    #[inline]
+    fn m(&self, loc_enc: u64, col: usize) -> f64 {
+        match self.loc_idx.get(&loc_enc) {
+            Some(&li) => self.mobility[li as usize * self.n_targets + col],
+            None => 0.0,
+        }
+    }
+
+    /// Whether the lookahead table was built. Callers needing lookahead with
+    /// tables built without it must fall back to direct computation.
+    #[inline]
+    fn has_lookahead(&self) -> bool {
+        self.lookahead_min.is_some()
+    }
+
+    /// Lookahead minimum by pre-resolved column. `f64::MAX` for unknown
+    /// locations or when no successor reaches the target. Only meaningful
+    /// when [`Self::has_lookahead`] — guard at the call site.
+    #[inline]
+    fn la(&self, loc_enc: u64, col: usize) -> f64 {
+        match (&self.lookahead_min, self.loc_idx.get(&loc_enc)) {
+            (Some(la), Some(&li)) => la[li as usize * self.n_targets + col],
+            _ => f64::MAX,
+        }
+    }
 }
 
 fn unresolved_count(config: &Config, targets: &[(u32, u64)]) -> u32 {
@@ -753,6 +1068,7 @@ pub(crate) fn generate_candidates(
     params: &EntropyParams,
     ctx: &SearchContext,
     seed: u64,
+    tables: Option<&HeuristicTables>,
 ) -> Vec<CandidateEntry> {
     assert!(
         params.max_movesets_per_group > 0,
@@ -803,34 +1119,43 @@ pub(crate) fn generate_candidates(
 
     let mut raw_deltas: Vec<(TripletKey, u32, f64, f64, u64, u64)> = Vec::new();
     // Collect (triplet, qid, delta_d, delta_m, lane_enc, dst_enc).
+    //
+    // The per-(location, target) quantities below — blended distance, static
+    // mobility, lookahead minimum — are pure per solve (they filter on
+    // `blocked` only, never on atom positions). With `tables` present they
+    // are flat-array reads; the fallback evaluates the same free functions
+    // directly, producing bit-identical values.
 
     for &(qid, loc_enc, target_enc) in &unresolved {
-        let d_now = match dist_table.distance(loc_enc, target_enc) {
-            Some(d) => blended_distance(d as f64, loc_enc, target_enc, params.w_t, dist_table),
-            None => continue,
-        };
-        let m_now = {
-            let loc = LocationAddr::decode(loc_enc);
-            let mut m = 0.0_f64;
-            for &lane in index.outgoing_lanes(loc) {
-                let Some((_, dst)) = index.endpoints(&lane) else {
-                    continue;
-                };
-                let dst_e = dst.encode();
-                if blocked.contains(&dst_e) {
-                    continue;
-                }
-                let d = dist_table
-                    .distance(dst_e, target_enc)
-                    .map_or(f64::MAX, |d| {
-                        blended_distance(d as f64, dst_e, target_enc, params.w_t, dist_table)
-                    });
-                if d < f64::MAX {
-                    m += 1.0 / (1.0 + d);
-                }
+        let tcol = tables.and_then(|tb| tb.col(target_enc));
+        let d_of = |enc: u64| -> f64 {
+            match (tables, tcol) {
+                (Some(tb), Some(c)) => tb.d(enc, c),
+                _ => dist_table.distance(enc, target_enc).map_or(f64::MAX, |d| {
+                    blended_distance(d as f64, enc, target_enc, params.w_t, dist_table)
+                }),
             }
-            m
         };
+        let m_of = |enc: u64| -> f64 {
+            match (tables, tcol) {
+                (Some(tb), Some(c)) => tb.m(enc, c),
+                _ => static_mobility(enc, target_enc, ctx, params.w_t),
+            }
+        };
+        let la_of = |enc: u64| -> f64 {
+            match (tables, tcol) {
+                // Tables built without lookahead (params mismatch) must not
+                // silently mask the term — fall back to direct computation.
+                (Some(tb), Some(c)) if tb.has_lookahead() => tb.la(enc, c),
+                _ => min_successor_distance(enc, target_enc, ctx, params.w_t),
+            }
+        };
+
+        let d_now = d_of(loc_enc);
+        if d_now == f64::MAX {
+            continue;
+        }
+        let m_now = m_of(loc_enc);
 
         let loc = LocationAddr::decode(loc_enc);
         for &lane in index.outgoing_lanes(loc) {
@@ -841,35 +1166,13 @@ pub(crate) fn generate_candidates(
             if blocked.contains(&dst_enc) {
                 continue;
             }
-            let d_after = dist_table
-                .distance(dst_enc, target_enc)
-                .map_or(f64::MAX, |d| {
-                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
-                });
-
-            // Combined lookahead + mobility in a single outgoing-lanes pass.
-            let mut best_d2 = d_after;
-            let mut m_after = 0.0_f64;
-            for &next_lane in index.outgoing_lanes(dst) {
-                let Some((_, next_dst)) = index.endpoints(&next_lane) else {
-                    continue;
-                };
-                let enc = next_dst.encode();
-                if blocked.contains(&enc) {
-                    continue;
-                }
-                // Distance-weighted mobility: closer destinations count more.
-                let d_to_target = dist_table.distance(enc, target_enc).map_or(f64::MAX, |d| {
-                    blended_distance(d as f64, enc, target_enc, params.w_t, dist_table)
-                });
-                if d_to_target < f64::MAX {
-                    m_after += 1.0 / (1.0 + d_to_target);
-                }
-                if params.lookahead && d_to_target < f64::MAX {
-                    best_d2 = best_d2.min(d_to_target);
-                }
-            }
-            let effective_d_after = if params.lookahead { best_d2 } else { d_after };
+            let d_after = d_of(dst_enc);
+            let m_after = m_of(dst_enc);
+            let effective_d_after = if params.lookahead {
+                d_after.min(la_of(dst_enc))
+            } else {
+                d_after
+            };
             let delta_d = d_now - effective_d_after;
             let delta_m = m_after - m_now;
 
@@ -1027,19 +1330,29 @@ pub(crate) fn generate_candidates(
     }
 
     // Step 6: score each moveset with alpha/beta/gamma + perturbation, sort descending.
-    let mut scored: Vec<(f64, MoveSet, Config)> = candidates
+    // The unperturbed score rides along so it can be cached on the entry.
+    let mut scored: Vec<(f64, f64, MoveSet, Config)> = candidates
         .into_iter()
         .map(|(_raw_score, ms, new_cfg)| {
-            let ms_score = score_moveset(config, &new_cfg, &occupied, ctx, params);
+            let ms_score = score_moveset(config, &new_cfg, &occupied, ctx, params, tables);
             let ms_perturbation = rng.as_mut().map_or(0.0, |r| r.random_range(-0.5..0.5));
-            (ms_score + ms_perturbation, ms, new_cfg)
+            (ms_score + ms_perturbation, ms_score, ms, new_cfg)
         })
         .collect();
-    scored.sort_by(cmp_scored_candidates);
+    scored.sort_by(|a, b| {
+        b.0.total_cmp(&a.0)
+            .then_with(|| cmp_moveset_config_tiebreak(&a.2, &a.3, &b.2, &b.3))
+    });
 
     scored
         .into_iter()
-        .map(|(_, ms, cfg)| (ms, cfg, 1.0, used_deadlock_breaker))
+        .map(|(_, score, move_set, new_config)| CandidateEntry {
+            move_set,
+            new_config,
+            cost: 1.0,
+            deadlock_breaker: used_deadlock_breaker,
+            score,
+        })
         .collect()
 }
 
@@ -1179,12 +1492,17 @@ pub fn compute_moveset_metrics(
 }
 
 /// Score a moveset: `alpha * distance_progress + beta * arrived + gamma * mobility_gain`.
+///
+/// Unlike the level-1 generator mobility, the mobility terms here filter on
+/// full occupancy (atoms included), so only the distance evaluations are
+/// table-backed; the occupancy checks stay at call time.
 pub(crate) fn score_moveset(
     old_config: &Config,
     new_config: &Config,
     occupied: &HashSet<u64>,
     ctx: &SearchContext,
     params: &EntropyParams,
+    tables: Option<&HeuristicTables>,
 ) -> f64 {
     let targets = ctx.targets;
     let dist_table = ctx.dist_table;
@@ -1209,28 +1527,25 @@ pub(crate) fn score_moveset(
             continue; // didn't move
         }
 
-        let d_before = dist_table
-            .distance(old_loc.encode(), target_enc)
-            .map_or(0.0, |d| {
-                blended_distance(
-                    d as f64,
-                    old_loc.encode(),
-                    target_enc,
-                    params.w_t,
-                    dist_table,
-                )
-            });
-        let d_after = dist_table
-            .distance(new_loc.encode(), target_enc)
-            .map_or(0.0, |d| {
-                blended_distance(
-                    d as f64,
-                    new_loc.encode(),
-                    target_enc,
-                    params.w_t,
-                    dist_table,
-                )
-            });
+        // Resolve the target column once per qubit — `d_of` runs per
+        // successor in the mobility loops, and re-resolving the column
+        // there doubles the hash probes in the hottest loop of the solve.
+        let tcol = tables.and_then(|tb| tb.col(target_enc));
+        let d_of = |enc: u64| -> Option<f64> {
+            match (tables, tcol) {
+                (Some(tb), Some(c)) => {
+                    let d = tb.d(enc, c);
+                    (d < f64::MAX).then_some(d)
+                }
+                (Some(_), None) => None,
+                (None, _) => dist_table
+                    .distance(enc, target_enc)
+                    .map(|d| blended_distance(d as f64, enc, target_enc, params.w_t, dist_table)),
+            }
+        };
+
+        let d_before = d_of(old_loc.encode()).unwrap_or(0.0);
+        let d_after = d_of(new_loc.encode()).unwrap_or(0.0);
         distance_progress += (d_before - d_after).max(0.0);
 
         if new_loc.encode() == target_enc {
@@ -1246,12 +1561,7 @@ pub(crate) fn score_moveset(
             if occupied.contains(&dst_enc) {
                 continue;
             }
-            let d = dist_table
-                .distance(dst_enc, target_enc)
-                .map_or(f64::MAX, |d| {
-                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
-                });
-            if d < f64::MAX {
+            if let Some(d) = d_of(dst_enc) {
                 mobility_before += 1.0 / (1.0 + d);
             }
         }
@@ -1263,12 +1573,7 @@ pub(crate) fn score_moveset(
             if new_occupied.contains(&dst_enc) {
                 continue;
             }
-            let d = dist_table
-                .distance(dst_enc, target_enc)
-                .map_or(f64::MAX, |d| {
-                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
-                });
-            if d < f64::MAX {
+            if let Some(d) = d_of(dst_enc) {
                 mobility_after += 1.0 / (1.0 + d);
             }
         }
@@ -1487,6 +1792,37 @@ pub fn entropy_search(
     seed: u64,
     observer: &mut dyn SearchObserver,
 ) -> SearchResult {
+    entropy_search_with_tables(
+        root,
+        goal,
+        params,
+        ctx,
+        max_expansions,
+        max_depth,
+        seed,
+        observer,
+        None,
+    )
+}
+
+/// [`entropy_search`] with an optionally prebuilt [`HeuristicTables`].
+///
+/// The solver dispatch builds the tables once per solve (through the
+/// engine's [`BlendedColumnCache`]) and shares them across restarts;
+/// `None` builds them internally, preserving the public entry point's
+/// behavior for tests, benches, and direct callers.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn entropy_search_with_tables(
+    root: Config,
+    goal: &impl Goal,
+    params: &EntropyParams,
+    ctx: &SearchContext,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+    seed: u64,
+    observer: &mut dyn SearchObserver,
+    tables: Option<&HeuristicTables>,
+) -> SearchResult {
     // Early check.
     if goal.is_goal(&root) {
         let graph = SearchGraph::new(root);
@@ -1497,6 +1833,17 @@ pub fn entropy_search(
             graph,
         };
     }
+
+    // Per-solve memoization of the occupancy-independent heuristic terms.
+    // Build cost is roughly one node expansion; every expansion reads it.
+    let owned_tables;
+    let tables = match tables {
+        Some(t) => t,
+        None => {
+            owned_tables = HeuristicTables::build(ctx, params.w_t, params.lookahead);
+            &owned_tables
+        }
+    };
 
     let mut graph = SearchGraph::new(root);
     let root_id = graph.root();
@@ -1567,7 +1914,7 @@ pub fn entropy_search(
                     .map(|s| {
                         s.candidate_cache
                             .iter()
-                            .map(|(ms, _, _, _)| ms.clone())
+                            .map(|entry| entry.move_set.clone())
                             .collect()
                     })
                     .unwrap_or_default();
@@ -1591,7 +1938,15 @@ pub fn entropy_search(
         }
 
         // CANDIDATE SELECTION.
-        let candidate = get_next_candidate(&mut entropy_map, current, params, ctx, &graph, seed);
+        let candidate = get_next_candidate(
+            &mut entropy_map,
+            current,
+            params,
+            ctx,
+            &graph,
+            seed,
+            Some(tables),
+        );
 
         let Some((candidate_idx, move_set, new_config, cost, candidate_origin)) = candidate else {
             // No candidates available — bump entropy.
@@ -1608,7 +1963,7 @@ pub fn entropy_search(
                     .map(|s| {
                         s.candidate_cache
                             .iter()
-                            .map(|(ms, _, _, _)| ms.clone())
+                            .map(|entry| entry.move_set.clone())
                             .collect()
                     })
                     .unwrap_or_default();
@@ -1665,7 +2020,7 @@ pub fn entropy_search(
                         .map(|s| {
                             s.candidate_cache
                                 .iter()
-                                .map(|(ms, _, _, _)| ms.clone())
+                                .map(|entry| entry.move_set.clone())
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -1709,7 +2064,7 @@ pub fn entropy_search(
                     .map(|s| {
                         s.candidate_cache
                             .iter()
-                            .map(|(ms, _, _, _)| ms.clone())
+                            .map(|entry| entry.move_set.clone())
                             .collect()
                     })
                     .unwrap_or_default();
@@ -1744,15 +2099,10 @@ pub fn entropy_search(
         max_depth_seen = max_depth_seen.max(child_depth);
         let child_cfg = graph.config(child_id);
         let current_cfg = graph.config(current);
-        let mut occupied = HashSet::with_capacity(ctx.blocked.len() + current_cfg.len());
-        occupied.extend(ctx.blocked);
-        for (_, loc) in current_cfg.iter() {
-            occupied.insert(loc.encode());
-        }
         resume_buffer_discard(&mut resume_buffer, current);
         if let Some(next_best_score) = entropy_map
             .get(&current)
-            .and_then(|es| best_untried_moveset_score(es, current_cfg, &occupied, ctx, params))
+            .and_then(best_untried_moveset_score)
         {
             resume_buffer_insert(
                 &mut resume_buffer,
@@ -1765,14 +2115,20 @@ pub fn entropy_search(
         }
 
         if observer.wants_events() {
-            let moveset_score = score_moveset(current_cfg, child_cfg, &occupied, ctx, params);
+            let mut occupied = HashSet::with_capacity(ctx.blocked.len() + current_cfg.len());
+            occupied.extend(ctx.blocked);
+            for (_, loc) in current_cfg.iter() {
+                occupied.insert(loc.encode());
+            }
+            let moveset_score =
+                score_moveset(current_cfg, child_cfg, &occupied, ctx, params, Some(tables));
             let entropy_now = entropy_map.get(&current).map_or(1, |s| s.entropy);
             let candidate_movesets: Vec<MoveSet> = entropy_map
                 .get(&current)
                 .map(|s| {
                     s.candidate_cache
                         .iter()
-                        .map(|(ms, _, _, _)| ms.clone())
+                        .map(|entry| entry.move_set.clone())
                         .collect()
                 })
                 .unwrap_or_default();
@@ -1865,6 +2221,7 @@ pub fn entropy_search(
 }
 
 /// Get the next untried candidate from the cache, regenerating if needed.
+#[allow(clippy::too_many_arguments)]
 fn get_next_candidate(
     entropy_map: &mut HashMap<NodeId, EntropyState>,
     node_id: NodeId,
@@ -1872,6 +2229,7 @@ fn get_next_candidate(
     ctx: &SearchContext,
     graph: &SearchGraph,
     seed: u64,
+    tables: Option<&HeuristicTables>,
 ) -> Option<(usize, MoveSet, Config, f64, bool)> {
     let config = graph.config(node_id);
     let es = entropy_map.entry(node_id).or_default();
@@ -1879,7 +2237,7 @@ fn get_next_candidate(
     // Regenerate if we've exhausted max_candidates from current cache.
     let mut regenerated =
         if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
-            es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
+            es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed, tables);
             es.candidates_tried = 0;
             true
         } else {
@@ -1889,10 +2247,16 @@ fn get_next_candidate(
     loop {
         // Find first untried, non-failed candidate.
         while es.candidates_tried < es.candidate_cache.len() {
-            let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
-            let move_key = ms.encoded_lanes();
+            let entry = &es.candidate_cache[es.candidates_tried];
+            let move_key = entry.move_set.encoded_lanes();
             if !es.tried_moves.contains(move_key) && !es.failed_candidates.contains(move_key) {
-                let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
+                let result = (
+                    es.candidates_tried,
+                    entry.move_set.clone(),
+                    entry.new_config.clone(),
+                    entry.cost,
+                    entry.deadlock_breaker,
+                );
                 return Some(result);
             }
             es.candidates_tried += 1;
@@ -1908,7 +2272,7 @@ fn get_next_candidate(
         if regenerated {
             return None;
         }
-        es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
+        es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed, tables);
         es.candidates_tried = 0;
         regenerated = true;
     }
@@ -2495,7 +2859,7 @@ mod tests {
         let params = EntropyParams::default();
 
         COMPUTE_MOVESET_METRICS_CALLS.store(0, std::sync::atomic::Ordering::Relaxed);
-        let score = score_moveset(&old_config, &new_config, &occupied, &ctx, &params);
+        let score = score_moveset(&old_config, &new_config, &occupied, &ctx, &params, None);
 
         assert_eq!(
             COMPUTE_MOVESET_METRICS_CALLS.load(std::sync::atomic::Ordering::Relaxed),
@@ -2530,14 +2894,126 @@ mod tests {
             ..EntropyParams::default()
         };
 
-        let out1 = generate_candidates(&config, 1, &params, &ctx, 0);
-        let out2 = generate_candidates(&config, 1, &params, &ctx, 0);
+        let out1 = generate_candidates(&config, 1, &params, &ctx, 0, None);
+        let out2 = generate_candidates(&config, 1, &params, &ctx, 0, None);
 
         assert!(!out1.is_empty());
         assert_eq!(out1.len(), out2.len());
-        for ((ms_a, cfg_a, _, _), (ms_b, cfg_b, _, _)) in out1.iter().zip(out2.iter()) {
-            assert_eq!(ms_a, ms_b);
-            assert_eq!(cfg_a.as_entries(), cfg_b.as_entries());
+        for (a, b) in out1.iter().zip(out2.iter()) {
+            assert_eq!(a.move_set, b.move_set);
+            assert_eq!(a.new_config.as_entries(), b.new_config.as_entries());
+        }
+    }
+
+    /// The per-solve tables are a memoization of the direct computation:
+    /// candidates, ordering, and cached scores must be bit-identical with
+    /// and without them. Exercises blocked locations, multiple qubits, and
+    /// lookahead so all three tables (distance, mobility, lookahead) are hit.
+    #[test]
+    fn generate_candidates_tables_match_direct_computation() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(1, 0))]).unwrap();
+        let target_encoded = vec![
+            (0u32, loc(1, 5).encode()),
+            (1u32, loc(0, 6).encode()),
+            (2u32, loc(0, 5).encode()),
+        ];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index).with_time_distances(&index);
+        let blocked: HashSet<u64> = [loc(0, 7).encode()].into_iter().collect();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+
+        for lookahead in [false, true] {
+            let params = EntropyParams {
+                lookahead,
+                max_movesets_per_group: 8,
+                ..EntropyParams::default()
+            };
+            let tables = HeuristicTables::build(&ctx, params.w_t, params.lookahead);
+
+            for entropy in [1u32, 3] {
+                let direct = generate_candidates(&config, entropy, &params, &ctx, 0, None);
+                let tabled = generate_candidates(&config, entropy, &params, &ctx, 0, Some(&tables));
+                assert_eq!(direct.len(), tabled.len(), "lookahead={lookahead}");
+                for (a, b) in direct.iter().zip(tabled.iter()) {
+                    assert_eq!(a.move_set, b.move_set);
+                    assert_eq!(a.new_config.as_entries(), b.new_config.as_entries());
+                    assert_eq!(a.score.to_bits(), b.score.to_bits());
+                    assert_eq!(a.deadlock_breaker, b.deadlock_breaker);
+                }
+            }
+
+            let occupied: HashSet<u64> = config
+                .iter()
+                .map(|(_, l)| l.encode())
+                .chain(blocked.iter().copied())
+                .collect();
+            for entry in generate_candidates(&config, 1, &params, &ctx, 0, None) {
+                let s_direct =
+                    score_moveset(&config, &entry.new_config, &occupied, &ctx, &params, None);
+                let s_tabled = score_moveset(
+                    &config,
+                    &entry.new_config,
+                    &occupied,
+                    &ctx,
+                    &params,
+                    Some(&tables),
+                );
+                assert_eq!(s_direct.to_bits(), s_tabled.to_bits());
+                assert_eq!(s_direct.to_bits(), entry.score.to_bits());
+            }
+        }
+    }
+
+    /// Cached-column builds must be bit-identical to uncached builds — on a
+    /// cold cache (columns computed and inserted), on a warm cache (columns
+    /// reused), and across solves with different target sets sharing target
+    /// locations (the CZ-layer candidate-loop pattern the cache exists for).
+    #[test]
+    fn heuristic_tables_blended_cache_matches_uncached() {
+        let index = make_index();
+        let cache = BlendedColumnCache::new(&index);
+        let blocked: HashSet<u64> = [loc(0, 7).encode()].into_iter().collect();
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        let params = EntropyParams::default();
+
+        // Two "solves": overlapping but distinct target location sets.
+        let target_sets: Vec<Vec<(u32, u64)>> = vec![
+            vec![(0, loc(1, 5).encode()), (1, loc(0, 6).encode())],
+            vec![(0, loc(0, 6).encode()), (1, loc(0, 5).encode())],
+        ];
+
+        for targets in &target_sets {
+            let target_locs: Vec<u64> = targets.iter().map(|&(_, enc)| enc).collect();
+            let dist_table = DistanceTable::new(&target_locs, &index).with_time_distances(&index);
+            let ctx = SearchContext {
+                index: &index,
+                dist_table: &dist_table,
+                blocked: &blocked,
+                targets,
+                cz_pairs: None,
+            };
+
+            let uncached = HeuristicTables::build(&ctx, params.w_t, params.lookahead);
+            // Build twice: first pass mixes cold and warm columns, second is
+            // fully warm. Both must match the uncached build bit-for-bit.
+            for _ in 0..2 {
+                let cached =
+                    HeuristicTables::build_cached(&ctx, params.w_t, params.lookahead, &cache);
+                let direct = generate_candidates(&config, 1, &params, &ctx, 0, Some(&uncached));
+                let via_cache = generate_candidates(&config, 1, &params, &ctx, 0, Some(&cached));
+                assert_eq!(direct.len(), via_cache.len());
+                for (a, b) in direct.iter().zip(via_cache.iter()) {
+                    assert_eq!(a.move_set, b.move_set);
+                    assert_eq!(a.score.to_bits(), b.score.to_bits());
+                }
+            }
         }
     }
 
@@ -2562,7 +3038,7 @@ mod tests {
             ..EntropyParams::default()
         };
 
-        let _ = generate_candidates(&config, 1, &params, &ctx, 0);
+        let _ = generate_candidates(&config, 1, &params, &ctx, 0, None);
     }
 
     #[test]
@@ -2585,7 +3061,7 @@ mod tests {
             ..EntropyParams::default()
         };
 
-        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+        let out = generate_candidates(&config, 1, &params, &ctx, 0, None);
         assert!(!out.is_empty());
 
         let mut occupied = HashSet::new();
@@ -2593,8 +3069,8 @@ mod tests {
             occupied.insert(loc.encode());
         }
 
-        for (moveset, _, _, _) in out {
-            let lanes = moveset.decode();
+        for entry in out {
+            let lanes = entry.move_set.decode();
             if lanes.is_empty() {
                 continue;
             }
@@ -2618,7 +3094,7 @@ mod tests {
             }
 
             let grids = grid_ctx.build_aod_grids(&entries);
-            let expected = moveset.encoded_lanes().to_vec();
+            let expected = entry.move_set.encoded_lanes().to_vec();
             assert!(
                 grids.into_iter().any(|grid| {
                     let candidate = MoveSet::from_encoded(grid);
@@ -2654,10 +3130,11 @@ mod tests {
             ..EntropyParams::default()
         };
 
-        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+        let out = generate_candidates(&config, 1, &params, &ctx, 0, None);
 
         assert!(
-            out.iter().any(|(_, candidate_config, _, _)| {
+            out.iter().any(|entry| {
+                let candidate_config = &entry.new_config;
                 candidate_config.location_of(0) == Some(loc(0, 2))
                     && candidate_config.location_of(2) == Some(loc(0, 4))
                     && candidate_config.location_of(4) == Some(loc(0, 6))
@@ -2696,13 +3173,13 @@ mod tests {
             ..EntropyParams::default()
         };
 
-        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+        let out = generate_candidates(&config, 1, &params, &ctx, 0, None);
         assert!(
             !out.is_empty(),
             "deadlock breaker should emit at least one fallback candidate"
         );
         assert!(
-            out.iter().any(|(_, _, _, origin)| *origin),
+            out.iter().any(|entry| entry.deadlock_breaker),
             "expected deadlock-breaker candidate origin in fallback output"
         );
 
@@ -2717,7 +3194,8 @@ mod tests {
 
         let best_moved_unresolved = out
             .iter()
-            .map(|(_, candidate_config, _, _)| {
+            .map(|entry| {
+                let candidate_config = &entry.new_config;
                 unresolved_ids
                     .iter()
                     .filter(|qid| candidate_config.location_of(**qid) != config.location_of(**qid))

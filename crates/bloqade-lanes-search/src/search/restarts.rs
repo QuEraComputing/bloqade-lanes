@@ -112,6 +112,7 @@ pub(crate) fn run_with_components<Go, Gen, Hmax, Hsum, MkGen>(
     max_expansions: Option<u32>,
     opts: &SolveOptions,
     entropy_opts: Option<&EntropyOptions>,
+    entropy_tables: Option<&crate::drivers::entropy::HeuristicTables>,
 ) -> SolveResult
 where
     Go: Goal + Sync,
@@ -167,7 +168,7 @@ where
                             Some(trace) => trace,
                             None => &mut noop,
                         };
-                    crate::drivers::entropy::entropy_search(
+                    crate::drivers::entropy::entropy_search_with_tables(
                         root.clone(),
                         goal,
                         &entropy_params,
@@ -176,6 +177,7 @@ where
                         None,
                         seed,
                         observer,
+                        entropy_tables,
                     )
                 };
                 let mut solve = extract(result, 0, budget);
