@@ -3,7 +3,7 @@
 //! Validates all structural rules in a single pass, collecting every error
 //! rather than failing fast. See [`ArchSpec::validate`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
@@ -27,9 +27,19 @@ pub enum ArchSpecError {
     #[error("{0}")]
     InterZoneBus(String),
 
-    /// Grid invariant error (bus src/dst not rectangular).
+    /// Bus src→dst relation contains a cycle.
+    ///
+    /// A bus is by definition a set of explicit edge transports executed
+    /// simultaneously as one AOD operation — never a permutation. A chain
+    /// (`x→y, y→z` with the final destination outside the source set) shifts
+    /// atoms like a conveyor and is physically valid; a cycle
+    /// (`x→y, y→z, z→x`, including the self-loop `x→x`) would rotate a
+    /// fully-occupied set of atoms with no empty site, which AOD hardware
+    /// cannot do (tones in a group share a direction and cannot cross).
+    /// Cyclic buses are therefore rejected outright, while
+    /// overlapping-but-acyclic buses remain legal.
     #[error("{0}")]
-    GridInvariant(String),
+    CyclicBus(String),
 
     /// Entangling zone pair validation error.
     #[error("{0}")]
@@ -259,6 +269,14 @@ fn check_zone_site_buses(
                 )));
             }
         }
+        check_bus_relation(
+            &bus.src,
+            &bus.dst,
+            &format!("zone {zone_idx}, site_bus {bus_idx}"),
+            |s| s.0.to_string(),
+            ArchSpecError::ZoneBus,
+            errors,
+        );
     }
 }
 
@@ -295,6 +313,14 @@ fn check_zone_word_buses(
                 )));
             }
         }
+        check_bus_relation(
+            &bus.src,
+            &bus.dst,
+            &format!("zone {zone_idx}, word_bus {bus_idx}"),
+            |w| w.0.to_string(),
+            ArchSpecError::ZoneBus,
+            errors,
+        );
     }
 }
 
@@ -358,6 +384,119 @@ fn check_zone_buses(
                     bus_idx, i, bus.src[i].zone_id, bus.dst[i].zone_id
                 )));
             }
+        }
+
+        check_bus_relation(
+            &bus.src,
+            &bus.dst,
+            &format!("zone_bus {bus_idx}"),
+            |z| format!("z{}w{}", z.zone_id, z.word_id),
+            ArchSpecError::InterZoneBus,
+            errors,
+        );
+    }
+}
+
+// --- Bus src→dst relation well-formedness ---
+
+/// Check that a bus's src→dst relation is well-formed: unique sources,
+/// unique destinations, and no cycles.
+///
+/// Duplicate sources are rejected because endpoint resolution is positional
+/// first-match ([`super::types::Bus::resolve_forward`]), so a duplicated
+/// source silently shadows every later pair. Duplicate destinations are
+/// rejected because two simultaneous transports into one site cannot both
+/// complete. Cycles (including self-loops) are rejected because a bus is a
+/// set of explicit transports, never a permutation — see
+/// [`ArchSpecError::CyclicBus`]. Overlapping-but-acyclic relations
+/// (conveyor chains such as `0→1, 1→2`) are legal.
+///
+/// `dup_err` selects the error category for duplicate-endpoint errors
+/// (`ZoneBus` for per-zone buses, `InterZoneBus` for zone buses); cycles
+/// always report as [`ArchSpecError::CyclicBus`]. Pairs are zipped, so a
+/// src/dst length mismatch (reported separately) truncates to the shorter
+/// side here.
+fn check_bus_relation<T>(
+    src: &[T],
+    dst: &[T],
+    label: &str,
+    fmt: impl Fn(&T) -> String,
+    dup_err: impl Fn(String) -> ArchSpecError,
+    errors: &mut Vec<ArchSpecError>,
+) where
+    T: Copy + Eq + std::hash::Hash,
+{
+    let mut first_src: HashMap<T, usize> = HashMap::new();
+    for (i, s) in src.iter().enumerate() {
+        if let Some(&j) = first_src.get(s) {
+            errors.push(dup_err(format!(
+                "{label}: duplicate src {} at indices {j} and {i} \
+                 (first-match resolution silently shadows the later pair)",
+                fmt(s)
+            )));
+        } else {
+            first_src.insert(*s, i);
+        }
+    }
+
+    let mut first_dst: HashMap<T, usize> = HashMap::new();
+    for (i, d) in dst.iter().enumerate() {
+        if let Some(&j) = first_dst.get(d) {
+            errors.push(dup_err(format!(
+                "{label}: duplicate dst {} at indices {j} and {i} \
+                 (two simultaneous transports into one site cannot both complete)",
+                fmt(d)
+            )));
+        } else {
+            first_dst.insert(*d, i);
+        }
+    }
+
+    // Cycle detection on the src→dst functional graph. With unique sources
+    // each node has at most one successor; with duplicates the first pair
+    // wins, matching first-match endpoint resolution.
+    let mut next: HashMap<T, T> = HashMap::new();
+    for (s, d) in src.iter().zip(dst.iter()) {
+        next.entry(*s).or_insert(*d);
+    }
+
+    // 0 = unvisited (absent), 1 = on the current walk, 2 = finished.
+    let mut state: HashMap<T, u8> = HashMap::new();
+    for start in src {
+        if state.get(start).copied() == Some(2) {
+            continue;
+        }
+        let mut walk: Vec<T> = Vec::new();
+        let mut cur = *start;
+        loop {
+            match state.get(&cur).copied() {
+                Some(2) => break,
+                Some(1) => {
+                    let pos = walk.iter().position(|n| *n == cur).unwrap_or(0);
+                    let cycle: Vec<String> = walk[pos..]
+                        .iter()
+                        .chain(std::iter::once(&cur))
+                        .map(&fmt)
+                        .collect();
+                    errors.push(ArchSpecError::CyclicBus(format!(
+                        "{label}: src→dst relation contains a cycle: {} \
+                         (a bus is a set of explicit transports, never a rotation)",
+                        cycle.join(" -> ")
+                    )));
+                    break;
+                }
+                _ => {
+                    state.insert(cur, 1);
+                    walk.push(cur);
+                    match next.get(&cur) {
+                        Some(n) => cur = *n,
+                        None => break,
+                    }
+                }
+            }
+        }
+        for n in walk {
+            state.insert(n, 2);
         }
     }
 }
@@ -628,6 +767,111 @@ mod tests {
         assert!(matches!(
             spec.validate(),
             Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::InterZoneBus(_)))
+        ));
+    }
+
+    /// Extend the fixture with a third word so chains (`0→1, 1→2`) are
+    /// expressible in word buses.
+    fn add_third_word(spec: &mut ArchSpec) {
+        spec.words.push(Word {
+            sites: vec![[2, 0], [2, 1]],
+        });
+        spec.zones[0].words_with_site_buses.push(2);
+    }
+
+    #[test]
+    fn test_validate_overlapping_acyclic_bus_accepted() {
+        let mut spec = make_valid_two_zone_spec();
+        add_third_word(&mut spec);
+        // Conveyor chain 0→1, 1→2: dst set overlaps src set, no cycle.
+        spec.zones[0].word_buses = vec![Bus {
+            src: vec![WordRef(0), WordRef(1)],
+            dst: vec![WordRef(1), WordRef(2)],
+        }];
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_cyclic_site_bus_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        // 0→1, 1→0: a rotation.
+        spec.zones[0].site_buses = vec![Bus {
+            src: vec![SiteRef(0), SiteRef(1)],
+            dst: vec![SiteRef(1), SiteRef(0)],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::CyclicBus(_)))
+        ));
+    }
+
+    #[test]
+    fn test_validate_self_loop_site_bus_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].site_buses = vec![Bus {
+            src: vec![SiteRef(0)],
+            dst: vec![SiteRef(0)],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::CyclicBus(_)))
+        ));
+    }
+
+    #[test]
+    fn test_validate_duplicate_bus_src_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        add_third_word(&mut spec);
+        // Duplicate src 0; acyclic and dst-unique so only the src rule fires.
+        spec.zones[0].word_buses = vec![Bus {
+            src: vec![WordRef(0), WordRef(0)],
+            dst: vec![WordRef(1), WordRef(2)],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(
+                |e| matches!(e, ArchSpecError::ZoneBus(msg) if msg.contains("duplicate src"))
+            )
+        ));
+    }
+
+    #[test]
+    fn test_validate_duplicate_bus_dst_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        add_third_word(&mut spec);
+        // Duplicate dst 1; acyclic and src-unique so only the dst rule fires.
+        spec.zones[0].word_buses = vec![Bus {
+            src: vec![WordRef(0), WordRef(2)],
+            dst: vec![WordRef(1), WordRef(1)],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(
+                |e| matches!(e, ArchSpecError::ZoneBus(msg) if msg.contains("duplicate dst"))
+            )
+        ));
+    }
+
+    #[test]
+    fn test_validate_cyclic_zone_bus_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        // A 2-cycle across zones: every pair crosses a zone boundary, so the
+        // inter-zone rule passes; only the acyclicity rule can catch it.
+        let z0 = ZonedWordRef {
+            zone_id: 0,
+            word_id: 0,
+        };
+        let z1 = ZonedWordRef {
+            zone_id: 1,
+            word_id: 0,
+        };
+        spec.zone_buses = vec![Bus {
+            src: vec![z0, z1],
+            dst: vec![z1, z0],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::CyclicBus(_)))
         ));
     }
 

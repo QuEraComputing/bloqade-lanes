@@ -5,11 +5,92 @@
 //! It is the core data structure used by the IR analysis pipeline to simulate
 //! atom movement, detect collisions, and identify CZ gate pairings.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
+use thiserror::Error;
+
 use crate::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
+use crate::arch::query::LaneGroupError;
 use crate::arch::types::ArchSpec;
+
+/// A lane group that cannot execute against a given [`AtomStateData`].
+///
+/// Produced by [`AtomStateData::validate_moves`]. Static lane-group failures
+/// (address validity, duplicates, consistency, membership, AOD geometry) are
+/// delegated to [`ArchSpec::check_lanes`] and wrapped in [`Self::LaneGroup`];
+/// the occupancy rules are this module's own.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum MoveValidationError {
+    /// A lane could not be resolved to (src, dst) endpoints.
+    #[error("lane {lane:?} cannot be resolved to endpoints")]
+    UnresolvableLane {
+        /// The unresolvable lane.
+        lane: LaneAddr,
+    },
+
+    /// Static lane-group check failure from [`ArchSpec::check_lanes`].
+    #[error("{0}")]
+    LaneGroup(LaneGroupError),
+
+    /// A lane's destination holds an atom that does not move in this group.
+    ///
+    /// The AOD trap site arrives at every lane's destination whether or not
+    /// the lane carried an atom, so this is a fault for empty-source filler
+    /// lanes just as for movers. An occupied destination is legal only when
+    /// its occupant sits at the source of another lane in the same group
+    /// (it vacates in the same simultaneous step).
+    #[error(
+        "lane {lane:?} targets {dst:?}, which is occupied by qubit {occupant} \
+         that does not move in this group"
+    )]
+    DestinationOccupiedByStationaryAtom {
+        /// The offending lane (mover or filler).
+        lane: LaneAddr,
+        /// The occupied destination.
+        dst: LocationAddr,
+        /// The stationary qubit at the destination.
+        occupant: u32,
+    },
+
+    /// Two lanes in the group share a destination.
+    ///
+    /// Unreachable through a well-formed bus (destination-unique per
+    /// [`ArchSpec::validate`]); kept as a defensive check for hand-built
+    /// lane groups.
+    #[error("lanes {first:?} and {second:?} share destination {dst:?}")]
+    ContestedDestination {
+        /// The shared destination.
+        dst: LocationAddr,
+        /// The lane that claimed the destination first.
+        first: LaneAddr,
+        /// The lane that collided with it.
+        second: LaneAddr,
+    },
+}
+
+/// A lane group proven executable against the [`AtomStateData`] it was
+/// validated with.
+///
+/// Obtainable only from [`AtomStateData::validate_moves`], which makes
+/// "apply without validating" unrepresentable: [`AtomStateData::apply_validated`]
+/// takes this token and is total — no collision, no silent skip.
+///
+/// The token captures resolved mover assignments against the pre-move state,
+/// so it must be applied to the same state it was validated against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedMoves {
+    /// Resolved movers: `(qubit, src, dst, lane)`, one entry per lane whose
+    /// source held an atom at validation time.
+    movers: Vec<(u32, LocationAddr, LocationAddr, LaneAddr)>,
+}
+
+impl ValidatedMoves {
+    /// The resolved `(qubit, src, dst, lane)` mover assignments.
+    pub fn movers(&self) -> &[(u32, LocationAddr, LocationAddr, LaneAddr)] {
+        &self.movers
+    }
+}
 
 /// Tracks qubit-to-location mappings as atoms move through the architecture.
 ///
@@ -153,43 +234,96 @@ impl AtomStateData {
         })
     }
 
-    /// Apply a sequence of lane moves and return the resulting state.
+    /// Resolve each lane against the pre-move state into `(qubit, src, dst,
+    /// lane)` mover entries. Lanes whose source holds no atom contribute no
+    /// entry; a source consumed by an earlier lane is not consumed again
+    /// (first lane wins, matching first-match bus endpoint resolution).
     ///
-    /// For each lane, resolves its source and destination locations via
-    /// [`ArchSpec::lane_endpoints`]. If a qubit exists at the source, it is
-    /// moved to the destination. If the destination is already occupied,
-    /// both qubits are removed from the location maps and recorded in
-    /// `collision`. Lanes whose source has no qubit are skipped.
+    /// Returns `None` if any lane cannot be resolved to endpoints.
+    fn resolve_movers(
+        &self,
+        lanes: &[LaneAddr],
+        arch_spec: &ArchSpec,
+    ) -> Option<Vec<(u32, LocationAddr, LocationAddr, LaneAddr)>> {
+        let mut movers = Vec::with_capacity(lanes.len());
+        let mut seen_srcs: HashSet<LocationAddr> = HashSet::new();
+        for lane in lanes {
+            let (src, dst) = arch_spec.lane_endpoints(lane)?;
+            if !seen_srcs.insert(src) {
+                continue;
+            }
+            if let Some(&qubit) = self.locations_to_qubit.get(&src) {
+                movers.push((qubit, src, dst, *lane));
+            }
+        }
+        Some(movers)
+    }
+
+    /// Apply a group of lane moves simultaneously and return the resulting
+    /// state.
+    ///
+    /// All lanes execute as one AOD transport operation: every endpoint is
+    /// resolved against the pre-move state, so the result is independent of
+    /// lane order. A destination counts as free when its occupant moves in
+    /// the same group — conveyor chains (`x→y, y→z`) are legal. Lanes whose
+    /// source has no qubit are skipped.
+    ///
+    /// A qubit that lands on an atom which does *not* move in this group
+    /// collides: both qubits are removed from the location maps and recorded
+    /// in `collision`. This method never fails on collisions — use
+    /// [`Self::validate_moves`] + [`Self::apply_validated`] to reject such
+    /// groups up front instead.
     ///
     /// Returns `None` if any lane cannot be resolved to endpoints (invalid
     /// bus, word, or site). The `prev_lanes` field is reset to contain only
     /// the lanes used in this call; `move_count` is accumulated.
     pub fn apply_moves(&self, lanes: &[LaneAddr], arch_spec: &ArchSpec) -> Option<Self> {
+        let mut movers = self.resolve_movers(lanes, arch_spec)?;
+        // Deterministic landing order regardless of lane slice order; only
+        // observable through which qubit a `collision` entry is keyed on
+        // when two movers contest one destination (ill-formed bus).
+        movers.sort_unstable_by_key(|&(qubit, ..)| qubit);
+
         let mut qubit_to_locations = self.qubit_to_locations.clone();
         let mut locations_to_qubit = self.locations_to_qubit.clone();
         let mut collisions = self.collision.clone();
         let mut move_count = self.move_count.clone();
         let mut prev_lanes: HashMap<u32, LaneAddr> = HashMap::new();
 
-        for lane in lanes {
-            let (src, dst) = arch_spec.lane_endpoints(lane)?;
+        // Phase 1: every mover vacates its source.
+        for (qubit, src, _, _) in &movers {
+            locations_to_qubit.remove(src);
+            qubit_to_locations.remove(qubit);
+        }
 
-            let qubit = match locations_to_qubit.remove(&src) {
-                Some(q) => q,
-                None => continue,
-            };
+        // Phase 2: land, judging occupancy against the pre-move state.
+        let mover_srcs: HashSet<LocationAddr> = movers.iter().map(|&(_, src, ..)| src).collect();
+        for (qubit, _, dst, lane) in &movers {
+            *move_count.entry(*qubit).or_insert(0) += 1;
+            prev_lanes.insert(*qubit, *lane);
 
-            *move_count.entry(qubit).or_insert(0) += 1;
-            prev_lanes.insert(qubit, *lane);
-
-            if let Some(other_qubit) = locations_to_qubit.remove(&dst) {
-                qubit_to_locations.remove(&qubit);
-                qubit_to_locations.remove(&other_qubit);
-                collisions.insert(qubit, other_qubit);
-            } else {
-                qubit_to_locations.insert(qubit, dst);
-                locations_to_qubit.insert(dst, qubit);
+            // A pre-move occupant that is not itself a mover stays put:
+            // both it and the arriving qubit are destroyed.
+            if let Some(&stationary) = self.locations_to_qubit.get(dst)
+                && !mover_srcs.contains(dst)
+            {
+                locations_to_qubit.remove(dst);
+                qubit_to_locations.remove(&stationary);
+                collisions.insert(*qubit, stationary);
+                continue;
             }
+
+            // Another mover already landed here (two lanes sharing a
+            // destination — ill-formed bus): destroy both.
+            if let Some(&other) = locations_to_qubit.get(dst) {
+                locations_to_qubit.remove(dst);
+                qubit_to_locations.remove(&other);
+                collisions.insert(*qubit, other);
+                continue;
+            }
+
+            qubit_to_locations.insert(*qubit, *dst);
+            locations_to_qubit.insert(*dst, *qubit);
         }
 
         Some(Self {
@@ -199,6 +333,127 @@ impl AtomStateData {
             collision: collisions,
             move_count,
         })
+    }
+
+    /// Validate that a lane group can execute against this state.
+    ///
+    /// This is the canonical executability check for a `move` group. It runs
+    /// the static lane-group checks ([`ArchSpec::check_lanes`]) and the
+    /// occupancy rules, all resolved against the pre-move state:
+    ///
+    /// - every occupied destination must be vacated by a lane in the same
+    ///   group (the occupant sits at another lane's source) — this applies
+    ///   uniformly to mover lanes *and* empty-source filler lanes, because
+    ///   the AOD trap site arrives at every destination either way;
+    /// - no two lanes may share a destination;
+    /// - empty-source lanes whose destination is also free are legal no-ops
+    ///   (AOD rectangle filler).
+    ///
+    /// Assumes `arch_spec` itself is valid (see [`ArchSpec::validate`]);
+    /// with well-formed (acyclic, endpoint-unique) buses, a valid group can
+    /// only be a set of independent transports or conveyor chains, never a
+    /// rotation.
+    ///
+    /// All errors are collected in one pass. On success the returned
+    /// [`ValidatedMoves`] token feeds [`Self::apply_validated`]; it is tied
+    /// to this state and must not be applied to any other.
+    pub fn validate_moves(
+        &self,
+        lanes: &[LaneAddr],
+        arch_spec: &ArchSpec,
+    ) -> Result<ValidatedMoves, Vec<MoveValidationError>> {
+        let mut errors: Vec<MoveValidationError> = arch_spec
+            .check_lanes(lanes)
+            .into_iter()
+            .map(MoveValidationError::LaneGroup)
+            .collect();
+
+        let mut resolved: Vec<(LaneAddr, LocationAddr, LocationAddr)> =
+            Vec::with_capacity(lanes.len());
+        for lane in lanes {
+            match arch_spec.lane_endpoints(lane) {
+                Some((src, dst)) => resolved.push((*lane, src, dst)),
+                None => errors.push(MoveValidationError::UnresolvableLane { lane: *lane }),
+            }
+        }
+
+        let mover_srcs: HashSet<LocationAddr> = resolved
+            .iter()
+            .filter(|(_, src, _)| self.locations_to_qubit.contains_key(src))
+            .map(|&(_, src, _)| src)
+            .collect();
+
+        let mut claimed_dsts: HashMap<LocationAddr, LaneAddr> = HashMap::new();
+        for &(lane, _, dst) in &resolved {
+            if let Some(&occupant) = self.locations_to_qubit.get(&dst)
+                && !mover_srcs.contains(&dst)
+            {
+                errors.push(MoveValidationError::DestinationOccupiedByStationaryAtom {
+                    lane,
+                    dst,
+                    occupant,
+                });
+            }
+            if let Some(&first) = claimed_dsts.get(&dst) {
+                errors.push(MoveValidationError::ContestedDestination {
+                    dst,
+                    first,
+                    second: lane,
+                });
+            } else {
+                claimed_dsts.insert(dst, lane);
+            }
+        }
+
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
+        let movers = self
+            .resolve_movers(lanes, arch_spec)
+            .expect("all lanes resolved above");
+        Ok(ValidatedMoves { movers })
+    }
+
+    /// Apply a validated lane group and return the resulting state.
+    ///
+    /// Total on its input: [`Self::validate_moves`] has already ruled out
+    /// every collision, so no atom is ever destroyed or silently skipped
+    /// here. The `prev_lanes` field is reset to the movers of this call;
+    /// `move_count` is accumulated; `collision` is carried over unchanged.
+    ///
+    /// The token must have been produced by `validate_moves` on this same
+    /// state (debug-asserted).
+    pub fn apply_validated(&self, moves: &ValidatedMoves) -> Self {
+        let mut qubit_to_locations = self.qubit_to_locations.clone();
+        let mut locations_to_qubit = self.locations_to_qubit.clone();
+        let mut move_count = self.move_count.clone();
+        let mut prev_lanes: HashMap<u32, LaneAddr> = HashMap::new();
+
+        for (qubit, src, _, _) in &moves.movers {
+            debug_assert_eq!(
+                self.locations_to_qubit.get(src),
+                Some(qubit),
+                "ValidatedMoves applied to a state it was not validated against"
+            );
+            locations_to_qubit.remove(src);
+            qubit_to_locations.remove(qubit);
+        }
+
+        for (qubit, _, dst, lane) in &moves.movers {
+            *move_count.entry(*qubit).or_insert(0) += 1;
+            prev_lanes.insert(*qubit, *lane);
+            qubit_to_locations.insert(*qubit, *dst);
+            locations_to_qubit.insert(*dst, *qubit);
+        }
+
+        Self {
+            locations_to_qubit,
+            qubit_to_locations,
+            prev_lanes,
+            collision: self.collision.clone(),
+            move_count,
+        }
     }
 
     /// Look up which qubit (if any) occupies the given location.
@@ -951,5 +1206,215 @@ mod tests {
         state1.hash(&mut h1);
         state2.hash(&mut h2);
         assert_eq!(h1.finish(), h2.finish());
+    }
+
+    // --- Simultaneous semantics: chains, order-independence, validate/apply ---
+
+    /// A `validate()`-clean spec with an overlapping (acyclic) word bus:
+    /// bus 0 maps words 0→1, 1→2, 2→3 — a conveyor chain.
+    fn make_chain_spec() -> crate::arch::ArchSpec {
+        let grid0 = Grid::from_positions(&[0.0, 5.0, 10.0, 15.0], &[0.0, 3.0]);
+        let grid1 = Grid::from_positions(&[30.0, 35.0, 40.0, 45.0], &[0.0, 4.0]);
+
+        let spec = crate::arch::ArchSpec {
+            version: Version::new(2, 0),
+            words: (0..4u32)
+                .map(|w| Word {
+                    sites: vec![[w, 0], [w, 1]],
+                })
+                .collect(),
+            zones: vec![
+                Zone {
+                    name: String::new(),
+                    grid: grid0,
+                    site_buses: vec![],
+                    word_buses: vec![Bus {
+                        src: vec![WordRef(0), WordRef(1), WordRef(2)],
+                        dst: vec![WordRef(1), WordRef(2), WordRef(3)],
+                    }],
+                    words_with_site_buses: vec![],
+                    sites_with_word_buses: vec![0],
+                    entangling_pairs: vec![[0, 1]],
+                },
+                Zone {
+                    name: String::new(),
+                    grid: grid1,
+                    site_buses: vec![],
+                    word_buses: vec![],
+                    words_with_site_buses: vec![],
+                    sites_with_word_buses: vec![],
+                    entangling_pairs: vec![],
+                },
+            ],
+            zone_buses: vec![],
+            modes: vec![Mode {
+                name: "full".to_string(),
+                zones: vec![0, 1],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: None,
+        };
+        assert!(
+            spec.validate().is_ok(),
+            "overlapping acyclic buses must be legal: {:?}",
+            spec.validate()
+        );
+        spec
+    }
+
+    /// Forward lane on chain-spec word bus 0, sourced at `word_id`.
+    fn chain_lane(word_id: u32) -> LaneAddr {
+        LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::WordBus,
+            zone_id: 0,
+            word_id,
+            site_id: 0,
+            bus_id: 0,
+        }
+    }
+
+    fn word_loc(word_id: u32) -> LocationAddr {
+        LocationAddr {
+            zone_id: 0,
+            word_id,
+            site_id: 0,
+        }
+    }
+
+    #[test]
+    fn apply_moves_chain_succeeds_in_any_lane_order() {
+        let spec = make_chain_spec();
+        // Atoms at words 0 and 1; word 2 empty: conveyor shift 0→1→2.
+        let state = AtomStateData::from_locations(&[(0, word_loc(0)), (1, word_loc(1))]);
+        let lanes = [chain_lane(0), chain_lane(1)];
+
+        for order in [[0usize, 1], [1, 0]] {
+            let slice = [lanes[order[0]], lanes[order[1]]];
+            let result = state.apply_moves(&slice, &spec).unwrap();
+            assert!(
+                result.collision.is_empty(),
+                "chain must not collide (order {order:?})"
+            );
+            assert_eq!(result.qubit_to_locations[&0], word_loc(1));
+            assert_eq!(result.qubit_to_locations[&1], word_loc(2));
+            assert_eq!(result.locations_to_qubit.len(), 2);
+            assert_eq!(result.move_count[&0], 1);
+            assert_eq!(result.move_count[&1], 1);
+        }
+    }
+
+    #[test]
+    fn apply_moves_is_invariant_under_lane_permutation() {
+        let spec = make_chain_spec();
+        // Full chain: atoms at words 0, 1, 2 shift to 1, 2, 3.
+        let state =
+            AtomStateData::from_locations(&[(0, word_loc(0)), (1, word_loc(1)), (2, word_loc(2))]);
+        let lanes = [chain_lane(0), chain_lane(1), chain_lane(2)];
+
+        let reference = state.apply_moves(&lanes, &spec).unwrap();
+        assert!(reference.collision.is_empty());
+        assert_eq!(reference.qubit_to_locations[&2], word_loc(3));
+
+        for perm in [
+            [0usize, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let slice = [lanes[perm[0]], lanes[perm[1]], lanes[perm[2]]];
+            let permuted = state.apply_moves(&slice, &spec).unwrap();
+            assert_eq!(
+                permuted, reference,
+                "lane order {perm:?} changed the result"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_moves_stationary_collision_is_order_independent() {
+        let spec = make_chain_spec();
+        // Atom at word 3 has no outgoing lane in the group: qubit 1 lands on
+        // a stationary atom regardless of lane order.
+        let state =
+            AtomStateData::from_locations(&[(0, word_loc(1)), (1, word_loc(2)), (2, word_loc(3))]);
+        let lanes = [chain_lane(1), chain_lane(2)];
+
+        let reference = state.apply_moves(&lanes, &spec).unwrap();
+        assert_eq!(reference.collision, HashMap::from([(1, 2)]));
+        // Qubit 0 still completes its move; the collided pair is destroyed.
+        assert_eq!(reference.qubit_to_locations[&0], word_loc(2));
+        assert_eq!(reference.qubit_to_locations.len(), 1);
+
+        let reversed = state.apply_moves(&[lanes[1], lanes[0]], &spec).unwrap();
+        assert_eq!(reversed, reference);
+    }
+
+    #[test]
+    fn validate_moves_accepts_chain_and_apply_validated_matches() {
+        let spec = make_chain_spec();
+        let state = AtomStateData::from_locations(&[(0, word_loc(0)), (1, word_loc(1))]);
+        let lanes = [chain_lane(0), chain_lane(1)];
+
+        let validated = state.validate_moves(&lanes, &spec).expect("chain is valid");
+        let via_token = state.apply_validated(&validated);
+        let via_legacy = state.apply_moves(&lanes, &spec).unwrap();
+        assert_eq!(via_token, via_legacy);
+        assert!(via_token.collision.is_empty());
+    }
+
+    #[test]
+    fn validate_moves_rejects_mover_onto_stationary_atom() {
+        let spec = make_chain_spec();
+        // Word 3 is occupied but has no lane in the group.
+        let state = AtomStateData::from_locations(&[(0, word_loc(2)), (1, word_loc(3))]);
+        let lanes = [chain_lane(2)];
+
+        let errors = state.validate_moves(&lanes, &spec).unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            MoveValidationError::DestinationOccupiedByStationaryAtom { occupant: 1, .. }
+        )));
+    }
+
+    #[test]
+    fn validate_moves_rejects_filler_onto_stationary_atom() {
+        let spec = make_chain_spec();
+        // Word 1 is empty (filler lane) but its destination word 2 holds a
+        // stationary atom: the trap site still arrives there.
+        let state = AtomStateData::from_locations(&[(0, word_loc(2))]);
+        let lanes = [chain_lane(1)];
+
+        let errors = state.validate_moves(&lanes, &spec).unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            MoveValidationError::DestinationOccupiedByStationaryAtom { occupant: 0, .. }
+        )));
+        // Legacy apply skips the filler silently — pinned so the contrast
+        // between the two APIs stays intentional.
+        let legacy = state.apply_moves(&lanes, &spec).unwrap();
+        assert_eq!(legacy.qubit_to_locations[&0], word_loc(2));
+        assert!(legacy.collision.is_empty());
+    }
+
+    #[test]
+    fn validate_moves_accepts_filler_onto_vacated_site() {
+        let spec = make_chain_spec();
+        // Word 1 empty, word 2 occupied by a mover: the filler lane 1→2
+        // points at a site vacated in the same step.
+        let state = AtomStateData::from_locations(&[(0, word_loc(2))]);
+        let lanes = [chain_lane(1), chain_lane(2)];
+
+        let validated = state
+            .validate_moves(&lanes, &spec)
+            .expect("filler is valid");
+        let result = state.apply_validated(&validated);
+        assert_eq!(result.qubit_to_locations[&0], word_loc(3));
+        assert_eq!(result.locations_to_qubit.len(), 1);
     }
 }

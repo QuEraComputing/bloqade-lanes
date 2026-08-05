@@ -169,12 +169,15 @@ impl PyAtomStateData {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Apply a sequence of lane moves and return the resulting state.
+    /// Apply a group of lane moves simultaneously and return the resulting state.
     ///
-    /// Each lane is resolved to source/destination locations via the arch spec.
-    /// Qubits at source locations are moved to destinations. If a destination
-    /// is already occupied, both qubits are recorded as collided and removed
-    /// from the location maps. Returns None if any lane is invalid.
+    /// All lanes execute as one AOD transport operation: endpoints are
+    /// resolved against the pre-move state, so the result is independent of
+    /// lane order and a destination counts as free when its occupant moves in
+    /// the same group (conveyor chains are legal). A qubit landing on an atom
+    /// that does not move in this group collides: both are recorded in
+    /// `collision` and removed from the location maps. Returns None if any
+    /// lane is invalid.
     fn apply_moves(&self, lanes: Vec<PyLaneAddr>, arch_spec: &PyArchSpec) -> Option<Self> {
         let lane_addrs: Vec<LaneAddr> = lanes.iter().map(|l| l.inner).collect();
         self.inner

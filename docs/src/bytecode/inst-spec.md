@@ -302,7 +302,9 @@ Pops `n` location addresses and refills atoms at those sites.
 | data2 | unused |
 | Stack | `(lane₁ lane₂ … laneₙ -- )` |
 
-Pops `n` lane addresses and performs atom moves along those lanes. All lanes in a single `move` instruction are executed simultaneously as one AOD transport operation.
+Pops `n` lane addresses and performs atom moves along those lanes. All lanes in a single `move` instruction are executed simultaneously as one AOD transport operation: every endpoint is resolved against the pre-move atom state, so the result is independent of lane order, and a multi-hop route (`x→y` then `y→z` for the *same* atom) must be split across separate `move` instructions.
+
+A lane whose source holds no atom is a no-op (AOD rectangle filler), but the trap site still arrives at its destination — so an occupied destination is only legal when its occupant is itself moved by another lane in the same instruction (conveyor chains such as `x→y, y→z` executed as one shot). A destination occupied by an atom that does not move in the group is invalid.
 
 ##### Lane group validation
 
