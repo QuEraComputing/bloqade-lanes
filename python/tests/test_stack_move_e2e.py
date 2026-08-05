@@ -102,12 +102,14 @@ def test_realistic_cz_sandwich_runs_end_to_end():
 
     1. Initial fill: 4 atoms at zone 0, site 0, words 0/2/4/6 (atoms
        0/1/2/3 respectively).
-    2. Move atom 0 word 0 -> word 3 (two lanes in one ``move``
-       instruction: bus 0 fwd 0->1, then bus 18 fwd 1->3).
+    2. Move atom 0 word 0 -> word 3 (two single-lane ``move``
+       instructions: bus 0 fwd 0->1, then bus 18 fwd 1->3 — lanes
+       within one ``move`` execute simultaneously, so a multi-hop
+       must be split across instructions).
     3. CZ on zone 0 (atom 0 at word 3 now pairs with atom 1 at word 2
        through entangling pair (2,3)).
-    4. Move atom 0 back word 3 -> word 0 (two lanes: bus 18 bwd 3->1,
-       bus 0 bwd 1->0).
+    4. Move atom 0 back word 3 -> word 0 (two single-lane moves:
+       bus 18 bwd 3->1, then bus 0 bwd 1->0).
     5. Move atoms 2 and 3 from words 4/6 -> words 1/3 (bus 10 fwd
        word4->word1, bus 11 fwd word6->word3).
     6. CZ on zone 0.
@@ -126,21 +128,23 @@ def test_realistic_cz_sandwich_runs_end_to_end():
         Instruction.const_loc(0, 4, 0),
         Instruction.const_loc(0, 6, 0),
         Instruction.initial_fill(4),
-        # 2. Move atom 0: word 0 -> word 1 (bus 0 fwd), word 1 -> word 3
-        #    (bus 18 fwd). Two lanes in one move instruction — the Rust
-        #    apply_moves runs lanes sequentially, so atom 0 hops
-        #    0->1->3.
+        # 2. Move atom 0: word 0 -> word 1 (bus 0 fwd), then word 1 ->
+        #    word 3 (bus 18 fwd). Two single-lane move instructions —
+        #    lanes within one move execute simultaneously as one AOD
+        #    operation, so a multi-hop must be split.
         Instruction.const_lane(MoveType.WORD, 0, 0, 0, 0, Direction.FORWARD),
+        Instruction.move_(1),
         Instruction.const_lane(MoveType.WORD, 0, 1, 0, 18, Direction.FORWARD),
-        Instruction.move_(2),
+        Instruction.move_(1),
         # 3. CZ on zone 0.
         Instruction.const_zone(0),
         Instruction.cz(),
-        # 4. Move atom 0 back: 3 -> 1 (bus 18 bwd with word_id=1),
-        #    1 -> 0 (bus 0 bwd with word_id=0).
+        # 4. Move atom 0 back: 3 -> 1 (bus 18 bwd with word_id=1), then
+        #    1 -> 0 (bus 0 bwd with word_id=0). Split for the same reason.
         Instruction.const_lane(MoveType.WORD, 0, 1, 0, 18, Direction.BACKWARD),
+        Instruction.move_(1),
         Instruction.const_lane(MoveType.WORD, 0, 0, 0, 0, Direction.BACKWARD),
-        Instruction.move_(2),
+        Instruction.move_(1),
         # 5. Move atoms 2 and 3: word 4 -> word 1 (bus 10 fwd),
         #    word 6 -> word 3 (bus 11 fwd). One move instruction, two lanes.
         Instruction.const_lane(MoveType.WORD, 0, 4, 0, 10, Direction.FORWARD),
@@ -209,14 +213,12 @@ def test_realistic_cz_sandwich_runs_end_to_end():
             zone_id=0,
         )
 
-    atom_0_forward = (
-        lane(word_id=0, bus_id=0, direction=Direction.FORWARD),
-        lane(word_id=1, bus_id=18, direction=Direction.FORWARD),
-    )
-    atom_0_backward = (
-        lane(word_id=1, bus_id=18, direction=Direction.BACKWARD),
-        lane(word_id=0, bus_id=0, direction=Direction.BACKWARD),
-    )
+    # Atom 0's multi-hop is two single-lane moves per direction (lanes
+    # within one move execute simultaneously, so hops cannot share one).
+    atom_0_hop1 = (lane(word_id=0, bus_id=0, direction=Direction.FORWARD),)
+    atom_0_hop2 = (lane(word_id=1, bus_id=18, direction=Direction.FORWARD),)
+    atom_0_hop2_back = (lane(word_id=1, bus_id=18, direction=Direction.BACKWARD),)
+    atom_0_hop1_back = (lane(word_id=0, bus_id=0, direction=Direction.BACKWARD),)
     atoms_23_forward = (
         lane(word_id=4, bus_id=10, direction=Direction.FORWARD),
         lane(word_id=6, bus_id=11, direction=Direction.FORWARD),
@@ -245,10 +247,12 @@ def test_realistic_cz_sandwich_runs_end_to_end():
             LocationAddress(6, 0, 0),
         ),
     )
-    move1 = move.Move(fill.result, lanes=atom_0_forward)
-    cz1 = move.CZ(move1.result, zone_address=zone0)
-    move2 = move.Move(cz1.result, lanes=atom_0_backward)
-    move3 = move.Move(move2.result, lanes=atoms_23_forward)
+    move1a = move.Move(fill.result, lanes=atom_0_hop1)
+    move1b = move.Move(move1a.result, lanes=atom_0_hop2)
+    cz1 = move.CZ(move1b.result, zone_address=zone0)
+    move2a = move.Move(cz1.result, lanes=atom_0_hop2_back)
+    move2b = move.Move(move2a.result, lanes=atom_0_hop1_back)
+    move3 = move.Move(move2b.result, lanes=atoms_23_forward)
     cz2 = move.CZ(move3.result, zone_address=zone0)
     move4 = move.Move(cz2.result, lanes=atoms_23_backward)
     end_measure = move.EndMeasure(current_state=move4.result, zone_addresses=(zone0,))
@@ -298,9 +302,11 @@ def test_realistic_cz_sandwich_runs_end_to_end():
         [
             load,
             fill,
-            move1,
+            move1a,
+            move1b,
             cz1,
-            move2,
+            move2a,
+            move2b,
             move3,
             cz2,
             move4,

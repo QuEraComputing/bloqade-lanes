@@ -85,6 +85,7 @@ dev = [
     "pytest-xdist>=3.0",
     "ipython>=8.29.0",
     "isort>=5.13.2",
+    "jsonschema>=4.23.0",
     "jupytext>=1.18.1",
     "mypy>=1.13.0",
     "numpy>=1.26.4",
