@@ -472,7 +472,10 @@ fn check_bus_relation<T>(
             match state.get(&cur).copied() {
                 Some(2) => break,
                 Some(1) => {
-                    let pos = walk.iter().position(|n| *n == cur).unwrap_or(0);
+                    let pos = walk
+                        .iter()
+                        .position(|n| *n == cur)
+                        .expect("a node in state 1 is always on the current walk stack");
                     let cycle: Vec<String> = walk[pos..]
                         .iter()
                         .chain(std::iter::once(&cur))
