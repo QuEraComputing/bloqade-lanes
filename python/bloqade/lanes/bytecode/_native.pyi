@@ -1721,13 +1721,16 @@ class AtomStateData:
     def apply_moves(
         self, lanes: list[LaneAddress], arch_spec: ArchSpec
     ) -> Optional[AtomStateData]:
-        """Apply a sequence of lane moves and return the resulting state.
+        """Apply a group of lane moves simultaneously and return the new state.
 
-        Each lane is resolved to source/destination locations via the arch
-        spec. Qubits at source locations are moved to their destinations.
-        If a destination is already occupied, both qubits are recorded as
-        collided and removed from the location maps. Lanes whose source
-        location has no qubit are silently skipped.
+        All lanes execute as one AOD transport operation: endpoints are
+        resolved against the pre-move state, so for any valid lane group
+        the result is independent of lane order, and a destination counts
+        as free when its occupant moves in the same group (conveyor chains
+        are legal). A qubit that lands on an atom which does not move in
+        this group collides: both are recorded in ``collision`` and removed
+        from the location maps. Lanes whose source location has no qubit
+        are silently skipped.
 
         Args:
             lanes (list[LaneAddress]): Sequence of lane addresses to apply.
