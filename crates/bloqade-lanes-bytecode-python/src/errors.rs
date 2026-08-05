@@ -26,7 +26,7 @@ fn arch_spec_error_to_py(py: Python<'_>, error: &ArchSpecError) -> PyResult<PyOb
         ArchSpecError::Structure(msg) => ("ArchSpecGeometryError", msg.as_str()),
         ArchSpecError::ZoneBus(msg) => ("ArchSpecBusError", msg.as_str()),
         ArchSpecError::InterZoneBus(msg) => ("ArchSpecBusError", msg.as_str()),
-        ArchSpecError::GridInvariant(msg) => ("ArchSpecGeometryError", msg.as_str()),
+        ArchSpecError::CyclicBus(msg) => ("ArchSpecBusError", msg.as_str()),
         ArchSpecError::EntanglingPair(msg) => ("ArchSpecZoneError", msg.as_str()),
         ArchSpecError::Mode(msg) => ("ArchSpecZoneError", msg.as_str()),
         ArchSpecError::Path(msg) => ("ArchSpecPathError", msg.as_str()),

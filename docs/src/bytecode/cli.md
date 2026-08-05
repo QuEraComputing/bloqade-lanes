@@ -163,28 +163,19 @@ bloqade-bytecode arch <INPUT>
 ```
 ArchSpec v2.0
 
-Geometry: 2 word(s), 10 sites/word
-  Word 0: 2x10 grid, 10 sites
-    x: start=0, spacing=[5.0]
-    y: start=0, spacing=[1.0, 1.0, ...]
-    site_indices: (0,0) (0,1) (0,2) ...
-
-Buses: 1 site bus(es), 1 word bus(es)
-  Site bus 0: src=[0, 1, 2, 3, 4] dst=[5, 6, 7, 8, 9]
-  Word bus 0: src=[0] dst=[1]
-  words_with_site_buses: [0, 1]
-  sites_with_word_buses: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+Words: 1 word(s), 5 sites/word
+  Word 0: sites=[(0,0) (1,0) (2,0) (3,0) (4,0)]
 
 Zones: 1 zone(s)
-  Zone 0: words=[0, 1]
-  entangling_zones: [[[0, 1]]]
-  measurement_mode_zones: [0]
+  Zone 0: 5x1 grid, 1 site bus(es), 0 word bus(es)
+    Site bus 0: src=[SiteRef(0), SiteRef(1)] dst=[SiteRef(3), SiteRef(4)]
+    words_with_site_buses: [0]
+  modes: 1 mode(s)
+    default: zones=[0]
 
-Paths: 1 path(s)
-  0xC000000000000005: 3 waypoint(s)
-    [1.0, 15.0]
-    [1.0, 10.0]
-    [1.0, 5.0]
+Capabilities:
+  feed_forward: false
+  atom_reloading: false
 ```
 
 The Paths section is only shown when the ArchSpec includes path data. Each path is identified by its 64-bit encoded lane address (in hex) and lists the AOD waypoints (physical coordinates) that define the transport trajectory.
