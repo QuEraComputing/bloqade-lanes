@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AtomStateData"]};
+window.SIDEBAR_ITEMS = {"enum":["MoveValidationError"],"struct":["AtomStateData","ValidatedMoves"]};

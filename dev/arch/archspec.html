@@ -186,62 +186,76 @@
 <h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-Level Structure</a></h2>
 <pre><code class="language-jsonc">{
   &quot;version&quot;: &quot;2.0&quot;,
-  &quot;geometry&quot;: { ... },
-  &quot;buses&quot;: { ... },
-  &quot;words_with_site_buses&quot;: [...],
-  &quot;sites_with_word_buses&quot;: [...],
+  &quot;words&quot;: [...],
   &quot;zones&quot;: [...],
-  &quot;entangling_zones&quot;: [...],
-  &quot;measurement_mode_zones&quot;: [...],
-  &quot;blockade_radius&quot;: 2.0,         // optional, default 2.0
+  &quot;zone_buses&quot;: [...],
+  &quot;modes&quot;: [...],
   &quot;paths&quot;: [...],                 // optional
   &quot;feed_forward&quot;: false,          // optional, default false
-  &quot;atom_reloading&quot;: false          // optional, default false
+  &quot;atom_reloading&quot;: false,        // optional, default false
+  &quot;blockade_radius&quot;: 2.0          // optional
 }
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>version</code></td><td>string</td><td>Format version as <code>&quot;major.minor&quot;</code> (e.g. <code>&quot;2.0&quot;</code>).</td></tr>
-<tr><td><code>geometry</code></td><td>object</td><td>Physical geometry — words, grids, and site positions.</td></tr>
-<tr><td><code>buses</code></td><td>object</td><td>Transport bus definitions (site buses and word buses).</td></tr>
-<tr><td><code>words_with_site_buses</code></td><td>integer[]</td><td>Word IDs with intra-word site transport capability.</td></tr>
-<tr><td><code>sites_with_word_buses</code></td><td>integer[]</td><td>Site indices that serve as landing pads for inter-word transport.</td></tr>
-<tr><td><code>zones</code></td><td>Zone[]</td><td>Logical groupings of words for execution phases.</td></tr>
-<tr><td><code>entangling_zones</code></td><td>[word_a, word_b][][]</td><td>Entanglement zones, each containing word-ID pairs whose matching sites are within blockade radius.</td></tr>
-<tr><td><code>measurement_mode_zones</code></td><td>integer[]</td><td>Zone IDs that support measurement.</td></tr>
-<tr><td><code>blockade_radius</code></td><td>float</td><td><em>(optional, default <code>2.0</code>)</em> Rydberg blockade radius in micrometers.</td></tr>
-<tr><td><code>paths</code></td><td>TransportPath[]</td><td><em>(optional)</em> AOD transport paths between locations.</td></tr>
+<tr><td><code>words</code></td><td>Word[]</td><td>Word definitions. A word's ID is its index in this array.</td></tr>
+<tr><td><code>zones</code></td><td>Zone[]</td><td>Logical zones, each owning a coordinate grid and intra-zone buses.</td></tr>
+<tr><td><code>zone_buses</code></td><td>InterZoneBus[]</td><td>Inter-zone word buses.</td></tr>
+<tr><td><code>modes</code></td><td>Mode[]</td><td>Named operational modes (zone subsets + measurement bitstring ordering).</td></tr>
+<tr><td><code>paths</code></td><td>TransportPath[]</td><td><em>(optional)</em> AOD transport paths for lanes.</td></tr>
 <tr><td><code>feed_forward</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports mid-circuit measurement with classical feedback.</td></tr>
 <tr><td><code>atom_reloading</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports reloading atoms after initial fill.</td></tr>
+<tr><td><code>blockade_radius</code></td><td>float</td><td><em>(optional)</em> Rydberg blockade radius in micrometers — metadata for interpreting entangling pairs.</td></tr>
 </tbody></table>
 </div>
 <hr />
-<h2 id="geometry"><a class="header" href="#geometry">Geometry</a></h2>
-<p>The geometry describes the physical layout of the device: how many words exist, how many sites each word contains, and where those sites are in 2D space.</p>
-<pre><code class="language-jsonc">&quot;geometry&quot;: {
-  &quot;sites_per_word&quot;: 10,
-  &quot;words&quot;: [
-    {
-      &quot;positions&quot;: {
-        &quot;x_start&quot;: 1.0,
-        &quot;y_start&quot;: 2.5,
-        &quot;x_spacing&quot;: [2.0, 2.0, 2.0, 2.0],
-        &quot;y_spacing&quot;: [2.5]
-      },
-      &quot;site_indices&quot;: [[0, 0], [1, 0], [2, 0], ...]
-    }
-  ]
-}
+<h2 id="words"><a class="header" href="#words">Words</a></h2>
+<p>A <strong>word</strong> is an independent register of atom trapping sites. It is the fundamental unit of the device topology. A word's ID is its index in the top-level <code>words</code> array (e.g., the first word is word 0).</p>
+<pre><code class="language-jsonc">&quot;words&quot;: [
+  { &quot;sites&quot;: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] }
+]
 </code></pre>
-<h3 id="word"><a class="header" href="#word">Word</a></h3>
-<p>A <strong>word</strong> is an independent register of atom trapping sites arranged on a 2D grid. It is the fundamental unit of the device topology.</p>
-<p>A word's ID is its index in the <code>geometry.words</code> array (e.g., the first word is word 0).</p>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>positions</code></td><td>Grid</td><td>The 2D coordinate system for this word.</td></tr>
-<tr><td><code>site_indices</code></td><td>[x_idx, y_idx][]</td><td>Site positions as index pairs into the grid's x and y coordinate arrays.</td></tr>
+<tr><td><code>sites</code></td><td>[x_idx, y_idx][]</td><td>Site positions as index pairs into the owning zone grid's x and y coordinate arrays.</td></tr>
+</tbody></table>
+</div>
+<p>All words must have the same number of sites (<code>sites_per_word</code> is derived as the site count of the first word), and every site's <code>[x, y]</code> indices must lie within the zone grid.</p>
+<hr />
+<h2 id="zones"><a class="header" href="#zones">Zones</a></h2>
+<p>A <strong>zone</strong> is a logical region owning a coordinate grid and the transport buses that operate within it. A zone's ID is its index in the <code>zones</code> array (e.g., the first zone is zone 0).</p>
+<pre><code class="language-jsonc">&quot;zones&quot;: [
+  {
+    &quot;name&quot;: &quot;entangling&quot;,
+    &quot;grid&quot;: {
+      &quot;x_start&quot;: 1.0,
+      &quot;y_start&quot;: 2.5,
+      &quot;x_spacing&quot;: [2.0, 2.0, 2.0, 2.0],
+      &quot;y_spacing&quot;: [2.5]
+    },
+    &quot;site_buses&quot;: [
+      { &quot;src&quot;: [0, 1], &quot;dst&quot;: [3, 4] }
+    ],
+    &quot;word_buses&quot;: [
+      { &quot;src&quot;: [0], &quot;dst&quot;: [1] }
+    ],
+    &quot;words_with_site_buses&quot;: [0, 1],
+    &quot;sites_with_word_buses&quot;: [0],
+    &quot;entangling_pairs&quot;: [[0, 1]]
+  }
+]
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>name</code></td><td>string</td><td><em>(optional, default <code>&quot;&quot;</code>)</em> Human-readable zone name.</td></tr>
+<tr><td><code>grid</code></td><td>Grid</td><td>Coordinate grid for all words in this zone.</td></tr>
+<tr><td><code>site_buses</code></td><td>Bus[]</td><td>Site buses moving atoms between sites within words of this zone.</td></tr>
+<tr><td><code>word_buses</code></td><td>Bus[]</td><td>Word buses moving atoms between words within this zone.</td></tr>
+<tr><td><code>words_with_site_buses</code></td><td>integer[]</td><td>Word IDs with site-bus transport capability in this zone.</td></tr>
+<tr><td><code>sites_with_word_buses</code></td><td>integer[]</td><td>Site indices serving as landing pads for word-bus moves.</td></tr>
+<tr><td><code>entangling_pairs</code></td><td>[w_a, w_b][]</td><td><em>(optional, default <code>[]</code>)</em> Word pairs at blockade radius for CZ gates.</td></tr>
 </tbody></table>
 </div>
 <h3 id="grid"><a class="header" href="#grid">Grid</a></h3>
-<p>A <strong>grid</strong> defines the physical coordinate axes for a word using a start position and spacing values. Positions are typically in micrometers (µm).</p>
+<p>A <strong>grid</strong> defines the physical coordinate axes for a zone using a start position and spacing values. Positions are typically in micrometers (µm).</p>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>x_start</code></td><td>float</td><td>X-coordinate of the first grid point.</td></tr>
 <tr><td><code>y_start</code></td><td>float</td><td>Y-coordinate of the first grid point.</td></tr>
@@ -249,62 +263,63 @@
 <tr><td><code>y_spacing</code></td><td>float[]</td><td>Spacing between consecutive y-coordinates. The number of y grid points is <code>len(y_spacing) + 1</code>.</td></tr>
 </tbody></table>
 </div>
-<p>The x-coordinates are computed as <code>[x_start, x_start + x_spacing[0], x_start + x_spacing[0] + x_spacing[1], ...]</code> (cumulative sum of spacings from the start). Same for y. Sites reference grid positions by index: site <code>[2, 1]</code> is located at the 3rd x-coordinate and 2nd y-coordinate.</p>
-<p>All words must have the same grid shape — i.e., the same number of x and y grid points (same <code>x_spacing</code> and <code>y_spacing</code> lengths). The actual coordinate values may differ (words can be at different physical locations), but the grid dimensions must be consistent.</p>
+<p>The x-coordinates are computed as <code>[x_start, x_start + x_spacing[0], x_start + x_spacing[0] + x_spacing[1], ...]</code> (cumulative sum of spacings from the start). Same for y. Sites reference grid positions by index: site <code>[2, 1]</code> is located at the 3rd x-coordinate and 2nd y-coordinate. Spacings must be non-negative.</p>
+<p>All zones must have the same grid dimensions — i.e., the same number of x and y grid points (same <code>x_spacing</code> and <code>y_spacing</code> lengths). The actual coordinate values differ (zones are at different physical locations), and zone bounding boxes must not overlap in physical space.</p>
+<h3 id="entangling-pairs"><a class="header" href="#entangling-pairs">Entangling Pairs</a></h3>
+<p>Each zone's <code>entangling_pairs</code> lists which word pairs within it can perform CZ (entangling) gates. Within a pair, sites at matching indices in <code>w_a</code> and <code>w_b</code> are within blockade radius. A zone with no entangling pairs is a storage/low-connectivity zone.</p>
 <hr />
 <h2 id="buses"><a class="header" href="#buses">Buses</a></h2>
-<p>Buses are the physical transport channels that move atoms. There are two kinds:</p>
+<p>Buses are the physical transport channels that move atoms. Each bus defines a paired mapping via parallel arrays: the atom at <code>src[i]</code> moves to <code>dst[i]</code>, and all pairs of one bus execute <strong>simultaneously as one AOD operation</strong>. There are three kinds:</p>
 <h3 id="site-bus"><a class="header" href="#site-bus">Site Bus</a></h3>
-<p>A <strong>site bus</strong> moves atoms between sites <em>within the same word</em>. It defines a paired mapping where <code>src[i]</code> moves to <code>dst[i]</code>.</p>
+<p>A <strong>site bus</strong> moves atoms between sites <em>within the same word</em>. Entries are site indices. A site bus's ID is its index in the owning zone's <code>site_buses</code> array.</p>
 <pre><code class="language-jsonc">{ &quot;src&quot;: [0, 1, 2, 3, 4], &quot;dst&quot;: [5, 6, 7, 8, 9] }
 </code></pre>
-<p>This means atom at site 0 moves to site 5, atom at site 1 moves to site 6, and so on — all in a single transport operation. The <code>src</code> and <code>dst</code> arrays must be the same length and must not overlap (no site can be both a source and a destination in the same bus). A site bus's ID is its index in the <code>buses.site_buses</code> array.</p>
+<p>This means the atom at site 0 moves to site 5, the atom at site 1 moves to site 6, and so on — all in a single transport operation. Only words listed in the zone's <code>words_with_site_buses</code> can execute site-bus moves.</p>
 <h3 id="word-bus"><a class="header" href="#word-bus">Word Bus</a></h3>
-<p>A <strong>word bus</strong> moves atoms between sites across <em>different words</em>. The <code>src</code> and <code>dst</code> arrays contain word IDs (not site indices). A word bus's ID is its index in the <code>buses.word_buses</code> array.</p>
+<p>A <strong>word bus</strong> moves atoms between <em>different words within a zone</em>. The <code>src</code> and <code>dst</code> arrays contain word IDs (not site indices). A word bus's ID is its index in the owning zone's <code>word_buses</code> array.</p>
 <pre><code class="language-jsonc">{ &quot;src&quot;: [0], &quot;dst&quot;: [1] }
 </code></pre>
-<p>The specific sites involved in inter-word transport are those listed in <code>sites_with_word_buses</code> — these are the &quot;landing pad&quot; positions within each word.</p>
-<h3 id="supporting-fields"><a class="header" href="#supporting-fields">Supporting Fields</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>words_with_site_buses</code></td><td>Which words have site bus hardware. Only these words can execute intra-word site moves.</td></tr>
-<tr><td><code>sites_with_word_buses</code></td><td>Which site indices serve as landing pads for word-bus moves. These positions within each word are where atoms arrive and depart during inter-word transport.</td></tr>
+<p>The specific sites involved in inter-word transport are those listed in the zone's <code>sites_with_word_buses</code> — the &quot;landing pad&quot; positions within each word.</p>
+<h3 id="zone-bus"><a class="header" href="#zone-bus">Zone Bus</a></h3>
+<p>A <strong>zone bus</strong> (top-level <code>zone_buses</code>) moves words <em>across zone boundaries</em>. Entries are zone-qualified word references, and every <code>(src[i], dst[i])</code> pair must have different <code>zone_id</code>s.</p>
+<pre><code class="language-jsonc">{
+  &quot;src&quot;: [{ &quot;zone_id&quot;: 0, &quot;word_id&quot;: 0 }],
+  &quot;dst&quot;: [{ &quot;zone_id&quot;: 1, &quot;word_id&quot;: 0 }]
+}
+</code></pre>
+<h3 id="bus-well-formedness"><a class="header" href="#bus-well-formedness">Bus Well-Formedness</a></h3>
+<p>For every bus kind, the <code>src</code>→<code>dst</code> relation must be well-formed: <code>src</code> entries unique, <code>dst</code> entries unique, and <strong>acyclic</strong> (no rotations, including self-loops) — a bus is a set of explicit transports, never a permutation. Overlapping-but-acyclic relations (conveyor chains such as <code>0→1, 1→2</code>) are legal. See <a href="#validation-rules">Validation Rules</a>.</p>
+<hr />
+<h2 id="modes"><a class="header" href="#modes">Modes</a></h2>
+<p>A <strong>mode</strong> is a named operational configuration: a subset of zones plus the bitstring ordering used for measurement results.</p>
+<pre><code class="language-jsonc">&quot;modes&quot;: [
+  { &quot;name&quot;: &quot;full&quot;, &quot;zones&quot;: [0, 1], &quot;bitstring_order&quot;: [] }
+]
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>name</code></td><td>string</td><td>Human-readable mode name.</td></tr>
+<tr><td><code>zones</code></td><td>integer[]</td><td>Zone IDs active in this mode.</td></tr>
+<tr><td><code>bitstring_order</code></td><td>integer[]</td><td>Bit-to-location mapping for measurement results. Each entry is a <code>LocationAddr</code> encoded as a packed integer (layout <code>[zone_id:8][word_id:16][site_id:16][pad:24]</code>, most-significant first).</td></tr>
 </tbody></table>
 </div>
-<hr />
-<h2 id="zones"><a class="header" href="#zones">Zones</a></h2>
-<p>A <strong>zone</strong> groups words into logical regions for different execution phases (entangling, measurement, etc.).</p>
-<pre><code class="language-jsonc">&quot;zones&quot;: [
-  { &quot;words&quot;: [0, 1, 2] }
-]
-</code></pre>
-<p>A zone's ID is its index in the <code>zones</code> array (e.g., the first zone is zone 0).</p>
-<p>Zone 0 is special — it must contain every word in the geometry. This ensures there is always a &quot;global&quot; zone that covers the entire device.</p>
-<h3 id="entangling-zones"><a class="header" href="#entangling-zones">Entangling Zones</a></h3>
-<p><code>entangling_zones</code> defines which word pairs can perform CZ (entangling) gates. Each entangling zone is a list of <code>[word_a, word_b]</code> pairs. Within a pair, sites at matching indices in <code>word_a</code> and <code>word_b</code> are within blockade radius.</p>
-<pre><code class="language-jsonc">&quot;entangling_zones&quot;: [
-  [[0, 1], [2, 3]]   // zone 0: words 0↔1 and 2↔3 are CZ pairs
-]
-</code></pre>
-<h3 id="measurement-mode-zones"><a class="header" href="#measurement-mode-zones">Measurement Mode Zones</a></h3>
-<p><code>measurement_mode_zones</code> lists zone IDs that support measurement operations. If non-empty, the first entry must be zone 0.</p>
 <hr />
 <h2 id="paths-optional"><a class="header" href="#paths-optional">Paths (Optional)</a></h2>
 <p>AOD (Acousto-Optic Deflector) transport paths. Each path identifies a transport lane and provides a sequence of <code>[x, y]</code> waypoints defining the physical trajectory atoms follow during transport.</p>
 <p>The lane is identified by its encoded <code>LaneAddr</code>, serialized as a hex string. See <a href="#address-encoding">Address Encoding</a> for the <code>LaneAddr</code> bit layout.</p>
 <pre><code class="language-jsonc">&quot;paths&quot;: [
   {
-    &quot;lane&quot;: &quot;0xC000000000000000&quot;,                        // encoded LaneAddr (hex, 16-digit)
-    &quot;waypoints&quot;: [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]]  // physical trajectory
+    &quot;lane&quot;: &quot;0x2000000000000000&quot;,                       // encoded LaneAddr (hex, 16-digit)
+    &quot;waypoints&quot;: [[0.0, 0.0], [0.0, 5.0], [2.0, 5.0]]   // physical trajectory
   }
 ]
 </code></pre>
 <p>Each <code>TransportPath</code> entry has:</p>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>lane</code></td><td>string</td><td>Encoded <code>LaneAddr</code> as a <code>&quot;0x...&quot;</code> hex string.</td></tr>
-<tr><td><code>waypoints</code></td><td>[x, y][]</td><td>Sequence of physical coordinate waypoints.</td></tr>
+<tr><td><code>waypoints</code></td><td>[x, y][]</td><td>Sequence of physical coordinate waypoints (at least 2, all finite).</td></tr>
 </tbody></table>
 </div>
-<p>To decode the lane hex string, parse it as a 64-bit unsigned integer. The low 32 bits (data0) contain <code>[word_id:16][site_id:16]</code> and the high 32 bits (data1) contain <code>[dir:1][mt:1][pad:14][bus_id:16]</code>. For example, <code>&quot;0xC000000000000000&quot;</code> decodes to direction=Backward, move_type=WordBus, word=0, site=0, bus=0. In the lane address convention, <code>word_id</code> always encodes the forward-direction source word for that lane; in this specific example the bus mapping is src=[0], dst=[1], so <code>direction=Backward</code> means the move goes from word 1 back to word 0.</p>
+<p>To decode the lane hex string, parse it as a 64-bit unsigned integer. The low 32 bits (data0) contain <code>[word_id:16][site_id:16]</code> and the high 32 bits (data1) contain <code>[dir:1][mt:2][zone_id:8][pad:5][bus_id:16]</code>. For example, <code>&quot;0x2000000000000000&quot;</code> has data1 = <code>0x20000000</code>: direction=Forward (bit 31 clear), move_type=WordBus (bits 30–29 = <code>01</code>), zone=0, word=0, site=0, bus=0. In the lane address convention, <code>word_id</code> always encodes the forward-direction source word for that lane, so a <code>Backward</code> lane with the same address fields moves the atom from the bus destination back to that source.</p>
 <p>This field is omitted from the JSON when not needed.</p>
 <hr />
 <h2 id="capability-flags-optional"><a class="header" href="#capability-flags-optional">Capability Flags (Optional)</a></h2>
@@ -322,101 +337,116 @@
 </code></pre>
 <hr />
 <h2 id="validation-rules"><a class="header" href="#validation-rules">Validation Rules</a></h2>
-<p>The <code>ArchSpec::validate()</code> method checks all structural rules in a single pass, collecting every error rather than failing fast. The following rules are enforced:</p>
-<h3 id="zone-rules"><a class="header" href="#zone-rules">Zone Rules</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
-<tr><td>Zone 0 must include every word ID in the geometry</td><td><code>Zone0MissingWords</code></td></tr>
-<tr><td><code>measurement_mode_zones</code> must not be empty</td><td><code>MeasurementModeZonesEmpty</code></td></tr>
-<tr><td><code>measurement_mode_zones[0]</code> must be zone 0</td><td><code>MeasurementModeFirstNotZone0</code></td></tr>
-<tr><td>Every ID in <code>entangling_zones</code> must reference a defined zone</td><td><code>InvalidEntanglingZone</code></td></tr>
-<tr><td>Every ID in <code>measurement_mode_zones</code> must reference a defined zone</td><td><code>InvalidMeasurementModeZone</code></td></tr>
+<p>The <code>ArchSpec::validate()</code> method checks all structural rules in a single pass, collecting every error rather than failing fast. Errors are grouped into coarse <code>ArchSpecError</code> categories, each carrying a descriptive message; the <strong>Error</strong> column below names the category (Rust enum variant). Through the Python bindings the categories map onto exception classes:</p>
+<div class="table-wrapper"><table><thead><tr><th><code>ArchSpecError</code> variant</th><th>Python exception</th></tr></thead><tbody>
+<tr><td><code>Structure</code></td><td><code>ArchSpecGeometryError</code></td></tr>
+<tr><td><code>ZoneBus</code>, <code>InterZoneBus</code>, <code>CyclicBus</code></td><td><code>ArchSpecBusError</code></td></tr>
+<tr><td><code>EntanglingPair</code>, <code>Mode</code></td><td><code>ArchSpecZoneError</code></td></tr>
+<tr><td><code>Path</code></td><td><code>ArchSpecPathError</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="word--site-rules"><a class="header" href="#word--site-rules">Word / Site Rules</a></h3>
+<h3 id="structural-rules"><a class="header" href="#structural-rules">Structural Rules</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
-<tr><td>Every word must have exactly <code>sites_per_word</code> site_indices</td><td><code>WrongSiteCount</code></td></tr>
-<tr><td>All words must have the same grid shape (same number of x and y positions)</td><td><code>InconsistentGridShape</code></td></tr>
-<tr><td>Grid coordinates must be finite (no NaN or Inf)</td><td><code>NonFiniteGridValue</code></td></tr>
-<tr><td>Site <code>x_idx</code> must be &lt; number of x grid points (<code>len(x_spacing) + 1</code>)</td><td><code>SiteXIndexOutOfRange</code></td></tr>
-<tr><td>Site <code>y_idx</code> must be &lt; number of y grid points (<code>len(y_spacing) + 1</code>)</td><td><code>SiteYIndexOutOfRange</code></td></tr>
+<tr><td>At least one zone and at least one word must exist</td><td><code>Structure</code></td></tr>
+<tr><td>All grid spacings must be non-negative</td><td><code>Structure</code></td></tr>
+<tr><td>All zones must have the same grid dimensions (same number of x and y positions)</td><td><code>Structure</code></td></tr>
+<tr><td>All words must have the same number of sites</td><td><code>Structure</code></td></tr>
+<tr><td>Every word site's <code>[x, y]</code> indices must lie within the zone grid</td><td><code>Structure</code></td></tr>
+<tr><td>No two zones may have overlapping bounding boxes in physical (x, y) space</td><td><code>Structure</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="site-bus-rules"><a class="header" href="#site-bus-rules">Site Bus Rules</a></h3>
+<h3 id="per-zone-bus-rules"><a class="header" href="#per-zone-bus-rules">Per-Zone Bus Rules</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
-<tr><td><code>src.length</code> must equal <code>dst.length</code></td><td><code>SiteBusLengthMismatch</code></td></tr>
-<tr><td><code>src</code> and <code>dst</code> must be disjoint (no shared site indices)</td><td><code>SiteBusSrcDstOverlap</code></td></tr>
-<tr><td>All site indices in <code>src</code> and <code>dst</code> must be &lt; <code>sites_per_word</code></td><td><code>SiteBusIndexOutOfRange</code></td></tr>
+<tr><td>Every ID in <code>words_with_site_buses</code> must be a valid word ID</td><td><code>ZoneBus</code></td></tr>
+<tr><td>Every index in <code>sites_with_word_buses</code> must be &lt; <code>sites_per_word</code></td><td><code>ZoneBus</code></td></tr>
+<tr><td>Site bus <code>src</code> and <code>dst</code> must have equal length</td><td><code>ZoneBus</code></td></tr>
+<tr><td>All site bus indices in <code>src</code> and <code>dst</code> must be &lt; <code>sites_per_word</code></td><td><code>ZoneBus</code></td></tr>
+<tr><td>Word bus <code>src</code> and <code>dst</code> must have equal length</td><td><code>ZoneBus</code></td></tr>
+<tr><td>All word bus IDs in <code>src</code> and <code>dst</code> must be valid word IDs</td><td><code>ZoneBus</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="word-bus-rules"><a class="header" href="#word-bus-rules">Word Bus Rules</a></h3>
+<h3 id="inter-zone-bus-rules"><a class="header" href="#inter-zone-bus-rules">Inter-Zone Bus Rules</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
-<tr><td><code>src.length</code> must equal <code>dst.length</code></td><td><code>WordBusLengthMismatch</code></td></tr>
-<tr><td>All word IDs in <code>src</code> and <code>dst</code> must exist in <code>geometry.words</code></td><td><code>WordBusInvalidWordId</code></td></tr>
+<tr><td>Zone bus <code>src</code> and <code>dst</code> must have equal length</td><td><code>InterZoneBus</code></td></tr>
+<tr><td>All zone bus <code>zone_id</code> / <code>word_id</code> entries must be in range</td><td><code>InterZoneBus</code></td></tr>
+<tr><td>Every <code>(src[i], dst[i])</code> pair must cross a zone boundary</td><td><code>InterZoneBus</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="cross-reference-rules"><a class="header" href="#cross-reference-rules">Cross-Reference Rules</a></h3>
+<h3 id="bus-well-formedness-rules-all-bus-kinds"><a class="header" href="#bus-well-formedness-rules-all-bus-kinds">Bus Well-Formedness Rules (all bus kinds)</a></h3>
+<p>A bus is a set of explicit edge transports executed simultaneously as one AOD
+operation — never a permutation. These rules apply to site buses, word buses,
+and zone buses alike:</p>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
-<tr><td>Every ID in <code>words_with_site_buses</code> must be a valid word ID</td><td><code>InvalidWordWithSiteBus</code></td></tr>
-<tr><td>Every index in <code>sites_with_word_buses</code> must be &lt; <code>sites_per_word</code></td><td><code>InvalidSiteWithWordBus</code></td></tr>
+<tr><td><code>src</code> entries must be unique (endpoint resolution is positional first-match, so a duplicated source silently shadows later pairs)</td><td><code>ZoneBus</code> / <code>InterZoneBus</code></td></tr>
+<tr><td><code>dst</code> entries must be unique (two simultaneous transports into one site cannot both complete)</td><td><code>ZoneBus</code> / <code>InterZoneBus</code></td></tr>
+<tr><td>The <code>src</code>→<code>dst</code> relation must be acyclic, including self-loops — a cycle would rotate a fully-occupied set of atoms with no empty site, which AOD hardware cannot do. Overlapping-but-acyclic relations (conveyor chains such as <code>0→1, 1→2</code>) are legal.</td><td><code>CyclicBus</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="entangling-pair-rules"><a class="header" href="#entangling-pair-rules">Entangling Pair Rules</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
+<tr><td>Both word IDs in every <code>entangling_pairs</code> entry must be valid word IDs</td><td><code>EntanglingPair</code></td></tr>
+<tr><td>A word must not be paired with itself</td><td><code>EntanglingPair</code></td></tr>
+<tr><td>No duplicate pairs (order-insensitive: <code>[a, b]</code> duplicates <code>[b, a]</code>)</td><td><code>EntanglingPair</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="mode-rules"><a class="header" href="#mode-rules">Mode Rules</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
+<tr><td>Every zone ID in a mode must reference a defined zone</td><td><code>Mode</code></td></tr>
+<tr><td>Every <code>bitstring_order</code> entry's <code>zone_id</code>, <code>word_id</code>, and <code>site_id</code> must be in range</td><td><code>Mode</code></td></tr>
 </tbody></table>
 </div>
 <h3 id="path-rules"><a class="header" href="#path-rules">Path Rules</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
-<tr><td>Every path's <code>lane</code> must decode to a valid <code>LaneAddr</code> (valid bus ID, word ID, site ID)</td><td><code>InvalidPathLane</code></td></tr>
-<tr><td>Every path must have at least 2 waypoints</td><td><code>PathTooFewWaypoints</code></td></tr>
-<tr><td>The first waypoint must match the source position of the lane, and the last waypoint must match the destination position</td><td><code>PathEndpointMismatch</code></td></tr>
-<tr><td>Waypoint coordinates must be finite (no NaN or Inf)</td><td><code>NonFiniteWaypoint</code></td></tr>
+<tr><td>Waypoint coordinates must be finite (no NaN or Inf)</td><td><code>Path</code></td></tr>
+<tr><td>Every path's lane must have a valid <code>zone_id</code></td><td><code>Path</code></td></tr>
+<tr><td>Every path must have at least 2 waypoints</td><td><code>Path</code></td></tr>
 </tbody></table>
 </div>
 <h3 id="capability-rules-bytecode-validation"><a class="header" href="#capability-rules-bytecode-validation">Capability Rules (Bytecode Validation)</a></h3>
-<p>These rules are checked during bytecode validation when an <code>ArchSpec</code> is provided:</p>
+<p>These rules are checked during bytecode validation (<code>ValidationError</code>, not <code>ArchSpecError</code>) when an <code>ArchSpec</code> is provided:</p>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
-<tr><td>If <code>feed_forward = false</code>, at most one <code>measure</code> instruction is allowed</td><td><code>FeedForwardNotSupported</code></td></tr>
-<tr><td>If <code>atom_reloading = false</code>, no <code>fill</code> instruction is allowed</td><td><code>AtomReloadingNotSupported</code></td></tr>
+<tr><td>If <code>feed_forward = false</code>, control flow and multiple <code>measure</code> instructions are rejected</td><td><code>ControlFlowRequiresFeedForward</code>, <code>MultipleMeasuresRequireFeedForward</code></td></tr>
+<tr><td>If <code>atom_reloading = false</code>, no <code>fill</code> instruction is allowed (<code>initial_fill</code> is a separate instruction and is always permitted)</td><td><code>FillRequiresAtomReloading</code></td></tr>
 </tbody></table>
 </div>
 <hr />
 <h2 id="address-encoding"><a class="header" href="#address-encoding">Address Encoding</a></h2>
 <p>At the bytecode level, locations and lanes are encoded as bit-packed integers with 16-bit address fields. Each address type is packed into instruction data words (u32):</p>
 <div class="table-wrapper"><table><thead><tr><th>Type</th><th>Width</th><th>Layout</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>LocationAddr</code></td><td>32 bits (1 × u32)</td><td>data0: <code>[word_id:16][site_id:16]</code></td><td>Identifies a specific site within a word.</td></tr>
-<tr><td><code>LaneAddr</code></td><td>64 bits (2 × u32)</td><td>data0: <code>[word_id:16][site_id:16]</code>, data1: <code>[dir:1][mt:1][pad:14][bus_id:16]</code></td><td>Identifies a transport lane (direction + move type + site + bus).</td></tr>
-<tr><td><code>ZoneAddr</code></td><td>32 bits (1 × u32)</td><td>data0: <code>[pad:16][zone_id:16]</code></td><td>Identifies a zone.</td></tr>
+<tr><td><code>LocationAddr</code></td><td>64 bits</td><td><code>[zone_id:8][word_id:16][site_id:16][pad:24]</code> (most-significant first)</td><td>Identifies a specific site within a word of a zone.</td></tr>
+<tr><td><code>LaneAddr</code></td><td>64 bits (2 × u32)</td><td>data0 (low): <code>[word_id:16][site_id:16]</code>, data1 (high): <code>[dir:1][mt:2][zone_id:8][pad:5][bus_id:16]</code></td><td>Identifies a transport lane (direction + move type + zone + word/site + bus).</td></tr>
+<tr><td><code>ZoneAddr</code></td><td>32 bits (1 × u32)</td><td><code>[pad:24][zone_id:8]</code></td><td>Identifies a zone.</td></tr>
 </tbody></table>
 </div>
-<p>These packed addresses are used in 16-byte bytecode instructions (opcode + 3 data words) and are validated against the arch spec during program validation. In JSON and Python, <code>LaneAddr</code> is represented as a 64-bit integer (16-digit hex string in JSON, <code>u64</code> in Python).</p>
+<p>These packed addresses are used in 16-byte bytecode instructions (opcode + 3 data words) and are validated against the arch spec during program validation. In JSON, <code>LaneAddr</code> is represented as a 16-digit hex string (<code>data0 | data1 &lt;&lt; 32</code>) and <code>LocationAddr</code> as a plain integer; in Python both are <code>u64</code> values.</p>
 <hr />
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
-<p>Minimal spec with one word and one site bus:</p>
+<p>Minimal spec with one word, one zone, and one site bus (this is <a href="../../examples/arch/simple.json"><code>examples/arch/simple.json</code></a>):</p>
 <pre><code class="language-json">{
   &quot;version&quot;: &quot;2.0&quot;,
-  &quot;geometry&quot;: {
-    &quot;sites_per_word&quot;: 5,
-    &quot;words&quot;: [
-      {
-        &quot;positions&quot;: {
-          &quot;x_start&quot;: 1.0,
-          &quot;y_start&quot;: 2.0,
-          &quot;x_spacing&quot;: [2.0, 2.0, 2.0, 2.0],
-          &quot;y_spacing&quot;: []
-        },
-        &quot;site_indices&quot;: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]
-      }
-    ]
-  },
-  &quot;buses&quot;: {
-    &quot;site_buses&quot;: [
-      { &quot;src&quot;: [0, 1], &quot;dst&quot;: [3, 4] }
-    ],
-    &quot;word_buses&quot;: []
-  },
-  &quot;words_with_site_buses&quot;: [0],
-  &quot;sites_with_word_buses&quot;: [],
-  &quot;zones&quot;: [
-    { &quot;words&quot;: [0] }
+  &quot;words&quot;: [
+    { &quot;sites&quot;: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] }
   ],
-  &quot;entangling_zones&quot;: [],
-  &quot;measurement_mode_zones&quot;: [0]
+  &quot;zones&quot;: [
+    {
+      &quot;grid&quot;: {
+        &quot;x_start&quot;: 1.0,
+        &quot;y_start&quot;: 2.0,
+        &quot;x_spacing&quot;: [2.0, 2.0, 2.0, 2.0],
+        &quot;y_spacing&quot;: []
+      },
+      &quot;site_buses&quot;: [
+        { &quot;src&quot;: [0, 1], &quot;dst&quot;: [3, 4] }
+      ],
+      &quot;word_buses&quot;: [],
+      &quot;words_with_site_buses&quot;: [0],
+      &quot;sites_with_word_buses&quot;: []
+    }
+  ],
+  &quot;zone_buses&quot;: [],
+  &quot;modes&quot;: [
+    { &quot;name&quot;: &quot;default&quot;, &quot;zones&quot;: [0], &quot;bitstring_order&quot;: [] }
+  ]
 }
 </code></pre>
 <p>A fuller example with multiple words, CZ pairs, and word buses is available at <a href="../../examples/arch/full.json"><code>examples/arch/full.json</code></a>.</p>
