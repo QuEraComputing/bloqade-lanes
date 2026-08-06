@@ -315,6 +315,74 @@ impl<'a> BusGridContext<'a> {
 mod tests {
     use super::*;
 
+    /// A conveyor chain `a→b, b→c` where the atoms sit on `a` and `b`.
+    ///
+    /// `is_valid_rect` accepts the **complete** 2-cell rectangle: `a`'s
+    /// destination `b` is occupied, but `b` is one of the rectangle's own
+    /// moving sources, so it vacates in the same shot. Yet `build_aod_grids`
+    /// still fails to emit it — see
+    /// [`greedy_init_cannot_assemble_a_chain_rectangle`] — which is why no
+    /// generator assembles chains today (issue #887).
+    fn chain_context() -> BusGridContext<'static> {
+        // Positions: a=(0,0), b=(1,0) — same row, adjacent columns.
+        // Lanes: a→b, b→c. Atoms occupy a and b; c is free.
+        const A: u64 = 10;
+        const B: u64 = 20;
+        const C: u64 = 30;
+        make_context_with_endpoints(
+            &[((0, 0), A), ((1, 0), B)],
+            &[(A, 101, B), (B, 102, C)],
+            &[A, B],
+        )
+    }
+
+    /// The rule itself admits a chain: the full rectangle is valid.
+    #[test]
+    fn is_valid_rect_accepts_a_complete_chain_rectangle() {
+        let ctx = chain_context();
+        let movers: HashSet<u64> = [10u64, 20].into_iter().collect();
+        let xs: BTreeSet<u64> = [0u64, 1].into_iter().collect();
+        let ys: BTreeSet<u64> = [0u64].into_iter().collect();
+        assert!(
+            ctx.is_valid_rect(&xs, &ys, &movers),
+            "a→b, b→c is legal: b vacates in the same shot"
+        );
+        // ...but the leader's cell *alone* is not, because b is not yet one of
+        // the rectangle's sources. This non-monotonicity is the trap below.
+        let xs_leader: BTreeSet<u64> = [0u64].into_iter().collect();
+        assert!(
+            !ctx.is_valid_rect(&xs_leader, &ys, &movers),
+            "the chain's prefix is invalid in isolation"
+        );
+    }
+
+    /// **Known gap (issue #887).** `greedy_init` grows a rectangle one entry at
+    /// a time and sets aside any entry whose *intermediate* rectangle is
+    /// invalid. For a chain the intermediate state is exactly what fails: the
+    /// leader is rejected before the follower is ever added, so the valid
+    /// 2-cell rectangle is never tried.
+    ///
+    /// The ordering is the fix: feeding entries follower-first (reverse
+    /// topological order along the bus relation, which #874 guarantees is
+    /// acyclic) makes each intermediate rectangle valid. Endpoint-disjoint
+    /// buses have no chains, so their entry order — and behavior — is
+    /// unaffected either way.
+    #[test]
+    fn greedy_init_cannot_assemble_a_chain_rectangle() {
+        let ctx = chain_context();
+        let entries: HashMap<u64, u64> = [(10u64, 101u64), (20, 102)].into_iter().collect();
+        let grids = ctx.build_aod_grids(&entries);
+        let assembled_chain = grids.iter().any(|g| g.contains(&101) && g.contains(&102));
+        assert!(
+            !assembled_chain,
+            "if this now passes, chain assembly landed (#887) — assert the \
+             chain is emitted instead"
+        );
+        // Only the follower's own single-cell rectangle survives.
+        assert_eq!(grids.len(), 1);
+        assert_eq!(grids[0], vec![102]);
+    }
+
     /// Helper: build a BusGridContext from raw position/lane/collision data.
     fn make_context(
         positions: &[((u64, u64), u64)], // ((x, y), src_encoded)
