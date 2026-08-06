@@ -134,6 +134,19 @@ def test_simulator_tasks_normalize_lost_measurements_as_true(task_type):
     ) == [[False, True], [True, True]]
 
 
+@pytest.mark.parametrize(
+    "task_type", [GeminiLogicalSimulatorTask, PhysicalSimulatorTask]
+)
+def test_simulator_tasks_forward_loss_normalization_options(task_type):
+    assert task_type._normalize_matrix(
+        [[True, "lost"]],
+        name="measurement",
+        shots=1,
+        loss_replace=False,
+        is_loss=lambda value: value == "lost",
+    ) == [[True, False]]
+
+
 @pytest.mark.parametrize("simulator_type", [GeminiLogicalSimulator, PhysicalSimulator])
 @pytest.mark.parametrize(
     "method",

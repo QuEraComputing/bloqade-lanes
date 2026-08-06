@@ -13,7 +13,7 @@ from kirin import ir, rewrite
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 if TYPE_CHECKING:
-    from stim import DetectorErrorModel
+    from stim import Circuit as StimCircuit, DetectorErrorModel
     from tsim import Circuit as TsimCircuit  # type: ignore[reportMissingImports]
 
 
@@ -200,7 +200,7 @@ _PPVM_CORRELATED_LOSS_EVENT = re.compile(
 )
 
 
-def _ppvm_compatible_stim_text(circuit: Any) -> str:
+def _ppvm_compatible_stim_text(circuit: str | StimCircuit) -> str:
     """Convert paired Bloqade correlated-loss tags to PPVM syntax."""
 
     converted_lines: list[str] = []

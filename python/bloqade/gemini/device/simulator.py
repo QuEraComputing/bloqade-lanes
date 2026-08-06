@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import (
@@ -9,7 +10,6 @@ from typing import (
     TypeVar,
 )
 
-import numpy as np
 from kirin import ir
 
 from ._task_runtime import (
@@ -86,31 +86,20 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
         *,
         name: str,
         shots: int,
+        loss_replace: Any = True,
+        is_loss: Callable[[Any], bool] = lambda value: value is None,
     ) -> list[list[bool]]:
-        try:
-            array = np.asarray(payload, dtype=object)
-
-            # NOTE: this is to model a lack of loss-resolved readout; atom loss is indistinguishable from measuring the |1> state
-            none_mask = np.fromiter(
-                (value is None for value in array.flat),
-                dtype=bool,
-                count=array.size,
-            ).reshape(array.shape)
-
-            array[none_mask] = True
-            array = array.astype(bool)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Backend returned invalid {name} samples") from exc
-
-        if array.ndim != 2:
-            raise ValueError(f"Backend {name} samples must be a two-dimensional array")
-
-        if array.shape[0] != shots:
-            raise ValueError(
-                f"Backend returned {array.shape[0]} {name} rows for {shots} shots"
-            )
-
-        return array.tolist()
+        """
+        Overrides _normalize_matrix to convert the None values in the measurement output to True (to model a lack of loss-resolved readout
+        on Gemini)
+        """
+        return _SimulatorTaskBase._normalize_matrix(
+            payload=payload,
+            name=name,
+            shots=shots,
+            loss_replace=loss_replace,
+            is_loss=is_loss,
+        )
 
 
 @dataclass
