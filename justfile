@@ -73,7 +73,10 @@ demo-phys-arch-customization:
 demo-star-logical-demo:
     python demo/star_logical_demo.py
 
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo
+demo-simulators:
+    python demo/simulators_demo.py
+
+demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-simulators
 
 # Install mdBook at the pinned version
 install-mdbook:
