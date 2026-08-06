@@ -58,63 +58,84 @@
 <a href=#58 id=58 data-nosnippet>58</a>}
 <a href=#59 id=59 data-nosnippet>59</a>
 <a href=#60 id=60 data-nosnippet>60</a><span class="doccomment">/// Stack type simulation (underflow, type mismatches, and lane/location group
-<a href=#61 id=61 data-nosnippet>61</a>/// checks). Runs without an arch spec (duplicate-only group checks).
-<a href=#62 id=62 data-nosnippet>62</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
-<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_simulate_stack(
-<a href=#64 id=64 data-nosnippet>64</a>    prog: <span class="kw-2">*const </span>LANESProgram,
-<a href=#65 id=65 data-nosnippet>65</a>    out: <span class="kw-2">*mut *mut </span>LANESValidationErrors,
-<a href=#66 id=66 data-nosnippet>66</a>) -&gt; LanesStatus {
-<a href=#67 id=67 data-nosnippet>67</a>    clear_last_error();
-<a href=#68 id=68 data-nosnippet>68</a>
-<a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">if </span>prog.is_null() || out.is_null() {
-<a href=#70 id=70 data-nosnippet>70</a>        set_last_error(<span class="string">"null pointer argument"</span>);
-<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">return </span>LanesStatus::ErrNullPtr;
-<a href=#72 id=72 data-nosnippet>72</a>    }
-<a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">let </span>prog = <span class="kw">unsafe </span>{ <span class="kw-2">&amp;*</span>prog };
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>errors = validate::simulate_stack(<span class="kw-2">&amp;</span>prog.inner, <span class="prelude-val">None</span>);
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">let </span>status = <span class="kw">if </span>errors.is_empty() {
-<a href=#77 id=77 data-nosnippet>77</a>        LanesStatus::Ok
-<a href=#78 id=78 data-nosnippet>78</a>    } <span class="kw">else </span>{
-<a href=#79 id=79 data-nosnippet>79</a>        LanesStatus::ErrValidation
-<a href=#80 id=80 data-nosnippet>80</a>    };
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">let </span>handle = Box::new(LANESValidationErrors::from_errors(errors));
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">unsafe </span>{ <span class="kw-2">*</span>out = Box::into_raw(handle) };
-<a href=#83 id=83 data-nosnippet>83</a>    status
-<a href=#84 id=84 data-nosnippet>84</a>}
-<a href=#85 id=85 data-nosnippet>85</a>
-<a href=#86 id=86 data-nosnippet>86</a><span class="doccomment">/// Number of errors in the handle.
-<a href=#87 id=87 data-nosnippet>87</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
-<a href=#88 id=88 data-nosnippet>88</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_validation_errors_count(errs: <span class="kw-2">*const </span>LANESValidationErrors) -&gt; u32 {
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">if </span>errs.is_null() {
-<a href=#90 id=90 data-nosnippet>90</a>        <span class="kw">return </span><span class="number">0</span>;
-<a href=#91 id=91 data-nosnippet>91</a>    }
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>errs = <span class="kw">unsafe </span>{ <span class="kw-2">&amp;*</span>errs };
-<a href=#93 id=93 data-nosnippet>93</a>    errs.errors.len() <span class="kw">as </span>u32
-<a href=#94 id=94 data-nosnippet>94</a>}
-<a href=#95 id=95 data-nosnippet>95</a>
-<a href=#96 id=96 data-nosnippet>96</a><span class="doccomment">/// Error message at index. Returns NULL if index is out of range.
-<a href=#97 id=97 data-nosnippet>97</a>/// Pointer is valid until the handle is freed.
-<a href=#98 id=98 data-nosnippet>98</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
-<a href=#99 id=99 data-nosnippet>99</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_validation_error_message(
-<a href=#100 id=100 data-nosnippet>100</a>    errs: <span class="kw-2">*const </span>LANESValidationErrors,
-<a href=#101 id=101 data-nosnippet>101</a>    index: u32,
-<a href=#102 id=102 data-nosnippet>102</a>) -&gt; <span class="kw-2">*const </span>c_char {
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">if </span>errs.is_null() {
-<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">return </span>std::ptr::null();
-<a href=#105 id=105 data-nosnippet>105</a>    }
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span>errs = <span class="kw">unsafe </span>{ <span class="kw-2">&amp;*</span>errs };
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">match </span>errs.messages.get(index <span class="kw">as </span>usize) {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="prelude-val">Some</span>(cstr) =&gt; cstr.as_ptr(),
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="prelude-val">None </span>=&gt; std::ptr::null(),
-<a href=#110 id=110 data-nosnippet>110</a>    }
-<a href=#111 id=111 data-nosnippet>111</a>}
-<a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a><span class="doccomment">/// Free a validation errors handle.
-<a href=#114 id=114 data-nosnippet>114</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
-<a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_validation_errors_free(errs: <span class="kw-2">*mut </span>LANESValidationErrors) {
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">if </span>!errs.is_null() {
-<a href=#117 id=117 data-nosnippet>117</a>        drop(<span class="kw">unsafe </span>{ Box::from_raw(errs) });
-<a href=#118 id=118 data-nosnippet>118</a>    }
-<a href=#119 id=119 data-nosnippet>119</a>}
+<a href=#61 id=61 data-nosnippet>61</a>/// checks). Runs without an arch spec (duplicate-only group checks) — prefer
+<a href=#62 id=62 data-nosnippet>62</a>/// [`lanes_simulate_stack_with_arch`], which enables the arch-dependent
+<a href=#63 id=63 data-nosnippet>63</a>/// lane-group checks (consistency, bus membership, AOD geometry).
+<a href=#64 id=64 data-nosnippet>64</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
+<a href=#65 id=65 data-nosnippet>65</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_simulate_stack(
+<a href=#66 id=66 data-nosnippet>66</a>    prog: <span class="kw-2">*const </span>LANESProgram,
+<a href=#67 id=67 data-nosnippet>67</a>    out: <span class="kw-2">*mut *mut </span>LANESValidationErrors,
+<a href=#68 id=68 data-nosnippet>68</a>) -&gt; LanesStatus {
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">unsafe </span>{ lanes_simulate_stack_with_arch(prog, std::ptr::null(), out) }
+<a href=#70 id=70 data-nosnippet>70</a>}
+<a href=#71 id=71 data-nosnippet>71</a>
+<a href=#72 id=72 data-nosnippet>72</a><span class="doccomment">/// Stack type simulation with arch-dependent lane/location group checks
+<a href=#73 id=73 data-nosnippet>73</a>/// (consistency, bus membership, AOD complete-grid geometry).
+<a href=#74 id=74 data-nosnippet>74</a>///
+<a href=#75 id=75 data-nosnippet>75</a>/// `arch` may be NULL, in which case group checks degrade to duplicate
+<a href=#76 id=76 data-nosnippet>76</a>/// detection only (the [`lanes_simulate_stack`] behavior).
+<a href=#77 id=77 data-nosnippet>77</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
+<a href=#78 id=78 data-nosnippet>78</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_simulate_stack_with_arch(
+<a href=#79 id=79 data-nosnippet>79</a>    prog: <span class="kw-2">*const </span>LANESProgram,
+<a href=#80 id=80 data-nosnippet>80</a>    arch: <span class="kw-2">*const </span>LANESArchSpec,
+<a href=#81 id=81 data-nosnippet>81</a>    out: <span class="kw-2">*mut *mut </span>LANESValidationErrors,
+<a href=#82 id=82 data-nosnippet>82</a>) -&gt; LanesStatus {
+<a href=#83 id=83 data-nosnippet>83</a>    clear_last_error();
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">if </span>prog.is_null() || out.is_null() {
+<a href=#86 id=86 data-nosnippet>86</a>        set_last_error(<span class="string">"null pointer argument"</span>);
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">return </span>LanesStatus::ErrNullPtr;
+<a href=#88 id=88 data-nosnippet>88</a>    }
+<a href=#89 id=89 data-nosnippet>89</a>
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>prog = <span class="kw">unsafe </span>{ <span class="kw-2">&amp;*</span>prog };
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>arch = <span class="kw">if </span>arch.is_null() {
+<a href=#92 id=92 data-nosnippet>92</a>        <span class="prelude-val">None
+<a href=#93 id=93 data-nosnippet>93</a>    </span>} <span class="kw">else </span>{
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="prelude-val">Some</span>(<span class="kw">unsafe </span>{ <span class="kw-2">&amp;</span>(<span class="kw-2">*</span>arch).inner })
+<a href=#95 id=95 data-nosnippet>95</a>    };
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span>errors = validate::simulate_stack(<span class="kw-2">&amp;</span>prog.inner, arch);
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">let </span>status = <span class="kw">if </span>errors.is_empty() {
+<a href=#98 id=98 data-nosnippet>98</a>        LanesStatus::Ok
+<a href=#99 id=99 data-nosnippet>99</a>    } <span class="kw">else </span>{
+<a href=#100 id=100 data-nosnippet>100</a>        LanesStatus::ErrValidation
+<a href=#101 id=101 data-nosnippet>101</a>    };
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">let </span>handle = Box::new(LANESValidationErrors::from_errors(errors));
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">unsafe </span>{ <span class="kw-2">*</span>out = Box::into_raw(handle) };
+<a href=#104 id=104 data-nosnippet>104</a>    status
+<a href=#105 id=105 data-nosnippet>105</a>}
+<a href=#106 id=106 data-nosnippet>106</a>
+<a href=#107 id=107 data-nosnippet>107</a><span class="doccomment">/// Number of errors in the handle.
+<a href=#108 id=108 data-nosnippet>108</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
+<a href=#109 id=109 data-nosnippet>109</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_validation_errors_count(errs: <span class="kw-2">*const </span>LANESValidationErrors) -&gt; u32 {
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">if </span>errs.is_null() {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">return </span><span class="number">0</span>;
+<a href=#112 id=112 data-nosnippet>112</a>    }
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">let </span>errs = <span class="kw">unsafe </span>{ <span class="kw-2">&amp;*</span>errs };
+<a href=#114 id=114 data-nosnippet>114</a>    errs.errors.len() <span class="kw">as </span>u32
+<a href=#115 id=115 data-nosnippet>115</a>}
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a><span class="doccomment">/// Error message at index. Returns NULL if index is out of range.
+<a href=#118 id=118 data-nosnippet>118</a>/// Pointer is valid until the handle is freed.
+<a href=#119 id=119 data-nosnippet>119</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
+<a href=#120 id=120 data-nosnippet>120</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_validation_error_message(
+<a href=#121 id=121 data-nosnippet>121</a>    errs: <span class="kw-2">*const </span>LANESValidationErrors,
+<a href=#122 id=122 data-nosnippet>122</a>    index: u32,
+<a href=#123 id=123 data-nosnippet>123</a>) -&gt; <span class="kw-2">*const </span>c_char {
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">if </span>errs.is_null() {
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">return </span>std::ptr::null();
+<a href=#126 id=126 data-nosnippet>126</a>    }
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">let </span>errs = <span class="kw">unsafe </span>{ <span class="kw-2">&amp;*</span>errs };
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="kw">match </span>errs.messages.get(index <span class="kw">as </span>usize) {
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="prelude-val">Some</span>(cstr) =&gt; cstr.as_ptr(),
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="prelude-val">None </span>=&gt; std::ptr::null(),
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>}
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a><span class="doccomment">/// Free a validation errors handle.
+<a href=#135 id=135 data-nosnippet>135</a></span><span class="attr">#[<span class="kw">unsafe</span>(no_mangle)]
+<a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">pub unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>lanes_validation_errors_free(errs: <span class="kw-2">*mut </span>LANESValidationErrors) {
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">if </span>!errs.is_null() {
+<a href=#138 id=138 data-nosnippet>138</a>        drop(<span class="kw">unsafe </span>{ Box::from_raw(errs) });
+<a href=#139 id=139 data-nosnippet>139</a>    }
+<a href=#140 id=140 data-nosnippet>140</a>}
 </code></pre></div></section></main></body></html>

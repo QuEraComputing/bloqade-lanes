@@ -1239,14 +1239,14 @@ bloqade-bytecode disassemble prog.bin -o prog.sst
 <div class="table-wrapper"><table><thead><tr><th>Argument</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>&lt;INPUT&gt;</code></td><td>Input file (<code>.sst</code> = text, otherwise binary)</td></tr>
 <tr><td><code>--arch &lt;ARCH&gt;</code></td><td>ArchSpec JSON file for address validation</td></tr>
-<tr><td><code>--simulate-stack</code></td><td>Run stack type simulation</td></tr>
+<tr><td><code>--simulate-stack</code></td><td>Run stack type simulation (implied by <code>--arch</code>)</td></tr>
 </tbody></table>
 </div>
 <p><strong>Validation levels:</strong></p>
 <div class="table-wrapper"><table><thead><tr><th>Level</th><th>When</th><th>What it checks</th></tr></thead><tbody>
 <tr><td>Structural</td><td>Always</td><td>Arity bounds, <code>initial_fill</code> ordering</td></tr>
 <tr><td>Address</td><td><code>--arch</code> provided</td><td>Location, lane, zone, and bus validity against the architecture</td></tr>
-<tr><td>Stack simulation</td><td><code>--simulate-stack</code></td><td>Type safety, stack balance</td></tr>
+<tr><td>Stack simulation</td><td><code>--simulate-stack</code> or <code>--arch</code> provided</td><td>Type safety, stack balance, and (with an arch) the lane/location group checks — consistency, bus membership, AOD grid geometry</td></tr>
 </tbody></table>
 </div>
 <p><strong>Examples:</strong></p>
