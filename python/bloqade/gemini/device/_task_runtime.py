@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cached_property
@@ -287,25 +287,19 @@ class _SimulatorTaskBase(Generic[RetType]):
         name: str,
         shots: int,
         loss_replace: Any = None,
-        is_loss: Callable[[Any], bool] = lambda value: value is None,
+        loss: Any = None,
     ) -> list[list[bool]]:
         """
         Checks that the shape of the returned measurements is valid, and
-        adds configuration options for converting values matched by `is_loss` (representing atom loss values) to `loss_replace`.
+        adds configuration options for converting values of `loss` (representing atom loss values) to `loss_replace`.
 
-        By default, is_loss and loss_replace are no-ops (converts None to None).
+        By default, loss and loss_replace are no-ops (converts None to None).
         """
         try:
             array = np.asarray(payload, dtype=object)
 
             # NOTE: this is to model a lack of loss-resolved readout; atom loss is indistinguishable from measuring the |1> state
-            none_mask = np.fromiter(
-                (is_loss(value) for value in array.flat),
-                dtype=bool,
-                count=array.size,
-            ).reshape(array.shape)
-
-            array[none_mask] = loss_replace
+            array[array == loss] = loss_replace
             array = array.astype(bool)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Backend returned invalid {name} samples") from exc

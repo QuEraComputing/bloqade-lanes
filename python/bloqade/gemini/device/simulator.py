@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import (
@@ -87,7 +86,7 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
         name: str,
         shots: int,
         loss_replace: Any = True,
-        is_loss: Callable[[Any], bool] = lambda value: value is None,
+        loss: Any = None,
     ) -> list[list[bool]]:
         """
         Overrides _normalize_matrix to convert the None values in the measurement output to True (to model a lack of loss-resolved readout
@@ -98,7 +97,7 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
             name=name,
             shots=shots,
             loss_replace=loss_replace,
-            is_loss=is_loss,
+            loss=loss,
         )
 
 
