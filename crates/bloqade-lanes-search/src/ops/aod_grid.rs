@@ -36,9 +36,11 @@ pub(crate) struct BusGridContext<'a> {
     /// Borrowed in production (one context per bus group per node — cloning
     /// here was pure overhead); owned only by tests that fabricate contexts.
     occupied_locs: Cow<'a, HashSet<u64>>,
-    /// Scratch buffer reused across `is_valid_rect` calls (the hottest loop
-    /// in candidate generation) to avoid a fresh allocation per rectangle.
+    /// Scratch buffers reused across `is_valid_rect` calls (the hottest loop
+    /// in candidate generation) to avoid a fresh allocation per rectangle:
+    /// the rectangle's `(src, dst)` cells and its sorted source encodings.
     cells_scratch: RefCell<Vec<(u64, u64)>>,
+    srcs_scratch: RefCell<Vec<u64>>,
 }
 
 impl<'a> BusGridContext<'a> {
@@ -71,6 +73,7 @@ impl<'a> BusGridContext<'a> {
             maps,
             occupied_locs: Cow::Borrowed(occupied),
             cells_scratch: RefCell::new(Vec::new()),
+            srcs_scratch: RefCell::new(Vec::new()),
         }
     }
 
@@ -81,9 +84,7 @@ impl<'a> BusGridContext<'a> {
     /// may only fill the rectangle when both its source and destination avoid
     /// stationary atoms.
     fn is_valid_rect(&self, xs: &BTreeSet<u64>, ys: &BTreeSet<u64>, movers: &HashSet<u64>) -> bool {
-        // Resolve every cell's (src, dst) once; rectangles are small (tens of
-        // cells), so linear membership scans over the collected sources beat
-        // building a HashSet per call.
+        // Resolve every cell's (src, dst) once into a reused scratch buffer.
         let mut cells = self.cells_scratch.borrow_mut();
         cells.clear();
         cells.reserve(xs.len() * ys.len());
@@ -99,16 +100,32 @@ impl<'a> BusGridContext<'a> {
             }
         }
 
-        for &(src_enc, dst_enc) in cells.iter() {
-            let src_is_mover = movers.contains(&src_enc);
-            let dst_is_rect_mover =
-                movers.contains(&dst_enc) && cells.iter().any(|&(s, _)| s == dst_enc);
+        // "Is this destination one of the rectangle's own sources?" is only
+        // asked for cells whose destination is occupied, so build the sorted
+        // source index lazily on first ask: rectangles whose destinations are
+        // free (the common case) never pay for it, while a dense block move
+        // over a full-width rectangle — 160 cells on the physical spec — gets
+        // binary search instead of a nested scan.
+        let mut srcs = self.srcs_scratch.borrow_mut();
+        let mut srcs_ready = false;
 
-            if !src_is_mover && self.occupied_locs.contains(&src_enc) {
+        for &(src_enc, dst_enc) in cells.iter() {
+            if !movers.contains(&src_enc) && self.occupied_locs.contains(&src_enc) {
                 return false;
             }
-            if self.occupied_locs.contains(&dst_enc) && !dst_is_rect_mover {
-                return false;
+            if self.occupied_locs.contains(&dst_enc) {
+                let dst_is_rect_mover = movers.contains(&dst_enc) && {
+                    if !srcs_ready {
+                        srcs.clear();
+                        srcs.extend(cells.iter().map(|&(s, _)| s));
+                        srcs.sort_unstable();
+                        srcs_ready = true;
+                    }
+                    srcs.binary_search(&dst_enc).is_ok()
+                };
+                if !dst_is_rect_mover {
+                    return false;
+                }
             }
         }
         true
@@ -327,6 +344,7 @@ mod tests {
             }),
             occupied_locs: Cow::Owned(occupied_locs),
             cells_scratch: RefCell::new(Vec::new()),
+            srcs_scratch: RefCell::new(Vec::new()),
         }
     }
 

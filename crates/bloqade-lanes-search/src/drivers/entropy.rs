@@ -750,32 +750,83 @@ fn min_successor_distance(loc_enc: u64, target_enc: u64, ctx: &SearchContext, w_
     best
 }
 
-/// Engine-lifetime cache of blended-distance columns, keyed
-/// `(target location, w_t bits)`.
+/// The `w_t`-independent inputs to a blended-distance column: one hop count
+/// and one normalized time per interned location.
 ///
-/// A blended column is a pure function of the architecture alone —
-/// `DistanceTable` ignores occupancy and `blocked` entirely — so columns
-/// computed during one solve are valid for every later solve on the same
-/// engine. The physical pipeline issues one solve per candidate target
-/// layout per CZ layer, and the target *locations* (entangling slots, home
-/// sites) recur heavily across those solves; caching the columns turns the
-/// per-solve `d_blend` fill from `n_loc × n_targets` distance evaluations
-/// into per-column memcpys after first touch.
+/// [`blended_distance`] mixes these as
+/// `(1 - w_t) * hop + w_t * (time / fastest_lane)`. Both terms are pure
+/// architecture data, so storing them unmixed lets any `w_t` be derived at
+/// fill time from a single cached column — see [`Self::blend`].
+struct DistanceColumn {
+    /// Hop distance per interned row. `u32::MAX` = unreachable, matching
+    /// `DistanceTable::distance` returning `None`.
+    hops: Vec<u32>,
+    /// `time / fastest_lane` per interned row. `f64::NAN` = no time distance
+    /// for that pair (a real value is always finite and non-negative:
+    /// durations are positive and the fastest lane is arch-global), which
+    /// makes [`Self::blend`] fall back to the hop count exactly as
+    /// [`blended_distance`] does.
+    norm_times: Vec<f64>,
+}
+
+impl DistanceColumn {
+    /// Reconstruct one blended distance. Mirrors [`blended_distance`]'s
+    /// branches and arithmetic exactly, so a value derived here is
+    /// bit-identical to one computed directly from the distance table.
+    #[inline]
+    fn blend(&self, row: usize, w_t: f64) -> f64 {
+        let hop = self.hops[row];
+        if hop == u32::MAX {
+            return f64::MAX; // unreachable — the direct path leaves MAX here
+        }
+        let hop_dist = hop as f64;
+        if w_t <= 0.0 {
+            return hop_dist;
+        }
+        let normalized_time_d = self.norm_times[row];
+        if normalized_time_d.is_nan() {
+            return hop_dist;
+        }
+        (1.0 - w_t) * hop_dist + w_t * normalized_time_d
+    }
+}
+
+/// Engine-lifetime cache of per-target distance columns, keyed by target
+/// location.
+///
+/// A column is a pure function of the architecture alone — `DistanceTable`
+/// ignores occupancy and `blocked` entirely — so columns computed during one
+/// solve are valid for every later solve on the same engine. The physical
+/// pipeline issues one solve per candidate target layout per CZ layer, and
+/// the target *locations* (entangling slots, home sites) recur heavily across
+/// those solves; caching the columns turns the per-solve `d_blend` fill from
+/// `n_loc × n_targets` distance evaluations into a arithmetic pass over
+/// cached rows after first touch.
+///
+/// Columns store the *unmixed* [`DistanceColumn`] components rather than
+/// blended values, so `w_t` — a continuous weight, not an enum — stays out of
+/// the key: one column set serves every weight, and the memory bound below
+/// holds regardless of how many weights an engine sees.
 ///
 /// Lives in [`SearchEngine`](crate::search::engine::SearchEngine) behind a
 /// `OnceLock`; shared by every `TargetSolver` cloned from that engine.
-/// Memory is bounded by `n_locations` columns × `n_locations` entries.
+///
+/// Memory: 12 bytes per interned location per column (a `u32` hop and an
+/// `f64` normalized time), and at most one column per target location ever
+/// solved for, so the cache is bounded by `n_locations²  × 12` bytes with no
+/// eviction needed — about 300 KB fully populated on the physical Gemini
+/// spec's 160 locations.
 pub(crate) struct BlendedColumnCache {
     /// Shared location interning — every lane endpoint, fixed per arch.
     /// Tables built through this cache adopt it so cached columns can be
-    /// copied by row index.
+    /// read by row index.
     interner: Arc<HashMap<u64, u32>>,
-    /// `(target_enc, w_t.to_bits())` → column indexed by `interner` rows.
+    /// `target_enc` → column indexed by `interner` rows.
     cols: std::sync::RwLock<ColumnMap>,
 }
 
-/// Cached blended columns keyed `(target_enc, w_t.to_bits())`.
-type ColumnMap = HashMap<(u64, u64), Arc<Vec<f64>>>;
+/// Cached distance columns keyed by target location.
+type ColumnMap = HashMap<u64, Arc<DistanceColumn>>;
 
 impl BlendedColumnCache {
     pub(crate) fn new(index: &LaneIndex) -> Self {
@@ -858,18 +909,17 @@ impl HeuristicTables {
         }
         let n_targets = target_col.len();
 
-        // A blended column's values depend on the dist table's time data;
-        // caching a hop-only column under a `w_t > 0` key would poison the
-        // engine-lifetime cache for every later solve sharing the target.
-        if cache.is_some() {
-            debug_assert!(
-                w_t <= 0.0
-                    || ctx.index.fastest_lane_duration_us().is_none()
-                    || ctx.dist_table.fastest_lane_us().is_some(),
-                "build_cached with w_t > 0 requires a DistanceTable built \
-                 with_time_distances when the arch has lane durations"
-            );
-        }
+        // A `w_t > 0` solve whose distance table carries no time data blends
+        // nothing — `blended_distance` silently degrades to hop counts. The
+        // cache tolerates it (such columns are never stored, see
+        // `time_definitive` below), but the solve itself is misconfigured.
+        debug_assert!(
+            w_t <= 0.0
+                || ctx.index.fastest_lane_duration_us().is_none()
+                || ctx.dist_table.fastest_lane_us().is_some(),
+            "w_t > 0 requires a DistanceTable built with_time_distances when \
+             the arch has lane durations"
+        );
 
         // Interned rows cover every lane endpoint — with a cache, adopt its
         // interner so cached columns copy by row. `DistanceTable` additionally
@@ -896,38 +946,54 @@ impl HeuristicTables {
         }
         let n_rows = n_loc + extra_idx.len();
 
+        // A column's time component is trustworthy for later solves only if
+        // this table actually carries time distances, or the arch has no lane
+        // durations at all so no table ever could. Otherwise the all-NaN
+        // component we'd compute here is an artifact of *this* table and must
+        // not be cached, or a later `w_t > 0` solve would silently read hop
+        // counts. This makes the invariant structural rather than asserted.
+        let time_definitive = ctx.dist_table.fastest_lane_us().is_some()
+            || ctx.index.fastest_lane_duration_us().is_none();
+
         let mut d_blend = vec![f64::MAX; n_rows * n_targets];
         for (&t_enc, &tc) in &target_col {
-            let key = (t_enc, w_t.to_bits());
-            let cached = cache.and_then(|c| c.cols.read().expect("poisoned").get(&key).cloned());
+            let cached = cache.and_then(|c| c.cols.read().expect("poisoned").get(&t_enc).cloned());
             let column = match cached {
                 Some(column) => column,
                 None => {
-                    // Compute the column from this solve's distance table.
-                    // Values are pure per (arch, target, w_t): `DistanceTable`
-                    // ignores occupancy/blocked, and shortest distances are
-                    // unique — so a column computed now is bit-identical for
-                    // any later solve that shares the target location.
-                    let mut v = vec![f64::MAX; n_loc];
+                    // Compute the column's `w_t`-independent components from
+                    // this solve's distance table. `DistanceTable` ignores
+                    // occupancy/blocked and shortest distances are unique, so
+                    // a column computed now is bit-identical for any later
+                    // solve sharing the target location — at any `w_t`.
+                    let fastest = ctx.dist_table.fastest_lane_us();
+                    let mut hops = vec![u32::MAX; n_loc];
+                    let mut norm_times = vec![f64::NAN; n_loc];
                     for (&loc_enc, &li) in loc_idx.iter() {
                         if let Some(d) = ctx.dist_table.distance(loc_enc, t_enc) {
-                            v[li as usize] =
-                                blended_distance(d as f64, loc_enc, t_enc, w_t, ctx.dist_table);
+                            hops[li as usize] = d;
+                        }
+                        if let (Some(time_d), Some(f)) =
+                            (ctx.dist_table.time_distance(loc_enc, t_enc), fastest)
+                        {
+                            norm_times[li as usize] = time_d / f;
                         }
                     }
-                    let column = Arc::new(v);
-                    if let Some(c) = cache {
+                    let column = Arc::new(DistanceColumn { hops, norm_times });
+                    if let Some(c) = cache
+                        && time_definitive
+                    {
                         c.cols
                             .write()
                             .expect("poisoned")
-                            .entry(key)
+                            .entry(t_enc)
                             .or_insert_with(|| column.clone());
                     }
                     column
                 }
             };
-            for (li, &d) in column.iter().enumerate() {
-                d_blend[li * n_targets + tc as usize] = d;
+            for li in 0..n_loc {
+                d_blend[li * n_targets + tc as usize] = column.blend(li, w_t);
             }
             // Overlay rows (isolated targets) are never in cached columns —
             // fill them directly, matching what the direct path computes.
@@ -3088,6 +3154,51 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Columns cache the `w_t`-independent components, so one cache entry per
+    /// target serves every weight: a cache warmed at one `w_t` must yield
+    /// bit-identical tables at a different `w_t`, and must still produce the
+    /// weight-specific values (not the warmed weight's).
+    #[test]
+    fn heuristic_tables_blended_cache_serves_multiple_w_t() {
+        let index = make_index();
+        let cache = BlendedColumnCache::new(&index);
+        let targets = vec![(0u32, loc(1, 5).encode()), (1u32, loc(0, 6).encode())];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index).with_time_distances(&index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &targets,
+            cz_pairs: None,
+        };
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+
+        // Warm the cache at one weight, then serve two others from it.
+        let _warm = HeuristicTables::build_cached(&ctx, 0.05, false, &cache);
+        for w_t in [0.0, 0.5, 1.0] {
+            let params = EntropyParams {
+                w_t,
+                max_movesets_per_group: 8,
+                ..EntropyParams::default()
+            };
+            let uncached = HeuristicTables::build(&ctx, w_t, params.lookahead);
+            let cached = HeuristicTables::build_cached(&ctx, w_t, params.lookahead, &cache);
+
+            let direct = generate_candidates(&config, 1, &params, &ctx, 0, Some(&uncached));
+            let via_cache = generate_candidates(&config, 1, &params, &ctx, 0, Some(&cached));
+            assert_eq!(direct.len(), via_cache.len(), "w_t={w_t}");
+            for (a, b) in direct.iter().zip(via_cache.iter()) {
+                assert_eq!(a.move_set, b.move_set, "w_t={w_t}");
+                assert_eq!(a.score.to_bits(), b.score.to_bits(), "w_t={w_t}");
+            }
+        }
+
+        // One entry per target location regardless of how many weights ran.
+        assert_eq!(cache.cols.read().unwrap().len(), target_locs.len());
     }
 
     /// Targets with no incident lanes are interned by `DistanceTable`
