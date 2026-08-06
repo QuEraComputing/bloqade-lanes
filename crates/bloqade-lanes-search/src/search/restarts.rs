@@ -112,6 +112,7 @@ pub(crate) fn run_with_components<Go, Gen, Hmax, Hsum, MkGen>(
     max_expansions: Option<u32>,
     opts: &SolveOptions,
     entropy_opts: Option<&EntropyOptions>,
+    blended_cache: Option<&crate::drivers::entropy::BlendedColumnCache>,
 ) -> SolveResult
 where
     Go: Goal + Sync,
@@ -131,6 +132,28 @@ where
     let collect_entropy_trace = entropy.collect_entropy_trace;
     let w_t = entropy.w_t;
     let base_seed = entropy.seed;
+
+    // Build the entropy heuristic tables once per solve, shared across
+    // restarts, exactly when the dispatch below will run the entropy driver.
+    // Deciding here — next to that dispatch — keeps "will this solve run
+    // entropy?" in one place, and building from the same `w_t`/`lookahead`
+    // the `EntropyParams` below use keeps tables and params coupled by
+    // construction. Skipped when the root already satisfies the goal (the
+    // driver early-returns before touching the tables).
+    let entropy_tables = (matches!(
+        strategy,
+        Strategy::Entropy
+            | Strategy::Cascade {
+                inner: InnerStrategy::Entropy
+            }
+    ) && !goal.is_goal(&root))
+    .then(|| match blended_cache {
+        Some(cache) => {
+            crate::drivers::entropy::HeuristicTables::build_cached(ctx, w_t, opts.lookahead, cache)
+        }
+        None => crate::drivers::entropy::HeuristicTables::build(ctx, w_t, opts.lookahead),
+    });
+    let entropy_tables = entropy_tables.as_ref();
 
     // Helper: run a single inner strategy with the given seed and budget.
     let run_inner = |inner: InnerStrategy, seed: u64, budget: Option<u32>| -> SolveResult {
@@ -167,7 +190,7 @@ where
                             Some(trace) => trace,
                             None => &mut noop,
                         };
-                    crate::drivers::entropy::entropy_search(
+                    crate::drivers::entropy::entropy_search_with_tables(
                         root.clone(),
                         goal,
                         &entropy_params,
@@ -176,6 +199,7 @@ where
                         None,
                         seed,
                         observer,
+                        entropy_tables,
                     )
                 };
                 let mut solve = extract(result, 0, budget);

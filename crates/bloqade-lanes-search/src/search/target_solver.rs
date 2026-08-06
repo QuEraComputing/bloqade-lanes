@@ -168,6 +168,10 @@ pub(crate) fn solve_with_engine(
         HeuristicGenerator::configured(seed, policy, lookahead, top_c)
     };
 
+    // The engine's cross-solve blended-column cache: entropy strategies
+    // build their heuristic tables from it inside `run_with_components`, so
+    // repeated solves against recurring target locations (one solve per
+    // candidate layout per CZ layer) skip the distance-column fill entirely.
     let result = run_with_components(
         root.clone(),
         &goal_obj,
@@ -178,6 +182,7 @@ pub(crate) fn solve_with_engine(
         max_expansions,
         opts,
         entropy_opts,
+        Some(engine.blended_cache()),
     );
 
     // Opt-in reliability net. Push and Rotate is complete, so this converts
