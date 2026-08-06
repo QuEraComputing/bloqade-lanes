@@ -7,5 +7,6 @@ from .group import kernel as kernel
 from .stdlib import (
     broadcast as broadcast,
     default_post_processing as default_post_processing,
+    qalloc_at as qalloc_at,
     star_rz as star_rz,
 )
