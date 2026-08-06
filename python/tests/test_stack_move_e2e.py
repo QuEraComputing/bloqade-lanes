@@ -110,10 +110,12 @@ def test_realistic_cz_sandwich_runs_end_to_end():
        through entangling pair (2,3)).
     4. Move atom 0 back word 3 -> word 0 (two single-lane moves:
        bus 18 bwd 3->1, then bus 0 bwd 1->0).
-    5. Move atoms 2 and 3 from words 4/6 -> words 1/3 (bus 10 fwd
-       word4->word1, bus 11 fwd word6->word3).
+    5. Move atoms 2 and 3 from words 4/6 -> words 1/3 (two single-lane
+       moves: bus 10 fwd word4->word1, bus 11 fwd word6->word3 — a lane
+       group must share one bus_id).
     6. CZ on zone 0.
-    7. Move atoms 2 and 3 back from words 1/3 -> words 4/6.
+    7. Move atoms 2 and 3 back from words 1/3 -> words 4/6 (again one
+       move per bus).
     8. Measure zone 0.
     9. Await future; extract results at indices 0/2/4/6 (the original
        fill word_ids) and bundle into a new 1-D integer array.
@@ -145,18 +147,22 @@ def test_realistic_cz_sandwich_runs_end_to_end():
         Instruction.move_(1),
         Instruction.const_lane(MoveType.WORD, 0, 0, 0, 0, Direction.BACKWARD),
         Instruction.move_(1),
-        # 5. Move atoms 2 and 3: word 4 -> word 1 (bus 10 fwd),
-        #    word 6 -> word 3 (bus 11 fwd). One move instruction, two lanes.
+        # 5. Move atoms 2 and 3: word 4 -> word 1 (bus 10 fwd), word 6 ->
+        #    word 3 (bus 11 fwd). One move instruction per bus — a lane
+        #    group must share a single bus_id.
         Instruction.const_lane(MoveType.WORD, 0, 4, 0, 10, Direction.FORWARD),
+        Instruction.move_(1),
         Instruction.const_lane(MoveType.WORD, 0, 6, 0, 11, Direction.FORWARD),
-        Instruction.move_(2),
+        Instruction.move_(1),
         # 6. CZ on zone 0.
         Instruction.const_zone(0),
         Instruction.cz(),
-        # 7. Move atoms 2 and 3 back: 1 -> 4 (bus 10 bwd), 3 -> 6 (bus 11 bwd).
+        # 7. Move atoms 2 and 3 back: 1 -> 4 (bus 10 bwd), 3 -> 6 (bus 11
+        #    bwd). Split per bus for the same reason.
         Instruction.const_lane(MoveType.WORD, 0, 4, 0, 10, Direction.BACKWARD),
+        Instruction.move_(1),
         Instruction.const_lane(MoveType.WORD, 0, 6, 0, 11, Direction.BACKWARD),
-        Instruction.move_(2),
+        Instruction.move_(1),
         # 8. Measure zone 0.
         Instruction.const_zone(0),
         Instruction.measure(1),
@@ -219,14 +225,12 @@ def test_realistic_cz_sandwich_runs_end_to_end():
     atom_0_hop2 = (lane(word_id=1, bus_id=18, direction=Direction.FORWARD),)
     atom_0_hop2_back = (lane(word_id=1, bus_id=18, direction=Direction.BACKWARD),)
     atom_0_hop1_back = (lane(word_id=0, bus_id=0, direction=Direction.BACKWARD),)
-    atoms_23_forward = (
-        lane(word_id=4, bus_id=10, direction=Direction.FORWARD),
-        lane(word_id=6, bus_id=11, direction=Direction.FORWARD),
-    )
-    atoms_23_backward = (
-        lane(word_id=4, bus_id=10, direction=Direction.BACKWARD),
-        lane(word_id=6, bus_id=11, direction=Direction.BACKWARD),
-    )
+    # Atoms 2 and 3 travel on different buses (10 and 11), so each direction
+    # is two single-lane moves — a lane group must share one bus_id.
+    atom_2_forward = (lane(word_id=4, bus_id=10, direction=Direction.FORWARD),)
+    atom_3_forward = (lane(word_id=6, bus_id=11, direction=Direction.FORWARD),)
+    atom_2_backward = (lane(word_id=4, bus_id=10, direction=Direction.BACKWARD),)
+    atom_3_backward = (lane(word_id=6, bus_id=11, direction=Direction.BACKWARD),)
 
     # State threading: each stateful op consumes the previous state and
     # produces the next one. ``current_state`` tracks the most recent
@@ -252,10 +256,12 @@ def test_realistic_cz_sandwich_runs_end_to_end():
     cz1 = move.CZ(move1b.result, zone_address=zone0)
     move2a = move.Move(cz1.result, lanes=atom_0_hop2_back)
     move2b = move.Move(move2a.result, lanes=atom_0_hop1_back)
-    move3 = move.Move(move2b.result, lanes=atoms_23_forward)
-    cz2 = move.CZ(move3.result, zone_address=zone0)
-    move4 = move.Move(cz2.result, lanes=atoms_23_backward)
-    end_measure = move.EndMeasure(current_state=move4.result, zone_addresses=(zone0,))
+    move3a = move.Move(move2b.result, lanes=atom_2_forward)
+    move3b = move.Move(move3a.result, lanes=atom_3_forward)
+    cz2 = move.CZ(move3b.result, zone_address=zone0)
+    move4a = move.Move(cz2.result, lanes=atom_2_backward)
+    move4b = move.Move(move4a.result, lanes=atom_3_backward)
+    end_measure = move.EndMeasure(current_state=move4b.result, zone_addresses=(zone0,))
 
     # AwaitMeasure expands to one move.GetFutureResult per location
     # yielded by the ArchSpec for zone 0, bundled into an ilist.New.
@@ -288,10 +294,10 @@ def test_realistic_cz_sandwich_runs_end_to_end():
     )
 
     # rewrite_Block inserts the final move.Store before the terminator;
-    # measure_lower forwarded move.Measure's state result to move4's
+    # measure_lower forwarded move.Measure's state result to move4b's
     # state (i.e. the state just before the measurement), so Store
-    # consumes move4.result.
-    store = move.Store(move4.result)
+    # consumes move4b.result.
+    store = move.Store(move4b.result)
     ret = func.Return(result_bundle.result)
 
     # The decoded method's entry block carries a single argument of
@@ -307,9 +313,11 @@ def test_realistic_cz_sandwich_runs_end_to_end():
             cz1,
             move2a,
             move2b,
-            move3,
+            move3a,
+            move3b,
             cz2,
-            move4,
+            move4a,
+            move4b,
             end_measure,
             *gfrs,
             await_bundle,

@@ -198,8 +198,12 @@ class BenchmarkRunner:
             # (ilist.map/foldl in the init kernels) are fully unrolled; otherwise
             # FidelityAnalysis cannot resolve the per-qubit noise channels behind
             # the rolled loops and reports an inflated fidelity.
+            # Post-transversal move IR is physically addressed (the Steane
+            # expansion emits one lane per physical site), so the emit-time
+            # atom analysis and noise insertion must run against the
+            # physical arch spec — the logical spec only drives placement.
             physical_squin = MoveToSquinLogical(
-                arch_spec=placement_strategy.arch_spec,
+                arch_spec=get_physical_arch_spec(),
                 noise_model=generate_logical_noise_model(),
                 add_noise=True,
                 aggressive_unroll=True,

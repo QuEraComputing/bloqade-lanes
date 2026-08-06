@@ -6,6 +6,7 @@ from kirin import ir
 
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical import layout as logical_layout
@@ -124,8 +125,12 @@ class Metrics:
             placement_strategy=placement_strategy,
         )
         move_mt = transversal_rewrites(move_mt)
+        # Post-transversal move IR is physically addressed (the Steane
+        # expansion emits one lane per physical site), so the emit-time
+        # atom analysis and noise insertion must run against the physical
+        # arch spec — ``self.arch_spec`` (logical) only drives placement.
         transformer = MoveToSquinLogical(
-            arch_spec=self.arch_spec,
+            arch_spec=get_physical_arch_spec(),
             noise_model=noise_model,
             add_noise=True,
             aggressive_unroll=False,
@@ -277,11 +282,24 @@ class Metrics:
 
         for stmt in move_mt.callable_region.walk():
             if isinstance(stmt, move.Move):
+                # Lanes in one move execute simultaneously: resolve every
+                # endpoint against the pre-move occupancy, then commit, so
+                # a conveyor chain never overwrites or loses an atom
+                # regardless of lane order.
+                movers = []
+                seen_srcs = set()
                 for lane in stmt.lanes:
                     src, dst = self.arch_spec.get_endpoints(lane)
-                    qubit_id = qubit_by_location.pop(src, None)
+                    if src in seen_srcs:
+                        continue
+                    seen_srcs.add(src)
+                    qubit_id = qubit_by_location.get(src)
                     if qubit_id is None:
                         continue
+                    movers.append((qubit_id, src, dst, lane))
+                for _, src, _, _ in movers:
+                    del qubit_by_location[src]
+                for qubit_id, _, dst, lane in movers:
                     qubit_by_location[dst] = qubit_id
                     hop_count, distance_um = episode_stats.get(qubit_id, (0, 0.0))
                     episode_stats[qubit_id] = (
