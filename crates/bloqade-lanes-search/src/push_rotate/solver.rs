@@ -143,7 +143,12 @@ pub fn solve_push_rotate_with(
     // it leaves the router, so a condenser that batched two atoms into one
     // operation illegally fails here instead of downstream. The push-rotate
     // integration test asserted this by hand; it is now the production path.
-    crate::search::verify::assert_move_layers_executable(&root, &move_layers, index.arch_spec());
+    crate::search::verify::assert_move_layers_executable(
+        &root,
+        &move_layers,
+        index.arch_spec(),
+        &goal_config,
+    );
 
     // `nodes_expanded` is 0 by construction: this is not a search. Cost is the
     // operation count, matching `UniformCost` over the emitted layers so the

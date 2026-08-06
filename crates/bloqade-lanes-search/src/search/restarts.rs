@@ -46,6 +46,7 @@ pub(crate) fn extract(
                 result.graph.config(result.graph.root()),
                 &move_layers,
                 ctx.index.arch_spec(),
+                &goal_config,
             );
             SolveResult::solved(
                 goal_config,

@@ -20,6 +20,9 @@
 //! that produced the plan, and runs in every build: the invariant it protects
 //! (issue #866) is a correctness property, not a debugging aid.
 
+use std::collections::HashMap;
+
+use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_bytecode_core::atom_state::AtomStateData;
 
@@ -28,17 +31,14 @@ use crate::primitives::graph::MoveSet;
 
 /// Replay `layers` from `root` through the canonical execution model.
 ///
-/// Returns a diagnostic naming the first layer that cannot execute, or `Ok`
-/// when the whole plan is executable.
-pub(crate) fn verify_move_layers(
+/// Returns the placement the plan actually lands on — `qubit → location`, as
+/// resolved by lane endpoints rather than by [`Config::with_moves`] — or a
+/// diagnostic naming the first layer that cannot execute.
+pub(crate) fn replay_move_layers(
     root: &Config,
     layers: &[MoveSet],
     arch: &ArchSpec,
-) -> Result<(), String> {
-    if layers.is_empty() {
-        return Ok(());
-    }
-
+) -> Result<HashMap<u32, LocationAddr>, String> {
     let atoms: Vec<_> = root.iter().collect();
     let mut state = AtomStateData::from_locations(&atoms);
 
@@ -52,7 +52,49 @@ pub(crate) fn verify_move_layers(
             .map_err(|errors| format_layer_error(layer_idx, layers.len(), &errors))?;
     }
 
-    Ok(())
+    Ok(state.qubit_to_locations)
+}
+
+/// Replay `layers` from `root` and check the result against the placement the
+/// solver reports as its goal.
+///
+/// Executability alone is not enough: `Config::with_moves` overwrites a
+/// qubit's location with whatever the generator passed, without checking that
+/// the qubit was at the lane's source or that the lane leads where the
+/// generator claims. A plan can therefore be perfectly executable while the
+/// reported `goal_config` is wrong — a teleported qubit, or a move credited to
+/// the wrong atom. Comparing the replayed placement against `expected_goal`
+/// closes that gap, and is the only check that actually exercises
+/// lane-endpoint semantics end to end.
+pub(crate) fn verify_move_layers(
+    root: &Config,
+    layers: &[MoveSet],
+    arch: &ArchSpec,
+    expected_goal: &Config,
+) -> Result<(), String> {
+    let replayed = replay_move_layers(root, layers, arch)?;
+
+    let claimed: HashMap<u32, LocationAddr> = expected_goal.iter().collect();
+    if replayed == claimed {
+        return Ok(());
+    }
+
+    // Report every qubit that disagrees, sorted for a stable diagnostic.
+    let mut qubits: Vec<u32> = replayed.keys().chain(claimed.keys()).copied().collect();
+    qubits.sort_unstable();
+    qubits.dedup();
+    let mut details = String::new();
+    for qubit in qubits {
+        let (got, want) = (replayed.get(&qubit), claimed.get(&qubit));
+        if got != want {
+            details.push_str(&format!(
+                "\n  - qubit {qubit}: plan lands on {got:?}, solver reports {want:?}"
+            ));
+        }
+    }
+    Err(format!(
+        "replaying the plan does not reproduce the reported goal placement:{details}"
+    ))
 }
 
 fn format_layer_error<E: std::fmt::Display>(idx: usize, total: usize, errors: &[E]) -> String {
@@ -70,11 +112,16 @@ fn format_layer_error<E: std::fmt::Display>(idx: usize, total: usize, errors: &[
 /// the plan — not a user error — so it fails loudly rather than returning a
 /// plan that would corrupt atom state (or, since #877, be rejected with a
 /// much vaguer message once it reaches the IR analysis).
-pub(crate) fn assert_move_layers_executable(root: &Config, layers: &[MoveSet], arch: &ArchSpec) {
-    if let Err(diagnostic) = verify_move_layers(root, layers, arch) {
+pub(crate) fn assert_move_layers_executable(
+    root: &Config,
+    layers: &[MoveSet],
+    arch: &ArchSpec,
+    expected_goal: &Config,
+) {
+    if let Err(diagnostic) = verify_move_layers(root, layers, arch, expected_goal) {
         panic!(
-            "solver produced a plan that cannot execute (this is a bug in the \
-             move generator, not in the request): {diagnostic}"
+            "solver produced an invalid plan (this is a bug in the move \
+             generator, not in the request): {diagnostic}"
         );
     }
 }
@@ -104,21 +151,26 @@ mod tests {
     }
 
     #[test]
-    fn accepts_an_executable_plan() {
+    fn accepts_an_executable_plan_reaching_the_reported_goal() {
         let index = index();
         let root = Config::new([(0, loc(0, 0))]).expect("config");
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
+        // Site bus 0 maps site 0 → site 5.
+        let goal = Config::new([(0, loc(0, 5))]).expect("config");
         assert_eq!(
-            verify_move_layers(&root, &layers, index.arch_spec()),
+            verify_move_layers(&root, &layers, index.arch_spec(), &goal),
             Ok(())
         );
     }
 
     #[test]
-    fn empty_plan_is_vacuously_executable() {
+    fn empty_plan_must_report_the_root_placement() {
         let index = index();
         let root = Config::new([(0, loc(0, 0))]).expect("config");
-        assert_eq!(verify_move_layers(&root, &[], index.arch_spec()), Ok(()));
+        assert_eq!(
+            verify_move_layers(&root, &[], index.arch_spec(), &root),
+            Ok(())
+        );
     }
 
     #[test]
@@ -128,7 +180,9 @@ mod tests {
         // no lane of its own in the group, so the layer cannot execute.
         let root = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).expect("config");
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
-        let err = verify_move_layers(&root, &layers, index.arch_spec())
+        // Executability is checked before the placement comparison, so the
+        // expected goal passed here is irrelevant — use the root.
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &root)
             .expect_err("landing on a stationary atom must be rejected");
         assert!(err.contains("move layer 0 of 1"), "{err}");
         assert!(err.contains("occupied by qubit 1"), "{err}");
@@ -144,8 +198,43 @@ mod tests {
             MoveSet::new(vec![site_lane(0, 0)]),
             MoveSet::new(vec![site_lane(0, 1)]),
         ];
-        let err = verify_move_layers(&root, &layers, index.arch_spec())
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &root)
             .expect_err("second layer must be rejected");
         assert!(err.contains("move layer 1 of 2"), "{err}");
+    }
+
+    /// The check Copilot asked for on #888: a plan can be perfectly executable
+    /// while the placement the solver *reports* is wrong, because
+    /// `Config::with_moves` overwrites a qubit's location without consulting
+    /// lane endpoints. Here the lane moves qubit 0 to site 5, but the reported
+    /// goal claims site 6.
+    #[test]
+    fn rejects_an_executable_plan_that_misreports_the_goal() {
+        let index = index();
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
+        let wrong_goal = Config::new([(0, loc(0, 6))]).expect("config");
+
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &wrong_goal)
+            .expect_err("a misreported goal placement must be rejected");
+        assert!(
+            err.contains("does not reproduce the reported goal"),
+            "{err}"
+        );
+        assert!(err.contains("qubit 0"), "{err}");
+    }
+
+    /// A plan that silently drops an atom (reports fewer qubits than it moves)
+    /// is caught by the same comparison.
+    #[test]
+    fn rejects_a_goal_missing_a_qubit() {
+        let index = index();
+        let root = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).expect("config");
+        let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
+        let goal = Config::new([(0, loc(0, 5))]).expect("config");
+
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &goal)
+            .expect_err("a dropped qubit must be rejected");
+        assert!(err.contains("qubit 1"), "{err}");
     }
 }

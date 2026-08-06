@@ -403,10 +403,10 @@ mod tests {
         let bus = &mut spec.zones[0].site_buses[0];
         bus.src = (0..5).map(SiteRef).collect();
         bus.dst = (1..6).map(SiteRef).collect();
+        let validation = spec.validate();
         assert!(
-            spec.validate().is_ok(),
-            "conveyor-chain fixture must be a legal spec: {:?}",
-            spec.validate()
+            validation.is_ok(),
+            "conveyor-chain fixture must be a legal spec: {validation:?}"
         );
         serde_json::to_string(&spec).expect("spec serializes")
     }
@@ -619,10 +619,10 @@ mod tests {
             ),
         ] {
             let spec: ArchSpec = serde_json::from_str(json).expect("arch json parses");
+            let validation = spec.validate();
             assert!(
-                spec.validate().is_ok(),
-                "{name} spec must satisfy the reduction precondition: {:?}",
-                spec.validate()
+                validation.is_ok(),
+                "{name} spec must satisfy the reduction precondition: {validation:?}"
             );
         }
     }

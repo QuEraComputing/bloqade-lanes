@@ -259,8 +259,12 @@ impl HeuristicGenerator {
 
 /// Whether the atom occupying `dst` could vacate in the same AOD shot as
 /// `lane`: it has an outgoing lane on the same
-/// `(move_type, bus_id, direction)` group, the only way two lanes can execute
-/// simultaneously (`ArchSpec::check_lanes` requires one bus per group).
+/// `(zone_id, move_type, bus_id, direction)` group, the only way two lanes can
+/// execute simultaneously. All four fields are exactly what
+/// `ArchSpec::check_lane_group_consistency` requires of a group — matching
+/// fewer of them would admit a "vacating" occupant whose lane could never
+/// legally share the group, which matters on multi-zone specs where a
+/// `ZoneBus` lane's own zone differs from its destination's.
 ///
 /// This is the selection-time half of the uniform destination rule (#866).
 /// [`crate::ops::aod_grid::destination_is_available`] states the rule against a
@@ -274,7 +278,10 @@ impl HeuristicGenerator {
 /// exactly the same candidates as the previous unconditional occupancy filter.
 fn occupant_can_vacate(dst: LocationAddr, lane: &LaneAddr, index: &LaneIndex) -> bool {
     index.outgoing_lanes(dst).iter().any(|l| {
-        l.move_type == lane.move_type && l.bus_id == lane.bus_id && l.direction == lane.direction
+        l.zone_id == lane.zone_id
+            && l.move_type == lane.move_type
+            && l.bus_id == lane.bus_id
+            && l.direction == lane.direction
     })
 }
 
