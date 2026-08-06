@@ -13,5 +13,5 @@ def _load_spec_json() -> str:
 
 
 def get_arch_spec() -> ArchSpec:
-    rust_spec = _RustArchSpec.from_json(_load_spec_json())
+    rust_spec = _RustArchSpec.from_json_validated(_load_spec_json())
     return ArchSpec(rust_spec)
