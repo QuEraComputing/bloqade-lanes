@@ -4,6 +4,7 @@ from typing import Any
 from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
 
+from bloqade.lanes.analysis.atom.atom_state_data import AtomStateData
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
@@ -267,14 +268,17 @@ class Metrics:
         self,
         move_mt: ir.Method,
     ) -> tuple[float, float]:
-        """Average hops and traveled distance per moving qubit per CZ episode."""
+        """Average hops and traveled distance per moving qubit per CZ episode.
+
+        Raises:
+            MoveValidationError: If any move statement cannot execute
+                against the atom state it is applied to.
+        """
         initial_layout = _infer_initial_qubit_layout(move_mt)
         if initial_layout is None or len(initial_layout) == 0:
             return 0.0, 0.0
 
-        qubit_by_location = {
-            location: qubit_id for qubit_id, location in initial_layout.items()
-        }
+        state = AtomStateData.new(initial_layout)
 
         per_cz_hops: list[float] = []
         per_cz_distance_um: list[float] = []
@@ -282,25 +286,17 @@ class Metrics:
 
         for stmt in move_mt.callable_region.walk():
             if isinstance(stmt, move.Move):
-                # Lanes in one move execute simultaneously: resolve every
-                # endpoint against the pre-move occupancy, then commit, so
-                # a conveyor chain never overwrites or loses an atom
-                # regardless of lane order.
-                movers = []
-                seen_srcs = set()
-                for lane in stmt.lanes:
-                    src, dst = self.arch_spec.get_endpoints(lane)
-                    if src in seen_srcs:
-                        continue
-                    seen_srcs.add(src)
-                    qubit_id = qubit_by_location.get(src)
-                    if qubit_id is None:
-                        continue
-                    movers.append((qubit_id, src, dst, lane))
-                for _, src, _, _ in movers:
-                    del qubit_by_location[src]
-                for qubit_id, _, dst, lane in movers:
-                    qubit_by_location[dst] = qubit_id
+                # Delegate move semantics to the canonical execution model:
+                # ``validate_moves`` rejects a group that cannot execute
+                # (destination held by an atom that does not move in the
+                # same group, or two lanes contesting one destination), and
+                # ``apply_validated`` commits every lane simultaneously
+                # against the pre-move occupancy. ``prev_lanes`` is exactly
+                # the set of atoms that moved in this step.
+                state = state.apply_validated(
+                    state.validate_moves(stmt.lanes, self.arch_spec)
+                )
+                for qubit_id, lane in state.prev_lanes.items():
                     hop_count, distance_um = episode_stats.get(qubit_id, (0, 0.0))
                     episode_stats[qubit_id] = (
                         hop_count + 1,

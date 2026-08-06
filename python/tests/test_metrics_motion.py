@@ -10,6 +10,7 @@ every endpoint against the pre-move occupancy before committing.
 
 import json
 
+import pytest
 from bloqade.decoders.dialects import annotate
 
 from bloqade.lanes.arch.spec import ArchSpec
@@ -17,6 +18,10 @@ from bloqade.lanes.bytecode import ArchSpec as RustArchSpec
 from bloqade.lanes.bytecode.encoding import (
     WordLaneAddress,
     ZoneAddress,
+)
+from bloqade.lanes.bytecode.exceptions import (
+    DestinationOccupiedError,
+    MoveValidationError,
 )
 from bloqade.lanes.dialects import move
 from bloqade.lanes.metrics import Metrics
@@ -142,3 +147,45 @@ def test_per_cz_motion_chain_is_lane_order_independent():
         build((WordLaneAddress(1, 0, 0), WordLaneAddress(0, 0, 0)))
     )
     assert forward == reverse == (1.0, 5.0)
+
+
+def test_per_cz_motion_rejects_inexecutable_move():
+    """An occupied destination that is not vacated by the same group cannot
+    execute. The replay delegates to the canonical execution model, so it
+    fails fast instead of silently overwriting the occupant's entry."""
+    arch_spec = ArchSpec(RustArchSpec.from_json_validated(CHAIN_ARCH_JSON))
+
+    @kernel
+    def main():
+        state0 = move.load()
+        state1 = move.fill(
+            state0,
+            location_addresses=(
+                move.LocationAddress(0, 0),
+                move.LocationAddress(1, 0),
+            ),
+        )
+        state2 = move.logical_initialize(
+            state1,
+            thetas=(0.0, 0.0),
+            phis=(0.0, 0.0),
+            lams=(0.0, 0.0),
+            location_addresses=(
+                move.LocationAddress(0, 0),
+                move.LocationAddress(1, 0),
+            ),
+        )
+        # Only word 0 moves; its destination (word 1) holds a stationary atom.
+        state3 = move.move(state2, lanes=(WordLaneAddress(0, 0, 0),))
+        state4 = move.cz(state3, zone_address=ZoneAddress(0))
+        future = move.end_measure(state4, zone_addresses=(move.ZoneAddress(0),))
+        return move.get_future_result(
+            future,
+            zone_address=move.ZoneAddress(0),
+            location_address=move.LocationAddress(1, 0),
+        )
+
+    metrics = Metrics(arch_spec=arch_spec)
+    with pytest.raises(MoveValidationError) as excinfo:
+        metrics.analyze_per_cz_motion(main)
+    assert any(isinstance(e, DestinationOccupiedError) for e in excinfo.value.errors)
