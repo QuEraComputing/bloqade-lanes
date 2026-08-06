@@ -265,6 +265,60 @@ class LaneGroupAODConstraintViolationError(LaneGroupError):
         super().__init__(f"AOD constraint violation: {message}")
 
 
+# ── Move executability errors ──
+class MoveValidationError(Exception):
+    """Base class for lane-group executability errors against an atom state.
+
+    Raised by ``AtomStateData.validate_moves`` when a lane group cannot
+    execute. Carries an ``errors`` attribute with the individual error
+    instances — subclasses of this class for occupancy-rule violations, and
+    ``LaneGroupError`` subclasses for the static lane-group checks.
+    """
+
+    def __init__(self, message: str, errors: "list[Exception] | None" = None):
+        super().__init__(message)
+        self.errors: list[Exception] = errors or []
+
+
+class UnresolvableLaneError(MoveValidationError):
+    """A lane could not be resolved to (src, dst) endpoints."""
+
+    def __init__(self, lane: int):
+        self.lane = lane
+        super().__init__(f"lane 0x{lane:016x} cannot be resolved to endpoints")
+
+
+class DestinationOccupiedError(MoveValidationError):
+    """A lane's destination holds an atom that does not move in this group.
+
+    Applies uniformly to mover lanes and empty-source filler lanes: the AOD
+    trap site arrives at every lane's destination either way. An occupied
+    destination is only legal when its occupant vacates in the same group.
+    """
+
+    def __init__(self, lane: int, dst: int, occupant: int):
+        self.lane = lane
+        self.dst = dst
+        self.occupant = occupant
+        super().__init__(
+            f"lane 0x{lane:016x} targets location 0x{dst:016x}, which is "
+            f"occupied by qubit {occupant} that does not move in this group"
+        )
+
+
+class ContestedDestinationError(MoveValidationError):
+    """Two lanes in the group share a destination."""
+
+    def __init__(self, dst: int, first: int, second: int):
+        self.dst = dst
+        self.first = first
+        self.second = second
+        super().__init__(
+            f"lanes 0x{first:016x} and 0x{second:016x} share destination "
+            f"0x{dst:016x}"
+        )
+
+
 # ── Parse errors ──
 
 

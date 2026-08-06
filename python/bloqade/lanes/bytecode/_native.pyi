@@ -1592,6 +1592,25 @@ class NoHomeCzPlacement:
 # ── AtomStateData ──
 
 @final
+class ValidatedMoves:
+    """A lane group proven executable against the ``AtomStateData`` it was
+    validated with.
+
+    Obtainable only from ``AtomStateData.validate_moves``; feed it to
+    ``AtomStateData.apply_validated`` on the same state it was validated
+    against.
+    """
+
+    @property
+    def movers(
+        self,
+    ) -> list[tuple[int, LocationAddress, LocationAddress, LaneAddress]]:
+        """The resolved mover assignments as ``(qubit, src, dst, lane)`` tuples."""
+        ...
+
+    def __len__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
 class AtomStateData:
     """Tracks qubit-to-location mappings as atoms move through the architecture.
 
@@ -1740,6 +1759,46 @@ class AtomStateData:
         Returns:
             Optional[AtomStateData]: A new state reflecting the moves, or
                 ``None`` if any lane address is invalid.
+        """
+        ...
+
+    def validate_moves(
+        self, lanes: list[LaneAddress], arch_spec: ArchSpec
+    ) -> ValidatedMoves:
+        """Validate that a lane group can execute against this state.
+
+        Runs the static lane-group checks plus the occupancy rules, all
+        resolved against the pre-move state: every occupied destination
+        must be vacated by a lane in the same group (uniformly for mover
+        and empty-source filler lanes), and no two lanes may share a
+        destination.
+
+        Args:
+            lanes (list[LaneAddress]): The lane group to validate.
+            arch_spec (ArchSpec): Architecture specification for resolving
+                lane endpoints (assumed structurally valid).
+
+        Returns:
+            ValidatedMoves: A token for ``apply_validated``.
+
+        Raises:
+            MoveValidationError: If the group cannot execute; its
+                ``errors`` attribute carries every individual error.
+        """
+        ...
+
+    def apply_validated(self, moves: ValidatedMoves) -> AtomStateData:
+        """Apply a validated lane group and return the resulting state.
+
+        Total on its input: ``validate_moves`` has already ruled out every
+        collision, so no atom is destroyed or silently skipped. The token
+        must have been produced by ``validate_moves`` on this same state.
+
+        Args:
+            moves (ValidatedMoves): Token from ``validate_moves``.
+
+        Returns:
+            AtomStateData: A new state reflecting the moves.
         """
         ...
 

@@ -47,6 +47,7 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Atom state
     m.add_class::<atom_state_python::PyAtomStateData>()?;
+    m.add_class::<atom_state_python::PyValidatedMoves>()?;
 
     // Instruction and Program
     m.add_class::<instruction_python::PyInstruction>()?;
