@@ -117,7 +117,7 @@ bloqade-bytecode validate <INPUT> [--arch <ARCH>] [--simulate-stack]
 |----------|-------------|
 | `<INPUT>` | Input file (`.sst` = text, otherwise binary) |
 | `--arch <ARCH>` | ArchSpec JSON file for address validation |
-| `--simulate-stack` | Run stack type simulation |
+| `--simulate-stack` | Run stack type simulation (implied by `--arch`) |
 
 **Validation levels:**
 
@@ -125,7 +125,7 @@ bloqade-bytecode validate <INPUT> [--arch <ARCH>] [--simulate-stack]
 |-------|------|----------------|
 | Structural | Always | Arity bounds, `initial_fill` ordering |
 | Address | `--arch` provided | Location, lane, zone, and bus validity against the architecture |
-| Stack simulation | `--simulate-stack` | Type safety, stack balance |
+| Stack simulation | `--simulate-stack` or `--arch` provided | Type safety, stack balance, and (with an arch) the lane/location group checks — consistency, bus membership, AOD grid geometry |
 
 **Examples:**
 

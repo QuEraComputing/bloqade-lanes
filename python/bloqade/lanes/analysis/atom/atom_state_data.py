@@ -6,7 +6,10 @@ from types import MappingProxyType
 from kirin.interp import InterpreterError
 
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode import AtomStateData as _RustAtomStateData
+from bloqade.lanes.bytecode import (
+    AtomStateData as _RustAtomStateData,
+    ValidatedMoves,
+)
 from bloqade.lanes.bytecode._wrapper import RustWrapper
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
@@ -141,6 +144,31 @@ class AtomStateData(RustWrapper[_RustAtomStateData]):
         if result is None:
             return None
         return AtomStateData.from_inner(result)
+
+    def validate_moves(
+        self,
+        lanes: tuple[LaneAddress, ...],
+        arch_spec: ArchSpec,
+    ) -> ValidatedMoves:
+        """Validate that a lane group can execute against this state.
+
+        Returns a token for :meth:`apply_validated`. Raises
+        :class:`~bloqade.lanes.bytecode.exceptions.MoveValidationError`
+        (with every individual error in its ``errors`` attribute) when the
+        group cannot execute.
+        """
+        rust_lanes = [lane._inner for lane in lanes]
+        return self._inner.validate_moves(rust_lanes, arch_spec._inner)
+
+    def apply_validated(self, moves: ValidatedMoves) -> AtomStateData:
+        """Apply a group validated by :meth:`validate_moves` on this state.
+
+        Raises
+        :class:`~bloqade.lanes.bytecode.exceptions.MoveValidationError` if
+        the token is stale (validated against a different state, or against
+        this one before it moved on).
+        """
+        return AtomStateData.from_inner(self._inner.apply_validated(moves))
 
     def get_qubit(self, location: LocationAddress):
         return self._inner.get_qubit(location._inner)

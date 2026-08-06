@@ -216,13 +216,16 @@ fn cmd_validate(
     };
 
     // Structural checks always run; arch-dependent capability + address checks
-    // run when an arch spec is provided; stack-type simulation runs on request.
+    // run when an arch spec is provided. Stack-type simulation (which carries
+    // the lane/location group checks) runs on request or whenever an arch is
+    // supplied — an `--arch` invocation expects the arch-dependent group
+    // validation, not just per-operand address checks.
     let mut all_errors = validate::validate_structure(&program)
         .into_iter()
         .chain(validate::validate(&program, arch.as_ref()))
         .collect::<Vec<_>>();
 
-    if simulate_stack {
+    if simulate_stack || arch.is_some() {
         all_errors.extend(validate::simulate_stack(&program, arch.as_ref()));
     }
 

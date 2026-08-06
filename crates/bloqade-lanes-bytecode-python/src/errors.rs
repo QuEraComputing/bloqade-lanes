@@ -9,6 +9,7 @@ pub(crate) type PyObject = Py<PyAny>;
 
 use bloqade_lanes_bytecode_core::arch::query::{LaneGroupError, LocationGroupError};
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
+use bloqade_lanes_bytecode_core::atom_state::MoveValidationError;
 use bloqade_lanes_bytecode_core::isa::INSTRUCTION_WIDTH;
 use bloqade_lanes_bytecode_core::isa::program::BinaryError;
 use bloqade_lanes_bytecode_core::isa::text::TextError;
@@ -139,6 +140,82 @@ pub fn lane_group_error_to_py(py: Python<'_>, error: &LaneGroupError) -> PyResul
     };
 
     Ok(obj.into())
+}
+
+/// Convert a single MoveValidationError to a Python exception instance.
+fn move_validation_error_to_py(py: Python<'_>, error: &MoveValidationError) -> PyResult<PyObject> {
+    let module = py.import(EXCEPTIONS_MODULE)?;
+
+    let obj = match error {
+        MoveValidationError::UnresolvableLane { lane } => {
+            let cls = module.getattr("UnresolvableLaneError")?;
+            cls.call1((lane.encode_u64(),))?
+        }
+        MoveValidationError::LaneGroup(inner) => {
+            return lane_group_error_to_py(py, inner);
+        }
+        MoveValidationError::DestinationOccupiedByStationaryAtom {
+            lane,
+            dst,
+            occupant,
+        } => {
+            let cls = module.getattr("DestinationOccupiedError")?;
+            cls.call1((lane.encode_u64(), dst.encode(), *occupant))?
+        }
+        MoveValidationError::ContestedDestination { dst, first, second } => {
+            let cls = module.getattr("ContestedDestinationError")?;
+            cls.call1((dst.encode(), first.encode_u64(), second.encode_u64()))?
+        }
+        MoveValidationError::StaleMoverSource {
+            lane,
+            src,
+            expected,
+        } => {
+            let cls = module.getattr("StaleValidatedMovesError")?;
+            cls.call1((lane.encode_u64(), src.encode(), *expected))?
+        }
+    };
+
+    Ok(obj.into())
+}
+
+/// Convert a Vec<MoveValidationError> to a single Python MoveValidationError
+/// with an errors list.
+pub fn move_validation_errors_to_py(py: Python<'_>, errors: Vec<MoveValidationError>) -> PyErr {
+    let module = match py.import(EXCEPTIONS_MODULE) {
+        Ok(m) => m,
+        Err(e) => return e,
+    };
+
+    let py_errors: Vec<PyObject> = match errors
+        .iter()
+        .map(|e| move_validation_error_to_py(py, e))
+        .collect::<PyResult<Vec<_>>>()
+    {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let msg = errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let cls = match module.getattr("MoveValidationError") {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+
+    let py_errors_list = match PyList::new(py, &py_errors) {
+        Ok(l) => l,
+        Err(e) => return e,
+    };
+
+    match cls.call1((&msg, py_errors_list)) {
+        Ok(instance) => PyErr::from_value(instance),
+        Err(e) => e,
+    }
 }
 
 /// Convert a single ValidationError to a Python exception instance.
