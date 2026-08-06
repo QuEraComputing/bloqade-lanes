@@ -18,6 +18,30 @@ use crate::primitives::lane_index::LaneIndex;
 /// Coordinates are stored as `f64::to_bits()` for cheap equality.
 type Cluster = (BTreeSet<u64>, BTreeSet<u64>);
 
+/// The execution model's **uniform destination rule** (issue #866): a lane's
+/// destination is available when it is unoccupied, or when its occupant is
+/// itself one of the group's moving sources — it vacates in the same
+/// simultaneous shot, so a conveyor chain `x→y, y→z` is legal.
+///
+/// The rule applies to empty-source *filler* lanes exactly as it does to
+/// movers: the AOD trap site arrives at every lane's destination whether or
+/// not that lane carried an atom, so landing on a stationary atom is a fault
+/// either way. This mirrors
+/// `AtomStateData::validate_moves`'s `DestinationOccupiedByStationaryAtom`
+/// check, which is the normative statement of the same rule.
+///
+/// [`BusGridContext::is_valid_rect`] applies this rule inline against a
+/// lazily-built sorted source index (it is the hottest loop in candidate
+/// generation); every other caller should use this helper so the two cannot
+/// drift apart.
+pub(crate) fn destination_is_available(
+    dst_enc: u64,
+    occupied: &HashSet<u64>,
+    group_mover_srcs: &HashSet<u64>,
+) -> bool {
+    !occupied.contains(&dst_enc) || group_mover_srcs.contains(&dst_enc)
+}
+
 /// Context for building AOD-compatible rectangular grids on one bus group.
 ///
 /// Built from ALL lanes on the bus (via [`LaneIndex::lanes_for`]), not just
@@ -83,6 +107,9 @@ impl<'a> BusGridContext<'a> {
     /// occupied by another atom moving in the same rectangle. A non-mover source
     /// may only fill the rectangle when both its source and destination avoid
     /// stationary atoms.
+    ///
+    /// The destination half of that is [`destination_is_available`]'s rule,
+    /// specialized here to a lazily-built sorted source index for speed.
     fn is_valid_rect(&self, xs: &BTreeSet<u64>, ys: &BTreeSet<u64>, movers: &HashSet<u64>) -> bool {
         // Resolve every cell's (src, dst) once into a reused scratch buffer.
         let mut cells = self.cells_scratch.borrow_mut();

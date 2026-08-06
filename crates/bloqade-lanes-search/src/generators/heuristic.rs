@@ -257,10 +257,35 @@ impl HeuristicGenerator {
     }
 }
 
+/// Whether the atom occupying `dst` could vacate in the same AOD shot as
+/// `lane`: it has an outgoing lane on the same
+/// `(move_type, bus_id, direction)` group, the only way two lanes can execute
+/// simultaneously (`ArchSpec::check_lanes` requires one bus per group).
+///
+/// This is the selection-time half of the uniform destination rule (#866).
+/// [`crate::ops::aod_grid::destination_is_available`] states the rule against a
+/// known mover set; at scoring time that set does not exist yet, so this
+/// admits a conveyor chain as a *candidate* and
+/// `BusGridContext::is_valid_rect` adjudicates once the rectangle's actual
+/// movers are known.
+///
+/// Necessarily `false` on endpoint-disjoint buses — a destination there is
+/// never a source of the same bus — so the shipped Gemini specs produce
+/// exactly the same candidates as the previous unconditional occupancy filter.
+fn occupant_can_vacate(dst: LocationAddr, lane: &LaneAddr, index: &LaneIndex) -> bool {
+    index.outgoing_lanes(dst).iter().any(|l| {
+        l.move_type == lane.move_type && l.bus_id == lane.bus_id && l.direction == lane.direction
+    })
+}
+
 /// Yield `(lane, destination)` pairs for every outgoing lane from `loc`
 /// whose destination is currently unoccupied. Shared traversal for all
 /// escape-move generation paths. Order is preserved (filter_map on a slice
 /// iterator is order-preserving), which is required for behavior-neutrality.
+///
+/// Deliberately strict about occupancy: every caller turns each pair into a
+/// **single-lane** move set, and a lone lane has no companion mover that
+/// could vacate its destination, so the chain exemption cannot apply here.
 fn escape_targets<'a>(
     loc: LocationAddr,
     occupied: &'a HashSet<u64>,
@@ -378,7 +403,16 @@ impl MoveGenerator for HeuristicGenerator {
                     continue;
                 };
                 let dst_enc = dst.encode();
-                if occupied.contains(&dst_enc) {
+                // Uniform destination rule (#866) at selection time: a blocked
+                // site never frees up, and an atom-occupied site is a candidate
+                // destination only when its occupant could vacate in the same
+                // shot. `is_valid_rect` makes the final call against the
+                // rectangle's real mover set; this only widens what reaches it,
+                // and only on overlapping-bus specs.
+                if ctx.blocked.contains(&dst_enc) {
+                    continue;
+                }
+                if occupied.contains(&dst_enc) && !occupant_can_vacate(dst, &lane, ctx.index) {
                     continue;
                 }
 
@@ -654,9 +688,85 @@ mod tests {
         LaneIndex::new(spec)
     }
 
+    fn make_chain_index() -> LaneIndex {
+        let spec: ArchSpec = serde_json::from_str(&crate::test_utils::chain_arch_json()).unwrap();
+        LaneIndex::new(spec)
+    }
+
     fn make_table(targets: &[(u32, LocationAddr)], index: &LaneIndex) -> DistanceTable {
         let locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         DistanceTable::new(&locs, index)
+    }
+
+    /// The relaxed destination filter (#876): a destination occupied by an
+    /// atom that could vacate on the *same* bus group is a legal candidate;
+    /// one whose occupant has no such lane is not.
+    #[test]
+    fn occupant_can_vacate_only_on_a_shared_bus_group() {
+        // Conveyor chain 0→1, 1→2, …: the atom on site 1 has its own lane on
+        // this bus, so it can vacate in the same shot.
+        let chain = make_chain_index();
+        let lane_0 = lane(0, 0, 0);
+        assert!(
+            occupant_can_vacate(loc(0, 1), &lane_0, &chain),
+            "site 1 is a source of the same chain bus"
+        );
+        // Site 4 is the end of the chain — no outgoing lane on this bus.
+        assert!(
+            !occupant_can_vacate(loc(0, 4), &lane(0, 3, 0), &chain),
+            "the chain's final destination cannot vacate"
+        );
+
+        // On the endpoint-disjoint example arch a destination is never a
+        // source of the same bus, so the exemption can never fire — which is
+        // why this relaxation leaves the shipped Gemini specs untouched.
+        let disjoint = make_index();
+        assert!(
+            !occupant_can_vacate(loc(0, 5), &lane_0, &disjoint),
+            "disjoint buses have no shared src/dst site"
+        );
+    }
+
+    /// Documents a **known gap** (issue #887): admitting
+    /// chain candidates is necessary but not sufficient — the heuristic
+    /// selection still picks movers independently, so it does not co-select
+    /// the atom ahead and never assembles the chain into one AOD shot. Here it
+    /// emits only the follower's move; the leader waits for the next step, so
+    /// routing stays correct but takes two operations instead of one.
+    ///
+    /// `ExhaustiveGenerator` *does* assemble this chain (see
+    /// `generate_admits_conveyor_chain`) because it enumerates every
+    /// rectangle rather than selecting greedily.
+    #[test]
+    fn heuristic_selection_does_not_yet_assemble_chains() {
+        let index = make_chain_index();
+        // q0: site 0 → 1 (occupied by q1), q1: site 1 → 2 (free).
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        let targets = [(0u32, loc(0, 1)), (1u32, loc(0, 2))];
+        let dist_table = make_table(&targets, &index);
+        let targets_raw: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets_raw, &blocked);
+
+        let generator = HeuristicGenerator::new();
+        let mut state = SearchState::default();
+        let mut out = Vec::new();
+        generator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
+
+        let shifts_both = out.iter().any(|c| {
+            c.new_config.location_of(0) == Some(loc(0, 1))
+                && c.new_config.location_of(1) == Some(loc(0, 2))
+        });
+        assert!(
+            !shifts_both,
+            "chain assembly is not implemented yet — if this now passes, the \
+             follow-up landed and this test should assert the chain instead"
+        );
+        // The follower's move is still generated, so the search makes progress.
+        let follower_moves = out
+            .iter()
+            .any(|c| c.new_config.location_of(1) == Some(loc(0, 2)));
+        assert!(follower_moves, "the unobstructed atom must still move");
     }
 
     fn make_ctx<'a>(
