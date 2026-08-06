@@ -143,7 +143,7 @@ def test_simulator_tasks_forward_loss_normalization_options(task_type):
         name="measurement",
         shots=1,
         loss_replace=False,
-        is_loss=lambda value: value == "lost",
+        loss="lost",
     ) == [[True, False]]
 
 
