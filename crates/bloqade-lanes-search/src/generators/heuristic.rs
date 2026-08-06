@@ -261,10 +261,17 @@ impl HeuristicGenerator {
 /// `lane`: it has an outgoing lane on the same
 /// `(zone_id, move_type, bus_id, direction)` group, the only way two lanes can
 /// execute simultaneously. All four fields are exactly what
-/// `ArchSpec::check_lane_group_consistency` requires of a group — matching
-/// fewer of them would admit a "vacating" occupant whose lane could never
-/// legally share the group, which matters on multi-zone specs where a
-/// `ZoneBus` lane's own zone differs from its destination's.
+/// `ArchSpec::check_lane_group_consistency` requires of a group.
+///
+/// The `zone_id` term only ever bites for `ZoneBus` lanes: site and word buses
+/// are intra-zone, so a lane and its destination share a zone automatically.
+/// A single `zone_bus` may however connect more than two zones across its
+/// pairs, and a chain through it (`z0w0 → z1w0`, `z1w0 → z2w0`) has a
+/// different `zone_id` per hop — so it can never be one AOD shot, whatever
+/// the occupancy says. The worst case of comparing `zone_id` here is therefore
+/// that such a cross-zone chain gets **serialized** into one operation per
+/// hop, which is what the ISA requires anyway; omitting it would only
+/// manufacture candidates that `check_lanes` later rejects.
 ///
 /// This is the selection-time half of the uniform destination rule (#866).
 /// [`crate::ops::aod_grid::destination_is_available`] states the rule against a
