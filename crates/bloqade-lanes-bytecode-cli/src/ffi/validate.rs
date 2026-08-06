@@ -58,10 +58,26 @@ pub unsafe extern "C" fn lanes_validate_addresses(
 }
 
 /// Stack type simulation (underflow, type mismatches, and lane/location group
-/// checks). Runs without an arch spec (duplicate-only group checks).
+/// checks). Runs without an arch spec (duplicate-only group checks) — prefer
+/// [`lanes_simulate_stack_with_arch`], which enables the arch-dependent
+/// lane-group checks (consistency, bus membership, AOD geometry).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lanes_simulate_stack(
     prog: *const LANESProgram,
+    out: *mut *mut LANESValidationErrors,
+) -> LanesStatus {
+    unsafe { lanes_simulate_stack_with_arch(prog, std::ptr::null(), out) }
+}
+
+/// Stack type simulation with arch-dependent lane/location group checks
+/// (consistency, bus membership, AOD complete-grid geometry).
+///
+/// `arch` may be NULL, in which case group checks degrade to duplicate
+/// detection only (the [`lanes_simulate_stack`] behavior).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lanes_simulate_stack_with_arch(
+    prog: *const LANESProgram,
+    arch: *const LANESArchSpec,
     out: *mut *mut LANESValidationErrors,
 ) -> LanesStatus {
     clear_last_error();
@@ -72,7 +88,12 @@ pub unsafe extern "C" fn lanes_simulate_stack(
     }
 
     let prog = unsafe { &*prog };
-    let errors = validate::simulate_stack(&prog.inner, None);
+    let arch = if arch.is_null() {
+        None
+    } else {
+        Some(unsafe { &(*arch).inner })
+    };
+    let errors = validate::simulate_stack(&prog.inner, arch);
     let status = if errors.is_empty() {
         LanesStatus::Ok
     } else {
