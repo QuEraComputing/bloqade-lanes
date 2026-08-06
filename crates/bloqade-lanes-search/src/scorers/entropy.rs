@@ -35,12 +35,15 @@ impl CandidateScorer for EntropyScorer {
             occupied.insert(loc.encode());
         }
 
+        // `None`: no per-solve table cache on this trait path; distances are
+        // computed directly (bit-identical to the table-backed driver path).
         crate::drivers::entropy::score_moveset(
             config,
             &candidate.new_config,
             &occupied,
             ctx,
             &self.params,
+            None,
         )
     }
 }
