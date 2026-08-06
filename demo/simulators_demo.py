@@ -18,10 +18,19 @@
 # In this notebook, we provide a short demo for using the logical and physical simulators, as well as using different simulation backends for the logical/physical simulators.
 
 # %% [markdown]
+# ## Setup
+# To run this notebook with the appropriate dependencies, you can run
+#
+# `pip install "bloqade-lanes[sim, clifft]"`
+
+# %% [markdown]
 # ## Constructing Simulators
 # We have two different simulators representing two different parts of the compilation pipeline: the `GeminiLogicalSimulator` and the `GeminiPhysicalSimulator`. These two simulators take in different inputs (a logical circuit versus a physical circuit, respectively), and therefore have slightly different compilations.
 
 # %%
+# For postprocessing
+import numpy as np
+
 # Defining dialects to program logical or physical kernels in
 from bloqade import squin
 from bloqade.gemini import logical
@@ -59,6 +68,9 @@ logical_task = logical_sim.task(test_logical_program)
 # %%
 logical_result = logical_task.run(shots=1000)
 
+# %%
+print(np.asarray(logical_result.measurements).shape)
+
 # %% [markdown]
 # ## Specifying an Alternative Simulation Backend
 # You can also specify an alternative simulation backend when constructing the simulator. For example, you can use the `CliffTSimulatorBackend` for CliffT integration.
@@ -74,6 +86,9 @@ logical_task_clifft = logical_sim_clifft.task(test_logical_program)
 
 # %%
 logical_result_clifft = logical_task_clifft.run(shots=1000)
+
+# %%
+print(np.asarray(logical_result_clifft.measurements).shape)
 
 # %% [markdown]
 # ## Using Physical Simulator and Configuring Simulator Backend
@@ -100,6 +115,9 @@ physical_task = physical_sim.task(test_physical_program)
 physical_result = physical_task.run(shots=1000)
 
 # %%
+print(np.asarray(physical_result.measurements).shape)
+
+# %%
 # You can alternatively construct a GeminiPhysicalSimulator with a different simulator backend, like CliffT.
 physical_sim_clifft = GeminiPhysicalSimulator(backend=CliffTSimulatorBackend())
 
@@ -108,5 +126,8 @@ physical_task_clifft = physical_sim_clifft.task(test_physical_program)
 
 # %%
 physical_result_clifft = physical_task_clifft.run(shots=1000)
+
+# %%
+print(np.asarray(physical_result_clifft.measurements).shape)
 
 # %%
