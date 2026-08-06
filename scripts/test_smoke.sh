@@ -47,7 +47,9 @@ expect_fail() {
     fi
 }
 
-# A minimal valid program reused across cases.
+# A minimal valid program reused across cases. Ends with `halt` so it is
+# also stack-balanced: `validate --arch` runs the stack-type simulation
+# (a bare `return` with nothing on the stack is an underflow).
 prog valid <<'EOF'
 version 1.0;
 fn @main() {
@@ -56,7 +58,7 @@ fn @main() {
   initial_fill 2
   const.f64 1.5708
   global_rz
-  return
+  halt
 }
 EOF
 

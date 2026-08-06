@@ -467,24 +467,29 @@ fn test_validate_arch_spec_valid() {
 #[test]
 fn test_validate_arch_spec_invalid() {
     let dir = TempDir::new().unwrap();
-    // measurement_mode_zones[0] is not zone 0 — should fail validation
+    // Site bus 0 is cyclic (0→1, 1→0 — a rotation): parses fine, but
+    // fails the bus well-formedness validation.
     let arch_json = r#"{
         "version": "2.0",
-        "geometry": {
-            "sites_per_word": 2,
-            "words": [
-                {
-                    "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
-                    "site_indices": [[0, 0], [0, 1]]
-                }
-            ]
-        },
-        "buses": { "site_buses": [], "word_buses": [] },
-        "words_with_site_buses": [],
-        "sites_with_word_buses": [],
-        "zones": [{ "words": [0] }, { "words": [0] }],
-        "entangling_zones": [],
-        "measurement_mode_zones": [1]
+        "words": [
+            { "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] }
+        ],
+        "zones": [
+            {
+                "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [] },
+                "site_buses": [
+                    { "src": [0, 1], "dst": [1, 0] }
+                ],
+                "word_buses": [],
+                "words_with_site_buses": [0],
+                "sites_with_word_buses": []
+            }
+        ],
+        "zone_buses": [],
+
+        "modes": [
+            { "name": "default", "zones": [0], "bitstring_order": [] }
+        ]
     }"#;
     let arch_path = dir.path().join("bad_arch.json");
     fs::write(&arch_path, arch_json).unwrap();
@@ -493,7 +498,7 @@ fn test_validate_arch_spec_invalid() {
         .args(["arch", "validate", arch_path.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("error"));
+        .stderr(predicate::str::contains("cycle"));
 }
 
 #[test]

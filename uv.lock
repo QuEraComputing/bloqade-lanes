@@ -353,6 +353,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+clifft = [
+    { name = "clifft", marker = "python_full_version >= '3.12'" },
+]
 cudaq = [
     { name = "cudaq", version = "0.14.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and sys_platform != 'win32'" },
     { name = "cudaq", version = "0.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and sys_platform != 'win32'" },
@@ -390,6 +393,7 @@ dev = [
     { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "isort" },
+    { name = "jsonschema" },
     { name = "jupytext" },
     { name = "maturin" },
     { name = "mypy" },
@@ -426,6 +430,7 @@ requires-dist = [
     { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
     { name = "bloqade-lanes", extras = ["decoding"], marker = "extra == 'msd-reprod'" },
     { name = "bloqade-tsim", marker = "extra == 'sim'", specifier = "~=0.1.3" },
+    { name = "clifft", marker = "python_full_version >= '3.12' and extra == 'clifft'" },
     { name = "clifft", marker = "python_full_version >= '3.12' and extra == 'msd-reprod'" },
     { name = "cudaq", marker = "sys_platform != 'win32' and extra == 'cudaq'", specifier = ">=0.13.0" },
     { name = "deprecated", specifier = ">=1.3.1" },
@@ -442,7 +447,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "scipy", marker = "extra == 'visualization'", specifier = ">=1.15.3" },
 ]
-provides-extras = ["cudaq", "sim", "decoding", "visualization", "msd-reprod", "ppvm"]
+provides-extras = ["cudaq", "sim", "decoding", "visualization", "msd-reprod", "clifft", "ppvm"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -451,6 +456,7 @@ dev = [
     { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "ipython", specifier = ">=8.29.0" },
     { name = "isort", specifier = ">=5.13.2" },
+    { name = "jsonschema", specifier = ">=4.23.0" },
     { name = "jupytext", specifier = ">=1.18.1" },
     { name = "maturin", specifier = ">=1.4,<2.0" },
     { name = "mypy", specifier = ">=1.13.0" },

@@ -6,10 +6,55 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
-use bloqade_lanes_bytecode_core::atom_state::AtomStateData;
+use bloqade_lanes_bytecode_core::atom_state::{AtomStateData, ValidatedMoves};
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr, PyZoneAddr};
+use crate::errors::move_validation_errors_to_py;
 use crate::validation::{validate_i64_key_map, validate_i64_kv_map, validate_i64_value_map};
+
+/// A lane group proven executable against the `AtomStateData` it was
+/// validated with.
+///
+/// Obtainable only from `AtomStateData.validate_moves`; feed it to
+/// `AtomStateData.apply_validated` on the same state it was validated
+/// against.
+#[pyclass(
+    name = "ValidatedMoves",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyValidatedMoves {
+    pub(crate) inner: ValidatedMoves,
+}
+
+#[pymethods]
+impl PyValidatedMoves {
+    /// The resolved mover assignments as `(qubit, src, dst, lane)` tuples.
+    #[getter]
+    fn movers(&self) -> Vec<(u32, PyLocationAddr, PyLocationAddr, PyLaneAddr)> {
+        self.inner
+            .movers()
+            .iter()
+            .map(|&(qubit, src, dst, lane)| {
+                (
+                    qubit,
+                    PyLocationAddr { inner: src },
+                    PyLocationAddr { inner: dst },
+                    PyLaneAddr { inner: lane },
+                )
+            })
+            .collect()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.movers().len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ValidatedMoves(movers={})", self.inner.movers().len())
+    }
+}
 
 /// Tracks qubit-to-location mappings as atoms move through the architecture.
 ///
@@ -169,17 +214,59 @@ impl PyAtomStateData {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Apply a sequence of lane moves and return the resulting state.
+    /// Apply a group of lane moves simultaneously and return the resulting state.
     ///
-    /// Each lane is resolved to source/destination locations via the arch spec.
-    /// Qubits at source locations are moved to destinations. If a destination
-    /// is already occupied, both qubits are recorded as collided and removed
-    /// from the location maps. Returns None if any lane is invalid.
+    /// All lanes execute as one AOD transport operation: endpoints are
+    /// resolved against the pre-move state, so for any valid lane group the
+    /// result is independent of lane order, and a destination counts as free
+    /// when its occupant moves in the same group (conveyor chains are legal).
+    /// A qubit landing on an atom that does not move in this group collides:
+    /// both are recorded in `collision` and removed from the location maps.
+    /// Returns None if any lane is invalid.
     fn apply_moves(&self, lanes: Vec<PyLaneAddr>, arch_spec: &PyArchSpec) -> Option<Self> {
         let lane_addrs: Vec<LaneAddr> = lanes.iter().map(|l| l.inner).collect();
         self.inner
             .apply_moves(&lane_addrs, &arch_spec.inner)
             .map(Self::from_rs)
+    }
+
+    /// Validate that a lane group can execute against this state.
+    ///
+    /// Runs the static lane-group checks plus the occupancy rules, all
+    /// resolved against the pre-move state: every occupied destination must
+    /// be vacated by a lane in the same group (uniformly for mover and
+    /// empty-source filler lanes), and no two lanes may share a destination.
+    ///
+    /// Returns a `ValidatedMoves` token for `apply_validated` on success.
+    /// Raises `MoveValidationError` carrying every individual error in its
+    /// `errors` attribute otherwise.
+    fn validate_moves(
+        &self,
+        py: Python<'_>,
+        lanes: Vec<PyLaneAddr>,
+        arch_spec: &PyArchSpec,
+    ) -> PyResult<PyValidatedMoves> {
+        let lane_addrs: Vec<LaneAddr> = lanes.iter().map(|l| l.inner).collect();
+        self.inner
+            .validate_moves(&lane_addrs, &arch_spec.inner)
+            .map(|inner| PyValidatedMoves { inner })
+            .map_err(|errors| move_validation_errors_to_py(py, errors))
+    }
+
+    /// Apply a validated lane group and return the resulting state.
+    ///
+    /// Total on a token produced by `validate_moves` on this same state:
+    /// validation has already ruled out every collision, so no atom is
+    /// destroyed or silently skipped.
+    ///
+    /// Raises `MoveValidationError` if the token is stale — produced against
+    /// a different state, or against this one before it moved on — rather
+    /// than desynchronizing the location maps.
+    fn apply_validated(&self, py: Python<'_>, moves: &PyValidatedMoves) -> PyResult<Self> {
+        self.inner
+            .apply_validated(&moves.inner)
+            .map(Self::from_rs)
+            .map_err(|errors| move_validation_errors_to_py(py, errors))
     }
 
     /// Look up which qubit (if any) occupies the given location.

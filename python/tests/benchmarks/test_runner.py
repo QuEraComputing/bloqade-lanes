@@ -10,8 +10,7 @@ from kirin import ir
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import physical
-from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
-from bloqade.lanes.bytecode.encoding import WordLaneAddress
+from bloqade.lanes.bytecode.encoding import SiteLaneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
@@ -226,20 +225,24 @@ def test_run_jobs_stamps_arch_spec_id_from_strategy(monkeypatch):
 
 
 def test_count_moves_ignores_empty_filler_lanes():
+    # Physical-spec site bus 0 (src=[0,2,4,6], dst=[1,3,5,7]) on word 1:
+    # the lane at site 0 carries the atom; the lane at site 2 is a valid
+    # empty-source filler completing the AOD rectangle. Only the mover
+    # counts toward move_count_lanes.
     @move_kernel
     def main():
         state0 = move.load()
-        state1 = move.fill(state0, location_addresses=(move.LocationAddress(0, 0),))
+        state1 = move.fill(state0, location_addresses=(move.LocationAddress(1, 0),))
         state2 = move.move(
             state1,
             lanes=(
-                WordLaneAddress(0, 0, 0),
-                WordLaneAddress(0, 1, 0),
+                SiteLaneAddress(1, 0, 0),
+                SiteLaneAddress(1, 2, 0),
             ),
         )
         move.store(state2)
 
-    move_count_events, move_count_lanes = _count_moves(main, get_logical_arch_spec())
+    move_count_events, move_count_lanes = _count_moves(main, physical.get_arch_spec())
 
     assert move_count_events == 1
     assert move_count_lanes == 1

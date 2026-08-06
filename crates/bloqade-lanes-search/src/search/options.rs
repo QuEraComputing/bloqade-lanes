@@ -38,6 +38,25 @@ pub enum Strategy {
     Cascade { inner: InnerStrategy },
     /// Entropy-guided search: single-path DFS with entropy-based backtracking.
     Entropy,
+    /// Push and Rotate: a complete rule-based router, not a search.
+    ///
+    /// Finds a solution whenever one exists (at two or more empty locations),
+    /// so an `Unsolvable` result from it is a proof rather than an exhausted
+    /// frontier. Produces more AOD operations than the search strategies on
+    /// instances they can solve, and is roughly two orders of magnitude
+    /// faster. Intended mainly as a reliability net — see
+    /// [`SolveOptions::fallback_push_rotate`].
+    ///
+    /// Only honoured on the **fixed-target** path
+    /// ([`TargetSolver::solve`](crate::search::target_solver::TargetSolver::solve)
+    /// and the placements that compose it). The loose-goal path leaves the
+    /// target open for the Hungarian assignment to choose, so there is nothing
+    /// for a fixed-target router to aim at; it substitutes A* there.
+    ///
+    /// `max_expansions` is ignored under this strategy: it budgets search
+    /// node expansions, and the planner is rule-based with its own runaway
+    /// guard on emitted moves.
+    PushRotate,
 }
 
 /// Core search-tuning parameters shared by every solver entry point.
@@ -68,6 +87,32 @@ pub struct SolveOptions {
     /// [`solve_loose_goal`](crate::placement::loose_goal::solve_loose_goal)
     /// defaults this to `Some(3)` when not set.
     pub top_c: Option<usize>,
+    /// Retry with [`Strategy::PushRotate`] when the chosen strategy returns
+    /// anything other than [`SolveStatus::Solved`](crate::search::result::SolveStatus::Solved).
+    ///
+    /// Off by default, so no existing caller changes behaviour. Enabling it
+    /// usually converts "the search gave up" into a valid schedule or a
+    /// *proof* that none exists
+    /// ([`SolveStatus::Unsolvable`](crate::search::result::SolveStatus::Unsolvable)
+    /// from the planner is a proof, unlike from the search) — with two
+    /// caveats:
+    ///
+    /// * The proof is **relative to `blocked`**. Callers that encode
+    ///   spectator atoms as blocked locations (`block_spectators` in the
+    ///   Python placement strategy) get "no solution that leaves spectators
+    ///   untouched"; unblocking a spectator may make the instance solvable.
+    /// * The planner does not prove every unsolvable instance: outside its
+    ///   completeness regime, or when its proof checks come up short, it
+    ///   reports `BudgetExceeded` and the search's own result stands.
+    ///
+    /// The recovered schedule uses more AOD operations than a search would
+    /// have, but it only ever applies where the search produced nothing at
+    /// all.
+    ///
+    /// Cheap to leave on: the planner is rule-based and runs in well under a
+    /// millisecond on Gemini-sized instances, and it only runs after a
+    /// failure.
+    pub fallback_push_rotate: bool,
 }
 
 impl Default for SolveOptions {
@@ -79,6 +124,7 @@ impl Default for SolveOptions {
             deadlock_policy: DeadlockPolicy::Skip,
             lookahead: false,
             top_c: None,
+            fallback_push_rotate: false,
         }
     }
 }

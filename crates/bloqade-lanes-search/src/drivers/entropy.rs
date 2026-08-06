@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::drivers::result::SearchResult;
+use crate::feasibility::graph::LaneGraph;
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
@@ -28,6 +29,7 @@ use crate::primitives::ordering::{
     cmp_triplet_entry_tiebreak,
 };
 use crate::primitives::path::find_path_occupied;
+use crate::push_rotate::{DEFAULT_MOVE_BUDGET, plan as push_rotate_plan};
 use crate::traits::Goal;
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 use rand::rngs::SmallRng;
@@ -1286,6 +1288,9 @@ fn fire_fallback_start_event(
     ctx: &SearchContext,
     resume_buffer: &[ScoredResumeState],
 ) {
+    if !observer.wants_events() {
+        return;
+    }
     let cfg = graph.config(root_id);
     let buffer_ids = trace_buffer_node_ids(resume_buffer);
     observer.on_event(SearchEvent::EntropyFallbackStart {
@@ -1296,6 +1301,96 @@ fn fire_fallback_start_event(
         configuration: cfg,
         best_buffer_node_ids: &buffer_ids,
     });
+}
+
+/// Budget-exhaustion fallback: Push and Rotate first, greedy sequential as
+/// the out-of-regime tertiary.
+///
+/// The planner is complete for instances with ≥ 2 empties per moving
+/// component and can displace atoms out of each other's way, so it solves
+/// everything the greedy router can and more (permutations, congestion).
+/// The greedy router's residual value is narrow and worth stating exactly:
+/// it cannot enter an occupied vertex, so at `m = 0` it never succeeds, and
+/// at `m = 1` it can only realize direct slides into the unique hole (any
+/// longer path would need a second empty). That single-hole slide is the
+/// one case the planner refuses (`TooFewEmpty`) that remains solvable here,
+/// so keeping the tertiary makes this a strict behavioural superset of the
+/// old greedy-only fallback.
+fn budget_exhaustion_fallback(
+    graph: &mut SearchGraph,
+    start: NodeId,
+    ctx: &SearchContext,
+    goal: &impl Goal,
+) -> (Option<NodeId>, u32) {
+    let config = graph.config(start).clone();
+    let lane_graph = LaneGraph::build(ctx.index, ctx.blocked);
+
+    // Any location off the carved graph makes the instance inexpressible for
+    // the planner; let the greedy router report what it can.
+    let initial_v: Option<Vec<(u32, usize)>> = config
+        .iter()
+        .map(|(q, loc)| lane_graph.vertex_of(loc.encode()).map(|v| (q, v)))
+        .collect();
+    let target_v: Option<Vec<(u32, usize)>> = ctx
+        .targets
+        .iter()
+        .map(|&(q, enc)| lane_graph.vertex_of(enc).map(|v| (q, v)))
+        .collect();
+    let (Some(initial_v), Some(target_v)) = (initial_v, target_v) else {
+        return sequential_fallback(graph, start, ctx, goal);
+    };
+
+    let Ok(p) = push_rotate_plan(
+        ctx.index,
+        &lane_graph,
+        &initial_v,
+        &target_v,
+        DEFAULT_MOVE_BUDGET,
+    ) else {
+        return sequential_fallback(graph, start, ctx, goal);
+    };
+
+    // Graft the plan onto the search graph as a chain of single-lane moves —
+    // the same currency the greedy router emits.
+    let mut current = start;
+    let mut nodes_expanded: u32 = 0;
+    for mv in &p.moves {
+        let src = LocationAddr::decode(lane_graph.location_of(mv.from));
+        let dst_enc = lane_graph.location_of(mv.to);
+        // Any lane realizing this edge works; one exists because the plan
+        // only steps along lane-graph adjacencies. Take the smallest
+        // encoding so the choice is deterministic.
+        let Some(lane) = ctx
+            .index
+            .outgoing_lanes(src)
+            .iter()
+            .filter(|l| {
+                ctx.index
+                    .endpoints(l)
+                    .is_some_and(|(_, d)| d.encode() == dst_enc)
+            })
+            .min_by_key(|l| l.encode_u64())
+            .copied()
+        else {
+            return (None, nodes_expanded);
+        };
+
+        let cur_config = graph.config(current).clone();
+        let Some(moving_qid) = cur_config.qubit_at(src) else {
+            return (None, nodes_expanded);
+        };
+        let new_config = cur_config.with_moves(&[(moving_qid, LocationAddr::decode(dst_enc))]);
+        let new_g = graph.g_score(current) + 1.0;
+        let (child_id, _) = graph.insert(current, MoveSet::new([lane]), new_config, new_g);
+        nodes_expanded += 1;
+        current = child_id;
+    }
+
+    if goal.is_goal(graph.config(current)) {
+        (Some(current), nodes_expanded)
+    } else {
+        (None, nodes_expanded)
+    }
 }
 
 /// Greedy sequential fallback: move each unresolved qubit along its shortest path.
@@ -1463,32 +1558,34 @@ pub fn entropy_search(
                 ancestor_es.entropy += 1;
                 ancestor_es.entropy
             };
-            let ancestor_cfg = graph.config(ancestor);
-            let parent_id = graph.parent(ancestor);
-            let parent_cfg = parent_id.map(|pid| graph.config(pid));
-            let candidate_movesets: Vec<MoveSet> = entropy_map
-                .get(&trigger_node)
-                .map(|s| {
-                    s.candidate_cache
-                        .iter()
-                        .map(|(ms, _, _, _)| ms.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
-            observer.on_event(SearchEvent::EntropyRevert {
-                node_id: ancestor,
-                parent_node_id: parent_id,
-                depth: graph.depth(ancestor),
-                entropy: new_ancestor_entropy,
-                unresolved_count: unresolved_count(ancestor_cfg, ctx.targets),
-                candidate_movesets: &candidate_movesets,
-                trigger_node_id: trigger_node,
-                trigger_entropy,
-                configuration: ancestor_cfg,
-                parent_configuration: parent_cfg,
-                best_buffer_node_ids: &buffer_ids,
-            });
+            if observer.wants_events() {
+                let ancestor_cfg = graph.config(ancestor);
+                let parent_id = graph.parent(ancestor);
+                let parent_cfg = parent_id.map(|pid| graph.config(pid));
+                let candidate_movesets: Vec<MoveSet> = entropy_map
+                    .get(&trigger_node)
+                    .map(|s| {
+                        s.candidate_cache
+                            .iter()
+                            .map(|(ms, _, _, _)| ms.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+                observer.on_event(SearchEvent::EntropyRevert {
+                    node_id: ancestor,
+                    parent_node_id: parent_id,
+                    depth: graph.depth(ancestor),
+                    entropy: new_ancestor_entropy,
+                    unresolved_count: unresolved_count(ancestor_cfg, ctx.targets),
+                    candidate_movesets: &candidate_movesets,
+                    trigger_node_id: trigger_node,
+                    trigger_entropy,
+                    configuration: ancestor_cfg,
+                    parent_configuration: parent_cfg,
+                    best_buffer_node_ids: &buffer_ids,
+                });
+            }
             current = ancestor;
             continue;
         }
@@ -1498,42 +1595,44 @@ pub fn entropy_search(
 
         let Some((candidate_idx, move_set, new_config, cost, candidate_origin)) = candidate else {
             // No candidates available — bump entropy.
-            let no_valid_qid =
-                first_unresolved_qubit_without_valid_move(graph.config(current), ctx);
             let new_entropy = {
                 let current_es = entropy_map.entry(current).or_default();
                 current_es.entropy += 1;
                 current_es.entropy
             };
-            let candidate_movesets: Vec<MoveSet> = entropy_map
-                .get(&current)
-                .map(|s| {
-                    s.candidate_cache
-                        .iter()
-                        .map(|(ms, _, _, _)| ms.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let cfg = graph.config(current);
-            let parent_id = graph.parent(current);
-            let parent_cfg = parent_id.map(|pid| graph.config(pid));
-            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
-            observer.on_event(SearchEvent::EntropyBump {
-                node_id: current,
-                parent_node_id: parent_id,
-                depth: graph.depth(current),
-                entropy: new_entropy,
-                unresolved_count: unresolved_count(cfg, ctx.targets),
-                moveset: None,
-                candidate_movesets: &candidate_movesets,
-                candidate_index: None,
-                reason: "no-valid-moves",
-                state_seen_node_id: None,
-                no_valid_moves_qubit: no_valid_qid,
-                configuration: cfg,
-                parent_configuration: parent_cfg,
-                best_buffer_node_ids: &buffer_ids,
-            });
+            if observer.wants_events() {
+                let no_valid_qid =
+                    first_unresolved_qubit_without_valid_move(graph.config(current), ctx);
+                let candidate_movesets: Vec<MoveSet> = entropy_map
+                    .get(&current)
+                    .map(|s| {
+                        s.candidate_cache
+                            .iter()
+                            .map(|(ms, _, _, _)| ms.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let cfg = graph.config(current);
+                let parent_id = graph.parent(current);
+                let parent_cfg = parent_id.map(|pid| graph.config(pid));
+                let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+                observer.on_event(SearchEvent::EntropyBump {
+                    node_id: current,
+                    parent_node_id: parent_id,
+                    depth: graph.depth(current),
+                    entropy: new_entropy,
+                    unresolved_count: unresolved_count(cfg, ctx.targets),
+                    moveset: None,
+                    candidate_movesets: &candidate_movesets,
+                    candidate_index: None,
+                    reason: "no-valid-moves",
+                    state_seen_node_id: None,
+                    no_valid_moves_qubit: no_valid_qid,
+                    configuration: cfg,
+                    parent_configuration: parent_cfg,
+                    best_buffer_node_ids: &buffer_ids,
+                });
+            }
             continue;
         };
 
@@ -1556,38 +1655,40 @@ pub fn entropy_search(
                     best_goal_depth = Some(goal_depth);
                 }
                 resume_buffer_discard(&mut resume_buffer, child_id);
-                let goal_cfg = graph.config(child_id);
-                let goal_parent_id = graph.parent(child_id);
-                let goal_parent_cfg = goal_parent_id.map(|pid| graph.config(pid));
-                let entropy_now = entropy_map.get(&current).map_or(1, |s| s.entropy);
-                let candidate_movesets: Vec<MoveSet> = entropy_map
-                    .get(&current)
-                    .map(|s| {
-                        s.candidate_cache
-                            .iter()
-                            .map(|(ms, _, _, _)| ms.clone())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let buffer_ids = trace_buffer_node_ids(&resume_buffer);
-                observer.on_event(SearchEvent::EntropyGoal {
-                    node_id: child_id,
-                    // Keep canonical parent for existing nodes; using the
-                    // current trigger node would visually re-parent the
-                    // node in the reducer and cause tree jitter/overlap.
-                    parent_node_id: goal_parent_id,
-                    depth: graph.depth(child_id),
-                    entropy: entropy_now,
-                    moveset: Some(&trace_move_set),
-                    candidate_movesets: &candidate_movesets,
-                    candidate_index: Some(candidate_idx as u32),
-                    reason: Some("state-seen-goal"),
-                    state_seen_node_id: Some(child_id),
-                    trigger_node_id: Some(current),
-                    configuration: goal_cfg,
-                    parent_configuration: goal_parent_cfg,
-                    best_buffer_node_ids: &buffer_ids,
-                });
+                if observer.wants_events() {
+                    let goal_cfg = graph.config(child_id);
+                    let goal_parent_id = graph.parent(child_id);
+                    let goal_parent_cfg = goal_parent_id.map(|pid| graph.config(pid));
+                    let entropy_now = entropy_map.get(&current).map_or(1, |s| s.entropy);
+                    let candidate_movesets: Vec<MoveSet> = entropy_map
+                        .get(&current)
+                        .map(|s| {
+                            s.candidate_cache
+                                .iter()
+                                .map(|(ms, _, _, _)| ms.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+                    observer.on_event(SearchEvent::EntropyGoal {
+                        node_id: child_id,
+                        // Keep canonical parent for existing nodes; using the
+                        // current trigger node would visually re-parent the
+                        // node in the reducer and cause tree jitter/overlap.
+                        parent_node_id: goal_parent_id,
+                        depth: graph.depth(child_id),
+                        entropy: entropy_now,
+                        moveset: Some(&trace_move_set),
+                        candidate_movesets: &candidate_movesets,
+                        candidate_index: Some(candidate_idx as u32),
+                        reason: Some("state-seen-goal"),
+                        state_seen_node_id: Some(child_id),
+                        trigger_node_id: Some(current),
+                        configuration: goal_cfg,
+                        parent_configuration: goal_parent_cfg,
+                        best_buffer_node_ids: &buffer_ids,
+                    });
+                }
                 if found_goals.len() >= params.max_goal_candidates {
                     break;
                 }
@@ -1602,35 +1703,37 @@ pub fn entropy_search(
                 es.entropy += 1;
                 es.entropy
             };
-            let candidate_movesets: Vec<MoveSet> = entropy_map
-                .get(&current)
-                .map(|s| {
-                    s.candidate_cache
-                        .iter()
-                        .map(|(ms, _, _, _)| ms.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let cfg = graph.config(current);
-            let parent_id = graph.parent(current);
-            let parent_cfg = parent_id.map(|pid| graph.config(pid));
-            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
-            observer.on_event(SearchEvent::EntropyBump {
-                node_id: current,
-                parent_node_id: parent_id,
-                depth: graph.depth(current),
-                entropy: new_entropy,
-                unresolved_count: unresolved_count(cfg, ctx.targets),
-                moveset: Some(&trace_move_set),
-                candidate_movesets: &candidate_movesets,
-                candidate_index: Some(candidate_idx as u32),
-                reason: "state-seen",
-                state_seen_node_id: Some(child_id),
-                no_valid_moves_qubit: None,
-                configuration: cfg,
-                parent_configuration: parent_cfg,
-                best_buffer_node_ids: &buffer_ids,
-            });
+            if observer.wants_events() {
+                let candidate_movesets: Vec<MoveSet> = entropy_map
+                    .get(&current)
+                    .map(|s| {
+                        s.candidate_cache
+                            .iter()
+                            .map(|(ms, _, _, _)| ms.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let cfg = graph.config(current);
+                let parent_id = graph.parent(current);
+                let parent_cfg = parent_id.map(|pid| graph.config(pid));
+                let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+                observer.on_event(SearchEvent::EntropyBump {
+                    node_id: current,
+                    parent_node_id: parent_id,
+                    depth: graph.depth(current),
+                    entropy: new_entropy,
+                    unresolved_count: unresolved_count(cfg, ctx.targets),
+                    moveset: Some(&trace_move_set),
+                    candidate_movesets: &candidate_movesets,
+                    candidate_index: Some(candidate_idx as u32),
+                    reason: "state-seen",
+                    state_seen_node_id: Some(child_id),
+                    no_valid_moves_qubit: None,
+                    configuration: cfg,
+                    parent_configuration: parent_cfg,
+                    best_buffer_node_ids: &buffer_ids,
+                });
+            }
             continue;
         }
 
@@ -1646,7 +1749,6 @@ pub fn entropy_search(
         for (_, loc) in current_cfg.iter() {
             occupied.insert(loc.encode());
         }
-        let moveset_score = score_moveset(current_cfg, child_cfg, &occupied, ctx, params);
         resume_buffer_discard(&mut resume_buffer, current);
         if let Some(next_best_score) = entropy_map
             .get(&current)
@@ -1662,33 +1764,36 @@ pub fn entropy_search(
             );
         }
 
-        let entropy_now = entropy_map.get(&current).map_or(1, |s| s.entropy);
-        let candidate_movesets: Vec<MoveSet> = entropy_map
-            .get(&current)
-            .map(|s| {
-                s.candidate_cache
-                    .iter()
-                    .map(|(ms, _, _, _)| ms.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let current_cfg_owned = graph.config(current);
-        let buffer_ids = trace_buffer_node_ids(&resume_buffer);
-        observer.on_event(SearchEvent::EntropyDescend {
-            node_id: child_id,
-            parent_node_id: current,
-            depth: graph.depth(child_id),
-            entropy: entropy_now,
-            unresolved_count: unresolved_count(child_cfg, ctx.targets),
-            moveset: &trace_move_set,
-            candidate_movesets: &candidate_movesets,
-            candidate_index: candidate_idx as u32,
-            reason: candidate_origin.then_some("deadlock-breaker"),
-            configuration: child_cfg,
-            parent_configuration: current_cfg_owned,
-            moveset_score,
-            best_buffer_node_ids: &buffer_ids,
-        });
+        if observer.wants_events() {
+            let moveset_score = score_moveset(current_cfg, child_cfg, &occupied, ctx, params);
+            let entropy_now = entropy_map.get(&current).map_or(1, |s| s.entropy);
+            let candidate_movesets: Vec<MoveSet> = entropy_map
+                .get(&current)
+                .map(|s| {
+                    s.candidate_cache
+                        .iter()
+                        .map(|(ms, _, _, _)| ms.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let current_cfg_owned = graph.config(current);
+            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+            observer.on_event(SearchEvent::EntropyDescend {
+                node_id: child_id,
+                parent_node_id: current,
+                depth: graph.depth(child_id),
+                entropy: entropy_now,
+                unresolved_count: unresolved_count(child_cfg, ctx.targets),
+                moveset: &trace_move_set,
+                candidate_movesets: &candidate_movesets,
+                candidate_index: candidate_idx as u32,
+                reason: candidate_origin.then_some("deadlock-breaker"),
+                configuration: child_cfg,
+                parent_configuration: current_cfg_owned,
+                moveset_score,
+                best_buffer_node_ids: &buffer_ids,
+            });
+        }
 
         if goal.is_goal(graph.config(child_id)) {
             let goal_depth = graph.depth(child_id);
@@ -1697,26 +1802,28 @@ pub fn entropy_search(
                 best_goal_depth = Some(goal_depth);
             }
             resume_buffer_discard(&mut resume_buffer, child_id);
-            let goal_cfg = graph.config(child_id);
-            let goal_parent_id = graph.parent(child_id);
-            let goal_parent_cfg = goal_parent_id.map(|pid| graph.config(pid));
-            let entropy_at_goal = entropy_map.get(&current).map_or(1, |s| s.entropy);
-            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
-            observer.on_event(SearchEvent::EntropyGoal {
-                node_id: child_id,
-                parent_node_id: goal_parent_id,
-                depth: graph.depth(child_id),
-                entropy: entropy_at_goal,
-                moveset: None,
-                candidate_movesets: &[],
-                candidate_index: None,
-                reason: None,
-                state_seen_node_id: None,
-                trigger_node_id: None,
-                configuration: goal_cfg,
-                parent_configuration: goal_parent_cfg,
-                best_buffer_node_ids: &buffer_ids,
-            });
+            if observer.wants_events() {
+                let goal_cfg = graph.config(child_id);
+                let goal_parent_id = graph.parent(child_id);
+                let goal_parent_cfg = goal_parent_id.map(|pid| graph.config(pid));
+                let entropy_at_goal = entropy_map.get(&current).map_or(1, |s| s.entropy);
+                let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+                observer.on_event(SearchEvent::EntropyGoal {
+                    node_id: child_id,
+                    parent_node_id: goal_parent_id,
+                    depth: graph.depth(child_id),
+                    entropy: entropy_at_goal,
+                    moveset: None,
+                    candidate_movesets: &[],
+                    candidate_index: None,
+                    reason: None,
+                    state_seen_node_id: None,
+                    trigger_node_id: None,
+                    configuration: goal_cfg,
+                    parent_configuration: goal_parent_cfg,
+                    best_buffer_node_ids: &buffer_ids,
+                });
+            }
             if found_goals.len() >= params.max_goal_candidates {
                 break;
             }
@@ -1738,7 +1845,7 @@ pub fn entropy_search(
 
     if found_goals.is_empty() && budget_exhausted {
         fire_fallback_start_event(observer, &graph, root_id, ctx, &resume_buffer);
-        let (goal_id, fb_expanded) = sequential_fallback(&mut graph, root_id, ctx, goal);
+        let (goal_id, fb_expanded) = budget_exhaustion_fallback(&mut graph, root_id, ctx, goal);
         nodes_expanded += fb_expanded;
         if let Some(gid) = goal_id {
             found_goals.push(gid);
@@ -1770,37 +1877,41 @@ fn get_next_candidate(
     let es = entropy_map.entry(node_id).or_default();
 
     // Regenerate if we've exhausted max_candidates from current cache.
-    if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
+    let mut regenerated =
+        if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
+            es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
+            es.candidates_tried = 0;
+            true
+        } else {
+            false
+        };
+
+    loop {
+        // Find first untried, non-failed candidate.
+        while es.candidates_tried < es.candidate_cache.len() {
+            let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
+            let move_key = ms.encoded_lanes();
+            if !es.tried_moves.contains(move_key) && !es.failed_candidates.contains(move_key) {
+                let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
+                return Some(result);
+            }
+            es.candidates_tried += 1;
+        }
+
+        // All cached candidates already tried. If we generated this cache
+        // during this call, regenerating again is pointless:
+        // `generate_candidates` is a pure function of
+        // `(config, entropy, params, ctx, seed)` and none of those changed,
+        // so a second call yields an identical cache with the same
+        // all-tried outcome. Only regenerate once, when the cache we just
+        // scanned was stale (carried over from a lower entropy).
+        if regenerated {
+            return None;
+        }
         es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
         es.candidates_tried = 0;
+        regenerated = true;
     }
-
-    // Find first untried, non-failed candidate.
-    while es.candidates_tried < es.candidate_cache.len() {
-        let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
-        let move_key = ms.encoded_lanes().to_vec();
-        if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
-            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
-            return Some(result);
-        }
-        es.candidates_tried += 1;
-    }
-
-    // All cached candidates already tried — regenerate and try again.
-    es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
-    es.candidates_tried = 0;
-
-    while es.candidates_tried < es.candidate_cache.len() {
-        let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
-        let move_key = ms.encoded_lanes().to_vec();
-        if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
-            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
-            return Some(result);
-        }
-        es.candidates_tried += 1;
-    }
-
-    None // all candidates exhausted
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -2144,12 +2255,50 @@ mod tests {
     }
 
     #[test]
-    fn budget_exhaustion_runs_sequential_fallback() {
+    fn budget_exhaustion_runs_fallback() {
         let r = run_entropy([(0, loc(0, 0))], [(0, loc(0, 5))], Some(0));
+        let goal = r.goal.expect("fallback should find reachable target");
+        assert_eq!(r.graph.config(goal).location_of(0), Some(loc(0, 5)));
+    }
+
+    /// Interference the greedy sequential fallback cannot handle: qubit 0's
+    /// only route runs through qubit 1's current site, so a path avoiding
+    /// every occupied vertex does not exist — the atom in the way must be
+    /// displaced ahead, which is exactly what Push and Rotate does. (The
+    /// example arch's components are 4-vertex paths `(0,0)-(0,5)-(1,5)-(1,0)`,
+    /// so the targets preserve the atoms' order — a true swap would be
+    /// genuinely unsolvable here.)
+    #[test]
+    fn budget_exhaustion_fallback_solves_interference() {
+        let r = run_entropy(
+            [(0, loc(0, 0)), (1, loc(0, 5))],
+            [(0, loc(1, 5)), (1, loc(1, 0))],
+            Some(0),
+        );
         let goal = r
             .goal
-            .expect("sequential fallback should find reachable target");
-        assert_eq!(r.graph.config(goal).location_of(0), Some(loc(0, 5)));
+            .expect("the planner fallback should displace the blocker");
+        assert_eq!(r.graph.config(goal).location_of(0), Some(loc(1, 5)));
+        assert_eq!(r.graph.config(goal).location_of(1), Some(loc(1, 0)));
+    }
+
+    /// The greedy tertiary's one residual case: a component with a single
+    /// hole where an unresolved qubit slides directly into it. `m = 1` is
+    /// outside the planner's regime (`TooFewEmpty`), and the greedy router
+    /// can do nothing more than this — it cannot enter occupied vertices,
+    /// so at `m = 1` only direct slides into the hole are realizable.
+    #[test]
+    fn budget_exhaustion_fallback_out_of_regime_hole_slide() {
+        // Component (0,0)-(0,5)-(1,5)-(1,0), three atoms, hole at (1,0).
+        let r = run_entropy(
+            [(0, loc(0, 0)), (1, loc(0, 5)), (2, loc(1, 5))],
+            [(2, loc(1, 0))],
+            Some(0),
+        );
+        let goal = r
+            .goal
+            .expect("the greedy tertiary should slide into the hole");
+        assert_eq!(r.graph.config(goal).location_of(2), Some(loc(1, 0)));
     }
 
     #[test]

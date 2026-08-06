@@ -5,9 +5,15 @@
 //! [`run_search`](crate::drivers::frontier::run_search) and the entropy-guided
 //! [`entropy_search`](crate::drivers::entropy::entropy_search) — fires
 //! [`SearchEvent`]s at the points where a trace consumer needs a
-//! snapshot. Use [`NoOpObserver`] when no observability is needed:
-//! `on_event` is `#[inline(always)]` over an empty body so the dispatch
-//! disappears under release-mode inlining.
+//! snapshot. Use [`NoOpObserver`] when no observability is needed.
+//!
+//! Drivers dispatch through `&mut dyn SearchObserver`, so `on_event` is a
+//! virtual call that the compiler cannot devirtualize or inline away — and the
+//! event *payload* (moveset clones, buffer ranking) is built eagerly before the
+//! call regardless of the observer. Drivers therefore gate that construction on
+//! [`SearchObserver::wants_events`], which [`NoOpObserver`] overrides to
+//! `false` so the whole build-and-dispatch step is skipped when nothing
+//! consumes it.
 //!
 //! Implementations in this crate: [`NoOpObserver`] discards everything;
 //! [`EntropyTrace`](crate::drivers::entropy::EntropyTrace) collects events into
@@ -141,6 +147,17 @@ pub enum SearchEvent<'a> {
 /// `on_event` must clone or transform before returning.
 pub trait SearchObserver {
     fn on_event(&mut self, event: SearchEvent<'_>);
+
+    /// Whether this observer consumes events. Drivers skip building event
+    /// payloads (moveset clones, buffer ranking) when this returns `false`.
+    ///
+    /// Defaults to `true`; [`NoOpObserver`] overrides it to `false`. Because
+    /// dispatch is through `&mut dyn SearchObserver`, this is one cheap virtual
+    /// `bool` call that guards the eager, per-event payload construction — the
+    /// part that dynamic dispatch prevents the compiler from eliding.
+    fn wants_events(&self) -> bool {
+        true
+    }
 }
 
 /// No-op observer that discards all events. Zero overhead.
@@ -149,6 +166,11 @@ pub struct NoOpObserver;
 impl SearchObserver for NoOpObserver {
     #[inline(always)]
     fn on_event(&mut self, _event: SearchEvent<'_>) {}
+
+    #[inline(always)]
+    fn wants_events(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
