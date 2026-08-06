@@ -656,11 +656,12 @@ mod tests {
     fn debug_guard_rejects_overlapping_bus() {
         let mut spec: ArchSpec =
             serde_json::from_str(example_arch_json()).expect("arch json parses");
-        // Point the first destination back at the first source. Structural
-        // validation still passes (lengths and index ranges are unchanged);
+        // Point the first destination at the second source, forming the
+        // acyclic chain 0→1→6. Structural validation still passes (the
+        // relation stays cycle-free and endpoint-unique, per issue #874);
         // disjointness does not.
         let bus = &mut spec.zones[0].site_buses[0];
-        bus.dst[0] = bus.src[0];
+        bus.dst[0] = bus.src[1];
         let index = LaneIndex::new(spec);
         let initial = Config::new([(0, loc(0, 0))]).expect("config");
         let _ = check(&index, &initial, &[], &HashSet::new());
