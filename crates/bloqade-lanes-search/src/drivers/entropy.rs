@@ -6,9 +6,11 @@
 //! Backtracks by walking parent pointers when entropy exceeds a threshold,
 //! and falls back to greedy single-qubit routing when fully stuck.
 //!
-//! Self-contained module: provides its own [`solve`] entry point that builds
-//! all required infrastructure internally. Can be removed by deleting this
-//! file and the one-line references in `lib.rs`, `solve.rs`, and the Python
+//! Mostly self-contained: [`entropy_search`] builds all required
+//! infrastructure internally. Removing the driver touches this file plus its
+//! references in `lib.rs`, the solver dispatch (`search/restarts.rs`,
+//! `search/target_solver.rs`, `placement/loose_goal.rs`), the
+//! [`BlendedColumnCache`] field on `search/engine.rs`, and the Python
 //! bindings.
 
 use std::cmp::Ordering;
@@ -807,8 +809,17 @@ impl BlendedColumnCache {
 /// across solves via [`BlendedColumnCache`].
 pub(crate) struct HeuristicTables {
     loc_idx: Arc<HashMap<u64, u32>>,
+    /// Per-solve overlay rows for targets absent from the endpoint interner:
+    /// `DistanceTable` interns isolated targets (no incident lanes) so
+    /// `distance(t, t) = 0` works, and these rows mirror that, keeping table
+    /// lookups aligned with the direct path on every location the distance
+    /// table can answer for. Empty on typical architectures.
+    extra_idx: HashMap<u64, u32>,
     target_col: HashMap<u64, u32>,
     n_targets: usize,
+    /// The `w_t` the tables were built with; must match the consuming
+    /// `EntropyParams::w_t` (debug-asserted at the read sites).
+    w_t: f64,
     /// Blended distance, `f64::MAX` = unreachable.
     d_blend: Vec<f64>,
     /// Static (blocked-only) mobility.
@@ -847,9 +858,23 @@ impl HeuristicTables {
         }
         let n_targets = target_col.len();
 
-        // Same location universe as `DistanceTable` (every lane endpoint),
-        // so table lookups can never miss where the direct path would hit.
-        // With a cache, adopt its interner so cached columns copy by row.
+        // A blended column's values depend on the dist table's time data;
+        // caching a hop-only column under a `w_t > 0` key would poison the
+        // engine-lifetime cache for every later solve sharing the target.
+        if cache.is_some() {
+            debug_assert!(
+                w_t <= 0.0
+                    || ctx.index.fastest_lane_duration_us().is_none()
+                    || ctx.dist_table.fastest_lane_us().is_some(),
+                "build_cached with w_t > 0 requires a DistanceTable built \
+                 with_time_distances when the arch has lane durations"
+            );
+        }
+
+        // Interned rows cover every lane endpoint — with a cache, adopt its
+        // interner so cached columns copy by row. `DistanceTable` additionally
+        // interns isolated targets (no incident lanes); give those per-solve
+        // overlay rows below so lookups never miss where the direct path hits.
         let loc_idx: Arc<HashMap<u64, u32>> = match cache {
             Some(c) => c.interner.clone(),
             None => {
@@ -862,8 +887,16 @@ impl HeuristicTables {
             }
         };
         let n_loc = loc_idx.len();
+        let mut extra_idx: HashMap<u64, u32> = HashMap::new();
+        for &t_enc in target_col.keys() {
+            if !loc_idx.contains_key(&t_enc) {
+                let next = (n_loc + extra_idx.len()) as u32;
+                extra_idx.entry(t_enc).or_insert(next);
+            }
+        }
+        let n_rows = n_loc + extra_idx.len();
 
-        let mut d_blend = vec![f64::MAX; n_loc * n_targets];
+        let mut d_blend = vec![f64::MAX; n_rows * n_targets];
         for (&t_enc, &tc) in &target_col {
             let key = (t_enc, w_t.to_bits());
             let cached = cache.and_then(|c| c.cols.read().expect("poisoned").get(&key).cloned());
@@ -896,6 +929,14 @@ impl HeuristicTables {
             for (li, &d) in column.iter().enumerate() {
                 d_blend[li * n_targets + tc as usize] = d;
             }
+            // Overlay rows (isolated targets) are never in cached columns —
+            // fill them directly, matching what the direct path computes.
+            for (&loc_enc, &li) in &extra_idx {
+                if let Some(d) = ctx.dist_table.distance(loc_enc, t_enc) {
+                    d_blend[li as usize * n_targets + tc as usize] =
+                        blended_distance(d as f64, loc_enc, t_enc, w_t, ctx.dist_table);
+                }
+            }
         }
 
         // Mobility and lookahead are folds over each location's unblocked
@@ -906,8 +947,10 @@ impl HeuristicTables {
         // order, so the folds are bit-identical). Successor resolution is
         // hoisted out of the target loop; this matters because the physical
         // pipeline issues many short solves and each pays the build.
-        let mut mobility = vec![0.0_f64; n_loc * n_targets];
-        let mut lookahead_min = lookahead.then(|| vec![f64::MAX; n_loc * n_targets]);
+        // Overlay rows keep the defaults (mobility 0.0, lookahead MAX):
+        // isolated targets have no outgoing lanes, matching the direct path.
+        let mut mobility = vec![0.0_f64; n_rows * n_targets];
+        let mut lookahead_min = lookahead.then(|| vec![f64::MAX; n_rows * n_targets]);
         let mut successor_rows: Vec<u32> = Vec::new();
         for (&loc_enc, &li) in loc_idx.iter() {
             successor_rows.clear();
@@ -943,8 +986,10 @@ impl HeuristicTables {
 
         Self {
             loc_idx,
+            extra_idx,
             target_col,
             n_targets,
+            w_t,
             d_blend,
             mobility,
             lookahead_min,
@@ -958,12 +1003,22 @@ impl HeuristicTables {
         self.target_col.get(&target_enc).map(|&c| c as usize)
     }
 
+    /// Resolve a location's row index: interned lane endpoints first, then
+    /// the per-solve overlay rows for isolated targets.
+    #[inline]
+    fn row(&self, loc_enc: u64) -> Option<u32> {
+        self.loc_idx
+            .get(&loc_enc)
+            .or_else(|| self.extra_idx.get(&loc_enc))
+            .copied()
+    }
+
     /// Blended distance by pre-resolved column. `f64::MAX` = unreachable or
     /// unknown location.
     #[inline]
     fn d(&self, loc_enc: u64, col: usize) -> f64 {
-        match self.loc_idx.get(&loc_enc) {
-            Some(&li) => self.d_blend[li as usize * self.n_targets + col],
+        match self.row(loc_enc) {
+            Some(li) => self.d_blend[li as usize * self.n_targets + col],
             None => f64::MAX,
         }
     }
@@ -972,8 +1027,8 @@ impl HeuristicTables {
     /// (no outgoing lanes).
     #[inline]
     fn m(&self, loc_enc: u64, col: usize) -> f64 {
-        match self.loc_idx.get(&loc_enc) {
-            Some(&li) => self.mobility[li as usize * self.n_targets + col],
+        match self.row(loc_enc) {
+            Some(li) => self.mobility[li as usize * self.n_targets + col],
             None => 0.0,
         }
     }
@@ -990,10 +1045,25 @@ impl HeuristicTables {
     /// when [`Self::has_lookahead`] — guard at the call site.
     #[inline]
     fn la(&self, loc_enc: u64, col: usize) -> f64 {
-        match (&self.lookahead_min, self.loc_idx.get(&loc_enc)) {
-            (Some(la), Some(&li)) => la[li as usize * self.n_targets + col],
+        match (&self.lookahead_min, self.row(loc_enc)) {
+            (Some(la), Some(li)) => la[li as usize * self.n_targets + col],
             _ => f64::MAX,
         }
+    }
+}
+
+/// Guard the by-convention coupling between prebuilt tables and the params
+/// consuming them: a `w_t` mismatch would silently blend distances with the
+/// build-time weight while the fallback path uses the runtime weight.
+#[inline]
+fn debug_assert_tables_match(tables: Option<&HeuristicTables>, params: &EntropyParams) {
+    if let Some(tb) = tables {
+        debug_assert!(
+            tb.w_t.to_bits() == params.w_t.to_bits(),
+            "HeuristicTables built with w_t={} but consumed with w_t={}",
+            tb.w_t,
+            params.w_t
+        );
     }
 }
 
@@ -1074,6 +1144,7 @@ pub(crate) fn generate_candidates(
         params.max_movesets_per_group > 0,
         "max_movesets_per_group must be > 0"
     );
+    debug_assert_tables_match(tables, params);
 
     let index = ctx.index;
     let dist_table = ctx.dist_table;
@@ -1504,6 +1575,7 @@ pub(crate) fn score_moveset(
     params: &EntropyParams,
     tables: Option<&HeuristicTables>,
 ) -> f64 {
+    debug_assert_tables_match(tables, params);
     let targets = ctx.targets;
     let dist_table = ctx.dist_table;
     let blocked = ctx.blocked;
@@ -1532,15 +1604,16 @@ pub(crate) fn score_moveset(
         // there doubles the hash probes in the hottest loop of the solve.
         let tcol = tables.and_then(|tb| tb.col(target_enc));
         let d_of = |enc: u64| -> Option<f64> {
-            match (tables, tcol) {
-                (Some(tb), Some(c)) => {
-                    let d = tb.d(enc, c);
-                    (d < f64::MAX).then_some(d)
-                }
-                (Some(_), None) => None,
-                (None, _) => dist_table
+            if let (Some(tb), Some(c)) = (tables, tcol) {
+                let d = tb.d(enc, c);
+                (d < f64::MAX).then_some(d)
+            } else {
+                // No tables, or a target missing from this table's columns
+                // (tables built from a different target set): fall back to
+                // direct computation, matching `generate_candidates`.
+                dist_table
                     .distance(enc, target_enc)
-                    .map(|d| blended_distance(d as f64, enc, target_enc, params.w_t, dist_table)),
+                    .map(|d| blended_distance(d as f64, enc, target_enc, params.w_t, dist_table))
             }
         };
 
@@ -3014,6 +3087,54 @@ mod tests {
                     assert_eq!(a.score.to_bits(), b.score.to_bits());
                 }
             }
+        }
+    }
+
+    /// Targets with no incident lanes are interned by `DistanceTable`
+    /// (`distance(t, t) = 0`) but absent from the lane-endpoint interner;
+    /// the tables must give them overlay rows so `d(t, col)` matches the
+    /// direct path (blended 0.0, not the unknown-location MAX sentinel) —
+    /// on both the uncached and cached builds.
+    #[test]
+    fn heuristic_tables_intern_isolated_targets() {
+        let index = make_index();
+        let iso = LocationAddr {
+            zone_id: 0,
+            word_id: 9,
+            site_id: 9,
+        };
+        let iso_enc = iso.encode();
+        assert!(
+            index.outgoing_lanes(iso).is_empty(),
+            "test premise: the isolated target must have no lanes"
+        );
+
+        let targets = vec![(0u32, loc(0, 5).encode()), (1u32, iso_enc)];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index).with_time_distances(&index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &targets,
+            cz_pairs: None,
+        };
+        let w_t = EntropyParams::default().w_t;
+
+        let expected = blended_distance(0.0, iso_enc, iso_enc, w_t, &dist_table);
+        let cache = BlendedColumnCache::new(&index);
+        for tables in [
+            HeuristicTables::build(&ctx, w_t, false),
+            HeuristicTables::build_cached(&ctx, w_t, false, &cache),
+        ] {
+            let col = tables.col(iso_enc).expect("isolated target has a column");
+            assert_eq!(
+                tables.d(iso_enc, col).to_bits(),
+                expected.to_bits(),
+                "table distance for the isolated target must match the direct path"
+            );
+            assert_eq!(tables.m(iso_enc, col), 0.0);
         }
     }
 

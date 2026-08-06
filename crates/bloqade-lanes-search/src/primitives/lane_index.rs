@@ -273,10 +273,13 @@ impl LaneIndex {
 
     /// Iterate the encoded endpoints (src, dst) of every registered lane.
     ///
-    /// Yields duplicates; callers dedupe. Unlike `positions`, which only
-    /// covers endpoints whose grid position resolves, this is the same
-    /// location universe `DistanceTable` interns — use it when a lookup
-    /// structure must answer for every location the distance table can.
+    /// Yields duplicates; callers dedupe. Unlike `positions`, this covers
+    /// every registered endpoint regardless of whether its grid position
+    /// resolves. Note it is still a strict subset of what `DistanceTable`
+    /// interns: the distance table additionally interns isolated targets
+    /// with no incident lanes (so `distance(t, t) = 0` works). Consumers
+    /// that must answer for every distance-table location (e.g. the entropy
+    /// `HeuristicTables`) handle those targets separately.
     pub(crate) fn lane_endpoint_encs(&self) -> impl Iterator<Item = u64> + '_ {
         self.endpoints
             .values()
