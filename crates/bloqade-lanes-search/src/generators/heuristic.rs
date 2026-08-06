@@ -259,19 +259,26 @@ impl HeuristicGenerator {
 
 /// Whether the atom occupying `dst` could vacate in the same AOD shot as
 /// `lane`: it has an outgoing lane on the same
-/// `(zone_id, move_type, bus_id, direction)` group, the only way two lanes can
-/// execute simultaneously. All four fields are exactly what
-/// `ArchSpec::check_lane_group_consistency` requires of a group.
+/// `(zone_id, move_type, bus_id, direction)` group — the four fields
+/// `ArchSpec::check_lane_group_consistency` requires a group to share, so a
+/// candidate admitted here is one the validator will accept.
 ///
-/// The `zone_id` term only ever bites for `ZoneBus` lanes: site and word buses
-/// are intra-zone, so a lane and its destination share a zone automatically.
-/// A single `zone_bus` may however connect more than two zones across its
-/// pairs, and a chain through it (`z0w0 → z1w0`, `z1w0 → z2w0`) has a
-/// different `zone_id` per hop — so it can never be one AOD shot, whatever
-/// the occupancy says. The worst case of comparing `zone_id` here is therefore
-/// that such a cross-zone chain gets **serialized** into one operation per
-/// hop, which is what the ISA requires anyway; omitting it would only
-/// manufacture candidates that `check_lanes` later rejects.
+/// The `zone_id` term only bites for `ZoneBus` lanes: site and word buses are
+/// intra-zone, so a lane and its destination share a zone automatically. A
+/// single `zone_bus` may serve several zones across its pairs, and for such a
+/// lane `zone_id` is the *source's* zone, so a chain through it
+/// (`z0w0 → z1w0`, then `z1w0 → z2w0`) carries a different `zone_id` per hop.
+///
+/// Consequence, stated honestly: those hops get **serialized** into one
+/// operation each. Serialization is permitted by the architecture — but so is
+/// batching them, since one zone bus may carry transfers among more than two
+/// zones in a single shot. This predicate is therefore deliberately *stricter
+/// than the architecture*, matching today's group-consistency rule rather than
+/// the hardware's capability. The reason to keep it that way for now is that
+/// `check_lane_group_consistency` rejects a mixed-`zone_id` group, so
+/// generating such candidates would produce plans that fail the
+/// solver-boundary replay outright. Unlocking the batching means relaxing that
+/// rule for zone buses first, then relaxing this in step.
 ///
 /// This is the selection-time half of the uniform destination rule (#866).
 /// [`crate::ops::aod_grid::destination_is_available`] states the rule against a
