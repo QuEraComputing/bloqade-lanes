@@ -121,10 +121,23 @@ enum LanesStatus lanes_validate_addresses(const struct LANESProgram *prog,
 
 /**
  * Stack type simulation (underflow, type mismatches, and lane/location group
- * checks). Runs without an arch spec (duplicate-only group checks).
+ * checks). Runs without an arch spec (duplicate-only group checks) — prefer
+ * [`lanes_simulate_stack_with_arch`], which enables the arch-dependent
+ * lane-group checks (consistency, bus membership, AOD geometry).
  */
 enum LanesStatus lanes_simulate_stack(const struct LANESProgram *prog,
                                       struct LANESValidationErrors **out);
+
+/**
+ * Stack type simulation with arch-dependent lane/location group checks
+ * (consistency, bus membership, AOD complete-grid geometry).
+ *
+ * `arch` may be NULL, in which case group checks degrade to duplicate
+ * detection only (the [`lanes_simulate_stack`] behavior).
+ */
+enum LanesStatus lanes_simulate_stack_with_arch(const struct LANESProgram *prog,
+                                                const struct LANESArchSpec *arch,
+                                                struct LANESValidationErrors **out);
 
 /**
  * Number of errors in the handle.
