@@ -271,6 +271,21 @@ impl LaneIndex {
         self.positions.len()
     }
 
+    /// Iterate the encoded endpoints (src, dst) of every registered lane.
+    ///
+    /// Yields duplicates; callers dedupe. Unlike `positions`, this covers
+    /// every registered endpoint regardless of whether its grid position
+    /// resolves. Note it is still a strict subset of what `DistanceTable`
+    /// interns: the distance table additionally interns isolated targets
+    /// with no incident lanes (so `distance(t, t) = 0` works). Consumers
+    /// that must answer for every distance-table location (e.g. the entropy
+    /// `HeuristicTables`) handle those targets separately.
+    pub(crate) fn lane_endpoint_encs(&self) -> impl Iterator<Item = u64> + '_ {
+        self.endpoints
+            .values()
+            .flat_map(|(src, dst)| [src.encode(), dst.encode()])
+    }
+
     /// Get all lanes for a `(move_type, bus_id, zone_id, direction)` triplet.
     pub fn lanes_for(
         &self,

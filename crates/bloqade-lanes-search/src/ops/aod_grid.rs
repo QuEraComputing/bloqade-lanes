@@ -5,6 +5,7 @@
 //! merge pass combines compatible clusters into larger rectangles.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
@@ -32,7 +33,14 @@ pub(crate) struct BusGridContext<'a> {
     /// cache in the all-zones case, or freshly built for a single zone.
     maps: Cow<'a, BusGridMaps>,
     /// Locations occupied by atoms or blocked locations in the current config.
-    occupied_locs: HashSet<u64>,
+    /// Borrowed in production (one context per bus group per node — cloning
+    /// here was pure overhead); owned only by tests that fabricate contexts.
+    occupied_locs: Cow<'a, HashSet<u64>>,
+    /// Scratch buffers reused across `is_valid_rect` calls (the hottest loop
+    /// in candidate generation) to avoid a fresh allocation per rectangle:
+    /// the rectangle's `(src, dst)` cells and its sorted source encodings.
+    cells_scratch: RefCell<Vec<(u64, u64)>>,
+    srcs_scratch: RefCell<Vec<u64>>,
 }
 
 impl<'a> BusGridContext<'a> {
@@ -48,7 +56,7 @@ impl<'a> BusGridContext<'a> {
         bus_id: u32,
         zone_id: Option<u32>,
         dir: Direction,
-        occupied: &HashSet<u64>,
+        occupied: &'a HashSet<u64>,
     ) -> Self {
         let maps = match zone_id {
             None => match index.bus_grid_maps(mt, bus_id, dir) {
@@ -63,7 +71,9 @@ impl<'a> BusGridContext<'a> {
 
         Self {
             maps,
-            occupied_locs: occupied.clone(),
+            occupied_locs: Cow::Borrowed(occupied),
+            cells_scratch: RefCell::new(Vec::new()),
+            srcs_scratch: RefCell::new(Vec::new()),
         }
     }
 
@@ -74,16 +84,10 @@ impl<'a> BusGridContext<'a> {
     /// may only fill the rectangle when both its source and destination avoid
     /// stationary atoms.
     fn is_valid_rect(&self, xs: &BTreeSet<u64>, ys: &BTreeSet<u64>, movers: &HashSet<u64>) -> bool {
-        let mut rect_sources = HashSet::new();
-        for &x in xs {
-            for &y in ys {
-                let Some(&src_enc) = self.maps.pos_to_src.get(&(x, y)) else {
-                    return false;
-                };
-                rect_sources.insert(src_enc);
-            }
-        }
-
+        // Resolve every cell's (src, dst) once into a reused scratch buffer.
+        let mut cells = self.cells_scratch.borrow_mut();
+        cells.clear();
+        cells.reserve(xs.len() * ys.len());
         for &x in xs {
             for &y in ys {
                 let Some(&src_enc) = self.maps.pos_to_src.get(&(x, y)) else {
@@ -92,14 +96,34 @@ impl<'a> BusGridContext<'a> {
                 let Some(&dst_enc) = self.maps.src_to_dst.get(&src_enc) else {
                     return false;
                 };
-                let src_is_mover = movers.contains(&src_enc);
-                let dst_is_rect_mover =
-                    movers.contains(&dst_enc) && rect_sources.contains(&dst_enc);
+                cells.push((src_enc, dst_enc));
+            }
+        }
 
-                if !src_is_mover && self.occupied_locs.contains(&src_enc) {
-                    return false;
-                }
-                if self.occupied_locs.contains(&dst_enc) && !dst_is_rect_mover {
+        // "Is this destination one of the rectangle's own sources?" is only
+        // asked for cells whose destination is occupied, so build the sorted
+        // source index lazily on first ask: rectangles whose destinations are
+        // free (the common case) never pay for it, while a dense block move
+        // over a full-width rectangle — 160 cells on the physical spec — gets
+        // binary search instead of a nested scan.
+        let mut srcs = self.srcs_scratch.borrow_mut();
+        let mut srcs_ready = false;
+
+        for &(src_enc, dst_enc) in cells.iter() {
+            if !movers.contains(&src_enc) && self.occupied_locs.contains(&src_enc) {
+                return false;
+            }
+            if self.occupied_locs.contains(&dst_enc) {
+                let dst_is_rect_mover = movers.contains(&dst_enc) && {
+                    if !srcs_ready {
+                        srcs.clear();
+                        srcs.extend(cells.iter().map(|&(s, _)| s));
+                        srcs.sort_unstable();
+                        srcs_ready = true;
+                    }
+                    srcs.binary_search(&dst_enc).is_ok()
+                };
+                if !dst_is_rect_mover {
                     return false;
                 }
             }
@@ -174,15 +198,18 @@ impl<'a> BusGridContext<'a> {
                     continue;
                 }
 
-                let mut new_xs = xs.clone();
-                let mut new_ys = ys.clone();
-                new_xs.insert(x);
-                new_ys.insert(y);
-
-                if self.is_valid_rect(&new_xs, &new_ys, movers) {
-                    xs = new_xs;
-                    ys = new_ys;
-                } else {
+                // Tentatively grow the rectangle in place; roll back on an
+                // invalid result. Equivalent to validating a cloned copy,
+                // without the two BTreeSet clones per entry.
+                let inserted_x = xs.insert(x);
+                let inserted_y = ys.insert(y);
+                if !self.is_valid_rect(&xs, &ys, movers) {
+                    if inserted_x {
+                        xs.remove(&x);
+                    }
+                    if inserted_y {
+                        ys.remove(&y);
+                    }
                     leftover.push((src_enc, lane_enc));
                 }
             }
@@ -315,7 +342,9 @@ mod tests {
                 src_to_dst,
                 src_to_pos,
             }),
-            occupied_locs,
+            occupied_locs: Cow::Owned(occupied_locs),
+            cells_scratch: RefCell::new(Vec::new()),
+            srcs_scratch: RefCell::new(Vec::new()),
         }
     }
 

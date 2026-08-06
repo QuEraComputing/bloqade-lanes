@@ -75,6 +75,7 @@ from bloqade.lanes.bytecode._native import (
     TargetPolicyRunner as TargetPolicyRunner,
     TargetSolver as TargetSolver,
     TransportPath as TransportPath,
+    ValidatedMoves as ValidatedMoves,
     Word as Word,
     WordBus as WordBus,
     Zone as Zone,

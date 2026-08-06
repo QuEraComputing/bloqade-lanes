@@ -240,7 +240,72 @@ int main(void) {
         tests_passed++;
     }
 
-    /* --- Test 8: Null pointer safety --- */
+    /* --- Test 8: Arch-aware stack simulation catches lane-group errors --- */
+    {
+        /* One word, five sites, one site bus src=[0,1] dst=[3,4]. */
+        static const char *ARCH_JSON =
+            "{\"version\": \"2.0\","
+            " \"words\": [{ \"sites\": [[0,0],[1,0],[2,0],[3,0],[4,0]] }],"
+            " \"zones\": [{"
+            "   \"grid\": {\"x_start\": 1.0, \"y_start\": 2.0,"
+            "              \"x_spacing\": [2.0,2.0,2.0,2.0], \"y_spacing\": []},"
+            "   \"site_buses\": [{ \"src\": [0,1], \"dst\": [3,4] }],"
+            "   \"word_buses\": [],"
+            "   \"words_with_site_buses\": [0],"
+            "   \"sites_with_word_buses\": []"
+            " }],"
+            " \"zone_buses\": [],"
+            " \"modes\": [{ \"name\": \"default\", \"zones\": [0],"
+            "               \"bitstring_order\": [] }]}";
+
+        /* Site-bus lane on bus 7, which does not exist in the arch. */
+        static const char *BAD_LANE_PROGRAM =
+            "version 1.0;\n"
+            "fn @main() {\n"
+            "  const_lane 0x0000000700000000\n"
+            "  move 1\n"
+            "  halt\n"
+            "}\n";
+
+        struct LANESArchSpec *arch = NULL;
+        ASSERT_OK(lanes_arch_from_json(ARCH_JSON, &arch), "parse arch json");
+
+        struct LANESProgram *prog = NULL;
+        ASSERT_OK(lanes_program_from_text(BAD_LANE_PROGRAM, &prog),
+                  "parse bad-lane program");
+
+        /* Without an arch the group checks degrade to duplicate detection
+         * and the invalid bus goes unnoticed. */
+        struct LANESValidationErrors *errs = NULL;
+        ASSERT_OK(lanes_simulate_stack(prog, &errs), "no-arch stack sim passes");
+        ASSERT_EQ(lanes_validation_errors_count(errs), 0,
+                  "no-arch stack sim reports no errors");
+        lanes_validation_errors_free(errs);
+
+        /* With the arch the invalid lane is reported. */
+        errs = NULL;
+        enum LanesStatus s = lanes_simulate_stack_with_arch(prog, arch, &errs);
+        ASSERT_EQ(s, LANES_STATUS_ERR_VALIDATION,
+                  "arch-aware stack sim returns ErrValidation");
+        ASSERT_TRUE(lanes_validation_errors_count(errs) > 0,
+                    "arch-aware stack sim reports the invalid lane");
+
+        /* NULL arch degrades to the legacy behavior. */
+        struct LANESValidationErrors *errs2 = NULL;
+        ASSERT_OK(lanes_simulate_stack_with_arch(prog, NULL, &errs2),
+                  "NULL-arch stack sim passes");
+        ASSERT_EQ(lanes_validation_errors_count(errs2), 0,
+                  "NULL-arch stack sim reports no errors");
+
+        lanes_validation_errors_free(errs2);
+        lanes_validation_errors_free(errs);
+        lanes_program_free(prog);
+        lanes_arch_free(arch);
+        printf("  PASS: arch-aware stack simulation\n");
+        tests_passed++;
+    }
+
+    /* --- Test 9: Null pointer safety --- */
     {
         enum LanesStatus s = lanes_program_from_text(NULL, NULL);
         ASSERT_EQ(s, LANES_STATUS_ERR_NULL_PTR, "null text returns null-ptr status");
@@ -257,7 +322,7 @@ int main(void) {
         tests_passed++;
     }
 
-    /* --- Test 9: lanes_last_error after failure --- */
+    /* --- Test 10: lanes_last_error after failure --- */
     {
         struct LANESProgram *prog = NULL;
         enum LanesStatus s = lanes_program_from_text("not valid sst", &prog);

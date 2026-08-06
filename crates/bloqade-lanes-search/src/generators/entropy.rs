@@ -34,18 +34,22 @@ impl MoveGenerator for EntropyGenerator {
         // Read entropy for this node (default 1 if not yet in map).
         let entropy = state.entropy_map.get(&node_id).map_or(1, |s| s.entropy);
 
+        // `None`: this trait path has no per-solve table cache; candidates
+        // are computed directly (bit-identical, just slower). The production
+        // entropy driver builds `HeuristicTables` once per solve instead.
         let raw = crate::drivers::entropy::generate_candidates(
             config,
             entropy,
             &self.params,
             ctx,
             self.seed,
+            None,
         );
 
-        for (move_set, new_config, _cost, _origin) in raw {
+        for entry in raw {
             out.push(MoveCandidate {
-                move_set,
-                new_config,
+                move_set: entry.move_set,
+                new_config: entry.new_config,
             });
         }
     }
