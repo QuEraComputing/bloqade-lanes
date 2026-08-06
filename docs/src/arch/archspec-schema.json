@@ -2,136 +2,86 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/QuEraComputing/bloqade-lanes/main/docs/src/arch/archspec-schema.json",
   "title": "ArchSpec",
-  "description": "Architecture specification for the Bloqade quantum device. Defines the physical geometry (words, sites, grids), transport buses (site and word), logical zones, and optional AOD transport paths.",
+  "description": "Architecture specification for the Bloqade quantum device. Describes the full hardware topology: words, zones (each owning a coordinate grid and intra-zone buses), inter-zone buses, entangling pairs, operational modes, optional AOD transport paths, and device capabilities. Rules that JSON Schema cannot express (uniform grid dimensions across zones, bus well-formedness, index ranges relative to other fields, zone bounding-box overlap) are enforced by ArchSpec::validate().",
   "type": "object",
   "required": [
     "version",
-    "geometry",
-    "buses",
-    "words_with_site_buses",
-    "sites_with_word_buses",
+    "words",
     "zones",
-    "entangling_zones",
-    "measurement_mode_zones"
+    "zone_buses",
+    "modes"
   ],
   "additionalProperties": false,
   "properties": {
     "version": {
-      "description": "Arch spec format version as a \"major.minor\" string (e.g. \"1.0\"). Both major and minor components must fit in a u16 (0..65535).",
+      "description": "Arch spec format version as a \"major.minor\" string (e.g. \"2.0\"). Both major and minor components must fit in a u16 (0..65535).",
       "type": "string",
       "pattern": "^[0-9]{1,5}\\.[0-9]{1,5}$"
     },
-    "geometry": {
-      "$ref": "#/$defs/Geometry"
-    },
-    "buses": {
-      "$ref": "#/$defs/Buses"
-    },
-    "words_with_site_buses": {
-      "description": "Word IDs that have site bus transport capability. Only these words can execute intra-word site moves. Every entry must be a valid word ID defined in geometry.words.",
+    "words": {
+      "description": "Word definitions (atom registers). A word's ID is its index in this array. All words must have the same number of sites, and every zone's grid must be able to position every word's sites.",
       "type": "array",
       "items": {
-        "type": "integer",
-        "minimum": 0
-      }
-    },
-    "sites_with_word_buses": {
-      "description": "Site indices that participate in inter-word (word bus) transport. These are the 'landing pad' positions within each word where atoms arrive/depart during word-bus moves. Every entry must be less than geometry.sites_per_word.",
-      "type": "array",
-      "items": {
-        "type": "integer",
-        "minimum": 0
-      }
+        "$ref": "#/$defs/Word"
+      },
+      "minItems": 1
     },
     "zones": {
-      "description": "Logical zones that group words for execution phases. Zone 0 is special and must contain all word IDs.",
+      "description": "Logical zones. Each zone owns a coordinate grid and the site/word buses that operate within it. A zone's ID is its index in this array. All zones must have the same grid dimensions, and zone bounding boxes must not overlap in physical space.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/Zone"
       },
       "minItems": 1
     },
-    "entangling_zones": {
-      "description": "Entanglement zones. Each zone is a list of word-ID pairs [w_a, w_b] whose matching sites are within blockade radius for CZ gates.",
+    "zone_buses": {
+      "description": "Inter-zone word buses. Each entry transports words across a zone boundary: every (src[i], dst[i]) pair must have different zone_ids. A bus's ID is its index in this array. Subject to the bus well-formedness rules (see Bus).",
       "type": "array",
       "items": {
-        "type": "array",
-        "items": {
-          "type": "array",
-          "items": { "type": "integer", "minimum": 0 },
-          "minItems": 2,
-          "maxItems": 2
-        }
+        "$ref": "#/$defs/InterZoneBus"
       }
     },
-    "measurement_mode_zones": {
-      "description": "Zone IDs that support measurement mode. Must not be empty. The first entry must be zone 0. Every entry must reference a valid zone ID defined in zones.",
+    "modes": {
+      "description": "Named operational modes. Each mode selects a subset of zones and defines the bitstring ordering used for measurement results.",
       "type": "array",
-      "minItems": 1,
       "items": {
-        "type": "integer",
-        "minimum": 0
+        "$ref": "#/$defs/Mode"
       }
     },
     "paths": {
-      "description": "Optional list of AOD (Acousto-Optic Deflector) transport paths. Each path connects a source location to a destination location via a sequence of [x, y] waypoints.",
+      "description": "Optional list of AOD (Acousto-Optic Deflector) transport paths. Each path identifies a transport lane and gives the sequence of [x, y] waypoints atoms follow during that transport.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/TransportPath"
       }
     },
     "feed_forward": {
-      "description": "Whether the device supports mid-circuit measurement with classical feedback. When false (default), at most one measure instruction is allowed per program.",
+      "description": "Whether the device supports mid-circuit measurement with classical feedback. When false (default), control flow and multiple measure instructions are rejected during bytecode validation.",
       "type": "boolean",
       "default": false
     },
     "atom_reloading": {
-      "description": "Whether the device supports reloading atoms after initial fill. When false (default), no fill instruction is allowed (only initial_fill).",
+      "description": "Whether the device supports reloading atoms after the initial fill. When false (default), no fill instruction is allowed (initial_fill is separate and always permitted).",
       "type": "boolean",
       "default": false
     },
     "blockade_radius": {
-      "description": "Rydberg blockade radius in micrometers. Sites within this distance are considered entangled during CZ gates.",
-      "type": "number",
-      "default": 2.0
+      "description": "Optional Rydberg blockade radius in micrometers. Metadata associated with the architecture, typically used by consumers to interpret the entangling word pairs; no relationship between the pairs and the radius is enforced by the spec itself.",
+      "type": "number"
     }
   },
   "$defs": {
-    "Geometry": {
-      "title": "Geometry",
-      "description": "Physical geometry of the device. Defines words, their 2D grids, and site positions within each word.",
-      "type": "object",
-      "required": ["sites_per_word", "words"],
-      "additionalProperties": false,
-      "properties": {
-        "sites_per_word": {
-          "description": "Number of atom sites per word. Every word must have exactly this many sites.",
-          "type": "integer",
-          "minimum": 1
-        },
-        "words": {
-          "description": "List of words (atom registers). Each word is an independent array of sites laid out on a 2D grid.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Word"
-          },
-          "minItems": 1
-        }
-      }
-    },
     "Word": {
       "title": "Word",
-      "description": "A word (atom register) consisting of sites arranged on a 2D grid. Words are the fundamental unit of the device topology. A word's ID is its index in the geometry.words array.",
+      "description": "A word (atom register) consisting of sites positioned on the parent zone's grid. Words are the fundamental unit of the device topology. A word's ID is its index in the top-level words array.",
       "type": "object",
-      "required": ["positions", "site_indices"],
+      "required": ["sites"],
       "additionalProperties": false,
       "properties": {
-        "positions": {
-          "$ref": "#/$defs/Grid"
-        },
-        "site_indices": {
-          "description": "Site positions as [x_idx, y_idx] pairs. Each pair indexes into the grid's computed x and y coordinate arrays respectively. Length must equal geometry.sites_per_word.",
+        "sites": {
+          "description": "Site positions as [x_idx, y_idx] pairs. Each pair indexes into the zone grid's computed x and y coordinate arrays respectively. All words must have the same number of sites (sites_per_word).",
           "type": "array",
+          "minItems": 1,
           "items": {
             "type": "array",
             "items": {
@@ -146,7 +96,7 @@
     },
     "Grid": {
       "title": "Grid",
-      "description": "A 2D coordinate grid for a word, defined by start positions and spacing values. Coordinates are computed as cumulative sums: x[i] = x_start + sum(x_spacing[0..i]). The number of grid points along each axis is len(spacing) + 1. Physical positions are typically in micrometers (µm).",
+      "description": "A 2D coordinate grid for positioning atom sites within a zone, defined by start positions and spacing values. Coordinates are computed as cumulative sums: x[i] = x_start + sum(x_spacing[0..i]). The number of grid points along each axis is len(spacing) + 1. Spacings must be non-negative. Physical positions are typically in micrometers (µm).",
       "type": "object",
       "required": ["x_start", "y_start", "x_spacing", "y_spacing"],
       "additionalProperties": false,
@@ -175,32 +125,9 @@
         }
       }
     },
-    "Buses": {
-      "title": "Buses",
-      "description": "Transport bus definitions. Buses are the channels that move atoms between sites (intra-word) or between words (inter-word).",
-      "type": "object",
-      "required": ["site_buses", "word_buses"],
-      "additionalProperties": false,
-      "properties": {
-        "site_buses": {
-          "description": "Site buses move atoms between sites within the same word. A bus's ID is its index in this array.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Bus"
-          }
-        },
-        "word_buses": {
-          "description": "Word buses move atoms between different words. A bus's ID is its index in this array.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Bus"
-          }
-        }
-      }
-    },
     "Bus": {
       "title": "Bus",
-      "description": "A transport bus that maps source positions to destination positions. For site buses, src and dst are site indices within a word. For word buses, they are word IDs. The bus's identity is determined by its position in the parent array.",
+      "description": "A transport bus that maps source positions to destination positions via parallel arrays: src[i] -> dst[i]. For site buses, entries are site indices within a word; for word buses, they are word IDs. The bus's identity is determined by its position in the parent array. The src->dst relation must be well-formed: src entries unique, dst entries unique, and no cycles (including self-loops) — a bus is a set of explicit transports executed simultaneously as one AOD operation, never a permutation. Overlapping-but-acyclic relations (conveyor chains such as 0->1, 1->2) are legal. These relational constraints cannot be expressed in JSON Schema and are enforced by ArchSpec::validate().",
       "type": "object",
       "required": ["src", "dst"],
       "additionalProperties": false,
@@ -223,15 +150,138 @@
         }
       }
     },
-    "Zone": {
-      "title": "Zone",
-      "description": "A logical zone that groups words for execution phases (e.g. entangling, measurement). A zone's ID is its index in the zones array.",
+    "InterZoneBus": {
+      "title": "InterZoneBus",
+      "description": "An inter-zone word bus mapping zone-qualified words via parallel arrays: src[i] -> dst[i]. Every pair must cross a zone boundary (src[i].zone_id != dst[i].zone_id). Subject to the same well-formedness rules as Bus (unique src entries, unique dst entries, acyclic src->dst relation).",
       "type": "object",
-      "required": ["words"],
+      "required": ["src", "dst"],
       "additionalProperties": false,
       "properties": {
-        "words": {
-          "description": "Word IDs belonging to this zone.",
+        "src": {
+          "description": "Zone-qualified source words.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ZonedWordRef"
+          }
+        },
+        "dst": {
+          "description": "Zone-qualified destination words. Must be the same length as src.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ZonedWordRef"
+          }
+        }
+      }
+    },
+    "ZonedWordRef": {
+      "title": "ZonedWordRef",
+      "description": "A zone-qualified word reference for inter-zone bus entries.",
+      "type": "object",
+      "required": ["zone_id", "word_id"],
+      "additionalProperties": false,
+      "properties": {
+        "zone_id": {
+          "description": "Zone ID (index into the zones array).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "word_id": {
+          "description": "Word ID (index into the words array).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "Zone": {
+      "title": "Zone",
+      "description": "A logical zone owning a coordinate grid and the site/word buses that operate within it. A zone's ID is its index in the zones array.",
+      "type": "object",
+      "required": [
+        "grid",
+        "site_buses",
+        "word_buses",
+        "words_with_site_buses",
+        "sites_with_word_buses"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Human-readable zone name. Defaults to the empty string when absent.",
+          "type": "string",
+          "default": ""
+        },
+        "grid": {
+          "$ref": "#/$defs/Grid"
+        },
+        "site_buses": {
+          "description": "Site buses that move atoms between sites within words of this zone. A bus's ID is its index in this array.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bus"
+          }
+        },
+        "word_buses": {
+          "description": "Word buses that move atoms between words within this zone. A bus's ID is its index in this array.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bus"
+          }
+        },
+        "words_with_site_buses": {
+          "description": "Word IDs (within this zone) that have site-bus transport capability. Every entry must be a valid word ID.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "sites_with_word_buses": {
+          "description": "Site indices that participate in word-bus transport within this zone. These are the 'landing pad' positions within each word where atoms arrive/depart during word-bus moves. Every entry must be less than sites_per_word.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "entangling_pairs": {
+          "description": "Word pairs [w_a, w_b] within this zone that are at blockade radius for CZ gates. Word IDs must be valid, a word must not pair with itself, and pairs must be unique (order-insensitive). A zone with no entangling pairs is a storage/low-connectivity zone. Defaults to empty when absent.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    "Mode": {
+      "title": "Mode",
+      "description": "A named operational mode selecting a subset of zones and the measurement bitstring ordering.",
+      "type": "object",
+      "required": ["name", "zones", "bitstring_order"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Human-readable mode name.",
+          "type": "string"
+        },
+        "zones": {
+          "description": "Zone IDs active in this mode. Every entry must reference a defined zone.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "bitstring_order": {
+          "description": "Bit-to-location mapping for measurement results. Each entry is a LocationAddr encoded as a packed integer with bit layout [zone_id:8][word_id:16][site_id:16][pad:24] (most-significant first).",
           "type": "array",
           "items": {
             "type": "integer",
@@ -248,12 +298,12 @@
       "additionalProperties": false,
       "properties": {
         "lane": {
-          "description": "Encoded LaneAddr as a 16-digit hex string (e.g. '0xC000000000010000'). Low 32 bits: [word_id:16][site_id:16], high 32 bits: [dir:1][mt:1][pad:14][bus_id:16].",
+          "description": "Encoded LaneAddr as a 16-digit hex string (e.g. '0x2000000000000000'). Low 32 bits: [word_id:16][site_id:16]; high 32 bits: [direction:1][move_type:2][zone_id:8][pad:5][bus_id:16].",
           "type": "string",
           "pattern": "^0[xX][0-9a-fA-F]{16}$"
         },
         "waypoints": {
-          "description": "Sequence of [x, y] waypoints defining the physical trajectory atoms follow during transport. Must have at least 2 entries; the first and last must match the lane's source and destination positions.",
+          "description": "Sequence of [x, y] waypoints defining the physical trajectory atoms follow during transport. Must have at least 2 entries. Coordinates must be finite.",
           "type": "array",
           "minItems": 2,
           "items": {

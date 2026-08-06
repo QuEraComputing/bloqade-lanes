@@ -1592,6 +1592,25 @@ class NoHomeCzPlacement:
 # ── AtomStateData ──
 
 @final
+class ValidatedMoves:
+    """A lane group proven executable against the ``AtomStateData`` it was
+    validated with.
+
+    Obtainable only from ``AtomStateData.validate_moves``; feed it to
+    ``AtomStateData.apply_validated`` on the same state it was validated
+    against.
+    """
+
+    @property
+    def movers(
+        self,
+    ) -> list[tuple[int, LocationAddress, LocationAddress, LaneAddress]]:
+        """The resolved mover assignments as ``(qubit, src, dst, lane)`` tuples."""
+        ...
+
+    def __len__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
 class AtomStateData:
     """Tracks qubit-to-location mappings as atoms move through the architecture.
 
@@ -1721,13 +1740,16 @@ class AtomStateData:
     def apply_moves(
         self, lanes: list[LaneAddress], arch_spec: ArchSpec
     ) -> Optional[AtomStateData]:
-        """Apply a sequence of lane moves and return the resulting state.
+        """Apply a group of lane moves simultaneously and return the new state.
 
-        Each lane is resolved to source/destination locations via the arch
-        spec. Qubits at source locations are moved to their destinations.
-        If a destination is already occupied, both qubits are recorded as
-        collided and removed from the location maps. Lanes whose source
-        location has no qubit are silently skipped.
+        All lanes execute as one AOD transport operation: endpoints are
+        resolved against the pre-move state, so for any valid lane group
+        the result is independent of lane order, and a destination counts
+        as free when its occupant moves in the same group (conveyor chains
+        are legal). A qubit that lands on an atom which does not move in
+        this group collides: both are recorded in ``collision`` and removed
+        from the location maps. Lanes whose source location has no qubit
+        are silently skipped.
 
         Args:
             lanes (list[LaneAddress]): Sequence of lane addresses to apply.
@@ -1737,6 +1759,52 @@ class AtomStateData:
         Returns:
             Optional[AtomStateData]: A new state reflecting the moves, or
                 ``None`` if any lane address is invalid.
+        """
+        ...
+
+    def validate_moves(
+        self, lanes: list[LaneAddress], arch_spec: ArchSpec
+    ) -> ValidatedMoves:
+        """Validate that a lane group can execute against this state.
+
+        Runs the static lane-group checks plus the occupancy rules, all
+        resolved against the pre-move state: every occupied destination
+        must be vacated by a lane in the same group (uniformly for mover
+        and empty-source filler lanes), and no two lanes may share a
+        destination.
+
+        Args:
+            lanes (list[LaneAddress]): The lane group to validate.
+            arch_spec (ArchSpec): Architecture specification for resolving
+                lane endpoints (assumed structurally valid).
+
+        Returns:
+            ValidatedMoves: A token for ``apply_validated``.
+
+        Raises:
+            MoveValidationError: If the group cannot execute; its
+                ``errors`` attribute carries every individual error.
+        """
+        ...
+
+    def apply_validated(self, moves: ValidatedMoves) -> AtomStateData:
+        """Apply a validated lane group and return the resulting state.
+
+        Total on a token produced by ``validate_moves`` on this same state:
+        validation has already ruled out every collision, so no atom is
+        destroyed or silently skipped.
+
+        Args:
+            moves (ValidatedMoves): Token from ``validate_moves``.
+
+        Returns:
+            AtomStateData: A new state reflecting the moves.
+
+        Raises:
+            MoveValidationError: If the token is stale — produced against a
+                different state, or against this one before it moved on.
+                Carries ``StaleValidatedMovesError`` /
+                ``DestinationOccupiedError`` instances in ``errors``.
         """
         ...
 

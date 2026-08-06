@@ -111,6 +111,81 @@ def test_apply_moves_with_collision():
     assert new_atom_state == expected_atom_state
 
 
+def test_validate_moves_and_apply_validated():
+    atom_state = atom_state_data.AtomStateData.from_fields(
+        locations_to_qubit={LocationAddress(0, 0): 0},
+        qubit_to_locations={0: LocationAddress(0, 0)},
+    )
+    arch_spec = logical.get_arch_spec()
+
+    validated = atom_state.validate_moves(
+        lanes=(WordLaneAddress(0, 0, 0),), arch_spec=arch_spec
+    )
+    new_atom_state = atom_state.apply_validated(validated)
+
+    assert new_atom_state == atom_state.apply_moves(
+        lanes=(WordLaneAddress(0, 0, 0),), arch_spec=arch_spec
+    )
+    assert new_atom_state.qubit_to_locations[0] == LocationAddress(1, 0)
+    assert new_atom_state.collision == {}
+
+
+def test_apply_validated_rejects_stale_token():
+    """A ValidatedMoves token is tied to the state it was validated against.
+    Applying it to a state that has moved on must raise rather than
+    desynchronize the location maps — enforced in every build, since the
+    shipped extension module is compiled in release mode."""
+    from bloqade.lanes.bytecode.exceptions import (
+        MoveValidationError,
+        StaleValidatedMovesError,
+    )
+
+    atom_state = atom_state_data.AtomStateData.from_fields(
+        locations_to_qubit={LocationAddress(0, 0): 0},
+        qubit_to_locations={0: LocationAddress(0, 0)},
+    )
+    arch_spec = logical.get_arch_spec()
+
+    validated = atom_state.validate_moves(
+        lanes=(WordLaneAddress(0, 0, 0),), arch_spec=arch_spec
+    )
+    moved = atom_state.apply_validated(validated)
+
+    # The qubit has left word 0, so the token no longer describes `moved`.
+    with pytest.raises(MoveValidationError) as excinfo:
+        moved.apply_validated(validated)
+    assert any(isinstance(e, StaleValidatedMovesError) for e in excinfo.value.errors)
+
+    # The state that raised is untouched.
+    assert moved.qubit_to_locations[0] == LocationAddress(1, 0)
+
+
+def test_validate_moves_rejects_occupied_destination():
+    from bloqade.lanes.bytecode.exceptions import (
+        DestinationOccupiedError,
+        MoveValidationError,
+    )
+
+    # Word 1 is occupied by a stationary atom: the group cannot execute.
+    atom_state = atom_state_data.AtomStateData.from_fields(
+        locations_to_qubit={
+            LocationAddress(0, 0): 0,
+            LocationAddress(1, 0): 1,
+        },
+        qubit_to_locations={
+            0: LocationAddress(0, 0),
+            1: LocationAddress(1, 0),
+        },
+    )
+    arch_spec = logical.get_arch_spec()
+
+    with pytest.raises(MoveValidationError) as excinfo:
+        atom_state.validate_moves(
+            lanes=(WordLaneAddress(0, 0, 0),), arch_spec=arch_spec
+        )
+    assert any(isinstance(e, DestinationOccupiedError) for e in excinfo.value.errors)
+
+
 def test_get_qubit_pairing():
     # CZ partners: word 0 ↔ word 1.
     # Qubit 0 at (w=0,s=0) pairs with qubit 2 at (w=1,s=0).

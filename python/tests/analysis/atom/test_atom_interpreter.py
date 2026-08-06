@@ -73,6 +73,37 @@ def test_atom_interpreter_simple():
     )
 
 
+def test_atom_interpreter_rejects_inexecutable_move():
+    """A move whose destination holds an atom that does not move in the same
+    group is a program error: the analysis raises with the diagnostic rather
+    than silently repairing the state (previously the collision was masked
+    by restoring both atoms to their pre-move positions)."""
+    import pytest
+
+    @kernel
+    def main():
+        state0 = move.load()
+        state1 = move.fill(
+            state0,
+            location_addresses=(
+                move.LocationAddress(0, 0),
+                move.LocationAddress(1, 0),
+            ),
+        )
+        # Word 1 is occupied by a stationary atom.
+        state2 = move.move(state1, lanes=(WordLaneAddress(0, 0, 0),))
+        future = move.end_measure(state2, zone_addresses=(move.ZoneAddress(0),))
+        return move.get_future_result(
+            future,
+            zone_address=move.ZoneAddress(0),
+            location_address=move.LocationAddress(1, 0),
+        )
+
+    interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())
+    with pytest.raises(Exception, match="not executable"):
+        interp.run(main)
+
+
 def test_get_post_processing():
     # Define a simple kernel for testing
     @kernel
