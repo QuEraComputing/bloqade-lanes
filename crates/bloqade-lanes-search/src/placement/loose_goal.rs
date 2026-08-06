@@ -271,6 +271,7 @@ pub(crate) fn solve_loose_goal(
             max_expansions,
             opts,
             None,
+            Some(engine.blended_cache()),
         )
     };
 
