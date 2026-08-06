@@ -13,6 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
+use crate::drivers::entropy::BlendedColumnCache;
 use crate::ops::entangling::{self, WordPairDistances};
 use crate::primitives::distance::DistanceTable;
 use crate::primitives::lane_index::LaneIndex;
@@ -50,6 +51,9 @@ pub struct SearchEngine {
     index: LaneIndex,
     entangling_cache: OnceLock<EntanglingCache>,
     nohome_cache: OnceLock<NoHomeCache>,
+    /// Cross-solve cache of entropy blended-distance columns; see
+    /// [`BlendedColumnCache`]. Remove alongside the entropy driver.
+    blended_cache: OnceLock<BlendedColumnCache>,
 }
 
 impl std::fmt::Debug for SearchEngine {
@@ -83,7 +87,14 @@ impl SearchEngine {
             index,
             entangling_cache: OnceLock::new(),
             nohome_cache: OnceLock::new(),
+            blended_cache: OnceLock::new(),
         }
+    }
+
+    /// Get or build the cross-solve entropy blended-column cache.
+    pub(crate) fn blended_cache(&self) -> &BlendedColumnCache {
+        self.blended_cache
+            .get_or_init(|| BlendedColumnCache::new(&self.index))
     }
 
     /// Access the underlying lane index.
