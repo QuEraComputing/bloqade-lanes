@@ -166,6 +166,14 @@ fn move_validation_error_to_py(py: Python<'_>, error: &MoveValidationError) -> P
             let cls = module.getattr("ContestedDestinationError")?;
             cls.call1((dst.encode(), first.encode_u64(), second.encode_u64()))?
         }
+        MoveValidationError::StaleMoverSource {
+            lane,
+            src,
+            expected,
+        } => {
+            let cls = module.getattr("StaleValidatedMovesError")?;
+            cls.call1((lane.encode_u64(), src.encode(), *expected))?
+        }
     };
 
     Ok(obj.into())

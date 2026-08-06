@@ -161,7 +161,13 @@ class AtomStateData(RustWrapper[_RustAtomStateData]):
         return self._inner.validate_moves(rust_lanes, arch_spec._inner)
 
     def apply_validated(self, moves: ValidatedMoves) -> AtomStateData:
-        """Apply a group validated by :meth:`validate_moves` on this state."""
+        """Apply a group validated by :meth:`validate_moves` on this state.
+
+        Raises
+        :class:`~bloqade.lanes.bytecode.exceptions.MoveValidationError` if
+        the token is stale (validated against a different state, or against
+        this one before it moved on).
+        """
         return AtomStateData.from_inner(self._inner.apply_validated(moves))
 
     def get_qubit(self, location: LocationAddress):

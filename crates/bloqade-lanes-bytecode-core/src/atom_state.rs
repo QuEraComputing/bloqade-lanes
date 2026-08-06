@@ -53,6 +53,22 @@ pub enum MoveValidationError {
         occupant: u32,
     },
 
+    /// A validated mover's source no longer holds the qubit it was resolved
+    /// with, i.e. the [`ValidatedMoves`] token was produced against a
+    /// different state (or against this one before it moved on).
+    #[error(
+        "stale ValidatedMoves token: lane {lane:?} expected qubit {expected} \
+         at {src:?}, which no longer holds it"
+    )]
+    StaleMoverSource {
+        /// The lane whose resolved source went stale.
+        lane: LaneAddr,
+        /// The source location the token recorded.
+        src: LocationAddr,
+        /// The qubit the token expected to find there.
+        expected: u32,
+    },
+
     /// Two lanes in the group share a destination.
     ///
     /// Unreachable through a well-formed bus (destination-unique per
@@ -440,41 +456,54 @@ impl AtomStateData {
 
     /// Apply a validated lane group and return the resulting state.
     ///
-    /// Total on its input: [`Self::validate_moves`] has already ruled out
-    /// every collision, so no atom is ever destroyed or silently skipped
-    /// here. The `prev_lanes` field is reset to the movers of this call;
-    /// `move_count` is accumulated; `collision` is carried over unchanged.
+    /// Total on a token produced by [`Self::validate_moves`] on *this* state:
+    /// validation has already ruled out every collision, so no atom is
+    /// destroyed or silently skipped. The `prev_lanes` field is reset to the
+    /// movers of this call; `move_count` is accumulated; `collision` is
+    /// carried over unchanged.
     ///
-    /// The token must have been produced by `validate_moves` on this same
-    /// state (debug-asserted).
-    pub fn apply_validated(&self, moves: &ValidatedMoves) -> Self {
+    /// Returns `Err` when the token is stale — produced against a different
+    /// state, or against this state before it moved on. The token records
+    /// assignments resolved at validation time, so applying it blindly would
+    /// silently desynchronize the two location maps rather than fail. This
+    /// check runs in every build (not just debug) because `apply_validated`
+    /// is public API, including through the Python bindings, where holding a
+    /// token across a state change is easy to do by accident. It costs
+    /// O(movers) lookups — far less than [`Self::validate_moves`] itself.
+    pub fn apply_validated(
+        &self,
+        moves: &ValidatedMoves,
+    ) -> Result<Self, Vec<MoveValidationError>> {
+        let mover_srcs: HashSet<LocationAddr> =
+            moves.movers.iter().map(|&(_, src, _, _)| src).collect();
+        let mut errors: Vec<MoveValidationError> = Vec::new();
+        for &(qubit, src, dst, lane) in &moves.movers {
+            if self.locations_to_qubit.get(&src) != Some(&qubit) {
+                errors.push(MoveValidationError::StaleMoverSource {
+                    lane,
+                    src,
+                    expected: qubit,
+                });
+                continue;
+            }
+            if let Some(&occupant) = self.locations_to_qubit.get(&dst)
+                && !mover_srcs.contains(&dst)
+            {
+                errors.push(MoveValidationError::DestinationOccupiedByStationaryAtom {
+                    lane,
+                    dst,
+                    occupant,
+                });
+            }
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
         let mut qubit_to_locations = self.qubit_to_locations.clone();
         let mut locations_to_qubit = self.locations_to_qubit.clone();
         let mut move_count = self.move_count.clone();
         let mut prev_lanes: HashMap<u32, LaneAddr> = HashMap::new();
-
-        // Guard against a stale token (validated against a different state):
-        // every mover's source must still hold the validated qubit, and every
-        // destination must still be free or vacated by this same group —
-        // otherwise the insert below would silently desync the bidirectional
-        // maps.
-        #[cfg(debug_assertions)]
-        {
-            let mover_srcs: HashSet<LocationAddr> =
-                moves.movers.iter().map(|&(_, src, _, _)| src).collect();
-            for (qubit, src, dst, _) in &moves.movers {
-                debug_assert_eq!(
-                    self.locations_to_qubit.get(src),
-                    Some(qubit),
-                    "ValidatedMoves applied to a state it was not validated against"
-                );
-                debug_assert!(
-                    !self.locations_to_qubit.contains_key(dst) || mover_srcs.contains(dst),
-                    "ValidatedMoves applied to a state where destination {dst:?} \
-                     is occupied by an atom that does not move in this group"
-                );
-            }
-        }
 
         for (qubit, src, _, _) in &moves.movers {
             locations_to_qubit.remove(src);
@@ -488,13 +517,13 @@ impl AtomStateData {
             locations_to_qubit.insert(*dst, *qubit);
         }
 
-        Self {
+        Ok(Self {
             locations_to_qubit,
             qubit_to_locations,
             prev_lanes,
             collision: self.collision.clone(),
             move_count,
-        }
+        })
     }
 
     /// Look up which qubit (if any) occupies the given location.
@@ -1403,7 +1432,7 @@ mod tests {
         let lanes = [chain_lane(0), chain_lane(1)];
 
         let validated = state.validate_moves(&lanes, &spec).expect("chain is valid");
-        let via_token = state.apply_validated(&validated);
+        let via_token = state.apply_validated(&validated).expect("token is fresh");
         let via_legacy = state.apply_moves(&lanes, &spec).unwrap();
         assert_eq!(via_token, via_legacy);
         assert!(via_token.collision.is_empty());
@@ -1507,9 +1536,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "is occupied by an atom that does not move")]
-    fn apply_validated_stale_token_panics_in_debug() {
+    fn apply_validated_rejects_token_whose_destination_became_occupied() {
         let spec = make_chain_spec();
         let state = AtomStateData::from_locations(&[(0, word_loc(0))]);
         let validated = state
@@ -1517,9 +1544,35 @@ mod tests {
             .expect("valid against the original state");
 
         // The destination becomes occupied by a stationary atom after
-        // validation; applying the stale token must trip the debug guard.
+        // validation; applying the stale token must fail rather than
+        // overwrite the occupant's reverse-map entry.
         let later = state.add_atoms(&[(5, word_loc(1))]).unwrap();
-        let _ = later.apply_validated(&validated);
+        let errors = later.apply_validated(&validated).unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            MoveValidationError::DestinationOccupiedByStationaryAtom { occupant: 5, .. }
+        )));
+    }
+
+    #[test]
+    fn apply_validated_rejects_token_whose_source_moved_on() {
+        let spec = make_chain_spec();
+        let state = AtomStateData::from_locations(&[(0, word_loc(0))]);
+        let validated = state
+            .validate_moves(&[chain_lane(0)], &spec)
+            .expect("valid against the original state");
+
+        // Applying the token twice: after the first apply the qubit has left
+        // word 0, so the second application is stale.
+        let after = state.apply_validated(&validated).expect("token is fresh");
+        let errors = after.apply_validated(&validated).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, MoveValidationError::StaleMoverSource { expected: 0, .. }))
+        );
+        // The state that produced the error is untouched.
+        assert_eq!(after.qubit_to_locations[&0], word_loc(1));
     }
 
     #[test]
@@ -1533,7 +1586,7 @@ mod tests {
         let validated = state
             .validate_moves(&lanes, &spec)
             .expect("filler is valid");
-        let result = state.apply_validated(&validated);
+        let result = state.apply_validated(&validated).expect("token is fresh");
         assert_eq!(result.qubit_to_locations[&0], word_loc(3));
         assert_eq!(result.locations_to_qubit.len(), 1);
     }

@@ -319,6 +319,24 @@ class ContestedDestinationError(MoveValidationError):
         )
 
 
+class StaleValidatedMovesError(MoveValidationError):
+    """A ``ValidatedMoves`` token was applied to a state it was not
+    validated against (or to that state after it moved on).
+
+    The token records the mover assignments resolved at validation time, so
+    applying it to a different state would desynchronize the location maps.
+    """
+
+    def __init__(self, lane: int, src: int, expected: int):
+        self.lane = lane
+        self.src = src
+        self.expected = expected
+        super().__init__(
+            f"stale ValidatedMoves token: lane 0x{lane:016x} expected qubit "
+            f"{expected} at location 0x{src:016x}, which no longer holds it"
+        )
+
+
 # ── Parse errors ──
 
 

@@ -73,13 +73,14 @@ class Move(interp.MethodTable):
         # physical spec.
         try:
             validated = current_state.data.validate_moves(stmt.lanes, interp_.arch_spec)
+            new_data = current_state.data.apply_validated(validated)
         except MoveValidationError as e:
             details = "\n".join(f"  - {err}" for err in e.errors) or f"  - {e}"
             raise InterpreterError(
                 f"move statement is not executable:\n{details}"
             ) from e
 
-        return (AtomState(current_state.data.apply_validated(validated)),)
+        return (AtomState(new_data),)
 
     @interp.impl(move.CZ)
     @interp.impl(move.LocalR)

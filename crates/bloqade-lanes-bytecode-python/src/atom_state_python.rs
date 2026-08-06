@@ -255,11 +255,18 @@ impl PyAtomStateData {
 
     /// Apply a validated lane group and return the resulting state.
     ///
-    /// Total on its input: `validate_moves` has already ruled out every
-    /// collision, so no atom is destroyed or silently skipped. The token
-    /// must have been produced by `validate_moves` on this same state.
-    fn apply_validated(&self, moves: &PyValidatedMoves) -> Self {
-        Self::from_rs(self.inner.apply_validated(&moves.inner))
+    /// Total on a token produced by `validate_moves` on this same state:
+    /// validation has already ruled out every collision, so no atom is
+    /// destroyed or silently skipped.
+    ///
+    /// Raises `MoveValidationError` if the token is stale — produced against
+    /// a different state, or against this one before it moved on — rather
+    /// than desynchronizing the location maps.
+    fn apply_validated(&self, py: Python<'_>, moves: &PyValidatedMoves) -> PyResult<Self> {
+        self.inner
+            .apply_validated(&moves.inner)
+            .map(Self::from_rs)
+            .map_err(|errors| move_validation_errors_to_py(py, errors))
     }
 
     /// Look up which qubit (if any) occupies the given location.

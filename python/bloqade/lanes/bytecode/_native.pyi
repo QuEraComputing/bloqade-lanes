@@ -1790,15 +1790,21 @@ class AtomStateData:
     def apply_validated(self, moves: ValidatedMoves) -> AtomStateData:
         """Apply a validated lane group and return the resulting state.
 
-        Total on its input: ``validate_moves`` has already ruled out every
-        collision, so no atom is destroyed or silently skipped. The token
-        must have been produced by ``validate_moves`` on this same state.
+        Total on a token produced by ``validate_moves`` on this same state:
+        validation has already ruled out every collision, so no atom is
+        destroyed or silently skipped.
 
         Args:
             moves (ValidatedMoves): Token from ``validate_moves``.
 
         Returns:
             AtomStateData: A new state reflecting the moves.
+
+        Raises:
+            MoveValidationError: If the token is stale — produced against a
+                different state, or against this one before it moved on.
+                Carries ``StaleValidatedMovesError`` /
+                ``DestinationOccupiedError`` instances in ``errors``.
         """
         ...
 
