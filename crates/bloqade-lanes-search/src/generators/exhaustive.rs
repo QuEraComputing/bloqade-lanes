@@ -92,7 +92,6 @@ struct ExpandContext<'a> {
 /// Per-triplet data built during rectangle enumeration.
 struct TripletData {
     pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)>,
-    invalid_locs: HashSet<u64>,
 }
 
 /// Enumerate all valid AOD rectangles for a set of lanes and push results.
@@ -106,27 +105,19 @@ fn rectangles_to_move_sets(
     let mut pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)> = HashMap::new();
     let mut unique_x: BTreeSet<u64> = BTreeSet::new();
     let mut unique_y: BTreeSet<u64> = BTreeSet::new();
-    let mut invalid_locs: HashSet<u64> = HashSet::new();
 
     for &lane in lanes {
-        let (src, dst) = match ctx.index.endpoints(&lane) {
-            Some(ep) => ep,
-            None => continue,
+        let Some((src, _dst)) = ctx.index.endpoints(&lane) else {
+            continue;
         };
-        let (x, y) = match ctx.index.position(src) {
-            Some(p) => p,
-            None => continue,
+        let Some((x, y)) = ctx.index.position(src) else {
+            continue;
         };
         let xb = x.to_bits();
         let yb = y.to_bits();
         pos_to_info.insert((xb, yb), (src, lane));
         unique_x.insert(xb);
         unique_y.insert(yb);
-
-        let src_enc = src.encode();
-        if ctx.occupied.contains(&src_enc) && ctx.occupied.contains(&dst.encode()) {
-            invalid_locs.insert(src_enc);
-        }
     }
 
     let sorted_xs: Vec<u64> = unique_x.into_iter().collect();
@@ -141,10 +132,7 @@ fn rectangles_to_move_sets(
         .unwrap_or(sorted_ys.len())
         .min(sorted_ys.len());
 
-    let td = TripletData {
-        pos_to_info,
-        invalid_locs,
-    };
+    let td = TripletData { pos_to_info };
 
     for nx in 1..=max_nx {
         let mut x_indices = vec![0usize; nx];
@@ -181,30 +169,43 @@ fn try_rectangle(
 ) {
     let mut lane_addrs: Vec<LaneAddr> = Vec::new();
     let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
-    let mut has_atom = false;
+    // Every cell's (src, dst) plus the sources this rectangle actually moves
+    // an atom out of — the group's mover set, needed to judge destinations.
+    let mut cells: Vec<(u64, u64)> = Vec::with_capacity(x_subset.len() * y_subset.len());
+    let mut mover_srcs: HashSet<u64> = HashSet::new();
 
     for &xb in x_subset {
         for &yb in y_subset {
             let Some(&(src, lane)) = td.pos_to_info.get(&(xb, yb)) else {
                 return;
             };
-            let src_enc = src.encode();
-            if td.invalid_locs.contains(&src_enc) {
+            let Some((_, dst)) = ctx.index.endpoints(&lane) else {
                 return;
-            }
+            };
+            let src_enc = src.encode();
             lane_addrs.push(lane);
+            cells.push((src_enc, dst.encode()));
 
             if let Some(&qid) = ctx.loc_to_qubit.get(&src_enc) {
-                has_atom = true;
-                if let Some((_, dst)) = ctx.index.endpoints(&lane) {
-                    moves.push((qid, dst));
-                }
+                mover_srcs.insert(src_enc);
+                moves.push((qid, dst));
             }
         }
     }
 
-    if !has_atom {
+    if moves.is_empty() {
         return;
+    }
+
+    // Uniform destination rule (#866): every cell's destination — mover and
+    // empty-source filler alike — must be free or vacated by this same
+    // rectangle. Judged against the pre-move occupancy once the whole mover
+    // set is known, which is why it cannot be a per-lane prefilter: a
+    // conveyor chain is only legal *because* the atom ahead moves too.
+    for &(_, dst_enc) in &cells {
+        if !crate::ops::aod_grid::destination_is_available(dst_enc, &ctx.occupied, &mover_srcs) {
+            return;
+        }
     }
 
     let move_set = MoveSet::new(lane_addrs);
@@ -380,11 +381,11 @@ mod tests {
     }
 
     #[test]
-    fn generate_collision_prefilter() {
+    fn generate_rejects_move_onto_stationary_atom() {
         let index = make_index();
         // Qubit 0 at site 0, qubit 1 at site 5 (destination of site 0 forward).
-        // The pre-filter should mark site 0 as invalid for forward moves
-        // (src occupied, dst occupied).
+        // Qubit 1 has no lane of its own on this bus, so it cannot vacate in
+        // the same shot: the uniform destination rule rejects the rectangle.
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
         let generator = ExhaustiveGenerator::new(None, None);
 
@@ -394,7 +395,72 @@ mod tests {
         let collision = out
             .iter()
             .any(|c| c.new_config.location_of(0) == Some(loc(0, 5)));
-        assert!(!collision, "collision should be pre-filtered");
+        assert!(!collision, "landing on a stationary atom must be rejected");
+    }
+
+    fn make_chain_index() -> LaneIndex {
+        let spec: ArchSpec = serde_json::from_str(&crate::test_utils::chain_arch_json()).unwrap();
+        LaneIndex::new(spec)
+    }
+
+    /// On a conveyor-chain bus (0→1, 1→2, …) two adjacent atoms can shift
+    /// together in one shot: the leading atom's destination is occupied, but
+    /// its occupant moves in the same rectangle. Before #876 the whole
+    /// rectangle was discarded because both endpoints were occupied.
+    #[test]
+    fn generate_admits_conveyor_chain() {
+        let index = make_chain_index();
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        let generator = ExhaustiveGenerator::new(None, None);
+
+        let targets_raw: Vec<(u32, u64)> = vec![(0, loc(0, 1).encode())];
+        let target_locs: Vec<u64> = vec![loc(0, 1).encode()];
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets_raw, &blocked);
+        let mut state = SearchState::default();
+        let mut out = Vec::new();
+        generator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
+
+        let has_chain = out.iter().any(|c| {
+            c.move_set.len() >= 2
+                && c.new_config.location_of(0) == Some(loc(0, 1))
+                && c.new_config.location_of(1) == Some(loc(0, 2))
+        });
+        assert!(
+            has_chain,
+            "conveyor chain 0→1, 1→2 must be generated as one simultaneous move set"
+        );
+    }
+
+    /// The chain exemption is not a blanket pass for occupied destinations:
+    /// the atom ahead must actually move. Here site 1 holds an atom with no
+    /// lane in the group (site 1's own lane is not part of a 1-cell rectangle
+    /// at site 0), so the single-cell rectangle at site 0 stays invalid.
+    #[test]
+    fn generate_chain_still_rejects_stationary_leader() {
+        let index = make_chain_index();
+        // Qubit 1 sits on site 4 — the end of the chain, which has no
+        // outgoing lane on this bus — so qubit 0's 3→4 lane can never fire.
+        let config = Config::new([(0, loc(0, 3)), (1, loc(0, 4))]).unwrap();
+        let generator = ExhaustiveGenerator::new(None, None);
+
+        let targets_raw: Vec<(u32, u64)> = vec![(0, loc(0, 4).encode())];
+        let target_locs: Vec<u64> = vec![loc(0, 4).encode()];
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets_raw, &blocked);
+        let mut state = SearchState::default();
+        let mut out = Vec::new();
+        generator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
+
+        let lands_on_occupant = out
+            .iter()
+            .any(|c| c.new_config.location_of(0) == Some(loc(0, 4)));
+        assert!(
+            !lands_on_occupant,
+            "the atom ahead has no lane on this bus, so the move must be rejected"
+        );
     }
 
     #[test]

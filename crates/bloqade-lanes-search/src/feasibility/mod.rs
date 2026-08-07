@@ -17,29 +17,26 @@
 //!    legal AOD operation — `ArchSpec::check_lanes` only applies the
 //!    complete-rectangle geometry constraint to groups of more than one lane.
 //!    So single-pebble moves are available.
-//! 2. Every bus is a matching between *disjoint* source and destination sets,
-//!    so a multi-lane move is a set of vertex-disjoint edges whose
-//!    destinations must all already be empty. Such a move serializes into
-//!    independent single-pebble moves in any order, and no move can rotate a
-//!    cycle of atoms with no empty vertex.
+//! 2. Every bus's src→dst relation is acyclic and endpoint-unique — a bus is
+//!    by definition a set of explicit transports along graph edges, never a
+//!    permutation. A multi-lane move is therefore either a set of
+//!    vertex-disjoint edges (when the src and dst sets are disjoint) or a
+//!    conveyor chain `x→y, y→z` whose final destination is empty. Both
+//!    serialize into independent single-pebble moves — the chain in reverse
+//!    topological order, each site vacated before the atom behind it arrives
+//!    — so no move can rotate a cycle of atoms with no empty vertex.
 //!
 //! Together these mean the set of reachable configurations under AOD moves is
 //! identical to the set reachable under one-atom-at-a-time pebble motion —
 //! AOD parallelism changes the schedule, not what is reachable. Point 2 is a
-//! property of the shipped architecture specs rather than of the format, so
-//! [`validate_bus_disjointness`] checks it explicitly; if it ever fails, the
-//! reduction in this module is invalid. In debug builds, [`check`] and
-//! [`build_decomposition`] assert it on entry (together with
-//! `ArchSpec::validate`); release builds skip the check and trust the caller
-//! to pass a validated spec.
+//! validated format invariant as of issue #874: `ArchSpec::validate` rejects a
+//! cyclic bus (`ArchSpecError::CyclicBus`) along with duplicate endpoints, so
+//! the property holds for any spec this module can legally be handed. In debug
+//! builds [`check`] and [`build_decomposition`] re-assert it on entry; release
+//! builds skip the walk and trust the caller to pass a validated spec.
 //!
-//! Strictly, the reduction needs less than disjointness: a bus is by
-//! definition a set of explicit transports along graph edges, never a
-//! permutation, so the load-bearing property is that no bus's src→dst
-//! relation contains a cycle (a chain `x→y, y→z` serializes in reverse
-//! topological order and is pebble-equivalent; only a rotation is not).
-//! Overlapping-but-acyclic buses, and relaxing this module's guard
-//! accordingly, are tracked in issue #866.
+//! Note that overlapping-but-acyclic buses are *legal* here (issue #866): the
+//! reduction never needed endpoint disjointness, only the absence of cycles.
 //!
 //! ## What this does and does not prove
 //!
@@ -66,8 +63,6 @@ pub mod decomposition;
 pub mod graph;
 
 use std::collections::{HashMap, HashSet};
-
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::feasibility::decomposition::{
     Decomposition, find_precedence_cycle, subgraph_priorities,
@@ -178,65 +173,23 @@ impl Feasibility {
     }
 }
 
-/// Verify that every bus maps a source set disjoint from its destination set.
+/// Debug-build guard for the assumption the pebble-motion reduction rests on:
+/// a structurally valid architecture, which since issue #874 includes per-bus
+/// src→dst acyclicity and endpoint uniqueness (see the module docs).
 ///
-/// The whole pebble-motion reduction rests on this: it is what rules out an
-/// AOD move rotating a cycle of atoms with no empty vertex. Returns one
-/// message per violating bus; an empty vector means the property holds.
-pub fn validate_bus_disjointness(arch: &ArchSpec) -> Vec<String> {
-    let mut errors = Vec::new();
-
-    for (zone_id, zone) in arch.zones.iter().enumerate() {
-        for (bus_id, bus) in zone.site_buses.iter().enumerate() {
-            let src: HashSet<u16> = bus.src.iter().map(|s| s.0).collect();
-            if bus.dst.iter().any(|d| src.contains(&d.0)) {
-                errors.push(format!(
-                    "zone {zone_id} site_bus {bus_id}: src and dst sets overlap"
-                ));
-            }
-        }
-        for (bus_id, bus) in zone.word_buses.iter().enumerate() {
-            let src: HashSet<u16> = bus.src.iter().map(|s| s.0).collect();
-            if bus.dst.iter().any(|d| src.contains(&d.0)) {
-                errors.push(format!(
-                    "zone {zone_id} word_bus {bus_id}: src and dst sets overlap"
-                ));
-            }
-        }
-    }
-    for (bus_id, bus) in arch.zone_buses.iter().enumerate() {
-        let src: HashSet<(u8, u16)> = bus.src.iter().map(|s| (s.zone_id, s.word_id)).collect();
-        if bus
-            .dst
-            .iter()
-            .any(|d| src.contains(&(d.zone_id, d.word_id)))
-        {
-            errors.push(format!("zone_bus {bus_id}: src and dst sets overlap"));
-        }
-    }
-
-    errors
-}
-
-/// Debug-build guard for the assumptions the pebble-motion reduction rests
-/// on: a structurally valid architecture whose buses keep their source and
-/// destination sets disjoint (see the module docs).
+/// Overlapping-but-acyclic (conveyor) buses are legal here — they serialize in
+/// reverse topological order and are pebble-equivalent. Only a rotation would
+/// invalidate the reduction, and `ArchSpec::validate` rejects those outright,
+/// so checking structural validity is now exactly the right precondition.
 ///
 /// Release builds skip this entirely — callers are expected to pass a
-/// validated spec (e.g. loaded via `ArchSpec::from_json_validated`). The
-/// disjointness requirement relaxes to per-bus acyclicity once that becomes
-/// a validated format invariant (issue #866).
+/// validated spec (e.g. loaded via `ArchSpec::from_json_validated`).
 fn debug_assert_valid_arch(_index: &LaneIndex) {
     #[cfg(debug_assertions)]
-    {
-        if let Err(errors) = _index.arch_spec().validate() {
-            panic!("feasibility requires a structurally valid ArchSpec: {errors:?}");
-        }
-        let overlaps = validate_bus_disjointness(_index.arch_spec());
-        assert!(
-            overlaps.is_empty(),
-            "feasibility reduction requires src/dst-disjoint buses \
-             (relaxation to acyclicity tracked in issue #866): {overlaps:?}"
+    if let Err(errors) = _index.arch_spec().validate() {
+        panic!(
+            "feasibility requires a structurally valid ArchSpec \
+             (per-bus acyclicity is load-bearing for the reduction): {errors:?}"
         );
     }
 }
@@ -432,7 +385,31 @@ fn decomposition_obstruction(
 mod tests {
     use super::*;
     use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::addr::{LocationAddr as TestLocationAddr, SiteRef};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+    /// Decode an encoded graph vertex location into a `LocationAddr`.
+    fn decode_loc(enc: u64) -> TestLocationAddr {
+        TestLocationAddr::decode(enc)
+    }
+
+    /// The example arch with site bus 0 turned into a conveyor chain
+    /// (0→1, 1→2, 2→3, 3→4, 4→5): the destination set overlaps the source
+    /// set on {1,2,3,4}, but the relation is acyclic and endpoint-unique, so
+    /// it is a legal bus (#874) and a legal input to the reduction (#866).
+    fn overlapping_chain_arch_json() -> String {
+        let mut spec: ArchSpec =
+            serde_json::from_str(example_arch_json()).expect("arch json parses");
+        let bus = &mut spec.zones[0].site_buses[0];
+        bus.src = (0..5).map(SiteRef).collect();
+        bus.dst = (1..6).map(SiteRef).collect();
+        let validation = spec.validate();
+        assert!(
+            validation.is_ok(),
+            "conveyor-chain fixture must be a legal spec: {validation:?}"
+        );
+        serde_json::to_string(&spec).expect("spec serializes")
+    }
 
     /// Brute force over the configuration space: is there a reachable state
     /// where every targeted agent sits on its goal simultaneously? Ground
@@ -622,8 +599,11 @@ mod tests {
     }
 
     #[test]
-    fn shipped_gemini_specs_have_disjoint_bus_endpoints() {
-        // The pebble-motion reduction is only valid while this holds.
+    fn shipped_gemini_specs_satisfy_the_reduction_precondition() {
+        // The reduction needs per-bus src→dst acyclicity, which
+        // `ArchSpec::validate` enforces as of #874. (These specs happen to
+        // keep their endpoints disjoint too, but that is incidental — the
+        // reduction never required it.)
         for (name, json) in [
             (
                 "physical",
@@ -639,29 +619,40 @@ mod tests {
             ),
         ] {
             let spec: ArchSpec = serde_json::from_str(json).expect("arch json parses");
-            assert_eq!(
-                validate_bus_disjointness(&spec),
-                Vec::<String>::new(),
-                "{name} spec must have src/dst-disjoint buses"
+            let validation = spec.validate();
+            assert!(
+                validation.is_ok(),
+                "{name} spec must satisfy the reduction precondition: {validation:?}"
             );
         }
     }
 
-    /// The debug-build guard must refuse a spec whose bus endpoints overlap:
-    /// the reduction is not justified there, so silently returning verdicts
-    /// would be unsound. Relaxing this to per-bus acyclicity is issue #866.
+    /// A spec whose bus overlaps its endpoints *acyclically* (a conveyor
+    /// chain) is legal: the chain serializes in reverse topological order, so
+    /// the pebble-motion reduction still holds and the guard must accept it.
+    /// This is the #866 relaxation — the old guard rejected this spec.
+    #[test]
+    fn overlapping_acyclic_bus_is_accepted() {
+        let index = index_from(&overlapping_chain_arch_json());
+        let initial = Config::new([(0, loc(0, 0))]).expect("config");
+        // Reaching a verdict at all is the assertion: the debug guard runs on
+        // entry to `check` and must not panic on a chain bus.
+        let _verdict = check(&index, &initial, &[], &HashSet::new());
+    }
+
+    /// The debug-build guard must still refuse a spec whose bus *rotates*: a
+    /// cycle has no empty vertex to serialize through, so pebble motion can
+    /// never reproduce it and `Infeasible` verdicts would stop being proofs.
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "src/dst-disjoint")]
-    fn debug_guard_rejects_overlapping_bus() {
+    #[should_panic(expected = "structurally valid ArchSpec")]
+    fn debug_guard_rejects_cyclic_bus() {
         let mut spec: ArchSpec =
             serde_json::from_str(example_arch_json()).expect("arch json parses");
-        // Point the first destination at the second source, forming the
-        // acyclic chain 0→1→6. Structural validation still passes (the
-        // relation stays cycle-free and endpoint-unique, per issue #874);
-        // disjointness does not.
+        // Turn site bus 0 into a rotation: 0→1, 1→0.
         let bus = &mut spec.zones[0].site_buses[0];
-        bus.dst[0] = bus.src[1];
+        bus.src = vec![SiteRef(0), SiteRef(1)];
+        bus.dst = vec![SiteRef(1), SiteRef(0)];
         let index = LaneIndex::new(spec);
         let initial = Config::new([(0, loc(0, 0))]).expect("config");
         let _ = check(&index, &initial, &[], &HashSet::new());
@@ -922,6 +913,65 @@ mod tests {
         let index = gemini_physical();
         for seed in 0..5 {
             assert_no_false_positive(&index, 24, 300, seed);
+        }
+    }
+
+    /// Soundness on an overlapping-bus spec: with endpoint disjointness
+    /// relaxed to acyclicity (#866), the reduction must still never call a
+    /// reachable-by-construction instance infeasible on a conveyor-chain bus.
+    #[test]
+    fn never_reports_reachable_instances_infeasible_on_overlapping_bus_spec() {
+        let index = index_from(&overlapping_chain_arch_json());
+        for seed in 0..25 {
+            assert_no_false_positive(&index, 3, 40, seed);
+        }
+    }
+
+    /// Brute-force cross-check on the chain spec: the decomposition verdict
+    /// must agree with exhaustive search over the reachable configuration
+    /// space, exactly as it does for disjoint-bus specs.
+    #[test]
+    fn decomposition_verdicts_match_brute_force_on_overlapping_bus_spec() {
+        let index = index_from(&overlapping_chain_arch_json());
+        let graph = LaneGraph::build(&index, &HashSet::new());
+        let movable: Vec<VertexId> = (0..graph.len()).filter(|&v| graph.degree(v) > 0).collect();
+        assert!(movable.len() >= 4, "fixture needs a connected region");
+
+        // Two atoms, every ordered (start, goal) combination inside the region
+        // the chain bus wires up: `Infeasible` must imply genuinely unsolvable.
+        for &a0 in movable.iter().take(4) {
+            for &a1 in movable.iter().take(4) {
+                if a0 == a1 {
+                    continue;
+                }
+                for &t0 in movable.iter().take(4) {
+                    for &t1 in movable.iter().take(4) {
+                        if t0 == t1 {
+                            continue;
+                        }
+                        let initial = Config::new([
+                            (0, decode_loc(graph.location_of(a0))),
+                            (1, decode_loc(graph.location_of(a1))),
+                        ])
+                        .expect("distinct vertices give a valid config");
+                        let targets =
+                            [(0u32, graph.location_of(t0)), (1u32, graph.location_of(t1))];
+                        if !check(&index, &initial, &targets, &HashSet::new()).is_infeasible() {
+                            continue;
+                        }
+                        let mut occupant: Vec<Option<u32>> = vec![None; graph.len()];
+                        occupant[a0] = Some(0);
+                        occupant[a1] = Some(1);
+                        let goals: HashMap<u32, VertexId> =
+                            [(0u32, t0), (1u32, t1)].into_iter().collect();
+                        assert!(
+                            !instance_solvable(&graph, &occupant, &goals),
+                            "reported Infeasible for a solvable instance: \
+                             atoms {a0},{a1} → targets {t0},{t1}"
+                        );
+                    }
+                }
+            }
         }
     }
 

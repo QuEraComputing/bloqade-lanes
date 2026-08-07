@@ -26,12 +26,28 @@ use crate::search::result::{SolveResult, SolveStatus};
 use crate::traits::{Goal, Heuristic, MoveGenerator};
 
 /// Extract a [`SolveResult`] from a [`SearchResult`].
-pub(crate) fn extract(result: SearchResult, deadlocks: u32, max_exp: Option<u32>) -> SolveResult {
+///
+/// Every solved plan is replayed through the canonical execution model before
+/// it leaves the solver (see [`crate::search::verify`]): `Config::with_moves`
+/// performs no occupancy validation, so this is where a generator that emits
+/// an inexecutable move set gets caught, rather than downstream in the IR.
+pub(crate) fn extract(
+    result: SearchResult,
+    deadlocks: u32,
+    max_exp: Option<u32>,
+    ctx: &SearchContext,
+) -> SolveResult {
     match result.goal {
         Some(goal_id) => {
             let move_layers = result.solution_path().unwrap_or_default();
             let goal_config = result.graph.config(goal_id).clone();
             let cost = result.graph.g_score(goal_id);
+            crate::search::verify::assert_move_layers_executable(
+                result.graph.config(result.graph.root()),
+                &move_layers,
+                ctx.index.arch_spec(),
+                &goal_config,
+            );
             SolveResult::solved(
                 goal_config,
                 move_layers,
@@ -162,13 +178,13 @@ where
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = IdsFrontier::new(h_sum);
                 let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
-                extract(result, move_gen.deadlock_count(), budget)
+                extract(result, move_gen.deadlock_count(), budget, ctx)
             }
             InnerStrategy::Dfs => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = DfsFrontier::new(h_sum);
                 let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
-                extract(result, move_gen.deadlock_count(), budget)
+                extract(result, move_gen.deadlock_count(), budget, ctx)
             }
             InnerStrategy::Entropy => {
                 let entropy_params = crate::drivers::entropy::EntropyParams {
@@ -202,7 +218,7 @@ where
                         entropy_tables,
                     )
                 };
-                let mut solve = extract(result, 0, budget);
+                let mut solve = extract(result, 0, budget, ctx);
                 solve.entropy_trace = entropy_trace;
                 solve
             }
@@ -253,6 +269,7 @@ where
             astar_result,
             astar_move_gen.deadlock_count(),
             max_expansions,
+            ctx,
         );
 
         if astar_solve.status == SolveStatus::Solved {
@@ -281,7 +298,7 @@ where
                     budget,
                     weight,
                 );
-                extract(result, move_gen.deadlock_count(), budget)
+                extract(result, move_gen.deadlock_count(), budget, ctx)
             }
         }
     };
