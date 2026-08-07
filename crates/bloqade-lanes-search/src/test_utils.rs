@@ -32,6 +32,33 @@ pub fn full_arch_json() -> &'static str {
     include_str!("../../../examples/arch/full.json")
 }
 
+/// The example arch with site bus 0 rewired as a **conveyor chain**:
+/// `0→1, 1→2, 2→3, 3→4` along one row of a word.
+///
+/// The destination set `{1,2,3,4}` overlaps the source set `{0,1,2,3}`, but
+/// the relation is acyclic and endpoint-unique, so this is a legal bus
+/// (issue #874) — and the only kind of spec on which the chain-handling paths
+/// of the generators and the AOD grid layer are reachable (issue #866). The
+/// shipped Gemini specs keep their endpoints disjoint, where a destination is
+/// never a source of the same bus and the chain code is dead.
+#[allow(dead_code)]
+pub fn chain_arch_json() -> String {
+    use bloqade_lanes_bytecode_core::arch::addr::SiteRef;
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+    let mut spec: ArchSpec =
+        serde_json::from_str(example_arch_json()).expect("example arch json parses");
+    let bus = &mut spec.zones[0].site_buses[0];
+    bus.src = (0..4).map(SiteRef).collect();
+    bus.dst = (1..5).map(SiteRef).collect();
+    let validation = spec.validate();
+    assert!(
+        validation.is_ok(),
+        "conveyor-chain fixture must be a legal spec: {validation:?}"
+    );
+    serde_json::to_string(&spec).expect("spec serializes")
+}
+
 /// Minimal two-zone architecture with a single inter-zone `zone_bus`.
 ///
 /// Zone 0 ("gate") holds word 0 and zone 1 ("memory") holds word 1, each a
