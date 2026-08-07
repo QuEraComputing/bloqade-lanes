@@ -52,7 +52,7 @@ allocated_task = GeminiLogicalSimulator().task(logical_qubit_allocation)
 
 # %%
 # We see that the four qubits are allocated at positions 1-4, skipping position 0.
-allocated_task.visualize()
+# allocated_task.visualize()
 
 
 # %%
@@ -68,4 +68,4 @@ def logical_qubit_allocation_alt():
 allocated_task_alt = GeminiLogicalSimulator().task(logical_qubit_allocation_alt)
 
 # %%
-allocated_task_alt.visualize()
+# allocated_task_alt.visualize()
