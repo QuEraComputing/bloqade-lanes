@@ -320,18 +320,17 @@ impl<'a> BusGridContext<'a> {
     ) -> bool {
         // Grow in place and undo exactly what we inserted, rather than
         // snapshotting the sets: this is the hottest loop in candidate
-        // generation, and the three buffers below stay unallocated unless a
+        // generation. The requested point is tracked in a bool, exactly as it
+        // was before repairs existed, so the allocation-free rollback #882
+        // tuned for still holds on the common path. The buffers below record
+        // only *repair-induced* inserts, so they stay unallocated unless a
         // chain actually needs repairing — which cannot happen on an
         // endpoint-disjoint bus, so the shipped specs pay nothing for this.
+        let inserted_x = xs.insert(x);
+        let inserted_y = ys.insert(y);
         let mut added_x: Vec<u64> = Vec::new();
         let mut added_y: Vec<u64> = Vec::new();
         let mut repairs: Vec<u64> = Vec::new();
-        if xs.insert(x) {
-            added_x.push(x);
-        }
-        if ys.insert(y) {
-            added_y.push(y);
-        }
 
         loop {
             repairs.clear();
@@ -367,10 +366,16 @@ impl<'a> BusGridContext<'a> {
             }
         }
 
-        for x in added_x {
+        for rx in added_x {
+            xs.remove(&rx);
+        }
+        for ry in added_y {
+            ys.remove(&ry);
+        }
+        if inserted_x {
             xs.remove(&x);
         }
-        for y in added_y {
+        if inserted_y {
             ys.remove(&y);
         }
         false
