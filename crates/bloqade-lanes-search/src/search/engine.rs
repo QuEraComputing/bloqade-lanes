@@ -11,7 +11,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
+use bloqade_lanes_bytecode_core::arch::query::ArchSpecLoadError;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 
 use crate::drivers::entropy::BlendedColumnCache;
 use crate::ops::entangling::{self, WordPairDistances};
@@ -65,20 +67,51 @@ impl std::fmt::Debug for SearchEngine {
 }
 
 impl SearchEngine {
-    /// Construct from an [`ArchSpec`] JSON string.
+    /// Construct from an [`ArchSpec`] JSON string **without validating it**.
     ///
     /// Parses the JSON, builds the lane index (precomputes all lane
     /// lookups, endpoints, and positions).
+    ///
+    /// Prefer [`Self::from_json_validated`]: this constructor performs no
+    /// structural validation, so it will happily build an engine on a spec
+    /// whose buses are cyclic or have duplicate endpoints — invariants the
+    /// search relies on rather than checks (see
+    /// [`crate::ops::aod_grid`], which cannot tell a rotation from a chain).
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let arch_spec = serde_json::from_str(json)?;
         Ok(Self::from_index(LaneIndex::new(arch_spec)))
     }
 
-    /// Construct from a borrowed [`ArchSpec`]. Avoids the JSON
-    /// round-trip that callers holding a wrapper around an `ArchSpec`
-    /// would otherwise pay to materialize an owned spec.
-    pub fn from_arch_spec(arch_spec: &ArchSpec) -> Self {
-        Self::from_index(LaneIndex::from_arch_spec(arch_spec))
+    /// Construct from an [`ArchSpec`] JSON string, rejecting a spec that does
+    /// not satisfy [`ArchSpec::validate`].
+    ///
+    /// This is the loader every caller should use. The search layers treat
+    /// per-bus acyclicity and endpoint uniqueness (#874) as *given*: rectangle
+    /// growth exempts an occupied destination whose occupant moves in the same
+    /// shot, which is what makes conveyor chains legal — and, on a cyclic bus,
+    /// what would make a physically impossible rotation look legal too.
+    /// Validating at load is what keeps that assumption true.
+    pub fn from_json_validated(json: &str) -> Result<Self, ArchSpecLoadError> {
+        let arch_spec = ArchSpec::from_json_validated(json)?;
+        Ok(Self::from_index(LaneIndex::new(arch_spec)))
+    }
+
+    /// Construct from a borrowed [`ArchSpec`], rejecting a spec that does not
+    /// satisfy [`ArchSpec::validate`]. Avoids the JSON round-trip that callers
+    /// holding a wrapper around an `ArchSpec` would otherwise pay to
+    /// materialize an owned spec.
+    ///
+    /// Validates for the same reason [`Self::from_json_validated`] does, and
+    /// it matters more here: this is the constructor the Python placement
+    /// layers use, so an unchecked version would let a user-supplied spec
+    /// reach the search with a cyclic bus and have a physically impossible
+    /// rotation routed as a legal AOD operation.
+    ///
+    /// [`Self::from_index`] remains the unchecked escape hatch, for callers
+    /// that have already validated or are building a fixture by hand.
+    pub fn from_arch_spec(arch_spec: &ArchSpec) -> Result<Self, Vec<ArchSpecError>> {
+        arch_spec.validate()?;
+        Ok(Self::from_index(LaneIndex::from_arch_spec(arch_spec)))
     }
 
     /// Construct from an existing [`LaneIndex`].
@@ -141,5 +174,44 @@ impl SearchEngine {
                 dist_table,
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::example_arch_json;
+    use bloqade_lanes_bytecode_core::arch::addr::SiteRef;
+
+    /// A spec whose bus is a rotation must be refused at load. Nothing below
+    /// this point can catch it: rectangle growth exempts an occupied
+    /// destination whose occupant moves in the same shot, which is exactly
+    /// what a rotation looks like locally, so the search would route it as a
+    /// legal AOD operation (see `ops::aod_grid`'s
+    /// `the_grid_layer_relies_on_arch_level_acyclicity`).
+    #[test]
+    fn from_json_validated_rejects_a_cyclic_bus() {
+        let mut spec: ArchSpec =
+            serde_json::from_str(example_arch_json()).expect("arch json parses");
+        let bus = &mut spec.zones[0].site_buses[0];
+        bus.src = vec![SiteRef(0), SiteRef(1)];
+        bus.dst = vec![SiteRef(1), SiteRef(0)];
+        let json = serde_json::to_string(&spec).expect("spec serializes");
+
+        let err =
+            SearchEngine::from_json_validated(&json).expect_err("a cyclic bus must be rejected");
+        assert!(
+            matches!(err, ArchSpecLoadError::Validation(_)),
+            "expected a validation error, got {err:?}"
+        );
+
+        // The unvalidated constructor still accepts it — which is precisely
+        // why callers must use the validating one.
+        assert!(SearchEngine::from_json(&json).is_ok());
+    }
+
+    #[test]
+    fn from_json_validated_accepts_a_legal_spec() {
+        assert!(SearchEngine::from_json_validated(example_arch_json()).is_ok());
     }
 }
