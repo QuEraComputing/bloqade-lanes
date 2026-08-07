@@ -13,6 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 use bloqade_lanes_bytecode_core::arch::query::ArchSpecLoadError;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 
 use crate::drivers::entropy::BlendedColumnCache;
 use crate::ops::entangling::{self, WordPairDistances};
@@ -95,11 +96,22 @@ impl SearchEngine {
         Ok(Self::from_index(LaneIndex::new(arch_spec)))
     }
 
-    /// Construct from a borrowed [`ArchSpec`]. Avoids the JSON
-    /// round-trip that callers holding a wrapper around an `ArchSpec`
-    /// would otherwise pay to materialize an owned spec.
-    pub fn from_arch_spec(arch_spec: &ArchSpec) -> Self {
-        Self::from_index(LaneIndex::from_arch_spec(arch_spec))
+    /// Construct from a borrowed [`ArchSpec`], rejecting a spec that does not
+    /// satisfy [`ArchSpec::validate`]. Avoids the JSON round-trip that callers
+    /// holding a wrapper around an `ArchSpec` would otherwise pay to
+    /// materialize an owned spec.
+    ///
+    /// Validates for the same reason [`Self::from_json_validated`] does, and
+    /// it matters more here: this is the constructor the Python placement
+    /// layers use, so an unchecked version would let a user-supplied spec
+    /// reach the search with a cyclic bus and have a physically impossible
+    /// rotation routed as a legal AOD operation.
+    ///
+    /// [`Self::from_index`] remains the unchecked escape hatch, for callers
+    /// that have already validated or are building a fixture by hand.
+    pub fn from_arch_spec(arch_spec: &ArchSpec) -> Result<Self, Vec<ArchSpecError>> {
+        arch_spec.validate()?;
+        Ok(Self::from_index(LaneIndex::from_arch_spec(arch_spec)))
     }
 
     /// Construct from an existing [`LaneIndex`].

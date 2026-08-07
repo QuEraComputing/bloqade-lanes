@@ -577,8 +577,9 @@ impl PyEntropyScorer {
         beta: f64,
         gamma: f64,
         w_t: f64,
+        py: Python<'_>,
     ) -> PyResult<Self> {
-        let index = LaneIndex::from_arch_spec(&arch_spec.inner);
+        let index = crate::errors::validated_lane_index(py, &arch_spec.inner)?;
 
         let targets: Vec<(u32, u64)> = target
             .iter()
@@ -1308,11 +1309,17 @@ pub struct PySearchEngine {
 #[pymethods]
 impl PySearchEngine {
     /// Create a ``SearchEngine`` from a native ``ArchSpec`` object.
+    ///
+    /// Raises ``ArchSpecError`` (with every individual problem in its
+    /// ``errors`` list) for a spec that fails structural validation — the
+    /// search assumes per-bus acyclicity rather than checking it.
     #[staticmethod]
-    fn from_arch_spec(arch: &PyArchSpec) -> Self {
-        Self {
-            inner: Arc::new(SearchEngine::from_arch_spec(&arch.inner)),
-        }
+    fn from_arch_spec(arch: &PyArchSpec, py: Python<'_>) -> PyResult<Self> {
+        let engine = SearchEngine::from_arch_spec(&arch.inner)
+            .map_err(|errors| crate::errors::arch_spec_errors_to_py(py, errors))?;
+        Ok(Self {
+            inner: Arc::new(engine),
+        })
     }
 
     /// Create a ``SearchEngine`` from an ArchSpec JSON string, **without

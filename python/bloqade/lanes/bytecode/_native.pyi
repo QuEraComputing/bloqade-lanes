@@ -1355,7 +1355,14 @@ class SearchEngine:
 
     @staticmethod
     def from_arch_spec(arch: ArchSpec) -> SearchEngine:
-        """Create a ``SearchEngine`` from a native ``ArchSpec`` object."""
+        """Create a ``SearchEngine`` from a native ``ArchSpec`` object.
+
+        Raises ``ArchSpecError`` (with every individual problem in its
+        ``errors`` list) for a spec that fails structural validation: the
+        search assumes per-bus acyclicity rather than checking it, so a cyclic
+        bus would otherwise be routed as if a rotation were a legal AOD
+        operation.
+        """
         ...
 
     @staticmethod
