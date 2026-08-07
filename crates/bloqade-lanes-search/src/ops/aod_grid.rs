@@ -577,6 +577,119 @@ mod tests {
     }
 
     /// Sorted lanes of every emitted grid, for order-insensitive assertions.
+    /// **Shadowed occupant, repairable-looking but unrepairable.**
+    ///
+    /// `pos_to_src` deliberately tolerates two sources at one grid position
+    /// (last-insert-wins — the `full.json` fixture stacks every word at
+    /// identical coordinates). Repair works in *position* space: it looks up
+    /// the blocking occupant's `(x, y)` and pulls those coordinates in. When
+    /// another source won that position, the new cell resolves to the winner
+    /// and the occupant still never becomes a rectangle source — so the same
+    /// repair is requested again from an unchanged rectangle.
+    ///
+    /// The `grew` guard is what stops that: a repair round that adds no new
+    /// coordinate abandons the rectangle. Reaching any assertion below is
+    /// itself the termination proof; a regression here hangs rather than
+    /// fails.
+    #[test]
+    fn repair_gives_up_when_the_occupants_cell_is_shadowed() {
+        const A: u64 = 10;
+        const B: u64 = 20;
+        const C: u64 = 30;
+        const D: u64 = 40;
+        const E: u64 = 50;
+        // B and C share position (1, 0); C is inserted last, so the cell there
+        // resolves to C and B can never join the rectangle as a source.
+        let ctx = make_context_with_endpoints(
+            &[((0, 0), A), ((1, 0), B), ((1, 0), C)],
+            &[(A, 101, B), (B, 102, E), (C, 103, D)],
+            &[A, B, C],
+        );
+        let entries: HashMap<u64, u64> = [(A, 101u64), (B, 102), (C, 103)].into_iter().collect();
+        let grids = ctx.build_aod_grids(&entries);
+
+        assert!(
+            grids.iter().all(|g| !g.contains(&101)),
+            "A lands on B, whose cell is shadowed by C, so A's hop must not be \
+             assembled: {grids:?}"
+        );
+        // The unobstructed cell is still usable, so this degrades to the
+        // pre-#887 behaviour rather than losing the whole bus.
+        assert_eq!(
+            sorted_grids(&grids),
+            vec![vec![103]],
+            "the cell that does resolve must still be offered"
+        );
+    }
+
+    /// The same geometry, exercised directly against [`BusGridContext::try_add_point`]
+    /// so the guard is pinned rather than inferred from the end-to-end result.
+    ///
+    /// Asserts all three properties the shadowed case depends on: the seed cell
+    /// really is `Repairable` (so repair is entered, not skipped), growth then
+    /// fails, and the rollback restores both sets exactly — including the
+    /// coordinate the failed repair inserted.
+    #[test]
+    fn a_shadowed_repair_rolls_back_every_inserted_coordinate() {
+        const A: u64 = 10;
+        const B: u64 = 20;
+        const C: u64 = 30;
+        const D: u64 = 40;
+        const E: u64 = 50;
+        let ctx = make_context_with_endpoints(
+            &[((0, 0), A), ((1, 0), B), ((1, 0), C)],
+            &[(A, 101, B), (B, 102, E), (C, 103, D)],
+            &[A, B, C],
+        );
+        let movers: HashSet<u64> = [A, B, C].into_iter().collect();
+
+        // The seed cell is repairable, not already valid — otherwise this
+        // would never reach the repair loop and would prove nothing.
+        let xs_seed: BTreeSet<u64> = [0].into_iter().collect();
+        let ys_seed: BTreeSet<u64> = [0].into_iter().collect();
+        assert_eq!(
+            ctx.rect_outcome(&xs_seed, &ys_seed, &movers, None),
+            RectOutcome::Repairable,
+            "the seed must need repair for this test to mean anything"
+        );
+
+        let mut xs: BTreeSet<u64> = BTreeSet::new();
+        let mut ys: BTreeSet<u64> = BTreeSet::new();
+        assert!(
+            !ctx.try_add_point(&mut xs, &mut ys, &movers, 0, 0),
+            "repair cannot converge when the occupant's cell is shadowed"
+        );
+        assert!(
+            xs.is_empty() && ys.is_empty(),
+            "rollback must undo the seed *and* the coordinate repair inserted, \
+             leaving xs={xs:?} ys={ys:?}"
+        );
+    }
+
+    /// The same shadowing, but the source that won the position is *stationary*.
+    /// Pulling its coordinates in produces a cell with an immovable atom on it,
+    /// which is `Invalid` rather than `Repairable` — growth must stop at once
+    /// instead of iterating.
+    #[test]
+    fn a_shadowing_stationary_atom_rejects_the_rectangle() {
+        const A: u64 = 10;
+        const B: u64 = 20;
+        const C: u64 = 30;
+        const D: u64 = 40;
+        const E: u64 = 50;
+        let ctx = make_context_with_endpoints(
+            &[((0, 0), A), ((1, 0), B), ((1, 0), C)],
+            &[(A, 101, B), (B, 102, E), (C, 103, D)],
+            &[A, B, C],
+        );
+        // C is occupied but never offered as a mover.
+        let entries: HashMap<u64, u64> = [(A, 101u64), (B, 102)].into_iter().collect();
+        assert!(
+            ctx.build_aod_grids(&entries).is_empty(),
+            "every cell on this bus resolves onto a stationary atom"
+        );
+    }
+
     fn sorted_grids(grids: &[Vec<u64>]) -> Vec<Vec<u64>> {
         let mut out: Vec<Vec<u64>> = grids
             .iter()
