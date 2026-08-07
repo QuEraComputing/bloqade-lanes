@@ -39,6 +39,25 @@ fn arch_spec_error_to_py(py: Python<'_>, error: &ArchSpecError) -> PyResult<PyOb
 }
 
 /// Convert a Vec<ArchSpecError> to a single Python ArchSpecError with an errors list.
+/// Build a [`LaneIndex`] from a Python-supplied [`ArchSpec`], rejecting a spec
+/// that fails structural validation.
+///
+/// Every path that turns a user-supplied spec into search machinery goes
+/// through here. The search layers treat per-bus acyclicity and endpoint
+/// uniqueness (#874) as *given* rather than checking them: rectangle growth
+/// exempts an occupied destination whose occupant moves in the same shot,
+/// which is what makes conveyor chains legal — and on a cyclic bus is exactly
+/// what would make a physically impossible rotation look legal too.
+pub fn validated_lane_index(
+    py: Python<'_>,
+    arch_spec: &bloqade_lanes_bytecode_core::arch::types::ArchSpec,
+) -> PyResult<bloqade_lanes_search::primitives::lane_index::LaneIndex> {
+    arch_spec
+        .validate()
+        .map_err(|errors| arch_spec_errors_to_py(py, errors))?;
+    Ok(bloqade_lanes_search::primitives::lane_index::LaneIndex::from_arch_spec(arch_spec))
+}
+
 pub fn arch_spec_errors_to_py(py: Python<'_>, errors: Vec<ArchSpecError>) -> PyErr {
     let module = match py.import(EXCEPTIONS_MODULE) {
         Ok(m) => m,

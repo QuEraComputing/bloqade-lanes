@@ -748,18 +748,15 @@ mod tests {
         );
     }
 
-    /// Documents a **known gap** (issue #887): admitting
-    /// chain candidates is necessary but not sufficient — the heuristic
-    /// selection still picks movers independently, so it does not co-select
-    /// the atom ahead and never assembles the chain into one AOD shot. Here it
-    /// emits only the follower's move; the leader waits for the next step, so
-    /// routing stays correct but takes two operations instead of one.
+    /// Chains now assemble into a single AOD shot (issue #887).
     ///
-    /// `ExhaustiveGenerator` *does* assemble this chain (see
-    /// `generate_admits_conveyor_chain`) because it enumerates every
-    /// rectangle rather than selecting greedily.
+    /// Selection still picks movers independently — nothing here co-selects
+    /// the atom ahead. What changed is one layer down: rectangle growth
+    /// repairs a chain by pulling in the follower's cell, so both hops ride in
+    /// one move set. Previously only the follower's move was emitted, leaving
+    /// the leader to wait a step.
     #[test]
-    fn heuristic_selection_does_not_yet_assemble_chains() {
+    fn heuristic_selection_assembles_chains() {
         let index = make_chain_index();
         // q0: site 0 → 1 (occupied by q1), q1: site 1 → 2 (free).
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
@@ -779,15 +776,12 @@ mod tests {
                 && c.new_config.location_of(1) == Some(loc(0, 2))
         });
         assert!(
-            !shifts_both,
-            "chain assembly is not implemented yet — if this now passes, the \
-             follow-up landed and this test should assert the chain instead"
+            shifts_both,
+            "both atoms must shift along the chain in one move set; got {:?}",
+            out.iter()
+                .map(|c| (c.new_config.location_of(0), c.new_config.location_of(1)))
+                .collect::<Vec<_>>()
         );
-        // The follower's move is still generated, so the search makes progress.
-        let follower_moves = out
-            .iter()
-            .any(|c| c.new_config.location_of(1) == Some(loc(0, 2)));
-        assert!(follower_moves, "the unobstructed atom must still move");
     }
 
     fn make_ctx<'a>(

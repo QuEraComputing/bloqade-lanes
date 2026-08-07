@@ -1355,12 +1355,37 @@ class SearchEngine:
 
     @staticmethod
     def from_arch_spec(arch: ArchSpec) -> SearchEngine:
-        """Create a ``SearchEngine`` from a native ``ArchSpec`` object."""
+        """Create a ``SearchEngine`` from a native ``ArchSpec`` object.
+
+        Raises ``ArchSpecError`` (with every individual problem in its
+        ``errors`` list) for a spec that fails structural validation: the
+        search assumes per-bus acyclicity rather than checking it, so a cyclic
+        bus would otherwise be routed as if a rotation were a legal AOD
+        operation.
+        """
         ...
 
     @staticmethod
     def from_json(arch_spec_json: str) -> SearchEngine:
-        """Create a ``SearchEngine`` from an ArchSpec JSON string."""
+        """Create a ``SearchEngine`` from an ArchSpec JSON string, **without
+        validating the spec**.
+
+        Prefer :meth:`from_json_validated`. The search layers assume per-bus
+        acyclicity and endpoint uniqueness rather than checking them, so an
+        unvalidated spec with a cyclic bus would be routed as if a rotation
+        were a legal AOD operation.
+        """
+        ...
+
+    @staticmethod
+    def from_json_validated(arch_spec_json: str) -> SearchEngine:
+        """Create a ``SearchEngine`` from an ArchSpec JSON string, rejecting a
+        spec that fails structural validation.
+
+        Raises ``ArchSpecError`` (with every individual problem in its
+        ``errors`` list) for an invalid spec, or ``ValueError`` for malformed
+        JSON.
+        """
         ...
 
     def __repr__(self) -> str: ...

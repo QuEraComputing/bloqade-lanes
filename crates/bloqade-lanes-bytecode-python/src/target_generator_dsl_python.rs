@@ -27,12 +27,12 @@ pub struct PyTargetPolicyRunner {
 impl PyTargetPolicyRunner {
     #[new]
     #[pyo3(signature = (policy_path, arch_spec))]
-    fn new(policy_path: &str, arch_spec: PyRef<'_, PyArchSpec>) -> PyResult<Self> {
+    fn new(policy_path: &str, arch_spec: PyRef<'_, PyArchSpec>, py: Python<'_>) -> PyResult<Self> {
         let cfg = SandboxConfig::default();
         let inner = TargetPolicyRunner::from_path(policy_path, &cfg).map_err(map_err)?;
         Ok(Self {
             inner,
-            index: Arc::new(LaneIndex::from_arch_spec(&arch_spec.inner)),
+            index: Arc::new(crate::errors::validated_lane_index(py, &arch_spec.inner)?),
         })
     }
 

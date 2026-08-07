@@ -577,8 +577,9 @@ impl PyEntropyScorer {
         beta: f64,
         gamma: f64,
         w_t: f64,
+        py: Python<'_>,
     ) -> PyResult<Self> {
-        let index = LaneIndex::from_arch_spec(&arch_spec.inner);
+        let index = crate::errors::validated_lane_index(py, &arch_spec.inner)?;
 
         let targets: Vec<(u32, u64)> = target
             .iter()
@@ -1308,18 +1309,45 @@ pub struct PySearchEngine {
 #[pymethods]
 impl PySearchEngine {
     /// Create a ``SearchEngine`` from a native ``ArchSpec`` object.
+    ///
+    /// Raises ``ArchSpecError`` (with every individual problem in its
+    /// ``errors`` list) for a spec that fails structural validation — the
+    /// search assumes per-bus acyclicity rather than checking it.
     #[staticmethod]
-    fn from_arch_spec(arch: &PyArchSpec) -> Self {
-        Self {
-            inner: Arc::new(SearchEngine::from_arch_spec(&arch.inner)),
-        }
+    fn from_arch_spec(arch: &PyArchSpec, py: Python<'_>) -> PyResult<Self> {
+        let engine = SearchEngine::from_arch_spec(&arch.inner)
+            .map_err(|errors| crate::errors::arch_spec_errors_to_py(py, errors))?;
+        Ok(Self {
+            inner: Arc::new(engine),
+        })
     }
 
-    /// Create a ``SearchEngine`` from an ArchSpec JSON string.
+    /// Create a ``SearchEngine`` from an ArchSpec JSON string, **without
+    /// validating the spec**.
+    ///
+    /// Prefer :meth:`from_json_validated`. The search layers assume per-bus
+    /// acyclicity and endpoint uniqueness rather than checking them, so an
+    /// unvalidated spec with a cyclic bus would be routed as if a rotation
+    /// were a legal AOD operation.
     #[staticmethod]
     fn from_json(arch_spec_json: &str) -> PyResult<Self> {
         let engine = SearchEngine::from_json(arch_spec_json)
             .map_err(|e| PyValueError::new_err(format!("invalid arch spec JSON: {e}")))?;
+        Ok(Self {
+            inner: Arc::new(engine),
+        })
+    }
+
+    /// Create a ``SearchEngine`` from an ArchSpec JSON string, rejecting a
+    /// spec that fails structural validation.
+    ///
+    /// Raises ``ArchSpecError`` (with every individual problem in its
+    /// ``errors`` list) for an invalid spec, or ``ValueError`` for malformed
+    /// JSON.
+    #[staticmethod]
+    fn from_json_validated(arch_spec_json: &str, py: Python<'_>) -> PyResult<Self> {
+        let engine = SearchEngine::from_json_validated(arch_spec_json)
+            .map_err(|e| crate::errors::arch_spec_load_error_to_py(py, &e))?;
         Ok(Self {
             inner: Arc::new(engine),
         })
