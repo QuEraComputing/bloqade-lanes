@@ -40,7 +40,13 @@
 //! with it. Every emitted batch is then re-validated with
 //! `AtomStateData::validate_moves` against the replayed placement — the
 //! canonical executability check, `ArchSpec::check_lanes` geometry *plus* the
-//! occupancy rules — and a group it rejects degrades to a single move.
+//! occupancy rules.
+//!
+//! That check is an assertion, not a fallback: the batches built here are legal
+//! by construction, so a rejection is a defect in this module and **panics**
+//! naming the batch, exactly as [`crate::search::verify`] does for a packaged
+//! plan. Emitting a smaller operation instead would keep the plan valid and
+//! leave the defect invisible.
 
 use std::collections::{HashMap, HashSet};
 
@@ -147,8 +153,8 @@ pub fn schedule_with(
         // move has no unscheduled predecessor of either kind: the ready set is
         // never empty, and always holds at least one move with nothing
         // outstanding. Such a move is legal on its own — the plan put it after
-        // whatever vacated its destination — which makes it the fallback when
-        // no batch survives.
+        // whatever vacated its destination — which is what makes `solo` a safe
+        // pick when every group's rectangle is stranded.
         debug_assert!(!ready.is_empty(), "dependency graph had a cycle");
         let needs = outstanding_chain_preds(&ready, &scheduled, &chain_preds);
         let solo = ready.iter().copied().find(|i| !needs.contains_key(i))?;
@@ -185,24 +191,36 @@ pub fn schedule_with(
         }
 
         // Authoritative check: lane-group geometry *and* the occupancy rules,
-        // against the replayed placement. If the execution model rejects the
-        // group, fall back to emitting one move, which is always legal.
-        let mut batch = best;
-        let mut batch_lanes: Vec<LaneAddr> = batch.iter().map(|&i| lanes[i]).collect();
-        let mut validated = state.validate_moves(&batch_lanes, arch).ok();
-        if validated.is_none() && batch.len() > 1 {
-            let one = batch
-                .iter()
-                .copied()
-                .find(|i| !needs.contains_key(i))
-                .unwrap_or(solo);
-            batch = vec![one];
-            batch_lanes = vec![lanes[one]];
-            validated = state.validate_moves(&batch_lanes, arch).ok();
-        }
-        // A single move the execution model refuses means the plan itself does
-        // not execute — a planner bug, not something to schedule around.
-        state = state.apply_validated(&validated?).ok()?;
+        // against the replayed placement.
+        //
+        // Every batch this loop builds is legal by construction — the pick is a
+        // complete rectangle on one bus group, and chain closure leaves each
+        // destination either free or vacated by a move in the same operation —
+        // so a rejection here is a defect in the condenser, not a situation to
+        // schedule around. It fails loudly for the same reason
+        // [`crate::search::verify`] does: degrading to a smaller operation
+        // would hide the defect behind a slower-but-valid plan, and the batch
+        // that provoked it is only in scope right here.
+        let batch = best;
+        let batch_lanes: Vec<LaneAddr> = batch.iter().map(|&i| lanes[i]).collect();
+        let validated = state
+            .validate_moves(&batch_lanes, arch)
+            .unwrap_or_else(|errors| {
+                panic!(
+                    "the condenser built an operation the execution model \
+                     rejects (this is a bug in the scheduler, not in the \
+                     request): {} of {n} moves, {} lanes{}",
+                    batch.len(),
+                    batch_lanes.len(),
+                    errors
+                        .iter()
+                        .map(|e| format!("\n  - {e}"))
+                        .collect::<String>(),
+                )
+            });
+        state = state
+            .apply_validated(&validated)
+            .expect("the token was just validated against this state");
 
         for &i in &batch {
             scheduled[i] = true;
