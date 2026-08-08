@@ -1,26 +1,39 @@
 //! End-to-end validation of the Push and Rotate router.
 //!
-//! Two properties, checked with [`AtomStateData`] — the same simulator the IR
-//! analysis pipeline uses — rather than a reimplementation of it, since a bug
-//! in a hand-rolled replay could mask exactly the bug it exists to catch:
+//! Two properties, checked with [`AtomStateData`] — the same execution model
+//! the IR analysis pipeline and the bytecode validator use — rather than a
+//! reimplementation of it, since a bug in a hand-rolled replay could mask
+//! exactly the bug it exists to catch:
 //!
-//! 1. **The plan rearranges the atoms correctly.** Feed each scheduled AOD
-//!    operation to [`AtomStateData::apply_moves`] and compare the resulting
-//!    `qubit_to_locations` against the requested target.
-//! 2. **Every operation is a valid AOD move.** Each batch's lane group is
-//!    checked with `ArchSpec::check_lanes`, the same authority the open
-//!    solver's generators are held to.
+//! 1. **Every operation is executable.** Each batch goes through
+//!    [`AtomStateData::validate_moves`] against the placement its predecessors
+//!    produced. That is the canonical check, and it covers both halves: the
+//!    static lane-group rules (`ArchSpec::check_lanes` — address validity, bus
+//!    group consistency, the AOD's complete-rectangle geometry) and the
+//!    occupancy rules, of which the one that bites here is the uniform
+//!    destination rule: an occupied destination is legal exactly when its
+//!    occupant vacates in the same operation.
+//! 2. **The plan rearranges the atoms correctly.** Apply each validated
+//!    operation in turn and compare the resulting `qubit_to_locations` against
+//!    the requested target.
+//!
+//! Note what property 1 deliberately does *not* assert: that an operation's
+//! destinations avoid its own sources. Simultaneity does not require that — a
+//! vertex which is both is a conveyor chain, legal since #866 and reachable on
+//! any spec whose buses overlap (#874, #892). It used to be asserted here, and
+//! it only ever held because these two fixtures keep their bus endpoints
+//! disjoint. `validate_moves` is the actual rule.
 //!
 //! `AtomStateData` earns its place here by failing in ways a naive replay
 //! would not notice:
 //!
-//! * A move onto an occupied site is recorded in `collision`, and **both**
-//!   qubits are dropped from the location maps. Asserting `collision` is
-//!   empty catches any operation that would crash two atoms together.
-//! * `apply_moves` *silently skips* a lane whose source holds no qubit. A
-//!   scheduler that emitted a lane for an atom that is not there would look
-//!   fine on the final placement in some cases, so the total `move_count` is
-//!   asserted against the number of lanes issued.
+//! * A group that would crash two atoms together cannot reach
+//!   `apply_validated` at all — `validate_moves` rejects it first and names
+//!   the offending lane, where a hand-rolled replay would have to notice the
+//!   damage after the fact.
+//! * What validation permits but a caller may not expect is a lane carrying no
+//!   atom (a legal AOD filler, which this scheduler has no reason to emit), so
+//!   the total `move_count` is asserted against the number of lanes issued.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -91,53 +104,34 @@ fn check_end_to_end(
     let batches = schedule(&fx.index, &fx.graph, &p.moves)
         .unwrap_or_else(|| panic!("{label}: scheduling failed"));
 
-    // ── Property 2: every operation is a legal AOD move ────────────
-    for (bi, b) in batches.iter().enumerate() {
-        let errors = fx.spec.check_lanes(&b.lanes);
-        assert!(
-            errors.is_empty(),
-            "{label}: operation {bi} is not a valid AOD move: {errors:?}"
-        );
-        // A bus maps disjoint source and destination sets, so simultaneous
-        // execution is only meaningful if no destination is also a source.
-        let srcs: HashSet<VertexId> = b.moves.iter().map(|m| m.from).collect();
-        for m in &b.moves {
-            assert!(
-                !srcs.contains(&m.to),
-                "{label}: operation {bi} moves into {} while another move leaves it",
-                m.to
-            );
-        }
-    }
-
-    // ── Property 1: the atoms end up where they were asked to ──────
     let start: Vec<(u32, LocationAddr)> = initial
         .iter()
         .map(|&(q, loc)| (q, LocationAddr::decode(loc)))
         .collect();
     let mut state = AtomStateData::from_locations(&start);
 
+    // ── Property 1: every operation executes ───────────────────────
     let mut lanes_issued = 0usize;
     for (bi, b) in batches.iter().enumerate() {
         lanes_issued += b.lanes.len();
+        let validated = state
+            .validate_moves(&b.lanes, &fx.spec)
+            .unwrap_or_else(|e| panic!("{label}: operation {bi} cannot execute: {e:?}"));
         state = state
-            .apply_moves(&b.lanes, &fx.spec)
-            .unwrap_or_else(|| panic!("{label}: operation {bi} has an unresolvable lane"));
-        assert!(
-            state.collision.is_empty(),
-            "{label}: operation {bi} collided atoms: {:?}",
-            state.collision
-        );
+            .apply_validated(&validated)
+            .unwrap_or_else(|e| panic!("{label}: operation {bi} was validated stale: {e:?}"));
     }
 
-    // Every lane must have actually moved an atom. `apply_moves` skips a lane
-    // whose source is empty, which would otherwise pass unnoticed.
+    // Every lane must have actually moved an atom. A filler lane — one whose
+    // source is empty — validates and applies as a legal no-op, which would
+    // otherwise pass unnoticed.
     let moved: u32 = state.move_count.values().sum();
     assert_eq!(
         moved as usize, lanes_issued,
         "{label}: {lanes_issued} lanes issued but only {moved} atom moves took effect"
     );
 
+    // ── Property 2: the atoms end up where they were asked to ──────
     let want: HashMap<u32, LocationAddr> = target
         .iter()
         .map(|&(q, loc)| (q, LocationAddr::decode(loc)))
@@ -174,35 +168,23 @@ fn assert_solved_result_rearranges(
         let lanes = layer.decode();
         lanes_issued += lanes.len();
 
-        let errors = fx.spec.check_lanes(&lanes);
-        assert!(
-            errors.is_empty(),
-            "{label}: operation {bi} is not a valid AOD move: {errors:?}"
-        );
-        let srcs: HashSet<u64> = lanes
-            .iter()
-            .map(|l| fx.index.endpoints(l).expect("lane resolves").0.encode())
-            .collect();
+        // The blocked set is this harness's own obligation — `validate_moves`
+        // knows about atoms, not about which locations the caller declared
+        // off-limits.
         for lane in &lanes {
             let (src, dst) = fx.index.endpoints(lane).expect("lane resolves");
             assert!(
                 !blocked.contains(&src.encode()) && !blocked.contains(&dst.encode()),
                 "{label}: operation {bi} touches a blocked location"
             );
-            assert!(
-                !srcs.contains(&dst.encode()),
-                "{label}: operation {bi} moves into a location another move leaves"
-            );
         }
 
+        let validated = state
+            .validate_moves(&lanes, &fx.spec)
+            .unwrap_or_else(|e| panic!("{label}: operation {bi} cannot execute: {e:?}"));
         state = state
-            .apply_moves(&lanes, &fx.spec)
-            .unwrap_or_else(|| panic!("{label}: operation {bi} has an unresolvable lane"));
-        assert!(
-            state.collision.is_empty(),
-            "{label}: operation {bi} collided atoms: {:?}",
-            state.collision
-        );
+            .apply_validated(&validated)
+            .unwrap_or_else(|e| panic!("{label}: operation {bi} was validated stale: {e:?}"));
     }
 
     let moved: u32 = state.move_count.values().sum();
@@ -768,13 +750,11 @@ fn a_custom_heuristic_changes_the_plan_but_not_its_validity() {
             .map(|&(q, loc)| (q, LocationAddr::decode(loc)))
             .collect();
         let mut state = AtomStateData::from_locations(&start);
-        for b in &batches {
-            assert!(
-                fx.spec.check_lanes(&b.lanes).is_empty(),
-                "{label}: bad batch"
-            );
-            state = state.apply_moves(&b.lanes, &fx.spec).expect("applies");
-            assert!(state.collision.is_empty(), "{label}: collision");
+        for (bi, b) in batches.iter().enumerate() {
+            let validated = state
+                .validate_moves(&b.lanes, &fx.spec)
+                .unwrap_or_else(|e| panic!("{label}: operation {bi} cannot execute: {e:?}"));
+            state = state.apply_validated(&validated).expect("token is fresh");
         }
         let want: HashMap<u32, LocationAddr> = target
             .iter()
@@ -833,10 +813,13 @@ fn alignment_heuristics_produce_valid_plans() {
                 .map(|&(q, loc)| (q, LocationAddr::decode(loc)))
                 .collect();
             let mut state = AtomStateData::from_locations(&start);
-            for b in &batches {
-                assert!(fx.spec.check_lanes(&b.lanes).is_empty(), "k={k}: bad batch");
-                state = state.apply_moves(&b.lanes, &fx.spec).expect("applies");
-                assert!(state.collision.is_empty(), "k={k}: collision");
+            for (bi, b) in batches.iter().enumerate() {
+                let validated = state
+                    .validate_moves(&b.lanes, &fx.spec)
+                    .unwrap_or_else(|e| {
+                        panic!("k={k} seed={seed}: operation {bi} cannot execute: {e:?}")
+                    });
+                state = state.apply_validated(&validated).expect("token is fresh");
             }
             let want: HashMap<u32, LocationAddr> = target
                 .iter()
