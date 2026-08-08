@@ -22,5 +22,6 @@ from .simulator_backend import (
     AbstractSimulatorBackend as AbstractSimulatorBackend,
     BackendSample as BackendSample,
     CliffTSimulatorBackend as CliffTSimulatorBackend,
+    PPVMSimulatorBackend as PPVMSimulatorBackend,
     TsimSimulatorBackend as TsimSimulatorBackend,
 )
