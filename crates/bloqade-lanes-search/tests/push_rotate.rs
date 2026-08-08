@@ -104,14 +104,13 @@ fn check_end_to_end(
     let batches = schedule(&fx.index, &fx.graph, &p.moves)
         .unwrap_or_else(|| panic!("{label}: scheduling failed"));
 
-    // ── Property 1: every operation executes ───────────────────────
     let start: Vec<(u32, LocationAddr)> = initial
         .iter()
         .map(|&(q, loc)| (q, LocationAddr::decode(loc)))
         .collect();
     let mut state = AtomStateData::from_locations(&start);
 
-    // ── Property 2: the atoms end up where they were asked to ──────
+    // ── Property 1: every operation executes ───────────────────────
     let mut lanes_issued = 0usize;
     for (bi, b) in batches.iter().enumerate() {
         lanes_issued += b.lanes.len();
@@ -132,6 +131,7 @@ fn check_end_to_end(
         "{label}: {lanes_issued} lanes issued but only {moved} atom moves took effect"
     );
 
+    // ── Property 2: the atoms end up where they were asked to ──────
     let want: HashMap<u32, LocationAddr> = target
         .iter()
         .map(|&(q, loc)| (q, LocationAddr::decode(loc)))

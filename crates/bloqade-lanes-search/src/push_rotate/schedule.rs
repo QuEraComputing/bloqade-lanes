@@ -47,6 +47,13 @@
 //! naming the batch, exactly as [`crate::search::verify`] does for a packaged
 //! plan. Emitting a smaller operation instead would keep the plan valid and
 //! leave the defect invisible.
+//!
+//! It replays occupancy one operation at a time, so it costs O(operations ×
+//! atoms) and runs in every build — about a quarter of condensing, which is
+//! itself a fraction of planning (0.17 ms of a 2.4 ms plan-and-condense for a
+//! 64-atom physical instance), and this router only runs at all once a search
+//! has already failed. Same trade as `search::verify`: the invariant is a
+//! correctness property, not a debugging aid.
 
 use std::collections::{HashMap, HashSet};
 
@@ -104,11 +111,30 @@ fn group_key(l: &LaneAddr) -> GroupKey {
 ///
 /// Returns `None` if any move has no lane realising it, which would mean the
 /// plan and the architecture disagree.
+///
+/// # Panics
+///
+/// See [`schedule_with`]: `moves` must be a sequential plan that executes as
+/// written.
 pub fn schedule(index: &LaneIndex, graph: &LaneGraph, moves: &[Move]) -> Option<Vec<Batch>> {
     schedule_with(index, graph, moves, &LargestBatch)
 }
 
 /// Schedule with an explicit batch policy.
+///
+/// # Panics
+///
+/// `moves` must be a **sequential plan that executes as written** — each move's
+/// destination unoccupied at the point the list reaches it, as everything
+/// [`PlanState`](crate::push_rotate::state::PlanState) produces is. Given that,
+/// every batch built here is legal and the checks below are assertions about
+/// this module.
+///
+/// A hand-built list that violates it — one move stepping onto a vertex another
+/// still occupies — is not a schedulable input, and aborts rather than being
+/// quietly condensed into a plan that would corrupt atom state downstream. A
+/// [`BatchPolicy`] cannot cause this: it ranks candidates and never proposes
+/// them.
 pub fn schedule_with(
     index: &LaneIndex,
     graph: &LaneGraph,
@@ -150,14 +176,24 @@ pub fn schedule_with(
     while done < n {
         let ready = ready_set(&scheduled, &indeg, &chain_preds);
         // Every edge runs forward through the plan, so the lowest unscheduled
-        // move has no unscheduled predecessor of either kind: the ready set is
-        // never empty, and always holds at least one move with nothing
-        // outstanding. Such a move is legal on its own — the plan put it after
-        // whatever vacated its destination — which is what makes `solo` a safe
-        // pick when every group's rectangle is stranded.
-        debug_assert!(!ready.is_empty(), "dependency graph had a cycle");
+        // move has no unscheduled predecessor of either kind: it is always
+        // ready and always has nothing outstanding. Such a move is legal on its
+        // own — the plan put it after whatever vacated its destination — which
+        // is what makes `solo` a safe pick when every group's rectangle is
+        // stranded.
+        //
+        // Failing to find one means the dependency graph is not the forward DAG
+        // it is built to be, which is a defect here rather than a schedulable
+        // situation — so it aborts, like the batch check below.
         let needs = outstanding_chain_preds(&ready, &scheduled, &chain_preds);
-        let solo = ready.iter().copied().find(|i| !needs.contains_key(i))?;
+        let solo = ready
+            .iter()
+            .copied()
+            .find(|i| !needs.contains_key(i))
+            .expect(
+                "the lowest unscheduled move is always ready with no \
+                 outstanding chain dependency",
+            );
 
         // Partition the ready set by bus group and take the biggest legal
         // rectangle across all groups.
@@ -431,17 +467,24 @@ fn largest_rectangle(
     rows.sort_by_key(|(y, _)| *y);
 
     if rows.len() > MAX_ROWS_EXHAUSTIVE {
-        // Degrade to the single best row rather than enumerate 2^n.
-        let best = rows
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, (_, m))| m.len())
-            .expect("rows is non-empty")
-            .0;
-        let mut xs: Vec<u64> = rows[best].1.keys().copied().collect();
-        xs.sort_unstable();
-        close_rectangle(&rows, &[best], &mut xs, needs);
-        return cells(&rows, &[best], &xs);
+        // Degrade to a single row rather than enumerate 2^n. Every row is
+        // trimmed and the widest survivor wins, rather than trimming the widest
+        // row and taking whatever is left: a chain leader one row over can
+        // strand every column of the widest row, and returning nothing there
+        // would serialise a chain that a narrower row could have carried whole.
+        //
+        // Unreachable on the shipped Gemini specs, whose grids have five y
+        // positions in total.
+        let mut best: Vec<usize> = Vec::new();
+        for r in 0..rows.len() {
+            let mut xs: Vec<u64> = rows[r].1.keys().copied().collect();
+            xs.sort_unstable();
+            close_rectangle(&rows, &[r], &mut xs, needs);
+            if xs.len() > best.len() {
+                best = cells(&rows, &[r], &xs);
+            }
+        }
+        return best;
     }
 
     let mut best: Vec<usize> = Vec::new();
@@ -485,9 +528,11 @@ fn cells(rows: &[(u64, HashMap<u64, usize>)], chosen: &[usize], xs: &[u64]) -> V
 /// cannot compromise on. Dropping a column can strand further moves, hence the
 /// loop; each pass removes at least one column, so it terminates.
 ///
-/// The rows are left alone: every choice of rows is enumerated separately by
-/// [`largest_rectangle`], so a stranding that another row set would fix is
-/// already covered there.
+/// The rows are left alone: on the exhaustive path every choice of rows is
+/// enumerated separately by [`largest_rectangle`], so a stranding that another
+/// row set would fix is already covered there. Past the row cap that no longer
+/// holds, which is why the degrade path trims each row and compares, instead of
+/// trimming one chosen up front.
 fn close_rectangle(
     rows: &[(u64, HashMap<u64, usize>)],
     chosen: &[usize],
