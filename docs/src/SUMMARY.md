@@ -12,3 +12,7 @@
 - [Instruction Quick Reference](bytecode/inst-quick-ref.md)
 - [Instruction Set](bytecode/inst-spec.md)
 - [CLI Reference](bytecode/cli.md)
+
+# Migration guides
+
+- [Migrating to v0.11](migration/v0.11.md)
