@@ -26,8 +26,11 @@
 //! The planner emits **single-atom moves**, one per step. That is not a usable
 //! AOD schedule on its own — turning it into one is the condenser's job
 //! (phase 2b), which merges consecutive moves into complete X×Y rectangle
-//! batches. Sound by construction: a legal AOD move is exactly a set of
-//! vertex-disjoint single moves into empty destinations.
+//! batches. Sound by construction: a legal AOD move is a set of single moves
+//! on one bus group whose sources form the rectangle and whose destinations
+//! are each free — or vacated by another move of the same operation, which is
+//! what lets a conveyor chain ride in one shot (see [`schedule`]'s chain
+//! dependencies).
 
 pub mod context;
 pub mod heuristics;
