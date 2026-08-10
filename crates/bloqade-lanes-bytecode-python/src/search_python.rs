@@ -850,19 +850,31 @@ impl PySolveOptions {
     }
 
     #[getter]
+    fn fallback_push_rotate(&self) -> bool {
+        self.inner.fallback_push_rotate
+    }
+
+    #[getter]
     fn backwards_search(&self) -> bool {
         self.inner.backwards_search
     }
 
+    /// Every constructor field, in constructor order.
+    ///
+    /// Keep this exhaustive: a `SolveOptions` that prints fewer options than
+    /// it carries makes a mis-set flag invisible at exactly the moment
+    /// someone is printing the options to find one.
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?})",
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?}, fallback_push_rotate={}, backwards_search={})",
             self.strategy().name(),
             self.inner.weight,
             self.inner.restarts,
             self.deadlock_policy().name(),
             self.inner.lookahead,
             self.inner.top_c,
+            self.inner.fallback_push_rotate,
+            self.inner.backwards_search,
         )
     }
 }
