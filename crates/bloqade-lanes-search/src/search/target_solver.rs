@@ -151,6 +151,17 @@ pub(crate) fn solve_with_engine(
     // concrete configuration to start from. A partial target
     // has no configuration to start the mirrored solve from, so the option
     // no-ops there rather than mirroring something else.
+    //
+    // The test below is cardinality only, which is weaker than that: with
+    // `validate_target_assignment` already past, an equal-length target can
+    // still name a *different* qubit-id set than `root` (root `{0, 1}`,
+    // target `{0, 2}`), and such a target is admitted here. Harmless rather
+    // than wrong, because `AllAtTarget::is_goal` requires each target qubit
+    // to be present in the config: the mirror's goal names a qubit its root
+    // does not contain, so the mirror reports `Unsolvable` and that verdict
+    // is returned — the same verdict the forward solve reaches, for the
+    // mirror-image reason. So the loose check costs a futile search on
+    // malformed input, never a wrong plan.
     if opts.backwards_search
         && target_pairs.len() == root.len()
         && !mirroring_breaks_blocked(&blocked_locs, &initial_pairs, &target_pairs)

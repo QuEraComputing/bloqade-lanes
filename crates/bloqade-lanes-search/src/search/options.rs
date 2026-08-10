@@ -126,7 +126,10 @@ pub struct SolveOptions {
     /// placement's qubits — otherwise the mirrored instance is not
     /// well-defined — and unless neither endpoint sits on a `blocked`
     /// location; see `mirroring_breaks_blocked` in
-    /// [`crate::search::target_solver`].
+    /// [`crate::search::target_solver`]. Totality is approximated by a
+    /// cardinality test, so an equal-length target over a different qubit-id
+    /// set is still mirrored; that costs a futile search rather than a wrong
+    /// plan, since the goal predicate cannot fire for an absent qubit.
     ///
     /// Not purely an optimisation: when the mirror *does* run, the caller
     /// gets the mirrored solve's verdict, failures included. A mirror that
