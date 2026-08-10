@@ -35,9 +35,9 @@ def _sample_tasks_sequentially(
     simulator: GeminiLogicalSimulator,
 ) -> None:
     """Sample tomography bases in a deterministic child-seed order."""
-    tasks = experiment.make_tasks(simulator)
+    tasks = experiment.make_tasks(simulator, num_shots=_SIMULATION_SHOTS)
     experiment._postselection_exp_cache.raw_results = {
-        basis: _basis_dataset_from_task_result(tasks[basis].run(_SIMULATION_SHOTS))
+        basis: _basis_dataset_from_task_result(tasks[basis].run())
         for basis in ("X", "Y", "Z")
     }
 

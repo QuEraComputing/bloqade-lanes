@@ -608,7 +608,7 @@ placement_strategy = make_physical_placement_strategy(
 physical_msd_task = PhysicalSimulator(
     place_opt_type=ASAPPlacePass,
     placement_strategy=placement_strategy,
-).task(allocate_five_qubits)
+).task(allocate_five_qubits, num_shots=1000)
 
 # %%
 # physical_msd_task.visualize()
@@ -618,7 +618,7 @@ physical_msd_task = PhysicalSimulator(
 # Similar to the simulator task for the logical simulator, we can also run the tasks for the physical simulator using "task.run()".
 
 # %%
-physical_msd_task_res = physical_msd_task.run(shots=1000)
+physical_msd_task_res = physical_msd_task.run()
 
 # %%
 print(np.array(physical_msd_task_res.measurements).shape)

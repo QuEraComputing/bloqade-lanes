@@ -79,8 +79,8 @@ msd_mld_exp.kernels(num_logical_qubits=5)
 msd_mld_exp.dem_circuits()
 msd_mld_exp.dems()
 msd_mld_exp.initialize_decoders()
-msd_mld_exp.make_tasks(device=tsim_simulator)
-msd_mld_exp.get_samples(num_shots=100)
+msd_mld_exp.make_tasks(device=tsim_simulator, num_shots=100)
+msd_mld_exp.get_samples()
 msd_mld_exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
 
 # %%
@@ -89,8 +89,8 @@ msd_mle_exp.kernels(num_logical_qubits=5)
 msd_mle_exp.dem_circuits()
 msd_mle_exp.dems()
 msd_mle_exp.initialize_decoders()
-msd_mle_exp.make_tasks(device=tsim_simulator)
-msd_mle_exp.get_samples(num_shots=100)
+msd_mle_exp.make_tasks(device=tsim_simulator, num_shots=100)
+msd_mle_exp.get_samples()
 msd_mle_exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
 
 # %%
@@ -100,8 +100,8 @@ injected_mld_exp.kernels(num_logical_qubits=1)
 injected_mld_exp.dem_circuits()
 injected_mld_exp.dems()
 injected_mld_exp.initialize_decoders()
-injected_mld_exp.make_tasks(device=tsim_simulator)
-injected_mld_exp.get_samples(num_shots=100)
+injected_mld_exp.make_tasks(device=tsim_simulator, num_shots=100)
+injected_mld_exp.get_samples()
 injected_mld_exp.decode_and_postselect(np.array([[]]))
 
 # %% [markdown]

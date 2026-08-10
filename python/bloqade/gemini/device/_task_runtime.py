@@ -208,6 +208,7 @@ class _SimulatorTaskBase(Generic[RetType]):
     physical_arch_spec: ArchSpec
     physical_move_kernel: ir.Method[[], RetType]
     _post_processing: atom.PostProcessing[RetType]
+    num_shots: int
 
     @property
     def _backend(self) -> AbstractSimulatorBackend:
@@ -316,13 +317,11 @@ class _SimulatorTaskBase(Generic[RetType]):
 
     def run(
         self,
-        shots: int = 1,
         with_noise: bool = True,
     ) -> SimulatorResult[RetType]:
         """Run the kernel and get simulation results.
 
         Args:
-            shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
 
         Returns:
@@ -331,6 +330,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         """
         # Build the guaranteed DEM before beginning a potentially expensive
         # sampling request. This also fails early when Tsim is unavailable.
+        shots = self.num_shots
         detector_error_model = self.detector_error_model
         physical_kernel = (
             self._physical_kernel if with_noise else self._noiseless_physical_kernel
@@ -378,13 +378,11 @@ class _SimulatorTaskBase(Generic[RetType]):
 
     def run_async(
         self,
-        shots: int = 1,
         with_noise: bool = True,
     ) -> Future[SimulatorResult[RetType]]:
         """Run the kernel asynchronously and get simulation results.
 
         Args:
-            shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
 
         Returns:
@@ -393,5 +391,5 @@ class _SimulatorTaskBase(Generic[RetType]):
         """
         return cast(
             Future[SimulatorResult[RetType]],
-            self._thread_pool_executor.submit(self.run, shots, with_noise),
+            self._thread_pool_executor.submit(self.run, with_noise=with_noise),
         )

@@ -40,7 +40,7 @@ def _assert_postprocessed_matches_native(task) -> tuple[list, list]:
     Returns the (detectors, observables) post-processed rows for any
     further value assertions.
     """
-    postprocessed = task.run(shots=SHOTS, with_noise=False)
+    postprocessed = task.run(with_noise=False)
     native = TsimSimulatorBackend(run_detectors=True).sample(
         task.noiseless_physical_squin_kernel,
         shots=SHOTS,
@@ -101,7 +101,7 @@ def _phys_arbitrary_order():
     ids=["allocation", "reversed", "arbitrary"],
 )
 def test_physical_permutation(kernel, expected_return, expected_m0):
-    task = PhysicalSimulator().task(kernel)
+    task = PhysicalSimulator().task(kernel, num_shots=SHOTS)
     dets, obs = _assert_postprocessed_matches_native(task)
 
     # Detector/observable on m[0] reflect the first measured qubit.
@@ -109,7 +109,7 @@ def test_physical_permutation(kernel, expected_return, expected_m0):
     assert all(row == [expected_m0] for row in obs)
 
     # Return values reconstruct the measured bits in the order listed.
-    result = task.run(shots=SHOTS, with_noise=False)
+    result = task.run(with_noise=False)
     for ret in result.return_values:
         assert [bool(x) for x in ret] == expected_return
 
@@ -166,7 +166,7 @@ def _logical_arbitrary_order():
     ids=["allocation", "reversed", "arbitrary"],
 )
 def test_logical_permutation(kernel, expected_m0):
-    task = GeminiLogicalSimulator().task(kernel)
+    task = GeminiLogicalSimulator().task(kernel, num_shots=SHOTS)
     dets, obs = _assert_postprocessed_matches_native(task)
 
     assert all(row == [expected_m0] for row in dets)

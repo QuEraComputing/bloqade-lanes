@@ -373,7 +373,7 @@ def main():
     return logical.default_post_processing(reg)  # Return the physical measurements
 
 
-task = GeminiLogicalSimulator().task(main)
+task = GeminiLogicalSimulator().task(main, num_shots=1)
 
 # %% [markdown]
 # The `task` has several attributes. The key attributes are:
@@ -404,13 +404,15 @@ task.tsim_circuit.diagram(height=task.tsim_circuit.num_qubits * 25)
 # The `task.run` attribute compiles the task to tsim and then samples from it. Note that the majority of the time is spent compiling the task; the sampler is very fast.
 
 # %%
-result = task.run(1, with_noise=True)
-result_wo_noise = task.run(1, with_noise=False)
+result = task.run(with_noise=True)
+result_wo_noise = task.run(with_noise=False)
 
 # %%
-# After recompilation, the task runs very quickly.
-result = task.run(10000, with_noise=True)
-result_wo_noise = task.run(10000, with_noise=False)
+# A task's shot count is fixed at creation. Create a separate task for a
+# larger sample.
+large_sample_task = GeminiLogicalSimulator().task(main, num_shots=10000)
+result = large_sample_task.run(with_noise=True)
+result_wo_noise = large_sample_task.run(with_noise=False)
 
 # %% [markdown]
 # The `result` object has several meaningful attributes that are useful for analysis:

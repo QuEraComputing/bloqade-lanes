@@ -167,6 +167,8 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     """The physical move kernel compiled from the source SQuIn kernel."""
     _post_processing: atom.PostProcessing[RetType] = field(repr=False)
     """The post-processing object for extracting detectors, observables, and return values."""
+    num_shots: int
+    """The number of shots to execute the task with."""
     _simulator_backend: AbstractSimulatorBackend = field(
         default_factory=TsimSimulatorBackend, repr=False
     )
@@ -235,11 +237,18 @@ class GeminiPhysicalSimulator:
     def task(
         self,
         physical_kernel: ir.Method[[], RetType],
+        num_shots: int = 1,
     ) -> PhysicalSimulatorTask[RetType]:
         """Compile a physical-pipeline-compatible ``ir.Method`` into a task.
 
         The method must already contain terminal physical measurement and any
         desired annotations; no conversion or insertion is performed.
+
+        Args:
+            physical_kernel (ir.Method[[], RetType]): The physical SQuIN kernel
+                to compile and run.
+            num_shots (int): Number of shots to execute when the returned task
+                is run. Defaults to 1.
         """
         if not isinstance(physical_kernel, ir.Method):
             raise TypeError("GeminiPhysicalSimulator.task() requires a Squin ir.Method")
@@ -272,6 +281,7 @@ class GeminiPhysicalSimulator:
             self.arch_spec,
             physical_move_kernel,
             post_processing,
+            num_shots,
             self.backend,
         )
 

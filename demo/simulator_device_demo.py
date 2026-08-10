@@ -49,13 +49,13 @@ def main():
     return default_post_processing(reg)
 
 
-task = GeminiLogicalSimulator().task(main)
+task = GeminiLogicalSimulator().task(main, num_shots=1000)
 
 # run simulation with and without noise
 print("Running simulation with noise...")
-future = task.run_async(1000)
+future = task.run_async()
 print("Running simulation without noise...")
-future_wo_noise = task.run_async(1000, with_noise=False)
+future_wo_noise = task.run_async(with_noise=False)
 
 result_wo_noise = future_wo_noise.result()
 result = future.result()

@@ -53,9 +53,12 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     """The physical move kernel that executes the logical squin kernel on the physical architecture."""
     _post_processing: atom.PostProcessing[RetType] = field(repr=False)
     """The post-processing object for extracting detectors, observables, and return values."""
+    num_shots: int
+    """The number of shots to execute the task with."""
     _simulator_backend: AbstractSimulatorBackend = field(
         default_factory=TsimSimulatorBackend
     )
+    """Sampling and detector-model backend used to perform sampling."""
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
@@ -119,6 +122,7 @@ class GeminiLogicalSimulator:
     def task(
         self,
         logical_kernel: ir.Method[[], RetType],
+        num_shots: int = 1,
     ) -> GeminiLogicalSimulatorTask[RetType]:
         """Create a simulation task for the given kernel.
 
@@ -132,6 +136,8 @@ class GeminiLogicalSimulator:
         Args:
             logical_kernel (ir.Method[[], RetType]): The logical
                 squin kernel to compile and run.
+            num_shots (int): Number of shots to execute when the returned task
+                is run. Defaults to 1.
 
         Returns:
             GeminiLogicalSimulatorTask[RetType]: The compiled simulation task.
@@ -153,5 +159,6 @@ class GeminiLogicalSimulator:
             physical_arch_spec,
             physical_move_kernel,
             post_processing,
+            num_shots,
             self.backend,
         )

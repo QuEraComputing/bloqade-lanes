@@ -20,7 +20,7 @@ def main_cuda():
 
 prepared_squin = cudaq_to_squin(main_cuda)
 append_measurements_and_annotations(prepared_squin, m2dets, m2obs)
-task = GeminiLogicalSimulator().task(prepared_squin)
+task = GeminiLogicalSimulator().task(prepared_squin, num_shots=10)
 
-result = task.run(10)
+result = task.run()
 print(result.detectors)

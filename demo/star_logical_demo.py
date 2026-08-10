@@ -121,13 +121,19 @@ def postselected_observable_bits(result):
 
 
 # Compile kernels down to tsim circuits to do simulation
-x_task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel_x)
-y_task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel_y)
-z_task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel_z)
+x_task = GeminiLogicalSimulator().task(
+    logical_kernel=star_on_plus_kernel_x, num_shots=SHOTS
+)
+y_task = GeminiLogicalSimulator().task(
+    logical_kernel=star_on_plus_kernel_y, num_shots=SHOTS
+)
+z_task = GeminiLogicalSimulator().task(
+    logical_kernel=star_on_plus_kernel_z, num_shots=SHOTS
+)
 
-x_shots = x_task.run(shots=SHOTS, with_noise=False)
-y_shots = y_task.run(shots=SHOTS, with_noise=False)
-z_shots = z_task.run(shots=SHOTS, with_noise=False)
+x_shots = x_task.run(with_noise=False)
+y_shots = y_task.run(with_noise=False)
+z_shots = z_task.run(with_noise=False)
 
 # Postselect on ancilla detectors being all 0
 x_shots_arr, x_accepted = postselected_observable_bits(x_shots)

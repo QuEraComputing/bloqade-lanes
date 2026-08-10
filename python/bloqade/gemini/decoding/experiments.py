@@ -324,18 +324,25 @@ class PostSelectionExperiment:
         # the hardware). However, because GeminiLogicalSimulator currently doesn't obey any interface/inheritance for a generic hardware object,
         # we can't really replace this with a more specific type without changing the design of GeminiLogicalSimulator.
         device: GeminiLogicalSimulator,
+        num_shots: int = 1,
         # TODO: the return type of make_tasks of what we want to run on hardware should not be GeminiLogicalSimulatorTask. It should be
         # TaskABC[GeminiLogicalFuture]. However, currently, GeminiLogicalSimulatorTask does not inherit from the abstract "task" types in
         # bloqade-core.
     ) -> dict[str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]]:
-        """Prepares tasks for submission to the hardware device."""
+        """Prepares tasks for submission to the hardware device.
+
+        Args:
+            device: Simulator or device used to create the tasks.
+            num_shots: Number of shots assigned to each tomography task.
+                Defaults to 1.
+        """
         dem_kernels = self._postselection_exp_cache.dem_kernels
         if dem_kernels is None:
             raise RuntimeError("kernels must be called before make_tasks.")
         actual_tasks: dict[
             str, GeminiLogicalSimulatorTask[_LogicalTomographyReturn]
         ] = {
-            basis: device.task(kernel.similar())
+            basis: device.task(kernel.similar(), num_shots=num_shots)
             for basis, kernel in dem_kernels.items()
         }
         self._postselection_exp_cache.hardware_tasks = actual_tasks
@@ -346,19 +353,14 @@ class PostSelectionExperiment:
     # ^ We might want a way to reuse hardware samples across different "experiments".
     # NOTE: In the future, we may want to define a "get_samples_async" method that allows
     # the user to get futures and later request to actually get the samples on their own time (a "non-blocking" implementation).
-    def get_samples(
-        self,
-        num_shots: int,
-    ) -> dict[str, _BasisDataset]:
-        """For each basis, samples num_shots from the hardware. Returns the detector and observable information for each task."""
+    def get_samples(self) -> dict[str, _BasisDataset]:
+        """Samples each prepared task and returns detector and observable data."""
         actual_tasks = self._postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
         # In this implementation, we request samples for each basis in parallel, and then iteratively block
         # on X, Y, and then Z being finished.
-        futures = {
-            basis: task.run_async(num_shots) for basis, task in actual_tasks.items()
-        }
+        futures = {basis: task.run_async() for basis, task in actual_tasks.items()}
         actual_data = {
             basis: _basis_dataset_from_task_result(future.result())
             for basis, future in futures.items()

@@ -115,8 +115,8 @@ def msd_mld_decoders(msd_mld_exp, msd_mld_dems):
 @pytest.fixture(scope="module")
 def msd_mld_samples(msd_mld_exp, msd_mld_kernels):
     _ = msd_mld_kernels
-    msd_mld_exp.make_tasks(GeminiLogicalSimulator())
-    return msd_mld_exp.get_samples(num_shots=100)
+    msd_mld_exp.make_tasks(GeminiLogicalSimulator(), num_shots=100)
+    return msd_mld_exp.get_samples()
 
 
 @pytest.fixture(scope="module")
@@ -249,7 +249,7 @@ def test_postselection_experiment_get_samples_requires_make_tasks(
     with pytest.raises(
         RuntimeError, match="make_tasks must be called before get_samples"
     ):
-        exp.get_samples(num_shots=10)
+        exp.get_samples()
 
 
 def test_postselection_experiment_decode_requires_samples(
@@ -417,9 +417,10 @@ def test_postselection_experiment_initialize_mle_decoders_validate_width(
 
 def test_postselection_experiment_make_tasks_sets_cache(msd_mld_exp, msd_mld_kernels):
     _ = msd_mld_kernels
-    tasks = msd_mld_exp.make_tasks(GeminiLogicalSimulator())
+    tasks = msd_mld_exp.make_tasks(GeminiLogicalSimulator(), num_shots=7)
 
     assert msd_mld_exp._postselection_exp_cache.hardware_tasks is tasks
+    assert all(task.num_shots == 7 for task in tasks.values())
 
 
 @dataclass
@@ -469,10 +470,10 @@ def test_postselection_experiment_get_samples_calls_run_async_once_per_basis():
         tasks[basis] = _FakeTask(run_async=Mock(return_value=future))
     cast(Any, exp._postselection_exp_cache).hardware_tasks = tasks
 
-    exp.get_samples(num_shots=100)
+    exp.get_samples()
 
     for task in tasks.values():
-        task.run_async.assert_called_once_with(100)
+        task.run_async.assert_called_once_with()
 
 
 def test_postselection_experiment_get_samples_shapes(msd_mld_samples):

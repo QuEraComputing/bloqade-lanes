@@ -79,7 +79,7 @@ def test_physical_result_uses_post_processing():
     post_processing.emit_observables.assert_called_once_with(raw_measurements)
 
 
-def _mock_physical_task() -> Any:
+def _mock_physical_task(num_shots: int = 1) -> Any:
     task = object.__new__(PhysicalSimulatorTask)
     backend = MagicMock()
     backend._detector_error_model.return_value = "dem"
@@ -88,6 +88,7 @@ def _mock_physical_task() -> Any:
     object.__setattr__(task, "_simulator_backend", backend)
     object.__setattr__(task, "fidelity_bounds", MagicMock(return_value=(0.5, 0.9)))
     object.__setattr__(task, "_post_processing", MagicMock())
+    object.__setattr__(task, "num_shots", num_shots)
     return task
 
 
@@ -97,7 +98,7 @@ def test_physical_task_run_routes_through_backend():
         measurements=np.array([[True, False]])
     )
 
-    result = PhysicalSimulatorTask.run(task, shots=1, with_noise=True)
+    result = PhysicalSimulatorTask.run(task, with_noise=True)
 
     task._backend._detector_error_model.assert_called_once_with("noisy-kernel")
     task._backend.sample.assert_called_once_with("noisy-kernel", shots=1)
@@ -311,8 +312,8 @@ def test_builtin_backends_run_physical_workflow_with_guaranteed_dem(
 ):
     result = (
         PhysicalSimulator(backend=backend)
-        .task(small_physical_kernel)
-        .run(shots=2, with_noise=with_noise)
+        .task(small_physical_kernel, num_shots=2)
+        .run(with_noise=with_noise)
     )
 
     assert isinstance(result, Result)
@@ -332,7 +333,7 @@ def test_tsim_physical_detector_backend_returns_detector_result():
     )
     simulator = PhysicalSimulator(backend=TsimSimulatorBackend(run_detectors=True))
 
-    result = simulator.task(prepared_kernel).run(shots=2, with_noise=False)
+    result = simulator.task(prepared_kernel, num_shots=2).run(with_noise=False)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 2
@@ -351,7 +352,7 @@ def test_pyqrack_physical_returns_measurement_backed_result():
     )
     simulator = PhysicalSimulator(backend=_PyQrackSimulatorBackend(seed=30))
 
-    result = simulator.task(prepared_kernel).run(shots=2, with_noise=False)
+    result = simulator.task(prepared_kernel, num_shots=2).run(with_noise=False)
 
     assert isinstance(result, Result)
     assert result.detectors == [[True], [True]]
@@ -368,6 +369,7 @@ def test_pyqrack_physical_returns_measurement_backed_result():
 )
 def test_physical_task_run_methods_do_not_expose_runtime_configuration(method):
     assert "run_detectors" not in inspect.signature(method).parameters
+    assert "shots" not in inspect.signature(method).parameters
     assert "seed" not in inspect.signature(method).parameters
 
 
