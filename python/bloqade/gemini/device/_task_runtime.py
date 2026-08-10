@@ -281,17 +281,37 @@ class _SimulatorTaskBase(Generic[RetType]):
         return min_fidelity, max_fidelity
 
     @staticmethod
-    def _normalize_matrix(payload: Any, *, name: str, shots: int) -> list[list[bool]]:
+    def _normalize_matrix(
+        payload: Any,
+        *,
+        name: str,
+        shots: int,
+        loss_replace: Any = None,
+        loss: Any = None,
+    ) -> list[list[bool]]:
+        """
+        Checks that the shape of the returned measurements is valid, and
+        adds configuration options for converting values of `loss` (representing atom loss values) to `loss_replace`.
+
+        By default, loss and loss_replace are no-ops (converts None to None).
+        """
         try:
-            array = np.asarray(payload, dtype=bool)
+            array = np.asarray(payload, dtype=object)
+
+            # NOTE: this is to model a lack of loss-resolved readout; atom loss is indistinguishable from measuring the |1> state
+            array[array == loss] = loss_replace
+            array = array.astype(bool)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Backend returned invalid {name} samples") from exc
+
         if array.ndim != 2:
             raise ValueError(f"Backend {name} samples must be a two-dimensional array")
+
         if array.shape[0] != shots:
             raise ValueError(
                 f"Backend returned {array.shape[0]} {name} rows for {shots} shots"
             )
+
         return array.tolist()
 
     def run(
