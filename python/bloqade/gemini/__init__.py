@@ -18,6 +18,7 @@ from .device import (
     PhysicalResult as PhysicalResult,
     PhysicalSimulator as PhysicalSimulator,
     PhysicalSimulatorTask as PhysicalSimulatorTask,
+    PPVMSimulatorBackend as PPVMSimulatorBackend,
     Result as Result,
     SimulatorResult as SimulatorResult,
     TsimSimulatorBackend as TsimSimulatorBackend,

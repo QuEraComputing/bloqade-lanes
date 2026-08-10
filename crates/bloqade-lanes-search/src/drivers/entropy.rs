@@ -3483,3 +3483,61 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod chain_assembly {
+    use super::*;
+    use crate::primitives::distance::DistanceTable;
+    use crate::test_utils::loc;
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+    use std::collections::HashSet;
+
+    /// The entropy driver serialized conveyor chains before #887: it emitted
+    /// only the follower's single-lane move because rectangle growth discarded
+    /// the leader. With growth repairing the chain, both hops ride in one
+    /// candidate — and it outranks the follower-only option, since its score
+    /// is the sum of both entries'.
+    #[test]
+    fn entropy_generates_a_chain_candidate() {
+        let spec: ArchSpec = serde_json::from_str(&crate::test_utils::chain_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        let target_encoded = vec![(0u32, loc(0, 1).encode()), (1u32, loc(0, 2).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, e)| e).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams {
+            max_movesets_per_group: 16,
+            ..EntropyParams::default()
+        };
+
+        let out = generate_candidates(&config, 1, &params, &ctx, 0, None);
+        let chain = out.iter().find(|c| {
+            c.new_config.location_of(0) == Some(loc(0, 1))
+                && c.new_config.location_of(1) == Some(loc(0, 2))
+        });
+        assert!(
+            chain.is_some(),
+            "entropy must offer the one-shot chain; got {:?}",
+            out.iter()
+                .map(|c| (
+                    c.move_set.len(),
+                    c.new_config.location_of(0).map(|l| l.site_id),
+                    c.new_config.location_of(1).map(|l| l.site_id),
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            chain.expect("checked above").move_set.len(),
+            2,
+            "the chain must be a single two-lane operation"
+        );
+    }
+}

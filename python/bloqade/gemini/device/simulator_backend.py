@@ -13,7 +13,7 @@ from kirin import ir, rewrite
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 if TYPE_CHECKING:
-    from stim import DetectorErrorModel
+    from stim import Circuit as StimCircuit, DetectorErrorModel
     from tsim import Circuit as TsimCircuit  # type: ignore[reportMissingImports]
 
 
@@ -191,6 +191,43 @@ def _clifft_compatible_stim_text(circuit: Any) -> str:
     )
 
 
+_PPVM_CORRELATED_LOSS_EVENT = re.compile(
+    r"^(?P<instruction>\s*I_ERROR)"
+    r"\[correlated_loss:(?P<event_id>\d+)\]"
+    r"(?P<arguments>\([^)\n]*\))"
+    r"(?P<targets>\s+[^#\n]+)"
+    r"(?P<comment>#.*)?$"
+)
+
+
+def _ppvm_compatible_stim_text(circuit: str | StimCircuit) -> str:
+    """Convert paired Bloqade correlated-loss tags to PPVM syntax."""
+
+    converted_lines: list[str] = []
+    for line in str(circuit).splitlines():
+        match = _PPVM_CORRELATED_LOSS_EVENT.match(line)
+        if match is None:
+            converted_lines.append(line)
+            continue
+
+        targets = match.group("targets").split()
+        if len(targets) != 2:
+            event_id = match.group("event_id")
+            raise ValueError(
+                "PPVM requires each Bloqade correlated-loss event to target "
+                f"exactly two qubits, but correlated_loss:{event_id} targets "
+                f"{len(targets)}."
+            )
+
+        converted_lines.append(
+            f"{match.group('instruction')}[correlated_loss]"
+            f"{match.group('arguments')}{match.group('targets')}"
+            f"{match.group('comment') or ''}"
+        )
+
+    return "\n".join(converted_lines)
+
+
 def _clifft() -> Any:
     try:
         import clifft  # type: ignore[reportMissingImports]
@@ -204,9 +241,29 @@ def _clifft() -> Any:
     return clifft
 
 
+def _ppvm() -> Any:
+    try:
+        import ppvm  # type: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise ImportError(
+            "PPVM simulation requires the optional `ppvm` dependency. "
+            "Install it with `bloqade-lanes[ppvm,sim]`."
+        ) from exc
+
+    return ppvm
+
+
 def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
     return ImportError(
         "CliffT simulation also requires `bloqade-lanes[sim]`: Tsim performs "
+        "physical SQuIn conversion and detector error model generation even "
+        "when CliffT is selected for sampling."
+    )
+
+
+def _ppvm_tsim_import_error(exc: ImportError) -> ImportError:
+    return ImportError(
+        "PPVM simulation also requires `bloqade-lanes[sim]`: Tsim performs "
         "physical SQuIn conversion and detector error model generation even "
         "when CliffT is selected for sampling."
     )
@@ -287,6 +344,89 @@ def _pyqrack_tsim_import_error(exc: ImportError) -> ImportError:
         "the guaranteed detector error model even when PyQrack is selected "
         "for sampling."
     )
+
+
+@dataclass
+class PPVMSimulatorBackend(AbstractSimulatorBackend):
+    """
+    Backend using Tsim for conversion/DEM generation and PPVM for sampling.
+
+    ``seed`` is a construction-time root seed. Each seeded sampling request
+    receives the next derived child seed from this backend's private stream.
+    """
+
+    seed: int | None = None
+    _tsim_backend: TsimSimulatorBackend = field(
+        default_factory=TsimSimulatorBackend, repr=False
+    )
+    _programs: WeakKeyDictionary[ir.Method, Any] = field(
+        default_factory=WeakKeyDictionary, init=False, repr=False
+    )
+    _rng_state: np.random.Generator | None = field(init=False, repr=False)
+    _rng_lock: LockType = field(default_factory=Lock, init=False, repr=False)
+
+    def __post_init__(self):
+        _validate_seed(self.seed)
+        self._rng_state = (
+            np.random.default_rng(self.seed) if self.seed is not None else None
+        )
+
+    def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
+        try:
+            return self._tsim_backend._tsim_circuit(physical_squin_kernel)
+        except ImportError as exc:
+            raise _ppvm_tsim_import_error(exc) from exc
+
+    def _ppvm_program(self, physical_squin_kernel: ir.Method) -> Any:
+        try:
+            return self._programs[physical_squin_kernel]
+        except KeyError:
+            pass
+
+        ppvm = _ppvm()
+        tsim_circuit = self._tsim_circuit(physical_squin_kernel)
+        stim_text = _ppvm_compatible_stim_text(tsim_circuit.stim_circuit)
+
+        program = ppvm.StimProgram.parse(
+            stim_text
+        )  # parses and validates compatibility
+        self._programs[physical_squin_kernel] = program
+        return program
+
+    def sample(
+        self,
+        physical_squin_kernel: ir.Method,
+        *,
+        shots: int,
+    ) -> BackendSample:
+        effective_seed = _next_child_seed(self._rng_state, self._rng_lock)
+
+        program = self._ppvm_program(physical_squin_kernel)
+
+        ppvm = _ppvm()
+        samples = ppvm.sample_stim(
+            program,
+            n_qubits=program.num_qubits,
+            num_shots=int(shots),
+            seed=effective_seed,
+        )
+
+        raw_measurements = np.asarray(samples)
+
+        measurements = np.empty(raw_measurements.shape, dtype=object)
+        measurements[raw_measurements == ppvm.MeasurementResult.ZERO] = False
+        measurements[raw_measurements == ppvm.MeasurementResult.ONE] = True
+        measurements[raw_measurements == ppvm.MeasurementResult.LOST] = None
+
+        return BackendSample(measurements=measurements)
+
+    def _detector_error_model(
+        self, physical_squin_kernel: ir.Method
+    ) -> DetectorErrorModel:
+        try:
+            return self._tsim_backend._detector_error_model(physical_squin_kernel)
+        except ImportError as exc:
+            raise _ppvm_tsim_import_error(exc) from exc
 
 
 class _RemovePyQrackAnnotations(RewriteRule):
