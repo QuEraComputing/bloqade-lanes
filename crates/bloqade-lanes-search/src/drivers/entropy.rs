@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::drivers::result::SearchResult;
 use crate::feasibility::graph::LaneGraph;
 use crate::observer::{SearchEvent, SearchObserver};
-use crate::ops::aod_grid::BusGridContext;
+use crate::ops::aod_grid::{BusGridContext, ChainLink, close_chain_entries};
 use crate::primitives::config::Config;
 use crate::primitives::context::SearchContext;
 use crate::primitives::distance::DistanceTable;
@@ -388,6 +388,25 @@ fn cmp_group_entries(a: &ScoredEntry, b: &ScoredEntry) -> Ordering {
     })
 }
 
+/// Turn the conveyor followers [`close_chain_entries`] pulled in into scored
+/// entries, so their moves get recorded in the candidate's config.
+///
+/// The score is `0.0` deliberately. A follower is not a chosen move — it is
+/// what the chosen move costs — and these entry scores only order candidates
+/// *within* a bus group before the `max_movesets_per_group` truncation. The
+/// authoritative ranking is [`score_moveset`], which reads the whole
+/// old-config → new-config delta and therefore already prices every follower's
+/// displacement, arrival, and mobility change. Synthesizing an entry score here
+/// would double-count it.
+fn chain_scored_entries(links: &[ChainLink]) -> impl Iterator<Item = ScoredEntry> + '_ {
+    links.iter().map(|link| ScoredEntry {
+        qubit_id: link.qubit_id,
+        score: 0.0,
+        lane_encoded: link.lane_encoded,
+        dst_encoded: link.dst_encoded,
+    })
+}
+
 fn build_deadlock_breaker_candidate(
     config: &Config,
     occupied: &HashSet<u64>,
@@ -427,6 +446,7 @@ fn build_deadlock_breaker_candidate(
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
+        let mut seed_lanes: Vec<u64> = Vec::new();
         let mut seen_qubits: HashSet<u32> = HashSet::new();
         let mut selected_unresolved = 0usize;
         for t in &qubits {
@@ -444,6 +464,7 @@ fn build_deadlock_breaker_candidate(
                 }
                 entries.insert(src_enc, t.lane_encoded);
                 entry_by_lane.insert(t.lane_encoded, *t);
+                seed_lanes.push(t.lane_encoded);
                 if unresolved.contains(&t.qubit_id) {
                     selected_unresolved += 1;
                 }
@@ -452,6 +473,19 @@ fn build_deadlock_breaker_candidate(
 
         if entries.is_empty() {
             continue;
+        }
+
+        // Conveyor followers ride along (#910). They are exempt from the
+        // `target_movers` cap on purpose: the cap limits how many atoms this
+        // breaker *chooses* to move, and a follower is not a choice — without
+        // it the mover ahead has nowhere to go and the group emits nothing.
+        for entry in chain_scored_entries(&close_chain_entries(
+            &mut entries,
+            &seed_lanes,
+            config,
+            ctx.index,
+        )) {
+            entry_by_lane.insert(entry.lane_encoded, entry);
         }
 
         for grid_lanes in grid_ctx.build_aod_grids(&entries) {
@@ -1403,14 +1437,28 @@ pub(crate) fn generate_candidates(
         let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
-        let mut entry_by_lane: HashMap<u64, &ScoredEntry> = HashMap::new();
+        let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
+        let mut seed_lanes: Vec<u64> = Vec::with_capacity(qubits.len());
         for t in &qubits {
             let lane = LaneAddr::decode_u64(t.lane_encoded);
             if let Some((src, _)) = ctx.index.endpoints(&lane) {
                 let src_enc = src.encode();
                 entries.insert(src_enc, t.lane_encoded);
-                entry_by_lane.insert(t.lane_encoded, t);
+                entry_by_lane.insert(t.lane_encoded, *t);
+                seed_lanes.push(t.lane_encoded);
             }
+        }
+
+        // Co-select the conveyor followers a selected mover has to displace, to
+        // the end of the chain (#910). Without them the leader's rectangle is
+        // unexecutable and a packed block yields no candidate at all.
+        for entry in chain_scored_entries(&close_chain_entries(
+            &mut entries,
+            &seed_lanes,
+            config,
+            ctx.index,
+        )) {
+            entry_by_lane.insert(entry.lane_encoded, entry);
         }
 
         // Grids may include empty filler lanes so the emitted MoveSet remains

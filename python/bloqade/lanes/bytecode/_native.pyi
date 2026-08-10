@@ -1121,7 +1121,13 @@ class SolveResult:
 
     @property
     def status(self) -> str:
-        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``."""
+        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
+
+        ``"unsolvable"`` is a proof only from the ``push_rotate`` strategy. From
+        a search strategy it means the search exhausted the moves its generator
+        offered — which is deliberately less than the architecture allows — not
+        that no solution exists.
+        """
         ...
 
     @property
