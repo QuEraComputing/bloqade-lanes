@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
+    Any,
     Generic,
     TypeVar,
 )
@@ -77,6 +78,27 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
             noise_model=self.noise_model,
             add_noise=False,
         ).emit(self.physical_move_kernel)
+
+    @staticmethod
+    def _normalize_matrix(
+        payload: Any,
+        *,
+        name: str,
+        shots: int,
+        loss_replace: Any = True,
+        loss: Any = None,
+    ) -> list[list[bool]]:
+        """
+        Overrides _normalize_matrix to convert the None values in the measurement output to True (to model a lack of loss-resolved readout
+        on Gemini)
+        """
+        return _SimulatorTaskBase._normalize_matrix(
+            payload=payload,
+            name=name,
+            shots=shots,
+            loss_replace=loss_replace,
+            loss=loss,
+        )
 
 
 @dataclass

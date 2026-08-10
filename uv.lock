@@ -369,6 +369,9 @@ msd-reprod = [
     { name = "clifft", marker = "python_full_version >= '3.12'" },
     { name = "ipywidgets" },
 ]
+ppvm = [
+    { name = "ppvm" },
+]
 sim = [
     { name = "bloqade-circuit", extra = ["cirq", "tsim"] },
     { name = "bloqade-tsim" },
@@ -436,6 +439,7 @@ requires-dist = [
     { name = "kirin-toolchain", specifier = "~=0.22.6" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.9.4" },
     { name = "numpy", specifier = ">=2.2.6" },
+    { name = "ppvm", marker = "extra == 'ppvm'", git = "https://github.com/QuEraComputing/ppvm.git?subdirectory=ppvm-python" },
     { name = "pyqt5", marker = "sys_platform == 'darwin' and extra == 'visualization'", specifier = ">=5.15.11" },
     { name = "pyqt5", marker = "sys_platform == 'linux' and extra == 'visualization'", specifier = ">=5.15.11" },
     { name = "qbraid-qir", extras = ["squin"], marker = "sys_platform != 'win32' and extra == 'cudaq'", specifier = ">=0.5.1" },
@@ -443,7 +447,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "scipy", marker = "extra == 'visualization'", specifier = ">=1.15.3" },
 ]
-provides-extras = ["cudaq", "sim", "decoding", "visualization", "msd-reprod", "clifft"]
+provides-extras = ["cudaq", "sim", "decoding", "visualization", "msd-reprod", "clifft", "ppvm"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4032,6 +4036,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/43/2e/12e987b0f311f20e41f904acc452824af3009579d60c878a5435ae1e9f0a/polars_runtime_32-1.43.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:977b4620d837f3ca0d131f858ac1bd72e2ae10a5e85a6cc27fddc71fbdb5005d", size = 55189721, upload-time = "2026-07-27T12:06:54.68Z" },
     { url = "https://files.pythonhosted.org/packages/3a/f6/5bfba6f40a08b2b1bbe0507e9cc638ebada2dceaece45f9d87a905c57de5/polars_runtime_32-1.43.1-cp310-abi3-win_amd64.whl", hash = "sha256:fa557938e9113c12d59c56df8d7f7e1a411cc1954df0dafbb05900136c6329e7", size = 52566672, upload-time = "2026-07-27T12:06:57.725Z" },
     { url = "https://files.pythonhosted.org/packages/f9/5e/41df901e2684e8857bdffd458c8157d237c701df9f3f922d101075f97724/polars_runtime_32-1.43.1-cp310-abi3-win_arm64.whl", hash = "sha256:cc186bad9f33b71f66ee6cc3ba2146d64315a120b0e988814d6fb1a37f0cc9e9", size = 46575356, upload-time = "2026-07-27T12:07:00.856Z" },
+]
+
+[[package]]
+name = "ppvm"
+version = "0.1.0"
+source = { git = "https://github.com/QuEraComputing/ppvm.git?subdirectory=ppvm-python#661fc66fffe1826dad5ee14b514f151b8703a69e" }
+dependencies = [
+    { name = "bloqade-circuit" },
+    { name = "kirin-toolchain" },
 ]
 
 [[package]]

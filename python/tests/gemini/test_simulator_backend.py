@@ -18,11 +18,14 @@ from bloqade.gemini.device import (
     AbstractSimulatorBackend,
     BackendSample,
     CliffTSimulatorBackend,
+    PPVMSimulatorBackend,
     TsimSimulatorBackend,
 )
 from bloqade.gemini.device.simulator_backend import (
     _clifft_compatible_stim_text,
     _get_tsim_circuit,
+    _ppvm,
+    _ppvm_compatible_stim_text,
     _PyQrackSimulatorBackend,
 )
 
@@ -67,6 +70,7 @@ def test_backend_contract_has_exactly_two_abstract_operations():
         AbstractSimulatorBackend,
         TsimSimulatorBackend,
         CliffTSimulatorBackend,
+        PPVMSimulatorBackend,
         _PyQrackSimulatorBackend,
     ],
 )
@@ -77,7 +81,12 @@ def test_backend_sample_does_not_expose_detector_mode(backend_type):
 
 @pytest.mark.parametrize(
     "backend_type",
-    [TsimSimulatorBackend, CliffTSimulatorBackend, _PyQrackSimulatorBackend],
+    [
+        TsimSimulatorBackend,
+        CliffTSimulatorBackend,
+        PPVMSimulatorBackend,
+        _PyQrackSimulatorBackend,
+    ],
 )
 def test_backends_expose_only_private_detector_error_model(backend_type):
     backend = backend_type()
@@ -100,7 +109,8 @@ def test_tsim_backend_accepts_detector_mode_configuration():
 
 
 @pytest.mark.parametrize(
-    "backend_type", [CliffTSimulatorBackend, _PyQrackSimulatorBackend]
+    "backend_type",
+    [CliffTSimulatorBackend, PPVMSimulatorBackend, _PyQrackSimulatorBackend],
 )
 def test_composite_backend_exposes_only_private_tsim_backend(backend_type):
     backend = backend_type()
@@ -110,7 +120,12 @@ def test_composite_backend_exposes_only_private_tsim_backend(backend_type):
 
 @pytest.mark.parametrize(
     "backend_type",
-    [TsimSimulatorBackend, CliffTSimulatorBackend, _PyQrackSimulatorBackend],
+    [
+        TsimSimulatorBackend,
+        CliffTSimulatorBackend,
+        PPVMSimulatorBackend,
+        _PyQrackSimulatorBackend,
+    ],
 )
 @pytest.mark.parametrize("seed", [True, -1, 2**63, 1.5, "1"])
 def test_backends_reject_invalid_public_seed(backend_type, seed):
@@ -353,6 +368,112 @@ def test_clifft_compatible_stim_text_strips_instruction_tags_only():
         )
         == "I_ERROR(0)\nDETECTOR(1)\n# [comment]"
     )
+
+
+def test_ppvm_compatible_stim_text_converts_paired_correlated_loss_events():
+    stim_text = (
+        "I_ERROR[correlated_loss:7](0.1) 0 1\n"
+        "  I_ERROR[correlated_loss:8](0.2, 0.03, 0.04) 2 3 # paired loss\n"
+        "I_ERROR[loss](0.05) 4"
+    )
+
+    assert _ppvm_compatible_stim_text(stim_text) == (
+        "I_ERROR[correlated_loss](0.1) 0 1\n"
+        "  I_ERROR[correlated_loss](0.2, 0.03, 0.04) 2 3 # paired loss\n"
+        "I_ERROR[loss](0.05) 4"
+    )
+
+
+@pytest.mark.parametrize("targets", ["0", "0 1 2", "0 1 2 3"])
+def test_ppvm_compatible_stim_text_rejects_non_pair_events(targets):
+    stim_text = f"I_ERROR[correlated_loss:4](0.1) {targets}"
+
+    with pytest.raises(ValueError, match="exactly two qubits"):
+        _ppvm_compatible_stim_text(stim_text)
+
+
+def _fake_ppvm(monkeypatch, *, samples):
+    ppvm = ModuleType("ppvm")
+    ppvm.StimProgram = SimpleNamespace(  # type: ignore[attr-defined]
+        parse=MagicMock(return_value=SimpleNamespace(num_qubits=5))
+    )
+    ppvm.MeasurementResult = SimpleNamespace(  # type: ignore[attr-defined]
+        ZERO=0,
+        ONE=1,
+        LOST=2,
+    )
+    ppvm.sample_stim = MagicMock(return_value=samples)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "ppvm", ppvm)
+    return ppvm
+
+
+def test_ppvm_missing_dependency_has_installation_guidance(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ppvm", None)
+
+    with pytest.raises(ImportError, match=r"bloqade-lanes\[ppvm,sim\]"):
+        _ppvm()
+
+
+def test_ppvm_backend_caches_program_maps_losses_and_derives_child_seed(monkeypatch):
+    ppvm = _fake_ppvm(monkeypatch, samples=[[0, 1, 2], [2, 0, 1]])
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = SimpleNamespace(
+        stim_circuit="I_ERROR[correlated_loss:9](0.1) 0 1\nM 0 1 2"
+    )
+    backend = PPVMSimulatorBackend(seed=123, _tsim_backend=tsim_backend)
+
+    first = backend.sample(_physical_kernel, shots=2)
+    second = backend.sample(_physical_kernel, shots=2)
+
+    assert first.measurements is not None
+    assert first.measurements.dtype == object
+    assert first.measurements.tolist() == [[False, True, None], [None, False, True]]
+    assert second.measurements is not None
+    ppvm.StimProgram.parse.assert_called_once_with(  # type: ignore[attr-defined]
+        "I_ERROR[correlated_loss](0.1) 0 1\nM 0 1 2"
+    )
+    assert ppvm.sample_stim.call_args_list == [  # type: ignore[attr-defined]
+        call(
+            ppvm.StimProgram.parse.return_value,  # type: ignore[attr-defined]
+            n_qubits=5,
+            num_shots=2,
+            seed=child_seed,
+        )
+        for child_seed in _derived_seeds(123, 2)
+    ]
+    assert tsim_backend._tsim_circuit.call_count == 1
+
+
+def test_ppvm_backend_omits_unconfigured_seed_and_returns_measurements(monkeypatch):
+    ppvm = _fake_ppvm(monkeypatch, samples=[[1]])
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = SimpleNamespace(stim_circuit="M 0")
+    backend = PPVMSimulatorBackend(_tsim_backend=tsim_backend)
+
+    sample = backend.sample(_physical_kernel, shots=1)
+
+    assert sample.measurements is not None
+    assert sample.measurements.tolist() == [[True]]
+    ppvm.sample_stim.assert_called_once_with(  # type: ignore[attr-defined]
+        ppvm.StimProgram.parse.return_value,  # type: ignore[attr-defined]
+        n_qubits=5,
+        num_shots=1,
+        seed=None,
+    )
+    assert sample.detectors is None
+    assert sample.observables is None
+
+
+def test_ppvm_backend_delegates_tsim_circuit_and_dem_to_injected_backend():
+    tsim_backend = MagicMock(spec=TsimSimulatorBackend)
+    tsim_backend._tsim_circuit.return_value = "circuit"
+    tsim_backend._detector_error_model.return_value = "dem"
+    backend = PPVMSimulatorBackend(_tsim_backend=tsim_backend)
+
+    assert _get_tsim_circuit(backend, _physical_kernel) == "circuit"
+    assert backend._detector_error_model(_physical_kernel) == "dem"
+    tsim_backend._tsim_circuit.assert_called_once_with(_physical_kernel)
+    tsim_backend._detector_error_model.assert_called_once_with(_physical_kernel)
 
 
 def test_clifft_backend_compiles_once_normalizes_measurements_and_derives_child_seed(
