@@ -114,9 +114,17 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         default_factory=lambda: DeadlockPolicy.MOVE_BLOCKERS
     )
     top_c: int | None = None
-    # Keep this last among the init fields: this dataclass is not ``kw_only``,
-    # so inserting mid-struct would shift the positional indices of every
-    # subclass field.
+    # Note this field is positionally breaking, and no placement in the base
+    # avoids that: dataclass inheritance always emits base fields before
+    # subclass fields, so *any* new base init field shifts every subclass
+    # field one slot right. Adding it here moved
+    # ``NoHomePlacementStrategy``'s ``gamma`` / ``lambda_lookahead`` /
+    # ``k_candidates`` / ``top_bus_signatures`` / ``bus_reward_rho`` (and the
+    # equivalents on the other subclasses) one position later, starting at
+    # init index 7 instead of 6. Only ``kw_only=True`` on this dataclass, or
+    # declaring the field on each leaf class instead, would keep those indices
+    # stable. Tolerated because no in-repo caller constructs these strategies
+    # positionally.
     backwards_search: bool = False
 
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)

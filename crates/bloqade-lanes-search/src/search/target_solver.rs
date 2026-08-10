@@ -195,9 +195,34 @@ pub(crate) fn solve_with_engine(
         // `Config::new` cannot fail: `validate_target_assignment` already
         // rejected duplicate qubit ids.
         let goal_config = Config::new(target_pairs.iter().copied())?;
-        // The one check that distinguishes a correct transform from a
-        // plausible-looking wrong one. Runs in release, like every other
-        // packaging-time replay in this crate.
+        // For lane-endpoint and occupancy semantics this is the check that
+        // distinguishes a correct transform from a plausible-looking wrong
+        // one — it is what rejects reversing without inverting (or the
+        // converse), which yields a plan that still executes but lands
+        // elsewhere. Runs in release, like every other packaging-time replay
+        // in this crate.
+        //
+        // It is *not* a check on AOD geometry under inversion, and is
+        // structurally blind to it: `check_lane_group_geometry` builds its
+        // grid from each lane's raw `(zone_id, word_id, site_id)` — the
+        // forward source by convention — and never consults
+        // `lane_endpoints`, so a lane and its inverse always get the same
+        // verdict, and an inverted group is checked at its drop side rather
+        // than its pickup side. What makes that sound is a property of the
+        // arch, not of this transform: the src -> dst coordinate map of a bus
+        // must be *separable* (dst x a function of src x alone, dst y of src
+        // y alone), which is what lets a rectangle on one side certify a
+        // rectangle on the other. Every bus of the bundled Gemini physical
+        // spec is separable (3 site buses, 19 word buses, no zone buses), so
+        // the one-sided check is equivalent to a two-sided one there. The
+        // property is currently unstated and unenforced — arch build time
+        // validates that each bus's *full* src and dst sets are rectangles,
+        // which does not imply separability for lane *subsets*. Pre-existing,
+        // and orthogonal to mirroring.
+        //
+        // Note this is the *second* replay a mirrored plan goes through: the
+        // mirror's own plan was already verified inside `run_with_components`
+        // (see `extract` in `search/restarts.rs`).
         crate::search::verify::assert_move_layers_executable(
             &root,
             &layers,

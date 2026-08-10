@@ -634,7 +634,13 @@ mod tests {
 
     /// The load-bearing property for bidirectional search: flipping a lane's
     /// `Direction` swaps its endpoints, and the flipped lane is always
-    /// registered in the index. Checked across every lane of the bundled spec.
+    /// registered in the index.
+    ///
+    /// Checked across every lane of the `example_arch_json` fixture, which
+    /// declares `"zone_buses": []` — so `MoveType::ZoneBus` is **not**
+    /// covered. That is the one lane kind where `zone_id`/`word_id` name a
+    /// different zone than one of the lane's endpoints, i.e. exactly the case
+    /// where the flip is least obviously an involution.
     #[test]
     fn flipping_direction_swaps_endpoints_for_every_lane() {
         use bloqade_lanes_dsl_core::primitives::move_set::MoveSet;

@@ -36,6 +36,27 @@ inverted. Doing only one of the two produces a plan that is often still
 executable but lands somewhere else, which is why the transformed plan is
 replayed through `assert_move_layers_executable` before it is returned.
 
+That replay covers lane endpoints and occupancy; it does **not** cover AOD
+geometry, and cannot. `ArchSpec::check_lane_group_geometry`
+(`arch/query.rs`) builds its grid from each lane's raw
+`(zone_id, word_id, site_id)` — the forward source by convention — and never
+calls `lane_endpoints`, so a lane and its inverse always receive the identical
+verdict, and an inverted group is checked at its drop side rather than its
+pickup side. What makes the one-sided check sound is an unstated property of the
+architecture: a bus's src → dst coordinate map must be **separable** — dst *x* a
+function of src *x* alone, dst *y* of src *y* alone — which is what lets a
+rectangle on one side certify a rectangle on the other. All 22 buses of the
+bundled Gemini physical spec (3 site buses, 19 word buses, 0 zone buses) are
+separable, so on that arch the one-sided check is equivalent to a two-sided one.
+Nothing enforces this: arch build time validates that each bus's *full* src and
+dst word/site sets form AOD rectangles (`_validate_aod_rectangle`, called from
+`add_site_bus`, `add_word_bus` and `ArchBuilder.connect`), which is strictly
+weaker — full rectangles on both sides say nothing about an arbitrary lane
+*subset* mapping to a rectangle. This is pre-existing behaviour that
+`backwards_search` does not change, and a follow-up worth taking up separately:
+either assert separability at arch-load time, or make the geometry check
+endpoint-aware.
+
 ## Direction alone is not the cause
 
 Three things differ between a mirrored solve and a forward one in the
@@ -194,8 +215,23 @@ away, yielding a plan that parks an atom on top of an external atom.
 `assert_move_layers_executable` **cannot** catch this: blocked atoms are not in
 the `Config` it replays. `backwards_search` therefore declines to mirror when
 either endpoint intersects `blocked` (`mirroring_breaks_blocked` in
-`search/target_solver.rs`). This is reachable in production, since
-`PhysicalPlacementStrategy` runs with `block_spectators=True`.
+`search/target_solver.rs`).
+
+On the one path that enables the option, the guard is a safety net rather than a
+live case. `backwards_search` reaches only `NoHomePlacementStrategy`, whose
+`blocked` list is plain `state.occupied` (`_no_return_base.py`).
+`block_spectators` belongs to `PhysicalPlacementStrategy`, which builds its
+`SolveOptions` in `_move_search_from_traversal` and never sets
+`backwards_search`, so that flag is irrelevant to this option. And
+`ConcreteState.__post_init__` (`analysis/placement/lattice.py`) asserts
+`occupied.isdisjoint(layout)`, so `initial ∩ blocked` cannot occur on this
+path — only `target ∩ blocked` can trip the guard, and such an instance is
+unsolvable *forward* too, since no move may land on a blocked location and no
+atom starts there. The guard therefore never de-mirrors a layer that was
+solvable in the first place. It stays because the
+failure it prevents (a fabricated plan parking an atom on an external one) is
+invisible to the replay verifier, and because `SolveOptions` is a public surface
+that callers other than this one path can set.
 
 ## An unexploited performance opportunity
 

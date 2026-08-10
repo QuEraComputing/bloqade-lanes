@@ -127,6 +127,16 @@ pub struct SolveOptions {
     /// well-defined — and unless neither endpoint sits on a `blocked`
     /// location; see `mirroring_breaks_blocked` in
     /// [`crate::search::target_solver`].
+    ///
+    /// Not purely an optimisation: when the mirror *does* run, the caller
+    /// gets the mirrored solve's verdict, failures included. A mirror that
+    /// comes back anything other than
+    /// [`SolveStatus::Solved`](crate::search::result::SolveStatus::Solved) is
+    /// terminal — the forward instance is not retried — so under a finite
+    /// `max_expansions` the two directions can disagree about solvability and
+    /// enabling this option can lose a solve the forward search would have
+    /// found. That is deliberate: a request to solve backwards returns the
+    /// backwards solve's answer rather than silently searching twice.
     pub backwards_search: bool,
 }
 
