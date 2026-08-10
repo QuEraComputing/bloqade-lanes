@@ -426,6 +426,29 @@ def make_physical_placement_strategy(
     ``max_expansions``.  ``lambda_lookahead`` is fixed at ``0`` because
     palindrome return always moves atoms back to their original home position,
     so future-layer proximity penalties carry no signal.
+
+    ``return_moves`` also selects mirrored solving: it wraps the strategy in
+    :class:`~bloqade.lanes.analysis.placement.PalindromePlacementStrategy`
+    *and* turns on ``backwards_search``, since palindrome is what makes
+    mirroring sound (see below).
+
+    .. warning::
+
+       On the palindrome path (``return_moves=True``, the default) with a home
+       starting layout — atoms on their even/home words —
+       ``move_solutions_per_layer`` has no effect. It maps to
+       ``k_candidates``, which feeds the no-home *return* assignment, and that
+       phase never runs under palindrome: ``solve_nohome`` skips it whenever
+       every atom already sits on a home site. Confirmed empirically —
+       sweeping ``move_solutions_per_layer`` over 1, 3, 8 and 20 produces
+       byte-identical move layers at 4, 6 and 8 atoms. The knob still applies
+       when ``return_moves=False``, or when atoms start off their home words.
+
+       The wider consequence is that palindrome reduces
+       :class:`~bloqade.lanes.heuristics.physical.nohome.NoHomePlacementStrategy`
+       to a plain fixed-target router, so ``gamma``, ``k_candidates``,
+       ``top_bus_signatures`` and ``bus_reward_rho`` are all inert on that
+       path.
     """
     from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
 
@@ -440,6 +463,16 @@ def make_physical_placement_strategy(
         max_expansions=search_budget,
         k_candidates=move_solutions_per_layer,
         lambda_lookahead=0.0,
+        # Mirrored solving is only sound as an *optimisation* when the target
+        # is reliably the more constrained endpoint, and palindrome is what
+        # guarantees that: it restores the pre-CZ home layout before every
+        # solve, so each solve runs home (unpaired) → CZ pairing. That also
+        # makes it a single routing call — `solve_nohome` skips its return
+        # phase when every atom already sits on a home site — so the one call
+        # being mirrored is exactly the one with the gradient. Without
+        # palindrome there is no such guarantee, hence the tie to
+        # `return_moves`.
+        backwards_search=return_moves,
     )
 
     return PalindromePlacementStrategy(inner=inner) if return_moves else inner
