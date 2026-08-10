@@ -783,7 +783,8 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,
         weight: f64,
@@ -792,6 +793,7 @@ impl PySolveOptions {
         lookahead: bool,
         top_c: Option<usize>,
         fallback_push_rotate: bool,
+        backwards_search: bool,
     ) -> PyResult<Self> {
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
@@ -812,6 +814,7 @@ impl PySolveOptions {
                 lookahead,
                 top_c,
                 fallback_push_rotate,
+                backwards_search,
             },
         })
     }
@@ -844,6 +847,11 @@ impl PySolveOptions {
     #[getter]
     fn top_c(&self) -> Option<usize> {
         self.inner.top_c
+    }
+
+    #[getter]
+    fn backwards_search(&self) -> bool {
+        self.inner.backwards_search
     }
 
     fn __repr__(&self) -> String {
@@ -1501,6 +1509,15 @@ impl PyMoveSearch {
     #[getter]
     fn strategy(&self) -> PySearchStrategy {
         PySearchStrategy::from_rs(&self.inner.options.strategy)
+    }
+
+    /// Whether the carried ``SolveOptions`` requests mirrored solving.
+    ///
+    /// ``MoveSearch`` deliberately exposes no ``options`` property, so this
+    /// getter is the only way to read the flag back off a built search.
+    #[getter]
+    fn backwards_search(&self) -> bool {
+        self.inner.options.backwards_search
     }
 
     fn __repr__(&self) -> String {
