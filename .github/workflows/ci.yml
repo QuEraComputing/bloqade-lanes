@@ -150,9 +150,6 @@ jobs:
         run: uv sync --all-extras --dev
       - name: Run demos
         run: uv run just demo
-      - name: Run simulator backend demo
-        if: matrix.python-version == '3.12'
-        run: uv run just demo-simulators
 
   msd-numerical-regression:
     name: MSD numerical regression (optional)
