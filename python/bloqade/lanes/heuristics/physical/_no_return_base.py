@@ -71,6 +71,33 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         ``None`` keeps all scored bus options (default for this base —
         subclasses such as :class:`NoReturnPlacementStrategy` override to
         ``3`` to match their historical behaviour).
+    backwards_search:
+        Solve each fixed-target routing call mirrored — plan
+        ``target -> initial``, then reverse the layer list and invert every
+        move set — instead of solving ``initial -> target`` directly. AOD
+        moves are invertible, so the transformed plan is equally valid.
+
+        Worth enabling only when the target is *reliably* more constrained
+        than the initial placement, because routing is empirically easier
+        toward the less constrained endpoint; mirroring aims the search at
+        the loose end. Enabled on an instance where that gradient runs the
+        other way, it costs expansions rather than saving them, so this
+        defaults to ``False``.
+
+        Under :class:`~bloqade.lanes.analysis.placement.PalindromePlacementStrategy`
+        the gradient holds by construction: palindrome restores the pre-CZ
+        home layout before every solve, so each solve runs home (unpaired)
+        → CZ pairing, i.e. loose initial → constrained target.
+
+        On the two-phase no-home path this is only *one* routing call under
+        palindrome. ``solve_nohome``
+        (``crates/bloqade-lanes-search/src/placement/nohome.rs``, see
+        ``has_returners``) skips its return phase whenever every atom
+        already sits on a home site, which palindrome guarantees — leaving a
+        single fixed-target entangling solve, exactly the call that has the
+        gradient. Off the palindrome path the return phase does run, and
+        mirroring it is expected to be neutral, since both of *its*
+        endpoints are unpaired.
 
     Notes
     -----
@@ -87,6 +114,10 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         default_factory=lambda: DeadlockPolicy.MOVE_BLOCKERS
     )
     top_c: int | None = None
+    # Keep this last among the init fields: this dataclass is not ``kw_only``,
+    # so inserting mid-struct would shift the positional indices of every
+    # subclass field.
+    backwards_search: bool = False
 
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
@@ -121,6 +152,7 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
             lookahead=True,
             deadlock_policy=self.deadlock_policy,
             top_c=self.top_c,
+            backwards_search=self.backwards_search,
         )
 
     def _build_move_search(self) -> MoveSearch:

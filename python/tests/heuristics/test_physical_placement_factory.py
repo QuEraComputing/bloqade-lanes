@@ -42,6 +42,29 @@ def test_make_physical_placement_strategy_can_disable_return_moves():
     assert isinstance(strategy, NoHomePlacementStrategy)
 
 
+def test_make_physical_placement_strategy_mirrors_under_palindrome():
+    # Palindrome restores the home layout before every solve, so each solve
+    # runs home (unpaired) -> CZ pairing: the target is the constrained
+    # endpoint, which is the gradient mirrored solving exploits.
+    strategy = make_physical_placement_strategy(return_moves=True)
+
+    assert isinstance(strategy, PalindromePlacementStrategy)
+    inner = strategy.inner
+    assert isinstance(inner, NoHomePlacementStrategy)
+    assert inner.backwards_search is True
+    assert inner._build_solve_options().backwards_search is True
+
+
+def test_make_physical_placement_strategy_solves_forward_without_palindrome():
+    # No palindrome means no guarantee the target is the constrained endpoint,
+    # so mirroring is not applied.
+    strategy = make_physical_placement_strategy(return_moves=False)
+
+    assert isinstance(strategy, NoHomePlacementStrategy)
+    assert strategy.backwards_search is False
+    assert strategy._build_solve_options().backwards_search is False
+
+
 def test_make_physical_placement_strategy_allows_unbounded_search_budget():
     strategy = make_physical_placement_strategy(search_budget=None)
 
