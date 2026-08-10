@@ -73,6 +73,9 @@ demo-phys-arch-customization:
 demo-star-logical-demo:
     python demo/star_logical_demo.py
 
+demo-simulators:
+    python demo/simulators_demo.py
+
 demo-qalloc-at:
     python demo/logical_qalloc_at_demo.py
 
