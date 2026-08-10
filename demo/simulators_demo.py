@@ -63,10 +63,10 @@ def test_logical_program():
 
 # %%
 # Compile the logical program to a task
-logical_task = logical_sim.task(test_logical_program)
+logical_task = logical_sim.task(test_logical_program, num_shots=1000)
 
 # %%
-logical_result = logical_task.run(shots=1000)
+logical_result = logical_task.run()
 
 # %%
 print(np.asarray(logical_result.measurements).shape)
@@ -82,10 +82,10 @@ logical_sim_clifft = GeminiLogicalSimulator(backend=CliffTSimulatorBackend())
 
 # %%
 # Compile the program to a task and use CliffT to sample the results.
-logical_task_clifft = logical_sim_clifft.task(test_logical_program)
+logical_task_clifft = logical_sim_clifft.task(test_logical_program, num_shots=1000)
 
 # %%
-logical_result_clifft = logical_task_clifft.run(shots=1000)
+logical_result_clifft = logical_task_clifft.run()
 
 # %%
 print(np.asarray(logical_result_clifft.measurements).shape)
@@ -109,10 +109,10 @@ def test_physical_program():
 
 
 # %%
-physical_task = physical_sim.task(test_physical_program)
+physical_task = physical_sim.task(test_physical_program, num_shots=1000)
 
 # %%
-physical_result = physical_task.run(shots=1000)
+physical_result = physical_task.run()
 
 # %%
 print(np.asarray(physical_result.measurements).shape)
@@ -122,10 +122,10 @@ print(np.asarray(physical_result.measurements).shape)
 physical_sim_clifft = GeminiPhysicalSimulator(backend=CliffTSimulatorBackend())
 
 # %%
-physical_task_clifft = physical_sim_clifft.task(test_physical_program)
+physical_task_clifft = physical_sim_clifft.task(test_physical_program, num_shots=1000)
 
 # %%
-physical_result_clifft = physical_task_clifft.run(shots=1000)
+physical_result_clifft = physical_task_clifft.run()
 
 # %%
 print(np.asarray(physical_result_clifft.measurements).shape)
