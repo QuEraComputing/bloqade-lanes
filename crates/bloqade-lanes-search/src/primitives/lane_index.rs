@@ -631,4 +631,42 @@ mod tests {
         };
         assert!(index.endpoints(&lane).is_none());
     }
+
+    /// The load-bearing property for bidirectional search: flipping a lane's
+    /// `Direction` swaps its endpoints, and the flipped lane is always
+    /// registered in the index. Checked across every lane of the bundled spec.
+    #[test]
+    fn flipping_direction_swaps_endpoints_for_every_lane() {
+        use bloqade_lanes_dsl_core::primitives::move_set::MoveSet;
+
+        let index = make_index();
+        let mut checked = 0usize;
+
+        for (mt, bus_id, zone_id, dir) in index.bus_groups().collect::<Vec<_>>() {
+            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
+                let Some((src, dst)) = index.endpoints(&lane) else {
+                    continue;
+                };
+                let inverted = MoveSet::new([lane]).inverse().decode();
+                assert_eq!(inverted.len(), 1, "inverse must preserve lane count");
+                let flipped = inverted[0];
+
+                let (inv_src, inv_dst) = index
+                    .endpoints(&flipped)
+                    .expect("the flipped lane must be registered in the index");
+
+                assert_eq!(
+                    inv_src, dst,
+                    "inverted source must be the forward destination"
+                );
+                assert_eq!(
+                    inv_dst, src,
+                    "inverted destination must be the forward source"
+                );
+                checked += 1;
+            }
+        }
+
+        assert!(checked > 0, "the fixture spec must contain lanes to check");
+    }
 }
