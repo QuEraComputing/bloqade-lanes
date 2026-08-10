@@ -7,7 +7,7 @@
 //! imports (`crate::graph::MoveSet`,
 //! `crate::move_policy_dsl::lib_move::StarlarkMoveSet`) keep working.
 
-use bloqade_lanes_bytecode_core::arch::addr::LaneAddr;
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr};
 use starlark::starlark_simple_value;
 use starlark::values::list::AllocList;
 use starlark::values::{Heap, NoSerialize, ProvidesStaticType, StarlarkValue, Value};
@@ -62,6 +62,26 @@ impl MoveSet {
     pub fn encoded_lanes(&self) -> &[u64] {
         &self.lanes
     }
+
+    /// Return the move set that undoes this one.
+    ///
+    /// Lane identity (`move_type`, `zone_id`, `word_id`, `site_id`, `bus_id`)
+    /// is direction-*independent*: `site_id` and `word_id` always encode the
+    /// forward-direction source, and `Direction` only selects which endpoint
+    /// `ArchSpec::lane_endpoints` returns as src versus dst. Flipping it
+    /// therefore maps every lane's `(src, dst)` to `(dst, src)`.
+    ///
+    /// The flipped lane always exists in the architecture, because
+    /// `LaneIndex::new` registers every lane in both directions.
+    pub fn inverse(&self) -> Self {
+        Self::new(self.decode().into_iter().map(|mut lane| {
+            lane.direction = match lane.direction {
+                Direction::Forward => Direction::Backward,
+                Direction::Backward => Direction::Forward,
+            };
+            lane
+        }))
+    }
 }
 
 /// Starlark-visible wrapper around [`MoveSet`].
@@ -99,5 +119,55 @@ impl<'v> StarlarkValue<'v> for StarlarkMoveSet {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
+
+    fn lane(direction: Direction, site_id: u32) -> LaneAddr {
+        LaneAddr {
+            direction,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id,
+            bus_id: 0,
+        }
+    }
+
+    #[test]
+    fn inverse_flips_every_lane_direction() {
+        let ms = MoveSet::new([lane(Direction::Forward, 0), lane(Direction::Forward, 1)]);
+        let inv = ms.inverse();
+        let dirs: Vec<Direction> = inv.decode().into_iter().map(|l| l.direction).collect();
+        assert_eq!(dirs, vec![Direction::Backward, Direction::Backward]);
+    }
+
+    #[test]
+    fn inverse_is_an_involution() {
+        let ms = MoveSet::new([lane(Direction::Forward, 0), lane(Direction::Backward, 3)]);
+        assert_eq!(ms.inverse().inverse(), ms);
+    }
+
+    #[test]
+    fn inverse_preserves_lane_identity() {
+        let ms = MoveSet::new([lane(Direction::Forward, 7)]);
+        let original = ms.decode();
+        let inverted = ms.inverse().decode();
+        assert_eq!(original.len(), 1);
+        assert_eq!(inverted.len(), 1);
+        assert_eq!(inverted[0].move_type, original[0].move_type);
+        assert_eq!(inverted[0].zone_id, original[0].zone_id);
+        assert_eq!(inverted[0].word_id, original[0].word_id);
+        assert_eq!(inverted[0].site_id, original[0].site_id);
+        assert_eq!(inverted[0].bus_id, original[0].bus_id);
+    }
+
+    #[test]
+    fn inverse_of_empty_is_empty() {
+        assert!(MoveSet::new([]).inverse().is_empty());
     }
 }
