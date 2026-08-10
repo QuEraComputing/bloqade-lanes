@@ -18,6 +18,7 @@ use rand::{Rng, SeedableRng};
 use crate::generators::cz_coordination::{
     CzCoordination, EntanglingCoordination, FixedTargetCoordination,
 };
+use crate::ops::aod_grid::{ChainLink, close_chain_entries, vacating_lane};
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::distance::DistanceTable;
@@ -258,45 +259,46 @@ impl HeuristicGenerator {
 }
 
 /// Whether the atom occupying `dst` could vacate in the same AOD shot as
-/// `lane`: it has an outgoing lane on the same
-/// `(zone_id, move_type, bus_id, direction)` group — the four fields
-/// `ArchSpec::check_lane_group_consistency` requires a group to share, so a
-/// candidate admitted here is one the validator will accept.
-///
-/// The `zone_id` term only bites for `ZoneBus` lanes: site and word buses are
-/// intra-zone, so a lane and its destination share a zone automatically. A
-/// single `zone_bus` may serve several zones across its pairs, and for such a
-/// lane `zone_id` is the *source's* zone, so a chain through it
-/// (`z0w0 → z1w0`, then `z1w0 → z2w0`) carries a different `zone_id` per hop.
-///
-/// Consequence, stated honestly: those hops get **serialized** into one
-/// operation each. Serialization is permitted by the architecture — but so is
-/// batching them, since one zone bus may carry transfers among more than two
-/// zones in a single shot. This predicate is therefore deliberately *stricter
-/// than the architecture*, matching today's group-consistency rule rather than
-/// the hardware's capability. The reason to keep it that way for now is that
-/// `check_lane_group_consistency` rejects a mixed-`zone_id` group, so
-/// generating such candidates would produce plans that fail the
-/// solver-boundary replay outright. Unlocking the batching means relaxing that
-/// rule for zone buses first, then relaxing this in step.
+/// `lane` — see [`vacating_lane`] for which lanes qualify and why the rule is
+/// deliberately stricter than the architecture for zone buses.
 ///
 /// This is the selection-time half of the uniform destination rule (#866).
 /// [`crate::ops::aod_grid::destination_is_available`] states the rule against a
 /// known mover set; at scoring time that set does not exist yet, so this
-/// admits a conveyor chain as a *candidate* and
-/// `BusGridContext::is_valid_rect` adjudicates once the rectangle's actual
-/// movers are known.
+/// admits a conveyor chain as a *candidate*, [`close_chain_entries`] co-selects
+/// the atoms that make it executable, and `BusGridContext::is_valid_rect`
+/// adjudicates once the rectangle's actual movers are known.
 ///
 /// Necessarily `false` on endpoint-disjoint buses — a destination there is
 /// never a source of the same bus — so the shipped Gemini specs produce
 /// exactly the same candidates as the previous unconditional occupancy filter.
 fn occupant_can_vacate(dst: LocationAddr, lane: &LaneAddr, index: &LaneIndex) -> bool {
-    index.outgoing_lanes(dst).iter().any(|l| {
-        l.zone_id == lane.zone_id
-            && l.move_type == lane.move_type
-            && l.bus_id == lane.bus_id
-            && l.direction == lane.direction
-    })
+    vacating_lane(dst, lane, index).is_some()
+}
+
+/// Distance improvement for a co-selected conveyor follower, on the same
+/// `d_now - d_after` scale the scoring loop uses for chosen movers.
+///
+/// A follower is not a chosen move — it is what the chosen move costs — and
+/// that cost is real: shifting an atom off its target scores `-1`, so a chain
+/// that derails a packed block ranks below one that runs into free space. A
+/// follower with no target of its own, or an unreachable one, contributes `0`
+/// rather than a fabricated preference.
+fn chain_link_score(
+    link: &ChainLink,
+    targets: &HashMap<u32, u64>,
+    dist_table: &DistanceTable,
+) -> i32 {
+    let Some(&target_enc) = targets.get(&link.qubit_id) else {
+        return 0;
+    };
+    let (Some(d_now), Some(d_after)) = (
+        dist_table.distance(link.src_encoded, target_enc),
+        dist_table.distance(link.dst_encoded, target_enc),
+    ) else {
+        return 0;
+    };
+    d_now as i32 - d_after as i32
 }
 
 /// Yield `(lane, destination)` pairs for every outgoing lane from `loc`
@@ -590,6 +592,10 @@ impl MoveGenerator for HeuristicGenerator {
         // Side-index of movesets already emitted, for O(1) dedup. Order of
         // `candidates` is irrelevant — Step 6 re-sorts by score.
         let mut seen_movesets: HashSet<MoveSet> = HashSet::new();
+        // Target lookup for scoring co-selected conveyor followers. Built on
+        // first use so the endpoint-disjoint specs — where no chain can ever
+        // form — pay nothing for it.
+        let mut target_by_qubit: Option<HashMap<u32, u64>> = None;
 
         for (
             TripletKey {
@@ -605,19 +611,51 @@ impl MoveGenerator for HeuristicGenerator {
                 ctx.index, mt, bus_id, None, dir, &occupied,
             );
 
-            // Build entries (src_encoded -> lane_encoded) and a lane -> triple lookup.
-            // Each source location has at most one atom, so no overwrites occur.
+            // Build entries (src_encoded -> lane_encoded) and the seed order for
+            // the chain closure. Each source location has at most one atom, so
+            // no overwrites occur.
             let mut entries: HashMap<u64, u64> = HashMap::new();
-            let mut triple_by_lane: HashMap<u64, &ScoredTriple> = HashMap::new();
+            let mut seed_lanes: Vec<u64> = Vec::with_capacity(qubits.len());
 
             for t in &qubits {
                 let lane = LaneAddr::decode_u64(t.lane_encoded);
                 if let Some((src, _)) = ctx.index.endpoints(&lane) {
                     let src_enc = src.encode();
                     entries.insert(src_enc, t.lane_encoded);
-                    triple_by_lane.insert(t.lane_encoded, t);
+                    seed_lanes.push(t.lane_encoded);
                 }
             }
+
+            // Step 5a: chain closure (#910). Scoring picks movers one qubit at a
+            // time, so a mover whose destination is held by an atom that must
+            // vacate with it — one already on its target, or one whose own move
+            // scored `<= 0` and was pruned — leaves the rectangle unexecutable
+            // and the group emits nothing. Co-select those followers, to the end
+            // of the chain, so the whole shift rides in one AOD shot.
+            let chain_links = close_chain_entries(&mut entries, &seed_lanes, config, ctx.index);
+            let chain_triples: Vec<ScoredTriple> = if chain_links.is_empty() {
+                Vec::new()
+            } else {
+                let targets = target_by_qubit
+                    .get_or_insert_with(|| ctx.targets.iter().copied().collect::<HashMap<_, _>>());
+                chain_links
+                    .iter()
+                    .map(|link| ScoredTriple {
+                        qubit_id: link.qubit_id,
+                        score: chain_link_score(link, targets, ctx.dist_table),
+                        lane_encoded: link.lane_encoded,
+                        dst_encoded: link.dst_encoded,
+                    })
+                    .collect()
+            };
+
+            // Lane -> triple lookup over both the selected movers and the
+            // followers pulled in behind them.
+            let triple_by_lane: HashMap<u64, &ScoredTriple> = qubits
+                .iter()
+                .chain(chain_triples.iter())
+                .map(|t| (t.lane_encoded, t))
+                .collect();
 
             // Build rectangular grids via two-phase algorithm. Grids may include
             // empty filler lanes to keep complete AOD geometry; only lanes that
@@ -748,13 +786,16 @@ mod tests {
         );
     }
 
-    /// Chains now assemble into a single AOD shot (issue #887).
+    /// Chains assemble into a single AOD shot (issue #887).
     ///
-    /// Selection still picks movers independently — nothing here co-selects
-    /// the atom ahead. What changed is one layer down: rectangle growth
-    /// repairs a chain by pulling in the follower's cell, so both hops ride in
-    /// one move set. Previously only the follower's move was emitted, leaving
-    /// the leader to wait a step.
+    /// Both atoms are nominated by scoring here, so this case is carried by the
+    /// grid layer alone: rectangle growth repairs the chain by pulling in the
+    /// follower's cell, and both hops ride in one move set. Previously only the
+    /// follower's move was emitted, leaving the leader to wait a step.
+    ///
+    /// [`packed_chain_shifts_the_whole_row_in_one_shot`] covers what growth
+    /// cannot reach — a follower that scoring never nominated, which needs the
+    /// selection-time closure.
     #[test]
     fn heuristic_selection_assembles_chains() {
         let index = make_chain_index();
@@ -781,6 +822,99 @@ mod tests {
             out.iter()
                 .map(|c| (c.new_config.location_of(0), c.new_config.location_of(1)))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    /// The packed conveyor of issue #910, as small as it gets: atoms on sites
+    /// 0-3, only site 4 free, and `q0` has to travel to the far end.
+    ///
+    /// `q1..q3` already sit on their targets, so nothing scores them and they
+    /// never became movers — which used to make `q0`'s rectangle unexecutable
+    /// and left the node with **zero** successors. Under grid-complete
+    /// activation there is no chain-free alternative in a packed block, so the
+    /// search reported `unsolvable` on an instance a whole-row shift solves.
+    fn packed_chain_setup() -> (LaneIndex, Config, [(u32, LocationAddr); 4]) {
+        let index = make_chain_index();
+        let config = Config::new([
+            (0, loc(0, 0)),
+            (1, loc(0, 1)),
+            (2, loc(0, 2)),
+            (3, loc(0, 3)),
+        ])
+        .unwrap();
+        let targets = [
+            (0u32, loc(0, 4)),
+            (1, loc(0, 1)),
+            (2, loc(0, 2)),
+            (3, loc(0, 3)),
+        ];
+        (index, config, targets)
+    }
+
+    #[test]
+    fn packed_chain_shifts_the_whole_row_in_one_shot() {
+        let (index, config, targets) = packed_chain_setup();
+        let dist_table = make_table(&targets, &index);
+        let targets_raw: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets_raw, &blocked);
+
+        let mut out = Vec::new();
+        HeuristicGenerator::new().generate(
+            &config,
+            NodeId(0),
+            &ctx,
+            &mut SearchState::default(),
+            &mut out,
+        );
+
+        assert!(
+            !out.is_empty(),
+            "a packed conveyor with a free head must still have successors"
+        );
+        let shifts_all = out
+            .iter()
+            .any(|c| (0..4).all(|q| c.new_config.location_of(q) == Some(loc(0, q + 1))));
+        assert!(
+            shifts_all,
+            "expected one candidate shifting all four atoms; got {:?}",
+            snapshot(&out)
+        );
+    }
+
+    /// Same witness through the entropy generator: its candidate path derives
+    /// movers from the same selected-entry set, so it deadlocked here too.
+    #[test]
+    fn packed_chain_shifts_the_whole_row_under_entropy() {
+        use crate::drivers::entropy::EntropyParams;
+        use crate::generators::entropy::EntropyGenerator;
+
+        let (index, config, targets) = packed_chain_setup();
+        let dist_table = make_table(&targets, &index);
+        let targets_raw: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets_raw, &blocked);
+
+        let mut out = Vec::new();
+        EntropyGenerator::new(EntropyParams::default(), 0).generate(
+            &config,
+            NodeId(0),
+            &ctx,
+            &mut SearchState::default(),
+            &mut out,
+        );
+
+        assert!(
+            !out.is_empty(),
+            "entropy generator must have successors on a packed conveyor"
+        );
+        let shifts_all = out
+            .iter()
+            .any(|c| (0..4).all(|q| c.new_config.location_of(q) == Some(loc(0, q + 1))));
+        assert!(
+            shifts_all,
+            "expected one candidate shifting all four atoms; got {:?}",
+            snapshot(&out)
         );
     }
 
