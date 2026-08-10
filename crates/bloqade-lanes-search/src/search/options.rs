@@ -113,6 +113,21 @@ pub struct SolveOptions {
     /// millisecond on Gemini-sized instances, and it only runs after a
     /// failure.
     pub fallback_push_rotate: bool,
+    /// Solve the mirrored instance and invert the resulting plan.
+    ///
+    /// AOD moves are invertible, so a plan for `target -> initial`, reversed
+    /// and with every move set inverted, is a valid plan for
+    /// `initial -> target`. Routing is empirically easier toward the less
+    /// constrained endpoint, so mirroring can cut node expansions
+    /// substantially when the target is more constrained than the initial
+    /// placement (e.g. a CZ pairing target).
+    ///
+    /// Ignored unless the target is a total assignment over the initial
+    /// placement's qubits — otherwise the mirrored instance is not
+    /// well-defined — and unless neither endpoint sits on a `blocked`
+    /// location; see `mirroring_breaks_blocked` in
+    /// [`crate::search::target_solver`].
+    pub backwards_search: bool,
 }
 
 impl Default for SolveOptions {
@@ -125,6 +140,7 @@ impl Default for SolveOptions {
             lookahead: false,
             top_c: None,
             fallback_push_rotate: false,
+            backwards_search: false,
         }
     }
 }
@@ -254,5 +270,18 @@ impl EntanglingOptions {
             Some(n) => &future_cz_layers[..future_cz_layers.len().min(n)],
             None => future_cz_layers,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backwards_search_is_off_by_default() {
+        assert!(
+            !SolveOptions::default().backwards_search,
+            "mirroring must be opt-in so no existing caller changes behaviour"
+        );
     }
 }

@@ -90,6 +90,33 @@ impl TargetSolver {
     }
 }
 
+/// Whether swapping `initial` and `target` would change the instance's
+/// meaning with respect to `blocked`.
+///
+/// A `blocked` location is an external atom, so no move may *land* on one —
+/// but nothing forbids the root placement from sitting on one, and the
+/// generators never check it. That makes an endpoint that overlaps `blocked`
+/// asymmetric: as a target it is unreachable, as a root it is merely a
+/// starting point the atoms move off. Mirroring across such an endpoint would
+/// "solve" an instance that is genuinely unsolvable (target on a blocked
+/// location) by producing a plan that parks an atom on top of an external one
+/// — which the replay verifier cannot catch, since blocked atoms are not in
+/// the configuration. Skip the mirror instead.
+fn mirroring_breaks_blocked(
+    blocked: &[LocationAddr],
+    initial_pairs: &[(u32, LocationAddr)],
+    target_pairs: &[(u32, LocationAddr)],
+) -> bool {
+    if blocked.is_empty() {
+        return false;
+    }
+    let blocked_set: HashSet<u64> = blocked.iter().map(|l| l.encode()).collect();
+    initial_pairs
+        .iter()
+        .chain(target_pairs)
+        .any(|(_, loc)| blocked_set.contains(&loc.encode()))
+}
+
 /// Shared implementation backing [`TargetSolver::solve`].
 ///
 /// Builds the distance table, heuristic, goal predicate, search
@@ -116,6 +143,76 @@ pub(crate) fn solve_with_engine(
     validate_target_assignment(&target_pairs)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
     let initial_pairs: Vec<(u32, LocationAddr)> = root.iter().collect();
+
+    // Mirroring: solve `target -> initial` and turn the plan around.
+    //
+    // Only well-defined when the target is a total assignment over the
+    // initial placement's qubits: a mirrored instance needs a single
+    // concrete configuration to start from. A partial target
+    // has no configuration to start the mirrored solve from, so the option
+    // no-ops there rather than mirroring something else.
+    if opts.backwards_search
+        && target_pairs.len() == root.len()
+        && !mirroring_breaks_blocked(&blocked_locs, &initial_pairs, &target_pairs)
+    {
+        // `backwards_search: false` is the recursion guard: the mirrored solve must
+        // run forward or this recurses forever.
+        let mirrored_opts = SolveOptions {
+            backwards_search: false,
+            ..opts.clone()
+        };
+        let mirrored = solve_with_engine(
+            engine,
+            &mirrored_opts,
+            entropy_opts,
+            target_pairs.iter().copied(),
+            initial_pairs.iter().copied(),
+            blocked_locs.iter().copied(),
+            max_expansions,
+        )?;
+        if mirrored.status != SolveStatus::Solved {
+            // An unsolved result reports the configuration the *caller's*
+            // solve started from, not the mirror's.
+            return Ok(SolveResult {
+                goal_config: root,
+                ..mirrored
+            });
+        }
+
+        // The mirrored plan `[m1, …, mk]` runs `target -> initial`: applying
+        // `m1` to the target configuration yields `c1`, and `mk` yields
+        // `initial`. Undoing it from `initial` therefore applies `mk` first,
+        // backwards — so the plan for `initial -> target` is
+        // `[mk⁻¹, m(k-1)⁻¹, …, m1⁻¹]`: the list reversed *and* every element
+        // inverted. Doing only one of the two yields a plan that is often
+        // still executable but lands somewhere else entirely.
+        let layers: Vec<_> = mirrored
+            .move_layers
+            .iter()
+            .rev()
+            .map(|layer| layer.inverse())
+            .collect();
+        // `Config::new` cannot fail: `validate_target_assignment` already
+        // rejected duplicate qubit ids.
+        let goal_config = Config::new(target_pairs.iter().copied())?;
+        // The one check that distinguishes a correct transform from a
+        // plausible-looking wrong one. Runs in release, like every other
+        // packaging-time replay in this crate.
+        crate::search::verify::assert_move_layers_executable(
+            &root,
+            &layers,
+            engine.index().arch_spec(),
+            &goal_config,
+        );
+        // `nodes_expanded`, `deadlocks` and `cost` describe the search that
+        // actually ran; inversion preserves the layer count that `cost`
+        // measures, so they carry over unchanged.
+        return Ok(SolveResult {
+            move_layers: layers,
+            goal_config,
+            ..mirrored
+        });
+    }
 
     // Push and Rotate is not a search, so it bypasses the whole
     // frontier/generator apparatus below rather than being a `Frontier`.
@@ -214,11 +311,19 @@ mod tests {
     use super::*;
     use crate::search::move_search::MoveSearch;
     use crate::search::result::SolveStatus;
-    use crate::test_utils::{example_arch_json, loc};
+    use crate::test_utils::{chain_arch_json, example_arch_json, loc};
     use std::sync::Arc;
 
     fn make_engine() -> Arc<SearchEngine> {
         Arc::new(SearchEngine::from_json(example_arch_json()).unwrap())
+    }
+
+    /// The conveyor-chain fixture (`0→1→2→3→4` along one row). Its bus
+    /// destinations overlap its sources, so plans there are genuinely
+    /// direction-dependent — unlike the example arch, where each site column
+    /// is an isolated 4-node path and every plan is forced.
+    fn make_chain_engine() -> Arc<SearchEngine> {
+        Arc::new(SearchEngine::from_json(&chain_arch_json()).unwrap())
     }
 
     #[test]
@@ -239,5 +344,263 @@ mod tests {
         assert_eq!(result.status, SolveStatus::Solved);
         assert!(!result.move_layers.is_empty());
         assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
+    }
+    // ── `SolveOptions::backwards_search` ──
+    //
+    // The transform under test is "reverse the layer list AND invert each
+    // layer". Getting exactly one of the two right still produces a plausible
+    // plan, so every test here leans on the replay verifier
+    // (`assert_move_layers_executable`, called inside `solve_with_engine` on
+    // the transformed plan) to reject it — a wrong transform panics rather
+    // than returning a quietly-wrong result.
+
+    fn backwards_options(strategy: Strategy) -> SolveOptions {
+        SolveOptions {
+            strategy,
+            backwards_search: true,
+            ..SolveOptions::default()
+        }
+    }
+
+    #[test]
+    fn backwards_search_solves_and_lands_on_the_requested_target() {
+        let engine = make_engine();
+        let result = solve_with_engine(
+            &engine,
+            &backwards_options(Strategy::AStar),
+            None,
+            [(0, loc(0, 0)), (1, loc(0, 1))],
+            [(0, loc(1, 5)), (1, loc(1, 6))],
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.goal_config.location_of(0), Some(loc(1, 5)));
+        assert_eq!(result.goal_config.location_of(1), Some(loc(1, 6)));
+        assert!(!result.move_layers.is_empty());
+    }
+
+    #[test]
+    fn backwards_and_forward_agree_on_the_goal_configuration() {
+        let engine = make_engine();
+        let initial = [(0, loc(0, 0)), (1, loc(0, 1))];
+        let target = [(0, loc(1, 5)), (1, loc(1, 6))];
+
+        let forward = solve_with_engine(
+            &engine,
+            &SolveOptions {
+                strategy: Strategy::Entropy,
+                ..SolveOptions::default()
+            },
+            None,
+            initial,
+            target,
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+        let backwards = solve_with_engine(
+            &engine,
+            &backwards_options(Strategy::Entropy),
+            None,
+            initial,
+            target,
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+
+        assert_eq!(forward.status, SolveStatus::Solved);
+        assert_eq!(backwards.status, SolveStatus::Solved);
+        for qubit in [0, 1] {
+            assert_eq!(
+                backwards.goal_config.location_of(qubit),
+                forward.goal_config.location_of(qubit),
+                "both directions must land qubit {qubit} on the same location"
+            );
+        }
+    }
+
+    #[test]
+    fn backwards_search_returns_the_transformed_mirror_plan() {
+        // The discriminating test: a backwards solve must return exactly the
+        // mirrored solve's plan, reversed and inverted. A `backwards_search` flag that
+        // was silently ignored would return the forward plan instead, which on
+        // this conveyor-chain instance is a different plan.
+        let engine = make_chain_engine();
+        let initial = [(0, loc(0, 0)), (1, loc(0, 2))];
+        let target = [(0, loc(0, 3)), (1, loc(0, 4))];
+
+        let mirrored = solve_with_engine(
+            &engine,
+            &SolveOptions::default(),
+            None,
+            target,
+            initial,
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+        let backwards = solve_with_engine(
+            &engine,
+            &backwards_options(Strategy::AStar),
+            None,
+            initial,
+            target,
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+
+        assert_eq!(mirrored.status, SolveStatus::Solved);
+        assert_eq!(backwards.status, SolveStatus::Solved);
+        let expected: Vec<_> = mirrored
+            .move_layers
+            .iter()
+            .rev()
+            .map(|layer| layer.inverse())
+            .collect();
+        assert_eq!(backwards.move_layers, expected);
+        assert_eq!(backwards.nodes_expanded, mirrored.nodes_expanded);
+        assert_eq!(backwards.cost, mirrored.cost);
+        assert_eq!(backwards.deadlocks, mirrored.deadlocks);
+
+        // Guard the fixture itself: if the forward plan ever coincides with the
+        // transformed mirror plan, the assertion above stops discriminating.
+        let forward = solve_with_engine(
+            &engine,
+            &SolveOptions::default(),
+            None,
+            initial,
+            target,
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+        assert_ne!(
+            forward.move_layers, expected,
+            "the fixture must be direction-sensitive for this test to mean anything"
+        );
+    }
+
+    #[test]
+    fn backwards_search_no_ops_on_a_partial_target() {
+        // Two qubits in the initial placement, one target: the mirrored
+        // instance is not well-defined (the "initial" of the mirror would not
+        // cover every qubit), so the option must be ignored rather than
+        // producing a bogus plan.
+        let engine = make_engine();
+        let initial = [(0, loc(0, 0)), (1, loc(1, 0))];
+        let target = [(0, loc(0, 5))];
+        let result = solve_with_engine(
+            &engine,
+            &backwards_options(Strategy::AStar),
+            None,
+            initial,
+            target,
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+        let plain = solve_with_engine(
+            &engine,
+            &SolveOptions::default(),
+            None,
+            initial,
+            target,
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
+        assert_eq!(
+            result.move_layers, plain.move_layers,
+            "the option must be a no-op, not a different (mirrored) solve"
+        );
+    }
+
+    #[test]
+    fn backwards_search_reports_the_root_placement_when_the_mirror_fails() {
+        // Site columns are disjoint on the example arch, so no plan connects
+        // column 0 to column 1 in either direction. An unsolved result must
+        // report the *original* initial configuration, not the mirror's.
+        let engine = make_engine();
+        let result = solve_with_engine(
+            &engine,
+            &backwards_options(Strategy::AStar),
+            None,
+            [(0, loc(0, 0))],
+            [(0, loc(0, 6))],
+            std::iter::empty(),
+            Some(200),
+        )
+        .unwrap();
+
+        assert_ne!(result.status, SolveStatus::Solved);
+        assert!(result.move_layers.is_empty());
+        assert_eq!(result.goal_config.location_of(0), Some(loc(0, 0)));
+    }
+
+    #[test]
+    fn backwards_search_no_ops_when_an_endpoint_sits_on_a_blocked_location() {
+        // The target location holds an external atom, so the instance is
+        // unsolvable. The mirror would start *on* that location and happily
+        // move away, "solving" it with a plan that parks qubit 0 on top of the
+        // blocker — and the replay verifier cannot see blocked atoms. The
+        // option must decline to mirror here.
+        let engine = make_engine();
+        let result = solve_with_engine(
+            &engine,
+            &backwards_options(Strategy::AStar),
+            None,
+            [(0, loc(0, 0))],
+            [(0, loc(0, 5))],
+            [loc(0, 5)],
+            Some(200),
+        )
+        .unwrap();
+
+        assert_ne!(
+            result.status,
+            SolveStatus::Solved,
+            "a target on a blocked location has no valid plan"
+        );
+        assert!(result.move_layers.is_empty());
+    }
+
+    #[test]
+    fn inverting_and_reversing_a_plan_twice_is_the_identity() {
+        // The transform is its own inverse, which is exactly why solving the
+        // mirror and applying it yields a plan for the original instance.
+        let engine = make_engine();
+        let forward = solve_with_engine(
+            &engine,
+            &SolveOptions::default(),
+            None,
+            [(0, loc(0, 0)), (1, loc(0, 1))],
+            [(0, loc(1, 5)), (1, loc(1, 6))],
+            std::iter::empty(),
+            Some(2000),
+        )
+        .unwrap();
+        assert_eq!(forward.status, SolveStatus::Solved);
+        assert!(forward.move_layers.len() > 1, "need a non-trivial plan");
+
+        let once: Vec<_> = forward
+            .move_layers
+            .iter()
+            .rev()
+            .map(|layer| layer.inverse())
+            .collect();
+        let twice: Vec<_> = once.iter().rev().map(|layer| layer.inverse()).collect();
+        assert_eq!(twice, forward.move_layers);
+        assert_ne!(
+            once, forward.move_layers,
+            "a single application must actually change the plan"
+        );
     }
 }
