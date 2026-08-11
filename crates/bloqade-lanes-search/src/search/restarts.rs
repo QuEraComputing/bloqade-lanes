@@ -23,7 +23,7 @@ use crate::primitives::context::{SearchContext, SearchState};
 use crate::scorers::DistanceScorer;
 use crate::search::options::{EntropyOptions, InnerStrategy, SolveOptions, Strategy};
 use crate::search::result::{SolveResult, SolveStatus};
-use crate::traits::{Goal, Heuristic, MoveGenerator};
+use crate::traits::{Goal, Heuristic, MoveGenerator, Objective};
 
 /// Extract a [`SolveResult`] from a [`SearchResult`].
 ///
@@ -238,6 +238,7 @@ where
                         seed,
                         observer,
                         entropy_tables,
+                        &UniformCost,
                     )
                 };
                 let mut solve = extract(result, 0, budget, ctx);
@@ -275,7 +276,14 @@ where
             return inner_result;
         }
 
-        let max_depth = Some(inner_result.cost.ceil() as u32);
+        // `cost` is an objective cost; `max_depth` is a tree-depth cutoff
+        // (`frontier::run_search` compares it against `graph.depth`). Convert
+        // through the objective's per-shot floor: no plan of cost `<= c` can be
+        // deeper than `floor(c / min_shot_cost)`. Under `UniformCost`
+        // (`min_shot_cost == 1`, integral costs) this is exactly the
+        // `cost.ceil()` it replaces, but it stays correct rather than
+        // accidentally correct if the inner objective ever changes.
+        let max_depth = Some((inner_result.cost / UniformCost.min_shot_cost()).floor() as u32);
         let astar_move_gen = make_generator(0, frontier_deadlock_policy(deadlock_policy));
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
         let astar_result = run_frontier(

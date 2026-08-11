@@ -70,4 +70,4 @@ pub use search::move_search::MoveSearch;
 pub use search::options::{InnerStrategy, SolveOptions, Strategy};
 pub use search::result::{CandidateAttempt, MultiSolveResult};
 pub use search::target_solver::TargetSolver;
-pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};
+pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator, Objective, ObjectiveId};
