@@ -68,6 +68,13 @@ pub struct BoundStats {
     pub root_lower_bound: f64,
     /// Cost of the best solution found, or [`f64::NAN`] if none was.
     pub incumbent_cost: f64,
+    /// Whether a non-trivial bound was in use.
+    ///
+    /// Without it, an unbounded run is indistinguishable from a bounded run
+    /// that pruned nothing: both report zero cuts, and `root_lower_bound` of
+    /// `0.0` would yield a spurious "gap" of 1.0 that reads like a measurement
+    /// rather than an absence of one.
+    pub bound_enabled: bool,
 }
 
 impl BoundStats {
@@ -77,11 +84,12 @@ impl BoundStats {
     }
 
     /// Certified optimality gap `(incumbent - h(root)) / incumbent`, or `None`
-    /// when no solution was found or the incumbent is zero.
+    /// when no bound was in use, no solution was found, or the incumbent is
+    /// zero.
     ///
     /// `0.0` means the incumbent is provably optimal.
     pub fn optimality_gap(&self) -> Option<f64> {
-        if !self.incumbent_cost.is_finite() || self.incumbent_cost <= 0.0 {
+        if !self.bound_enabled || !self.incumbent_cost.is_finite() || self.incumbent_cost <= 0.0 {
             return None;
         }
         Some(((self.incumbent_cost - self.root_lower_bound) / self.incumbent_cost).max(0.0))

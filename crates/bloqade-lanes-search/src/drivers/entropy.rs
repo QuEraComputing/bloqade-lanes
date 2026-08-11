@@ -557,12 +557,15 @@ impl Default for EntropyState {
 struct ScoredResumeState {
     node_id: NodeId,
     score: f64,
-    /// `g + h` for this node: accumulated objective cost plus the completion
-    /// bound, fixed at insertion time because both are functions of the node's
-    /// configuration alone. Used *only* by the incumbent gate in
-    /// [`resume_buffer_pop_best`] — never by the ordering below. Equals `g`
-    /// exactly when bounding is disabled.
-    f: f64,
+    /// Lowest total cost any solution through this node can have: `g + h`,
+    /// accumulated objective cost plus the completion bound. Fixed at
+    /// insertion time, since both terms are functions of the node's
+    /// configuration alone. Equals `g` exactly when bounding is disabled.
+    ///
+    /// Used *only* by the incumbent gate in [`resume_buffer_pop_best`], never
+    /// by the ordering below — unlike the weighted `f_score` the frontier
+    /// driver ranks by, this is an unweighted floor used to prune.
+    min_total_cost: f64,
     depth: u32,
     order: u64,
 }
@@ -579,7 +582,7 @@ fn resume_buffer_insert(
     buffer: &mut Vec<ScoredResumeState>,
     node_id: NodeId,
     score: f64,
-    f: f64,
+    min_total_cost: f64,
     depth: u32,
     capacity: usize,
     next_order: &mut u64,
@@ -592,7 +595,7 @@ fn resume_buffer_insert(
     let candidate = ScoredResumeState {
         node_id,
         score,
-        f,
+        min_total_cost,
         depth,
         order: *next_order,
     };
@@ -639,7 +642,7 @@ fn resume_buffer_pop_best(
             .map(|(idx, _)| idx)?;
         let best = buffer.swap_remove(best_idx);
         if let Some(cost_cap) = best_cost
-            && best.f >= cost_cap
+            && best.min_total_cost >= cost_cap
         {
             continue;
         }
@@ -2285,6 +2288,7 @@ where
             bound.estimate(graph.config(root_id))
         },
         incumbent_cost: f64::NAN,
+        bound_enabled: !B::TRIVIAL,
         ..BoundStats::default()
     };
 
@@ -2555,7 +2559,7 @@ where
             .get(&current)
             .and_then(best_untried_moveset_score)
         {
-            let f = graph.g_score(current)
+            let min_total_cost = graph.g_score(current)
                 + if B::TRIVIAL {
                     0.0
                 } else {
@@ -2565,7 +2569,7 @@ where
                 &mut resume_buffer,
                 current,
                 next_best_score,
-                f,
+                min_total_cost,
                 graph.depth(current),
                 resume_capacity,
                 &mut resume_insert_order,

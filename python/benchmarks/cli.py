@@ -48,7 +48,12 @@ def main() -> int:
 
     if args.architecture == "logical":
         strategies = tuple(
-            default_strategy_configs(arch_spec=("logical", logical_arch.get_arch_spec))
+            default_strategy_configs(
+                arch_spec=("logical", logical_arch.get_arch_spec),
+                # Bound-on coverage is tracked on the logical suite only; see
+                # `default_strategy_configs` for why not on physical.
+                include_completion_bound=True,
+            )
         )
     else:
         strategies = tuple(

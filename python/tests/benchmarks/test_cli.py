@@ -227,7 +227,7 @@ def _mock_cli_run(monkeypatch, rows: list[BenchmarkRow]):
     monkeypatch.setattr(
         cli_module,
         "default_strategy_configs",
-        lambda arch_spec=None: (strategy,),
+        lambda arch_spec=None, **_kwargs: (strategy,),
     )
     monkeypatch.setattr(
         cli_module,
@@ -362,7 +362,7 @@ def test_main_logical_mode_skips_large_cases(monkeypatch, capsys, tmp_path: Path
     monkeypatch.setattr(
         cli_module,
         "default_strategy_configs",
-        lambda arch_spec=None: (strategy,),
+        lambda arch_spec=None, **_kwargs: (strategy,),
     )
     monkeypatch.setattr(
         cli_module,

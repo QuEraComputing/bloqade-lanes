@@ -1008,7 +1008,17 @@ class EntropyOptions:
         w_t: float = 0.05,
         collect_entropy_trace: bool = False,
         seed: int = 0,
+        completion_bound: str | None = None,
     ) -> None: ...
+    @property
+    def completion_bound(self) -> str | None:
+        """Admissible completion bound for branch-and-bound pruning.
+
+        ``"weighted_distance"`` or ``None`` (no bound). Affects which subtrees
+        the entropy search explores, never candidate generation, and never
+        yields a worse plan.
+        """
+
     @property
     def max_movesets_per_group(self) -> int: ...
     @property
@@ -1154,6 +1164,20 @@ class SolveResult:
     @property
     def cost(self) -> float:
         """Total path cost. 0.0 when ``status`` is not ``"solved"``."""
+        ...
+
+    @property
+    def bound_stats(self) -> dict[str, float | None]:
+        """Branch-and-bound pruning statistics.
+
+        All-zero unless ``EntropyOptions.completion_bound`` was set. Keys:
+        ``cuts_by_g`` (cuts accumulated cost alone could make), ``cuts_by_h``
+        (cuts only the bound could make), ``cuts_infeasible``,
+        ``cut_depth_sum`` / ``cut_depth_g_only_sum`` (the depth ratio measuring
+        how much earlier the bound cut), ``root_lower_bound`` (a certified
+        lower bound on the instance optimum), ``incumbent_cost``, and
+        ``optimality_gap`` (``None`` when unsolved).
+        """
         ...
 
     @property

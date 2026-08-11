@@ -60,6 +60,21 @@ class BenchmarkRow:
     estimated_fidelity: float | None
     nodes_explored: int | None
     max_depth_reached: int | None
+    cuts_by_g: int | None = None
+    """Branches pruned because accumulated cost alone reached the incumbent."""
+    cuts_by_h: int | None = None
+    """Branches pruned only because the completion bound was added: the bound's
+    actual contribution over the pre-existing test."""
+    cut_depth_sum: int | None = None
+    """Summed depth at which ``cuts_by_h`` fired."""
+    cut_depth_g_only_sum: int | None = None
+    """Summed depth at which cost alone would have reached the incumbent for
+    those same branches. Against ``cut_depth_sum`` this is the depth ratio:
+    how much earlier the bound cut, hence roughly how much subtree it saved."""
+    max_optimality_gap: float | None = None
+    """Widest ``(incumbent - h(root)) / incumbent`` over this case's solves.
+    ``0.0`` would mean provably optimal; large values mean the bound is loose
+    and a tighter one has headroom."""
     arch_spec_id: str = BUILTIN_ARCH_SPEC_ID
     notes: str = ""
     extra: dict[str, Any] = field(default_factory=dict)

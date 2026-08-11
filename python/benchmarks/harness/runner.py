@@ -5,7 +5,7 @@ from __future__ import annotations
 import statistics
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
@@ -60,12 +60,24 @@ def _squin_to_move(
     ).emit(place_mt)
 
 
+def _stat_int(stats: dict[str, float], key: str) -> int | None:
+    """Read one integer counter, or ``None`` when bounding was disabled.
+
+    An absent key means no bounded solve ran, which is reported as blank rather
+    than ``0`` so "bounding off" is distinguishable from "bounding on and
+    nothing was pruned".
+    """
+    value = stats.get(key)
+    return None if value is None else int(value)
+
+
 @dataclass(frozen=True)
 class _RunArtifacts:
     move_mt: object
     arch_spec: ArchSpec
     nodes_explored: int | None
     max_depth_reached: int | None
+    bound_stats: dict[str, float] = field(default_factory=dict)
     notes: str = ""
 
 
@@ -97,6 +109,7 @@ class BenchmarkRunner:
         artifacts: _RunArtifacts | None = None
         nodes_explored = None
         max_depth_reached = None
+        bound_stats: dict[str, float] = {}
         notes = [job.strategy.notes] if job.strategy.notes else []
 
         try:
@@ -112,6 +125,7 @@ class BenchmarkRunner:
                     move_mt = artifacts.move_mt
                     nodes_explored = artifacts.nodes_explored
                     max_depth_reached = artifacts.max_depth_reached
+                    bound_stats = artifacts.bound_stats
                     if artifacts.notes:
                         notes.append(artifacts.notes)
 
@@ -139,6 +153,11 @@ class BenchmarkRunner:
                 estimated_fidelity=fidelity,
                 nodes_explored=nodes_explored,
                 max_depth_reached=max_depth_reached,
+                cuts_by_g=_stat_int(bound_stats, "cuts_by_g"),
+                cuts_by_h=_stat_int(bound_stats, "cuts_by_h"),
+                cut_depth_sum=_stat_int(bound_stats, "cut_depth_sum"),
+                cut_depth_g_only_sum=_stat_int(bound_stats, "cut_depth_g_only_sum"),
+                max_optimality_gap=bound_stats.get("max_optimality_gap"),
                 arch_spec_id=job.strategy.arch_spec_id,
                 notes="; ".join([n for n in notes if n]),
             )
@@ -172,16 +191,19 @@ class BenchmarkRunner:
         _assert_move_lowering_complete(move_mt)
 
         nodes: int | None = None
+        bound_stats: dict[str, float] = {}
         inner = getattr(placement_strategy, "inner", placement_strategy)
         if isinstance(inner, PhysicalPlacementStrategy) and isinstance(
             inner.traversal, RustPlacementTraversal
         ):
             nodes = inner.rust_nodes_expanded_total
+            bound_stats = inner.rust_bound_stats_total
         return _RunArtifacts(
             move_mt=move_mt,
             arch_spec=placement_strategy.arch_spec,
             nodes_explored=nodes,
             max_depth_reached=None,
+            bound_stats=bound_stats,
         )
 
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 // `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
 // so the attempts-list getter's return signature stays legible.
@@ -33,7 +34,7 @@ use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::search::engine::SearchEngine;
 use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::options::{
-    EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
+    BoundKind, EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
 };
 use bloqade_lanes_search::search::result::{MultiSolveResult, SolveResult};
 use bloqade_lanes_search::search::target_solver::TargetSolver;
@@ -265,6 +266,42 @@ impl PySolveResult {
     #[getter]
     fn deadlocks(&self) -> u32 {
         self.inner.deadlocks
+    }
+
+    /// Branch-and-bound pruning statistics as a dict.
+    ///
+    /// All-zero unless `EntropyOptions.completion_bound` was set. Keys:
+    /// `cuts_by_g` (cuts `g` alone could make), `cuts_by_h` (cuts only the
+    /// bound could make), `cuts_infeasible`, `cut_depth_sum` /
+    /// `cut_depth_g_only_sum` (the depth ratio measuring how much earlier the
+    /// bound fired), `root_lower_bound` (a certified lower bound on the
+    /// instance optimum), `incumbent_cost`, and `optimality_gap`
+    /// (`None` when unsolved).
+    #[getter]
+    fn bound_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let s = &self.inner.bound_stats;
+        let dict = PyDict::new(py);
+        // No bound in use: return an empty dict rather than a wall of zeros, so
+        // "bounding was off" stays distinguishable from "bounding was on and
+        // pruned nothing" — and so no spurious gap of 1.0 is reported for a
+        // run that measured no lower bound at all.
+        if !s.bound_enabled {
+            return Ok(dict);
+        }
+        dict.set_item("cuts_by_g", s.cuts_by_g)?;
+        dict.set_item("cuts_by_h", s.cuts_by_h)?;
+        dict.set_item("cuts_infeasible", s.cuts_infeasible)?;
+        dict.set_item("cut_depth_sum", s.cut_depth_sum)?;
+        dict.set_item("cut_depth_g_only_sum", s.cut_depth_g_only_sum)?;
+        dict.set_item("root_lower_bound", s.root_lower_bound)?;
+        // NaN does not round-trip usefully into Python numerics; report the
+        // "no solution found" case as None instead.
+        dict.set_item(
+            "incumbent_cost",
+            s.incumbent_cost.is_finite().then_some(s.incumbent_cost),
+        )?;
+        dict.set_item("optimality_gap", s.optimality_gap())?;
+        Ok(dict)
     }
 
     /// Optional entropy trace (present when `collect_entropy_trace=True`).
@@ -909,13 +946,14 @@ pub struct PyEntropyOptions {
 #[pymethods]
 impl PyEntropyOptions {
     #[new]
-    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0))]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None))]
     fn new(
         max_movesets_per_group: usize,
         max_goal_candidates: usize,
         w_t: f64,
         collect_entropy_trace: bool,
         seed: u64,
+        completion_bound: Option<&str>,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -932,6 +970,15 @@ impl PyEntropyOptions {
                 "w_t must be a finite float in the range [0.0, 1.0]",
             ));
         }
+        let completion_bound = match completion_bound {
+            None => None,
+            Some("weighted_distance") => Some(BoundKind::WeightedDistance),
+            Some(other) => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown completion_bound '{other}'; expected 'weighted_distance' or None"
+                )));
+            }
+        };
         Ok(Self {
             inner: EntropyOptions {
                 max_movesets_per_group,
@@ -939,11 +986,18 @@ impl PyEntropyOptions {
                 w_t,
                 collect_entropy_trace,
                 seed,
-                // Not exposed to Python yet: branch-and-bound pruning is
-                // Rust-side only until the benchmark harness measures it.
-                completion_bound: None,
+                completion_bound,
             },
         })
+    }
+
+    /// Completion bound in use: `"weighted_distance"` or `None`.
+    #[getter]
+    fn completion_bound(&self) -> Option<&'static str> {
+        match self.inner.completion_bound {
+            None => None,
+            Some(BoundKind::WeightedDistance) => Some("weighted_distance"),
+        }
     }
 
     #[getter]
