@@ -482,6 +482,7 @@ fn build_deadlock_breaker_candidate(
         for entry in chain_scored_entries(&close_chain_entries(
             &mut entries,
             &seed_lanes,
+            occupied,
             config,
             ctx.index,
         )) {
@@ -1455,6 +1456,7 @@ pub(crate) fn generate_candidates(
         for entry in chain_scored_entries(&close_chain_entries(
             &mut entries,
             &seed_lanes,
+            &occupied,
             config,
             ctx.index,
         )) {
