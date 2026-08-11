@@ -38,6 +38,7 @@ pub(crate) fn extract(
     max_exp: Option<u32>,
     ctx: &SearchContext,
 ) -> SolveResult {
+    let bound_stats = result.bound_stats;
     match result.goal {
         Some(goal_id) => {
             let move_layers = result.solution_path().unwrap_or_default();
@@ -49,13 +50,15 @@ pub(crate) fn extract(
                 ctx.index.arch_spec(),
                 &goal_config,
             );
-            SolveResult::solved(
+            let mut solved = SolveResult::solved(
                 goal_config,
                 move_layers,
                 cost,
                 result.nodes_expanded,
                 deadlocks,
-            )
+            );
+            solved.bound_stats = bound_stats;
+            solved
         }
         None => {
             let root_config = result.graph.config(result.graph.root()).clone();
@@ -64,7 +67,10 @@ pub(crate) fn extract(
             } else {
                 SolveStatus::Unsolvable
             };
-            SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks)
+            let mut unsolved =
+                SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks);
+            unsolved.bound_stats = bound_stats;
+            unsolved
         }
     }
 }

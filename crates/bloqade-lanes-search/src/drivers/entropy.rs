@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::bounds::{CompletionBound, NoBound};
+use crate::bounds::{BoundStats, CompletionBound, NoBound};
 use crate::cost::UniformCost;
 use crate::drivers::result::SearchResult;
 use crate::feasibility::graph::LaneGraph;
@@ -1201,11 +1201,22 @@ fn debug_assert_tables_match(tables: Option<&HeuristicTables>, params: &EntropyP
     }
 }
 
+/// Why a branch was cut, for [`BoundStats`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Cut {
+    /// `h = +∞`: no completion exists, whatever the incumbent.
+    Infeasible,
+    /// `g` alone reached the incumbent — would have been cut without a bound.
+    ByG,
+    /// Only the bound could make this cut: `g < C <= g + h`.
+    ByH,
+}
+
 /// Branch-and-bound test: can `node` still lead to something strictly better
 /// than the incumbent?
 ///
-/// Returns `true` when the branch is provably not worth exploring, either
-/// because the bound proves no completion exists at all (`h = +∞`) or because
+/// Returns `Some(reason)` when the branch is provably not worth exploring —
+/// either because the bound proves no completion exists (`h = +∞`) or because
 /// `g + h` already reaches the incumbent cost `C`. Ties are cut: an equal-cost
 /// completion adds nothing once one is held.
 ///
@@ -1213,25 +1224,65 @@ fn debug_assert_tables_match(tables: Option<&HeuristicTables>, params: &EntropyP
 /// driver may be perturbed or reweighted; a pruning decision may not be.
 ///
 /// With a [`TRIVIAL`](CompletionBound::TRIVIAL) bound the `h` term folds to a
-/// constant `0.0` at monomorphization, leaving exactly the `g >= C` test this
+/// constant `0.0` at monomorphization, so [`Cut::ByH`] and [`Cut::Infeasible`]
+/// become unreachable and this collapses to exactly the `g >= C` test it
 /// generalizes — the bound-disabled path is the same code, not merely
 /// equivalent code.
 #[inline]
-fn is_pruned<B: CompletionBound>(
+fn classify_cut<B: CompletionBound>(
     graph: &SearchGraph,
     node: NodeId,
     best_cost: Option<f64>,
     bound: &B,
-) -> bool {
+) -> Option<Cut> {
     let h = if B::TRIVIAL {
         0.0
     } else {
         bound.estimate(graph.config(node))
     };
     if h.is_infinite() {
-        return true; // infeasible regardless of any incumbent
+        return Some(Cut::Infeasible);
     }
-    best_cost.is_some_and(|cost_cap| graph.g_score(node) + h >= cost_cap)
+    let cost_cap = best_cost?;
+    let g = graph.g_score(node);
+    if g >= cost_cap {
+        Some(Cut::ByG)
+    } else if g + h >= cost_cap {
+        Some(Cut::ByH)
+    } else {
+        None
+    }
+}
+
+/// Fold one child-expansion cut into [`BoundStats`].
+///
+/// For a [`Cut::ByH`] this also records how much earlier the bound fired than
+/// `g` alone would have. `g` grows by at least `min_shot_cost` per shot, so
+/// from cost `g` the earliest depth at which `g` alone could reach `C` is
+/// `depth + ceil((C - g) / min_shot_cost)` — a floor on the extra depth the
+/// unbounded search would have descended before cutting, hence a conservative
+/// estimate of the subtree saved.
+fn record_cut(
+    stats: &mut BoundStats,
+    cut: Cut,
+    depth: u32,
+    g: f64,
+    best_cost: Option<f64>,
+    min_shot_cost: f64,
+) {
+    match cut {
+        Cut::Infeasible => stats.cuts_infeasible += 1,
+        Cut::ByG => stats.cuts_by_g += 1,
+        Cut::ByH => {
+            stats.cuts_by_h += 1;
+            stats.cut_depth_sum += u64::from(depth);
+            let extra = match best_cost {
+                Some(c) if min_shot_cost > 0.0 => ((c - g) / min_shot_cost).ceil().max(0.0) as u64,
+                _ => 0,
+            };
+            stats.cut_depth_g_only_sum += u64::from(depth) + extra;
+        }
+    }
 }
 
 fn unresolved_count(config: &Config, targets: &[(u32, u64)]) -> u32 {
@@ -2183,6 +2234,12 @@ where
             nodes_expanded: 0,
             max_depth_reached: 0,
             graph,
+            // The root satisfies the goal: nothing was searched, and the
+            // optimum is trivially 0.
+            bound_stats: BoundStats {
+                incumbent_cost: 0.0,
+                ..BoundStats::default()
+            },
         };
     }
 
@@ -2215,6 +2272,22 @@ where
     let mut best_cost: Option<f64> = None;
     let mut budget_exhausted = false;
 
+    // `h(root)` is a certified lower bound on this instance's optimum: it
+    // depends only on the configuration, so sampled branch generation cannot
+    // invalidate it. Captured once, before any search.
+    // Nodes whose cut has already been folded into `bound_stats`, so a node
+    // tested at both gates or re-tested on resume is counted once.
+    let mut cut_counted: HashSet<NodeId> = HashSet::new();
+    let mut bound_stats = BoundStats {
+        root_lower_bound: if B::TRIVIAL {
+            0.0
+        } else {
+            bound.estimate(graph.config(root_id))
+        },
+        incumbent_cost: f64::NAN,
+        ..BoundStats::default()
+    };
+
     // Safety cap: hard iteration limit prevents infinite loops when
     // max_expansions is None and the search gets stuck in reversion cycles.
     let hard_limit = max_expansions.unwrap_or(ctx.index.num_locations() as u32 * 10);
@@ -2234,7 +2307,22 @@ where
         // nothing better exists — the loop falls back to the root and runs to
         // the iteration cap, which then hands off to the budget-exhaustion
         // fallback exactly as an unbounded run would.
-        if is_pruned(&graph, current, best_cost, bound) {
+        if let Some(cut) = classify_cut(&graph, current, best_cost, bound) {
+            // Most post-incumbent pruning lands here rather than at the child
+            // gate: once a goal is found the driver jumps to a resume node,
+            // and this is where that node is tested. Dedupe by node id so a
+            // node re-tested on later resumes (or the root, which the loop
+            // falls back to repeatedly once the buffer empties) counts once.
+            if cut_counted.insert(current) {
+                record_cut(
+                    &mut bound_stats,
+                    cut,
+                    graph.depth(current),
+                    graph.g_score(current),
+                    best_cost,
+                    objective.min_shot_cost(),
+                );
+            }
             current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
             continue;
         }
@@ -2557,7 +2645,17 @@ where
             continue;
         }
 
-        if is_pruned(&graph, child_id, best_cost, bound) {
+        if let Some(cut) = classify_cut(&graph, child_id, best_cost, bound) {
+            if cut_counted.insert(child_id) {
+                record_cut(
+                    &mut bound_stats,
+                    cut,
+                    child_depth,
+                    new_g,
+                    best_cost,
+                    objective.min_shot_cost(),
+                );
+            }
             resume_buffer_discard(&mut resume_buffer, child_id);
             current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
             continue;
@@ -2579,11 +2677,13 @@ where
     // 1) lowest objective cost, 2) lowest approximate path move time,
     // 3) lexicographic path key (deterministic), 4) node id (deterministic).
     let best = select_best_goal_with_tiebreak(&found_goals, &graph, ctx.index);
+    bound_stats.incumbent_cost = best.map_or(f64::NAN, |id| graph.g_score(id));
     SearchResult {
         goal: best,
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
+        bound_stats,
     }
 }
 
@@ -4026,6 +4126,98 @@ mod tests {
                 (u, b) => panic!("solvability disagreed: unbounded={u:?} bounded={b:?}"),
             }
         }
+    }
+
+    /// The bound's root estimate is a certified lower bound on the optimum,
+    /// so it can never exceed the cost of a solution actually found. This is
+    /// the admissibility property checked against a real search rather than
+    /// argued on paper.
+    #[test]
+    fn root_lower_bound_never_exceeds_the_incumbent() {
+        type Instance = (Vec<(u32, LocationAddr)>, Vec<(u32, LocationAddr)>);
+        let cases: [Instance; 3] = [
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))]),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 5))],
+                vec![(0, loc(1, 0)), (1, loc(1, 5))],
+            ),
+            (
+                vec![(0, loc(0, 0)), (1, loc(1, 0))],
+                vec![(0, loc(1, 0)), (1, loc(0, 0))],
+            ),
+        ];
+
+        for (initial, target) in cases {
+            let (_, bounded) = run_bounded_and_unbounded(initial.clone(), target, &[], Some(400));
+            let stats = bounded.bound_stats;
+            if let Some(goal) = bounded.goal {
+                let cost = bounded.graph.g_score(goal);
+                assert!(
+                    stats.root_lower_bound <= cost,
+                    "h(root) {} exceeded the solution cost {cost} for {initial:?}",
+                    stats.root_lower_bound
+                );
+                assert_eq!(stats.incumbent_cost, cost);
+                let gap = stats.optimality_gap().expect("solved runs have a gap");
+                assert!((0.0..=1.0).contains(&gap), "gap {gap} out of range");
+            }
+        }
+    }
+
+    /// With bounding disabled every counter stays zero, so the instrumentation
+    /// cannot mislead a reader into thinking an unbounded run pruned anything.
+    #[test]
+    fn bound_stats_are_inert_when_bounding_is_disabled() {
+        let (unbounded, _) =
+            run_bounded_and_unbounded([(0, loc(0, 0))], [(0, loc(1, 0))], &[], Some(400));
+        let stats = unbounded.bound_stats;
+        assert_eq!(stats.total_cuts(), 0);
+        assert_eq!(stats.root_lower_bound, 0.0);
+        assert_eq!(stats.cut_depth_sum, 0);
+        assert_eq!(stats.cut_depth_g_only_sum, 0);
+    }
+
+    /// The bound must actually convert cuts that `g` alone could not make —
+    /// otherwise `h0` is dead weight on this architecture.
+    ///
+    /// `cut_depth_g_only_sum` exceeding `cut_depth_sum` is the statement that
+    /// those cuts fired *earlier* than the unbounded search would have managed,
+    /// which is the whole point: cut at the doomed commitment, not after paying
+    /// for the doomed prefix.
+    #[test]
+    fn bound_converts_cuts_that_g_alone_could_not_make() {
+        type Instance = (Vec<(u32, LocationAddr)>, Vec<(u32, LocationAddr)>);
+        let cases: [Instance; 4] = [
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))]),
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 5))]),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 5))],
+                vec![(0, loc(1, 0)), (1, loc(1, 5))],
+            ),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 1))],
+                vec![(0, loc(0, 5)), (1, loc(0, 6))],
+            ),
+        ];
+
+        let mut seen = Vec::new();
+        let mut converted = false;
+        for (initial, target) in cases {
+            let (_, bounded) = run_bounded_and_unbounded(initial, target, &[], Some(400));
+            let stats = bounded.bound_stats;
+            assert!(
+                stats.cut_depth_g_only_sum >= stats.cut_depth_sum,
+                "g-only depth {} below actual cut depth {}",
+                stats.cut_depth_g_only_sum,
+                stats.cut_depth_sum
+            );
+            converted |= stats.cuts_by_h > 0;
+            seen.push(stats);
+        }
+        assert!(
+            converted,
+            "no instance produced a cut that only the bound could make: {seen:?}"
+        );
     }
 
     /// Pruning with a bound built against a different objective *instance*

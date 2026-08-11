@@ -31,6 +31,63 @@ use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::weighted_distance::WeightedDistanceTable;
 use crate::traits::{Heuristic, Objective, ObjectiveId};
 
+/// Pruning statistics for one search episode.
+///
+/// The point of collecting these is to answer "is a stronger bound worth
+/// building?" — a bound that never converts a cut, or converts them only one
+/// level earlier than `g` alone would have, is not paying for itself.
+///
+/// Counters cover **child-expansion decisions**: each newly created node is
+/// classified exactly once, when the driver decides whether to descend into
+/// it. Re-checks of already-known nodes on resume are not counted, so a node
+/// cannot inflate the totals by being revisited.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BoundStats {
+    /// Cuts where `g` alone already reached the incumbent — these would have
+    /// fired without any bound.
+    pub cuts_by_g: u64,
+    /// Cuts that **only** the bound could make: `g < C <= g + h`. This is the
+    /// bound's actual contribution.
+    pub cuts_by_h: u64,
+    /// Cuts from `h = +∞`: the bound proved no completion exists at all,
+    /// independent of any incumbent.
+    pub cuts_infeasible: u64,
+    /// Summed depth at which `cuts_by_h` fired.
+    pub cut_depth_sum: u64,
+    /// Summed depth at which `g` alone *would* have reached the incumbent for
+    /// those same cuts, i.e. `depth + ceil((C - g) / min_shot_cost)`.
+    ///
+    /// Against [`Self::cut_depth_sum`] this is the depth ratio: how much
+    /// earlier the bound fired, and so roughly how much subtree it saved.
+    pub cut_depth_g_only_sum: u64,
+    /// `h(root)`: a lower bound on the optimal cost of the whole instance.
+    ///
+    /// Certified even though branch generation is sampled — `h` depends only
+    /// on the configuration, never on which candidates the generator happened
+    /// to produce. Against the final incumbent it gives an optimality gap.
+    pub root_lower_bound: f64,
+    /// Cost of the best solution found, or [`f64::NAN`] if none was.
+    pub incumbent_cost: f64,
+}
+
+impl BoundStats {
+    /// Total cuts made, however classified.
+    pub fn total_cuts(&self) -> u64 {
+        self.cuts_by_g + self.cuts_by_h + self.cuts_infeasible
+    }
+
+    /// Certified optimality gap `(incumbent - h(root)) / incumbent`, or `None`
+    /// when no solution was found or the incumbent is zero.
+    ///
+    /// `0.0` means the incumbent is provably optimal.
+    pub fn optimality_gap(&self) -> Option<f64> {
+        if !self.incumbent_cost.is_finite() || self.incumbent_cost <= 0.0 {
+            return None;
+        }
+        Some(((self.incumbent_cost - self.root_lower_bound) / self.incumbent_cost).max(0.0))
+    }
+}
+
 /// A lower bound on the cost to complete a partial plan, admissible with
 /// respect to [`CompletionBound::Obj`].
 ///

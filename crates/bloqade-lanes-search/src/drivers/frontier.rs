@@ -519,6 +519,8 @@ where
             nodes_expanded: 0,
             max_depth_reached: 0,
             graph: SearchGraph::new(root),
+            // The frontier drivers do not prune against an incumbent.
+            bound_stats: crate::bounds::BoundStats::default(),
         };
     }
 
@@ -564,6 +566,7 @@ where
                 nodes_expanded,
                 max_depth_reached: max_depth_seen,
                 graph,
+                bound_stats: crate::bounds::BoundStats::default(),
             };
         }
 
@@ -628,6 +631,7 @@ where
                         nodes_expanded,
                         max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
                         graph,
+                        bound_stats: crate::bounds::BoundStats::default(),
                     };
                 }
                 new_children.push(child_id);
@@ -644,6 +648,7 @@ where
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
+        bound_stats: crate::bounds::BoundStats::default(),
     }
 }
 

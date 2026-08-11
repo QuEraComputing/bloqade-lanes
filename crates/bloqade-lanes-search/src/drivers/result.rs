@@ -5,6 +5,7 @@
 //! [`crate::drivers::entropy::entropy_search`]) and carries the goal node,
 //! expansion statistics, and the [`SearchGraph`] for path reconstruction.
 
+use crate::bounds::BoundStats;
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 
 /// Result of a search.
@@ -18,6 +19,9 @@ pub struct SearchResult {
     pub max_depth_reached: u32,
     /// The search graph, for path reconstruction and inspection.
     pub graph: SearchGraph,
+    /// Branch-and-bound pruning statistics. All-zero for drivers that do not
+    /// bound, and for bounded runs with the bound disabled.
+    pub bound_stats: BoundStats,
 }
 
 impl SearchResult {
