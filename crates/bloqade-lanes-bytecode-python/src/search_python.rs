@@ -939,6 +939,9 @@ impl PyEntropyOptions {
                 w_t,
                 collect_entropy_trace,
                 seed,
+                // Not exposed to Python yet: branch-and-bound pruning is
+                // Rust-side only until the benchmark harness measures it.
+                completion_bound: None,
             },
         })
     }

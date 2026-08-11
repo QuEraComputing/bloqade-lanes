@@ -12,6 +12,7 @@
 
 use rayon::prelude::*;
 
+use crate::bounds::{NoBound, WeightedDistanceBound};
 use crate::cost::UniformCost;
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
@@ -21,7 +22,7 @@ use crate::observer::NoOpObserver;
 use crate::primitives::config::Config;
 use crate::primitives::context::{SearchContext, SearchState};
 use crate::scorers::DistanceScorer;
-use crate::search::options::{EntropyOptions, InnerStrategy, SolveOptions, Strategy};
+use crate::search::options::{BoundKind, EntropyOptions, InnerStrategy, SolveOptions, Strategy};
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::traits::{Goal, Heuristic, MoveGenerator, Objective};
 
@@ -193,6 +194,30 @@ where
     });
     let entropy_tables = entropy_tables.as_ref();
 
+    // Completion bound, built once per solve and shared by reference across
+    // the restart fan-out (hence `Objective: Sync` / `CompletionBound: Sync`).
+    //
+    // Deliberately **not** built for loose-goal solves. There, `ctx.targets`
+    // is a greedy assignment of qubits to entangling slots, but the goal
+    // (`EntanglingConstraintGoal`) accepts *any* valid entangling placement:
+    // a qubit can satisfy the goal without ever reaching its assigned target,
+    // so the distance to that target can exceed the true remaining cost.
+    // `h0` would not be admissible and pruning could discard the optimum.
+    // `cz_pairs.is_some()` is exactly the loose-goal marker.
+    let completion_bound = match entropy_opts.and_then(|o| o.completion_bound) {
+        Some(BoundKind::WeightedDistance) if entropy_tables.is_some() && ctx.cz_pairs.is_none() => {
+            Some(WeightedDistanceBound::new(
+                &UniformCost,
+                ctx.targets,
+                ctx.index,
+                ctx.blocked,
+            ))
+        }
+        _ => None,
+    };
+    let completion_bound = completion_bound.as_ref();
+    let no_bound = NoBound::for_objective(&UniformCost);
+
     // Helper: run a single inner strategy with the given seed and budget.
     let run_inner = |inner: InnerStrategy, seed: u64, budget: Option<u32>| -> SolveResult {
         match inner {
@@ -228,18 +253,37 @@ where
                             Some(trace) => trace,
                             None => &mut noop,
                         };
-                    crate::drivers::entropy::entropy_search_with_tables(
-                        root.clone(),
-                        goal,
-                        &entropy_params,
-                        ctx,
-                        budget,
-                        None,
-                        seed,
-                        observer,
-                        entropy_tables,
-                        &UniformCost,
-                    )
+                    // Two monomorphizations rather than a runtime branch, so
+                    // the bound-disabled arm compiles to the same code as
+                    // having no bounding at all (`NoBound::TRIVIAL`).
+                    match completion_bound {
+                        Some(bound) => crate::drivers::entropy::entropy_search_with_tables(
+                            root.clone(),
+                            goal,
+                            &entropy_params,
+                            ctx,
+                            budget,
+                            None,
+                            seed,
+                            observer,
+                            entropy_tables,
+                            &UniformCost,
+                            bound,
+                        ),
+                        None => crate::drivers::entropy::entropy_search_with_tables(
+                            root.clone(),
+                            goal,
+                            &entropy_params,
+                            ctx,
+                            budget,
+                            None,
+                            seed,
+                            observer,
+                            entropy_tables,
+                            &UniformCost,
+                            &no_bound,
+                        ),
+                    }
                 };
                 let mut solve = extract(result, 0, budget, ctx);
                 solve.entropy_trace = entropy_trace;

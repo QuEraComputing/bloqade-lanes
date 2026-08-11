@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::bounds::{CompletionBound, NoBound};
 use crate::cost::UniformCost;
 use crate::drivers::result::SearchResult;
 use crate::feasibility::graph::LaneGraph;
@@ -556,9 +557,12 @@ impl Default for EntropyState {
 struct ScoredResumeState {
     node_id: NodeId,
     score: f64,
-    /// Accumulated objective cost of this node. Used *only* by the incumbent
-    /// gate in [`resume_buffer_pop_best`] — never by the ordering below.
-    g: f64,
+    /// `g + h` for this node: accumulated objective cost plus the completion
+    /// bound, fixed at insertion time because both are functions of the node's
+    /// configuration alone. Used *only* by the incumbent gate in
+    /// [`resume_buffer_pop_best`] — never by the ordering below. Equals `g`
+    /// exactly when bounding is disabled.
+    f: f64,
     depth: u32,
     order: u64,
 }
@@ -575,7 +579,7 @@ fn resume_buffer_insert(
     buffer: &mut Vec<ScoredResumeState>,
     node_id: NodeId,
     score: f64,
-    g: f64,
+    f: f64,
     depth: u32,
     capacity: usize,
     next_order: &mut u64,
@@ -588,7 +592,7 @@ fn resume_buffer_insert(
     let candidate = ScoredResumeState {
         node_id,
         score,
-        g,
+        f,
         depth,
         order: *next_order,
     };
@@ -619,10 +623,10 @@ fn resume_buffer_discard(buffer: &mut Vec<ScoredResumeState>, node_id: NodeId) {
 /// Pop the highest-priority resumable node, skipping any that the incumbent
 /// already dominates.
 ///
-/// `best_cost` is the incumbent objective cost `C`. A buffered node with
-/// `g >= C` cannot lead to a strictly cheaper solution, so it is dropped
-/// rather than returned. Ordering is untouched by the gate — the priority
-/// comparison stays `(score, depth, order)`.
+/// `best_cost` is the incumbent objective cost `C`. A buffered node whose
+/// `g + h` reaches `C` cannot lead to a strictly cheaper solution, so it is
+/// dropped rather than returned. Ordering is untouched by the gate — the
+/// priority comparison stays `(score, depth, order)`.
 fn resume_buffer_pop_best(
     buffer: &mut Vec<ScoredResumeState>,
     best_cost: Option<f64>,
@@ -635,7 +639,7 @@ fn resume_buffer_pop_best(
             .map(|(idx, _)| idx)?;
         let best = buffer.swap_remove(best_idx);
         if let Some(cost_cap) = best_cost
-            && best.g >= cost_cap
+            && best.f >= cost_cap
         {
             continue;
         }
@@ -1195,6 +1199,39 @@ fn debug_assert_tables_match(tables: Option<&HeuristicTables>, params: &EntropyP
             params.w_t
         );
     }
+}
+
+/// Branch-and-bound test: can `node` still lead to something strictly better
+/// than the incumbent?
+///
+/// Returns `true` when the branch is provably not worth exploring, either
+/// because the bound proves no completion exists at all (`h = +∞`) or because
+/// `g + h` already reaches the incumbent cost `C`. Ties are cut: an equal-cost
+/// completion adds nothing once one is held.
+///
+/// `h` is the *unweighted* admissible estimate. Ordering elsewhere in this
+/// driver may be perturbed or reweighted; a pruning decision may not be.
+///
+/// With a [`TRIVIAL`](CompletionBound::TRIVIAL) bound the `h` term folds to a
+/// constant `0.0` at monomorphization, leaving exactly the `g >= C` test this
+/// generalizes — the bound-disabled path is the same code, not merely
+/// equivalent code.
+#[inline]
+fn is_pruned<B: CompletionBound>(
+    graph: &SearchGraph,
+    node: NodeId,
+    best_cost: Option<f64>,
+    bound: &B,
+) -> bool {
+    let h = if B::TRIVIAL {
+        0.0
+    } else {
+        bound.estimate(graph.config(node))
+    };
+    if h.is_infinite() {
+        return true; // infeasible regardless of any incumbent
+    }
+    best_cost.is_some_and(|cost_cap| graph.g_score(node) + h >= cost_cap)
 }
 
 fn unresolved_count(config: &Config, targets: &[(u32, u64)]) -> u32 {
@@ -2037,7 +2074,7 @@ pub fn entropy_search(
 /// the driver appends and therefore defines what the incumbent comparison
 /// means. Swapping it requires no other change to the driver.
 #[allow(clippy::too_many_arguments)]
-pub fn entropy_search_with_objective(
+pub fn entropy_search_with_objective<O>(
     root: Config,
     goal: &impl Goal,
     params: &EntropyParams,
@@ -2046,8 +2083,46 @@ pub fn entropy_search_with_objective(
     max_depth: Option<u32>,
     seed: u64,
     observer: &mut dyn SearchObserver,
-    objective: &impl Objective,
-) -> SearchResult {
+    objective: &O,
+) -> SearchResult
+where
+    O: Objective,
+{
+    entropy_search_with_bound(
+        root,
+        goal,
+        params,
+        ctx,
+        max_expansions,
+        max_depth,
+        seed,
+        observer,
+        objective,
+        &NoBound::for_objective(objective),
+    )
+}
+
+/// [`entropy_search`] under an explicit [`Objective`] and completion bound.
+///
+/// The bound must be admissible for `objective` — see [`CompletionBound`].
+/// Pass [`NoBound`] to disable pruning entirely.
+#[allow(clippy::too_many_arguments)]
+pub fn entropy_search_with_bound<O, B>(
+    root: Config,
+    goal: &impl Goal,
+    params: &EntropyParams,
+    ctx: &SearchContext,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+    seed: u64,
+    observer: &mut dyn SearchObserver,
+    objective: &O,
+    bound: &B,
+) -> SearchResult
+where
+    O: Objective,
+    B: CompletionBound<Obj = O>,
+{
     entropy_search_with_tables(
         root,
         goal,
@@ -2059,6 +2134,7 @@ pub fn entropy_search_with_objective(
         observer,
         None,
         objective,
+        bound,
     )
 }
 
@@ -2069,7 +2145,7 @@ pub fn entropy_search_with_objective(
 /// `None` builds them internally, preserving the public entry point's
 /// behavior for tests, benches, and direct callers.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn entropy_search_with_tables(
+pub(crate) fn entropy_search_with_tables<O, B>(
     root: Config,
     goal: &impl Goal,
     params: &EntropyParams,
@@ -2079,8 +2155,26 @@ pub(crate) fn entropy_search_with_tables(
     seed: u64,
     observer: &mut dyn SearchObserver,
     tables: Option<&HeuristicTables>,
-    objective: &impl Objective,
-) -> SearchResult {
+    objective: &O,
+    bound: &B,
+) -> SearchResult
+where
+    O: Objective,
+    B: CompletionBound<Obj = O>,
+{
+    // Admissibility is relative to an objective: pruning with a bound built
+    // against a *different* objective instance silently discards correct
+    // solutions. The associated type makes the objective *types* agree at
+    // compile time; this catches same-type/different-parameter instances.
+    // Once per solve, so it is a hard assert rather than a debug one — a wrong
+    // prune is a correctness failure, not a performance one.
+    assert_eq!(
+        bound.objective_id(),
+        objective.id(),
+        "completion bound was built against a different objective instance \
+         than the one accumulating g"
+    );
+
     // Early check.
     if goal.is_goal(&root) {
         let graph = SearchGraph::new(root);
@@ -2132,10 +2226,19 @@ pub(crate) fn entropy_search_with_tables(
             budget_exhausted = true;
             break;
         }
-        if let Some(cost_cap) = best_cost
-            && graph.g_score(current) >= cost_cap
-        {
-            current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
+        if is_pruned(&graph, current, best_cost, bound) {
+            if let Some(next) = resume_buffer_pop_best(&mut resume_buffer, best_cost) {
+                current = next;
+            } else if is_pruned(&graph, root_id, best_cost, bound) {
+                // Nothing buffered, and even the root cannot beat the
+                // incumbent (or is infeasible) — restarting from it would spin
+                // to the iteration cap. Unreachable with bounding disabled:
+                // `g(root) == 0 < C` for any incumbent, since a goal at the
+                // root returns before this loop.
+                break;
+            } else {
+                current = root_id;
+            }
             continue;
         }
 
@@ -2367,11 +2470,17 @@ pub(crate) fn entropy_search_with_tables(
             .get(&current)
             .and_then(best_untried_moveset_score)
         {
+            let f = graph.g_score(current)
+                + if B::TRIVIAL {
+                    0.0
+                } else {
+                    bound.estimate(graph.config(current))
+                };
             resume_buffer_insert(
                 &mut resume_buffer,
                 current,
                 next_best_score,
-                graph.g_score(current),
+                f,
                 graph.depth(current),
                 resume_capacity,
                 &mut resume_insert_order,
@@ -2451,9 +2560,7 @@ pub(crate) fn entropy_search_with_tables(
             continue;
         }
 
-        if let Some(cost_cap) = best_cost
-            && new_g >= cost_cap
-        {
+        if is_pruned(&graph, child_id, best_cost, bound) {
             resume_buffer_discard(&mut resume_buffer, child_id);
             current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
             continue;
@@ -3790,6 +3897,182 @@ mod tests {
         assert!(
             actual > depth,
             "weighted g {actual} should exceed the layer count {depth}"
+        );
+    }
+
+    // ── Completion bound (branch-and-bound pruning) ─────────────────
+
+    /// Run the driver twice on one instance, with and without `h0`.
+    fn run_bounded_and_unbounded(
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        target: impl IntoIterator<Item = (u32, LocationAddr)>,
+        blocked_locs: &[LocationAddr],
+        max_expansions: Option<u32>,
+    ) -> (SearchResult, SearchResult) {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> =
+            target.into_iter().map(|(q, l)| (q, l.encode())).collect();
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams::default();
+        let root = Config::new(initial).unwrap();
+
+        let unbounded = entropy_search_with_bound(
+            root.clone(),
+            &goal,
+            &params,
+            &ctx,
+            max_expansions,
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
+        );
+        let bound = crate::bounds::WeightedDistanceBound::new(
+            &UniformCost,
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+        let bounded = entropy_search_with_bound(
+            root,
+            &goal,
+            &params,
+            &ctx,
+            max_expansions,
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &bound,
+        );
+        (unbounded, bounded)
+    }
+
+    /// An unreachable target makes `h0 = +∞`, an infeasibility proof
+    /// independent of any incumbent, so the bounded run stops instead of
+    /// grinding to the iteration cap.
+    ///
+    /// This is the pre-registered behaviour change of enabling the bound:
+    /// unroutable instances stop early and so report `Unsolvable` rather than
+    /// `BudgetExceeded`. Sound, because both budget-exhaustion fallbacks also
+    /// carve out `blocked` and could not have reached the target either.
+    #[test]
+    fn infeasible_instance_is_cut_immediately_when_bounded() {
+        let (unbounded, bounded) = run_bounded_and_unbounded(
+            [(0, loc(0, 0))],
+            [(0, loc(99, 99))], // not a location in the fixture at all
+            &[],
+            Some(64),
+        );
+
+        assert!(unbounded.goal.is_none() && bounded.goal.is_none());
+        assert_eq!(
+            bounded.nodes_expanded, 0,
+            "an infeasible root should be cut before any expansion"
+        );
+    }
+
+    /// Enabling the bound must never worsen the answer: pruning only removes
+    /// branches that provably cannot contain a strictly cheaper solution.
+    ///
+    /// Note what is deliberately *not* asserted: that bounding expands fewer
+    /// nodes. It often expands more, and that is not a defect. This driver
+    /// stops once it has collected `max_goal_candidates` goals; with ties
+    /// pruned, every goal after the first must be *strictly* cheaper, which is
+    /// far rarer, so the search keeps going — frequently until it has proven
+    /// no better solution exists. That is strictly more work than the
+    /// unbounded run performs, but it is also a stronger result, and it is why
+    /// bounding sometimes returns a cheaper plan. Measured node counts move in
+    /// both directions; see the step-5 instrumentation.
+    #[test]
+    fn bound_preserves_solution_cost() {
+        /// `(initial placement, target placement)` for one instance.
+        type Instance = (Vec<(u32, LocationAddr)>, Vec<(u32, LocationAddr)>);
+
+        let cases: [Instance; 3] = [
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))]),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 5))],
+                vec![(0, loc(1, 0)), (1, loc(1, 5))],
+            ),
+            (
+                vec![(0, loc(0, 0)), (1, loc(1, 0))],
+                vec![(0, loc(1, 0)), (1, loc(0, 0))],
+            ),
+        ];
+
+        for (initial, target) in cases {
+            let (unbounded, bounded) =
+                run_bounded_and_unbounded(initial.clone(), target.clone(), &[], Some(400));
+
+            match (unbounded.goal, bounded.goal) {
+                (Some(u), Some(b)) => {
+                    let uc = unbounded.graph.g_score(u);
+                    let bc = bounded.graph.g_score(b);
+                    assert!(
+                        bc <= uc,
+                        "bounded cost {bc} must not exceed unbounded {uc} for {initial:?}"
+                    );
+                }
+                (None, None) => {}
+                (u, b) => panic!("solvability disagreed: unbounded={u:?} bounded={b:?}"),
+            }
+        }
+    }
+
+    /// Pruning with a bound built against a different objective *instance*
+    /// would silently discard correct solutions. Both sides are
+    /// `WeightedDuration` here, so the associated type cannot tell them apart
+    /// and only the driver-entry id check can.
+    #[test]
+    #[should_panic(expected = "different objective instance")]
+    fn driver_rejects_a_bound_from_another_objective_instance() {
+        use crate::cost::WeightedDuration;
+
+        let index = make_index();
+        let target_encoded = vec![(0u32, loc(1, 0).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+
+        let accumulating = WeightedDuration::new(&index, 1.0);
+        let bound_from_other = crate::bounds::WeightedDistanceBound::new(
+            &WeightedDuration::new(&index, 10.0),
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+
+        let _ = entropy_search_with_bound(
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &goal,
+            &EntropyParams::default(),
+            &ctx,
+            Some(50),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &accumulating,
+            &bound_from_other,
         );
     }
 }
