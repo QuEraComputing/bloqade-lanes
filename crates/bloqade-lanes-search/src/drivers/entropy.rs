@@ -2226,19 +2226,16 @@ where
             budget_exhausted = true;
             break;
         }
+        // Bounding decides which branches are worth exploring; it does not
+        // decide when the search is over. Termination stays exactly what it
+        // was: the expansion/iteration budget, or `max_goal_candidates` goals
+        // collected. In particular, a pruned root with an empty resume buffer
+        // does *not* end the search early even though the bound has proven
+        // nothing better exists — the loop falls back to the root and runs to
+        // the iteration cap, which then hands off to the budget-exhaustion
+        // fallback exactly as an unbounded run would.
         if is_pruned(&graph, current, best_cost, bound) {
-            if let Some(next) = resume_buffer_pop_best(&mut resume_buffer, best_cost) {
-                current = next;
-            } else if is_pruned(&graph, root_id, best_cost, bound) {
-                // Nothing buffered, and even the root cannot beat the
-                // incumbent (or is infeasible) — restarting from it would spin
-                // to the iteration cap. Unreachable with bounding disabled:
-                // `g(root) == 0 < C` for any incumbent, since a goal at the
-                // root returns before this loop.
-                break;
-            } else {
-                current = root_id;
-            }
+            current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
             continue;
         }
 
@@ -3959,16 +3956,16 @@ mod tests {
         (unbounded, bounded)
     }
 
-    /// An unreachable target makes `h0 = +∞`, an infeasibility proof
-    /// independent of any incumbent, so the bounded run stops instead of
-    /// grinding to the iteration cap.
+    /// An unreachable target makes `h0 = +∞` — an infeasibility proof
+    /// independent of any incumbent — so no node is ever expanded.
     ///
-    /// This is the pre-registered behaviour change of enabling the bound:
-    /// unroutable instances stop early and so report `Unsolvable` rather than
-    /// `BudgetExceeded`. Sound, because both budget-exhaustion fallbacks also
-    /// carve out `blocked` and could not have reached the target either.
+    /// The bound suppresses *expansion*, not termination: the run still ends
+    /// on the budget, then hands off to the budget-exhaustion fallback, which
+    /// also fails here because it carves out `blocked` too. Both runs report
+    /// no goal and zero expansions; the bounded one simply never had to
+    /// discover that by trying.
     #[test]
-    fn infeasible_instance_is_cut_immediately_when_bounded() {
+    fn infeasible_instance_expands_nothing_when_bounded() {
         let (unbounded, bounded) = run_bounded_and_unbounded(
             [(0, loc(0, 0))],
             [(0, loc(99, 99))], // not a location in the fixture at all
@@ -3979,7 +3976,7 @@ mod tests {
         assert!(unbounded.goal.is_none() && bounded.goal.is_none());
         assert_eq!(
             bounded.nodes_expanded, 0,
-            "an infeasible root should be cut before any expansion"
+            "h0 = +inf should keep every branch unexpanded"
         );
     }
 
