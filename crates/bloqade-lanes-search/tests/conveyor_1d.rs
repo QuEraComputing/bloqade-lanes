@@ -464,7 +464,7 @@ fn fully_packed_line_admits_only_the_identity() {
 
         for (name, search) in searches() {
             // The identity target is already met at the root: solved, no moves.
-            let solver = TargetSolver::new(Arc::clone(&engine), search);
+            let solver = TargetSolver::new(Arc::clone(&engine), search.clone());
             let identity = solver
                 .solve(
                     initial.iter().copied(),
@@ -499,7 +499,7 @@ fn fully_packed_line_admits_only_the_identity() {
                     )
                 })
                 .collect();
-            let solver = TargetSolver::new(Arc::clone(&engine), MoveSearch::astar(1.0));
+            let solver = TargetSolver::new(Arc::clone(&engine), search);
             let moved = solver
                 .solve(
                     initial.iter().copied(),
@@ -699,7 +699,6 @@ fn router_matches_a_brute_force_optimum_on_every_1d_instance() {
 
             for target in &targets {
                 let optimal = optimal_for_target(&distances, target);
-                let budget = SWEEP_BUDGET;
 
                 for (name, search) in searches() {
                     let solver = TargetSolver::new(Arc::clone(&engine), search);
@@ -708,7 +707,7 @@ fn router_matches_a_brute_force_optimum_on_every_1d_instance() {
                             initial.iter().copied(),
                             target.iter().copied(),
                             std::iter::empty(),
-                            Some(budget),
+                            Some(SWEEP_BUDGET),
                         )
                         .expect("instance is well formed");
                     let label = format!(

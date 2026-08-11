@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 
@@ -75,9 +75,17 @@ pub(crate) fn destination_is_available(
 ///
 /// The `zone_id` term only bites for `ZoneBus` lanes: site and word buses are
 /// intra-zone, so a lane and its destination share a zone automatically. A
-/// single `zone_bus` may serve several zones across its pairs, and for such a
-/// lane `zone_id` is the *source's* zone, so a chain through it
-/// (`z0w0 → z1w0`, then `z1w0 → z2w0`) carries a different `zone_id` per hop.
+/// single `zone_bus` may serve several zones across its pairs, and each hop of a
+/// chain through it (`z0w0 → z1w0`, then `z1w0 → z2w0`) carries a different
+/// `zone_id`, so no two hops can share a group.
+///
+/// This matches on the raw [`LaneAddr`] fields rather than on resolved
+/// endpoints, deliberately: `check_lane_group_consistency` groups on those same
+/// raw fields. Note they are not always the *source's* zone — a backward
+/// `ZoneBus` lane's true source is the forward destination (see
+/// [`BusGridMaps`](crate::primitives::bus_grid_maps::BusGridMaps)) — which is
+/// another reason to compare the addresses the validator compares instead of
+/// reasoning about which end is which.
 ///
 /// Consequence, stated honestly: those hops get **serialized** into one
 /// operation each. Serialization is permitted by the architecture — but so is
@@ -162,30 +170,60 @@ pub(crate) struct ChainLink {
 /// spinning — though `ArchSpec::validate` rejects cyclic buses outright
 /// (#874), which is what makes a closed chain a shift and not a rotation.
 ///
+/// # Cost
+///
+/// Runs on every expansion of every spec, chain-capable or not, so the walk is
+/// ordered cheapest-test-first: the `occupied` lookup is a hash probe and
+/// rejects the common case (a free destination) before
+/// [`Config::qubit_at`]'s O(atoms) scan is reached. Skipping it would make this
+/// quadratic in the atom count on exactly the specs where it can never do
+/// anything. `occupied` is the caller's config-plus-blocked set, so the probe
+/// and the scan agree: a location holding an atom is always in `occupied`, and a
+/// blocked location has no qubit either way.
+///
+/// The worklist is walked by cursor rather than drained, so the only allocation
+/// is `links` — and `pending` never allocates unless a chain actually forms.
+///
 /// A no-op on endpoint-disjoint buses (see [`vacating_lane`]), so the shipped
 /// Gemini specs get byte-identical entry sets.
 pub(crate) fn close_chain_entries(
     entries: &mut HashMap<u64, u64>,
     seed_lanes: &[u64],
+    occupied: &HashSet<u64>,
     config: &Config,
     index: &LaneIndex,
 ) -> Vec<ChainLink> {
     let mut links: Vec<ChainLink> = Vec::new();
-    let mut queue: VecDeque<u64> = seed_lanes.iter().copied().collect();
+    // Walk the seeds first, then whatever the closure appends behind them.
+    let mut pending: Vec<u64> = Vec::new();
+    let mut cursor = 0usize;
 
-    while let Some(lane_enc) = queue.pop_front() {
+    loop {
+        let lane_enc = match seed_lanes.get(cursor) {
+            Some(&enc) => enc,
+            None => match pending.get(cursor - seed_lanes.len()) {
+                Some(&enc) => enc,
+                None => break,
+            },
+        };
+        cursor += 1;
+
         let lane = LaneAddr::decode_u64(lane_enc);
         let Some((_, dst)) = index.endpoints(&lane) else {
             continue;
         };
         let dst_enc = dst.encode();
+        // Nothing in the way: no atom, or a blocked site, which holds no qubit
+        // and never frees up. Checked first because it is a hash probe and it is
+        // what almost every lane hits.
+        if !occupied.contains(&dst_enc) {
+            continue;
+        }
         // The occupant is already a mover on this group, so the rule is
         // satisfied and there is nothing to add.
         if entries.contains_key(&dst_enc) {
             continue;
         }
-        // No atom to co-select: the destination is free, or it is a blocked
-        // site, which holds no qubit and never frees up.
         let Some(qubit_id) = config.qubit_at(dst) else {
             continue;
         };
@@ -206,7 +244,7 @@ pub(crate) fn close_chain_entries(
             src_encoded: dst_enc,
             dst_encoded: next_dst.encode(),
         });
-        queue.push_back(next_lane_enc);
+        pending.push(next_lane_enc);
     }
 
     links
@@ -404,14 +442,24 @@ impl<'a> BusGridContext<'a> {
     /// whose selection can nominate an atom whose destination is occupied must
     /// therefore run [`close_chain_entries`] first, so the atoms that *have* to
     /// move are in `entries` before the geometry is decided — otherwise the
-    /// group silently emits nothing (#910). The heuristic generator and both
-    /// entropy candidate paths do this.
+    /// group silently emits nothing (#910).
     ///
-    /// [`GreedyGenerator`](crate::generators::greedy::GreedyGenerator) does not,
-    /// and does not need to: `find_path_occupied` treats every atom as a wall, so
-    /// its first-step lanes never point at an occupied site and no chain can
-    /// arise. That also makes it chain-*incapable* — following a chain would take
-    /// multi-agent pathfinding rather than per-atom BFS (#887).
+    /// Where each caller stands:
+    ///
+    /// * The heuristic generator and both entropy candidate paths run the
+    ///   closure.
+    /// * [`GreedyGenerator`](crate::generators::greedy::GreedyGenerator) does
+    ///   not, and does not need to: `find_path_occupied` treats every atom as a
+    ///   wall, so its first-step lanes never point at an occupied site and no
+    ///   chain can arise. That also makes it chain-*incapable* — following a
+    ///   chain would take multi-agent pathfinding rather than per-atom BFS
+    ///   (#887).
+    /// * [`pack_aod_rectangles`](crate::dsl::pipeline) does not, and **does**
+    ///   need to: a Starlark policy enumerates legal lanes itself, with no
+    ///   occupancy prefilter, so a policy that nominates a lane into an occupied
+    ///   site still hits #910 on a chain-capable spec. Latent rather than live —
+    ///   no shipped spec can form a chain — and tracked separately rather than
+    ///   fixed here.
     ///
     /// # What the result is, precisely
     ///
@@ -1550,6 +1598,15 @@ mod tests {
             Config::new(sites.iter().map(|&s| (s, loc(0, s)))).unwrap()
         }
 
+        /// The occupancy set every caller passes: atom locations plus `blocked`.
+        fn occupied_of(config: &Config, blocked: &[u32]) -> HashSet<u64> {
+            config
+                .iter()
+                .map(|(_, l)| l.encode())
+                .chain(blocked.iter().map(|&s| loc(0, s).encode()))
+                .collect()
+        }
+
         /// Seed the closure with the forward site-bus-0 lane out of `site`.
         fn seed(site: u32) -> Vec<u64> {
             vec![lane(0, site, 0).encode_u64()]
@@ -1565,7 +1622,13 @@ mod tests {
                 .into_iter()
                 .collect();
 
-            let links = close_chain_entries(&mut entries, &seed(0), &config, &index);
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(0),
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
 
             let hops: Vec<(u32, u32, u32)> = links
                 .iter()
@@ -1594,7 +1657,13 @@ mod tests {
                 .into_iter()
                 .collect();
 
-            let links = close_chain_entries(&mut entries, &seed(0), &config, &index);
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(0),
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
 
             assert_eq!(links.len(), 1, "site 2 is free, so the chain ends at q1");
             assert_eq!(links[0].qubit_id, 1);
@@ -1612,7 +1681,13 @@ mod tests {
             let mut entries: HashMap<u64, u64> =
                 [(loc(0, 3).encode(), seed_lane)].into_iter().collect();
 
-            let links = close_chain_entries(&mut entries, &seed(3), &config, &index);
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(3),
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
 
             assert!(links.is_empty(), "site 4 cannot vacate: {links:?}");
             assert_eq!(entries.len(), 1, "entries must be left untouched");
@@ -1630,7 +1705,13 @@ mod tests {
                 .into_iter()
                 .collect();
 
-            let links = close_chain_entries(&mut entries, &seed(0), &config, &index);
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(0),
+                &occupied_of(&config, &[1]),
+                &config,
+                &index,
+            );
 
             assert!(links.is_empty(), "a blocked destination has no follower");
             assert_eq!(entries.len(), 1);
@@ -1649,7 +1730,13 @@ mod tests {
                     .into_iter()
                     .collect();
 
-            let links = close_chain_entries(&mut entries, &[lane_0, lane_1], &config, &index);
+            let links = close_chain_entries(
+                &mut entries,
+                &[lane_0, lane_1],
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
 
             assert!(links.is_empty(), "both hops were already selected");
             assert_eq!(entries.len(), 2);
@@ -1667,7 +1754,13 @@ mod tests {
             let mut entries: HashMap<u64, u64> =
                 [(loc(0, 0).encode(), lane_0)].into_iter().collect();
 
-            let links = close_chain_entries(&mut entries, &[lane_0], &config, &index);
+            let links = close_chain_entries(
+                &mut entries,
+                &[lane_0],
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
 
             assert!(links.is_empty(), "no chain exists on a disjoint bus");
             assert_eq!(entries.len(), 1);

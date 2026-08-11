@@ -632,7 +632,8 @@ impl MoveGenerator for HeuristicGenerator {
             // scored `<= 0` and was pruned — leaves the rectangle unexecutable
             // and the group emits nothing. Co-select those followers, to the end
             // of the chain, so the whole shift rides in one AOD shot.
-            let chain_links = close_chain_entries(&mut entries, &seed_lanes, config, ctx.index);
+            let chain_links =
+                close_chain_entries(&mut entries, &seed_lanes, &occupied, config, ctx.index);
             let chain_triples: Vec<ScoredTriple> = if chain_links.is_empty() {
                 Vec::new()
             } else {
