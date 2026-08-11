@@ -1,10 +1,27 @@
 # Objective / completion-bound design (B&B pruning for the entropy driver)
 
-Status: **reviewed 2026-08-10** (see "Resolved in review"). **Step 1 landed**
-(§7): `Objective` trait, `UniformCost` impl, `g`/incumbent/goal-selection routed
-through it, cascade depth conversion. Verified behaviour-neutral — both
-benchmark suites report "no differences found", with `wall_time_ms` the only
-column that moved across all 108 rows. Steps 2–6 not started.
+Status: **reviewed 2026-08-10.** **Steps 1–5 landed** (§7); step 6 (brute-force
+admissibility property test) not started.
+
+Measured outcome with the bound enabled: move counts never worse, `adder_64`
+better (1540 → 1532 events), and `bv_70` / `qpe_9` / `steane_logical_5` returned
+**provably optimal** plans (`h(root)` equals the incumbent). `cuts_by_g` is zero
+on every case measured — the pre-existing `g >= C` test never fires, so `h0`
+does all of the pruning. The optimality gap elsewhere is 0.33–0.79, so the
+composable bounds left out of scope have real headroom.
+
+Two deviations from the plan as written, both deliberate:
+
+- **Termination is unchanged** (reviewed decision): a pruned root with an empty
+  resume buffer does *not* end the search. The bound decides which branches are
+  worth exploring, never when the search is over. The consequence is that once
+  ties are pruned every goal after the first must be strictly cheaper, so the
+  search often runs to its budget — buying better plans at more nodes. Node
+  counts are therefore **not** monotone, and the §7 caveat's warning against
+  asserting anytime dominance applies to node counts too.
+- **`rust_entropy_5_bounded` is tracked on the logical suite only.** On
+  `adder_64` the bound costs 4× wall time for 8 fewer moves, which would roughly
+  double physical CI runtime; physical coverage stays ad hoc.
 
 Goal: upgrade the entropy driver's incumbent cut from `g >= C` to
 `g + h(config) >= C` with an admissible completion bound `h`, without touching
