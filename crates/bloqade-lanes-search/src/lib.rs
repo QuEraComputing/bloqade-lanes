@@ -21,6 +21,7 @@
 //! - Top-level small modules (`cost`, `goals`, `heuristics`, `scorers`,
 //!   `generators`, `observer`, `traits`) — too small to warrant subdirs.
 
+pub mod bounds;
 pub mod cost;
 pub mod drivers;
 pub mod dsl;
@@ -39,7 +40,10 @@ pub mod search;
 pub(crate) mod test_utils;
 pub mod traits;
 
-pub use cost::UniformCost;
+pub use bounds::{
+    CompletionBound, MaxBound, NoBound, WeightedDistanceBound, assert_objective_contract,
+};
+pub use cost::{UniformCost, WeightedDuration};
 pub use drivers::result::SearchResult;
 pub use feasibility::{Feasibility, Obstruction, check as check_feasibility};
 pub use generators::{

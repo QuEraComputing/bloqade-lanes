@@ -3728,6 +3728,70 @@ mod tests {
             explicit.goal.map(|g| explicit.graph.g_score(g))
         );
     }
+
+    /// Swapping the objective requires no driver change, and `g` really is
+    /// that objective's cost rather than a moveset count in disguise.
+    ///
+    /// The assertion that matters is the independent recomputation: the
+    /// solution's `g_score` must equal the sum of `edge_cost` over the emitted
+    /// move layers. If the driver had kept any inlined `+ 1.0`, `g` would come
+    /// out as the layer count instead.
+    #[test]
+    fn driver_accumulates_g_under_a_swapped_objective() {
+        use crate::cost::WeightedDuration;
+
+        let index = make_index();
+        let target_encoded = vec![(0u32, loc(1, 0).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+        let objective = WeightedDuration::new(&index, 10.0);
+
+        let result = entropy_search_with_objective(
+            root.clone(),
+            &goal,
+            &EntropyParams::default(),
+            &ctx,
+            Some(200),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &objective,
+        );
+
+        let goal_id = result.goal.expect("instance should solve");
+        let layers = result.solution_path().expect("solved run has a path");
+        assert!(!layers.is_empty());
+
+        // `WeightedDuration::edge_cost` is configuration-independent, so the
+        // endpoints passed here do not affect the recomputation.
+        let expected: f64 = layers
+            .iter()
+            .map(|ms| objective.edge_cost(ms, &root, &root))
+            .sum();
+        let actual = result.graph.g_score(goal_id);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "g {actual} should equal the summed objective cost {expected}"
+        );
+
+        // And it is genuinely not the moveset count: every shot costs
+        // `1 + dur/tau` with a positive duration term.
+        let depth = f64::from(result.graph.depth(goal_id));
+        assert!(
+            actual > depth,
+            "weighted g {actual} should exceed the layer count {depth}"
+        );
+    }
 }
 
 #[cfg(test)]
