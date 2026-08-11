@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Instruction Quick Reference - Bloqade Lanes</title>
+        <title>Migrating to v0.11 - Bloqade Lanes</title>
 
 
         <!-- Custom HTML head -->
@@ -89,7 +89,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="../arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="../arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="../bytecode/inst-quick-ref.html" class="active"><strong aria-hidden="true">3.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="../bytecode/inst-spec.html"><strong aria-hidden="true">4.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="../bytecode/cli.html"><strong aria-hidden="true">5.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="../migration/v0.11.html"><strong aria-hidden="true">6.</strong> Migrating to v0.11</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="../arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="../arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="../bytecode/inst-quick-ref.html"><strong aria-hidden="true">3.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="../bytecode/inst-spec.html"><strong aria-hidden="true">4.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="../bytecode/cli.html"><strong aria-hidden="true">5.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="../migration/v0.11.html" class="active"><strong aria-hidden="true">6.</strong> Migrating to v0.11</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -151,7 +151,7 @@
                         <a href="https://github.com/QuEraComputing/bloqade-lanes" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/QuEraComputing/bloqade-lanes/edit/main/docs/src/bytecode/inst-quick-ref.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/QuEraComputing/bloqade-lanes/edit/main/docs/src/migration/v0.11.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -180,78 +180,16 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="instruction-quick-reference"><a class="header" href="#instruction-quick-reference">Instruction Quick Reference</a></h1>
-<p>A compact summary of all 24 bytecode instructions. See the <a href="inst-spec.html">Instruction Set</a> for full encoding details.</p>
-<h2 id="cpu-0x00"><a class="header" href="#cpu-0x00">Cpu (<code>0x00</code>)</a></h2>
-<p>Stack manipulation, constants, and control flow (FLAIR-aligned).</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>const_int</code></td><td><code>0x0200</code></td><td><code>( -- int)</code></td><td>Push 64-bit integer constant</td></tr>
-<tr><td><code>const_float</code></td><td><code>0x0300</code></td><td><code>( -- float)</code></td><td>Push 64-bit float constant</td></tr>
-<tr><td><code>dup</code></td><td><code>0x0400</code></td><td><code>(a -- a a)</code></td><td>Duplicate top of stack</td></tr>
-<tr><td><code>pop</code></td><td><code>0x0500</code></td><td><code>(a -- )</code></td><td>Discard top of stack</td></tr>
-<tr><td><code>swap</code></td><td><code>0x0600</code></td><td><code>(a b -- b a)</code></td><td>Swap top two elements</td></tr>
-<tr><td><code>return</code></td><td><code>0x6400</code></td><td><code>( -- )</code></td><td>Return from program</td></tr>
-<tr><td><code>halt</code></td><td><code>0xFF00</code></td><td><code>( -- )</code></td><td>Halt execution</td></tr>
-</tbody></table>
-</div>
-<h2 id="laneconstants-0x0f"><a class="header" href="#laneconstants-0x0f">LaneConstants (<code>0x0F</code>)</a></h2>
-<p>Address constant instructions.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>const_loc</code></td><td><code>0x000F</code></td><td><code>( -- loc)</code></td><td>Push location address</td></tr>
-<tr><td><code>const_lane</code></td><td><code>0x010F</code></td><td><code>( -- lane)</code></td><td>Push lane address</td></tr>
-<tr><td><code>const_zone</code></td><td><code>0x020F</code></td><td><code>( -- zone)</code></td><td>Push zone address</td></tr>
-</tbody></table>
-</div>
-<h2 id="atomarrangement-0x10"><a class="header" href="#atomarrangement-0x10">AtomArrangement (<code>0x10</code>)</a></h2>
-<p>Atom filling and transport.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>initial_fill</code></td><td><code>0x0010</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Initial atom loading</td></tr>
-<tr><td><code>fill</code></td><td><code>0x0110</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Atom refill</td></tr>
-<tr><td><code>move</code></td><td><code>0x0210</code></td><td><code>(lane₁..laneₙ -- )</code></td><td>Atom transport along lanes</td></tr>
-</tbody></table>
-</div>
-<h2 id="quantumgate-0x11"><a class="header" href="#quantumgate-0x11">QuantumGate (<code>0x11</code>)</a></h2>
-<p>Single- and multi-qubit gate operations.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>local_r</code></td><td><code>0x0011</code></td><td><code>(loc₁..locₙ θ φ -- )</code></td><td>Local R rotation</td></tr>
-<tr><td><code>local_rz</code></td><td><code>0x0111</code></td><td><code>(loc₁..locₙ θ -- )</code></td><td>Local Rz rotation</td></tr>
-<tr><td><code>global_r</code></td><td><code>0x0211</code></td><td><code>(θ φ -- )</code></td><td>Global R rotation</td></tr>
-<tr><td><code>global_rz</code></td><td><code>0x0311</code></td><td><code>(θ -- )</code></td><td>Global Rz rotation</td></tr>
-<tr><td><code>cz</code></td><td><code>0x0411</code></td><td><code>(zone -- )</code></td><td>Controlled-Z gate on zone</td></tr>
-</tbody></table>
-</div>
-<h2 id="measurement-0x12"><a class="header" href="#measurement-0x12">Measurement (<code>0x12</code>)</a></h2>
-<p>Qubit measurement.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>measure</code></td><td><code>0x0012</code></td><td><code>(zone₁..zoneₙ -- future₁..futureₙ)</code></td><td>Initiate measurement</td></tr>
-<tr><td><code>await_measure</code></td><td><code>0x0112</code></td><td><code>(future -- array_ref)</code></td><td>Wait for measurement result</td></tr>
-</tbody></table>
-</div>
-<h2 id="array-0x13"><a class="header" href="#array-0x13">Array (<code>0x13</code>)</a></h2>
-<p>Array construction and indexing.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>new_array</code></td><td><code>0x0013</code></td><td><code>(elem₁..elemₙ -- array_ref)</code></td><td>Construct array from stack</td></tr>
-<tr><td><code>get_item</code></td><td><code>0x0113</code></td><td><code>(array_ref idx₁..idxₙ -- value)</code></td><td>Index into array</td></tr>
-</tbody></table>
-</div>
-<h2 id="detectorobservable-0x14"><a class="header" href="#detectorobservable-0x14">DetectorObservable (<code>0x14</code>)</a></h2>
-<p>Detector and observable setup.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>set_detector</code></td><td><code>0x0014</code></td><td><code>(array_ref -- detector_ref)</code></td><td>Set detector</td></tr>
-<tr><td><code>set_observable</code></td><td><code>0x0114</code></td><td><code>(array_ref -- observable_ref)</code></td><td>Set observable</td></tr>
-</tbody></table>
-</div>
+                        <h1 id="migrating-to-v011"><a class="header" href="#migrating-to-v011">Migrating to v0.11</a></h1>
+
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../arch/zone-centric-concepts.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../bytecode/cli.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../bytecode/inst-spec.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
-                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -259,13 +197,10 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../arch/zone-centric-concepts.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../bytecode/cli.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../bytecode/inst-spec.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
-                    </a>
             </nav>
 
         </div>
