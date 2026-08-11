@@ -251,9 +251,13 @@ impl DistanceTable {
 }
 
 /// Dijkstra priority queue entry (min-heap by cost).
-struct DijkstraEntry {
-    cost: f64,
-    node: u64,
+///
+/// Shared with [`weighted_distance`](super::weighted_distance) so both
+/// weighted shortest-path implementations use one `total_cmp`-based reversed
+/// ordering rather than each rolling its own.
+pub(crate) struct DijkstraEntry {
+    pub(crate) cost: f64,
+    pub(crate) node: u64,
 }
 
 impl PartialEq for DijkstraEntry {
