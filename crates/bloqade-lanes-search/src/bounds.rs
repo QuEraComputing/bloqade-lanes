@@ -363,6 +363,7 @@ mod tests {
     use super::*;
     use crate::cost::{UniformCost, WeightedDuration};
     use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     fn make_index() -> LaneIndex {
@@ -585,6 +586,282 @@ mod tests {
         let config = Config::new([(0, loc(0, 0))]).unwrap();
         let none = NoBound::<UniformCost>::for_objective(&UniformCost);
         assert_eq!(none.estimate(&config), 0.0);
+    }
+
+    // ── Admissibility against brute-force optima ────────────────
+
+    /// Minimum moveset count to reach `targets`, by breadth-first search over
+    /// [`ExhaustiveGenerator`]'s successors under [`UniformCost`].
+    ///
+    /// `None` when the budget ran out before a goal was found — the caller must
+    /// then skip the instance rather than treat "unsolved" as an optimum.
+    ///
+    /// # What this is and is not
+    ///
+    /// `ExhaustiveGenerator` enumerates AOD rectangles **one bus triplet at a
+    /// time**, so a moveset combining lanes from two triplets is never
+    /// produced. Whatever the architecture permits, this is a search over a
+    /// *subgraph* of the true move space, so the value returned is an **upper
+    /// bound** on the true optimum, not necessarily the optimum itself.
+    ///
+    /// That is the safe direction for asserting `h0 <= optimum`: a reference
+    /// that is too large can never make an admissible bound look inadmissible,
+    /// so this cannot fail spuriously. It does mean the check is a *necessary
+    /// condition* rather than a proof — a violation hidden between the true
+    /// optimum and this reference would slip through. It still catches the
+    /// mistakes that matter most, notably summing per-atom distances instead of
+    /// maxing them, which inflates `h0` by up to a factor of the atom count.
+    ///
+    /// [`h0_is_exact_for_a_single_atom`] covers the one case where the true
+    /// optimum is known independently of any generator.
+    fn brute_force_optimum(
+        initial: &[(u32, LocationAddr)],
+        targets: &[(u32, u64)],
+        blocked: &HashSet<u64>,
+        index: &LaneIndex,
+        budget: u32,
+    ) -> Option<f64> {
+        use crate::drivers::frontier::{self, BfsFrontier};
+        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::goals::AllAtTarget;
+        use crate::observer::NoOpObserver;
+        use crate::primitives::context::{SearchContext, SearchState};
+        use crate::primitives::distance::DistanceTable;
+        use crate::scorers::DistanceScorer;
+
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, index);
+        let ctx = SearchContext {
+            index,
+            dist_table: &dist_table,
+            blocked,
+            targets,
+            cz_pairs: None,
+        };
+        let goal = AllAtTarget::new(targets);
+        let mut frontier = BfsFrontier::new();
+        let result = frontier::run_search(
+            Config::new(initial.iter().copied()).unwrap(),
+            &ExhaustiveGenerator::new(None, None),
+            &DistanceScorer,
+            &UniformCost,
+            &goal,
+            &mut frontier,
+            &ctx,
+            &mut SearchState::default(),
+            &mut NoOpObserver,
+            Some(budget),
+            None,
+        );
+        result.goal.map(|id| result.graph.g_score(id))
+    }
+
+    fn h0_at(
+        initial: &[(u32, LocationAddr)],
+        targets: &[(u32, u64)],
+        blocked: &HashSet<u64>,
+        index: &LaneIndex,
+    ) -> f64 {
+        WeightedDistanceBound::new(&UniformCost, targets, index, blocked)
+            .estimate(&Config::new(initial.iter().copied()).unwrap())
+    }
+
+    /// Tier 1, and the only tier that does not depend on the generator: for a
+    /// lone atom the optimum is **exactly** `h0`.
+    ///
+    /// Lower bound: `h0 = wdist` by the admissibility argument. Upper bound: a
+    /// plan of that cost exists — walk the shortest path one lane per shot,
+    /// each shot a single-lane moveset, each costing 1 under `UniformCost`. So
+    /// equality must hold, which pins the weights and the graph rather than
+    /// merely bounding them. A 1x1 rectangle is always enumerated, so the
+    /// generator's triplet-at-a-time limitation cannot affect this case.
+    #[test]
+    fn h0_is_exact_for_a_single_atom() {
+        let index = make_index();
+        let blocked = HashSet::new();
+        let cases = [
+            (loc(0, 0), loc(0, 5)),
+            (loc(0, 0), loc(1, 5)),
+            (loc(0, 0), loc(1, 0)),
+            (loc(0, 5), loc(1, 5)),
+        ];
+        for (start, target) in cases {
+            let initial = [(0u32, start)];
+            let targets = [(0u32, target.encode())];
+            let h0 = h0_at(&initial, &targets, &blocked, &index);
+            let optimum = brute_force_optimum(&initial, &targets, &blocked, &index, 20_000)
+                .unwrap_or_else(|| panic!("{start:?} -> {target:?} should be solvable"));
+            assert_eq!(
+                h0, optimum,
+                "h0 must equal the optimum for a lone atom: {start:?} -> {target:?}"
+            );
+        }
+    }
+
+    /// Tier 2: hand-picked instances, growing from one atom to three, each
+    /// verified against the brute-force reference.
+    #[test]
+    fn h0_never_exceeds_brute_force_optimum_on_tiny_instances() {
+        let index = make_index();
+
+        // (initial, targets, blocked) ordered by atom count.
+        /// `(initial placement, target placement, blocked locations)`.
+        type Instance = (
+            Vec<(u32, LocationAddr)>,
+            Vec<(u32, LocationAddr)>,
+            Vec<LocationAddr>,
+        );
+
+        let instances: Vec<Instance> = vec![
+            // 1 atom
+            (vec![(0, loc(0, 0))], vec![(0, loc(0, 5))], vec![]),
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))], vec![]),
+            // 1 atom, with an obstacle carved out of the graph
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))], vec![loc(0, 6)]),
+            // 2 atoms, parallel-friendly
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 1))],
+                vec![(0, loc(0, 5)), (1, loc(0, 6))],
+                vec![],
+            ),
+            // 2 atoms, crossing words
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 5))],
+                vec![(0, loc(0, 5)), (1, loc(1, 5))],
+                vec![],
+            ),
+            // 3 atoms
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))],
+                vec![(0, loc(0, 5)), (1, loc(0, 6)), (2, loc(0, 7))],
+                vec![],
+            ),
+        ];
+
+        let mut verified = 0_usize;
+        for (initial, target_pairs, blocked_locs) in instances {
+            let targets: Vec<(u32, u64)> =
+                target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
+            let blocked: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+            let h0 = h0_at(&initial, &targets, &blocked, &index);
+            let Some(optimum) = brute_force_optimum(&initial, &targets, &blocked, &index, 60_000)
+            else {
+                continue; // budget exhausted: no reference to compare against
+            };
+            assert!(
+                h0 <= optimum,
+                "h0 {h0} exceeded the brute-force optimum {optimum} for {initial:?} -> {target_pairs:?}"
+            );
+            verified += 1;
+        }
+        assert!(
+            verified >= 4,
+            "only {verified} instances produced a reference optimum; the ladder verified too little"
+        );
+    }
+
+    /// Tier 3: randomized instances, still small, with a fixed seed so any
+    /// failure reproduces.
+    ///
+    /// Targets are drawn from each atom's **reachable** set rather than
+    /// uniformly: the fixture's lane graph is sparse, and sampling blindly
+    /// produced instances that were almost all unreachable, so the bound
+    /// short-circuited to `+inf` and the comparison never ran. The coverage
+    /// assertion at the end is what caught that — without it this test would
+    /// have passed while verifying one instance out of twenty-four.
+    #[test]
+    fn h0_never_exceeds_brute_force_optimum_on_randomized_instances() {
+        use crate::primitives::distance::DistanceTable;
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+        use rand::seq::{IndexedRandom, SliceRandom};
+
+        let index = make_index();
+        let blocked = HashSet::new();
+
+        let sites: Vec<LocationAddr> = (0..2u32)
+            .flat_map(|word| (0..10u32).map(move |site| loc(word, site)))
+            .collect();
+        let all_encs: Vec<u64> = sites.iter().map(|l| l.encode()).collect();
+        // Reachability is a property of the architecture, so one table answers
+        // it for every instance below.
+        let reach = DistanceTable::new(&all_encs, &index);
+        let reachable_from = |from: LocationAddr| -> Vec<LocationAddr> {
+            sites
+                .iter()
+                .copied()
+                .filter(|&to| to != from && reach.distance(from.encode(), to.encode()).is_some())
+                .collect()
+        };
+
+        let mut rng = SmallRng::seed_from_u64(0xB01E_5EED);
+        let mut verified = 0_usize;
+        let mut skipped_budget = 0_usize;
+
+        for n_atoms in 1..=3usize {
+            for _ in 0..8 {
+                let mut picked = sites.clone();
+                picked.shuffle(&mut rng);
+                let starts: Vec<LocationAddr> = picked[..n_atoms].to_vec();
+
+                // One reachable, distinct target per atom.
+                let mut targets_used: Vec<LocationAddr> = Vec::new();
+                let mut ok = true;
+                for &start in &starts {
+                    let options: Vec<LocationAddr> = reachable_from(start)
+                        .into_iter()
+                        .filter(|t| !targets_used.contains(t))
+                        .collect();
+                    match options.choose(&mut rng) {
+                        Some(&t) => targets_used.push(t),
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !ok {
+                    continue;
+                }
+
+                let initial: Vec<(u32, LocationAddr)> = starts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &l)| (i as u32, l))
+                    .collect();
+                let targets: Vec<(u32, u64)> = targets_used
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &l)| (i as u32, l.encode()))
+                    .collect();
+
+                let h0 = h0_at(&initial, &targets, &blocked, &index);
+                assert!(
+                    h0.is_finite(),
+                    "targets were sampled from reachable sets, so h0 must be finite: \
+                     {initial:?} -> {targets:?}"
+                );
+                let Some(optimum) =
+                    brute_force_optimum(&initial, &targets, &blocked, &index, 60_000)
+                else {
+                    skipped_budget += 1;
+                    continue;
+                };
+                assert!(
+                    h0 <= optimum,
+                    "h0 {h0} exceeded optimum {optimum} for {initial:?} -> {targets:?}"
+                );
+                verified += 1;
+            }
+        }
+        // 22 of 24 verify today (2 exceed the reference budget), and the run is
+        // deterministic, so this threshold catches a real collapse in coverage
+        // rather than only a total one.
+        assert!(
+            verified >= 18,
+            "only {verified} randomized instances were verified \
+             ({skipped_budget} skipped on budget); the test is not exercising the bound"
+        );
     }
 
     // ── Frontier interop ──

@@ -1,7 +1,18 @@
 # Objective / completion-bound design (B&B pruning for the entropy driver)
 
-Status: **reviewed 2026-08-10.** **Steps 1–5 landed** (§7); step 6 (brute-force
-admissibility property test) not started.
+Status: **reviewed 2026-08-10.** **Steps 1–6 landed** (§7).
+
+One qualification on step 6's admissibility test, because it bounds what the
+test proves: `ExhaustiveGenerator` enumerates AOD rectangles one bus triplet at
+a time, so a moveset spanning two triplets is never produced. Its BFS optimum is
+therefore an optimum over a *subgraph* — an **upper bound** on the true optimum.
+Asserting `h0 <= reference` is the safe direction (a too-large reference cannot
+make an admissible bound look inadmissible, so no spurious failures), but it
+makes the check a *necessary condition* rather than a proof. It retains real
+detection power for the mistakes that matter — summing per-atom distances
+instead of maxing them inflates `h0` by up to the atom count and would trip it.
+The single-atom tier is exact and generator-independent: `h0` must *equal* the
+optimum there, since walking the shortest path one lane per shot achieves it.
 
 Measured outcome with the bound enabled: move counts never worse, `adder_64`
 better (1540 → 1532 events), and `bv_70` / `qpe_9` / `steane_logical_5` returned
