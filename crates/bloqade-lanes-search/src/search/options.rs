@@ -78,13 +78,21 @@ pub struct SolveOptions {
     ///
     /// Honoured verbatim by every strategy that routes through
     /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator): A*, BFS,
-    /// greedy, IDS, DFS, and both halves of a cascade. There is no floor and no
-    /// per-strategy substitution, so a strategy comparison on fixed options
-    /// varies only the strategy.
+    /// greedy, IDS, DFS, and both halves of a cascade. The strategy dispatch
+    /// applies no floor and no per-strategy substitution, so a strategy
+    /// comparison on fixed options varies only the strategy.
     ///
-    /// One exception, and it is structural: [`Strategy::Entropy`] generates its
-    /// candidates itself rather than through that generator, so this does not
-    /// reach it — its fallback is the driver's own deadlock breaker.
+    /// Two exceptions, neither of them in that dispatch:
+    ///
+    /// * [`Strategy::Entropy`] generates its candidates itself rather than
+    ///   through that generator, so this never reaches it — its fallback is the
+    ///   driver's own deadlock breaker. Structural.
+    /// * The **entangling entry points** — `solve_loose_goal`, `solve_nohome`
+    ///   and the receding-horizon driver — pass their options through
+    ///   [`Self::upgraded_for_entangling`] first, which raises
+    ///   [`DeadlockPolicy::Skip`] to [`DeadlockPolicy::MoveBlockers`]. So `Skip`
+    ///   means `Skip` from [`TargetSolver::solve`](crate::search::target_solver::TargetSolver::solve)
+    ///   and `MoveBlockers` from those three.
     pub deadlock_policy: DeadlockPolicy,
     /// Enable 2-step lookahead scoring inside
     /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator).

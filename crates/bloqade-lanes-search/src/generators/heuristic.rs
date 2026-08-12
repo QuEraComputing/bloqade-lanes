@@ -281,24 +281,37 @@ fn occupant_can_vacate(dst: LocationAddr, lane: &LaneAddr, index: &LaneIndex) ->
 ///
 /// A follower is not a chosen move — it is what the chosen move costs — and
 /// that cost is real: shifting an atom off its target scores `-1`, so a chain
-/// that derails a packed block ranks below one that runs into free space. A
-/// follower with no target of its own, or an unreachable one, contributes `0`
-/// rather than a fabricated preference.
+/// that derails a packed block ranks below one that runs into free space.
+///
+/// The three ways a delta is unavailable are *not* equivalent, so they do not
+/// share a score:
+///
+/// * **No target of its own** — a spectator, genuinely neutral, `0`.
+/// * **Already unreachable** before this hop — the chain did not cause it, so
+///   also `0`.
+/// * **Reachable now, unreachable after** — the chain would strand the atom.
+///   That is the worst outcome available and must not tie with "no change", so
+///   it is penalized: `STRANDS_FOLLOWER`.
 fn chain_link_score(
     link: &ChainLink,
     targets: &HashMap<u32, u64>,
     dist_table: &DistanceTable,
 ) -> i32 {
+    /// Penalty for a hop that leaves a follower unable to reach its target at
+    /// all. Worse than any finite regression a single hop can produce (a lane
+    /// moves one hop, so `d_now - d_after >= -1` whenever both are finite).
+    const STRANDS_FOLLOWER: i32 = -2;
+
     let Some(&target_enc) = targets.get(&link.qubit_id) else {
         return 0;
     };
-    let (Some(d_now), Some(d_after)) = (
-        dist_table.distance(link.src_encoded, target_enc),
-        dist_table.distance(link.dst_encoded, target_enc),
-    ) else {
+    let Some(d_now) = dist_table.distance(link.src_encoded, target_enc) else {
         return 0;
     };
-    d_now as i32 - d_after as i32
+    match dist_table.distance(link.dst_encoded, target_enc) {
+        Some(d_after) => d_now as i32 - d_after as i32,
+        None => STRANDS_FOLLOWER,
+    }
 }
 
 /// Yield `(lane, destination)` pairs for every outgoing lane from `loc`
@@ -971,23 +984,36 @@ mod tests {
         let blocked = HashSet::new();
         let ctx = make_ctx(&index, &table, &targets_enc, &blocked);
 
-        // With escapes disabled, the node really does produce nothing: this pins
-        // that the grid path is empty, so the assertion below is about the escape
-        // hatch rather than about some rectangle happening to work.
+        // `Skip` is `SolveOptions::default()`, so this half is what a caller who
+        // never touches `deadlock_policy` actually gets: the gate opens (the node
+        // *is* recognised as a dead end) but the policy declines to generate
+        // anything, so the node still has no successors and the search still
+        // reports `unsolvable`. Pinning both halves means a future change to the
+        // default cannot silently switch #910's fix on or off for every default
+        // caller without a test moving.
+        //
+        // It doubles as the control for the assertion below: the grid path really
+        // is empty here, so what follows is about the escape hatch and not about
+        // some rectangle happening to work.
+        let skipped = HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::Skip);
         let mut grid_only = Vec::new();
-        HeuristicGenerator::new()
-            .with_deadlock_policy(DeadlockPolicy::Skip)
-            .generate(
-                &config,
-                NodeId(0),
-                &ctx,
-                &mut SearchState::default(),
-                &mut grid_only,
-            );
+        skipped.generate(
+            &config,
+            NodeId(0),
+            &ctx,
+            &mut SearchState::default(),
+            &mut grid_only,
+        );
         assert!(
             grid_only.is_empty(),
-            "expected no executable rectangle at this node; got {:?}",
+            "on the default policy this node has no successors; got {:?}",
             snapshot(&grid_only)
+        );
+        assert_eq!(
+            skipped.deadlock_count(),
+            1,
+            "the gate must still fire under `Skip` — the node is a dead end \
+             whatever the policy then decides to do about it"
         );
 
         let generator = HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::AllMoves);

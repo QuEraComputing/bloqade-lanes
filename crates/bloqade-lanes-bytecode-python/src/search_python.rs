@@ -255,7 +255,13 @@ impl PySolveResult {
         self.inner.cost
     }
 
-    /// Number of deadlocks encountered during search.
+    /// Number of nodes at which the generator had nothing useful to offer.
+    ///
+    /// Counts both "nothing scored an improvement" and "nothing was executable"
+    /// (every rectangle rejected). **Not** a count of escape moves taken: the
+    /// counter is incremented before ``deadlock_policy`` is consulted, so under
+    /// the default ``SKIP`` it records nodes where nothing was generated in
+    /// response. Read it as "how often the search got stuck".
     #[getter]
     fn deadlocks(&self) -> u32 {
         self.inner.deadlocks
