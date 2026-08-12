@@ -732,15 +732,22 @@ impl MoveGenerator for HeuristicGenerator {
 
         // Step 7: deadlock escape.
         //
-        // Fires when the node has **no successors**, not merely when nothing
-        // scored positive. A positive score is a claim about distance, made in
-        // step 2 before any AOD geometry is known; whether a candidate can
-        // actually execute is decided two steps later by `build_aod_grids`. If
-        // every positive candidate's rectangle turns out unexecutable this call
-        // emits nothing and the node is a dead end — and gating on `has_positive`
-        // alone meant the escape hatch stayed shut in exactly that case, so the
-        // search drained its open list and reported `unsolvable` on solvable
-        // instances (#910).
+        // Two independent triggers, either of which opens the hatch:
+        //
+        // 1. `!has_positive` — nothing scored an improvement. Pre-existing, and
+        //    deliberately *not* conditional on the output being empty: the
+        //    step-3 fallback keeps a narrow set of non-improving entries that
+        //    may well have produced candidates, and escapes are appended
+        //    alongside those rather than replacing them.
+        // 2. This call emitted nothing at all. Added for #910.
+        //
+        // The second exists because a positive score is a claim about
+        // *distance*, made in step 2 before any AOD geometry is known, whereas
+        // whether a candidate can actually execute is settled two steps later by
+        // `build_aod_grids`. When every positive-scoring candidate's rectangle
+        // turns out unexecutable, trigger 1 stays silent, and with it alone the
+        // node was a dead end with no escape — the search drained its open list
+        // and reported `unsolvable` on a solvable instance.
         if out.len() == out_mark || !has_positive {
             self.deadlock_count.set(self.deadlock_count.get() + 1);
             match self.deadlock_policy {
