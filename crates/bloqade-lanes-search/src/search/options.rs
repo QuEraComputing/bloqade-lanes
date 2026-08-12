@@ -76,26 +76,24 @@ pub struct SolveOptions {
     /// How to handle deadlocks — a node whose candidates all turn out
     /// unexecutable, or where nothing scores an improvement.
     ///
-    /// Never *lowered*: an explicit [`DeadlockPolicy::AllMoves`] reaches every
-    /// strategy that routes through
-    /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator). It can be
-    /// *raised*, in two places, neither obvious from here:
+    /// Honoured **verbatim** by every strategy that routes through
+    /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator): A*, BFS,
+    /// greedy, IDS, DFS, and both halves of a cascade. The strategy dispatch
+    /// applies no floor and no per-strategy substitution, so a strategy
+    /// comparison on fixed options varies only the strategy.
     ///
-    /// * The plain frontier strategies — A*, BFS, greedy, and the cascade's A*
-    ///   refinement — floor [`DeadlockPolicy::Skip`] at
-    ///   [`DeadlockPolicy::MoveBlockers`]. They have no depth-first jump-back to
-    ///   fall back on, so `Skip` would leave them with no successors at all at a
-    ///   node whose candidates are unexecutable. IDS and DFS take the request
-    ///   verbatim.
+    /// Two exceptions, neither of them in that dispatch:
+    ///
+    /// * [`Strategy::Entropy`] generates its candidates itself rather than
+    ///   through that generator, so this never reaches it — its fallback is the
+    ///   driver's own deadlock breaker. Structural.
     /// * The **entangling entry points** — `solve_loose_goal`, `solve_nohome`
-    ///   and the receding-horizon driver — apply the same floor to *every*
-    ///   strategy via [`Self::upgraded_for_entangling`].
-    ///
-    /// So `Skip` means `Skip` only for IDS and DFS on the fixed-target path.
-    ///
-    /// One strategy is out of reach entirely: [`Strategy::Entropy`] generates its
-    /// candidates itself rather than through that generator, so this never
-    /// affects it — its fallback is the driver's own deadlock breaker.
+    ///   and the receding-horizon driver — pass their options through
+    ///   [`Self::upgraded_for_entangling`] first, which raises
+    ///   [`DeadlockPolicy::Skip`] to [`DeadlockPolicy::MoveBlockers`]. So `Skip`
+    ///   means `Skip` from
+    ///   [`TargetSolver::solve`](crate::search::target_solver::TargetSolver::solve)
+    ///   and `MoveBlockers` from those three.
     pub deadlock_policy: DeadlockPolicy,
     /// Enable 2-step lookahead scoring inside
     /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator).
