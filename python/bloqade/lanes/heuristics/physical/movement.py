@@ -75,23 +75,6 @@ class RustPlacementTraversal:
     max_expansions: int | None = 300
     restarts: int = 1
     lookahead: bool = False
-    deadlock_policy: _native.DeadlockPolicy = field(
-        default_factory=lambda: _native.DeadlockPolicy.SKIP
-    )
-    """What the search may do at a node with no usable candidate.
-
-    ``SKIP`` (the Rust default) generates nothing, leaving the outer search to
-    backtrack; ``MOVE_BLOCKERS`` frees atoms standing *on* an unresolved target;
-    ``ALL_MOVES`` offers every atom every free adjacent site.
-
-    Honoured verbatim by every strategy except ``entropy``, which generates its
-    own candidates and so has its own deadlock breaker. Worth setting explicitly
-    when comparing strategies: leaving it at the default is a valid choice, but a
-    comparison is only apples-to-apples if every row uses the same value.
-
-    ``ALL_MOVES`` is the widest and the most expensive — its fan-out is (atoms x
-    free adjacent lanes), which on a dense register is thousands of successors
-    per deadlocked node, so pair it with a bounded ``max_expansions``."""
     collect_entropy_trace: bool = False
     seed: int = 0
     block_spectators: bool = True
@@ -108,6 +91,25 @@ class RustPlacementTraversal:
     (sometimes increase) move counts (e.g. DFS may relocate a spectator to
     shorten a participant's path); the search-effort reduction is not always
     move-count-free."""
+
+    deadlock_policy: _native.DeadlockPolicy = _native.DeadlockPolicy.SKIP
+    """What the search may do at a node with no usable candidate.
+
+    ``SKIP`` (the Rust default) generates nothing, leaving the outer search to
+    backtrack; ``MOVE_BLOCKERS`` frees atoms standing *on* an unresolved target;
+    ``ALL_MOVES`` offers every atom every free adjacent site.
+
+    Honoured verbatim by every strategy except ``entropy``, which generates its
+    own candidates and so has its own deadlock breaker. Worth setting explicitly
+    when comparing strategies: leaving it at the default is a valid choice, but a
+    comparison is only apples-to-apples if every row uses the same value.
+
+    ``ALL_MOVES`` is the widest and the most expensive — its fan-out is (atoms x
+    free adjacent lanes), which on a dense register is thousands of successors
+    per deadlocked node, so pair it with a bounded ``max_expansions``.
+
+    Declared last on purpose: this dataclass is public, so inserting a field
+    mid-list would shift the positional index of every field after it."""
 
 
 def _move_search_from_traversal(

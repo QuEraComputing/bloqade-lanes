@@ -416,6 +416,9 @@ mod tests {
                 Strategy::AStar,
                 Strategy::Bfs,
                 Strategy::GreedyBestFirst,
+                // Substitutes A* in this dispatch, so it goes through the same
+                // arm and is just as exposed to a reintroduced hardcode.
+                Strategy::PushRotate,
                 Strategy::Ids,
                 Strategy::HeuristicDfs,
                 Strategy::Cascade {
@@ -445,9 +448,22 @@ mod tests {
                     None,
                 );
                 let observed = seen.lock().unwrap();
-                assert!(
-                    !observed.is_empty(),
-                    "{strategy:?} built no generator, so this test proves nothing"
+                // A cascade builds two: the inner run and the bounded A*
+                // refinement. The refinement is only reached when the inner
+                // solves, so require both rather than letting the inner alone
+                // satisfy the non-empty check and leave the refinement site
+                // silently unvisited.
+                let expected_generators = if matches!(strategy, Strategy::Cascade { .. }) {
+                    2
+                } else {
+                    1
+                };
+                assert_eq!(
+                    observed.len(),
+                    expected_generators,
+                    "{strategy:?} built {} generator(s); every construction site \
+                     must be visited or this test proves nothing about it",
+                    observed.len()
                 );
                 for &policy in observed.iter() {
                     assert_eq!(
