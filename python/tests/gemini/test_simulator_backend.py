@@ -444,7 +444,7 @@ def test_ppvm_backend_caches_program_maps_losses_and_derives_child_seed(monkeypa
     assert tsim_backend._tsim_circuit.call_count == 1
 
 
-def test_ppvm_backend_converts_lost_measurements_without_mutating_samples():
+def test_ppvm_backend_converts_lost_measurements_in_place():
     raw_measurements = np.array([[False, None], [None, True]], dtype=object)
 
     converted_measurements = PPVMSimulatorBackend._convert_loss_to_measurement(
@@ -453,7 +453,7 @@ def test_ppvm_backend_converts_lost_measurements_without_mutating_samples():
         loss=None,
     )
 
-    assert raw_measurements.tolist() == [[False, None], [None, True]]
+    assert raw_measurements.tolist() == [[False, True], [True, True]]
     assert converted_measurements.dtype == bool
     assert converted_measurements.tolist() == [[False, True], [True, True]]
 
