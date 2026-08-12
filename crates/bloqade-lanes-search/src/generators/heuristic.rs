@@ -333,6 +333,12 @@ impl MoveGenerator for HeuristicGenerator {
         _state: &mut SearchState,
         out: &mut Vec<MoveCandidate>,
     ) {
+        // Candidates already in `out` belong to the caller, not to this call:
+        // `MoveGenerator::generate` appends. Step 7 needs to know whether *this*
+        // call produced anything, so record the mark rather than testing
+        // `out.is_empty()` and silently depending on every caller to clear first.
+        let out_mark = out.len();
+
         // Select the CZ-coordination policy ONCE. `cz_pairs.is_some()`
         // (entangling: loose-goal/no-home/RH) vs `None` (legacy fixed-target)
         // formerly gated three inline branches; the policy makes that explicit.
@@ -717,12 +723,13 @@ impl MoveGenerator for HeuristicGenerator {
         // scored positive. A positive score is a claim about distance, made in
         // step 2 before any AOD geometry is known; whether a candidate can
         // actually execute is decided two steps later by `build_aod_grids`. If
-        // every positive candidate's rectangle turns out unexecutable, `out` is
-        // empty and the node is a dead end — and gating on `has_positive` alone
+        // every positive candidate's rectangle turns out unexecutable this call
+        // emits nothing and the node is a dead end — and gating on `has_positive`
+        // alone
         // meant the escape hatch stayed shut in exactly that case, so the search
         // drained its open list and reported `unsolvable` on solvable instances
         // (#910).
-        if out.is_empty() || !has_positive {
+        if out.len() == out_mark || !has_positive {
             self.deadlock_count.set(self.deadlock_count.get() + 1);
             match self.deadlock_policy {
                 DeadlockPolicy::Skip => {}
@@ -928,6 +935,97 @@ mod tests {
             snapshot(&out)
         );
     }
+
+    fn make_siding_index() -> LaneIndex {
+        let spec: ArchSpec =
+            serde_json::from_str(crate::test_utils::chain_with_siding_arch_json()).unwrap();
+        assert!(
+            spec.validate().is_ok(),
+            "siding fixture must be a legal spec"
+        );
+        LaneIndex::new(spec)
+    }
+
+    /// The **actual** cause of the `unsolvable` verdicts in issue #910: a node
+    /// whose every candidate scored positive but whose every rectangle turned
+    /// out unexecutable, leaving it with no successors at all.
+    ///
+    /// `q0`-`q2` fill the three-site chain of word 0 and `q0` wants the far end.
+    /// Its first hop is admitted — the atom ahead is a chain source, so it can
+    /// vacate — and scores `+1`, so `has_positive` is true. But the chain's head
+    /// sits on site 2, which is a chain *destination* and not a chain source, so
+    /// it cannot vacate on that group; the closure stops there and
+    /// `build_aod_grids` rightly rejects every rectangle. The word-bus
+    /// alternative scores `-1` and is pruned by `retain(score > 0)`.
+    ///
+    /// So the grid path legitimately yields nothing, and the escape hatch used to
+    /// stay shut because something had scored positive — a step-2 claim about
+    /// distance, decided before any geometry existed. The node died silently,
+    /// with the deadlock counter reading zero.
+    #[test]
+    fn a_node_whose_rectangles_all_fail_still_gets_escape_moves() {
+        let index = make_siding_index();
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
+        let targets = [(0u32, loc(0, 2))];
+        let table = make_table(&targets, &index);
+        let targets_enc: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &table, &targets_enc, &blocked);
+
+        // With escapes disabled, the node really does produce nothing: this pins
+        // that the grid path is empty, so the assertion below is about the escape
+        // hatch rather than about some rectangle happening to work.
+        let mut grid_only = Vec::new();
+        HeuristicGenerator::new()
+            .with_deadlock_policy(DeadlockPolicy::Skip)
+            .generate(
+                &config,
+                NodeId(0),
+                &ctx,
+                &mut SearchState::default(),
+                &mut grid_only,
+            );
+        assert!(
+            grid_only.is_empty(),
+            "expected no executable rectangle at this node; got {:?}",
+            snapshot(&grid_only)
+        );
+
+        let generator = HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::AllMoves);
+        let mut out = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx,
+            &mut SearchState::default(),
+            &mut out,
+        );
+        assert!(
+            !out.is_empty(),
+            "a node with no executable rectangle must still get escape moves, \
+             otherwise the search reports `unsolvable` on a solvable instance"
+        );
+        assert_eq!(
+            generator.deadlock_count(),
+            1,
+            "the node is a dead end and must be counted as one, so the metric \
+             stops hiding this failure mode"
+        );
+    }
+
+    // No end-to-end companion to the test above, deliberately. Reaching a *goal*
+    // through this fixture runs into a different and untouched limit: with
+    // `retain(score > 0)` pruning every non-improving move whenever an improving
+    // one exists, the reachable subgraph of a three-site siding is a handful of
+    // forced moves that closes on itself, so the solve still exhausts. That is
+    // the generator's move vocabulary, not the escape gate, and a test asserting
+    // `Solved` here would be asserting the wrong thing.
+    //
+    // The end-to-end evidence for this fix is the instance in #910 itself — a
+    // 98-atom, 49-pair stage phase on a gate+memory 5x16 spec, which went from
+    // `unsolvable` to solved in 16 layers (ids) and 15 (astar). That arch is not
+    // in this repo, so it cannot be a committed test; the numbers are recorded in
+    // the commit message.
 
     fn make_ctx<'a>(
         index: &'a LaneIndex,

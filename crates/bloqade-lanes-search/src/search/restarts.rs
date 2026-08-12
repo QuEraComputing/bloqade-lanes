@@ -78,6 +78,28 @@ pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
     })
 }
 
+/// Deadlock policy for the plain frontier strategies — A*, BFS, greedy, and the
+/// cascade's A* refinement.
+///
+/// [`DeadlockPolicy::MoveBlockers`] is a **floor here, not an override**. Those
+/// strategies have no depth-first jump-back to fall back on, so under
+/// [`DeadlockPolicy::Skip`] a node whose candidates all fail leaves them with
+/// nothing at all; the floor keeps them functional on the default options.
+///
+/// What the floor must not do is *lower* the caller's request. Hardcoding
+/// `MoveBlockers` — as this dispatch did — silently discarded an explicit
+/// [`DeadlockPolicy::AllMoves`], and `MoveBlockers` only frees atoms parked on
+/// an unresolved target. When the target is simply *far away* rather than
+/// occupied it emits nothing, so A* got zero successors and reported
+/// `unsolvable` on instances IDS and entropy — which do honour the option —
+/// solved in three nodes.
+fn frontier_deadlock_policy(requested: DeadlockPolicy) -> DeadlockPolicy {
+    match requested {
+        DeadlockPolicy::Skip => DeadlockPolicy::MoveBlockers,
+        stronger => stronger,
+    }
+}
+
 /// Run the trait-based frontier search with the scorer, cost, state, and
 /// observer fixed to the values every call site in this module uses
 /// identically. Removes those four boilerplate arguments from
@@ -254,7 +276,7 @@ where
         }
 
         let max_depth = Some(inner_result.cost.ceil() as u32);
-        let astar_move_gen = make_generator(0, DeadlockPolicy::MoveBlockers);
+        let astar_move_gen = make_generator(0, frontier_deadlock_policy(deadlock_policy));
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
         let astar_result = run_frontier(
             &root,
@@ -287,7 +309,7 @@ where
             Strategy::Ids => run_inner(InnerStrategy::Ids, seed, budget),
             Strategy::HeuristicDfs => run_inner(InnerStrategy::Dfs, seed, budget),
             _ => {
-                let move_gen = make_generator(seed, DeadlockPolicy::MoveBlockers);
+                let move_gen = make_generator(seed, frontier_deadlock_policy(deadlock_policy));
                 let result = run_strategy_v2(
                     strategy,
                     root.clone(),
@@ -358,5 +380,41 @@ where
         _ => {
             unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dispatch may *raise* a caller's deadlock policy to keep the plain
+    /// frontier strategies functional on the defaults, but it must never lower
+    /// one. Hardcoding `MoveBlockers` here — which is what it used to do — meant
+    /// A*, BFS and greedy silently ignored an explicit `AllMoves`, so a solve the
+    /// caller had configured to escape deadlocks reported `unsolvable` at a node
+    /// where IDS and entropy, which honour the option, walked straight through.
+    ///
+    /// Observed on a 37-atom staging phase with a single mover whose target was
+    /// *free*: `MoveBlockers` only frees atoms parked on an unresolved target, so
+    /// it emitted nothing and A* died with zero successors at the root, while the
+    /// same instance solved in three nodes under `AllMoves`.
+    #[test]
+    fn an_explicit_deadlock_policy_is_never_downgraded() {
+        assert_eq!(
+            frontier_deadlock_policy(DeadlockPolicy::AllMoves),
+            DeadlockPolicy::AllMoves,
+            "AllMoves asks for *more* escapes than MoveBlockers; honour it"
+        );
+        assert_eq!(
+            frontier_deadlock_policy(DeadlockPolicy::MoveBlockers),
+            DeadlockPolicy::MoveBlockers
+        );
+        // `Skip` is the default and leaves these strategies with no escape hatch
+        // at all, so the floor still applies there — this is the one case the
+        // dispatch is allowed to change.
+        assert_eq!(
+            frontier_deadlock_policy(DeadlockPolicy::Skip),
+            DeadlockPolicy::MoveBlockers
+        );
     }
 }
