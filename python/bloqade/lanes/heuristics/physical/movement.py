@@ -59,14 +59,14 @@ def convert_move_layers(
 class RustPlacementTraversal:
     """Config for the Rust search engine (``TargetSolver``).
 
-    ``restarts`` and ``lookahead`` are now exposed and threaded into
-    ``SolveOptions``; per-strategy entropy knobs (``max_movesets_per_group``,
-    ``max_goal_candidates``, ``collect_entropy_trace``) feed ``EntropyOptions``
-    via :func:`_move_search_from_traversal`.
+    ``restarts``, ``lookahead`` and ``deadlock_policy`` are exposed and threaded
+    into ``SolveOptions``; per-strategy entropy knobs
+    (``max_movesets_per_group``, ``max_goal_candidates``,
+    ``collect_entropy_trace``) feed ``EntropyOptions`` via
+    :func:`_move_search_from_traversal`.
 
-    Not yet exposed (Rust defaults used): ``weight``, ``deadlock_policy``,
-    ``w_t``. These will be threaded through once validated via Rust-only
-    benchmarking.
+    Not yet exposed (Rust defaults used): ``weight``, ``w_t``. These will be
+    threaded through once validated via Rust-only benchmarking.
     """
 
     strategy: SearchStrategyName = "entropy"
@@ -75,6 +75,23 @@ class RustPlacementTraversal:
     max_expansions: int | None = 300
     restarts: int = 1
     lookahead: bool = False
+    deadlock_policy: _native.DeadlockPolicy = field(
+        default_factory=lambda: _native.DeadlockPolicy.SKIP
+    )
+    """What the search may do at a node with no usable candidate.
+
+    ``SKIP`` (the Rust default) generates nothing, leaving the outer search to
+    backtrack; ``MOVE_BLOCKERS`` frees atoms standing *on* an unresolved target;
+    ``ALL_MOVES`` offers every atom every free adjacent site.
+
+    Honoured verbatim by every strategy except ``entropy``, which generates its
+    own candidates and so has its own deadlock breaker. Worth setting explicitly
+    when comparing strategies: leaving it at the default is a valid choice, but a
+    comparison is only apples-to-apples if every row uses the same value.
+
+    ``ALL_MOVES`` is the widest and the most expensive — its fan-out is (atoms x
+    free adjacent lanes), which on a dense register is thousands of successors
+    per deadlocked node, so pair it with a bounded ``max_expansions``."""
     collect_entropy_trace: bool = False
     seed: int = 0
     block_spectators: bool = True
@@ -107,6 +124,7 @@ def _move_search_from_traversal(
         strategy=_STRATEGY_MAP[traversal.strategy],
         restarts=traversal.restarts,
         lookahead=traversal.lookahead,
+        deadlock_policy=traversal.deadlock_policy,
     )
     entropy_opts = _native.EntropyOptions(
         max_movesets_per_group=traversal.max_movesets_per_group,

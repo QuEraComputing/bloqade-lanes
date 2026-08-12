@@ -725,10 +725,9 @@ impl MoveGenerator for HeuristicGenerator {
         // actually execute is decided two steps later by `build_aod_grids`. If
         // every positive candidate's rectangle turns out unexecutable this call
         // emits nothing and the node is a dead end — and gating on `has_positive`
-        // alone
-        // meant the escape hatch stayed shut in exactly that case, so the search
-        // drained its open list and reported `unsolvable` on solvable instances
-        // (#910).
+        // alone meant the escape hatch stayed shut in exactly that case, so the
+        // search drained its open list and reported `unsolvable` on solvable
+        // instances (#910).
         if out.len() == out_mark || !has_positive {
             self.deadlock_count.set(self.deadlock_count.get() + 1);
             match self.deadlock_policy {

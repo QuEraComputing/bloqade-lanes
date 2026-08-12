@@ -73,7 +73,18 @@ pub struct SolveOptions {
     pub weight: f64,
     /// Number of parallel restarts with perturbed scoring (1 = no restarts).
     pub restarts: u32,
-    /// How to handle deadlocks (no improving moves).
+    /// How to handle deadlocks — a node whose candidates all turn out
+    /// unexecutable, or where nothing scores an improvement.
+    ///
+    /// Honoured verbatim by every strategy that routes through
+    /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator): A*, BFS,
+    /// greedy, IDS, DFS, and both halves of a cascade. There is no floor and no
+    /// per-strategy substitution, so a strategy comparison on fixed options
+    /// varies only the strategy.
+    ///
+    /// One exception, and it is structural: [`Strategy::Entropy`] generates its
+    /// candidates itself rather than through that generator, so this does not
+    /// reach it — its fallback is the driver's own deadlock breaker.
     pub deadlock_policy: DeadlockPolicy,
     /// Enable 2-step lookahead scoring inside
     /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator).

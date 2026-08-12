@@ -78,28 +78,6 @@ pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
     })
 }
 
-/// Deadlock policy for the plain frontier strategies — A*, BFS, greedy, and the
-/// cascade's A* refinement.
-///
-/// [`DeadlockPolicy::MoveBlockers`] is a **floor here, not an override**. Those
-/// strategies have no depth-first jump-back to fall back on, so under
-/// [`DeadlockPolicy::Skip`] a node whose candidates all fail leaves them with
-/// nothing at all; the floor keeps them functional on the default options.
-///
-/// What the floor must not do is *lower* the caller's request. Hardcoding
-/// `MoveBlockers` — as this dispatch did — silently discarded an explicit
-/// [`DeadlockPolicy::AllMoves`], and `MoveBlockers` only frees atoms parked on
-/// an unresolved target. When the target is simply *far away* rather than
-/// occupied it emits nothing, so A* got zero successors and reported
-/// `unsolvable` on instances IDS and entropy — which do honour the option —
-/// solved in three nodes.
-fn frontier_deadlock_policy(requested: DeadlockPolicy) -> DeadlockPolicy {
-    match requested {
-        DeadlockPolicy::Skip => DeadlockPolicy::MoveBlockers,
-        stronger => stronger,
-    }
-}
-
 /// Run the trait-based frontier search with the scorer, cost, state, and
 /// observer fixed to the values every call site in this module uses
 /// identically. Removes those four boilerplate arguments from
@@ -276,7 +254,10 @@ where
         }
 
         let max_depth = Some(inner_result.cost.ceil() as u32);
-        let astar_move_gen = make_generator(0, frontier_deadlock_policy(deadlock_policy));
+        // Seed 0 and the caller's policy verbatim: the refinement is a single
+        // bounded A* pass, so it takes no restart seed, but it must not differ
+        // from the inner runs in what moves it is allowed to generate.
+        let astar_move_gen = make_generator(0, deadlock_policy);
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
         let astar_result = run_frontier(
             &root,
@@ -309,7 +290,7 @@ where
             Strategy::Ids => run_inner(InnerStrategy::Ids, seed, budget),
             Strategy::HeuristicDfs => run_inner(InnerStrategy::Dfs, seed, budget),
             _ => {
-                let move_gen = make_generator(seed, frontier_deadlock_policy(deadlock_policy));
+                let move_gen = make_generator(seed, deadlock_policy);
                 let result = run_strategy_v2(
                     strategy,
                     root.clone(),
@@ -386,35 +367,96 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generators::HeuristicGenerator;
+    use crate::goals::AllAtTarget;
+    use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
+    use crate::primitives::lane_index::LaneIndex;
+    use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+    use std::collections::HashSet;
 
-    /// The dispatch may *raise* a caller's deadlock policy to keep the plain
-    /// frontier strategies functional on the defaults, but it must never lower
-    /// one. Hardcoding `MoveBlockers` here — which is what it used to do — meant
-    /// A*, BFS and greedy silently ignored an explicit `AllMoves`, so a solve the
-    /// caller had configured to escape deadlocks reported `unsolvable` at a node
-    /// where IDS and entropy, which honour the option, walked straight through.
+    /// Every strategy that reads [`SolveOptions::deadlock_policy`] must get
+    /// exactly what the caller asked for — no floor, no override, no per-strategy
+    /// special case.
     ///
-    /// Observed on a 37-atom staging phase with a single mover whose target was
-    /// *free*: `MoveBlockers` only frees atoms parked on an unresolved target, so
-    /// it emitted nothing and A* died with zero successors at the root, while the
-    /// same instance solved in three nodes under `AllMoves`.
+    /// The dispatch used to break this in both directions at once: IDS and DFS
+    /// took the raw request while A*, BFS, greedy and the cascade's A* refinement
+    /// had `MoveBlockers` hardcoded. So one `SolveOptions` produced two different
+    /// move vocabularies depending on which strategy read it — an explicit
+    /// `AllMoves` was silently discarded for half of them, and a strategy
+    /// comparison on fixed options was quietly varying the escape policy too.
+    ///
+    /// This test walks the actual dispatch rather than a helper, so it fails if
+    /// any arm reintroduces a substitution.
     #[test]
-    fn an_explicit_deadlock_policy_is_never_downgraded() {
-        assert_eq!(
-            frontier_deadlock_policy(DeadlockPolicy::AllMoves),
+    fn every_strategy_receives_the_requested_deadlock_policy() {
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let targets = [(0u32, loc(0, 5))];
+        let targets_enc: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let table = DistanceTable::new(&[loc(0, 5).encode()], &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &table,
+            blocked: &blocked,
+            targets: &targets_enc,
+            cz_pairs: None,
+        };
+        let root = Config::new([(0u32, loc(0, 0))]).unwrap();
+        let goal = AllAtTarget::new(&targets_enc);
+        let h = HopDistanceHeuristic::new(targets.to_vec(), &table);
+
+        for requested in [
+            DeadlockPolicy::Skip,
+            DeadlockPolicy::MoveBlockers,
             DeadlockPolicy::AllMoves,
-            "AllMoves asks for *more* escapes than MoveBlockers; honour it"
-        );
-        assert_eq!(
-            frontier_deadlock_policy(DeadlockPolicy::MoveBlockers),
-            DeadlockPolicy::MoveBlockers
-        );
-        // `Skip` is the default and leaves these strategies with no escape hatch
-        // at all, so the floor still applies there — this is the one case the
-        // dispatch is allowed to change.
-        assert_eq!(
-            frontier_deadlock_policy(DeadlockPolicy::Skip),
-            DeadlockPolicy::MoveBlockers
-        );
+        ] {
+            for strategy in [
+                Strategy::AStar,
+                Strategy::Bfs,
+                Strategy::GreedyBestFirst,
+                Strategy::Ids,
+                Strategy::HeuristicDfs,
+                Strategy::Cascade {
+                    inner: InnerStrategy::Ids,
+                },
+            ] {
+                let seen = std::sync::Mutex::new(Vec::new());
+                let make_generator = |seed: u64, policy: DeadlockPolicy| {
+                    seen.lock().unwrap().push(policy);
+                    HeuristicGenerator::configured(seed, policy, false, None)
+                };
+                let opts = SolveOptions {
+                    strategy,
+                    deadlock_policy: requested,
+                    ..SolveOptions::default()
+                };
+                let _ = run_with_components(
+                    root.clone(),
+                    &goal,
+                    make_generator,
+                    |c: &Config| h.estimate_max(c),
+                    |c: &Config| h.estimate_sum(c),
+                    &ctx,
+                    Some(50),
+                    &opts,
+                    None,
+                    None,
+                );
+                let observed = seen.lock().unwrap();
+                assert!(
+                    !observed.is_empty(),
+                    "{strategy:?} built no generator, so this test proves nothing"
+                );
+                for &policy in observed.iter() {
+                    assert_eq!(
+                        policy, requested,
+                        "{strategy:?} was handed {policy:?} after the caller asked \
+                         for {requested:?}"
+                    );
+                }
+            }
+        }
     }
 }
