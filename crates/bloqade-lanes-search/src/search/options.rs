@@ -55,7 +55,10 @@ pub enum Strategy {
     ///
     /// `max_expansions` is ignored under this strategy: it budgets search
     /// node expansions, and the planner is rule-based with its own runaway
-    /// guard on emitted moves.
+    /// guard on emitted moves. [`SolveOptions::deadlock_policy`] is likewise
+    /// inert on the fixed-target path — there is no generator to hand it to.
+    /// Both come back into play on the loose-goal path, where the A* substitute
+    /// is an ordinary frontier search.
     PushRotate,
 }
 
@@ -82,7 +85,7 @@ pub struct SolveOptions {
     /// applies no floor and no per-strategy substitution, so a strategy
     /// comparison on fixed options varies only the strategy.
     ///
-    /// Two exceptions, neither of them in that dispatch:
+    /// Three exceptions, none of them in that dispatch:
     ///
     /// * [`Strategy::Entropy`] generates its candidates itself rather than
     ///   through that generator, so this never reaches it — its fallback is the
@@ -94,6 +97,13 @@ pub struct SolveOptions {
     ///   means `Skip` from
     ///   [`TargetSolver::solve`](crate::search::target_solver::TargetSolver::solve)
     ///   and `MoveBlockers` from those three.
+    /// * [`Strategy::PushRotate`] answers to this on one path and not the other,
+    ///   because it is not one search. On the fixed-target path it returns from
+    ///   `solve_with_engine` before a generator is ever built, so this is
+    ///   inert there — as `max_expansions` is. On the loose-goal path there is
+    ///   no fixed target for a rule-based planner to aim at, so A* is
+    ///   substituted, and *that* runs through the generator and honours this
+    ///   like any other frontier strategy (after the entangling raise above).
     pub deadlock_policy: DeadlockPolicy,
     /// Enable 2-step lookahead scoring inside
     /// [`HeuristicGenerator`](crate::generators::HeuristicGenerator).
