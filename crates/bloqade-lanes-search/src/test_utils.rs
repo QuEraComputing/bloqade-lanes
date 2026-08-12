@@ -59,6 +59,45 @@ pub fn chain_arch_json() -> String {
     serde_json::to_string(&spec).expect("spec serializes")
 }
 
+/// A conveyor chain with a **siding**: two words of three sites each, a chain
+/// site bus (`0→1, 1→2`) in both, and a word bus joining them at every site.
+///
+/// The smallest spec on which a chain can be *admitted* at selection time and
+/// still fail to assemble. Site `2` is a chain destination but not a chain
+/// source, so an atom parked there cannot vacate on that bus group — a run of
+/// three atoms therefore has a blocked head, every rectangle on the chain bus is
+/// rejected, and the group emits nothing even though the leader's move scored
+/// positive. The word bus is what makes the instance solvable anyway, and is the
+/// escape route the generator has to fall back on (#910).
+#[allow(dead_code)]
+pub fn chain_with_siding_arch_json() -> &'static str {
+    r#"{
+        "version": "2.0",
+        "words": [
+            { "sites": [[0, 0], [1, 0], [2, 0]] },
+            { "sites": [[0, 1], [1, 1], [2, 1]] }
+        ],
+        "zones": [
+            {
+                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [2.0, 2.0], "y_spacing": [2.0] },
+                "site_buses": [
+                    { "src": [0, 1], "dst": [1, 2] }
+                ],
+                "word_buses": [
+                    { "src": [0], "dst": [1] }
+                ],
+                "words_with_site_buses": [0, 1],
+                "sites_with_word_buses": [0, 1, 2],
+                "entangling_pairs": []
+            }
+        ],
+        "zone_buses": [],
+        "modes": [
+            { "name": "default", "zones": [0], "bitstring_order": [] }
+        ]
+    }"#
+}
+
 /// Minimal two-zone architecture with a single inter-zone `zone_bus`.
 ///
 /// Zone 0 ("gate") holds word 0 and zone 1 ("memory") holds word 1, each a
