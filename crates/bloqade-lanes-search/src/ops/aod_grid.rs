@@ -13,9 +13,10 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 
 use crate::primitives::bus_grid_maps::BusGridMaps;
+use crate::primitives::config::Config;
 use crate::primitives::lane_index::LaneIndex;
 
 /// A cluster represented by its X and Y coordinate sets.
@@ -61,6 +62,192 @@ pub(crate) fn destination_is_available(
     group_mover_srcs: &HashSet<u64>,
 ) -> bool {
     !occupied.contains(&dst_enc) || group_mover_srcs.contains(&dst_enc)
+}
+
+/// The lane on which the atom occupying `dst` could vacate in the same AOD shot
+/// as `lane`: an outgoing lane sharing all four of
+/// `(zone_id, move_type, bus_id, direction)` — the fields
+/// `ArchSpec::check_lane_group_consistency` requires a group to share, so a lane
+/// returned here is one the validator will accept alongside `lane`.
+///
+/// A source has at most one lane per bus group (the bus's src→dst relation is a
+/// function), so "the" lane is well defined; `find` returns that one.
+///
+/// The `zone_id` term only bites for `ZoneBus` lanes: site and word buses are
+/// intra-zone, so a lane and its destination share a zone automatically. A
+/// single `zone_bus` may serve several zones across its pairs, and each hop of a
+/// chain through it (`z0w0 → z1w0`, then `z1w0 → z2w0`) carries a different
+/// `zone_id`, so no two hops can share a group.
+///
+/// This matches on the raw [`LaneAddr`] fields rather than on resolved
+/// endpoints, deliberately: `check_lane_group_consistency` groups on those same
+/// raw fields. Note they are not always the *source's* zone — a backward
+/// `ZoneBus` lane's true source is the forward destination (see
+/// [`BusGridMaps`](crate::primitives::bus_grid_maps::BusGridMaps)) — which is
+/// another reason to compare the addresses the validator compares instead of
+/// reasoning about which end is which.
+///
+/// Consequence, stated honestly: those hops get **serialized** into one
+/// operation each. Serialization is permitted by the architecture — but so is
+/// batching them, since one zone bus may carry transfers among more than two
+/// zones in a single shot. This predicate is therefore deliberately *stricter
+/// than the architecture*, matching today's group-consistency rule rather than
+/// the hardware's capability. The reason to keep it that way for now is that
+/// `check_lane_group_consistency` rejects a mixed-`zone_id` group, so
+/// generating such candidates would produce plans that fail the
+/// solver-boundary replay outright. Unlocking the batching means relaxing that
+/// rule for zone buses first, then relaxing this in step.
+///
+/// Necessarily `None` on endpoint-disjoint buses — a destination there is never
+/// a source of the same bus — so the shipped Gemini specs never see a chain.
+pub(crate) fn vacating_lane(
+    dst: LocationAddr,
+    lane: &LaneAddr,
+    index: &LaneIndex,
+) -> Option<LaneAddr> {
+    index.outgoing_lanes(dst).iter().copied().find(|l| {
+        l.zone_id == lane.zone_id
+            && l.move_type == lane.move_type
+            && l.bus_id == lane.bus_id
+            && l.direction == lane.direction
+    })
+}
+
+/// One conveyor follower co-selected by [`close_chain_entries`]: the atom that
+/// has to vacate so an already-selected mover's destination is free in the same
+/// shot, plus the lane it vacates on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChainLink {
+    /// The follower's qubit id, so the caller records its move in the config.
+    pub(crate) qubit_id: u32,
+    /// Encoded lane the follower vacates on.
+    pub(crate) lane_encoded: u64,
+    /// Encoded location the follower is vacating — the blocked destination of
+    /// the hop ahead of it.
+    pub(crate) src_encoded: u64,
+    /// Encoded destination that lane carries it to.
+    pub(crate) dst_encoded: u64,
+}
+
+/// Close a bus group's mover set under the uniform destination rule (#866):
+/// when a selected mover's destination holds an atom that can vacate on this
+/// same group, co-select that atom's lane too — transitively, to the end of the
+/// chain.
+///
+/// # Why selection has to do this, not the grid layer
+///
+/// [`BusGridContext::build_aod_grids`] derives its mover set from `entries`, so
+/// [`BusGridContext::rect_outcome`]'s repair closure can only pull in cells
+/// whose source is *already* an entry. It deliberately never promotes a
+/// stationary atom to a mover: that would move an atom the caller never
+/// selected and never recorded in the config, so the plan and the hardware
+/// would disagree. The result is that a chain assembles only when every
+/// follower happens to have been selected on its own merit.
+///
+/// On a packed block that is exactly what does not happen. Followers drop out
+/// of selection for two ordinary reasons — a follower already sitting on its
+/// target is never scored at all, and one whose own move scores `≤ 0` is pruned
+/// — and then the leader's rectangle is rejected, the successor set comes up
+/// empty, and the search reports `unsolvable` on a solvable instance (#910).
+/// Under grid-complete activation semantics a packed region has no chain-free
+/// alternative to fall back on, so this is a correctness bug, not a cost one.
+///
+/// # Contract
+///
+/// `entries` maps `encoded_src → encoded_lane` and is extended in place;
+/// `seed_lanes` lists the already-selected lanes in the caller's deterministic
+/// order. Every returned [`ChainLink`] is a *new* entry the caller must turn
+/// into a recorded qubit move, in the order returned.
+///
+/// A chain that cannot complete is left alone rather than half-selected being
+/// rejected here: the follower's own rectangle is invalid for the same reason
+/// the leader's was, so `build_aod_grids` drops the whole thing. Letting one
+/// layer adjudicate keeps the two from drifting apart.
+///
+/// Terminates because every iteration inserts a source not already in
+/// `entries`, and locations are finite. The `contains_key` guard also means a
+/// hypothetically cyclic bus closes back onto a seed and stops rather than
+/// spinning — though `ArchSpec::validate` rejects cyclic buses outright
+/// (#874), which is what makes a closed chain a shift and not a rotation.
+///
+/// # Cost
+///
+/// Runs on every expansion of every spec, chain-capable or not, so the walk is
+/// ordered cheapest-test-first: the `occupied` lookup is a hash probe and
+/// rejects the common case (a free destination) before
+/// [`Config::qubit_at`]'s O(atoms) scan is reached. Skipping it would make this
+/// quadratic in the atom count on exactly the specs where it can never do
+/// anything. `occupied` is the caller's config-plus-blocked set, so the probe
+/// and the scan agree: a location holding an atom is always in `occupied`, and a
+/// blocked location has no qubit either way.
+///
+/// The worklist is walked by cursor rather than drained, so the only allocation
+/// is `links` — and `pending` never allocates unless a chain actually forms.
+///
+/// A no-op on endpoint-disjoint buses (see [`vacating_lane`]), so the shipped
+/// Gemini specs get byte-identical entry sets.
+pub(crate) fn close_chain_entries(
+    entries: &mut HashMap<u64, u64>,
+    seed_lanes: &[u64],
+    occupied: &HashSet<u64>,
+    config: &Config,
+    index: &LaneIndex,
+) -> Vec<ChainLink> {
+    let mut links: Vec<ChainLink> = Vec::new();
+    // Walk the seeds first, then whatever the closure appends behind them.
+    let mut pending: Vec<u64> = Vec::new();
+    let mut cursor = 0usize;
+
+    loop {
+        let lane_enc = match seed_lanes.get(cursor) {
+            Some(&enc) => enc,
+            None => match pending.get(cursor - seed_lanes.len()) {
+                Some(&enc) => enc,
+                None => break,
+            },
+        };
+        cursor += 1;
+
+        let lane = LaneAddr::decode_u64(lane_enc);
+        let Some((_, dst)) = index.endpoints(&lane) else {
+            continue;
+        };
+        let dst_enc = dst.encode();
+        // Nothing in the way: no atom, or a blocked site, which holds no qubit
+        // and never frees up. Checked first because it is a hash probe and it is
+        // what almost every lane hits.
+        if !occupied.contains(&dst_enc) {
+            continue;
+        }
+        // The occupant is already a mover on this group, so the rule is
+        // satisfied and there is nothing to add.
+        if entries.contains_key(&dst_enc) {
+            continue;
+        }
+        let Some(qubit_id) = config.qubit_at(dst) else {
+            continue;
+        };
+        // The atom ahead cannot vacate on this group — the chain is broken
+        // here and `build_aod_grids` will reject the rectangle.
+        let Some(next_lane) = vacating_lane(dst, &lane, index) else {
+            continue;
+        };
+        let Some((_, next_dst)) = index.endpoints(&next_lane) else {
+            continue;
+        };
+
+        let next_lane_enc = next_lane.encode_u64();
+        entries.insert(dst_enc, next_lane_enc);
+        links.push(ChainLink {
+            qubit_id,
+            lane_encoded: next_lane_enc,
+            src_encoded: dst_enc,
+            dst_encoded: next_dst.encode(),
+        });
+        pending.push(next_lane_enc);
+    }
+
+    links
 }
 
 /// Context for building AOD-compatible rectangular grids on one bus group.
@@ -248,6 +435,31 @@ impl<'a> BusGridContext<'a> {
     /// selecting a column drives it at *every* selected row. Empty **filler
     /// lanes** are therefore included where needed to complete the product —
     /// they carry no atom but let a rectangle grow to cover more movers.
+    ///
+    /// The mover set is exactly `entries.keys()`: growth may pull a mover's
+    /// *cell* into a rectangle, but it never promotes a stationary atom to a
+    /// mover, because the caller would not record that atom's move. A caller
+    /// whose selection can nominate an atom whose destination is occupied must
+    /// therefore run [`close_chain_entries`] first, so the atoms that *have* to
+    /// move are in `entries` before the geometry is decided — otherwise the
+    /// group silently emits nothing (#910).
+    ///
+    /// Where each caller stands:
+    ///
+    /// * The heuristic generator and both entropy candidate paths run the
+    ///   closure.
+    /// * [`GreedyGenerator`](crate::generators::greedy::GreedyGenerator) does
+    ///   not, and does not need to: `find_path_occupied` treats every atom as a
+    ///   wall, so its first-step lanes never point at an occupied site and no
+    ///   chain can arise. That also makes it chain-*incapable* — following a
+    ///   chain would take multi-agent pathfinding rather than per-atom BFS
+    ///   (#887).
+    /// * [`pack_aod_rectangles`](crate::dsl::pipeline) does not, and **does**
+    ///   need to: a Starlark policy enumerates legal lanes itself, with no
+    ///   occupancy prefilter, so a policy that nominates a lane into an occupied
+    ///   site still hits #910 on a chain-capable spec. Latent rather than live —
+    ///   no shipped spec can form a chain — and tracked separately rather than
+    ///   fixed here.
     ///
     /// # What the result is, precisely
     ///
@@ -1357,5 +1569,230 @@ mod tests {
         let mut sorted = grids[0].clone();
         sorted.sort();
         assert_eq!(sorted, vec![100, 101, 102, 103]);
+    }
+
+    // ── `close_chain_entries` (issue #910) ──
+    //
+    // These need real lane topology rather than the fabricated `BusGridMaps`
+    // above, so they build a `LaneIndex` from the conveyor-chain fixture
+    // (`0→1→2→3→4` along one row of word 0) and its endpoint-disjoint sibling.
+
+    mod chain_closure {
+        use super::*;
+        use crate::primitives::lane_index::LaneIndex;
+        use crate::test_utils::{chain_arch_json, example_arch_json, lane, loc};
+        use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+        fn chain_index() -> LaneIndex {
+            let spec: ArchSpec = serde_json::from_str(&chain_arch_json()).unwrap();
+            LaneIndex::new(spec)
+        }
+
+        fn disjoint_index() -> LaneIndex {
+            let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+            LaneIndex::new(spec)
+        }
+
+        /// Atoms on the given sites of word 0, keyed by qubit id = site id.
+        fn packed(sites: &[u32]) -> Config {
+            Config::new(sites.iter().map(|&s| (s, loc(0, s)))).unwrap()
+        }
+
+        /// The occupancy set every caller passes: atom locations plus `blocked`.
+        fn occupied_of(config: &Config, blocked: &[u32]) -> HashSet<u64> {
+            config
+                .iter()
+                .map(|(_, l)| l.encode())
+                .chain(blocked.iter().map(|&s| loc(0, s).encode()))
+                .collect()
+        }
+
+        /// Seed the closure with the forward site-bus-0 lane out of `site`.
+        fn seed(site: u32) -> Vec<u64> {
+            vec![lane(0, site, 0).encode_u64()]
+        }
+
+        /// One selected mover ahead of a packed run pulls in every atom between
+        /// it and the hole — transitively, in chain order.
+        #[test]
+        fn walks_to_the_end_of_the_chain() {
+            let index = chain_index();
+            let config = packed(&[0, 1, 2, 3]);
+            let mut entries: HashMap<u64, u64> = [(loc(0, 0).encode(), lane(0, 0, 0).encode_u64())]
+                .into_iter()
+                .collect();
+
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(0),
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
+
+            let hops: Vec<(u32, u32, u32)> = links
+                .iter()
+                .map(|l| {
+                    (
+                        l.qubit_id,
+                        LocationAddr::decode(l.src_encoded).site_id,
+                        LocationAddr::decode(l.dst_encoded).site_id,
+                    )
+                })
+                .collect();
+            assert_eq!(
+                hops,
+                vec![(1, 1, 2), (2, 2, 3), (3, 3, 4)],
+                "followers must be co-selected in chain order"
+            );
+            assert_eq!(entries.len(), 4, "every atom in the run becomes a mover");
+        }
+
+        /// The walk stops at the hole rather than running to the bus's end.
+        #[test]
+        fn stops_at_a_free_destination() {
+            let index = chain_index();
+            let config = packed(&[0, 1]);
+            let mut entries: HashMap<u64, u64> = [(loc(0, 0).encode(), lane(0, 0, 0).encode_u64())]
+                .into_iter()
+                .collect();
+
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(0),
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
+
+            assert_eq!(links.len(), 1, "site 2 is free, so the chain ends at q1");
+            assert_eq!(links[0].qubit_id, 1);
+            assert_eq!(LocationAddr::decode(links[0].dst_encoded), loc(0, 2));
+        }
+
+        /// An atom at the chain's final destination has no lane on this group,
+        /// so nothing is co-selected and `build_aod_grids` rejects the
+        /// rectangle — the same outcome as before the closure existed.
+        #[test]
+        fn leaves_an_unvacatable_occupant_alone() {
+            let index = chain_index();
+            let config = packed(&[3, 4]);
+            let seed_lane = lane(0, 3, 0).encode_u64();
+            let mut entries: HashMap<u64, u64> =
+                [(loc(0, 3).encode(), seed_lane)].into_iter().collect();
+
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(3),
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
+
+            assert!(links.is_empty(), "site 4 cannot vacate: {links:?}");
+            assert_eq!(entries.len(), 1, "entries must be left untouched");
+        }
+
+        /// A destination held by a *blocked* location carries no qubit to
+        /// co-select, and blocked atoms never move — so the closure must not
+        /// invent a mover for one.
+        #[test]
+        fn never_co_selects_a_blocked_site() {
+            let index = chain_index();
+            // Site 1 is blocked (an external atom), so it is not in the config.
+            let config = packed(&[0]);
+            let mut entries: HashMap<u64, u64> = [(loc(0, 0).encode(), lane(0, 0, 0).encode_u64())]
+                .into_iter()
+                .collect();
+
+            let links = close_chain_entries(
+                &mut entries,
+                &seed(0),
+                &occupied_of(&config, &[1]),
+                &config,
+                &index,
+            );
+
+            assert!(links.is_empty(), "a blocked destination has no follower");
+            assert_eq!(entries.len(), 1);
+        }
+
+        /// A follower already selected on its own merit needs no help, and must
+        /// not be added twice.
+        #[test]
+        fn skips_an_occupant_that_is_already_a_mover() {
+            let index = chain_index();
+            let config = packed(&[0, 1]);
+            let lane_0 = lane(0, 0, 0).encode_u64();
+            let lane_1 = lane(0, 1, 0).encode_u64();
+            let mut entries: HashMap<u64, u64> =
+                [(loc(0, 0).encode(), lane_0), (loc(0, 1).encode(), lane_1)]
+                    .into_iter()
+                    .collect();
+
+            let links = close_chain_entries(
+                &mut entries,
+                &[lane_0, lane_1],
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
+
+            assert!(links.is_empty(), "both hops were already selected");
+            assert_eq!(entries.len(), 2);
+        }
+
+        /// On an endpoint-disjoint bus a destination is never a source of the
+        /// same bus, so the closure cannot fire at all. This is what keeps the
+        /// shipped Gemini specs byte-identical.
+        #[test]
+        fn is_a_no_op_on_endpoint_disjoint_buses() {
+            let index = disjoint_index();
+            // Site bus 0 maps 0-4 → 5-9; park atoms on both ends of one lane.
+            let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
+            let lane_0 = lane(0, 0, 0).encode_u64();
+            let mut entries: HashMap<u64, u64> =
+                [(loc(0, 0).encode(), lane_0)].into_iter().collect();
+
+            let links = close_chain_entries(
+                &mut entries,
+                &[lane_0],
+                &occupied_of(&config, &[]),
+                &config,
+                &index,
+            );
+
+            assert!(links.is_empty(), "no chain exists on a disjoint bus");
+            assert_eq!(entries.len(), 1);
+        }
+
+        /// [`vacating_lane`] is what confines a chain to one lane group: the
+        /// occupant needs an outgoing lane matching all four grouping fields.
+        #[test]
+        fn vacating_lane_requires_the_same_bus_group() {
+            let index = chain_index();
+            let forward_0 = lane(0, 0, 0);
+            assert_eq!(
+                vacating_lane(loc(0, 1), &forward_0, &index).map(|l| l.site_id),
+                Some(1),
+                "site 1 is a source of the same forward chain bus"
+            );
+            assert!(
+                vacating_lane(loc(0, 4), &lane(0, 3, 0), &index).is_none(),
+                "the chain's final destination has no outgoing lane on it"
+            );
+            // Same sites, opposite direction: a backward mover cannot be
+            // cleared by a forward follower, since a lane group shares one
+            // direction.
+            let backward_2 = LaneAddr {
+                direction: Direction::Backward,
+                ..lane(0, 2, 0)
+            };
+            assert_eq!(
+                vacating_lane(loc(0, 1), &backward_2, &index).map(|l| l.direction),
+                Some(Direction::Backward),
+                "a backward mover is cleared by a backward follower, not a forward one"
+            );
+        }
     }
 }

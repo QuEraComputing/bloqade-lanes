@@ -381,6 +381,73 @@ mod tests {
         assert!(!result.move_layers.is_empty());
         assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
     }
+
+    /// End-to-end deadlock witness for issue #910: a packed conveyor block whose
+    /// only free site is at the head of the chain.
+    ///
+    /// Atoms fill sites 0-3 of the `0→1→2→3→4` row, site 4 is the lone hole, and
+    /// only `q0` is targeted — one site forward, into `q1`. The three atoms
+    /// ahead of it are untargeted spectators, so scoring never nominates them
+    /// and they never joined the mover set.
+    ///
+    /// That made the instance a dead end. Under grid-complete activation a
+    /// packed block has no chain-free alternative — firing the bus moves *every*
+    /// atom on the fired tones, so any single-mover selection here implies
+    /// co-moving its neighbours — and with the spectators absent from the mover
+    /// set `q0`'s rectangle was rejected, the root had **zero** successors, and
+    /// the search returned `Unsolvable` at any budget. One whole-row shift
+    /// solves it.
+    ///
+    /// Reaching `Solved` also proves the assembled chain is *executable*:
+    /// `solve_with_engine` replays every returned plan through
+    /// `AtomStateData::validate_moves` + `apply_validated` before handing it
+    /// back, so a simultaneous shift the hardware model rejected would panic
+    /// here rather than pass.
+    #[test]
+    fn packed_conveyor_block_is_solvable_not_unsolvable() {
+        let initial = [
+            (0u32, loc(0, 0)),
+            (1, loc(0, 1)),
+            (2, loc(0, 2)),
+            (3, loc(0, 3)),
+        ];
+        let target = [(0u32, loc(0, 1))];
+
+        for search in [MoveSearch::astar(1.0), MoveSearch::entropy()] {
+            let strategy = search.options.strategy;
+            let solver = TargetSolver::new(make_chain_engine(), search);
+            let result = solver
+                .solve(initial, target, std::iter::empty(), Some(10_000))
+                .unwrap();
+
+            assert_eq!(
+                result.status,
+                SolveStatus::Solved,
+                "{strategy:?} reported {:?} on a solvable packed conveyor",
+                result.status
+            );
+            assert_eq!(
+                result.goal_config.location_of(0),
+                Some(loc(0, 1)),
+                "{strategy:?}: q0 did not reach its target"
+            );
+            // The whole row shifts in a single AOD operation: one layer, four
+            // lanes, every spectator pushed one site along.
+            assert_eq!(
+                result.move_layers.len(),
+                1,
+                "{strategy:?}: expected one whole-row shift, got {:?}",
+                result.move_layers
+            );
+            for (qid, site) in [(1u32, 2u32), (2, 3), (3, 4)] {
+                assert_eq!(
+                    result.goal_config.location_of(qid),
+                    Some(loc(0, site)),
+                    "{strategy:?}: spectator q{qid} did not ride the chain"
+                );
+            }
+        }
+    }
     // ── `SolveOptions::backwards_search` ──
     //
     // The transform under test is "reverse the layer list AND invert each

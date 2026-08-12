@@ -12,10 +12,27 @@ use crate::primitives::graph::MoveSet;
 pub enum SolveStatus {
     /// A solution was found.
     Solved,
-    /// The search space was fully explored — no solution exists.
+    /// The search exhausted its space without finding a solution.
+    ///
+    /// **This is a proof only for a complete router.** From
+    /// [`Strategy::PushRotate`](crate::search::options::Strategy::PushRotate) it
+    /// means no solution exists. From every search strategy it means no solution
+    /// exists *within the move vocabulary its generator offered* — and the
+    /// heuristic generators deliberately offer less than the architecture
+    /// allows: non-improving moves are pruned whenever an improving one exists,
+    /// and only nominated atoms enter a bus group's mover set.
+    ///
+    /// Issue #910 is the cautionary case. On a packed block, an atom the
+    /// generator never nominated left the whole group unexecutable, so nodes had
+    /// no successors and the open list drained in seconds — identical verdicts at
+    /// `max_expansions` of 1e5 and 1e8 — on an instance one AOD operation
+    /// solves. Callers that branch on this status (fallback logic, feasibility
+    /// conclusions, optimality baselines) should treat it as "this search found
+    /// nothing" rather than "nothing exists"; for a genuine verdict use the
+    /// feasibility oracle or Push and Rotate.
     Unsolvable,
     /// The expansion budget was exhausted before finding a solution or
-    /// proving unsolvability.
+    /// exhausting the space.
     BudgetExceeded,
 }
 
@@ -48,7 +65,17 @@ pub struct SolveResult {
     pub nodes_expanded: u32,
     /// Total path cost. 0.0 when `status` is not `Solved`.
     pub cost: f64,
-    /// Number of deadlocks encountered during search.
+    /// Number of nodes at which the generator had nothing useful to offer.
+    ///
+    /// Counts two distinct situations: no candidate scored an improvement, and
+    /// no candidate turned out *executable* (every rectangle rejected) even
+    /// though something did score positive.
+    ///
+    /// **Not a count of escape moves taken.** The counter is incremented before
+    /// the [`DeadlockPolicy`](crate::generators::heuristic::DeadlockPolicy) is
+    /// consulted, so under `Skip` — the default — it records nodes where nothing
+    /// was generated in response. Read it as "how often the search got stuck",
+    /// not "how often it escaped".
     pub deadlocks: u32,
     /// Optional entropy-search trace payload for visualization/debugging.
     pub entropy_trace: Option<EntropyTrace>,
