@@ -1121,7 +1121,13 @@ class SolveResult:
 
     @property
     def status(self) -> str:
-        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``."""
+        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
+
+        ``"unsolvable"`` is a proof only from the ``push_rotate`` strategy. From
+        a search strategy it means the search exhausted the moves its generator
+        offered — which is deliberately less than the architecture allows — not
+        that no solution exists.
+        """
         ...
 
     @property
@@ -1152,7 +1158,14 @@ class SolveResult:
 
     @property
     def deadlocks(self) -> int:
-        """Number of deadlocks encountered during search."""
+        """Number of nodes at which the generator had nothing useful to offer.
+
+        Counts both "nothing scored an improvement" and "nothing was executable"
+        (every rectangle rejected). **Not** a count of escape moves taken: the
+        counter is incremented before ``deadlock_policy`` is consulted, so under
+        the default ``SKIP`` it records nodes where nothing was generated in
+        response. Read it as "how often the search got stuck".
+        """
         ...
 
     @property
