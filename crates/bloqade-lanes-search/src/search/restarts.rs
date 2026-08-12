@@ -24,7 +24,9 @@ use crate::primitives::context::{SearchContext, SearchState};
 use crate::scorers::DistanceScorer;
 use crate::search::options::{BoundKind, EntropyOptions, InnerStrategy, SolveOptions, Strategy};
 use crate::search::result::{SolveResult, SolveStatus};
-use crate::traits::{Goal, Heuristic, MoveGenerator, Objective};
+// No `Objective` import: the cascade now bounds its refinement by cost
+// directly, so nothing here needs `min_shot_cost`.
+use crate::traits::{Goal, Heuristic, MoveGenerator};
 
 /// Extract a [`SolveResult`] from a [`SearchResult`].
 ///
@@ -111,6 +113,11 @@ fn frontier_deadlock_policy(requested: DeadlockPolicy) -> DeadlockPolicy {
 /// observer fixed to the values every call site in this module uses
 /// identically. Removes those four boilerplate arguments from
 /// `frontier::run_search`.
+///
+/// Still passes both of `run_search`'s limits through: `max_depth` is a layer
+/// horizon, `max_cost` an incumbent bound, and they are not interchangeable
+/// under a non-uniform objective.
+#[allow(clippy::too_many_arguments)]
 fn run_frontier<Gen, Go, F>(
     root: &Config,
     generator: &Gen,
@@ -119,6 +126,7 @@ fn run_frontier<Gen, Go, F>(
     frontier: &mut F,
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
+    max_cost: Option<f64>,
 ) -> SearchResult
 where
     Gen: MoveGenerator,
@@ -137,6 +145,7 @@ where
         &mut NoOpObserver,
         max_expansions,
         max_depth,
+        max_cost,
     )
 }
 
@@ -177,6 +186,9 @@ where
     let collect_entropy_trace = entropy.collect_entropy_trace;
     let w_t = entropy.w_t;
     let base_seed = entropy.seed;
+    // The objective this solve accumulates `g` with, named once, so the driver
+    // and the bound it is paired with cannot disagree about it.
+    let objective = UniformCost;
 
     // Build the entropy heuristic tables once per solve, shared across
     // restarts, exactly when the dispatch below will run the entropy driver.
@@ -213,7 +225,7 @@ where
     let completion_bound = match entropy_opts.and_then(|o| o.completion_bound) {
         Some(BoundKind::WeightedDistance) if entropy_tables.is_some() && ctx.cz_pairs.is_none() => {
             Some(WeightedDistanceBound::new(
-                &UniformCost,
+                &objective,
                 ctx.targets,
                 ctx.index,
                 ctx.blocked,
@@ -222,7 +234,7 @@ where
         _ => None,
     };
     let completion_bound = completion_bound.as_ref();
-    let no_bound = NoBound::for_objective(&UniformCost);
+    let no_bound = NoBound::for_objective(&objective);
 
     // Helper: run a single inner strategy with the given seed and budget.
     let run_inner = |inner: InnerStrategy, seed: u64, budget: Option<u32>| -> SolveResult {
@@ -230,13 +242,13 @@ where
             InnerStrategy::Ids => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = IdsFrontier::new(h_sum);
-                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
+                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
                 extract(result, move_gen.deadlock_count(), budget, ctx)
             }
             InnerStrategy::Dfs => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = DfsFrontier::new(h_sum);
-                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
+                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
                 extract(result, move_gen.deadlock_count(), budget, ctx)
             }
             InnerStrategy::Entropy => {
@@ -273,7 +285,7 @@ where
                             seed,
                             observer,
                             entropy_tables,
-                            &UniformCost,
+                            &objective,
                             bound,
                         ),
                         None => crate::drivers::entropy::entropy_search_with_tables(
@@ -286,7 +298,7 @@ where
                             seed,
                             observer,
                             entropy_tables,
-                            &UniformCost,
+                            &objective,
                             &no_bound,
                         ),
                     }
@@ -326,14 +338,14 @@ where
             return inner_result;
         }
 
-        // `cost` is an objective cost; `max_depth` is a tree-depth cutoff
-        // (`frontier::run_search` compares it against `graph.depth`). Convert
-        // through the objective's per-shot floor: no plan of cost `<= c` can be
-        // deeper than `floor(c / min_shot_cost)`. Under `UniformCost`
-        // (`min_shot_cost == 1`, integral costs) this is exactly the
-        // `cost.ceil()` it replaces, but it stays correct rather than
-        // accidentally correct if the inner objective ever changes.
-        let max_depth = Some((inner_result.cost / UniformCost.min_shot_cost()).floor() as u32);
+        // The refinement is looking for something strictly cheaper than what
+        // the inner strategy already found, which is a statement about the
+        // objective — so bound it by that cost directly. It used to be
+        // converted into a tree-depth cutoff via `min_shot_cost`, which is only
+        // equivalent while `g == depth`: under a non-uniform objective a
+        // cheaper plan can be *deeper* (more shots, each cheaper), so a depth
+        // cap would exclude exactly the improvements sought here.
+        let max_cost = Some(inner_result.cost);
         let astar_move_gen = make_generator(0, frontier_deadlock_policy(deadlock_policy));
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
         let astar_result = run_frontier(
@@ -343,7 +355,8 @@ where
             ctx,
             &mut astar_f,
             max_expansions,
-            max_depth,
+            None,
+            max_cost,
         );
         let astar_solve = extract(
             astar_result,
@@ -415,15 +428,42 @@ where
     match strategy {
         Strategy::AStar => {
             let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         Strategy::Bfs => {
             let mut f = BfsFrontier::new();
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         Strategy::GreedyBestFirst => {
             let mut f = PriorityFrontier::greedy(heuristic_fn);
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         // Push and Rotate needs a concrete target placement, which this path
         // does not have: `run_with_components` is reached with a `Goal`
@@ -433,7 +473,16 @@ where
         // substitution is not a surprise.
         Strategy::PushRotate => {
             let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         _ => {
             unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")

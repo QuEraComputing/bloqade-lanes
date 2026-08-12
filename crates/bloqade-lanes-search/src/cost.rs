@@ -76,7 +76,17 @@ pub struct WeightedDuration {
     /// `lane_weight` or C3 breaks.
     missing_norm_dur: f64,
     tau: f64,
-    min_shot: f64,
+    /// Smallest value `norm_dur_of` can return, over the stored lanes *and*
+    /// [`Self::missing_norm_dur`]. Doubles as the `edge_cost` fold seed, which
+    /// is what makes `min_shot_cost` a floor on every shot including an empty
+    /// one — see [`CostFn::edge_cost`].
+    min_norm: f64,
+    /// Order-independent digest of the `(lane, normalized duration)` pairs this
+    /// instance was built from. Folded into [`Objective::id`] so two instances
+    /// built from *different* architectures never compare equal: `tau` alone
+    /// does not determine `lane_weight`, and `ObjectiveId` promises that equal
+    /// ids agree on every input.
+    arch_digest: u64,
 }
 
 impl WeightedDuration {
@@ -88,23 +98,33 @@ impl WeightedDuration {
         );
         let missing_norm_dur = MISSING_LANE_DURATION_US / tau;
         let mut norm_dur = HashMap::new();
-        let mut min_norm = f64::INFINITY;
+        // Seeded with the fallback, because `norm_dur_of` returns it for any
+        // lane absent from the map — one reached through a different accessor
+        // than the one enumerated here. Seeding means `min_norm` bounds every
+        // value `norm_dur_of` can produce, by construction, rather than by
+        // assuming the two lane sets coincide.
+        let mut min_norm = missing_norm_dur;
+        let mut arch_digest = 0_u64;
         for (mt, bus_id, zone_id, dir) in index.bus_groups() {
             for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
                 let d = index
                     .lane_duration_us(&lane)
                     .unwrap_or(MISSING_LANE_DURATION_US)
                     / tau;
-                norm_dur.insert(lane.encode_u64(), d);
+                let enc = lane.encode_u64();
+                norm_dur.insert(enc, d);
                 min_norm = min_norm.min(d);
+                // Order-independent (`wrapping_add` is commutative), so the
+                // digest does not depend on `bus_groups` iteration order.
+                arch_digest = arch_digest.wrapping_add(mix_lane_digest(enc, d));
             }
         }
-        let min_shot = 1.0 + if min_norm.is_finite() { min_norm } else { 0.0 };
         Self {
             norm_dur,
             missing_norm_dur,
             tau,
-            min_shot,
+            min_norm,
+            arch_digest,
         }
     }
 
@@ -125,13 +145,33 @@ impl WeightedDuration {
 /// entropy driver's `approx_layer_time_us` convention.
 const MISSING_LANE_DURATION_US: f64 = 1.0;
 
+/// Mix one `(lane, normalized duration)` pair into a digest value.
+///
+/// Only needs to separate architectures that differ in any lane weight, not to
+/// resist collisions adversarially, so a cheap multiply-xor suffices.
+#[inline]
+fn mix_lane_digest(lane_enc: u64, norm_dur: f64) -> u64 {
+    const ODD: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mixed = lane_enc.wrapping_mul(ODD).rotate_left(31) ^ norm_dur.to_bits().wrapping_mul(ODD);
+    mixed ^ (mixed >> 29)
+}
+
 impl CostFn for WeightedDuration {
+    /// `1 + max` over the shot's lanes, with the fold seeded at
+    /// [`Self::min_norm`] rather than `0.0`.
+    ///
+    /// The seed is what makes C4 (`edge_cost >= min_shot_cost`) hold for *every*
+    /// shot rather than only non-empty ones. A `MoveSet` with no lanes would
+    /// otherwise fold to `0.0` and cost `1.0`, below the advertised floor of
+    /// `1 + min_norm`; since `min_norm` bounds every value `norm_dur_of` can
+    /// return, seeding with it leaves the result unchanged for any shot that
+    /// does have lanes.
     fn edge_cost(&self, move_set: &MoveSet, _from: &Config, _to: &Config) -> f64 {
         let slowest = move_set
             .decode()
             .into_iter()
             .map(|lane| self.norm_dur_of(lane))
-            .fold(0.0_f64, f64::max);
+            .fold(self.min_norm, f64::max);
         1.0 + slowest
     }
 }
@@ -142,15 +182,18 @@ impl Objective for WeightedDuration {
     }
 
     fn min_shot_cost(&self) -> f64 {
-        self.min_shot
+        1.0 + self.min_norm
     }
 
     fn id(&self) -> ObjectiveId {
         ObjectiveId {
             kind: "weighted-duration",
-            // `tau` is the only parameter, and it fully determines both
-            // `edge_cost` and `lane_weight` for a given architecture.
-            params: self.tau.to_bits(),
+            // `tau` alone is not enough: it determines the weights only *for a
+            // fixed architecture*, so the arch digest has to participate or two
+            // instances over different lane graphs would compare equal and a
+            // bound built against one could prune a search accumulating the
+            // other.
+            params: self.arch_digest.rotate_left(1) ^ self.tau.to_bits(),
         }
     }
 }
@@ -159,6 +202,32 @@ impl Objective for WeightedDuration {
 mod tests {
     use super::*;
     use crate::test_utils::loc;
+
+    /// C4 must hold for *every* shot the type can be handed, including a
+    /// lane-less one. Regression: `edge_cost` folded from `0.0`, so an empty
+    /// `MoveSet` cost `1.0` while `min_shot_cost` advertised `1 + min_norm`,
+    /// breaking the floor that `floor(cost / min_shot_cost)` relies on to turn
+    /// a cost budget into a depth budget.
+    #[test]
+    fn weighted_duration_floor_holds_for_an_empty_shot() {
+        use crate::primitives::lane_index::LaneIndex;
+        use crate::test_utils::example_arch_json;
+        use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+        for tau in [0.5, 1.0, 10.0] {
+            let objective = WeightedDuration::new(&index, tau);
+            let empty = MoveSet::from_encoded(vec![]);
+            let cost = objective.edge_cost(&empty, &config, &config);
+            assert!(
+                cost >= objective.min_shot_cost(),
+                "tau={tau}: empty-shot cost {cost} below min_shot_cost {}",
+                objective.min_shot_cost()
+            );
+        }
+    }
 
     #[test]
     fn uniform_cost_always_returns_one() {

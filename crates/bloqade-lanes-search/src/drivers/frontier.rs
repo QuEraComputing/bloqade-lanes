@@ -490,6 +490,20 @@ fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchConte
 ///
 /// Uses separate [`MoveGenerator`], [`CandidateScorer`], [`CostFn`], and
 /// [`Goal`] traits. The [`Frontier`] controls node ordering and goal-check timing.
+///
+/// Two independent limits, deliberately not collapsed into one:
+///
+/// - `max_depth` bounds the *tree depth* — a horizon in move layers, as the
+///   receding-horizon rollout uses.
+/// - `max_cost` bounds the accumulated [`CostFn`] cost: a node whose `g` reaches
+///   it is not expanded. Callers refining an existing solution pass that
+///   solution's cost, so only strictly cheaper plans stay reachable.
+///
+/// They coincide only while `g == depth` (i.e. under
+/// [`UniformCost`](crate::cost::UniformCost)). Under a non-uniform objective a
+/// cheaper plan can be *deeper* — more shots, each cheaper — so expressing an
+/// incumbent bound as a depth cap would exclude exactly the improvements the
+/// caller is looking for.
 #[allow(clippy::too_many_arguments)]
 pub fn run_search<G, S, C, Go, F, O>(
     root: Config,
@@ -503,6 +517,7 @@ pub fn run_search<G, S, C, Go, F, O>(
     observer: &mut O,
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
+    max_cost: Option<f64>,
 ) -> SearchResult
 where
     G: MoveGenerator,
@@ -570,13 +585,18 @@ where
             };
         }
 
-        // Depth tracking + limit.
+        // Depth tracking, then both limits.
         let depth = graph.depth(node_id);
         max_depth_seen = max_depth_seen.max(depth);
         if let Some(max_d) = max_depth
             && depth >= max_d
         {
-            continue; // Don't expand beyond max depth.
+            continue; // Beyond the caller's layer horizon.
+        }
+        if let Some(max_c) = max_cost
+            && graph.g_score(node_id) >= max_c
+        {
+            continue; // Cannot beat the caller's incumbent cost.
         }
 
         // Expand.
@@ -878,6 +898,7 @@ mod tests {
         frontier: &mut F,
         max_expansions: Option<u32>,
         max_depth: Option<u32>,
+        max_cost: Option<f64>,
     ) -> SearchResult
     where
         G: MoveGenerator,
@@ -898,6 +919,7 @@ mod tests {
             &mut crate::observer::NoOpObserver,
             max_expansions,
             max_depth,
+            max_cost,
         )
     }
 
@@ -915,6 +937,7 @@ mod tests {
             &UniformCost,
             3,
             &mut f,
+            None,
             None,
             None,
         );
@@ -936,6 +959,7 @@ mod tests {
             &mut f,
             None,
             Some(3),
+            None,
         );
         // Goal at depth 5, max_depth 3 → not found.
         assert!(result.goal.is_none());
@@ -951,7 +975,17 @@ mod tests {
         let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
-        let result = run(&fx, root, &TwoPathGen, &TwoPathCost, 1, &mut f, None, None);
+        let result = run(
+            &fx,
+            root,
+            &TwoPathGen,
+            &TwoPathCost,
+            1,
+            &mut f,
+            None,
+            None,
+            None,
+        );
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 2.0);
         assert_eq!(result.solution_path().unwrap().len(), 2);
@@ -969,6 +1003,7 @@ mod tests {
             &UniformCost,
             3,
             &mut f,
+            None,
             None,
             None,
         );
@@ -996,6 +1031,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.nodes_expanded, 3);
@@ -1010,7 +1046,17 @@ mod tests {
         let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
-        let result = run(&fx, root, &DiamondGen, &DiamondCost, 4, &mut f, None, None);
+        let result = run(
+            &fx,
+            root,
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            None,
+        );
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 3.0);
         assert_eq!(result.solution_path().unwrap().len(), 3);
@@ -1029,6 +1075,7 @@ mod tests {
             100,
             &mut f,
             Some(5),
+            None,
             None,
         );
         assert!(result.goal.is_none());
@@ -1051,6 +1098,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_none());
     }
@@ -1069,6 +1117,7 @@ mod tests {
             &UniformCost,
             5,
             &mut f,
+            None,
             None,
             None,
         );
@@ -1091,6 +1140,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.solution_path().unwrap().len(), 5);
@@ -1109,6 +1159,7 @@ mod tests {
             100,
             &mut f,
             Some(5),
+            None,
             None,
         );
         assert!(result.goal.is_none());
@@ -1132,6 +1183,7 @@ mod tests {
             &mut dfs,
             None,
             None,
+            None,
         );
 
         let mut bfs = BfsFrontier::new();
@@ -1142,6 +1194,7 @@ mod tests {
             &UniformCost,
             5,
             &mut bfs,
+            None,
             None,
             None,
         );
@@ -1167,6 +1220,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.solution_path().unwrap().len(), 5);
@@ -1187,6 +1241,7 @@ mod tests {
             &mut ids,
             None,
             None,
+            None,
         );
 
         let mut bfs = BfsFrontier::new();
@@ -1197,6 +1252,7 @@ mod tests {
             &UniformCost,
             5,
             &mut bfs,
+            None,
             None,
             None,
         );
@@ -1219,6 +1275,7 @@ mod tests {
             100,
             &mut f,
             Some(5),
+            None,
             None,
         );
         assert!(result.goal.is_none());
@@ -1245,6 +1302,7 @@ mod tests {
                     &mut f,
                     None,
                     None,
+                    None,
                 )
             }),
             ("astar", {
@@ -1256,6 +1314,7 @@ mod tests {
                     &UniformCost,
                     3,
                     &mut f,
+                    None,
                     None,
                     None,
                 )
@@ -1271,6 +1330,7 @@ mod tests {
                     &mut f,
                     None,
                     None,
+                    None,
                 )
             }),
             ("ids", {
@@ -1282,6 +1342,7 @@ mod tests {
                     &UniformCost,
                     3,
                     &mut f,
+                    None,
                     None,
                     None,
                 )
@@ -1306,6 +1367,7 @@ mod tests {
             &UniformCost,
             3,
             &mut f,
+            None,
             None,
             None,
         );
@@ -1367,6 +1429,7 @@ mod tests {
             &ctx,
             &mut state,
             &mut NoOpObserver,
+            None,
             None,
             None,
         );

@@ -683,6 +683,11 @@ fn path_lexicographic_key(graph: &SearchGraph, goal_id: NodeId) -> Vec<Vec<u64>>
         .collect()
 }
 
+/// Relative slack for treating two accumulated costs as tied. Far above f64
+/// rounding noise over a plan of realistic length, far below any real cost
+/// difference (which is at least one `min_shot_cost`).
+const COST_TIE_RELATIVE_TOLERANCE: f64 = 1e-12;
+
 /// Pick the best goal: lowest objective cost, then the deterministic
 /// tiebreaks.
 ///
@@ -691,6 +696,12 @@ fn path_lexicographic_key(graph: &SearchGraph, goal_id: NodeId) -> Vec<Vec<u64>>
 /// every node, so this selects exactly what the previous min-depth rule did.
 /// Move time stays a *tiebreak* among equal-cost goals rather than being folded
 /// into the objective.
+///
+/// Costs are compared with a relative tolerance rather than bit-exactly: under
+/// a non-integral objective `g` is a running sum whose last bit depends on the
+/// order the shots were added, so two genuinely equal-cost goals can differ by
+/// an ulp. Exact filtering would drop one of them before the deterministic
+/// tiebreaks below ever see it, which is the opposite of this function's job.
 fn select_best_goal_with_tiebreak(
     found_goals: &[NodeId],
     graph: &SearchGraph,
@@ -700,10 +711,11 @@ fn select_best_goal_with_tiebreak(
         .iter()
         .map(|&id| graph.g_score(id))
         .min_by(f64::total_cmp)?;
+    let tolerance = min_cost.abs().max(1.0) * COST_TIE_RELATIVE_TOLERANCE;
     found_goals
         .iter()
         .copied()
-        .filter(|&id| graph.g_score(id).total_cmp(&min_cost) == Ordering::Equal)
+        .filter(|&id| graph.g_score(id) <= min_cost + tolerance)
         .map(|id| {
             (
                 id,
@@ -1231,18 +1243,38 @@ enum Cut {
 /// become unreachable and this collapses to exactly the `g >= C` test it
 /// generalizes — the bound-disabled path is the same code, not merely
 /// equivalent code.
+/// `h` for `node`, computed once per node and memoized.
+///
+/// The bound is a pure function of a node's configuration, and a node's
+/// configuration never changes after insertion, so caching by [`NodeId`] is
+/// exact. Without it the main loop evaluates the same node's `h` up to three
+/// times per iteration — the resume gate, the buffer insert, and the child gate
+/// that the next iteration's resume gate then repeats. Stays empty (no
+/// allocation) when the bound is trivial.
+#[inline]
+fn bound_estimate<B: CompletionBound>(
+    graph: &SearchGraph,
+    node: NodeId,
+    bound: &B,
+    h_cache: &mut HashMap<NodeId, f64>,
+) -> f64 {
+    if B::TRIVIAL {
+        return 0.0;
+    }
+    *h_cache
+        .entry(node)
+        .or_insert_with(|| bound.estimate(graph.config(node)))
+}
+
 #[inline]
 fn classify_cut<B: CompletionBound>(
     graph: &SearchGraph,
     node: NodeId,
     best_cost: Option<f64>,
     bound: &B,
+    h_cache: &mut HashMap<NodeId, f64>,
 ) -> Option<Cut> {
-    let h = if B::TRIVIAL {
-        0.0
-    } else {
-        bound.estimate(graph.config(node))
-    };
+    let h = bound_estimate(graph, node, bound, h_cache);
     if h.is_infinite() {
         return Some(Cut::Infeasible);
     }
@@ -1265,14 +1297,30 @@ fn classify_cut<B: CompletionBound>(
 /// `depth + ceil((C - g) / min_shot_cost)` — a floor on the extra depth the
 /// unbounded search would have descended before cutting, hence a conservative
 /// estimate of the subtree saved.
-fn record_cut(
+/// Fold one cut into [`BoundStats`], once per distinct node.
+///
+/// A no-op when the bound is [`TRIVIAL`](CompletionBound::TRIVIAL): with
+/// bounding disabled the `g >= C` arm of [`classify_cut`] still fires (it is
+/// the pre-existing incumbent test), but those cuts are not the bound's work,
+/// nobody reads them — `PySolveResult::bound_stats` returns an empty dict when
+/// `!bound_enabled` — and counting them would cost a hash insert per cut plus
+/// an ever-growing `HashSet` on the default production path. Skipping keeps
+/// `BoundStats` genuinely all-zero when bounding is off, as its docs promise.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn record_cut<B: CompletionBound>(
     stats: &mut BoundStats,
+    counted: &mut HashSet<NodeId>,
+    node: NodeId,
     cut: Cut,
     depth: u32,
     g: f64,
     best_cost: Option<f64>,
     min_shot_cost: f64,
 ) {
+    if B::TRIVIAL || !counted.insert(node) {
+        return;
+    }
     match cut {
         Cut::Infeasible => stats.cuts_infeasible += 1,
         Cut::ByG => stats.cuts_by_g += 1,
@@ -2238,9 +2286,12 @@ where
             max_depth_reached: 0,
             graph,
             // The root satisfies the goal: nothing was searched, and the
-            // optimum is trivially 0.
+            // optimum is trivially 0. `bound_enabled` still reflects whether a
+            // bound was supplied, so a bounded solve that starts at the goal is
+            // not misreported as an unbounded one.
             bound_stats: BoundStats {
                 incumbent_cost: 0.0,
+                bound_enabled: !B::TRIVIAL,
                 ..BoundStats::default()
             },
         };
@@ -2275,18 +2326,17 @@ where
     let mut best_cost: Option<f64> = None;
     let mut budget_exhausted = false;
 
+    // Nodes whose cut has already been folded into `bound_stats`, so a node
+    // tested at both gates or re-tested on resume is counted once. Left empty
+    // and never touched when bounding is disabled — see `note_cut`.
+    let mut cut_counted: HashSet<NodeId> = HashSet::new();
+    // Memoized `h` per node; see `bound_estimate`.
+    let mut h_cache: HashMap<NodeId, f64> = HashMap::new();
     // `h(root)` is a certified lower bound on this instance's optimum: it
     // depends only on the configuration, so sampled branch generation cannot
     // invalidate it. Captured once, before any search.
-    // Nodes whose cut has already been folded into `bound_stats`, so a node
-    // tested at both gates or re-tested on resume is counted once.
-    let mut cut_counted: HashSet<NodeId> = HashSet::new();
     let mut bound_stats = BoundStats {
-        root_lower_bound: if B::TRIVIAL {
-            0.0
-        } else {
-            bound.estimate(graph.config(root_id))
-        },
+        root_lower_bound: bound_estimate(&graph, root_id, bound, &mut h_cache),
         incumbent_cost: f64::NAN,
         bound_enabled: !B::TRIVIAL,
         ..BoundStats::default()
@@ -2311,22 +2361,23 @@ where
         // nothing better exists — the loop falls back to the root and runs to
         // the iteration cap, which then hands off to the budget-exhaustion
         // fallback exactly as an unbounded run would.
-        if let Some(cut) = classify_cut(&graph, current, best_cost, bound) {
+        if let Some(cut) = classify_cut(&graph, current, best_cost, bound, &mut h_cache) {
             // Most post-incumbent pruning lands here rather than at the child
             // gate: once a goal is found the driver jumps to a resume node,
-            // and this is where that node is tested. Dedupe by node id so a
-            // node re-tested on later resumes (or the root, which the loop
-            // falls back to repeatedly once the buffer empties) counts once.
-            if cut_counted.insert(current) {
-                record_cut(
-                    &mut bound_stats,
-                    cut,
-                    graph.depth(current),
-                    graph.g_score(current),
-                    best_cost,
-                    objective.min_shot_cost(),
-                );
-            }
+            // and this is where that node is tested. `record_cut` dedupes by
+            // node id so a node re-tested on later resumes (or the root, which
+            // the loop falls back to repeatedly once the buffer empties)
+            // counts once.
+            record_cut::<B>(
+                &mut bound_stats,
+                &mut cut_counted,
+                current,
+                cut,
+                graph.depth(current),
+                graph.g_score(current),
+                best_cost,
+                objective.min_shot_cost(),
+            );
             current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
             continue;
         }
@@ -2559,12 +2610,8 @@ where
             .get(&current)
             .and_then(best_untried_moveset_score)
         {
-            let min_total_cost = graph.g_score(current)
-                + if B::TRIVIAL {
-                    0.0
-                } else {
-                    bound.estimate(graph.config(current))
-                };
+            let min_total_cost =
+                graph.g_score(current) + bound_estimate(&graph, current, bound, &mut h_cache);
             resume_buffer_insert(
                 &mut resume_buffer,
                 current,
@@ -2649,17 +2696,17 @@ where
             continue;
         }
 
-        if let Some(cut) = classify_cut(&graph, child_id, best_cost, bound) {
-            if cut_counted.insert(child_id) {
-                record_cut(
-                    &mut bound_stats,
-                    cut,
-                    child_depth,
-                    new_g,
-                    best_cost,
-                    objective.min_shot_cost(),
-                );
-            }
+        if let Some(cut) = classify_cut(&graph, child_id, best_cost, bound, &mut h_cache) {
+            record_cut::<B>(
+                &mut bound_stats,
+                &mut cut_counted,
+                child_id,
+                cut,
+                child_depth,
+                new_g,
+                best_cost,
+                objective.min_shot_cost(),
+            );
             resume_buffer_discard(&mut resume_buffer, child_id);
             current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
             continue;

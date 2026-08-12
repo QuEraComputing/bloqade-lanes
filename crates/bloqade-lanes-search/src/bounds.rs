@@ -37,10 +37,16 @@ use crate::traits::{Heuristic, Objective, ObjectiveId};
 /// building?" — a bound that never converts a cut, or converts them only one
 /// level earlier than `g` alone would have, is not paying for itself.
 ///
-/// Counters cover **child-expansion decisions**: each newly created node is
-/// classified exactly once, when the driver decides whether to descend into
-/// it. Re-checks of already-known nodes on resume are not counted, so a node
-/// cannot inflate the totals by being revisited.
+/// Counters cover **both pruning gates** — the resume gate and the
+/// child-expansion gate — deduplicated by node, so each distinct pruned node
+/// contributes exactly once however many times it is re-tested. Counting only
+/// the child gate would miss nearly all post-incumbent pruning, since the
+/// driver jumps to a resume node once a goal is found.
+///
+/// All fields stay zero when the bound is
+/// [`TRIVIAL`](CompletionBound::TRIVIAL): the `g >= C` arm of the prune test
+/// still fires without a bound, but those cuts are not the bound's work and are
+/// deliberately not recorded.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BoundStats {
     /// Cuts where `g` alone already reached the incumbent — these would have
@@ -300,6 +306,19 @@ impl<O: Objective> CompletionBound for WeightedDistanceBound<O> {
     }
 }
 
+/// Comparison slack for the contract assertions, relative to the magnitude
+/// being compared.
+///
+/// `f64::EPSILON` is the ulp at 1.0 and is meaningless as an absolute tolerance
+/// for costs in the hundreds, where a single ulp is already far larger — an
+/// objective that scales durations can differ from its own lane weight by
+/// rounding alone and would fail spuriously.
+#[cfg(any(test, feature = "test-util"))]
+#[inline]
+fn slack(magnitude: f64) -> f64 {
+    magnitude.abs().max(1.0) * 1e-12
+}
+
 /// Assert the [`Objective`] contract (C2, C3, C4) for every lane and a
 /// selection of multi-lane shots on `index`.
 ///
@@ -307,9 +326,15 @@ impl<O: Objective> CompletionBound for WeightedDistanceBound<O> {
 /// so every `Objective` implementation should be run through this in a test
 /// rather than have the argument re-made by review.
 ///
+/// Test-only: the body is entirely assertions, so it is gated out of normal
+/// builds rather than sitting in the public API where a caller could take a
+/// panic in release. Enable the `test-util` feature to use it from another
+/// crate's tests.
+///
 /// # Panics
 ///
 /// On the first violation, naming the lane and the two costs involved.
+#[cfg(any(test, feature = "test-util"))]
 pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) {
     use crate::primitives::graph::MoveSet;
 
@@ -339,13 +364,13 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
             let cost = objective.edge_cost(shot, &config, &config);
             assert!(cost >= 0.0, "C2: negative shot cost {cost} for {shot:?}");
             assert!(
-                cost + f64::EPSILON >= min_shot,
+                cost >= min_shot - slack(min_shot),
                 "C4: shot cost {cost} is below min_shot_cost {min_shot} for {shot:?}"
             );
             for lane in shot.decode() {
                 let w = objective.lane_weight(lane);
                 assert!(
-                    cost + f64::EPSILON >= w,
+                    cost >= w - slack(w),
                     "C3: shot cost {cost} is below lane weight {w} for {lane:?}"
                 );
             }
@@ -651,6 +676,7 @@ mod tests {
             &mut SearchState::default(),
             &mut NoOpObserver,
             Some(budget),
+            None,
             None,
         );
         result.goal.map(|id| result.graph.g_score(id))

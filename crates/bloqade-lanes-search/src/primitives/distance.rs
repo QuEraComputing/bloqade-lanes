@@ -663,6 +663,7 @@ mod tests {
             &mut NoOpObserver,
             Some(1000),
             None,
+            None,
         );
 
         assert!(result.goal.is_some());
@@ -804,6 +805,7 @@ mod tests {
             &mut SearchState::default(),
             &mut NoOpObserver,
             Some(5000),
+            None,
             None,
         );
 

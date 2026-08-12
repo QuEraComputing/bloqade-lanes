@@ -592,7 +592,10 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
             &mut search_state,
             &mut observer,
             Some(max_expansions),
+            // A horizon in move layers, not a cost bound: the rollout looks
+            // ahead a fixed number of layers.
             Some(max_depth),
+            None,
         )
     };
 

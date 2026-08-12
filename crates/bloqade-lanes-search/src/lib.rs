@@ -40,9 +40,10 @@ pub mod search;
 pub(crate) mod test_utils;
 pub mod traits;
 
-pub use bounds::{
-    CompletionBound, MaxBound, NoBound, WeightedDistanceBound, assert_objective_contract,
-};
+pub use bounds::{CompletionBound, MaxBound, NoBound, WeightedDistanceBound};
+// `assert_objective_contract` is deliberately not re-exported here: it is a
+// test-only assertion helper, reachable as `bounds::assert_objective_contract`
+// under `cfg(test)` or the `test-util` feature.
 pub use cost::{UniformCost, WeightedDuration};
 pub use drivers::result::SearchResult;
 pub use feasibility::{Feasibility, Obstruction, check as check_feasibility};

@@ -47,10 +47,18 @@ pub struct WeightedDistanceTable {
     /// `encoded location → compact row/column index`. Blocked locations are
     /// deliberately absent, so any lookup involving one returns `None`.
     loc_index: HashMap<u64, usize>,
-    /// Row-major `n_loc × n_loc` weighted distances;
-    /// `flat_distance[from * n_loc + to]`, [`f64::INFINITY`] if unreachable.
+    /// `encoded target → compact column index`. Only actual targets get a
+    /// column, so the table is `n_loc × n_targets` rather than `n_loc × n_loc`:
+    /// every other column of a square layout would stay
+    /// [`f64::INFINITY`] forever, and unlike
+    /// [`DistanceTable`](super::distance::DistanceTable) this type has no
+    /// column-scanning accessor whose cache locality would justify the padding.
+    target_col: HashMap<u64, usize>,
+    /// Row-major `n_loc × n_targets` weighted distances;
+    /// `flat_distance[from * n_targets + col]`, [`f64::INFINITY`] if
+    /// unreachable.
     flat_distance: Vec<f64>,
-    n_loc: usize,
+    n_targets: usize,
     /// Identity of the objective whose `lane_weight` produced these edges.
     objective_id: ObjectiveId,
 }
@@ -125,10 +133,17 @@ impl WeightedDistanceTable {
         }
 
         let n_loc = loc_index.len();
-        let mut flat_distance = vec![f64::INFINITY; n_loc * n_loc];
+        let target_col: HashMap<u64, usize> = targets
+            .iter()
+            .enumerate()
+            .map(|(col, &t)| (t, col))
+            .collect();
+        let n_targets = target_col.len();
+        let mut flat_distance = vec![f64::INFINITY; n_loc * n_targets];
 
         for &target_enc in &targets {
             let target_idx = loc_index[&target_enc];
+            let col = target_col[&target_enc];
             let mut dist: Vec<f64> = vec![f64::INFINITY; n_loc];
             dist[target_idx] = 0.0;
             let mut heap = BinaryHeap::new();
@@ -160,14 +175,15 @@ impl WeightedDistanceTable {
             }
 
             for (from_idx, &d) in dist.iter().enumerate() {
-                flat_distance[from_idx * n_loc + target_idx] = d;
+                flat_distance[from_idx * n_targets + col] = d;
             }
         }
 
         Self {
             loc_index,
+            target_col,
             flat_distance,
-            n_loc,
+            n_targets,
             objective_id: objective.id(),
         }
     }
@@ -180,8 +196,8 @@ impl WeightedDistanceTable {
     /// unblocked path exists. Callers treat `None` as "infeasible".
     pub fn distance(&self, from_encoded: u64, to_target_encoded: u64) -> Option<f64> {
         let from_idx = *self.loc_index.get(&from_encoded)?;
-        let to_idx = *self.loc_index.get(&to_target_encoded)?;
-        let d = self.flat_distance[from_idx * self.n_loc + to_idx];
+        let col = *self.target_col.get(&to_target_encoded)?;
+        let d = self.flat_distance[from_idx * self.n_targets + col];
         d.is_finite().then_some(d)
     }
 

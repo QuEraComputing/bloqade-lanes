@@ -275,9 +275,12 @@ def _compare_rows(
         current=current.max_depth_reached,
         lower_is_better=True,
     )
-    # Pruning counters are deterministic, so compare them exactly. "Fewer cuts"
-    # is not automatically better -- a bound that converts more cuts is doing
-    # more work -- so neither direction is flagged as an improvement.
+    # Pruning counters are deterministic, so compare them exactly. Neither
+    # direction is inherently better -- fewer cuts can mean a tighter bound
+    # reached the incumbent sooner, more cuts can mean it is doing more work --
+    # so these go through `_add_strict_diff`, which reports "changed" rather
+    # than judging. `_add_numeric_delta` has no neutral verdict: either setting
+    # of `lower_is_better` would label one direction an improvement.
     for field_name, base_value, cur_value in (
         ("cuts_by_g", baseline.cuts_by_g, current.cuts_by_g),
         ("cuts_by_h", baseline.cuts_by_h, current.cuts_by_h),
@@ -288,15 +291,14 @@ def _compare_rows(
             current.cut_depth_g_only_sum,
         ),
     ):
-        _add_numeric_delta(
+        _add_strict_diff(
             diffs,
-            case_id=case_id,
-            strategy_id=strategy_id,
-            arch_spec_id=arch_spec_id,
-            field=field_name,
-            baseline=base_value,
-            current=cur_value,
-            lower_is_better=False,
+            case_id,
+            strategy_id,
+            arch_spec_id,
+            field_name,
+            base_value,
+            cur_value,
         )
     _add_numeric_delta(
         diffs,
