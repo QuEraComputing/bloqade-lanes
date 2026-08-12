@@ -65,7 +65,17 @@ pub struct SolveResult {
     pub nodes_expanded: u32,
     /// Total path cost. 0.0 when `status` is not `Solved`.
     pub cost: f64,
-    /// Number of deadlocks encountered during search.
+    /// Number of nodes at which the generator had nothing useful to offer.
+    ///
+    /// Counts two distinct situations: no candidate scored an improvement, and
+    /// no candidate turned out *executable* (every rectangle rejected) even
+    /// though something did score positive.
+    ///
+    /// **Not a count of escape moves taken.** The counter is incremented before
+    /// the [`DeadlockPolicy`](crate::generators::heuristic::DeadlockPolicy) is
+    /// consulted, so under `Skip` — the default — it records nodes where nothing
+    /// was generated in response. Read it as "how often the search got stuck",
+    /// not "how often it escaped".
     pub deadlocks: u32,
     /// Optional entropy-search trace payload for visualization/debugging.
     pub entropy_trace: Option<EntropyTrace>,

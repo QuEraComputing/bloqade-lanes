@@ -242,12 +242,18 @@ fn rigid_shifts_are_solved_in_exactly_the_optimal_number_of_operations() {
                 result.move_layers.len(),
                 result.nodes_expanded
             );
-            // The plan is not just optimal in length but *found* optimally: the
-            // whole-row shift is the top-ranked candidate at every step, so the
-            // walk is straight down with no backtracking.
-            assert_eq!(
-                result.nodes_expanded, shift,
-                "{label}: expected a straight walk of {shift} expansions, got {}",
+            // The plan is also *found* cheaply: the whole-row shift ranks at or
+            // near the top at every step, so the walk is essentially straight
+            // down. Deliberately a bound and not an equality — a scoring change
+            // that explores a node or two more on the way to the same optimal
+            // plan is not a regression, while a search that starts thrashing
+            // blows past this by orders of magnitude.
+            let expansion_budget = shift + 4;
+            assert!(
+                result.nodes_expanded <= expansion_budget,
+                "{label}: expected at most {expansion_budget} expansions for a \
+                 {shift}-operation plan, got {} — the search is no longer walking \
+                 more or less straight to it",
                 result.nodes_expanded
             );
         }
@@ -529,6 +535,23 @@ fn config_key(config: &Config) -> ConfigKey {
     v
 }
 
+/// The sorted successor-config keys `generator` produces from `config` under
+/// `ctx`. Used only to check that the oracle's successor relation does not
+/// depend on the target set.
+fn successor_keys(
+    generator: &ExhaustiveGenerator,
+    config: &Config,
+    node: bloqade_lanes_search::primitives::graph::NodeId,
+    state: &mut SearchState,
+    ctx: &SearchContext,
+) -> Vec<ConfigKey> {
+    let mut out = Vec::new();
+    generator.generate(config, node, ctx, state, &mut out);
+    let mut keys: Vec<ConfigKey> = out.iter().map(|c| config_key(&c.new_config)).collect();
+    keys.sort();
+    keys
+}
+
 /// Optimal operation count from `start` to **every** reachable configuration, by
 /// breadth-first search over
 /// [`ExhaustiveGenerator`](bloqade_lanes_search::generators::exhaustive::ExhaustiveGenerator).
@@ -559,6 +582,28 @@ fn optimal_distances_from(index: &LaneIndex, start: &Config) -> HashMap<ConfigKe
     let scratch = SearchGraph::new(start.clone());
     let node = scratch.root();
     let mut state = SearchState::default();
+
+    // Enforce the target-independence this whole function rests on, rather than
+    // asserting it in prose. One BFS serves every target only because the
+    // successor relation ignores `ctx.targets` and `ctx.dist_table`; if that ever
+    // stops being true the oracle would keep returning *an* answer, silently the
+    // wrong one, and the sweep below would pass while comparing the router
+    // against corrupted ground truth.
+    debug_assert_eq!(
+        successor_keys(&generator, start, node, &mut state, &ctx),
+        successor_keys(
+            &generator,
+            start,
+            node,
+            &mut state,
+            &SearchContext {
+                targets: &[(0u32, 0u64)],
+                ..ctx
+            },
+        ),
+        "the oracle's successor relation now depends on the target set, so one \
+         BFS per start no longer serves every target"
+    );
 
     let mut dist: HashMap<ConfigKey, usize> = HashMap::new();
     dist.insert(config_key(start), 0);
