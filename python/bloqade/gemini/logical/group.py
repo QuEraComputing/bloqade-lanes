@@ -54,7 +54,25 @@ def kernel(self):
         ] = 7,
     ) -> None:
         # stop circular import problems
+        from ..common.validation.recursion import (
+            NoOpaqueCallValidation,
+            NoRecursionValidation,
+        )
         from .rewrite.qubit_count import InsertQubitCount
+
+        def check_call_graph() -> None:
+            """Require a statically resolvable, acyclic call graph.
+
+            Deliberately unconditional: a cyclic call graph has no finite
+            lowering, and the inliner and address analysis below diverge on one
+            instead of erroring, so letting `verify=False` skip this would turn a
+            clear rejection back into an unkillable hang (bloqade-lanes#921).
+            """
+            ValidationSuite([NoRecursionValidation, NoOpaqueCallValidation]).validate(
+                mt
+            ).raise_if_invalid()
+
+        check_call_graph()
 
         if inline and not aggressive_unroll:
             InlinePass(mt.dialects, no_raise=no_raise).fixpoint(mt)
@@ -72,6 +90,12 @@ def kernel(self):
             )
 
             default_pass.fixpoint(mt)
+
+        # NOTE: the fold passes run `Call2Invoke`, which turns a dynamic call
+        # into a static `func.Invoke` once const propagation can prove the
+        # callee. That can expose a cycle the first check could not see, so
+        # re-check before the address analysis, which is what actually diverges.
+        check_call_graph()
 
         if no_raise:
             runner = address_analysis.run_no_raise
