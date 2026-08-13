@@ -55,10 +55,22 @@ class GeminiLogicalValidation(ValidationPass):
         return "Gemini Logical Validation"
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
-        addr_frame, _ = AddressAnalysis(method.dialects).run(method)
+        address_analysis = AddressAnalysis(method.dialects)
+        addr_frame, _ = address_analysis.run(method)
+
         analysis = _GeminiLogicalValidationAnalysis(
             method.dialects, addr_frame=addr_frame
         )
+
         frame, _ = analysis.run(method)
+
+        if address_analysis.qubit_count > analysis.max_qubits:
+            analysis.add_validation_error(
+                method.code,
+                ir.ValidationError(
+                    method.code,
+                    f"qubit allocation {address_analysis.qubit_count} exceeded {analysis.max_qubits}",
+                ),
+            )
 
         return frame, analysis.get_validation_errors()

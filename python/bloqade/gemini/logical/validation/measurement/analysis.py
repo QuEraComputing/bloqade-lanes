@@ -24,6 +24,9 @@ class _GeminiTerminalMeasurementValidationAnalysis(Forward[EmptyLattice]):
     def method_self(self, method: ir.Method) -> EmptyLattice:
         return self.lattice.bottom()
 
+    def run_lattice(*args, **kwargs):
+        return EmptyLattice.bottom()
+
 
 @dataclass
 class GeminiTerminalMeasurementValidation(ValidationPass):
