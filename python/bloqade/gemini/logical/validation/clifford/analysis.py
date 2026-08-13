@@ -69,7 +69,8 @@ class GeminiLogicalValidation(ValidationPass):
                 method.code,
                 ir.ValidationError(
                     method.code,
-                    f"qubit allocation {address_analysis.qubit_count} exceeded max of {analysis.max_qubits}",
+                    f"kernel allocates {address_analysis.qubit_count} qubits, "
+                    f"exceeding the maximum of {analysis.max_qubits}",
                 ),
             )
 

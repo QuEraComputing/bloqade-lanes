@@ -244,3 +244,55 @@ def test_allocation():
             reg = squin.qalloc(12)
             squin.h(reg[0])
             squin.cx(reg[0], reg[1])
+
+
+MAX_QUBITS = _GeminiLogicalValidationAnalysis.max_qubits
+
+
+def _error_messages(err: ValidationErrorGroup) -> list[str]:
+    return [e.args[0] if e.args else str(e) for e in err.errors]
+
+
+def test_allocation_exceeded_without_unroll():
+    # NOTE: the per-`qubit.New` check only fires once a register has been
+    # expanded into individual qubits, so without unrolling the total
+    # allocation is the only thing that can catch this.
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel
+        def main():
+            reg = squin.qalloc(MAX_QUBITS + 1)
+            squin.h(reg[0])
+
+    assert any(
+        f"kernel allocates {MAX_QUBITS + 1} qubits, "
+        f"exceeding the maximum of {MAX_QUBITS}" in message
+        for message in _error_messages(exc_info.value)
+    )
+
+
+def test_allocation_exceeded_summed_across_registers():
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel
+        def main():
+            first = squin.qalloc(MAX_QUBITS)
+            second = squin.qalloc(1)
+            squin.h(first[0])
+            squin.h(second[0])
+
+    assert any(
+        f"kernel allocates {MAX_QUBITS + 1} qubits, "
+        f"exceeding the maximum of {MAX_QUBITS}" in message
+        for message in _error_messages(exc_info.value)
+    )
+
+
+def test_allocation_at_limit_is_valid():
+    @gemini.logical.kernel
+    def main():
+        reg = squin.qalloc(MAX_QUBITS)
+        squin.h(reg[0])
+
+    validator = ValidationSuite([GeminiLogicalValidation])
+    validator.validate(main).raise_if_invalid()
