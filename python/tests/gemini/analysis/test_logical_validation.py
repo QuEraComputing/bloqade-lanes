@@ -296,3 +296,34 @@ def test_allocation_at_limit_is_valid():
 
     validator = ValidationSuite([GeminiLogicalValidation])
     validator.validate(main).raise_if_invalid()
+
+
+def test_dynamic_call_through_parameter_does_not_crash_validation():
+    """A dynamic `func.Call` must not blow up the terminal measurement pass.
+
+    `measurement.impls.Func` subclasses the address analysis' `func` method
+    table, so the measurement analysis *inherits* a `func.Call` impl that calls
+    `run_lattice` on the interpreter. Without the override on
+    `_GeminiTerminalMeasurementValidationAnalysis`, compiling any kernel that
+    calls one of its own parameters fails with
+    `AttributeError: ... has no attribute 'run_lattice'`.
+
+    No other kernel in the suite performs a dynamic call, so nothing else covers
+    this.
+    """
+    from bloqade.analysis.address.impls import Func as AddressFuncMethodTable
+
+    from bloqade.gemini.logical.validation.measurement.impls import (
+        Func as MeasurementFuncMethodTable,
+    )
+
+    # The coupling is what makes the override mandatory. If this stops holding,
+    # re-check whether the override is still needed before removing it.
+    assert issubclass(MeasurementFuncMethodTable, AddressFuncMethodTable)
+
+    @gemini.logical.kernel
+    def higher_order(f):
+        f()
+
+    validator = ValidationSuite([GeminiTerminalMeasurementValidation])
+    validator.validate(higher_order).raise_if_invalid()
