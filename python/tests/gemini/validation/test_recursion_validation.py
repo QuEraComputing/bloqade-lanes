@@ -242,10 +242,11 @@ def test_callgraph_terminates_and_finds_multi_node_cycles():
 
     cycles = graph.find_cycles()
     assert len(cycles) == 1
-    assert set(cycles[0]) == {a, b, c}
+    assert set(cycles[0].members) == {a, b, c}
+    # The entry method is in the cycle, so there is nothing to route through.
+    assert cycles[0].route == ()
     # Reported as a rotation starting from the DFS root, with the loop closed.
-    assert format_cycle(cycles[0]).split(" -> ")[0] == "a"
-    assert format_cycle(cycles[0]).count("->") == 3
+    assert format_cycle(cycles[0]) == "a -> b -> c -> a"
 
 
 def test_callgraph_reports_one_cycle_per_group():
@@ -262,7 +263,38 @@ def test_callgraph_reports_one_cycle_per_group():
     graph.edges = {a: {a, b}, b: {a}}
 
     cycles = graph.find_cycles()
-    assert [set(cycle) for cycle in cycles] == [{a}, {a, b}]
+    assert [set(cycle.members) for cycle in cycles] == [{a}, {a, b}]
+
+
+def test_cycle_below_the_entry_reports_the_route():
+    """A cycle need not live in the kernel being validated.
+
+    Any Gemini kernel containing a cycle is rejected at its own definition, so
+    it can never become a callee -- but a kernel built by another dialect group
+    runs no such guard, and a Gemini kernel may invoke one. Naming only the
+    cycle would then leave the reader with no way to find it.
+    """
+
+    @gemini.logical.kernel
+    def a(q):
+        squin.x(q)
+
+    @gemini.logical.kernel
+    def b(q):
+        squin.y(q)
+
+    @gemini.logical.kernel
+    def c(q):
+        squin.z(q)
+
+    graph = CallGraph(a)
+    # a -> b -> c -> c: the cycle is two hops below the entry.
+    graph.edges = {a: {b}, b: {c}, c: {c}}
+
+    (cycle,) = graph.find_cycles()
+    assert cycle.members == (c,)
+    assert cycle.route == (a, b)
+    assert format_cycle(cycle) == "c -> c (reached via a -> b -> c)"
 
 
 def test_no_recursion_validation_pass_reports_no_errors_for_acyclic_kernel():

@@ -78,9 +78,43 @@ def _sort_key(method: ir.Method) -> tuple[str, int]:
     return _name(method), id(method)
 
 
-def format_cycle(cycle: list[ir.Method]) -> str:
-    """Render a cycle as ``a -> b -> a``, closing the loop for readability."""
-    return " -> ".join([_name(method) for method in cycle] + [_name(cycle[0])])
+@dataclass(frozen=True)
+class Cycle:
+    """A cycle, plus how the validated kernel reaches it.
+
+    ``members`` is ``[m0, ..., mn]`` where ``mn`` calls ``m0``. ``route`` is the
+    path from the entry method down to ``m0``, excluding the cycle itself, and
+    is empty when the entry method is part of the cycle.
+
+    The route matters because the cycle is often not in the kernel being
+    validated. Any Gemini kernel containing a cycle is rejected at its own
+    definition, so it can never become a callee -- but a kernel built with
+    another dialect group (``squin.kernel``, say) runs no such guard, and a
+    Gemini kernel may invoke one. Then the cycle sits one or more hops away and
+    naming it alone would not say how it is reached.
+    """
+
+    route: tuple[ir.Method, ...]
+    members: tuple[ir.Method, ...]
+
+
+def format_cycle(cycle: Cycle | list[ir.Method]) -> str:
+    """Render a cycle as ``a -> b -> a``, closing the loop for readability.
+
+    A cycle reached from elsewhere also reports the route, as
+    ``b -> b (reached via main -> a -> b)``.
+    """
+    if isinstance(cycle, Cycle):
+        members, route = list(cycle.members), list(cycle.route)
+    else:  # a bare list of members, for convenience at the call site
+        members, route = list(cycle), []
+
+    loop = " -> ".join([_name(method) for method in members] + [_name(members[0])])
+    if not route:
+        return loop
+
+    via = " -> ".join(_name(method) for method in [*route, members[0]])
+    return f"{loop} (reached via {via})"
 
 
 @dataclass(init=False)
@@ -94,6 +128,22 @@ class CallGraph:
     an SSA value is invisible here: resolving one needs the same constant
     propagation that diverges on cyclic input, so it cannot be used by a guard
     whose job is to run first.
+
+    ``ir.Method.backedges`` looks like it should make this class unnecessary, but
+    cannot be used for any of the three things needed here:
+
+    - **It is empty when this runs.** ``update_backedges`` is called from
+      ``Method.__init__``, which completes only *after* ``run_pass`` returns, so
+      at guard time every method's ``backedges`` is still an empty set.
+    - **It goes stale.** It is populated once at construction and never
+      invalidated, so after the inliner has spliced a callee away the edge is
+      still recorded. That matters for the post-fold re-check, which would then
+      see cycles that no longer exist.
+    - **It points the wrong way.** It records callers, but validating a kernel
+      asks what that kernel *reaches*, rooted at the kernel itself.
+
+    It also derives from the same ``ir.StaticCall`` trait, so it would miss the
+    unresolved self call for the same reason a plain forward walk does.
     """
 
     entry: ir.Method
@@ -129,18 +179,30 @@ class CallGraph:
         """Callees of ``method``, in a deterministic order."""
         return sorted(self.edges.get(method, ()), key=_sort_key)
 
-    def find_cycles(self) -> list[list[ir.Method]]:
+    def _roots(self) -> list[ir.Method]:
+        """Traversal roots, entry first.
+
+        Entry leads so that every reachable cycle is discovered from the kernel
+        being validated, which is what makes `Cycle.route` a path the reader can
+        actually follow. The remaining roots are unreachable from entry in
+        practice -- `__init__` only walks outwards from it -- and are kept as a
+        guard against a hand-built `edges` dict.
+        """
+        rest = (m for m in sorted(self.edges, key=_sort_key) if m is not self.entry)
+        return ([self.entry] if self.entry in self.edges else []) + list(rest)
+
+    def find_cycles(self) -> list[Cycle]:
         """Return one representative cycle per distinct set of mutual callers.
 
-        Each cycle is ``[m0, ..., mn]`` where ``mn`` calls ``m0``; an empty list
-        means the call graph is acyclic. The traversal is an explicit-stack DFS
-        so that deeply nested (but acyclic) call graphs stay safe too.
+        An empty list means the call graph is acyclic. The traversal is an
+        explicit-stack DFS so that deeply nested (but acyclic) call graphs stay
+        safe too.
         """
-        cycles: list[list[ir.Method]] = []
+        cycles: list[Cycle] = []
         reported: set[frozenset[ir.Method]] = set()
         visited: set[ir.Method] = set()
 
-        for root in sorted(self.edges, key=_sort_key):
+        for root in self._roots():
             if root in visited:
                 continue
 
@@ -157,11 +219,15 @@ class CallGraph:
 
                 for callee in pending:
                     if callee in on_path:
-                        # Back edge: everything from `callee` onwards is a cycle.
-                        cycle = path[path.index(callee) :]
-                        if (key := frozenset(cycle)) not in reported:
+                        # Back edge: everything from `callee` onwards is the
+                        # cycle, and everything before it is how we got here.
+                        start = path.index(callee)
+                        members = tuple(path[start:])
+                        if (key := frozenset(members)) not in reported:
                             reported.add(key)
-                            cycles.append(cycle)
+                            cycles.append(
+                                Cycle(route=tuple(path[:start]), members=members)
+                            )
                         continue
 
                     if callee in visited:
@@ -190,10 +256,13 @@ class NoRecursionValidation(ValidationPass):
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
         graph = CallGraph(method)
-        # NOTE: blame the validated kernel rather than the statement that closes
-        # the cycle. `ValidationSuite` renders hints against the method it was
-        # given, so pointing at a statement inside a *callee* resolves to the
-        # wrong source line.
+        # NOTE: the caret is deliberately pinned to the validated kernel even
+        # when the cycle is further down the call graph. `ValidationSuite` calls
+        # `err.attach(method)` with the method it was handed, and `attach`
+        # resolves source lines against *that* method's `py_func`, so blaming a
+        # statement owned by a callee renders a line number from the wrong file.
+        # `Cycle.route` carries the location information instead: the message
+        # names the full path from this kernel down to the cycle.
         errors = [
             ir.ValidationError(
                 method.code,
