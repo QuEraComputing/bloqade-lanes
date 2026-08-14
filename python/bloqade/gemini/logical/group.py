@@ -54,25 +54,13 @@ def kernel(self):
         ] = 7,
     ) -> None:
         # stop circular import problems
-        from ..common.validation.recursion import (
-            NoOpaqueCallValidation,
-            NoRecursionValidation,
-        )
+        from ..common.validation.recursion import check_call_graph
         from .rewrite.qubit_count import InsertQubitCount
 
-        def check_call_graph() -> None:
-            """Require a statically resolvable, acyclic call graph.
-
-            Deliberately unconditional: a cyclic call graph has no finite
-            lowering, and the inliner and address analysis below diverge on one
-            instead of erroring, so letting `verify=False` skip this would turn a
-            clear rejection back into an unkillable hang (bloqade-lanes#921).
-            """
-            ValidationSuite([NoRecursionValidation, NoOpaqueCallValidation]).validate(
-                mt
-            ).raise_if_invalid()
-
-        check_call_graph()
+        # NOTE: ahead of every other pass, and deliberately not gated on
+        # `verify` -- see `check_call_graph` for why skipping it reintroduces a
+        # hang rather than merely losing a diagnostic.
+        check_call_graph(mt)
 
         if inline and not aggressive_unroll:
             InlinePass(mt.dialects, no_raise=no_raise).fixpoint(mt)
@@ -95,7 +83,7 @@ def kernel(self):
         # into a static `func.Invoke` once const propagation can prove the
         # callee. That can expose a cycle the first check could not see, so
         # re-check before the address analysis, which is what actually diverges.
-        check_call_graph()
+        check_call_graph(mt)
 
         if no_raise:
             runner = address_analysis.run_no_raise

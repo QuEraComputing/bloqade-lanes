@@ -23,7 +23,9 @@ from kirin.validation import ValidationSuite
 import bloqade.gemini as gemini
 from bloqade.gemini.common.validation.recursion import (
     CallGraph,
+    NoOpaqueCallValidation,
     NoRecursionValidation,
+    check_call_graph,
     format_cycle,
 )
 
@@ -93,7 +95,19 @@ def test_original_hang_reproducer_is_rejected_quickly():
             main()
 
     assert time.monotonic() - started < REJECTION_BUDGET_S
-    assert any("B -> B" in m for m in _messages(exc_info.value))
+    # Both rules report; `check_call_graph` does not stop at the first.
+    messages = _messages(exc_info.value)
+    assert any("B -> B" in m for m in messages)
+    assert any("calling the parameter 'main'" in m for m in messages)
+
+
+def test_check_call_graph_accepts_an_acyclic_kernel():
+    @gemini.logical.kernel
+    def main():
+        q = squin.qalloc(2)
+        squin.h(q[0])
+
+    check_call_graph(main)
 
 
 def test_mutual_recursion_between_kernels_cannot_be_lowered():
@@ -128,6 +142,25 @@ def test_calling_a_parameter_is_rejected():
         "calling the parameter 'f' is not supported" in m
         for m in _messages(exc_info.value)
     )
+
+
+def test_passing_a_parameter_to_a_subkernel_is_allowed():
+    """Only *calling* a parameter is rejected, not using one.
+
+    Pins the boundary of `NoOpaqueCallValidation`: it keys on the callee of a
+    `func.Call`, so a parameter forwarded as an ordinary argument -- and the
+    enclosing kernel's other parameters -- must not trip it.
+    """
+
+    @gemini.logical.kernel
+    def flip(q):
+        squin.x(q)
+
+    @gemini.logical.kernel
+    def outer(q):
+        flip(q)
+
+    ValidationSuite([NoOpaqueCallValidation]).validate(outer).raise_if_invalid()
 
 
 def test_dynamic_cycle_with_branching_cannot_be_built():

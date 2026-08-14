@@ -28,7 +28,7 @@ from typing import Any
 
 from kirin import ir
 from kirin.dialects import func
-from kirin.validation import ValidationPass
+from kirin.validation import ValidationPass, ValidationSuite
 
 
 def _name(method: ir.Method) -> str:
@@ -54,22 +54,26 @@ def _self_value(method: ir.Method) -> ir.SSAValue | None:
     return region.blocks[0].args[0]
 
 
-def _parameter_values(method: ir.Method) -> dict[int, ir.SSAValue]:
-    """``method``'s own parameters, keyed by id, excluding the self argument.
+def _parameter_values(method: ir.Method) -> set[ir.SSAValue]:
+    """``method``'s own parameters, excluding the self argument.
 
     A call through one of these has no statically knowable target, so it is what
     makes a dynamic call graph unanalysable. The self argument is excluded
     because it *is* known -- it is reported as recursion instead.
+
+    Membership is identity in practice: ``SSAValue.__hash__`` is ``id``, so two
+    distinct arguments never share a bucket even where the dataclass-generated
+    ``__eq__`` would compare their fields.
     """
     trait = method.code.get_trait(ir.CallableStmtInterface)
     if trait is None:
-        return {}
+        return set()
 
     region = trait.get_callable_region(method.code)
     if not region.blocks:
-        return {}
+        return set()
 
-    return {id(arg): arg for arg in region.blocks[0].args[1:]}
+    return set(region.blocks[0].args[1:])
 
 
 def _sort_key(method: ir.Method) -> tuple[str, int]:
@@ -298,14 +302,10 @@ class NoOpaqueCallValidation(ValidationPass):
         errors: list[ir.ValidationError] = []
 
         for stmt in method.code.walk():
-            if not isinstance(stmt, func.Call):
+            if not isinstance(stmt, func.Call) or stmt.callee not in parameters:
                 continue
 
-            parameter = parameters.get(id(stmt.callee))
-            if parameter is None:
-                continue
-
-            name = parameter.name or "<unnamed>"
+            name = stmt.callee.name or "<unnamed>"
             errors.append(
                 ir.ValidationError(
                     method.code,
@@ -315,3 +315,20 @@ class NoOpaqueCallValidation(ValidationPass):
             )
 
         return None, errors
+
+
+def check_call_graph(method: ir.Method) -> None:
+    """Require ``method``'s call graph to be statically resolvable and acyclic.
+
+    Raises ``ValidationErrorGroup`` listing every cycle and every opaque call
+    found, rather than stopping at the first.
+
+    Callers should run this *before* any pass that walks callees, and must not
+    gate it on a `verify` flag. A cyclic call graph has no finite lowering, and
+    the inliner and address analysis diverge on one instead of erroring, so
+    skipping the check turns a clear rejection back into an unkillable hang
+    (bloqade-lanes#921).
+    """
+    ValidationSuite([NoRecursionValidation, NoOpaqueCallValidation]).validate(
+        method
+    ).raise_if_invalid()
