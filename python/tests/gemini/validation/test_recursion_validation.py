@@ -16,11 +16,13 @@ import time
 
 import bloqade.squin as squin
 import pytest
+from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.lowering.exception import BuildError
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
+from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.common.validation.recursion import (
     CallGraph,
     NoOpaqueCallValidation,
@@ -28,6 +30,7 @@ from bloqade.gemini.common.validation.recursion import (
     check_call_graph,
     format_cycle,
 )
+from bloqade.gemini.logical.stdlib import default_post_processing
 
 # Generous enough to absorb a slow CI box, tight enough that the pre-fix
 # behaviour (effectively unbounded) cannot pass.
@@ -48,6 +51,36 @@ def test_direct_self_recursion_is_rejected():
     messages = _messages(exc_info.value)
     assert any("recursion is not supported" in m for m in messages)
     assert any("recurse -> recurse" in m for m in messages)
+
+
+def test_original_user_report_is_rejected_quickly():
+    """The kernel that prompted this work, kept verbatim.
+
+    A user hit an indefinite hang compiling this. Measured on the same machine:
+    with the guard removed it was still running after 60s; with it, the kernel is
+    rejected in 0.02s.
+
+    Worth keeping as its own case despite the simpler self-recursion tests above,
+    because it is the shape a real caller wrote: the recursive call takes no
+    arguments and its result is discarded, and it sits in a kernel whose other
+    statements are ordinary work. It also pins both flags the user had set --
+    neither `aggressive_unroll` nor `verify` may move the guard, since the pass
+    that diverges runs before the first and outside the second.
+    """
+    started = time.monotonic()
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel(aggressive_unroll=True, verify=True)
+        def main():
+            a = new_at(0, 0, 0)
+            b = new_at(0, 8, 0)
+            main()
+            squin.h(a)
+            squin.cx(a, b)
+            return default_post_processing(ilist.IList([a, b]))
+
+    assert time.monotonic() - started < REJECTION_BUDGET_S
+    assert any("main -> main" in m for m in _messages(exc_info.value))
 
 
 def test_verify_false_still_rejects_recursion():
