@@ -41,6 +41,15 @@ def _messages(err: ValidationErrorGroup) -> list[str]:
     return [e.args[0] if e.args else str(e) for e in err.errors]
 
 
+# A kernel from another dialect group, so the Gemini guard never runs on it and
+# the call through its parameter survives. Declared at module scope because
+# kirin resolves names from globals, not from an enclosing function's locals.
+@squin.kernel
+def _foreign_calls_its_parameter_twice(f):
+    f()
+    f()
+
+
 def test_direct_self_recursion_is_rejected():
     with pytest.raises(ValidationErrorGroup) as exc_info:
 
@@ -218,6 +227,36 @@ def test_dynamic_cycle_with_branching_cannot_be_built():
     # Reported once per offending call site, not once per kernel.
     messages = _messages(exc_info.value)
     assert sum("calling the parameter 'f'" in m for m in messages) == 2
+
+
+def test_opaque_call_inside_a_reachable_callee_is_rejected():
+    """Scanning only the entry method would leave the hang reachable.
+
+    A kernel from another dialect group never runs this guard, so it may call
+    its own parameter. A Gemini kernel can statically invoke one; with
+    `inline=False` the dynamic call survives to `AddressAnalysis`, and passing
+    the Gemini kernel's own self value into a callee that calls it twice
+    rebuilds the branching cycle -- with no static edge anywhere for
+    `NoRecursionValidation` to find. Confirmed to hang before this was covered.
+    """
+
+    started = time.monotonic()
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel(verify=False, inline=False)
+        def main():
+            _foreign_calls_its_parameter_twice(main)
+
+    assert time.monotonic() - started < REJECTION_BUDGET_S
+    # The owning kernel is named, since the caret stays on the entry method.
+    messages = _messages(exc_info.value)
+    assert (
+        sum(
+            "calling the parameter 'f' in '_foreign_calls_its_parameter_twice'" in m
+            for m in messages
+        )
+        == 2
+    )
 
 
 def test_non_recursive_subkernel_calls_are_unaffected():

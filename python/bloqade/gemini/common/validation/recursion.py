@@ -310,29 +310,46 @@ class NoOpaqueCallValidation(ValidationPass):
 
     This costs nothing real: a Gemini kernel cannot lower a call through a value
     anyway, and no kernel in the test suite performs one.
+
+    Every statically reachable method is scanned, not just the entry. Checking
+    only the entry leaves the hang reachable through a callee: a Gemini kernel
+    can statically invoke a kernel from another dialect group, which never ran
+    this guard and may call *its* parameter. Pass the Gemini kernel's own self
+    value into such a callee that calls it twice and the branching cycle is back,
+    with no static edge anywhere for ``NoRecursionValidation`` to find.
     """
 
     def name(self) -> str:
         return "gemini.no_opaque_call"
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
-        parameters = _parameter_values(method)
+        graph = CallGraph(method)
         errors: list[ir.ValidationError] = []
 
-        for stmt in method.code.walk():
-            if not isinstance(stmt, func.Call) or stmt.callee not in parameters:
+        for caller in sorted(graph.edges, key=_sort_key):
+            parameters = _parameter_values(caller)
+            if not parameters:
                 continue
 
-            name = stmt.callee.name or "<unnamed>"
-            errors.append(
-                ir.ValidationError(
-                    method.code,
-                    f"calling the parameter '{name}' is not supported in Gemini "
-                    "kernels; the call target must be known at compile time",
-                )
-            )
+            for stmt in caller.code.walk():
+                if not isinstance(stmt, func.Call) or stmt.callee not in parameters:
+                    continue
 
-        return None, errors
+                name = stmt.callee.name or "<unnamed>"
+                # Name the owner when it is not the kernel being validated, for
+                # the same reason `Cycle` carries a route: the caret is pinned to
+                # the entry method, so the message has to carry the location.
+                owner = "" if caller is method else f" in '{_name(caller)}'"
+                errors.append(
+                    ir.ValidationError(
+                        method.code,
+                        f"calling the parameter '{name}'{owner} is not supported "
+                        "in Gemini kernels; the call target must be known at "
+                        "compile time",
+                    )
+                )
+
+        return graph, errors
 
 
 def check_call_graph(method: ir.Method) -> None:
