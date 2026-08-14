@@ -24,6 +24,27 @@ class _GeminiTerminalMeasurementValidationAnalysis(Forward[EmptyLattice]):
     def method_self(self, method: ir.Method) -> EmptyLattice:
         return self.lattice.bottom()
 
+    def run_lattice(
+        self,
+        callee: EmptyLattice,
+        inputs: tuple[EmptyLattice, ...],
+        keys: tuple[str, ...],
+        kwargs: tuple[EmptyLattice, ...],
+    ) -> EmptyLattice:
+        """Handle a dynamic ``func.Call``.
+
+        Required, not optional: ``impls.Func`` subclasses the address analysis'
+        ``func`` method table, so this analysis inherits a ``func.Call`` impl
+        that calls ``run_lattice`` on the interpreter. Without an override, any
+        kernel containing a dynamic call dies with an ``AttributeError``.
+
+        Dynamic callees are deliberately not descended into. ``EmptyLattice``
+        carries no information, so a callee's return value would add nothing to
+        the frame; the cost is that a terminal-measurement violation *inside* a
+        dynamically called kernel goes unreported.
+        """
+        return self.lattice.bottom()
+
 
 @dataclass
 class GeminiTerminalMeasurementValidation(ValidationPass):
