@@ -42,8 +42,16 @@ def _messages(err: ValidationErrorGroup) -> list[str]:
 
 
 # A kernel from another dialect group, so the Gemini guard never runs on it and
-# the call through its parameter survives. Declared at module scope because
-# kirin resolves names from globals, not from an enclosing function's locals.
+# the call through its parameter survives.
+#
+# Every kernel fixture in this module sits at module scope rather than inside the
+# test that uses it. kirin does read an enclosing function's locals, but through
+# `inspect.getclosurevars` wrapped in a bare `except Exception`
+# (`kirin/lowering/python/lowering.py`). Handing a kernel its own name as a value
+# makes that name a freevar whose cell is still empty while the decorator runs,
+# so the lookup raises `ValueError: Cell is empty` and *every* nonlocal is
+# dropped together -- a sibling kernel defined beside it then fails to lower as
+# "not defined", pointing at the wrong name entirely.
 @squin.kernel
 def _foreign_calls_its_parameter_twice(f):
     f()
@@ -158,6 +166,10 @@ def test_mutual_recursion_between_kernels_cannot_be_lowered():
     The first kernel's forward reference fails during lowering, so the guard
     never sees it. Pinned here so that a future lowering change which *does*
     admit the forward reference shows up as a failure needing a guard update.
+
+    A closure is the obvious way to try to get around this, so the second case
+    rules it out: nothing defers name resolution, and the sibling is just as
+    unbound as a local of a factory function as it is as a module global.
     """
 
     with pytest.raises(BuildError):
@@ -165,6 +177,16 @@ def test_mutual_recursion_between_kernels_cannot_be_lowered():
         @gemini.logical.kernel(verify=False)
         def ping(q):
             pong(q)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
+
+    with pytest.raises(BuildError):
+
+        @gemini.logical.kernel(verify=False)
+        def ping_local(q):
+            pong_local(q)
+
+        @gemini.logical.kernel(verify=False)
+        def pong_local(q):
+            ping_local(q)
 
 
 def test_calling_a_parameter_is_rejected():
