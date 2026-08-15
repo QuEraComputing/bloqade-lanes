@@ -945,24 +945,48 @@ mod tests {
         assert_eq!(result.solution_path().unwrap().len(), 3);
     }
 
+    /// `max_depth` is a horizon on *move layers*: a plan of exactly `max_depth`
+    /// layers is admissible, one layer more is not.
+    ///
+    /// Both sides of the boundary are checked. A goal placed well beyond the
+    /// cap would pass whether the gate reads `depth >= max` or `depth > max`,
+    /// so it would leave the off-by-one untested — and `max_depth` is what the
+    /// receding-horizon rollout uses to size its window.
     #[test]
     fn bfs_respects_max_depth() {
         let fx = Fixture::new();
-        let root = Config::new([(0, loc(0, 0))]).unwrap();
-        let mut f = BfsFrontier::new();
-        let result = run(
+        let at_horizon = run(
             &fx,
-            root,
+            Config::new([(0, loc(0, 0))]).unwrap(),
             &LineGen { max_site: 10 },
             &UniformCost,
-            5,
-            &mut f,
+            3,
+            &mut BfsFrontier::new(),
             None,
             Some(3),
             None,
         );
-        // Goal at depth 5, max_depth 3 → not found.
-        assert!(result.goal.is_none());
+        assert!(
+            at_horizon.goal.is_some(),
+            "a plan of exactly max_depth layers is within the horizon"
+        );
+        assert_eq!(at_horizon.solution_path().unwrap().len(), 3);
+
+        let past_horizon = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            4,
+            &mut BfsFrontier::new(),
+            None,
+            Some(3),
+            None,
+        );
+        assert!(
+            past_horizon.goal.is_none(),
+            "a node at depth == max_depth must not be expanded"
+        );
     }
 
     // ── A* ──
@@ -1351,6 +1375,124 @@ mod tests {
             assert!(result.goal.is_some(), "{name} should find root-is-goal");
             assert_eq!(result.nodes_expanded, 0, "{name} should expand 0 nodes");
         }
+    }
+
+    // ── max_cost ──
+
+    /// A node whose accumulated `g` *reaches* the cap is not expanded, so no
+    /// plan costing more than the cap can be assembled.
+    ///
+    /// The diamond puts the boundary in a place a sloppy comparison can't
+    /// survive: the optimal plan `0 → 1 → 3 → 4` costs 3 and runs through a
+    /// node at `g = 2`. At `max_cost = 2` that node is exactly at the cap, so
+    /// gating on `>=` refuses it and the goal is unreachable; gating on `>`
+    /// would expand it and find the goal anyway. The two cases below therefore
+    /// pin the operator, not just the existence of a limit.
+    #[test]
+    fn max_cost_gates_expansion_at_the_cap() {
+        let fx = Fixture::new();
+
+        // Cap above the optimum: the goal is still reached, at its true cost.
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let reachable = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            Some(3.0),
+        );
+        let goal = reachable.goal.expect("cost-3 plan is within a cap of 3");
+        assert_eq!(reachable.graph.g_score(goal), 3.0);
+
+        // Cap *at* the cost of the only viable waypoint: nothing expands past
+        // it, so the goal drops out of reach entirely.
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let blocked = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            Some(2.0),
+        );
+        assert!(
+            blocked.goal.is_none(),
+            "a node at g == max_cost must not be expanded"
+        );
+    }
+
+    /// Edge costs for [`LineGen`] with the expense front-loaded: the first hop
+    /// off site 0 costs 8, every later hop costs 1. `g` and `depth` therefore
+    /// diverge immediately, which is what separates the two limits below.
+    struct FrontLoadedCost;
+
+    impl CostFn for FrontLoadedCost {
+        fn edge_cost(&self, _move_set: &MoveSet, from: &Config, _to: &Config) -> f64 {
+            if from.location_of(0).unwrap().site_id == 0 {
+                8.0
+            } else {
+                1.0
+            }
+        }
+    }
+
+    /// `max_cost` gates on accumulated cost, not on tree depth — the two are
+    /// not interchangeable, which is why `run_search` carries both.
+    ///
+    /// The same numeric cap of 8 is applied twice to the same instance. As a
+    /// *cost* cap it binds at the very first node (`g = 8`) and the goal
+    /// becomes unreachable; as a *depth* cap it never binds at all (depth 2)
+    /// and the search returns a cost-9 plan. A cap that behaved like a depth
+    /// limit would let that cost-9 plan through in both cases.
+    ///
+    /// Under `UniformCost` the two coincide (`g == depth`) and this distinction
+    /// is invisible, which is exactly why it needs pinning: the cascade passes
+    /// its incumbent's *cost*, and a non-uniform objective is what makes the
+    /// difference observable.
+    #[test]
+    fn max_cost_gates_on_cost_not_depth() {
+        let fx = Fixture::new();
+
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let by_cost = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 10 },
+            &FrontLoadedCost,
+            2,
+            &mut f,
+            None,
+            None,
+            Some(8.0),
+        );
+        assert!(
+            by_cost.goal.is_none(),
+            "the only route runs through a node at g == 8, which the cap must refuse"
+        );
+
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let by_depth = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 10 },
+            &FrontLoadedCost,
+            2,
+            &mut f,
+            None,
+            Some(8),
+            None,
+        );
+        let goal = by_depth
+            .goal
+            .expect("the same cap read as depth never binds on a two-layer plan");
+        assert_eq!(by_depth.graph.g_score(goal), 9.0);
     }
 
     // ── max_depth_reached tracking ──

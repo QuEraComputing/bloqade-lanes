@@ -492,7 +492,231 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
+    use crate::generators::HeuristicGenerator;
+    use crate::goals::AllAtTarget;
+    use crate::primitives::distance::DistanceTable;
+    use crate::primitives::lane_index::LaneIndex;
+    use crate::test_utils::{example_arch_json, loc};
+
+    /// Drive one solve through the real dispatch. Every argument the wiring
+    /// tests need to vary is a parameter; everything else (arch, root, goal,
+    /// targets, budget) is held fixed, so any difference in the returned
+    /// `bound_stats` is attributable to the varied input alone.
+    fn solve_with(
+        strategy: Strategy,
+        completion_bound: Option<BoundKind>,
+        cz_pairs: Option<&[(u32, u32)]>,
+        initial: &[(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)],
+    ) -> SolveResult {
+        let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
+            serde_json::from_str(example_arch_json()).expect("example arch json parses");
+        let index = LaneIndex::new(spec);
+        let root = Config::new(initial.iter().copied()).expect("root is a valid config");
+        let targets: Vec<(u32, u64)> = vec![(0, loc(1, 5).encode()), (1, loc(1, 6).encode())];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = AllAtTarget::new(&targets);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &targets,
+            cz_pairs,
+        };
+        let opts = SolveOptions {
+            strategy,
+            ..SolveOptions::default()
+        };
+        let entropy_opts = EntropyOptions {
+            completion_bound,
+            ..EntropyOptions::default()
+        };
+        // The entropy driver generates its own candidates, so this factory goes
+        // unused on that path; it exists to satisfy the type parameter, and is
+        // the real generator for the frontier strategies.
+        let make_generator = |seed: u64, policy: DeadlockPolicy| {
+            HeuristicGenerator::configured(seed, policy, false, None)
+        };
+        run_with_components(
+            root,
+            &goal,
+            make_generator,
+            |_: &Config| 0.0,
+            |_: &Config| 0.0,
+            &ctx,
+            Some(2000),
+            &opts,
+            Some(&entropy_opts),
+            None,
+        )
+    }
+
+    /// The placement `solve_with`'s fixed targets are stated against: two
+    /// qubits, both away from their targets.
+    fn start() -> Vec<(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)> {
+        vec![(0, loc(0, 0)), (1, loc(0, 1))]
+    }
+
+    /// The target placement itself, for the root-is-goal case.
+    fn already_at_target() -> Vec<(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)> {
+        vec![(0, loc(1, 5)), (1, loc(1, 6))]
+    }
+
+    /// Shorthand for the fixed-target entropy solve the wiring tests compare
+    /// against.
+    fn entropy_solve(completion_bound: Option<BoundKind>) -> SolveResult {
+        solve_with(Strategy::Entropy, completion_bound, None, &start())
+    }
+
+    /// An explicit `BoundKind` must reach the driver and actually prune;
+    /// leaving it unset must leave the search bit-for-bit unbounded.
+    ///
+    /// Both directions matter. Without the "on" half, a wiring bug that never
+    /// built the bound would look like a correctly disabled one; without the
+    /// "off" half, a bound that ignored the option would look enabled
+    /// everywhere. The cut count is what separates "the flag was recorded"
+    /// from "the bound is doing work".
+    #[test]
+    fn the_completion_bound_option_reaches_the_driver() {
+        let bounded = entropy_solve(Some(BoundKind::WeightedDistance));
+        assert_eq!(bounded.status, SolveStatus::Solved);
+        assert!(bounded.bound_stats.bound_enabled);
+        assert!(
+            bounded.bound_stats.total_cuts() > 0,
+            "the constructed bound must reach the driver and prune, not just set a flag"
+        );
+        assert!(
+            bounded.bound_stats.root_lower_bound > 0.0,
+            "a real h(root) must be recorded"
+        );
+
+        let unbounded = entropy_solve(None);
+        assert_eq!(unbounded.status, SolveStatus::Solved);
+        assert!(!unbounded.bound_stats.bound_enabled);
+        assert_eq!(unbounded.bound_stats.total_cuts(), 0);
+        assert_eq!(unbounded.bound_stats.root_lower_bound, 0.0);
+        assert_eq!(
+            unbounded.bound_stats.optimality_gap(),
+            None,
+            "an unbounded run has no gap to report, rather than a gap of 1.0"
+        );
+
+        // Pruning only removes branches that cannot hold a cheaper plan, so
+        // enabling it can improve the answer but never degrade it.
+        assert!(
+            bounded.cost <= unbounded.cost,
+            "bounded cost {} exceeded unbounded {}",
+            bounded.cost,
+            unbounded.cost
+        );
+    }
+
+    /// Only the entropy driver prunes against an incumbent, so a
+    /// `completion_bound` requested alongside a frontier strategy is a no-op
+    /// rather than an error.
+    ///
+    /// The bound is built next to the entropy dispatch and gated on the same
+    /// `entropy_tables.is_some()` condition. Were that gate to drift, the two
+    /// would disagree about whether this solve is bounded — and the frontier
+    /// drivers report `BoundStats::default()` unconditionally, so the request
+    /// would be silently dropped while the caller believed it applied.
+    #[test]
+    fn a_frontier_strategy_ignores_a_requested_completion_bound() {
+        for strategy in [Strategy::AStar, Strategy::Bfs, Strategy::Ids] {
+            let result = solve_with(strategy, Some(BoundKind::WeightedDistance), None, &start());
+            assert_eq!(
+                result.status,
+                SolveStatus::Solved,
+                "{strategy:?} should still solve with a bound requested"
+            );
+            assert!(
+                !result.bound_stats.bound_enabled,
+                "{strategy:?} does not prune against an incumbent; the request must be inert"
+            );
+            assert_eq!(result.bound_stats.total_cuts(), 0);
+        }
+    }
+
+    /// A solve whose root already satisfies the goal builds no bound, and says
+    /// so.
+    ///
+    /// This is the second thing the `entropy_tables.is_some()` condition
+    /// decides: those tables are skipped when the root is a goal, and the bound
+    /// rides on the same condition so a solve that never searches never pays
+    /// for a Dijkstra sweep it cannot use. The reported stats have to agree
+    /// with that — an empty `BoundStats` claiming `bound_enabled` would offer a
+    /// `root_lower_bound` of 0.0 as if it were a measurement.
+    #[test]
+    fn a_root_that_is_already_the_goal_builds_no_bound() {
+        let result = solve_with(
+            Strategy::Entropy,
+            Some(BoundKind::WeightedDistance),
+            None,
+            &already_at_target(),
+        );
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.cost, 0.0);
+        assert!(result.move_layers.is_empty(), "nothing needed moving");
+        assert!(
+            !result.bound_stats.bound_enabled,
+            "no search ran, so no bound was built; reporting one would be a claim about nothing"
+        );
+        assert_eq!(result.bound_stats.total_cuts(), 0);
+        assert_eq!(
+            result.bound_stats.optimality_gap(),
+            None,
+            "a zero-cost incumbent has no meaningful gap"
+        );
+    }
+
+    /// Loose-goal solves must refuse the completion bound even when the caller
+    /// asks for it.
+    ///
+    /// There, `ctx.targets` is a greedy Hungarian assignment of qubits to
+    /// entangling slots, but the goal accepts *any* valid entangling
+    /// placement: a qubit can satisfy the goal without ever reaching its
+    /// assigned target, so `h0` — a distance to that target — can exceed the
+    /// true remaining cost. Honouring the request would make pruning
+    /// inadmissible and silently discard optimal plans, with nothing in the
+    /// output to show for it. `cz_pairs.is_some()` is the marker for that
+    /// shape, and this pins that flipping it is what disables the bound.
+    #[test]
+    fn a_loose_goal_solve_refuses_the_completion_bound() {
+        // Fixed-target: the request is honoured, so the loose-goal assertion
+        // below cannot pass vacuously through some unrelated path that drops
+        // the bound anyway.
+        let fixed = entropy_solve(Some(BoundKind::WeightedDistance));
+        assert_eq!(fixed.status, SolveStatus::Solved);
+        assert!(
+            fixed.bound_stats.bound_enabled,
+            "a fixed-target solve must honour an explicit completion-bound request"
+        );
+
+        let loose = solve_with(
+            Strategy::Entropy,
+            Some(BoundKind::WeightedDistance),
+            Some(&[(0, 1)]),
+            &start(),
+        );
+        assert_eq!(
+            loose.status,
+            SolveStatus::Solved,
+            "refusing the bound must not cost the solve its answer"
+        );
+        assert!(
+            !loose.bound_stats.bound_enabled,
+            "h0 is not admissible against a loose entangling goal; the bound must be refused"
+        );
+        assert_eq!(
+            loose.bound_stats.total_cuts(),
+            0,
+            "a refused bound must not prune"
+        );
+    }
 
     /// The dispatch may *raise* a caller's deadlock policy to keep the plain
     /// frontier strategies functional on the defaults, but it must never lower
