@@ -58,6 +58,25 @@ def _foreign_calls_its_parameter_twice(f):
     f()
 
 
+# A chain of foreign kernels ending in self-recursion, for the case where the
+# cycle is several hops below the kernel being validated. Each link refers to one
+# already defined above it, which is the only direction a source-level reference
+# can go.
+@squin.kernel
+def _deep_cycle_end(n):
+    return _deep_cycle_end(n)
+
+
+@squin.kernel
+def _deep_cycle_mid(n):
+    return _deep_cycle_end(n)
+
+
+@squin.kernel
+def _deep_cycle_start(n):
+    return _deep_cycle_mid(n)
+
+
 def test_direct_self_recursion_is_rejected():
     with pytest.raises(ValidationErrorGroup) as exc_info:
 
@@ -444,3 +463,28 @@ def test_format_cycle_closes_the_loop():
 
     assert format_cycle([a]) == "a -> a"
     assert format_cycle([a, b]) == "a -> b -> a"
+
+
+def test_cycle_far_below_the_entry_is_rejected():
+    """The cycle need not be in the kernel being validated.
+
+    A Gemini kernel containing a cycle is rejected at its own definition, so it
+    can never become a callee -- but a kernel from another dialect group runs no
+    such guard. `main` invokes a chain of three foreign kernels ending in
+    self-recursion, so the cycle survives to the kernel that does check, three
+    hops down. Naming only the cycle would leave no way to find it, which is what
+    `Cycle.route` is for.
+    """
+    started = time.monotonic()
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel(verify=False, inline=False)
+        def main():
+            _deep_cycle_start(1)
+
+    assert time.monotonic() - started < REJECTION_BUDGET_S
+    assert any(
+        "_deep_cycle_end -> _deep_cycle_end (reached via main -> _deep_cycle_start "
+        "-> _deep_cycle_mid -> _deep_cycle_end)" in m
+        for m in _messages(exc_info.value)
+    )
