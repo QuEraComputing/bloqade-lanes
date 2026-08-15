@@ -488,3 +488,61 @@ def test_cycle_far_below_the_entry_is_rejected():
         "-> _deep_cycle_mid -> _deep_cycle_end)" in m
         for m in _messages(exc_info.value)
     )
+
+
+def test_physical_pipeline_rejects_recursion():
+    """`physical.kernel` has its own `run_pass` and its own `AddressAnalysis`.
+
+    It does not delegate to the logical pipeline, so it needs the guard
+    independently. Without it a recursive physical kernel was accepted, and the
+    `#921` shape hung there exactly as it originally did on the logical side.
+    """
+    started = time.monotonic()
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.physical.kernel(verify=False)
+        def k(q):
+            k(q)
+            squin.h(q)
+
+    assert time.monotonic() - started < REJECTION_BUDGET_S
+    assert any("k -> k" in m for m in _messages(exc_info.value))
+
+
+def test_recursion_through_ilist_map_is_found():
+    """`ilist.Map` invokes its `fn` but carries no `ir.StaticCall` trait.
+
+    kirin does not mark these higher-order statements as calls, so a trait-driven
+    walk misses the edge entirely -- in both directions. `CallGraph` keys on the
+    operand *type* instead, which also completes the graph for correct code.
+    """
+
+    @squin.kernel
+    def recurse_by_map(xs):
+        return ilist.map(recurse_by_map, xs)
+
+    (cycle,) = CallGraph(recurse_by_map).find_cycles()
+    assert cycle.members == (recurse_by_map,)
+
+
+def test_ilist_map_over_a_known_kernel_records_the_edge():
+    """The same detection must not reject ordinary higher-order code.
+
+    `gemini/logical/stdlib/qubit_allocation.py` maps over a kernel exactly like
+    this, so the edge has to be recorded without an opaque-call error.
+    """
+
+    @squin.kernel
+    def double(x):
+        return x + x
+
+    @squin.kernel
+    def uses_map(xs):
+        return ilist.map(double, xs)
+
+    graph = CallGraph(uses_map)
+    assert double in graph.edges[uses_map]
+    assert graph.find_cycles() == []
+
+    _, errors = NoOpaqueCallValidation().run(uses_map)
+    assert errors == []

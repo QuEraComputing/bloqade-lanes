@@ -26,9 +26,45 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from kirin import ir
+from kirin import ir, types
 from kirin.dialects import func
 from kirin.validation import ValidationPass, ValidationSuite
+
+
+def _callable_operands(stmt: ir.Statement) -> list[ir.SSAValue]:
+    """Arguments of ``stmt`` that hold a callable.
+
+    Higher-order statements such as ``ilist.Map``, ``Foldl``, ``Foldr``,
+    ``Scan`` and ``ForEach`` invoke their ``fn`` argument, but carry no
+    ``ir.StaticCall`` trait to say so -- kirin does not mark them as calls. A
+    trait-driven walk therefore misses every edge through them, in both
+    directions: a recursion routed through ``ilist.map`` is invisible, and the
+    call graph is incomplete even for correct code.
+
+    Keying on the operand *type* instead of a trait catches all of them, and any
+    future dialect that takes a callable, without needing a list of statements.
+
+    Bottom has to be excluded explicitly: it is a subtype of everything, so an
+    operand whose type inference gave up matches ``MethodType`` and would be
+    reported as an opaque call. Real kernels hit this -- `set_detector`'s
+    `coordinates` argument is one.
+    """
+    return [
+        arg
+        for arg in stmt.args
+        if arg.type.is_subseteq(types.MethodType)
+        and not arg.type.is_subseteq(types.Bottom)
+    ]
+
+
+def _constant_method(value: ir.SSAValue) -> ir.Method | None:
+    """The method ``value`` holds, when it is a compile-time constant."""
+    attribute = getattr(value.owner, "value", None)
+    if attribute is None:
+        return None
+
+    data = attribute.unwrap() if hasattr(attribute, "unwrap") else attribute
+    return data if isinstance(data, ir.Method) else None
 
 
 def _name(method: ir.Method) -> str:
@@ -168,13 +204,22 @@ class CallGraph:
             for stmt in caller.code.walk():
                 if trait := stmt.get_trait(ir.StaticCall):
                     callees.add(trait.get_callee(stmt))
-                elif (
+                    continue
+
+                if (
                     self_value is not None
                     and isinstance(stmt, func.Call)
                     and stmt.callee is self_value
                 ):
                     # Not-yet-resolved self call; record it as a real self edge.
                     callees.add(caller)
+                    continue
+
+                for operand in _callable_operands(stmt):
+                    if self_value is not None and operand is self_value:
+                        callees.add(caller)
+                    elif (callee := _constant_method(operand)) is not None:
+                        callees.add(callee)
 
             self.edges[caller] = callees
             worklist.extend(callee for callee in callees if callee not in self.edges)
@@ -301,22 +346,29 @@ class NoOpaqueCallValidation(ValidationPass):
     """Reject calls made through one of the kernel's own parameters.
 
     ``CallGraph`` can only see statically resolved edges, so a call through a
-    parameter is a hole in it: passing a kernel in as a value and calling it
-    builds a cycle that no amount of graph walking will find, and a cycle with
-    branching factor >= 2 still costs ``phi ** max_depth`` in the address
-    analysis. Resolving the target instead would need the constant propagation
-    that diverges on exactly that input, so the shape is rejected rather than
-    resolved.
+    value is a hole in it: hand a kernel in as a value and call it and the result
+    is a cycle no amount of graph walking will find, costing ``phi ** max_depth``
+    in the address analysis once the branching factor reaches two. Resolving the
+    target instead would need the constant propagation that diverges on exactly
+    that input, so the shape is rejected rather than resolved.
 
-    This costs nothing real: a Gemini kernel cannot lower a call through a value
-    anyway, and no kernel in the test suite performs one.
+    Both a ``func.Call`` and a higher-order statement's callable operand count:
+    ``ilist.Map`` and friends invoke their ``fn`` without being a ``func.Call``.
+
+    **Known gap.** Matching the parameter object is bypassed by routing the
+    callable through anything at all before calling it -- an ``if``/``else`` makes
+    it a block argument of a successor block, a list makes it a ``getitem``
+    result -- and neither is the parameter, so neither is caught. Rejecting every
+    unresolved call instead was tried and is not viable: after inlining, a
+    perfectly ordinary stdlib kernel calls a self value belonging to an inlined
+    region rather than to the method being scanned, so it is reported as opaque
+    and the physical pipeline stops compiling. Closing this properly needs
+    provenance for callable values, which is the analysis scoped in #927.
 
     Every statically reachable method is scanned, not just the entry. Checking
     only the entry leaves the hang reachable through a callee: a Gemini kernel
     can statically invoke a kernel from another dialect group, which never ran
-    this guard and may call *its* parameter. Pass the Gemini kernel's own self
-    value into such a callee that calls it twice and the branching cycle is back,
-    with no static edge anywhere for ``NoRecursionValidation`` to find.
+    this guard and may make an opaque call of its own.
     """
 
     def name(self) -> str:
@@ -328,26 +380,38 @@ class NoOpaqueCallValidation(ValidationPass):
 
         for caller in sorted(graph.edges, key=_sort_key):
             parameters = _parameter_values(caller)
-            if not parameters:
-                continue
+            self_value = _self_value(caller)
 
             for stmt in caller.code.walk():
-                if not isinstance(stmt, func.Call) or stmt.callee not in parameters:
-                    continue
+                # A `func.Call` on a parameter, and the same through a
+                # higher-order statement's callable operand -- `ilist.Map` and
+                # friends invoke their `fn` without being a `func.Call`.
+                if isinstance(stmt, func.Call):
+                    candidates = [stmt.callee]
+                else:
+                    candidates = _callable_operands(stmt)
 
-                name = stmt.callee.name or "<unnamed>"
-                # Name the owner when it is not the kernel being validated, for
-                # the same reason `Cycle` carries a route: the caret is pinned to
-                # the entry method, so the message has to carry the location.
-                owner = "" if caller is method else f" in '{_name(caller)}'"
-                errors.append(
-                    ir.ValidationError(
-                        method.code,
-                        f"calling the parameter '{name}'{owner} is not supported "
-                        "in Gemini kernels; the call target must be known at "
-                        "compile time",
+                for callee in candidates:
+                    if self_value is not None and callee is self_value:
+                        # Known exactly; reported as a cycle instead.
+                        continue
+
+                    if callee not in parameters:
+                        continue
+
+                    name = f"the parameter '{callee.name or '<unnamed>'}'"
+                    # Name the owner when it is not the kernel being validated,
+                    # for the same reason `Cycle` carries a route: the caret is
+                    # pinned to the entry method, so the message carries it.
+                    owner = "" if caller is method else f" in '{_name(caller)}'"
+                    errors.append(
+                        ir.ValidationError(
+                            method.code,
+                            f"calling {name}{owner} is not supported in Gemini "
+                            "kernels; the call target must be known at compile "
+                            "time",
+                        )
                     )
-                )
 
         return graph, errors
 
