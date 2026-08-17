@@ -69,6 +69,16 @@ pub struct ObjectiveId {
 /// - **C2 — non-negative.** `edge_cost(..) >= 0`.
 /// - **C3 — lane floor.** For every shot `s` and every lane `l ∈ s`,
 ///   `edge_cost(s, ..) >= lane_weight(l)`.
+/// - **C4 — shot floor.** `min_shot_cost() > 0` and is finite, and
+///   `edge_cost(s, ..) >= min_shot_cost()` for *every* shot `s` — including an
+///   empty one, which C3 says nothing about because it quantifies over the
+///   lanes a shot contains. An implementor whose cost is
+///   `base + f(lanes)` therefore has to seed `f`'s fold at its own minimum
+///   rather than at zero.
+///
+/// `bounds::assert_objective_contract` — available under `cfg(test)` or the
+/// `test-util` feature — checks C2, C3 and C4 mechanically over a lane sweep;
+/// C1 is structural and cannot be tested from outside.
 ///
 /// `Sync` because one objective is shared by reference across parallel
 /// restarts.
@@ -79,12 +89,15 @@ pub trait Objective: CostFn + Sync {
     /// bounds derived from it are trivial (`h ≡ 0`), never unsound.
     fn lane_weight(&self, lane: LaneAddr) -> f64;
 
-    /// A positive floor on any single shot's cost.
+    /// A positive floor on any single shot's cost (C4).
     ///
-    /// Converts a cost budget into a depth budget — no plan of cost `≤ c` is
-    /// deeper than `floor(c / min_shot_cost())` — which is what the cascade
-    /// strategy needs to bound its refinement pass, and what the pruning-depth
-    /// instrumentation measures against.
+    /// Converts a cost budget into a depth budget: no plan of cost `≤ c` is
+    /// deeper than `floor(c / min_shot_cost())`. The pruning-depth
+    /// instrumentation uses that to state how much *earlier* the bound cut than
+    /// `g` alone could have. The cascade used to convert its incumbent this way
+    /// too and no longer does — it bounds the refinement by cost directly,
+    /// since the conversion only preserves the intended meaning while
+    /// `g == depth`.
     fn min_shot_cost(&self) -> f64;
 
     /// Identity of this instance, parameters included.

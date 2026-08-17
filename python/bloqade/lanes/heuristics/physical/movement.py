@@ -259,11 +259,15 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     def rust_bound_stats_total(self) -> dict[str, float]:
         """Branch-and-bound pruning statistics summed over every solve.
 
-        Empty until a solve has run. Counters and depth sums add; the
-        per-instance ``root_lower_bound`` / ``incumbent_cost`` / gap do not
-        aggregate meaningfully across solves, so the widest observed gap is
-        kept as ``max_optimality_gap`` instead. All-zero when
-        :pyattr:`RustPlacementTraversal.completion_bound` is ``None``.
+        Counters and depth sums add; the per-instance ``root_lower_bound`` /
+        ``incumbent_cost`` / gap do not aggregate meaningfully across solves, so
+        the widest observed gap is kept as ``max_optimality_gap`` instead.
+
+        **Empty** — not zeroed — before the first solve, and after any number of
+        solves run with :pyattr:`RustPlacementTraversal.completion_bound` set to
+        ``None``: an unbounded run measured nothing, and reporting zeros would
+        be indistinguishable from a bounded run that pruned nothing. Key-check
+        rather than expecting the keys to exist.
         """
         return dict(self._bound_stats_total)
 

@@ -1170,7 +1170,10 @@ class SolveResult:
     def bound_stats(self) -> dict[str, float | None]:
         """Branch-and-bound pruning statistics.
 
-        All-zero unless ``EntropyOptions.completion_bound`` was set. Keys:
+        **Empty** unless ``EntropyOptions.completion_bound`` was set — an
+        unbounded solve measured nothing, and a zeroed dict would advertise a
+        ``root_lower_bound`` of 0.0 and an ``optimality_gap`` of 1.0 as if they
+        were measurements. Key-check rather than expecting zeros. Keys:
         ``cuts_by_g`` (cuts accumulated cost alone could make), ``cuts_by_h``
         (cuts only the bound could make), ``cuts_infeasible``,
         ``cut_depth_sum`` / ``cut_depth_g_only_sum`` (the depth ratio measuring
