@@ -191,26 +191,10 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
             arch_spec=self.physical_arch_spec,
         ).emit(self.physical_move_kernel)
 
-    @staticmethod
-    def _normalize_matrix(
-        payload: Any,
-        *,
-        name: str,
-        shots: int,
-        loss_replace: Any = True,
-        loss: Any = None,
-    ) -> list[list[bool]]:
-        """
-        Overrides _normalize_matrix to convert the None values in the measurement output to True (to model a lack of loss-resolved readout
-        on Gemini)
-        """
-        return _SimulatorTaskBase._normalize_matrix(
-            payload=payload,
-            name=name,
-            shots=shots,
-            loss_replace=loss_replace,
-            loss=loss,
-        )
+    @property
+    def _loss_replace_vals(self) -> tuple[Any, Any]:
+        """Replaces `loss` values (None) with `loss_replace` (True)."""
+        return (True, None)
 
 
 @dataclass
