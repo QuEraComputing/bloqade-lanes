@@ -93,14 +93,19 @@ def _mock_physical_task() -> Any:
 
 def test_physical_task_run_routes_through_backend():
     task = _mock_physical_task()
-    task._backend.sample.return_value = BackendSample(
-        measurements=np.array([[True, False]])
+    raw_measurements = np.array([[True, False]])
+    task._backend.sample.return_value = BackendSample(measurements=raw_measurements)
+    task._backend._convert_loss_to_measurement.side_effect = (
+        lambda shots_arr, **_kwargs: shots_arr
     )
 
     result = PhysicalSimulatorTask.run(task, shots=1, with_noise=True)
 
     task._backend._detector_error_model.assert_called_once_with("noisy-kernel")
     task._backend.sample.assert_called_once_with("noisy-kernel", shots=1)
+    task._backend._convert_loss_to_measurement.assert_called_once_with(
+        raw_measurements, loss_replace=True, loss=None
+    )
     assert isinstance(result, PhysicalResult)
     assert result.measurements == [[True, False]]
     assert result.detector_error_model == "dem"
@@ -123,28 +128,6 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
     assert not is_dataclass(_SimulatorTaskBase)
     assert issubclass(GeminiLogicalSimulatorTask, _SimulatorTaskBase)
     assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
-
-
-@pytest.mark.parametrize(
-    "task_type", [GeminiLogicalSimulatorTask, PhysicalSimulatorTask]
-)
-def test_simulator_tasks_normalize_lost_measurements_as_true(task_type):
-    assert task_type._normalize_matrix(
-        [[False, None], [None, True]], name="measurement", shots=2
-    ) == [[False, True], [True, True]]
-
-
-@pytest.mark.parametrize(
-    "task_type", [GeminiLogicalSimulatorTask, PhysicalSimulatorTask]
-)
-def test_simulator_tasks_forward_loss_normalization_options(task_type):
-    assert task_type._normalize_matrix(
-        [[True, "lost"]],
-        name="measurement",
-        shots=1,
-        loss_replace=False,
-        loss="lost",
-    ) == [[True, False]]
 
 
 @pytest.mark.parametrize("simulator_type", [GeminiLogicalSimulator, PhysicalSimulator])

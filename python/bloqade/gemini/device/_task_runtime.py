@@ -240,6 +240,11 @@ class _SimulatorTaskBase(Generic[RetType]):
         """Guaranteed detector error model for the noisy physical kernel."""
         return self._backend._detector_error_model(self._physical_kernel)
 
+    @property
+    def _loss_replace_vals(self) -> tuple[Any, Any]:
+        """Return ``(loss_replace, loss)`` for backend sample conversion."""
+        return (None, None)
+
     def visualize(self, animated: bool = False, interactive: bool = True):
         """Visualize the physical move kernel using the built-in debugger.
 
@@ -281,37 +286,17 @@ class _SimulatorTaskBase(Generic[RetType]):
         return min_fidelity, max_fidelity
 
     @staticmethod
-    def _normalize_matrix(
-        payload: Any,
-        *,
-        name: str,
-        shots: int,
-        loss_replace: Any = None,
-        loss: Any = None,
-    ) -> list[list[bool]]:
-        """
-        Checks that the shape of the returned measurements is valid, and
-        adds configuration options for converting values of `loss` (representing atom loss values) to `loss_replace`.
-
-        By default, loss and loss_replace are no-ops (converts None to None).
-        """
+    def _normalize_matrix(payload: Any, *, name: str, shots: int) -> list[list[bool]]:
         try:
-            array = np.asarray(payload, dtype=object)
-
-            # NOTE: this is to model a lack of loss-resolved readout; atom loss is indistinguishable from measuring the |1> state
-            array[array == loss] = loss_replace
-            array = array.astype(bool)
+            array = np.asarray(payload, dtype=bool)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Backend returned invalid {name} samples") from exc
-
         if array.ndim != 2:
             raise ValueError(f"Backend {name} samples must be a two-dimensional array")
-
         if array.shape[0] != shots:
             raise ValueError(
                 f"Backend returned {array.shape[0]} {name} rows for {shots} shots"
             )
-
         return array.tolist()
 
     def run(
@@ -338,13 +323,21 @@ class _SimulatorTaskBase(Generic[RetType]):
         sample = self._backend.sample(physical_kernel, shots=shots)
         fidelity_min, fidelity_max = self.fidelity_bounds()
 
-        has_measurements = sample.measurements is not None
+        measurements_payload = sample.measurements
         has_detectors = sample.detectors is not None
         has_observables = sample.observables is not None
 
-        if has_measurements and not has_detectors and not has_observables:
+        if (
+            measurements_payload is not None
+            and not has_detectors
+            and not has_observables
+        ):
+            loss_replace, loss = self._loss_replace_vals
+            loss_converted_measurements = self._backend._convert_loss_to_measurement(
+                measurements_payload, loss_replace=loss_replace, loss=loss
+            )
             measurements = self._normalize_matrix(
-                sample.measurements, name="measurement", shots=shots
+                loss_converted_measurements, name="measurement", shots=shots
             )
             return cast(
                 SimulatorResult[RetType],
@@ -357,7 +350,7 @@ class _SimulatorTaskBase(Generic[RetType]):
                 ),
             )
 
-        if not has_measurements and has_detectors and has_observables:
+        if measurements_payload is None and has_detectors and has_observables:
             detectors = self._normalize_matrix(
                 sample.detectors, name="detector", shots=shots
             )
