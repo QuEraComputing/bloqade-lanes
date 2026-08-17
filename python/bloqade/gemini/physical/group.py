@@ -61,7 +61,13 @@ def kernel(self):
         ] = None,
     ) -> None:
         # stop circular import problems
+        from bloqade.gemini.common.validation.recursion import check_call_graph
         from bloqade.gemini.logical.rewrite.qubit_count import InsertQubitCount
+
+        # NOTE: this pipeline reaches `AddressAnalysis` independently of the
+        # logical one, so it needs the guard independently too -- see
+        # `check_call_graph` for why skipping it reintroduces a hang.
+        check_call_graph(mt)
 
         if arch_spec is None:
             from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -84,6 +90,10 @@ def kernel(self):
             )
 
             default_pass.fixpoint(mt)
+
+        # NOTE: `Call2Invoke` in the fold passes can turn a dynamic call static
+        # and expose a cycle the first check could not see.
+        check_call_graph(mt)
 
         if no_raise:
             runner = address_analysis.run_no_raise
