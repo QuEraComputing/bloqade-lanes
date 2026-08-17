@@ -83,6 +83,14 @@ pub struct BoundStats {
     pub bound_enabled: bool,
 }
 
+/// Tolerance for the optimality-gap sign test, in units of the gap itself
+/// (which is a ratio, so an absolute tolerance is meaningful here).
+///
+/// Sized to absorb accumulated `f64` rounding in `g` against a `h(root)` that
+/// matches it exactly, without hiding a real admissibility violation — those
+/// are whole shots wide, not ulps.
+const GAP_SLACK: f64 = 1e-9;
+
 impl BoundStats {
     /// Total cuts made, however classified.
     pub fn total_cuts(&self) -> u64 {
@@ -90,15 +98,35 @@ impl BoundStats {
     }
 
     /// Certified optimality gap `(incumbent - h(root)) / incumbent`, or `None`
-    /// when no bound was in use, no solution was found, or the incumbent is
-    /// zero.
+    /// when no bound was in use, no solution was found, the incumbent is zero,
+    /// or `h(root)` is not a finite measurement.
     ///
-    /// `0.0` means the incumbent is provably optimal.
+    /// `0.0` means the incumbent is provably optimal. A **negative** result is
+    /// possible and is deliberately not clamped: `h(root) > incumbent` means
+    /// the bound overestimated the true remaining cost, i.e. it is
+    /// inadmissible, and pruning derived from it may have discarded the
+    /// optimum. That is the one condition here that must never be silent —
+    /// clamping it to `0.0` would report the strongest possible claim
+    /// ("provably optimal") for the run least entitled to it.
     pub fn optimality_gap(&self) -> Option<f64> {
         if !self.bound_enabled || !self.incumbent_cost.is_finite() || self.incumbent_cost <= 0.0 {
             return None;
         }
-        Some(((self.incumbent_cost - self.root_lower_bound) / self.incumbent_cost).max(0.0))
+        // An infinite `h(root)` is an infeasibility *claim*, not a measured
+        // lower bound; there is no gap to report against a solution the bound
+        // says cannot exist.
+        if !self.root_lower_bound.is_finite() {
+            return None;
+        }
+        let gap = (self.incumbent_cost - self.root_lower_bound) / self.incumbent_cost;
+        debug_assert!(
+            gap > -GAP_SLACK,
+            "inadmissible bound: h(root) {} exceeds the incumbent {}",
+            self.root_lower_bound,
+            self.incumbent_cost
+        );
+        // Absorb float noise around an exactly-optimal incumbent only.
+        Some(if gap.abs() <= GAP_SLACK { 0.0 } else { gap })
     }
 }
 
@@ -212,6 +240,13 @@ where
 {
     type Obj = A::Obj;
 
+    /// Trivial only when *both* children are: `max(0, 0) == 0` is still no
+    /// bound, but `max(h, 0) == h` is. Without this override the trait default
+    /// (`false`) would make a composition of two [`NoBound`]s report itself as
+    /// a real bound, so the driver would set `bound_enabled` and offer
+    /// `root_lower_bound = 0.0` as a measurement.
+    const TRIVIAL: bool = A::TRIVIAL && B::TRIVIAL;
+
     fn objective_id(&self) -> ObjectiveId {
         // Equal to `b`'s by the assert in `new`.
         self.a.objective_id()
@@ -250,6 +285,11 @@ pub struct WeightedDistanceBound<O> {
     /// `(qubit, encoded target)` — the same target list the goal and the move
     /// generators use, so "unresolved" means the same thing everywhere.
     targets: Vec<(u32, u64)>,
+    /// The carved-out locations, retained to tell "this atom is parked *on* a
+    /// blocked site" (legal at the root, and no floor can be certified for it)
+    /// apart from "this atom's routes were all severed by the carve" (a genuine
+    /// infeasibility proof). Both leave the source absent from the table.
+    blocked: HashSet<u64>,
     _obj: PhantomData<fn() -> O>,
 }
 
@@ -268,6 +308,7 @@ impl<O: Objective> WeightedDistanceBound<O> {
         Self {
             table: WeightedDistanceTable::new(&target_locs, index, blocked, objective),
             targets: targets.to_vec(),
+            blocked: blocked.clone(),
             _obj: PhantomData,
         }
     }
@@ -298,7 +339,22 @@ impl<O: Objective> CompletionBound for WeightedDistanceBound<O> {
                 continue; // resolved — contributes nothing
             }
             let Some(d) = self.table.distance(loc_enc, target_enc) else {
-                return f64::INFINITY; // no unblocked route exists
+                // An atom parked *on* a blocked site is absent from the carved
+                // graph, so the table cannot answer for it — but that is
+                // ignorance, not proof. `target_solver` notes that "nothing
+                // forbids the root placement from sitting on one, and the
+                // generators never check it", so this is a legal input shape,
+                // and the atom's first move takes it back onto the graph.
+                // Certifying no floor (`0.0`) is sound; claiming infeasibility
+                // would cut a solvable instance at its root.
+                //
+                // Any *other* absence — an unblocked source whose routes the
+                // carve severed — is a genuine proof that no completion exists,
+                // and must stay `+inf`.
+                if self.blocked.contains(&loc_enc) {
+                    continue;
+                }
+                return f64::INFINITY; // no unblocked route to the target
             };
             worst = worst.max(d);
         }

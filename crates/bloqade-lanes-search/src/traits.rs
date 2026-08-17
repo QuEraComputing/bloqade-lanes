@@ -107,6 +107,20 @@ pub trait Objective: CostFn + Sync {
 /// Decides when the search is complete.
 pub trait Goal {
     fn is_goal(&self, config: &Config) -> bool;
+
+    /// The `(qubit, encoded target)` set this goal requires *exactly* — every
+    /// listed qubit at its listed location — or `None` if the goal accepts more
+    /// than one configuration.
+    ///
+    /// This is what makes a target-distance completion bound admissible, so the
+    /// default is the conservative `None`: a new goal opts in rather than being
+    /// assumed point-valued. For a set-valued goal, the distance to any one
+    /// member is not a lower bound on the distance to the *nearest* member, so
+    /// a bound built from `ctx.targets` could exceed the true remaining cost
+    /// and prune the optimum.
+    fn exact_targets(&self) -> Option<&[(u32, u64)]> {
+        None
+    }
 }
 
 /// Estimates cost-to-goal for A*/greedy search (h-function).

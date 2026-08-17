@@ -47,8 +47,12 @@ def default_strategy_configs(
     hunting strictly-better goals on the largest kernel (`adder_64`, 93s ->
     370s) which roughly doubles that suite's runtime, and it buys 8 fewer moves
     there rather than nothing — a trade worth making deliberately, not on every
-    CI run. Physical bound coverage is measured ad hoc via
-    `--strategies rust_entropy_5_bounded`.
+    CI run.
+
+    Physical bound coverage is measured ad hoc via
+    `--architecture physical --strategies rust_entropy_5_bounded`: the CLI turns
+    this flag on when `--strategies` names a bounded config, so the strategy is
+    selectable by name without joining the default physical matrix.
     """
     if arch_spec is None:
         arch_spec_id = BUILTIN_ARCH_SPEC_ID

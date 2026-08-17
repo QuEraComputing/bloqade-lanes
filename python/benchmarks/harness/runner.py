@@ -155,6 +155,7 @@ class BenchmarkRunner:
                 max_depth_reached=max_depth_reached,
                 cuts_by_g=_stat_int(bound_stats, "cuts_by_g"),
                 cuts_by_h=_stat_int(bound_stats, "cuts_by_h"),
+                cuts_infeasible=_stat_int(bound_stats, "cuts_infeasible"),
                 cut_depth_sum=_stat_int(bound_stats, "cut_depth_sum"),
                 cut_depth_g_only_sum=_stat_int(bound_stats, "cut_depth_g_only_sum"),
                 max_optimality_gap=bound_stats.get("max_optimality_gap"),

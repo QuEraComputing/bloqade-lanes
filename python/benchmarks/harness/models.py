@@ -65,6 +65,11 @@ class BenchmarkRow:
     cuts_by_h: int | None = None
     """Branches pruned only because the completion bound was added: the bound's
     actual contribution over the pre-existing test."""
+    cuts_infeasible: int | None = None
+    """Branches pruned by an ``h = +inf`` proof that no completion exists,
+    independent of any incumbent. Reported separately because a solve whose
+    pruning is entirely infeasibility proofs leaves the other counters at zero,
+    which would otherwise be indistinguishable from the bound doing nothing."""
     cut_depth_sum: int | None = None
     """Summed depth at which ``cuts_by_h`` fired."""
     cut_depth_g_only_sum: int | None = None

@@ -56,6 +56,7 @@ OPTIONAL_COLUMN_DEFAULTS: dict[str, str] = {
     # Predate branch-and-bound instrumentation; blank means "not measured".
     "cuts_by_g": "",
     "cuts_by_h": "",
+    "cuts_infeasible": "",
     "cut_depth_sum": "",
     "cut_depth_g_only_sum": "",
     "max_optimality_gap": "",
@@ -67,13 +68,25 @@ def load_baseline_csv(path: Path) -> list[BenchmarkRow]:
 
     Columns listed in :data:`OPTIONAL_COLUMN_DEFAULTS` may be absent, so
     baselines committed before a column existed still load. Any other missing
-    column, or any column this harness does not know, is an error.
+    column, any column this harness does not know, and any *duplicated* column
+    is an error.
     """
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None:
             raise ValueError(f"Baseline CSV '{path}' is missing a header row.")
         fieldnames = tuple(reader.fieldnames)
+        # A repeated header name is silent corruption, not a schema variation:
+        # ``csv.DictReader`` keeps only the last occurrence, so every value from
+        # the duplicate onwards is read out of the wrong column and the CI gate
+        # then compares against numbers that were never measured. Membership
+        # checks alone cannot see this, which is why it is tested explicitly.
+        duplicates = sorted({c for c in fieldnames if fieldnames.count(c) > 1})
+        if duplicates:
+            raise ValueError(
+                f"Baseline CSV '{path}' repeats column(s): {', '.join(duplicates)}. "
+                "Duplicate headers silently shift values between columns."
+            )
         unknown = [c for c in fieldnames if c not in CSV_COLUMNS]
         missing = [
             c
@@ -220,6 +233,12 @@ def _compare_rows(
         )
         return diffs
 
+    # Pruning counters are compared even when both runs failed. A bound that
+    # proves an instance infeasible is *why* such a row fails, so this is
+    # exactly where a change in its counters carries information; returning
+    # first left the bound ungated on every unsuccessful case.
+    _add_bound_diffs(diffs, case_id, strategy_id, arch_spec_id, baseline, current)
+
     if not baseline.success and not current.success:
         return diffs
 
@@ -275,15 +294,40 @@ def _compare_rows(
         current=current.max_depth_reached,
         lower_is_better=True,
     )
-    # Pruning counters are deterministic, so compare them exactly. Neither
-    # direction is inherently better -- fewer cuts can mean a tighter bound
-    # reached the incumbent sooner, more cuts can mean it is doing more work --
-    # so these go through `_add_strict_diff`, which reports "changed" rather
-    # than judging. `_add_numeric_delta` has no neutral verdict: either setting
-    # of `lower_is_better` would label one direction an improvement.
+    _add_strict_diff(
+        diffs,
+        case_id,
+        strategy_id,
+        arch_spec_id,
+        "notes",
+        baseline.notes,
+        current.notes,
+    )
+    return diffs
+
+
+def _add_bound_diffs(
+    diffs: list[BenchmarkDiff],
+    case_id: str,
+    strategy_id: str,
+    arch_spec_id: str,
+    baseline: BenchmarkRow,
+    current: BenchmarkRow,
+) -> None:
+    """Compare the branch-and-bound instrumentation columns.
+
+    Pruning counters are deterministic, so compare them exactly. Neither
+    direction is inherently better -- fewer cuts can mean a tighter bound
+    reached the incumbent sooner, more cuts can mean it is doing more work --
+    so these go through :func:`_add_strict_diff`, which reports "changed"
+    rather than judging. :func:`_add_numeric_delta` has no neutral verdict:
+    either setting of ``lower_is_better`` would label one direction an
+    improvement.
+    """
     for field_name, base_value, cur_value in (
         ("cuts_by_g", baseline.cuts_by_g, current.cuts_by_g),
         ("cuts_by_h", baseline.cuts_by_h, current.cuts_by_h),
+        ("cuts_infeasible", baseline.cuts_infeasible, current.cuts_infeasible),
         ("cut_depth_sum", baseline.cut_depth_sum, current.cut_depth_sum),
         (
             "cut_depth_g_only_sum",
@@ -311,16 +355,6 @@ def _compare_rows(
         lower_is_better=True,
         float_compare_decimals=FLOAT_COMPARE_DECIMALS,
     )
-    _add_strict_diff(
-        diffs,
-        case_id,
-        strategy_id,
-        arch_spec_id,
-        "notes",
-        baseline.notes,
-        current.notes,
-    )
-    return diffs
 
 
 def _add_strict_diff(
@@ -416,6 +450,7 @@ def _parse_row(raw: dict[str, str]) -> BenchmarkRow:
         max_depth_reached=_parse_optional_int(raw["max_depth_reached"]),
         cuts_by_g=_parse_optional_int(raw["cuts_by_g"]),
         cuts_by_h=_parse_optional_int(raw["cuts_by_h"]),
+        cuts_infeasible=_parse_optional_int(raw["cuts_infeasible"]),
         cut_depth_sum=_parse_optional_int(raw["cut_depth_sum"]),
         cut_depth_g_only_sum=_parse_optional_int(raw["cut_depth_g_only_sum"]),
         max_optimality_gap=_parse_optional_float(raw["max_optimality_gap"]),

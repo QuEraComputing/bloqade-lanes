@@ -566,6 +566,10 @@ struct ScoredResumeState {
     /// by the ordering below — unlike the weighted `f_score` the frontier
     /// driver ranks by, this is an unweighted floor used to prune.
     min_total_cost: f64,
+    /// The node's accumulated cost alone, so the incumbent gate can classify
+    /// its own cuts as [`Cut::ByG`] or [`Cut::ByH`] without re-reading the
+    /// graph.
+    g: f64,
     depth: u32,
     order: u64,
 }
@@ -583,9 +587,11 @@ fn resume_buffer_insert(
     node_id: NodeId,
     score: f64,
     min_total_cost: f64,
+    g: f64,
     depth: u32,
     capacity: usize,
     next_order: &mut u64,
+    best_cost: Option<f64>,
 ) {
     if capacity == 0 {
         return;
@@ -596,6 +602,7 @@ fn resume_buffer_insert(
         node_id,
         score,
         min_total_cost,
+        g,
         depth,
         order: *next_order,
     };
@@ -603,6 +610,21 @@ fn resume_buffer_insert(
 
     if buffer.len() < capacity {
         buffer.push(candidate);
+        return;
+    }
+
+    // At capacity, evict a resident the incumbent already dominates before
+    // consulting the score ordering. `cmp_resume_states` deliberately ignores
+    // `min_total_cost`, so without this a dominated resident can out-rank a
+    // viable candidate on score and keep its slot — only for the next
+    // `resume_buffer_pop_best` to discard it anyway, having lost a resume point
+    // the buffer had room for.
+    let candidate_is_viable = best_cost.is_none_or(|cap| candidate.min_total_cost < cap);
+    if candidate_is_viable
+        && let Some(cap) = best_cost
+        && let Some(dominated_idx) = buffer.iter().position(|e| e.min_total_cost >= cap)
+    {
+        buffer[dominated_idx] = candidate;
         return;
     }
 
@@ -630,9 +652,19 @@ fn resume_buffer_discard(buffer: &mut Vec<ScoredResumeState>, node_id: NodeId) {
 /// `g + h` reaches `C` cannot lead to a strictly cheaper solution, so it is
 /// dropped rather than returned. Ordering is untouched by the gate — the
 /// priority comparison stays `(score, depth, order)`.
-fn resume_buffer_pop_best(
+///
+/// This is the third pruning gate, and its cuts are recorded like the other
+/// two: dropping a node here is the bound's work just as much as refusing it at
+/// the top of the loop, and a node reaching this gate is always uncounted (a
+/// node is only buffered after passing [`classify_cut`], and `best_cost` never
+/// rises, so a node that was ever cut is never re-inserted). Leaving it out
+/// undercounted `cuts_by_h` and biased the published depth ratio.
+fn resume_buffer_pop_best<B: CompletionBound>(
     buffer: &mut Vec<ScoredResumeState>,
     best_cost: Option<f64>,
+    stats: &mut BoundStats,
+    counted: &mut HashSet<NodeId>,
+    min_shot_cost: f64,
 ) -> Option<NodeId> {
     loop {
         let best_idx = buffer
@@ -644,6 +676,21 @@ fn resume_buffer_pop_best(
         if let Some(cost_cap) = best_cost
             && best.min_total_cost >= cost_cap
         {
+            let cut = if best.g >= cost_cap {
+                Cut::ByG
+            } else {
+                Cut::ByH
+            };
+            record_cut::<B>(
+                stats,
+                counted,
+                best.node_id,
+                cut,
+                best.depth,
+                best.g,
+                best_cost,
+                min_shot_cost,
+            );
             continue;
         }
         return Some(best.node_id);
@@ -2279,6 +2326,18 @@ where
 
     // Early check.
     if goal.is_goal(&root) {
+        // Evaluate the bound at the root rather than leaving `root_lower_bound`
+        // at its `Default` of `0.0`. Reporting `bound_enabled` beside an
+        // unevaluated zero would publish a measurement the bound never made —
+        // indistinguishable, to a reader of `bound_stats`, from a bound that ran
+        // and certified a floor of zero. For a point-valued goal this *is* 0.0,
+        // since every atom is already home; the difference is that it is 0.0
+        // because the bound said so.
+        let root_lower_bound = if B::TRIVIAL {
+            0.0
+        } else {
+            bound.estimate(&root)
+        };
         let graph = SearchGraph::new(root);
         return SearchResult {
             goal: Some(graph.root()),
@@ -2290,6 +2349,7 @@ where
             // bound was supplied, so a bounded solve that starts at the goal is
             // not misreported as an unbounded one.
             bound_stats: BoundStats {
+                root_lower_bound,
                 incumbent_cost: 0.0,
                 bound_enabled: !B::TRIVIAL,
                 ..BoundStats::default()
@@ -2378,7 +2438,14 @@ where
                 best_cost,
                 objective.min_shot_cost(),
             );
-            current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
+            current = resume_buffer_pop_best::<B>(
+                &mut resume_buffer,
+                best_cost,
+                &mut bound_stats,
+                &mut cut_counted,
+                objective.min_shot_cost(),
+            )
+            .unwrap_or(root_id);
             continue;
         }
 
@@ -2554,7 +2621,14 @@ where
                 if found_goals.len() >= params.max_goal_candidates {
                     break;
                 }
-                current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
+                current = resume_buffer_pop_best::<B>(
+                    &mut resume_buffer,
+                    best_cost,
+                    &mut bound_stats,
+                    &mut cut_counted,
+                    objective.min_shot_cost(),
+                )
+                .unwrap_or(root_id);
                 continue;
             }
             // Transposition: config seen at equal or better cost.
@@ -2617,9 +2691,11 @@ where
                 current,
                 next_best_score,
                 min_total_cost,
+                graph.g_score(current),
                 graph.depth(current),
                 resume_capacity,
                 &mut resume_insert_order,
+                best_cost,
             );
         }
 
@@ -2692,7 +2768,14 @@ where
             if found_goals.len() >= params.max_goal_candidates {
                 break;
             }
-            current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
+            current = resume_buffer_pop_best::<B>(
+                &mut resume_buffer,
+                best_cost,
+                &mut bound_stats,
+                &mut cut_counted,
+                objective.min_shot_cost(),
+            )
+            .unwrap_or(root_id);
             continue;
         }
 
@@ -2708,7 +2791,14 @@ where
                 objective.min_shot_cost(),
             );
             resume_buffer_discard(&mut resume_buffer, child_id);
-            current = resume_buffer_pop_best(&mut resume_buffer, best_cost).unwrap_or(root_id);
+            current = resume_buffer_pop_best::<B>(
+                &mut resume_buffer,
+                best_cost,
+                &mut bound_stats,
+                &mut cut_counted,
+                objective.min_shot_cost(),
+            )
+            .unwrap_or(root_id);
             continue;
         }
         current = child_id; // descend
@@ -3266,19 +3356,58 @@ mod tests {
         assert_eq!(entries[2].0, key_bus2);
     }
 
+    /// `resume_buffer_insert` with `g == min_total_cost` (the `h ≡ 0` shape
+    /// these ordering tests were written against) and no incumbent.
+    fn insert_for_test(
+        buffer: &mut Vec<ScoredResumeState>,
+        node_id: NodeId,
+        score: f64,
+        min_total_cost: f64,
+        depth: u32,
+        capacity: usize,
+        next_order: &mut u64,
+    ) {
+        resume_buffer_insert(
+            buffer,
+            node_id,
+            score,
+            min_total_cost,
+            min_total_cost,
+            depth,
+            capacity,
+            next_order,
+            None,
+        );
+    }
+
+    /// `resume_buffer_pop_best` with the cut bookkeeping discarded. `B` is only
+    /// a type parameter there, so a non-trivial bound needs no instance — and a
+    /// non-trivial one is what makes `record_cut` actually run.
+    fn pop_for_test(buffer: &mut Vec<ScoredResumeState>, best_cost: Option<f64>) -> Option<NodeId> {
+        let mut stats = BoundStats::default();
+        let mut counted = HashSet::new();
+        resume_buffer_pop_best::<crate::bounds::WeightedDistanceBound<crate::cost::UniformCost>>(
+            buffer,
+            best_cost,
+            &mut stats,
+            &mut counted,
+            1.0,
+        )
+    }
+
     #[test]
     fn resume_buffer_orders_by_score_then_depth_then_order() {
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
 
-        resume_buffer_insert(&mut buffer, NodeId(1), 10.0, 2.0, 2, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(2), 10.0, 4.0, 4, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(3), 11.0, 1.0, 1, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(1), 10.0, 2.0, 2, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(2), 10.0, 4.0, 4, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(3), 11.0, 1.0, 1, 3, &mut next_order);
 
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(NodeId(3)));
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(NodeId(2)));
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(NodeId(1)));
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), None);
+        assert_eq!(pop_for_test(&mut buffer, None), Some(NodeId(3)));
+        assert_eq!(pop_for_test(&mut buffer, None), Some(NodeId(2)));
+        assert_eq!(pop_for_test(&mut buffer, None), Some(NodeId(1)));
+        assert_eq!(pop_for_test(&mut buffer, None), None);
     }
 
     #[test]
@@ -3286,19 +3415,16 @@ mod tests {
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
 
-        resume_buffer_insert(&mut buffer, NodeId(11), 5.0, 1.0, 1, 2, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(12), 9.0, 2.0, 2, 2, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(13), 3.0, 3.0, 3, 2, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(11), 5.0, 1.0, 1, 2, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(12), 9.0, 2.0, 2, 2, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(13), 3.0, 3.0, 3, 2, &mut next_order);
 
         // Lowest-priority node (13) is dropped at capacity.
         assert_eq!(buffer.len(), 2);
 
         // An incumbent cost of 2 blocks node 12 (g = 2), so 11 is next.
-        assert_eq!(
-            resume_buffer_pop_best(&mut buffer, Some(2.0)),
-            Some(NodeId(11))
-        );
-        assert_eq!(resume_buffer_pop_best(&mut buffer, Some(2.0)), None);
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), Some(NodeId(11)));
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), None);
     }
 
     #[test]
@@ -3306,16 +3432,13 @@ mod tests {
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
 
-        resume_buffer_insert(&mut buffer, NodeId(20), 8.0, 3.0, 3, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(21), 7.5, 2.0, 2, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(22), 7.0, 1.0, 1, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(20), 8.0, 3.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(21), 7.5, 2.0, 2, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(22), 7.0, 1.0, 1, 3, &mut next_order);
 
         // Once the incumbent cost is 2, candidates with g >= 2 are skipped.
-        assert_eq!(
-            resume_buffer_pop_best(&mut buffer, Some(2.0)),
-            Some(NodeId(22))
-        );
-        assert_eq!(resume_buffer_pop_best(&mut buffer, Some(2.0)), None);
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), Some(NodeId(22)));
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), None);
     }
 
     #[test]
@@ -3323,10 +3446,10 @@ mod tests {
         let root = NodeId(0);
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
-        resume_buffer_insert(&mut buffer, NodeId(31), 4.0, 1.0, 1, 1, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(31), 4.0, 1.0, 1, 1, &mut next_order);
 
-        let first_resume = resume_buffer_pop_best(&mut buffer, Some(3.0)).unwrap_or(root);
-        let fallback_resume = resume_buffer_pop_best(&mut buffer, Some(3.0)).unwrap_or(root);
+        let first_resume = pop_for_test(&mut buffer, Some(3.0)).unwrap_or(root);
+        let fallback_resume = pop_for_test(&mut buffer, Some(3.0)).unwrap_or(root);
 
         assert_eq!(first_resume, NodeId(31));
         assert_eq!(fallback_resume, root);
@@ -3347,14 +3470,14 @@ mod tests {
         let mut next_order = 0_u64;
         let parent = NodeId(42);
 
-        resume_buffer_insert(&mut buffer, parent, 1.0, 3.0, 3, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(9), 2.0, 3.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, parent, 1.0, 3.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(9), 2.0, 3.0, 3, 3, &mut next_order);
         // Reinsert same parent with a better move score.
-        resume_buffer_insert(&mut buffer, parent, 5.0, 3.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, parent, 5.0, 3.0, 3, 3, &mut next_order);
 
         // Node id is de-duplicated and priority is refreshed.
         assert_eq!(buffer.iter().filter(|e| e.node_id == parent).count(), 1);
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(parent));
+        assert_eq!(pop_for_test(&mut buffer, None), Some(parent));
     }
 
     #[test]
@@ -4128,6 +4251,19 @@ mod tests {
         assert_eq!(
             bounded.nodes_expanded, 0,
             "h0 = +inf should keep every branch unexpanded"
+        );
+        // `nodes_expanded == 0` alone does not distinguish the two runs: with
+        // every target distance infinite the generator emits no candidates, so
+        // the *unbounded* run also expands nothing and that assertion stays
+        // green with the bound removed entirely. The infeasibility counter is
+        // what only the bound can move.
+        assert_eq!(
+            bounded.bound_stats.cuts_infeasible, 1,
+            "the bound must record the +inf proof it used"
+        );
+        assert_eq!(
+            unbounded.bound_stats.cuts_infeasible, 0,
+            "an unbounded run has no infeasibility proof to report"
         );
     }
 

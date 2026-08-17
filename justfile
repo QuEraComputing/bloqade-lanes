@@ -153,9 +153,10 @@ generate-primer:
 check-primer:
     cargo run -p bloqade-lanes-search --bin policies-primer -- --check
 
-# Run clippy lints on core + cli crates
+# Run clippy lints on every pure-Rust crate
+# (excludes the PyO3 binding crate, which needs a Python interpreter to link)
 lint: format-check check-header check-primer
-    cargo clippy -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli --all-targets -- -D warnings
+    cargo clippy -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli -p bloqade-lanes-search -p bloqade-lanes-dsl-core --all-targets -- -D warnings
 
 # Verify the committed C header matches what cbindgen generates
 check-header:
@@ -170,8 +171,12 @@ cli-smoke-test:
     ./scripts/test_smoke.sh
 
 # Run Rust tests (excludes Python-binding crate which needs PyO3)
+#
+# `bloqade-lanes-search` carries the search drivers and the completion-bound
+# admissibility suite; without it here, CI compiles that crate (via
+# check-primer) but never runs a single one of its tests.
 test-rust:
-    cargo test -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
+    cargo test -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli -p bloqade-lanes-search -p bloqade-lanes-dsl-core
 
 # Run Python tests
 test-python:

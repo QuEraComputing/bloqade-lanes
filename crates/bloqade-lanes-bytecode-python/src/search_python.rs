@@ -270,7 +270,10 @@ impl PySolveResult {
 
     /// Branch-and-bound pruning statistics as a dict.
     ///
-    /// All-zero unless `EntropyOptions.completion_bound` was set. Keys:
+    /// **Empty** unless `EntropyOptions.completion_bound` was set — an
+    /// unbounded solve measured nothing, and zeros would advertise a
+    /// `root_lower_bound` of 0.0 as if it were a measurement. Key-check rather
+    /// than expecting zeros. Keys:
     /// `cuts_by_g` (cuts `g` alone could make), `cuts_by_h` (cuts only the
     /// bound could make), `cuts_infeasible`, `cut_depth_sum` /
     /// `cut_depth_g_only_sum` (the depth ratio measuring how much earlier the

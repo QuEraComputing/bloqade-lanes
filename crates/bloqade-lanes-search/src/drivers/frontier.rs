@@ -496,14 +496,27 @@ fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchConte
 /// - `max_depth` bounds the *tree depth* — a horizon in move layers, as the
 ///   receding-horizon rollout uses.
 /// - `max_cost` bounds the accumulated [`CostFn`] cost: a node whose `g` reaches
-///   it is not expanded. Callers refining an existing solution pass that
-///   solution's cost, so only strictly cheaper plans stay reachable.
+///   it is neither expanded **nor returned as a goal**. Callers refining an
+///   existing solution pass that solution's cost, so only strictly cheaper
+///   plans stay reachable — including the plan this call reports.
 ///
 /// They coincide only while `g == depth` (i.e. under
 /// [`UniformCost`](crate::cost::UniformCost)). Under a non-uniform objective a
 /// cheaper plan can be *deeper* — more shots, each cheaper — so expressing an
 /// incumbent bound as a depth cap would exclude exactly the improvements the
 /// caller is looking for.
+/// Whether `g` has reached the caller's cost cap, i.e. nothing at or beyond
+/// this node can be *strictly* cheaper than the incumbent the cap came from.
+///
+/// Applied to the goal-return paths as well as to expansion: a cap that only
+/// stopped expansion still let `run_search` report a plan costlier than the
+/// incumbent it was given, which is the opposite of what a refinement pass asks
+/// for.
+#[inline]
+fn reaches_cost_cap(g: f64, max_cost: Option<f64>) -> bool {
+    max_cost.is_some_and(|cap| g >= cap)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_search<G, S, C, Go, F, O>(
     root: Config,
@@ -569,8 +582,13 @@ where
         }
         closed[idx] = true;
 
-        // Goal check on pop (A* optimality).
-        if frontier.check_goal_on_pop() && goal.is_goal(graph.config(node_id)) {
+        // Goal check on pop (A* optimality). A goal at or past the cost cap is
+        // not an improvement on the incumbent that cap came from, so it is not
+        // reported; falling through leaves the cost gate below to drop it.
+        if frontier.check_goal_on_pop()
+            && goal.is_goal(graph.config(node_id))
+            && !reaches_cost_cap(graph.g_score(node_id), max_cost)
+        {
             observer.on_event(SearchEvent::GoalFound {
                 depth: graph.depth(node_id),
                 node_id,
@@ -639,8 +657,14 @@ where
             let child_closed = child_idx < closed.len() && closed[child_idx];
 
             if is_new && !child_closed {
-                // Goal check on generate (BFS/DFS).
-                if frontier.check_goal_on_generate() && goal.is_goal(graph.config(child_id)) {
+                // Goal check on generate (BFS/DFS). Same cap rule as the
+                // on-pop path: a child that already reaches the cap cannot be
+                // a strictly cheaper plan, so it is queued rather than
+                // returned, and the cost gate drops it when popped.
+                if frontier.check_goal_on_generate()
+                    && goal.is_goal(graph.config(child_id))
+                    && !reaches_cost_cap(new_g, max_cost)
+                {
                     observer.on_event(SearchEvent::GoalFound {
                         depth: graph.depth(child_id),
                         node_id: child_id,
@@ -1379,20 +1403,20 @@ mod tests {
 
     // ── max_cost ──
 
-    /// A node whose accumulated `g` *reaches* the cap is not expanded, so no
-    /// plan costing more than the cap can be assembled.
+    /// A node whose accumulated `g` *reaches* the cap is neither expanded nor
+    /// returned, so no plan costing the cap or more can come back.
     ///
-    /// The diamond puts the boundary in a place a sloppy comparison can't
-    /// survive: the optimal plan `0 → 1 → 3 → 4` costs 3 and runs through a
-    /// node at `g = 2`. At `max_cost = 2` that node is exactly at the cap, so
-    /// gating on `>=` refuses it and the goal is unreachable; gating on `>`
-    /// would expand it and find the goal anyway. The two cases below therefore
-    /// pin the operator, not just the existence of a limit.
+    /// The diamond puts the boundary where a sloppy comparison cannot survive:
+    /// the optimal plan `0 → 1 → 3 → 4` costs 3 and runs through a node at
+    /// `g = 2`. At `max_cost = 4` the plan is admissible; at `max_cost = 3` the
+    /// goal is exactly at the cap and must be refused (gating on `>` would
+    /// return it); at `max_cost = 2` the waypoint itself is at the cap, so
+    /// nothing expands past it.
     #[test]
-    fn max_cost_gates_expansion_at_the_cap() {
+    fn max_cost_gates_expansion_and_the_returned_plan() {
         let fx = Fixture::new();
 
-        // Cap above the optimum: the goal is still reached, at its true cost.
+        // Cap above the optimum: the goal is reached, at its true cost.
         let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
         let reachable = run(
             &fx,
@@ -1403,13 +1427,31 @@ mod tests {
             &mut f,
             None,
             None,
-            Some(3.0),
+            Some(4.0),
         );
-        let goal = reachable.goal.expect("cost-3 plan is within a cap of 3");
+        let goal = reachable.goal.expect("cost-3 plan is under a cap of 4");
         assert_eq!(reachable.graph.g_score(goal), 3.0);
 
-        // Cap *at* the cost of the only viable waypoint: nothing expands past
-        // it, so the goal drops out of reach entirely.
+        // Cap *at* the goal's own cost: not an improvement, so not returned.
+        // A refinement pass asks for something strictly cheaper.
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let at_cap = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            Some(3.0),
+        );
+        assert!(
+            at_cap.goal.is_none(),
+            "a goal at g == max_cost is not strictly cheaper and must not be returned"
+        );
+
+        // Cap at the cost of the only viable waypoint: nothing expands past it.
         let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
         let blocked = run(
             &fx,
@@ -1426,6 +1468,54 @@ mod tests {
             blocked.goal.is_none(),
             "a node at g == max_cost must not be expanded"
         );
+    }
+
+    /// The cap bounds the *returned* plan on both goal-check timings, not just
+    /// expansion.
+    ///
+    /// This is the regression the cap originally missed: the root passes the
+    /// gate at `g = 0`, expands, and the child arrives already over the cap —
+    /// so a gate on expansion alone returned a plan costing 8 under a cap of 3.
+    /// A* checks the goal on pop and BFS on generate, and both paths leaked.
+    #[test]
+    fn max_cost_bounds_the_returned_plan_on_both_goal_paths() {
+        let fx = Fixture::new();
+
+        for (name, goal) in [
+            ("bfs (goal on generate)", {
+                run(
+                    &fx,
+                    Config::new([(0, loc(0, 0))]).unwrap(),
+                    &LineGen { max_site: 10 },
+                    &FrontLoadedCost,
+                    1,
+                    &mut BfsFrontier::new(),
+                    None,
+                    None,
+                    Some(3.0),
+                )
+                .goal
+            }),
+            ("astar (goal on pop)", {
+                run(
+                    &fx,
+                    Config::new([(0, loc(0, 0))]).unwrap(),
+                    &LineGen { max_site: 10 },
+                    &FrontLoadedCost,
+                    1,
+                    &mut PriorityFrontier::astar(|_: &Config| 0.0, 1.0),
+                    None,
+                    None,
+                    Some(3.0),
+                )
+                .goal
+            }),
+        ] {
+            assert!(
+                goal.is_none(),
+                "{name}: the only plan costs 8, which exceeds the cap of 3"
+            );
+        }
     }
 
     /// Edge costs for [`LineGen`] with the expense front-loaded: the first hop

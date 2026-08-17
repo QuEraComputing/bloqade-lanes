@@ -81,7 +81,12 @@ pub struct SolveResult {
     /// Optional entropy-search trace payload for visualization/debugging.
     pub entropy_trace: Option<EntropyTrace>,
     /// Branch-and-bound pruning statistics from the search that produced this
-    /// result. All-zero unless a completion bound was enabled.
+    /// result.
+    ///
+    /// Counters stay zero unless a completion bound was enabled; check
+    /// [`BoundStats::bound_enabled`] for that, since `incumbent_cost` is
+    /// populated either way. The Python surface reports an unbounded run as an
+    /// *empty* dict rather than zeros.
     pub bound_stats: BoundStats,
 }
 

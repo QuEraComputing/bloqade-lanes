@@ -19,8 +19,13 @@ pub struct SearchResult {
     pub max_depth_reached: u32,
     /// The search graph, for path reconstruction and inspection.
     pub graph: SearchGraph,
-    /// Branch-and-bound pruning statistics. All-zero for drivers that do not
-    /// bound, and for bounded runs with the bound disabled.
+    /// Branch-and-bound pruning statistics.
+    ///
+    /// Every counter stays zero for drivers that do not bound and for runs with
+    /// the bound disabled, but the struct as a whole is *not* all-zero: the
+    /// entropy driver records `incumbent_cost` either way (`NaN` when it found
+    /// nothing). Read [`BoundStats::bound_enabled`] to tell a measured run from
+    /// an unmeasured one rather than testing the counters against zero.
     pub bound_stats: BoundStats,
 }
 

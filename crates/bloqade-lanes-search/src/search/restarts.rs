@@ -215,22 +215,19 @@ where
     // Completion bound, built once per solve and shared by reference across
     // the restart fan-out (hence `Objective: Sync` / `CompletionBound: Sync`).
     //
-    // Deliberately **not** built for loose-goal solves. There, `ctx.targets`
-    // is a greedy assignment of qubits to entangling slots, but the goal
-    // (`EntanglingConstraintGoal`) accepts *any* valid entangling placement:
-    // a qubit can satisfy the goal without ever reaching its assigned target,
-    // so the distance to that target can exceed the true remaining cost.
-    // `h0` would not be admissible and pruning could discard the optimum.
-    // `cz_pairs.is_some()` is exactly the loose-goal marker.
+    // Built from `goal.exact_targets()`, not from `ctx.targets`, and only when
+    // the goal says it is point-valued. A set-valued goal — `EntanglingConstraintGoal`,
+    // where `ctx.targets` is one greedy Hungarian assignment among many
+    // acceptable placements, or `PartialPlacementGoal`, which requires only
+    // `min_placed` of them — is satisfiable without every qubit reaching its
+    // listed target, so a distance to those targets can exceed the true
+    // remaining cost, `h0` would be inadmissible, and pruning could discard
+    // the optimum. Asking the goal keeps that decision next to the definition
+    // that determines it, rather than inferring it from a context field.
     let completion_bound = match entropy_opts.and_then(|o| o.completion_bound) {
-        Some(BoundKind::WeightedDistance) if entropy_tables.is_some() && ctx.cz_pairs.is_none() => {
-            Some(WeightedDistanceBound::new(
-                &objective,
-                ctx.targets,
-                ctx.index,
-                ctx.blocked,
-            ))
-        }
+        Some(BoundKind::WeightedDistance) if entropy_tables.is_some() => goal
+            .exact_targets()
+            .map(|targets| WeightedDistanceBound::new(&objective, targets, ctx.index, ctx.blocked)),
         _ => None,
     };
     let completion_bound = completion_bound.as_ref();
@@ -366,8 +363,18 @@ where
         );
 
         if astar_solve.status == SolveStatus::Solved {
-            return pick_best(vec![inner_result, astar_solve])
-                .expect("two-element vec is non-empty");
+            // The refinement runs on a frontier driver, which never prunes
+            // against an incumbent and so reports an inert `BoundStats`. If it
+            // wins, the pruning the inner entropy pass really did still has to
+            // be reported — otherwise a bounded cascade whose A* leg happens to
+            // find a cheaper plan looks like a solve that was never bounded.
+            let inner_stats = inner_result.bound_stats;
+            let mut best =
+                pick_best(vec![inner_result, astar_solve]).expect("two-element vec is non-empty");
+            if !best.bound_stats.bound_enabled {
+                best.bound_stats = inner_stats;
+            }
+            return best;
         }
         return inner_result;
     }
@@ -511,6 +518,28 @@ mod tests {
         cz_pairs: Option<&[(u32, u32)]>,
         initial: &[(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)],
     ) -> SolveResult {
+        solve_with_goal(
+            AllAtTarget::new,
+            strategy,
+            completion_bound,
+            cz_pairs,
+            initial,
+        )
+    }
+
+    /// As [`solve_with`], but with the goal chosen by the caller — the input
+    /// that now decides whether a completion bound is admissible.
+    fn solve_with_goal<Go, F>(
+        make_goal: F,
+        strategy: Strategy,
+        completion_bound: Option<BoundKind>,
+        cz_pairs: Option<&[(u32, u32)]>,
+        initial: &[(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)],
+    ) -> SolveResult
+    where
+        Go: Goal + Sync,
+        F: FnOnce(&[(u32, u64)]) -> Go,
+    {
         let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
             serde_json::from_str(example_arch_json()).expect("example arch json parses");
         let index = LaneIndex::new(spec);
@@ -519,7 +548,7 @@ mod tests {
         let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l).collect();
         let dist_table = DistanceTable::new(&target_locs, &index);
         let blocked = HashSet::new();
-        let goal = AllAtTarget::new(&targets);
+        let goal = make_goal(&targets);
         let ctx = SearchContext {
             index: &index,
             dist_table: &dist_table,
@@ -680,15 +709,18 @@ mod tests {
     /// entangling slots, but the goal accepts *any* valid entangling
     /// placement: a qubit can satisfy the goal without ever reaching its
     /// assigned target, so `h0` — a distance to that target — can exceed the
-    /// true remaining cost. Honouring the request would make pruning
-    /// inadmissible and silently discard optimal plans, with nothing in the
-    /// output to show for it. `cz_pairs.is_some()` is the marker for that
-    /// shape, and this pins that flipping it is what disables the bound.
+    /// true remaining cost. `Goal::exact_targets()` is how a goal declares
+    /// itself point-valued, and only a goal that does gets a bound.
+    ///
+    /// Exercised with `PartialPlacementGoal`, the smallest set-valued goal:
+    /// requiring only `min_placed` of the targets means an atom can be left
+    /// where it is, so `h0` — a max over *all* unresolved atoms — overestimates.
+    /// `EntanglingConstraintGoal` is set-valued for the same reason and
+    /// inherits the same `None` default.
     #[test]
-    fn a_loose_goal_solve_refuses_the_completion_bound() {
-        // Fixed-target: the request is honoured, so the loose-goal assertion
-        // below cannot pass vacuously through some unrelated path that drops
-        // the bound anyway.
+    fn a_set_valued_goal_refuses_the_completion_bound() {
+        // Point-valued: the request is honoured, so the assertion below cannot
+        // pass vacuously through some unrelated path that drops the bound.
         let fixed = entropy_solve(Some(BoundKind::WeightedDistance));
         assert_eq!(fixed.status, SolveStatus::Solved);
         assert!(
@@ -696,10 +728,11 @@ mod tests {
             "a fixed-target solve must honour an explicit completion-bound request"
         );
 
-        let loose = solve_with(
+        let loose = solve_with_goal(
+            |targets| crate::goals::PartialPlacementGoal::new(targets, Some(1)),
             Strategy::Entropy,
             Some(BoundKind::WeightedDistance),
-            Some(&[(0, 1)]),
+            None,
             &start(),
         );
         assert_eq!(
@@ -709,13 +742,24 @@ mod tests {
         );
         assert!(
             !loose.bound_stats.bound_enabled,
-            "h0 is not admissible against a loose entangling goal; the bound must be refused"
+            "h0 is not admissible against a set-valued goal; the bound must be refused"
         );
         assert_eq!(
             loose.bound_stats.total_cuts(),
             0,
             "a refused bound must not prune"
         );
+
+        // The CZ marker is no longer what decides this: a point-valued goal is
+        // bounded whether or not the context carries cz_pairs, because the goal
+        // is what determines admissibility.
+        let with_cz_marker = solve_with(
+            Strategy::Entropy,
+            Some(BoundKind::WeightedDistance),
+            Some(&[(0, 1)]),
+            &start(),
+        );
+        assert!(with_cz_marker.bound_stats.bound_enabled);
     }
 
     /// The dispatch may *raise* a caller's deadlock policy to keep the plain
