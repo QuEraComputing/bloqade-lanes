@@ -3,6 +3,7 @@ import typing
 import numpy as np
 from bloqade.analysis.measure_id import MeasurementIDAnalysis, lattice
 from kirin import ir
+from kirin.passes import HintConst
 
 T = typing.TypeVar("T")
 
@@ -64,6 +65,11 @@ def generate_post_processing(
         each shot. If the user-level results cannot be determined, returns None.
 
     """
+
+    # JSON serialization deliberately omits SSA hints. Rebuild constant hints
+    # before analysing measurement indexing so a decoded kernel can resolve
+    # expressions such as ``measurements[0]``.
+    HintConst(mt.dialects, no_raise=False)(mt)
 
     _, user_output = MeasurementIDAnalysis(mt.dialects).run(mt)
     func = typing.cast(
