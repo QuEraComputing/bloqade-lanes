@@ -19,10 +19,10 @@
 //!   from, so a bound derived from it can refuse to prune a search whose `g`
 //!   accumulates a different objective.
 
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
-use crate::primitives::distance::DijkstraEntry;
 use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::reverse_lane_graph::ReverseLaneGraph;
 use crate::traits::{Objective, ObjectiveId};
 
 /// Precomputed minimum **weighted** distance from every reachable location to
@@ -94,45 +94,26 @@ impl WeightedDistanceTable {
             v
         };
 
-        // Reverse adjacency `dst → [(src, w)]` over unblocked lanes only, and
-        // intern every location that survives the carve.
-        let mut reverse_adj: HashMap<u64, Vec<(u64, f64)>> = HashMap::new();
-        let mut loc_index: HashMap<u64, usize> = HashMap::new();
-        let intern = |loc: u64, loc_index: &mut HashMap<u64, usize>| {
-            let next = loc_index.len();
-            loc_index.entry(loc).or_insert(next);
-        };
-
-        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
-            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
-                let Some((src, dst)) = index.endpoints(&lane) else {
-                    continue;
-                };
-                let (src_enc, dst_enc) = (src.encode(), dst.encode());
-                // Carve out blocked vertices: a lane touching one can never be
-                // taken, so it must not contribute a path.
-                if blocked.contains(&src_enc) || blocked.contains(&dst_enc) {
-                    continue;
-                }
-                let w = objective.lane_weight(lane);
-                assert!(
-                    w >= 0.0,
-                    "objective {:?} reported a negative lane_weight ({w}) for {lane:?}; \
-                     Dijkstra requires non-negative edge weights",
-                    objective.id()
-                );
-                intern(src_enc, &mut loc_index);
-                intern(dst_enc, &mut loc_index);
-                reverse_adj.entry(dst_enc).or_default().push((src_enc, w));
-            }
-        }
+        // Reversed, interned, blocked-carved lane graph at the objective's
+        // weights. `blocked` is carved inside the shared builder: a lane
+        // touching one can never be taken, so it must not contribute a path.
+        let mut graph = ReverseLaneGraph::build(index, blocked, |lane| {
+            let w = objective.lane_weight(lane);
+            assert!(
+                w >= 0.0,
+                "objective {:?} reported a negative lane_weight ({w}) for {lane:?}; \
+                 Dijkstra requires non-negative edge weights",
+                objective.id()
+            );
+            Some(w)
+        });
         // Isolated targets (no incident unblocked lanes) still need an index so
         // that `distance(t, t) == 0` holds, matching `DistanceTable`.
         for &t in &targets {
-            intern(t, &mut loc_index);
+            graph.intern(t);
         }
 
-        let n_loc = loc_index.len();
+        let n_loc = graph.len();
         let target_col: HashMap<u64, usize> = targets
             .iter()
             .enumerate()
@@ -142,43 +123,16 @@ impl WeightedDistanceTable {
         let mut flat_distance = vec![f64::INFINITY; n_loc * n_targets];
 
         for &target_enc in &targets {
-            let target_idx = loc_index[&target_enc];
             let col = target_col[&target_enc];
-            let mut dist: Vec<f64> = vec![f64::INFINITY; n_loc];
-            dist[target_idx] = 0.0;
-            let mut heap = BinaryHeap::new();
-            heap.push(DijkstraEntry {
-                cost: 0.0,
-                node: target_enc,
-            });
-
-            while let Some(entry) = heap.pop() {
-                let entry_idx = loc_index[&entry.node];
-                // Stale heap entry — a shorter path to this node was settled.
-                if entry.cost > dist[entry_idx] {
-                    continue;
-                }
-                let Some(preds) = reverse_adj.get(&entry.node) else {
-                    continue;
-                };
-                for &(pred, w) in preds {
-                    let pred_idx = loc_index[&pred];
-                    let new_cost = entry.cost + w;
-                    if new_cost < dist[pred_idx] {
-                        dist[pred_idx] = new_cost;
-                        heap.push(DijkstraEntry {
-                            cost: new_cost,
-                            node: pred,
-                        });
-                    }
-                }
-            }
-
-            for (from_idx, &d) in dist.iter().enumerate() {
+            let target_idx = graph
+                .index_of(target_enc)
+                .expect("every target was interned above");
+            for (from_idx, d) in graph.dijkstra_from(target_idx).into_iter().enumerate() {
                 flat_distance[from_idx * n_targets + col] = d;
             }
         }
 
+        let (loc_index, _) = graph.into_index();
         Self {
             loc_index,
             target_col,

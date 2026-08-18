@@ -47,14 +47,19 @@ The task statement assumes the driver's current objective is
 `cost = (number of movesets) + (total move duration) / tau`. **It is not.**
 What the driver actually accumulates and compares:
 
-| Question | Answer | Evidence |
+The table below is a snapshot of the state **before** this work landed. Its
+citations are symbol names rather than line links on purpose: every mechanism it
+names was replaced by the change this document proposes, so no line number can
+point at it any more.
+
+| Question | Answer (pre-change) | Evidence (pre-change) |
 |---|---|---|
-| What does a shot cost? | Exactly `1.0`, hardcoded | [`entropy.rs:1489`](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:1489) (`cost: 1.0` on every `CandidateEntry`) |
-| How does `g` accumulate? | `g(child) = g(parent) + cost` | [`entropy.rs:2141`](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:2141); both fallbacks also add `1.0` ([1827](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:1827), [1903](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:1903)) |
-| So what is `g`? | **`g(node) == depth(node)` exactly**, for every node in the entropy graph | uniform `1.0` per insert, no exceptions |
-| What does the incumbent cut compare? | **`depth`, not `g`** | `best_goal_depth` ([1997](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:1997)); cuts at [2011](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:2011), [2330](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:2330), and inside `resume_buffer_pop_best` ([584](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:584)) |
+| What does a shot cost? | Exactly `1.0`, hardcoded | `cost: 1.0` on every `CandidateEntry` — that field no longer exists; `g` now accumulates `Objective::edge_cost` |
+| How does `g` accumulate? | `g(child) = g(parent) + cost` | both deadlock fallbacks also added a literal `1.0` |
+| So what is `g`? | **`g(node) == depth(node)` exactly**, for every node in the entropy graph | uniform `1.0` per insert, no exceptions — still true under `UniformCost`, and pinned by `g_score_equals_depth_under_uniform_cost` |
+| What does the incumbent cut compare? | **`depth`, not `g`** | `best_goal_depth`, plus a `depth >= depth_cap` test at both gates and inside `resume_buffer_pop_best`; all three now compare `g + h` against `best_cost` |
 | Are ties pruned? | Yes — `depth >= depth_cap`, and `best_goal_depth` updates on strict `<` | same sites |
-| Where does duration enter? | Only as a **lexicographic tiebreak among equal-depth goals**, never in `g` | `select_best_goal_with_tiebreak` → `approx_path_time_us` ([599–649](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:599)) |
+| Where does duration enter? | Only as a **lexicographic tiebreak among equal-depth goals**, never in `g` | `select_best_goal_with_tiebreak` → `approx_path_time_us` ([`entropy.rs::select_best_goal_with_tiebreak`](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:752)) |
 
 **Verdict for invariant 3: `g` is exact — for the objective "number of
 movesets" (uniform cost 1.0 per shot).** It is not an approximation of
@@ -68,10 +73,10 @@ deterministic tiebreaks)`.
 consumers read it as a moveset count:
 
 - `pick_best` ranks restart results by `cost`
-  ([`restarts.rs:73`](../../../crates/bloqade-lanes-search/src/search/restarts.rs:73)).
+  ([`restarts.rs::pick_best`](../../../crates/bloqade-lanes-search/src/search/restarts.rs:82)).
 - `Strategy::Cascade` converts it to a **depth** budget for the A\* refinement:
   `max_depth = inner_result.cost.ceil() as u32`
-  ([`restarts.rs:256`](../../../crates/bloqade-lanes-search/src/search/restarts.rs:256)).
+  (`restarts.rs` (pre-change)).
 
 So making `1 + dur/tau` the *default* objective would silently change restart
 selection and shrink/inflate the cascade depth bound — a behavior change with
@@ -145,7 +150,7 @@ with a blanket `impl<O: Objective> CostFn for O` fails twice over. Its only
 motivation was giving `shot_cost` an `&LaneIndex` parameter, but `edge_cost`
 has none to forward, so the objective must own its arch data anyway; and the
 blanket impl overlaps the existing concrete `impl CostFn for UniformCost`
-([`cost.rs:10`](../../../crates/bloqade-lanes-search/src/cost.rs:10)) the moment
+([`cost.rs::impl CostFn for UniformCost`](../../../crates/bloqade-lanes-search/src/cost.rs:21)) the moment
 `UniformCost` implements `Objective` — a coherence error. Extending also makes
 the frontier driver's `g`, which already routes through `CostFn`, the same
 source of truth for free. `Sync` is required because restarts borrow one
@@ -205,7 +210,7 @@ never learns a bound's name.
 
 The `ObjectiveId` check is a **hard** `assert_eq!`, not a `debug_assert`. The
 neighbouring `debug_assert_tables_match`
-([`entropy.rs:1125`](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:1125))
+([`entropy.rs::debug_assert_tables_match`](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:1255))
 guards the same class of by-convention coupling for `w_t`, but the severities
 differ: a `w_t` mismatch only perturbs *ordering* and still yields a valid plan,
 whereas an objective mismatch makes *pruning unsound* — silently discarding
@@ -371,7 +376,7 @@ physical pipeline rebuilds it every solve from live atom state,
   `wdist`. The bound is materially tighter than the arch-only hop table, and
   the tightening grows with congestion — exactly the hard/dense instances where
   pruning is supposed to pay.
-- The [`BlendedColumnCache`](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:819)
+- The [`BlendedColumnCache`](../../../crates/bloqade-lanes-search/src/drivers/entropy.rs:949)
   pattern **cannot** be reused. That cache is valid precisely because
   `DistanceTable` columns ignore occupancy and `blocked` entirely, so a column
   is arch-pure and eternal. A weighted column is a function of
@@ -404,7 +409,7 @@ ordering and are not costs). Enforced structurally, not by convention.
 4. **Step 4** — wire in behind `EntropyOptions::completion_bound: Option<BoundKind>`
    (default `None`). The bound is built **once per solve beside
    `entropy_tables`** in `run_with_components`
-   ([`restarts.rs:159`](../../../crates/bloqade-lanes-search/src/search/restarts.rs:159)),
+   ([`restarts.rs::run_with_components`](../../../crates/bloqade-lanes-search/src/search/restarts.rs:159)),
    under the same "is this an entropy strategy" gate, and borrowed by every
    restart closure — hence `Objective: Sync` and `CompletionBound: Sync`.
    Mechanically the option is a two-arm match at that one site, each arm calling
@@ -456,7 +461,7 @@ instantiation of this design, expressed implicitly in five places.
 
 **The frontier's objective is the same one, unnamed.** Every frontier call site
 passes `&UniformCost`
-([`restarts.rs:103`](../../../crates/bloqade-lanes-search/src/search/restarts.rs:103)),
+([`restarts.rs::run_frontier`](../../../crates/bloqade-lanes-search/src/search/restarts.rs:140)),
 and every admissible heuristic is an integer hop count cast to `f64` —
 `HopDistanceHeuristic::estimate_max` (`max_dist as f64`),
 `PairDistanceHeuristic::estimate_max`, `MisplacedHeuristic` (`1.0`/`0.0`). Each
@@ -466,7 +471,7 @@ broken; the objective is just restated per call site rather than named once.
 **Why `Cascade` uses integers.** `run_search`'s `max_depth` is a literal
 tree-depth cutoff, not a cost cutoff:
 `let depth = graph.depth(node_id); if depth >= max_d { continue }`
-([`frontier.rs:571`](../../../crates/bloqade-lanes-search/src/drivers/frontier.rs:571)),
+([`frontier.rs::run_search`](../../../crates/bloqade-lanes-search/src/drivers/frontier.rs:610)),
 so `u32` counts tree levels. `inner_result.cost.ceil() as u32` converts the
 inner solver's `f64` cost into that integer depth budget, and `.ceil()` is an
 identity op on an integer-valued cost — defensive float→int hygiene, not
@@ -481,9 +486,9 @@ is out of scope here.
 **The ordering/bounding split already exists here — by hand, untyped.**
 `estimate_sum` is documented "Not admissible (overestimates because of bus
 parallelism), but gives much better ordering for IDS/DFS"
-([`distance.rs:357`](../../../crates/bloqade-lanes-search/src/primitives/distance.rs:357)),
+([`distance.rs::estimate_sum`](../../../crates/bloqade-lanes-search/src/primitives/distance.rs:271)),
 and `IdsFrontier` mixes `IDS_REVERSAL_PENALTY` directly into its `h_score`
-([`frontier.rs:373`](../../../crates/bloqade-lanes-search/src/drivers/frontier.rs:373))
+([`frontier.rs::IdsFrontier`](../../../crates/bloqade-lanes-search/src/drivers/frontier.rs:373))
 — a pure ordering artifact. `run_with_components` takes `h_max` and `h_sum` as
 separate generic parameters and it is on the author to route each correctly;
 nothing in the types stops `h_sum` reaching `PriorityFrontier::astar` and
@@ -503,7 +508,7 @@ objective would not break it — only the cascade's depth conversion would.)
    bound paired to the objective — making "inadmissible `h` passed to A\*" a
    compile error. It must be a sibling, not a replacement: many tests pass bare
    closures to `astar`
-   ([`frontier.rs:123`](../../../crates/bloqade-lanes-search/src/drivers/frontier.rs:123)),
+   ([`frontier.rs::PriorityFrontier::astar`](../../../crates/bloqade-lanes-search/src/drivers/frontier.rs:123)),
    and `estimate_sum` plus the IDS penalty legitimately remain plain
    `Heuristic`s. Weighting stays where it belongs — the frontier may scale for
    ordering, the entropy prune consumes the same object unweighted (invariant 6).

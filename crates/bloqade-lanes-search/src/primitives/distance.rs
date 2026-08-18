@@ -6,13 +6,13 @@
 //! [`MisplacedHeuristic`] is a simple count-based heuristic.
 //! [`HopDistanceHeuristic`] uses the distance table for a tighter bound.
 
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
 use crate::primitives::config::Config;
 use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::reverse_lane_graph::ReverseLaneGraph;
 
 // ── DistanceTable ───────────────────────────────────────────────────
 
@@ -70,69 +70,30 @@ impl DistanceTable {
             v
         };
 
-        // Build reverse adjacency: dst → [src, ...]. Also collect every
-        // location encountered (sources, destinations, and targets) so we
-        // can size the compact location index.
-        let mut reverse_adj: HashMap<u64, Vec<u64>> = HashMap::new();
-        let mut loc_index: HashMap<u64, usize> = HashMap::new();
-        let mut loc_by_index: Vec<u64> = Vec::new();
-        let intern =
-            |loc: u64, loc_index: &mut HashMap<u64, usize>, loc_by_index: &mut Vec<u64>| {
-                if let std::collections::hash_map::Entry::Vacant(e) = loc_index.entry(loc) {
-                    e.insert(loc_by_index.len());
-                    loc_by_index.push(loc);
-                }
-            };
-
-        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
-            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
-                if let Some((src, dst)) = index.endpoints(&lane) {
-                    let src_enc = src.encode();
-                    let dst_enc = dst.encode();
-                    intern(src_enc, &mut loc_index, &mut loc_by_index);
-                    intern(dst_enc, &mut loc_index, &mut loc_by_index);
-                    reverse_adj.entry(dst_enc).or_default().push(src_enc);
-                }
-            }
-        }
+        // Reversed, interned lane graph at unit weight — every lane accepted,
+        // nothing carved out.
+        let mut graph = ReverseLaneGraph::build(index, &HashSet::new(), |_| Some(1.0));
         // Make sure isolated targets (with no incoming lanes) still get
         // an index, so distance(target, target) = 0 works.
         for &t in &targets {
-            intern(t, &mut loc_index, &mut loc_by_index);
+            graph.intern(t);
         }
 
-        let n_loc = loc_index.len();
+        let n_loc = graph.len();
         let mut flat_distance = vec![u32::MAX; n_loc * n_loc];
 
         // BFS from each target on reversed edges, writing directly into
         // the flat array by compact index.
         for &target_enc in &targets {
-            let target_idx = loc_index[&target_enc];
-            let mut dist: Vec<u32> = vec![u32::MAX; n_loc];
-            let mut queue: VecDeque<u64> = VecDeque::new();
-            dist[target_idx] = 0;
-            queue.push_back(target_enc);
-
-            while let Some(current) = queue.pop_front() {
-                let current_idx = loc_index[&current];
-                let current_dist = dist[current_idx];
-                if let Some(preds) = reverse_adj.get(&current) {
-                    for &pred in preds {
-                        let pred_idx = loc_index[&pred];
-                        if dist[pred_idx] == u32::MAX {
-                            dist[pred_idx] = current_dist + 1;
-                            queue.push_back(pred);
-                        }
-                    }
-                }
-            }
-
-            // Copy this target's column into the flat 2D array.
-            for (from_idx, &d) in dist.iter().enumerate() {
+            let target_idx = graph
+                .index_of(target_enc)
+                .expect("every target was interned above");
+            for (from_idx, d) in graph.bfs_hops_from(target_idx).into_iter().enumerate() {
                 flat_distance[from_idx * n_loc + target_idx] = d;
             }
         }
 
+        let (loc_index, loc_by_index) = graph.into_index();
         Self {
             loc_index,
             loc_by_index,
@@ -154,47 +115,23 @@ impl DistanceTable {
         };
         self.fastest_lane_us = Some(fastest);
 
-        // Build reverse weighted adjacency: dst_enc → [(src_enc, duration_us)]
-        let mut reverse_adj: HashMap<u64, Vec<(u64, f64)>> = HashMap::new();
-        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
-            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
-                if let Some((src, dst)) = index.endpoints(&lane)
-                    && let Some(dur) = index.lane_duration_us(&lane)
-                {
-                    reverse_adj
-                        .entry(dst.encode())
-                        .or_default()
-                        .push((src.encode(), dur));
-                }
-            }
-        }
+        // Reversed lane graph weighted by lane duration. `None` from the weight
+        // function drops the lane, which is how lanes without transport-path
+        // data stay out of the time graph while remaining in the hop graph.
+        let graph =
+            ReverseLaneGraph::build(index, &HashSet::new(), |lane| index.lane_duration_us(&lane));
 
         // Dijkstra from each target on reversed weighted edges.
         let mut time_dist_to: HashMap<u64, HashMap<u64, f64>> = HashMap::new();
 
         for &target_enc in &self.targets {
-            let mut dist: HashMap<u64, f64> = HashMap::new();
-            let mut heap = BinaryHeap::new();
-            dist.insert(target_enc, 0.0);
-            heap.push(DijkstraEntry {
-                cost: 0.0,
-                node: target_enc,
-            });
-
-            while let Some(entry) = heap.pop() {
-                if entry.cost > *dist.get(&entry.node).unwrap_or(&f64::MAX) {
-                    continue;
-                }
-                if let Some(preds) = reverse_adj.get(&entry.node) {
-                    for &(pred, dur) in preds {
-                        let new_cost = entry.cost + dur;
-                        if new_cost < *dist.get(&pred).unwrap_or(&f64::MAX) {
-                            dist.insert(pred, new_cost);
-                            heap.push(DijkstraEntry {
-                                cost: new_cost,
-                                node: pred,
-                            });
-                        }
+            // A target no duration-carrying lane touches is absent from this
+            // graph; it still maps to itself at zero cost, and to nothing else.
+            let mut dist: HashMap<u64, f64> = HashMap::from([(target_enc, 0.0)]);
+            if let Some(target_idx) = graph.index_of(target_enc) {
+                for (idx, d) in graph.dijkstra_from(target_idx).into_iter().enumerate() {
+                    if d.is_finite() {
+                        dist.insert(graph.encoded_at(idx), d);
                     }
                 }
             }
@@ -247,37 +184,6 @@ impl DistanceTable {
                 f(self.loc_by_index[from_idx], d);
             }
         }
-    }
-}
-
-/// Dijkstra priority queue entry (min-heap by cost).
-///
-/// Shared with [`weighted_distance`](super::weighted_distance) so both
-/// weighted shortest-path implementations use one `total_cmp`-based reversed
-/// ordering rather than each rolling its own.
-pub(crate) struct DijkstraEntry {
-    pub(crate) cost: f64,
-    pub(crate) node: u64,
-}
-
-impl PartialEq for DijkstraEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.cost.total_cmp(&other.cost) == Ordering::Equal
-    }
-}
-
-impl Eq for DijkstraEntry {}
-
-impl Ord for DijkstraEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse for min-heap.
-        other.cost.total_cmp(&self.cost)
-    }
-}
-
-impl PartialOrd for DijkstraEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
 

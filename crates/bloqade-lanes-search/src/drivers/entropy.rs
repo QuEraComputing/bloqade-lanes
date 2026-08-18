@@ -663,7 +663,7 @@ fn resume_buffer_pop_best<B: CompletionBound>(
     buffer: &mut Vec<ScoredResumeState>,
     best_cost: Option<f64>,
     stats: &mut BoundStats,
-    counted: &mut HashSet<NodeId>,
+    counted: &mut Vec<bool>,
     min_shot_cost: f64,
 ) -> Option<NodeId> {
     loop {
@@ -1298,19 +1298,35 @@ enum Cut {
 /// times per iteration — the resume gate, the buffer insert, and the child gate
 /// that the next iteration's resume gate then repeats. Stays empty (no
 /// allocation) when the bound is trivial.
+///
+/// Indexed by [`NodeId`] directly rather than hashed. [`SearchGraph`] is an
+/// append-only arena — a node's id *is* its index at insertion, nothing is ever
+/// removed, cleared, or reused (a cheaper re-discovery appends a new node and
+/// leaves the old one in place), and the only size limit is a hard panic past
+/// `2^32` nodes. So ids are dense, stable for the graph's lifetime, and always
+/// below `graph.len()`; hashing a `u32` to reach them was pure overhead on a
+/// path probed up to three times per iteration.
+///
+/// `NaN` marks "not yet computed": `h` is a max over finite weighted distances
+/// or `+inf`, so it is never `NaN` and cannot collide with a real entry.
 #[inline]
 fn bound_estimate<B: CompletionBound>(
     graph: &SearchGraph,
     node: NodeId,
     bound: &B,
-    h_cache: &mut HashMap<NodeId, f64>,
+    h_cache: &mut Vec<f64>,
 ) -> f64 {
     if B::TRIVIAL {
         return 0.0;
     }
-    *h_cache
-        .entry(node)
-        .or_insert_with(|| bound.estimate(graph.config(node)))
+    let idx = node.0 as usize;
+    if idx >= h_cache.len() {
+        h_cache.resize(idx + 1, f64::NAN);
+    }
+    if h_cache[idx].is_nan() {
+        h_cache[idx] = bound.estimate(graph.config(node));
+    }
+    h_cache[idx]
 }
 
 #[inline]
@@ -1319,7 +1335,7 @@ fn classify_cut<B: CompletionBound>(
     node: NodeId,
     best_cost: Option<f64>,
     bound: &B,
-    h_cache: &mut HashMap<NodeId, f64>,
+    h_cache: &mut Vec<f64>,
 ) -> Option<Cut> {
     let h = bound_estimate(graph, node, bound, h_cache);
     if h.is_infinite() {
@@ -1357,7 +1373,7 @@ fn classify_cut<B: CompletionBound>(
 #[inline]
 fn record_cut<B: CompletionBound>(
     stats: &mut BoundStats,
-    counted: &mut HashSet<NodeId>,
+    counted: &mut Vec<bool>,
     node: NodeId,
     cut: Cut,
     depth: u32,
@@ -1365,7 +1381,15 @@ fn record_cut<B: CompletionBound>(
     best_cost: Option<f64>,
     min_shot_cost: f64,
 ) {
-    if B::TRIVIAL || !counted.insert(node) {
+    if B::TRIVIAL {
+        return;
+    }
+    // Dense arena index, same reasoning as `bound_estimate`'s cache.
+    let idx = node.0 as usize;
+    if idx >= counted.len() {
+        counted.resize(idx + 1, false);
+    }
+    if std::mem::replace(&mut counted[idx], true) {
         return;
     }
     match cut {
@@ -2389,9 +2413,9 @@ where
     // Nodes whose cut has already been folded into `bound_stats`, so a node
     // tested at both gates or re-tested on resume is counted once. Left empty
     // and never touched when bounding is disabled — see `note_cut`.
-    let mut cut_counted: HashSet<NodeId> = HashSet::new();
+    let mut cut_counted: Vec<bool> = Vec::new();
     // Memoized `h` per node; see `bound_estimate`.
-    let mut h_cache: HashMap<NodeId, f64> = HashMap::new();
+    let mut h_cache: Vec<f64> = Vec::new();
     // `h(root)` is a certified lower bound on this instance's optimum: it
     // depends only on the configuration, so sampled branch generation cannot
     // invalidate it. Captured once, before any search.
@@ -3385,7 +3409,7 @@ mod tests {
     /// non-trivial one is what makes `record_cut` actually run.
     fn pop_for_test(buffer: &mut Vec<ScoredResumeState>, best_cost: Option<f64>) -> Option<NodeId> {
         let mut stats = BoundStats::default();
-        let mut counted = HashSet::new();
+        let mut counted = Vec::new();
         resume_buffer_pop_best::<crate::bounds::WeightedDistanceBound<crate::cost::UniformCost>>(
             buffer,
             best_cost,

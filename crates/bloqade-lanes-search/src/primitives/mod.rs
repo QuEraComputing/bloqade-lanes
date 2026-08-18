@@ -13,4 +13,5 @@ pub mod graph;
 pub mod lane_index;
 pub(crate) mod ordering;
 pub mod path;
+pub(crate) mod reverse_lane_graph;
 pub mod weighted_distance;
