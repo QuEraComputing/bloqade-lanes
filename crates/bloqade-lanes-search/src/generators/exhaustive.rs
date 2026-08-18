@@ -523,6 +523,7 @@ mod tests {
             &mut NoOpObserver,
             Some(100),
             None,
+            None,
         );
 
         assert!(result.goal.is_some());

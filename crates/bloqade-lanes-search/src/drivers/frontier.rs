@@ -490,6 +490,33 @@ fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchConte
 ///
 /// Uses separate [`MoveGenerator`], [`CandidateScorer`], [`CostFn`], and
 /// [`Goal`] traits. The [`Frontier`] controls node ordering and goal-check timing.
+///
+/// Two independent limits, deliberately not collapsed into one:
+///
+/// - `max_depth` bounds the *tree depth* — a horizon in move layers, as the
+///   receding-horizon rollout uses.
+/// - `max_cost` bounds the accumulated [`CostFn`] cost: a node whose `g` reaches
+///   it is neither expanded **nor returned as a goal**. Callers refining an
+///   existing solution pass that solution's cost, so only strictly cheaper
+///   plans stay reachable — including the plan this call reports.
+///
+/// They coincide only while `g == depth` (i.e. under
+/// [`UniformCost`](crate::cost::UniformCost)). Under a non-uniform objective a
+/// cheaper plan can be *deeper* — more shots, each cheaper — so expressing an
+/// incumbent bound as a depth cap would exclude exactly the improvements the
+/// caller is looking for.
+/// Whether `g` has reached the caller's cost cap, i.e. nothing at or beyond
+/// this node can be *strictly* cheaper than the incumbent the cap came from.
+///
+/// Applied to the goal-return paths as well as to expansion: a cap that only
+/// stopped expansion still let `run_search` report a plan costlier than the
+/// incumbent it was given, which is the opposite of what a refinement pass asks
+/// for.
+#[inline]
+fn reaches_cost_cap(g: f64, max_cost: Option<f64>) -> bool {
+    max_cost.is_some_and(|cap| g >= cap)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_search<G, S, C, Go, F, O>(
     root: Config,
@@ -503,6 +530,7 @@ pub fn run_search<G, S, C, Go, F, O>(
     observer: &mut O,
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
+    max_cost: Option<f64>,
 ) -> SearchResult
 where
     G: MoveGenerator,
@@ -519,6 +547,8 @@ where
             nodes_expanded: 0,
             max_depth_reached: 0,
             graph: SearchGraph::new(root),
+            // The frontier drivers do not prune against an incumbent.
+            bound_stats: crate::bounds::BoundStats::default(),
         };
     }
 
@@ -552,8 +582,13 @@ where
         }
         closed[idx] = true;
 
-        // Goal check on pop (A* optimality).
-        if frontier.check_goal_on_pop() && goal.is_goal(graph.config(node_id)) {
+        // Goal check on pop (A* optimality). A goal at or past the cost cap is
+        // not an improvement on the incumbent that cap came from, so it is not
+        // reported; falling through leaves the cost gate below to drop it.
+        if frontier.check_goal_on_pop()
+            && goal.is_goal(graph.config(node_id))
+            && !reaches_cost_cap(graph.g_score(node_id), max_cost)
+        {
             observer.on_event(SearchEvent::GoalFound {
                 depth: graph.depth(node_id),
                 node_id,
@@ -564,16 +599,22 @@ where
                 nodes_expanded,
                 max_depth_reached: max_depth_seen,
                 graph,
+                bound_stats: crate::bounds::BoundStats::default(),
             };
         }
 
-        // Depth tracking + limit.
+        // Depth tracking, then both limits.
         let depth = graph.depth(node_id);
         max_depth_seen = max_depth_seen.max(depth);
         if let Some(max_d) = max_depth
             && depth >= max_d
         {
-            continue; // Don't expand beyond max depth.
+            continue; // Beyond the caller's layer horizon.
+        }
+        if let Some(max_c) = max_cost
+            && graph.g_score(node_id) >= max_c
+        {
+            continue; // Cannot beat the caller's incumbent cost.
         }
 
         // Expand.
@@ -616,8 +657,14 @@ where
             let child_closed = child_idx < closed.len() && closed[child_idx];
 
             if is_new && !child_closed {
-                // Goal check on generate (BFS/DFS).
-                if frontier.check_goal_on_generate() && goal.is_goal(graph.config(child_id)) {
+                // Goal check on generate (BFS/DFS). Same cap rule as the
+                // on-pop path: a child that already reaches the cap cannot be
+                // a strictly cheaper plan, so it is queued rather than
+                // returned, and the cost gate drops it when popped.
+                if frontier.check_goal_on_generate()
+                    && goal.is_goal(graph.config(child_id))
+                    && !reaches_cost_cap(new_g, max_cost)
+                {
                     observer.on_event(SearchEvent::GoalFound {
                         depth: graph.depth(child_id),
                         node_id: child_id,
@@ -628,6 +675,7 @@ where
                         nodes_expanded,
                         max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
                         graph,
+                        bound_stats: crate::bounds::BoundStats::default(),
                     };
                 }
                 new_children.push(child_id);
@@ -644,6 +692,7 @@ where
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
+        bound_stats: crate::bounds::BoundStats::default(),
     }
 }
 
@@ -873,6 +922,7 @@ mod tests {
         frontier: &mut F,
         max_expansions: Option<u32>,
         max_depth: Option<u32>,
+        max_cost: Option<f64>,
     ) -> SearchResult
     where
         G: MoveGenerator,
@@ -893,6 +943,7 @@ mod tests {
             &mut crate::observer::NoOpObserver,
             max_expansions,
             max_depth,
+            max_cost,
         )
     }
 
@@ -912,28 +963,54 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.solution_path().unwrap().len(), 3);
     }
 
+    /// `max_depth` is a horizon on *move layers*: a plan of exactly `max_depth`
+    /// layers is admissible, one layer more is not.
+    ///
+    /// Both sides of the boundary are checked. A goal placed well beyond the
+    /// cap would pass whether the gate reads `depth >= max` or `depth > max`,
+    /// so it would leave the off-by-one untested — and `max_depth` is what the
+    /// receding-horizon rollout uses to size its window.
     #[test]
     fn bfs_respects_max_depth() {
         let fx = Fixture::new();
-        let root = Config::new([(0, loc(0, 0))]).unwrap();
-        let mut f = BfsFrontier::new();
-        let result = run(
+        let at_horizon = run(
             &fx,
-            root,
+            Config::new([(0, loc(0, 0))]).unwrap(),
             &LineGen { max_site: 10 },
             &UniformCost,
-            5,
-            &mut f,
+            3,
+            &mut BfsFrontier::new(),
             None,
             Some(3),
+            None,
         );
-        // Goal at depth 5, max_depth 3 → not found.
-        assert!(result.goal.is_none());
+        assert!(
+            at_horizon.goal.is_some(),
+            "a plan of exactly max_depth layers is within the horizon"
+        );
+        assert_eq!(at_horizon.solution_path().unwrap().len(), 3);
+
+        let past_horizon = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            4,
+            &mut BfsFrontier::new(),
+            None,
+            Some(3),
+            None,
+        );
+        assert!(
+            past_horizon.goal.is_none(),
+            "a node at depth == max_depth must not be expanded"
+        );
     }
 
     // ── A* ──
@@ -946,7 +1023,17 @@ mod tests {
         let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
-        let result = run(&fx, root, &TwoPathGen, &TwoPathCost, 1, &mut f, None, None);
+        let result = run(
+            &fx,
+            root,
+            &TwoPathGen,
+            &TwoPathCost,
+            1,
+            &mut f,
+            None,
+            None,
+            None,
+        );
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 2.0);
         assert_eq!(result.solution_path().unwrap().len(), 2);
@@ -964,6 +1051,7 @@ mod tests {
             &UniformCost,
             3,
             &mut f,
+            None,
             None,
             None,
         );
@@ -991,6 +1079,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.nodes_expanded, 3);
@@ -1005,7 +1094,17 @@ mod tests {
         let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
-        let result = run(&fx, root, &DiamondGen, &DiamondCost, 4, &mut f, None, None);
+        let result = run(
+            &fx,
+            root,
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            None,
+        );
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 3.0);
         assert_eq!(result.solution_path().unwrap().len(), 3);
@@ -1024,6 +1123,7 @@ mod tests {
             100,
             &mut f,
             Some(5),
+            None,
             None,
         );
         assert!(result.goal.is_none());
@@ -1046,6 +1146,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_none());
     }
@@ -1064,6 +1165,7 @@ mod tests {
             &UniformCost,
             5,
             &mut f,
+            None,
             None,
             None,
         );
@@ -1086,6 +1188,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.solution_path().unwrap().len(), 5);
@@ -1104,6 +1207,7 @@ mod tests {
             100,
             &mut f,
             Some(5),
+            None,
             None,
         );
         assert!(result.goal.is_none());
@@ -1127,6 +1231,7 @@ mod tests {
             &mut dfs,
             None,
             None,
+            None,
         );
 
         let mut bfs = BfsFrontier::new();
@@ -1137,6 +1242,7 @@ mod tests {
             &UniformCost,
             5,
             &mut bfs,
+            None,
             None,
             None,
         );
@@ -1162,6 +1268,7 @@ mod tests {
             &mut f,
             None,
             None,
+            None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.solution_path().unwrap().len(), 5);
@@ -1182,6 +1289,7 @@ mod tests {
             &mut ids,
             None,
             None,
+            None,
         );
 
         let mut bfs = BfsFrontier::new();
@@ -1192,6 +1300,7 @@ mod tests {
             &UniformCost,
             5,
             &mut bfs,
+            None,
             None,
             None,
         );
@@ -1214,6 +1323,7 @@ mod tests {
             100,
             &mut f,
             Some(5),
+            None,
             None,
         );
         assert!(result.goal.is_none());
@@ -1240,6 +1350,7 @@ mod tests {
                     &mut f,
                     None,
                     None,
+                    None,
                 )
             }),
             ("astar", {
@@ -1251,6 +1362,7 @@ mod tests {
                     &UniformCost,
                     3,
                     &mut f,
+                    None,
                     None,
                     None,
                 )
@@ -1266,6 +1378,7 @@ mod tests {
                     &mut f,
                     None,
                     None,
+                    None,
                 )
             }),
             ("ids", {
@@ -1279,12 +1392,197 @@ mod tests {
                     &mut f,
                     None,
                     None,
+                    None,
                 )
             }),
         ] {
             assert!(result.goal.is_some(), "{name} should find root-is-goal");
             assert_eq!(result.nodes_expanded, 0, "{name} should expand 0 nodes");
         }
+    }
+
+    // ── max_cost ──
+
+    /// A node whose accumulated `g` *reaches* the cap is neither expanded nor
+    /// returned, so no plan costing the cap or more can come back.
+    ///
+    /// The diamond puts the boundary where a sloppy comparison cannot survive:
+    /// the optimal plan `0 → 1 → 3 → 4` costs 3 and runs through a node at
+    /// `g = 2`. At `max_cost = 4` the plan is admissible; at `max_cost = 3` the
+    /// goal is exactly at the cap and must be refused (gating on `>` would
+    /// return it); at `max_cost = 2` the waypoint itself is at the cap, so
+    /// nothing expands past it.
+    #[test]
+    fn max_cost_gates_expansion_and_the_returned_plan() {
+        let fx = Fixture::new();
+
+        // Cap above the optimum: the goal is reached, at its true cost.
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let reachable = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            Some(4.0),
+        );
+        let goal = reachable.goal.expect("cost-3 plan is under a cap of 4");
+        assert_eq!(reachable.graph.g_score(goal), 3.0);
+
+        // Cap *at* the goal's own cost: not an improvement, so not returned.
+        // A refinement pass asks for something strictly cheaper.
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let at_cap = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            Some(3.0),
+        );
+        assert!(
+            at_cap.goal.is_none(),
+            "a goal at g == max_cost is not strictly cheaper and must not be returned"
+        );
+
+        // Cap at the cost of the only viable waypoint: nothing expands past it.
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let blocked = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &DiamondGen,
+            &DiamondCost,
+            4,
+            &mut f,
+            None,
+            None,
+            Some(2.0),
+        );
+        assert!(
+            blocked.goal.is_none(),
+            "a node at g == max_cost must not be expanded"
+        );
+    }
+
+    /// The cap bounds the *returned* plan on both goal-check timings, not just
+    /// expansion.
+    ///
+    /// This is the regression the cap originally missed: the root passes the
+    /// gate at `g = 0`, expands, and the child arrives already over the cap —
+    /// so a gate on expansion alone returned a plan costing 8 under a cap of 3.
+    /// A* checks the goal on pop and BFS on generate, and both paths leaked.
+    #[test]
+    fn max_cost_bounds_the_returned_plan_on_both_goal_paths() {
+        let fx = Fixture::new();
+
+        for (name, goal) in [
+            ("bfs (goal on generate)", {
+                run(
+                    &fx,
+                    Config::new([(0, loc(0, 0))]).unwrap(),
+                    &LineGen { max_site: 10 },
+                    &FrontLoadedCost,
+                    1,
+                    &mut BfsFrontier::new(),
+                    None,
+                    None,
+                    Some(3.0),
+                )
+                .goal
+            }),
+            ("astar (goal on pop)", {
+                run(
+                    &fx,
+                    Config::new([(0, loc(0, 0))]).unwrap(),
+                    &LineGen { max_site: 10 },
+                    &FrontLoadedCost,
+                    1,
+                    &mut PriorityFrontier::astar(|_: &Config| 0.0, 1.0),
+                    None,
+                    None,
+                    Some(3.0),
+                )
+                .goal
+            }),
+        ] {
+            assert!(
+                goal.is_none(),
+                "{name}: the only plan costs 8, which exceeds the cap of 3"
+            );
+        }
+    }
+
+    /// Edge costs for [`LineGen`] with the expense front-loaded: the first hop
+    /// off site 0 costs 8, every later hop costs 1. `g` and `depth` therefore
+    /// diverge immediately, which is what separates the two limits below.
+    struct FrontLoadedCost;
+
+    impl CostFn for FrontLoadedCost {
+        fn edge_cost(&self, _move_set: &MoveSet, from: &Config, _to: &Config) -> f64 {
+            if from.location_of(0).unwrap().site_id == 0 {
+                8.0
+            } else {
+                1.0
+            }
+        }
+    }
+
+    /// `max_cost` gates on accumulated cost, not on tree depth — the two are
+    /// not interchangeable, which is why `run_search` carries both.
+    ///
+    /// The same numeric cap of 8 is applied twice to the same instance. As a
+    /// *cost* cap it binds at the very first node (`g = 8`) and the goal
+    /// becomes unreachable; as a *depth* cap it never binds at all (depth 2)
+    /// and the search returns a cost-9 plan. A cap that behaved like a depth
+    /// limit would let that cost-9 plan through in both cases.
+    ///
+    /// Under `UniformCost` the two coincide (`g == depth`) and this distinction
+    /// is invisible, which is exactly why it needs pinning: the cascade passes
+    /// its incumbent's *cost*, and a non-uniform objective is what makes the
+    /// difference observable.
+    #[test]
+    fn max_cost_gates_on_cost_not_depth() {
+        let fx = Fixture::new();
+
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let by_cost = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 10 },
+            &FrontLoadedCost,
+            2,
+            &mut f,
+            None,
+            None,
+            Some(8.0),
+        );
+        assert!(
+            by_cost.goal.is_none(),
+            "the only route runs through a node at g == 8, which the cap must refuse"
+        );
+
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let by_depth = run(
+            &fx,
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 10 },
+            &FrontLoadedCost,
+            2,
+            &mut f,
+            None,
+            Some(8),
+            None,
+        );
+        let goal = by_depth
+            .goal
+            .expect("the same cap read as depth never binds on a two-layer plan");
+        assert_eq!(by_depth.graph.g_score(goal), 9.0);
     }
 
     // ── max_depth_reached tracking ──
@@ -1301,6 +1599,7 @@ mod tests {
             &UniformCost,
             3,
             &mut f,
+            None,
             None,
             None,
         );
@@ -1362,6 +1661,7 @@ mod tests {
             &ctx,
             &mut state,
             &mut NoOpObserver,
+            None,
             None,
             None,
         );

@@ -29,6 +29,13 @@ impl Goal for AllAtTarget {
                 .is_some_and(|l| l.encode() == target_enc)
         })
     }
+
+    /// Point-valued by construction: `is_goal` is satisfied by exactly one
+    /// placement of these qubits, which is what a target-distance completion
+    /// bound needs to stay admissible.
+    fn exact_targets(&self) -> Option<&[(u32, u64)]> {
+        Some(&self.targets)
+    }
 }
 
 /// Goal: at least `min_placed` qubits are at their target locations.

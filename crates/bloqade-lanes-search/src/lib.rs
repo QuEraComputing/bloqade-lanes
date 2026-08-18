@@ -21,6 +21,7 @@
 //! - Top-level small modules (`cost`, `goals`, `heuristics`, `scorers`,
 //!   `generators`, `observer`, `traits`) — too small to warrant subdirs.
 
+pub mod bounds;
 pub mod cost;
 pub mod drivers;
 pub mod dsl;
@@ -39,7 +40,11 @@ pub mod search;
 pub(crate) mod test_utils;
 pub mod traits;
 
-pub use cost::UniformCost;
+pub use bounds::{CompletionBound, MaxBound, NoBound, WeightedDistanceBound};
+// `assert_objective_contract` is deliberately not re-exported here: it is a
+// test-only assertion helper, reachable as `bounds::assert_objective_contract`
+// under `cfg(test)` or the `test-util` feature.
+pub use cost::{UniformCost, WeightedDuration};
 pub use drivers::result::SearchResult;
 pub use feasibility::{Feasibility, Obstruction, check as check_feasibility};
 pub use generators::{
@@ -70,4 +75,4 @@ pub use search::move_search::MoveSearch;
 pub use search::options::{InnerStrategy, SolveOptions, Strategy};
 pub use search::result::{CandidateAttempt, MultiSolveResult};
 pub use search::target_solver::TargetSolver;
-pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};
+pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator, Objective, ObjectiveId};

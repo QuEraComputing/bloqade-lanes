@@ -3,6 +3,7 @@
 //! [`SolveStatus`] is the tristate outcome; [`SolveResult`] bundles the
 //! status with the path, final placement, and search statistics.
 
+use crate::bounds::BoundStats;
 use crate::drivers::entropy::EntropyTrace;
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
@@ -79,6 +80,14 @@ pub struct SolveResult {
     pub deadlocks: u32,
     /// Optional entropy-search trace payload for visualization/debugging.
     pub entropy_trace: Option<EntropyTrace>,
+    /// Branch-and-bound pruning statistics from the search that produced this
+    /// result.
+    ///
+    /// Counters stay zero unless a completion bound was enabled; check
+    /// [`BoundStats::bound_enabled`] for that, since `incumbent_cost` is
+    /// populated either way. The Python surface reports an unbounded run as an
+    /// *empty* dict rather than zeros.
+    pub bound_stats: BoundStats,
 }
 
 impl SolveResult {
@@ -98,6 +107,7 @@ impl SolveResult {
             cost,
             deadlocks,
             entropy_trace: None,
+            bound_stats: BoundStats::default(),
         }
     }
 
@@ -122,6 +132,7 @@ impl SolveResult {
             cost: 0.0,
             deadlocks,
             entropy_trace: None,
+            bound_stats: BoundStats::default(),
         }
     }
 
