@@ -1307,37 +1307,44 @@ enum Cut {
 /// below `graph.len()`; hashing a `u32` to reach them was pure overhead on a
 /// path probed up to three times per iteration.
 ///
-/// `NaN` marks "not yet computed": `h` is a max over finite weighted distances
-/// or `+inf`, so it is never `NaN` and cannot collide with a real entry.
+/// `None` marks "not yet computed". [`Option<f64>`] rather than a `NaN`
+/// sentinel: "unset" is then unrepresentable as an estimate, so no value a bound
+/// can return — `NaN` included — is mistaken for an empty slot. The cost is 16
+/// bytes per node against 8, which at this driver's own default cap is 31 KB
+/// instead of 15 KB, and a discriminant test in place of `is_nan()`. Both are
+/// far below anything measurable on a path that is a fraction of a percent of
+/// solve time; a sentinel that a caller can collide with is not worth saving
+/// them.
 #[inline]
 fn bound_estimate<B: CompletionBound>(
     graph: &SearchGraph,
     node: NodeId,
     bound: &B,
-    h_cache: &mut Vec<f64>,
+    h_cache: &mut Vec<Option<f64>>,
 ) -> f64 {
     if B::TRIVIAL {
         return 0.0;
     }
     let idx = node.0 as usize;
     if idx >= h_cache.len() {
-        h_cache.resize(idx + 1, f64::NAN);
+        h_cache.resize(idx + 1, None);
     }
-    if h_cache[idx].is_nan() {
-        let h = bound.estimate(graph.config(node));
-        // `NaN` is this cache's "unset" marker, so a bound that returned it
-        // would be re-evaluated on every probe — silently, since `NaN` also
-        // fails every comparison in `classify_cut` and so simply never prunes.
-        // It is not a meaningful lower bound in any case: use `0.0` to certify
-        // no floor, or `+∞` to assert infeasibility.
-        debug_assert!(
-            !h.is_nan(),
-            "CompletionBound::estimate returned NaN; use 0.0 for \"no floor\" \
-             or f64::INFINITY for \"infeasible\""
-        );
-        h_cache[idx] = h;
+    if let Some(cached) = h_cache[idx] {
+        return cached;
     }
-    h_cache[idx]
+    let h = bound.estimate(graph.config(node));
+    // The cache no longer cares about `NaN`, but `classify_cut` still does: it
+    // fails both `== f64::INFINITY` and `>= cost_cap`, so a `NaN` estimate
+    // silently disables pruning for this node rather than erring. It is not a
+    // meaningful lower bound either way — `0.0` certifies no floor, `+inf`
+    // asserts infeasibility.
+    debug_assert!(
+        !h.is_nan(),
+        "CompletionBound::estimate returned NaN; use 0.0 for \"no floor\" \
+         or f64::INFINITY for \"infeasible\""
+    );
+    h_cache[idx] = Some(h);
+    h
 }
 
 #[inline]
@@ -1346,7 +1353,7 @@ fn classify_cut<B: CompletionBound>(
     node: NodeId,
     best_cost: Option<f64>,
     bound: &B,
-    h_cache: &mut Vec<f64>,
+    h_cache: &mut Vec<Option<f64>>,
 ) -> Option<Cut> {
     let h = bound_estimate(graph, node, bound, h_cache);
     // `+∞` is the sentinel [`CompletionBound::estimate`] documents for "no
@@ -2433,7 +2440,7 @@ where
     // and never touched when bounding is disabled — see `note_cut`.
     let mut cut_counted: Vec<bool> = Vec::new();
     // Memoized `h` per node; see `bound_estimate`.
-    let mut h_cache: Vec<f64> = Vec::new();
+    let mut h_cache: Vec<Option<f64>> = Vec::new();
     // `h(root)` is a certified lower bound on this instance's optimum: it
     // depends only on the configuration, so sampled branch generation cannot
     // invalidate it. Captured once, before any search.

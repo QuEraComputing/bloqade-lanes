@@ -480,3 +480,73 @@ fn only_positive_infinity_is_the_infeasibility_sentinel() {
         "an infinite lower bound is a claim, not a measurement"
     );
 }
+
+/// A bound that counts how many times the driver asked it for an estimate.
+struct CountingBound {
+    calls: std::sync::atomic::AtomicUsize,
+    objective_id: bloqade_lanes_search::traits::ObjectiveId,
+}
+
+impl CountingBound {
+    fn new() -> Self {
+        Self {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            objective_id: bloqade_lanes_search::traits::Objective::id(&UniformCost),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl CompletionBound for CountingBound {
+    type Obj = UniformCost;
+
+    fn objective_id(&self) -> bloqade_lanes_search::traits::ObjectiveId {
+        self.objective_id
+    }
+
+    fn estimate(&self, _config: &Config) -> f64 {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        0.0
+    }
+}
+
+/// `h` is evaluated at most once per node.
+///
+/// The driver probes the bound up to three times per iteration — the resume
+/// gate, the resume-buffer insert, and the child gate the next iteration's
+/// resume gate then repeats — so without memoization the call count runs well
+/// past the number of nodes. Bounding this by `graph.len()` states the cache's
+/// contract without depending on how many iterations the search happens to take.
+///
+/// It holds because a node's configuration never changes after insertion, which
+/// is what makes caching by `NodeId` exact in the first place.
+#[test]
+fn the_bound_is_evaluated_at_most_once_per_node() {
+    let fx = Fixture::new(make_index());
+    let bound = CountingBound::new();
+
+    let result = entropy_search_with_bound(
+        fx.root.clone(),
+        &fx.goal,
+        &Fixture::params(),
+        &fx.ctx(),
+        Some(2000),
+        None,
+        0,
+        &mut NoOpObserver,
+        &UniformCost,
+        &bound,
+    );
+
+    let nodes = result.graph.len();
+    let calls = bound.calls();
+    assert!(calls > 0, "the driver should have consulted the bound");
+    assert!(
+        calls <= nodes,
+        "h was evaluated {calls} times over {nodes} nodes; the per-node cache is not holding"
+    );
+}
