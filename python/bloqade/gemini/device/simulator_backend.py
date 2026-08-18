@@ -65,6 +65,15 @@ class AbstractSimulatorBackend(abc.ABC):
     ) -> DetectorErrorModel:
         """Build the detector error model for a physical SQuIn kernel."""
 
+    @staticmethod
+    def _convert_loss_to_measurement(
+        shots_arr: np.ndarray,
+        loss_replace: Any = None,
+        loss: Any = None,
+    ) -> np.ndarray:
+        """Convert loss values to measurement values when the backend supports it."""
+        return shots_arr
+
 
 @runtime_checkable
 class _TsimCircuitCapability(Protocol):
@@ -427,6 +436,16 @@ class PPVMSimulatorBackend(AbstractSimulatorBackend):
             return self._tsim_backend._detector_error_model(physical_squin_kernel)
         except ImportError as exc:
             raise _ppvm_tsim_import_error(exc) from exc
+
+    @staticmethod
+    def _convert_loss_to_measurement(
+        shots_arr: np.ndarray,
+        loss_replace: Any = None,
+        loss: Any = None,
+    ) -> np.ndarray:
+        """Applies the conversion of `loss` values to `loss_replace`."""
+        shots_arr[shots_arr == loss] = loss_replace
+        return shots_arr.astype(bool)
 
 
 class _RemovePyQrackAnnotations(RewriteRule):

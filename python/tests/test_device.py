@@ -501,6 +501,9 @@ def _mock_task() -> Any:
     task = object.__new__(GeminiLogicalSimulatorTask)
     backend = MagicMock()
     backend._detector_error_model.return_value = "dem"
+    backend._convert_loss_to_measurement.side_effect = (
+        lambda shots_arr, **_kwargs: shots_arr
+    )
     object.__setattr__(task, "physical_squin_kernel", "noisy-kernel")
     object.__setattr__(task, "noiseless_physical_squin_kernel", "noiseless-kernel")
     object.__setattr__(task, "_simulator_backend", backend)
