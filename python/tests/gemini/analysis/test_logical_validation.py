@@ -2,7 +2,7 @@ import bloqade.squin as squin
 import pytest
 from bloqade.analysis.address import AddressAnalysis
 from bloqade.types import Qubit
-from kirin.dialects import ilist
+from kirin.dialects import func, ilist
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
@@ -304,12 +304,16 @@ def test_dynamic_call_through_parameter_does_not_crash_validation():
     `measurement.impls.Func` subclasses the address analysis' `func` method
     table, so the measurement analysis *inherits* a `func.Call` impl that calls
     `run_lattice` on the interpreter. Without the override on
-    `_GeminiTerminalMeasurementValidationAnalysis`, compiling any kernel that
-    calls one of its own parameters fails with
+    `_GeminiTerminalMeasurementValidationAnalysis`, a kernel carrying a dynamic
+    call into this pass fails with
     `AttributeError: ... has no attribute 'run_lattice'`.
 
-    No other kernel in the suite performs a dynamic call, so nothing else covers
-    this.
+    Built with `squin.kernel`, not `gemini.logical.kernel`: the latter now
+    rejects a call through a parameter outright (`gemini.no_opaque_call`), so a
+    Gemini kernel can no longer carry a dynamic call this far. A kernel from
+    another dialect group still can, and that is the case the override has to
+    survive. No other kernel in the suite performs a dynamic call, so nothing
+    else covers this.
     """
     from bloqade.analysis.address.impls import Func as AddressFuncMethodTable
 
@@ -321,9 +325,13 @@ def test_dynamic_call_through_parameter_does_not_crash_validation():
     # re-check whether the override is still needed before removing it.
     assert issubclass(MeasurementFuncMethodTable, AddressFuncMethodTable)
 
-    @gemini.logical.kernel
+    @squin.kernel
     def higher_order(f):
         f()
+
+    # Guard the premise: the point of the test is a dynamic call reaching the
+    # pass, which is silently lost if lowering ever folds this one away.
+    assert any(isinstance(stmt, func.Call) for stmt in higher_order.code.walk())
 
     validator = ValidationSuite([GeminiTerminalMeasurementValidation])
     validator.validate(higher_order).raise_if_invalid()
