@@ -597,6 +597,32 @@ def test_bound_stats_records_a_zero_gap():
     assert strategy.rust_bound_stats_total == {"max_optimality_gap": 0.0}
 
 
+def test_bound_stats_preserves_a_negative_gap_as_the_first_reading():
+    """A negative gap means ``h(root) > incumbent`` — an inadmissible bound that
+    may have pruned the optimum, which Rust preserves the sign to signal. Seeding
+    the aggregate's ``max`` with ``0.0`` would mask a negative first reading
+    outright; it must survive instead."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats({"optimality_gap": -0.5})
+    assert strategy.rust_bound_stats_total["max_optimality_gap"] == -0.5
+
+
+def test_bound_stats_a_negative_gap_dominates_a_later_positive_one():
+    """The inadmissibility signal must not be smoothed away by an admissible
+    solve elsewhere in the same pass. A negative reading dominates any
+    non-negative one regardless of order, and the most negative (worst) wins."""
+    ascending = _strategy()
+    for gap in (-0.2, 0.9, -0.6, 0.3):
+        ascending._accumulate_bound_stats({"optimality_gap": gap})
+    assert ascending.rust_bound_stats_total["max_optimality_gap"] == -0.6
+
+    # Order-independent: a positive gap seen first is still overridden.
+    positive_first = _strategy()
+    for gap in (0.9, -0.4):
+        positive_first._accumulate_bound_stats({"optimality_gap": gap})
+    assert positive_first.rust_bound_stats_total["max_optimality_gap"] == -0.4
+
+
 def test_bound_stats_ignore_an_unbounded_solve():
     """``SolveResult.bound_stats`` is an empty dict when bounding is off, so an
     unbounded solve mixed in with bounded ones must contribute nothing rather

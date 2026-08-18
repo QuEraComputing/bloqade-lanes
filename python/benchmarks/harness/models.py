@@ -77,9 +77,16 @@ class BenchmarkRow:
     those same branches. Against ``cut_depth_sum`` this is the depth ratio:
     how much earlier the bound cut, hence roughly how much subtree it saved."""
     max_optimality_gap: float | None = None
-    """Widest ``(incumbent - h(root)) / incumbent`` over this case's solves.
-    ``0.0`` would mean provably optimal; large values mean the bound is loose
-    and a tighter one has headroom."""
+    """Worst ``(incumbent - h(root)) / incumbent`` over this case's solves.
+    ``0.0`` means provably optimal; larger positive values mean the bound is
+    loose and a tighter one has headroom.
+
+    A **negative** value is out of band: it means ``h(root) > incumbent``, i.e.
+    an inadmissible bound that may have pruned the optimum. Rust preserves the
+    sign deliberately, and the accumulator lets a negative reading dominate any
+    non-negative one rather than aggregating it away — so this field is a "worst
+    gap" where a violated admissibility invariant counts as worse than any loose
+    bound, not a plain maximum."""
     arch_spec_id: str = BUILTIN_ARCH_SPEC_ID
     notes: str = ""
     extra: dict[str, Any] = field(default_factory=dict)

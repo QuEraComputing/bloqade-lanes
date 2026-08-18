@@ -287,9 +287,23 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
                 ) + int(value)
         gap = stats.get("optimality_gap")
         if gap is not None:
-            self._bound_stats_total["max_optimality_gap"] = max(
-                self._bound_stats_total.get("max_optimality_gap", 0.0), float(gap)
-            )
+            gap = float(gap)
+            prev = self._bound_stats_total.get("max_optimality_gap")
+            # A negative gap means h(root) > incumbent: the bound overestimated
+            # the true remaining cost, so it is inadmissible and pruning may have
+            # discarded the optimum. Rust preserves that sign on purpose (see
+            # BoundStats::optimality_gap), so the accumulator must not smooth it
+            # away — seeding `max` with 0.0 would mask a negative first reading,
+            # and a later positive gap would mask an earlier negative one. A
+            # negative reading therefore dominates any non-negative one, and
+            # among negatives the most negative (worst) wins; only when every
+            # gap is non-negative does the widest positive gap win.
+            if prev is None:
+                self._bound_stats_total["max_optimality_gap"] = gap
+            elif prev < 0.0 or gap < 0.0:
+                self._bound_stats_total["max_optimality_gap"] = min(prev, gap)
+            else:
+                self._bound_stats_total["max_optimality_gap"] = max(prev, gap)
 
     @property
     def rust_entropy_fallback_count(self) -> int:
