@@ -1324,7 +1324,18 @@ fn bound_estimate<B: CompletionBound>(
         h_cache.resize(idx + 1, f64::NAN);
     }
     if h_cache[idx].is_nan() {
-        h_cache[idx] = bound.estimate(graph.config(node));
+        let h = bound.estimate(graph.config(node));
+        // `NaN` is this cache's "unset" marker, so a bound that returned it
+        // would be re-evaluated on every probe — silently, since `NaN` also
+        // fails every comparison in `classify_cut` and so simply never prunes.
+        // It is not a meaningful lower bound in any case: use `0.0` to certify
+        // no floor, or `+∞` to assert infeasibility.
+        debug_assert!(
+            !h.is_nan(),
+            "CompletionBound::estimate returned NaN; use 0.0 for \"no floor\" \
+             or f64::INFINITY for \"infeasible\""
+        );
+        h_cache[idx] = h;
     }
     h_cache[idx]
 }
@@ -1338,7 +1349,14 @@ fn classify_cut<B: CompletionBound>(
     h_cache: &mut Vec<f64>,
 ) -> Option<Cut> {
     let h = bound_estimate(graph, node, bound, h_cache);
-    if h.is_infinite() {
+    // `+∞` is the sentinel [`CompletionBound::estimate`] documents for "no
+    // completion exists"; `-∞` is not. Remaining cost is non-negative (C2), so
+    // `-∞` never *overestimates* — it is a sound but vacuous lower bound, and
+    // an external impl is entitled to return it. Matching on sign-agnostic
+    // `is_infinite()` would read that as a proof of infeasibility and prune a
+    // solvable branch. `-∞` instead falls through to the `g + h` test below,
+    // where it can never reach the cap, so a vacuous bound prunes nothing.
+    if h == f64::INFINITY {
         return Some(Cut::Infeasible);
     }
     let cost_cap = best_cost?;

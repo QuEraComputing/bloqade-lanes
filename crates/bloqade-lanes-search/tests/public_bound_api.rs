@@ -383,3 +383,100 @@ fn a_bound_used_as_a_frontier_heuristic_finds_a_valid_plan() {
     );
     fx.assert_valid_plan("as_heuristic", &result);
 }
+
+/// A bound written by an *external* crate, returning a caller-chosen constant.
+///
+/// `CompletionBound` is public, so a downstream crate may implement it. That
+/// makes the trait's documented contract — what each return value means — part
+/// of the public API, and this is the only place it is exercised by an impl the
+/// crate does not own.
+struct ConstantBound {
+    value: f64,
+    objective_id: bloqade_lanes_search::traits::ObjectiveId,
+}
+
+impl ConstantBound {
+    fn new(value: f64) -> Self {
+        Self {
+            value,
+            objective_id: bloqade_lanes_search::traits::Objective::id(&UniformCost),
+        }
+    }
+}
+
+impl CompletionBound for ConstantBound {
+    type Obj = UniformCost;
+
+    fn objective_id(&self) -> bloqade_lanes_search::traits::ObjectiveId {
+        self.objective_id
+    }
+
+    fn estimate(&self, _config: &Config) -> f64 {
+        self.value
+    }
+}
+
+/// Only `+∞` means "no completion exists". `-∞` is a sound-but-vacuous lower
+/// bound — remaining cost is non-negative, so `-∞` never overestimates — and
+/// must not be read as a proof of infeasibility.
+///
+/// The driver used to test `h.is_infinite()`, which is sign-agnostic, so a
+/// downstream bound returning `-∞` had every branch pruned as infeasible and the
+/// instance came back unsolved.
+#[test]
+fn only_positive_infinity_is_the_infeasibility_sentinel() {
+    let fx = Fixture::new(make_index());
+
+    let solve = |bound: &ConstantBound| {
+        entropy_search_with_bound(
+            fx.root.clone(),
+            &fx.goal,
+            &Fixture::params(),
+            &fx.ctx(),
+            Some(2000),
+            None,
+            0,
+            &mut NoOpObserver,
+            &UniformCost,
+            bound,
+        )
+    };
+
+    // `-inf`: no information, so the search proceeds and still solves.
+    let vacuous = solve(&ConstantBound::new(f64::NEG_INFINITY));
+    fx.assert_valid_plan("h = -inf", &vacuous);
+    assert_eq!(
+        vacuous.bound_stats.cuts_infeasible, 0,
+        "-inf is not an infeasibility proof and must not be counted as one"
+    );
+
+    // `0.0`: the other sound-but-useless value, for contrast.
+    let zero = solve(&ConstantBound::new(0.0));
+    fx.assert_valid_plan("h = 0", &zero);
+    assert_eq!(zero.bound_stats.cuts_infeasible, 0);
+
+    // `+inf`: the documented sentinel. Every branch is refused, so the search
+    // proper expands nothing and records the proof.
+    //
+    // Note what is *not* asserted: that no goal comes back. A goal may still be
+    // reported, because `budget_exhaustion_fallback` is deliberately not
+    // bound-aware — the driver runs to its iteration cap and then hands off to
+    // the fallback exactly as an unbounded run would, and the fallback can graft
+    // a plan the bound had declared impossible. That combination (an infinite
+    // root bound beside a finite incumbent) is why `optimality_gap` reports
+    // `None` for a non-finite lower bound rather than clamping it to "provably
+    // optimal".
+    // `nodes_expanded` is deliberately not asserted either: the fallback's own
+    // expansions are counted in it, so it reflects the fallback's work rather
+    // than the bound's refusals.
+    let infeasible = solve(&ConstantBound::new(f64::INFINITY));
+    assert!(
+        infeasible.bound_stats.cuts_infeasible > 0,
+        "the infeasibility proof must be recorded"
+    );
+    assert_eq!(
+        infeasible.bound_stats.optimality_gap(),
+        None,
+        "an infinite lower bound is a claim, not a measurement"
+    );
+}
