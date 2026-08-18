@@ -149,12 +149,18 @@ impl Fixture {
         let (initial, target) = instance();
         let targets: Vec<(u32, u64)> = target.iter().map(|&(q, l)| (q, l.encode())).collect();
         let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l).collect();
-        // `.with_time_distances` is required, not optional: `EntropyParams`
-        // defaults to `w_t > 0`, and the driver debug-asserts that a blended
-        // solve over an arch *with* lane durations was given a table that
-        // carries them. The example specs have no durations, so this only bites
-        // on a real one — which is why an external caller is the right place to
-        // catch it.
+        // `.with_time_distances` is a **precondition**, not a tuning option.
+        // `w_t` is the entropy scorer's hops-versus-duration balance:
+        // `blended_distance` returns `(1 - w_t) * hops + w_t * (time / fastest_lane)`,
+        // so a `w_t > 0` solve is asking to be scored on duration as well as hop
+        // count, and it needs a table that carries both. Given a hop-only table
+        // the blend silently falls back to hop count — the solve still succeeds,
+        // it just quietly ignores the balance it was configured with, which is
+        // why the driver debug-asserts instead of leaving it to be noticed.
+        //
+        // `EntropyParams` defaults to `w_t > 0`, and the example specs carry no
+        // durations, so the assert only has anything to check on a spec that
+        // does — like this one.
         let dist_table = DistanceTable::new(&target_locs, &index).with_time_distances(&index);
         Self {
             goal: AllAtTarget::new(&targets),
