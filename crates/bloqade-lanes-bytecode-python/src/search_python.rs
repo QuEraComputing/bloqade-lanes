@@ -297,12 +297,10 @@ impl PySolveResult {
         dict.set_item("cut_depth_sum", s.cut_depth_sum)?;
         dict.set_item("cut_depth_g_only_sum", s.cut_depth_g_only_sum)?;
         dict.set_item("root_lower_bound", s.root_lower_bound)?;
-        // NaN does not round-trip usefully into Python numerics; report the
-        // "no solution found" case as None instead.
-        dict.set_item(
-            "incumbent_cost",
-            s.incumbent_cost.is_finite().then_some(s.incumbent_cost),
-        )?;
+        // `None` ("no solution found") maps to Python `None`. The `filter`
+        // guards the invariant that a `Some` is always a finite `g_score`, so a
+        // non-finite cost could never round-trip as a misleading Python float.
+        dict.set_item("incumbent_cost", s.incumbent_cost.filter(|c| c.is_finite()))?;
         dict.set_item("optimality_gap", s.optimality_gap())?;
         Ok(dict)
     }

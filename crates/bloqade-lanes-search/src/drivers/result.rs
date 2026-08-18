@@ -22,10 +22,9 @@ pub struct SearchResult {
     /// Branch-and-bound pruning statistics.
     ///
     /// Every counter stays zero for drivers that do not bound and for runs with
-    /// the bound disabled, but the struct as a whole is *not* all-zero: the
-    /// entropy driver records `incumbent_cost` either way (`NaN` when it found
-    /// nothing). Read [`BoundStats::bound_enabled`] to tell a measured run from
-    /// an unmeasured one rather than testing the counters against zero.
+    /// the bound disabled. Read [`BoundStats::bound_enabled`] to tell a measured
+    /// run from an unmeasured one rather than testing the counters against zero;
+    /// `incumbent_cost` is `Some` on any solve that found a goal, bounded or not.
     pub bound_stats: BoundStats,
 }
 

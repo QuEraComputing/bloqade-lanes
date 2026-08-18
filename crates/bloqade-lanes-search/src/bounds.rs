@@ -72,8 +72,13 @@ pub struct BoundStats {
     /// on the configuration, never on which candidates the generator happened
     /// to produce. Against the final incumbent it gives an optimality gap.
     pub root_lower_bound: f64,
-    /// Cost of the best solution found, or [`f64::NAN`] if none was.
-    pub incumbent_cost: f64,
+    /// Cost of the best solution found, or `None` if none was.
+    ///
+    /// `Option` rather than a `NaN` sentinel: `None` is unambiguously "no
+    /// solution", so no cost value can be mistaken for it, and — since
+    /// `BoundStats` derives `PartialEq` — a stats value stays equal to itself,
+    /// which a `NaN` field would break (`NaN != NaN`).
+    pub incumbent_cost: Option<f64>,
     /// Whether a non-trivial bound was in use.
     ///
     /// Without it, an unbounded run is indistinguishable from a bounded run
@@ -109,7 +114,13 @@ impl BoundStats {
     /// clamping it to `0.0` would report the strongest possible claim
     /// ("provably optimal") for the run least entitled to it.
     pub fn optimality_gap(&self) -> Option<f64> {
-        if !self.bound_enabled || !self.incumbent_cost.is_finite() || self.incumbent_cost <= 0.0 {
+        if !self.bound_enabled {
+            return None;
+        }
+        // `None` incumbent: no solution to measure against. A `Some` is always a
+        // finite `g_score`, but the guard stays defensive.
+        let incumbent = self.incumbent_cost?;
+        if !incumbent.is_finite() || incumbent <= 0.0 {
             return None;
         }
         // An infinite `h(root)` is an infeasibility *claim*, not a measured
@@ -118,12 +129,11 @@ impl BoundStats {
         if !self.root_lower_bound.is_finite() {
             return None;
         }
-        let gap = (self.incumbent_cost - self.root_lower_bound) / self.incumbent_cost;
+        let gap = (incumbent - self.root_lower_bound) / incumbent;
         debug_assert!(
             gap > -GAP_SLACK,
-            "inadmissible bound: h(root) {} exceeds the incumbent {}",
+            "inadmissible bound: h(root) {} exceeds the incumbent {incumbent}",
             self.root_lower_bound,
-            self.incumbent_cost
         );
         // Absorb float noise around an exactly-optimal incumbent only.
         Some(if gap.abs() <= GAP_SLACK { 0.0 } else { gap })
@@ -446,6 +456,34 @@ mod tests {
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+    /// A no-solution `BoundStats` must equal itself.
+    ///
+    /// `BoundStats` derives `PartialEq`, and the "no solution" incumbent used to
+    /// be `f64::NAN`, which is unequal to itself — so a determinism or
+    /// regression comparison of two identical unsolved results would report them
+    /// as different. `None` fixed that; this pins it.
+    #[test]
+    fn a_no_solution_stats_value_equals_itself() {
+        // Two independently built but identical no-solution results. Under the
+        // old `f64::NAN` incumbent these compared *unequal* (`NaN != NaN`), so a
+        // determinism check diffing two identical unsolved runs would flag a
+        // spurious difference.
+        let a = BoundStats {
+            bound_enabled: true,
+            incumbent_cost: None,
+            ..BoundStats::default()
+        };
+        let b = BoundStats {
+            bound_enabled: true,
+            incumbent_cost: None,
+            ..BoundStats::default()
+        };
+        assert_eq!(a, b);
+        assert_eq!(BoundStats::default(), BoundStats::default());
+        // And with no incumbent there is no gap to report.
+        assert_eq!(a.optimality_gap(), None);
+    }
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();

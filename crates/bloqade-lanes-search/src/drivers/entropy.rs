@@ -2399,7 +2399,7 @@ where
             // not misreported as an unbounded one.
             bound_stats: BoundStats {
                 root_lower_bound,
-                incumbent_cost: 0.0,
+                incumbent_cost: Some(0.0),
                 bound_enabled: !B::TRIVIAL,
                 ..BoundStats::default()
             },
@@ -2446,7 +2446,7 @@ where
     // invalidate it. Captured once, before any search.
     let mut bound_stats = BoundStats {
         root_lower_bound: bound_estimate(&graph, root_id, bound, &mut h_cache),
-        incumbent_cost: f64::NAN,
+        // `incumbent_cost` stays `None` (the default) until a goal is found.
         bound_enabled: !B::TRIVIAL,
         ..BoundStats::default()
     };
@@ -2867,7 +2867,7 @@ where
     // 1) lowest objective cost, 2) lowest approximate path move time,
     // 3) lexicographic path key (deterministic), 4) node id (deterministic).
     let best = select_best_goal_with_tiebreak(&found_goals, &graph, ctx.index);
-    bound_stats.incumbent_cost = best.map_or(f64::NAN, |id| graph.g_score(id));
+    bound_stats.incumbent_cost = best.map(|id| graph.g_score(id));
     SearchResult {
         goal: best,
         nodes_expanded,
@@ -4393,7 +4393,7 @@ mod tests {
                     "h(root) {} exceeded the solution cost {cost} for {initial:?}",
                     stats.root_lower_bound
                 );
-                assert_eq!(stats.incumbent_cost, cost);
+                assert_eq!(stats.incumbent_cost, Some(cost));
                 let gap = stats.optimality_gap().expect("solved runs have a gap");
                 assert!((0.0..=1.0).contains(&gap), "gap {gap} out of range");
             }
