@@ -28,6 +28,11 @@ proc-macro2 = "1"
 quote = "1"
 similar = "2"
 
+[features]
+# Exposes `bounds::assert_objective_contract` to other crates' tests. Off by
+# default so a panicking assertion helper stays out of release builds.
+test-util = []
+
 [dev-dependencies]
 assert_cmd = "2"
 tempfile = "3"

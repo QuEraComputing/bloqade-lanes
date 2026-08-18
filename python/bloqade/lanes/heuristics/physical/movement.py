@@ -77,6 +77,18 @@ class RustPlacementTraversal:
     lookahead: bool = False
     collect_entropy_trace: bool = False
     seed: int = 0
+    completion_bound: str | None = None
+    """Admissible completion bound for branch-and-bound pruning.
+
+    ``None`` (default) prunes a branch only once its accumulated cost alone
+    reaches the incumbent's. ``"weighted_distance"`` additionally prunes when
+    ``g + h`` reaches it, where ``h`` is the max objective-weighted distance
+    over unresolved atoms. Affects which subtrees are explored, never candidate
+    generation, and never returns a worse plan.
+
+    Only consulted by the entropy strategy, and ignored for loose-goal (CZ
+    pair) solves where the bound is not admissible.
+    """
     block_spectators: bool = True
     """Scope each CZ solve to the participating qubits.
 
@@ -113,6 +125,7 @@ def _move_search_from_traversal(
         max_goal_candidates=traversal.max_goal_candidates,
         collect_entropy_trace=collect_entropy_trace,
         seed=traversal.seed,
+        completion_bound=traversal.completion_bound,
     )
     return (
         _native.MoveSearch.entropy()
@@ -136,6 +149,9 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
     _rust_entropy_fallback_count: int = field(default=0, init=False, repr=False)
+    _bound_stats_total: dict[str, float] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _traced_rust_entropy_trace: EntropyTrace | None = field(
         default=None, init=False, repr=False
     )
@@ -240,6 +256,56 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         return self._rust_nodes_expanded_total
 
     @property
+    def rust_bound_stats_total(self) -> dict[str, float]:
+        """Branch-and-bound pruning statistics summed over every solve.
+
+        Counters and depth sums add; the per-instance ``root_lower_bound`` /
+        ``incumbent_cost`` / gap do not aggregate meaningfully across solves, so
+        the widest observed gap is kept as ``max_optimality_gap`` instead.
+
+        **Empty** — not zeroed — before the first solve, and after any number of
+        solves run with :pyattr:`RustPlacementTraversal.completion_bound` set to
+        ``None``: an unbounded run measured nothing, and reporting zeros would
+        be indistinguishable from a bounded run that pruned nothing. Key-check
+        rather than expecting the keys to exist.
+        """
+        return dict(self._bound_stats_total)
+
+    def _accumulate_bound_stats(self, stats: dict[str, float | None]) -> None:
+        """Fold one solve's bound statistics into the running totals."""
+        for key in (
+            "cuts_by_g",
+            "cuts_by_h",
+            "cuts_infeasible",
+            "cut_depth_sum",
+            "cut_depth_g_only_sum",
+        ):
+            value = stats.get(key)
+            if value is not None:
+                self._bound_stats_total[key] = self._bound_stats_total.get(
+                    key, 0
+                ) + int(value)
+        gap = stats.get("optimality_gap")
+        if gap is not None:
+            gap = float(gap)
+            prev = self._bound_stats_total.get("max_optimality_gap")
+            # A negative gap means h(root) > incumbent: the bound overestimated
+            # the true remaining cost, so it is inadmissible and pruning may have
+            # discarded the optimum. Rust preserves that sign on purpose (see
+            # BoundStats::optimality_gap), so the accumulator must not smooth it
+            # away — seeding `max` with 0.0 would mask a negative first reading,
+            # and a later positive gap would mask an earlier negative one. A
+            # negative reading therefore dominates any non-negative one, and
+            # among negatives the most negative (worst) wins; only when every
+            # gap is non-negative does the widest positive gap win.
+            if prev is None:
+                self._bound_stats_total["max_optimality_gap"] = gap
+            elif prev < 0.0 or gap < 0.0:
+                self._bound_stats_total["max_optimality_gap"] = min(prev, gap)
+            else:
+                self._bound_stats_total["max_optimality_gap"] = max(prev, gap)
+
+    @property
     def rust_entropy_fallback_count(self) -> int:
         """Number of solved Rust entropy stages that used the budget-exhaustion
         fallback (Push and Rotate, with the greedy sequential router as the
@@ -327,6 +393,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
                 remaining,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
+            self._accumulate_bound_stats(result.bound_stats)
             if remaining is not None:
                 # The search strategies expand ≥ 1 node per call (even when
                 # unsolvable), but PUSH_ROTATE is not a search and always

@@ -48,14 +48,29 @@ def main() -> int:
 
     if args.architecture == "logical":
         strategies = tuple(
-            default_strategy_configs(arch_spec=("logical", logical_arch.get_arch_spec))
+            default_strategy_configs(
+                arch_spec=("logical", logical_arch.get_arch_spec),
+                # Bound-on coverage is tracked on the logical suite only; see
+                # `default_strategy_configs` for why not on physical.
+                include_completion_bound=True,
+            )
         )
     else:
+        # The bounded variant is not in the *default* physical matrix (it roughly
+        # doubles that suite's runtime), but it must still be selectable by name
+        # so its physical coverage can be measured on demand. Registering it only
+        # when `--strategies` names it keeps the default run unchanged while
+        # making `--strategies rust_entropy_5_bounded` work rather than exiting
+        # with "no jobs selected".
+        physical_bound = bool(strategy_filter) and any(
+            "bounded" in name for name in strategy_filter
+        )
         strategies = tuple(
             cfg
             for (arch_id, arch) in arch_spec_pairs
             for cfg in default_strategy_configs(
                 arch_spec=(arch_id, (lambda arch=arch: arch)),
+                include_completion_bound=physical_bound,
             )
         )
     jobs = expand_benchmark_jobs(

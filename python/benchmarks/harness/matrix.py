@@ -30,6 +30,8 @@ from bloqade.lanes.heuristics.physical.placement import (
 
 def default_strategy_configs(
     arch_spec: tuple[str, Callable[[], ArchSpec]] | None = None,
+    *,
+    include_completion_bound: bool = False,
 ) -> tuple[StrategyConfig, ...]:
     """Return the default strategy matrix for V1 benchmarks.
 
@@ -38,6 +40,19 @@ def default_strategy_configs(
     physical archspec. The factory is invoked once per
     `StrategyConfig.build_placement_strategy` call, preserving the lazy
     construction semantics of the original built-in archspec.
+
+    `include_completion_bound` adds the branch-and-bound variant
+    (`rust_entropy_5_bounded`). Off by default, and enabled only for the logical
+    suite: on the physical suite the bound spends its full expansion budget
+    hunting strictly-better goals on the largest kernel (`adder_64`, 93s ->
+    370s) which roughly doubles that suite's runtime, and it buys 8 fewer moves
+    there rather than nothing — a trade worth making deliberately, not on every
+    CI run.
+
+    Physical bound coverage is measured ad hoc via
+    `--architecture physical --strategies rust_entropy_5_bounded`: the CLI turns
+    this flag on when `--strategies` names a bounded config, so the strategy is
+    selectable by name without joining the default physical matrix.
     """
     if arch_spec is None:
         arch_spec_id = BUILTIN_ARCH_SPEC_ID
@@ -169,6 +184,29 @@ def default_strategy_configs(
                 "Rust solver nodes_explored captured from solver output"
             ),
         ),
+    ) + (
+        (
+            StrategyConfig(
+                strategy_id="rust_entropy_5_bounded",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(
+                            strategy="entropy",
+                            max_goal_candidates=5,
+                            max_expansions=2000,
+                            completion_bound="weighted_distance",
+                        ),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+                notes="branch-and-bound pruning with the h0 weighted-distance bound",
+            ),
+        )
+        if include_completion_bound
+        else ()
     )
 
 

@@ -226,3 +226,25 @@ def test_load_baseline_csv_rejects_invalid_bool(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Invalid boolean"):
         load_baseline_csv(path)
+
+
+def test_load_baseline_csv_rejects_duplicate_columns(tmp_path: Path):
+    """A repeated header is silent corruption, not a schema variation.
+
+    ``csv.DictReader`` keeps only the last occurrence, so every value from the
+    duplicate onwards is read out of the wrong column and the CI gate then
+    compares against numbers that were never measured. Membership checks alone
+    cannot see it — the duplicated name is a known column and nothing is
+    missing.
+    """
+    path = tmp_path / "duplicate.csv"
+    path.write_text(
+        "case_id,strategy_id,backend,generator_id,success,wall_time_ms,"
+        "move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,"
+        "nodes_explored,max_depth_reached,notes\n"
+        "ghz_4,python_entropy,python,heuristic,True,1.0,1,1,0.9,37,999,1,\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="repeats column"):
+        load_baseline_csv(path)
