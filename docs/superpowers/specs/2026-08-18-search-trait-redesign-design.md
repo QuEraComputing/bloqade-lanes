@@ -22,9 +22,9 @@ CzPlacement / StagePlacement   "given CZ pairs at a stage, decide WHERE atoms go
       │  builds a Goal (+ heuristic guidance), orchestrates routing, picks best
       ▼
 TargetSolver                   "route from a start config toward a goal, within a budget"        ← routing solver
-      │  two independent realizations: search-based, and push-and-rotate (rule-based)
+      │  realizations behind one polymorphic face: static search specializations + push-and-rotate
       ▼
-search(gen, cost, bound, goal, traversal)   "move atoms until this Goal holds, min cost"         ← routing search core
+SearchCore substrate  +  static specializations (frontier-family, entropy)                       ← routing search core
 ```
 
 The **seam between placement and routing is `Goal`**: placement's entire product
@@ -72,40 +72,77 @@ trait CompletionBound: Sync {
 }
 ```
 
-### Tier 2 seam — traversal / open-list discipline (generic)
+### Tier 2 — search as *static specializations over a shared `SearchCore`*
+
+There is **no universal `Traversal` trait** that both engines implement, and **no
+single `search()`** with a pluggable open-list. Tracing the entropy loop
+([entropy.rs:2459-2854](../../..)) showed why: `Frontier`'s
+`select_next`/`receive_children` bake in "pop a node → batch-generate *all* its
+successors → push them to a *stored* open list," and entropy does the opposite on
+three axes at once — **incremental** (one candidate per step, lazily generated),
+**outcome-driven** (the loop decides descend/revert/resume from the *last*
+result), and **bounded-memory** (a size-`k` resume buffer + parent chain, not a
+materialized frontier). Forcing it under those two methods would push entropy's
+rules into the shared loop and defeat the point.
+
+So the model is: **each engine is a static (monomorphized) specialization of
+search over a shared substrate.** What is shared is the substrate, not the loop:
+
+- **`SearchCore` services** — the `SearchGraph` arena, node insertion, goal-check,
+  the `CompletionBound` gate, and the `best_reached` fold (below).
+- **The Tier-1 problem traits** (above) and the outward `SearchResult` /
+  `RouteOutcome` contract (§6).
+
+The specializations, each owning its own loop body:
+
+- **`FrontierSearch<F: Frontier>`** — the materialized-open-list specialization.
+  `Frontier` is a real, useful knob *here*: A\*/BFS/DFS/IDS differ *only* in it
+  (`select_next` / `receive_children` + goal-check timing). `Frontier` is **scoped
+  to this specialization** — it is *not* the cross-engine seam.
+- **`EntropySearch`** — a sibling specialization, **not** a `Frontier` impl. Same
+  substrate, different loop (single-path DFS + entropy backtracking + bounded
+  resume buffer).
+- **`PushRotate`** — a third realization with *no* search loop at all (rule-based
+  router), behind the same outward contract.
+
+Static specialization is what the type-level constraints already force anyway:
+`CompletionBound` is non-object-safe (`const TRIVIAL`, RPIT `as_heuristic`),
+`Heuristic + Copy` rules out `dyn`, and `NoBound::TRIVIAL` only compiles the prune
+away because the loop is monomorphized. The **only** runtime-polymorphic seam is
+`TargetSolver` (§6) — one coarse dispatch per solve, never inside a hot loop.
+
+#### Best-reached — an optional field on `SearchResult` (feeds the resumable handoff, §6)
+
+`best_reached` is **result data, not a trait method**: an optional field on the
+driver's `SearchResult` (a `NodeId` in the result graph, exactly like `goal`),
+which a specialization populates or leaves `None`.
 
 ```rust
-trait Traversal {
-    // select-next, receive-children, goal-check timing, prune-gate location ...
-    fn best_reached(&self) -> Option<NodeId>;   // overridable; a default is supplied by the loop
+struct SearchResult {
+    goal: Option<NodeId>,          // the solution / incumbent (best *complete*)
+    best_reached: Option<NodeId>,  // most-*progressed* node reached; None if not tracked
+    graph: SearchGraph, nodes_expanded: u32, bound_stats: BoundStats, /* … */
 }
-// Frontier family (materialized open list): PriorityFrontier<H> | Bfs | Dfs<H> | Ids<H>
-// Entropy/B&B family (implicit single path + resume buffer + entropy counters)
 ```
 
-`H` (ordering heuristic) lives *inside* the frontier variants; the entropy
-variant computes ordering internally (and statefully, which is why it is not a
-plug-in `Heuristic`).
+*Computing* it is a **fold over nodes seen** (`argmin(progress metric)`),
+independent of ordering, so it lives in the shared `SearchCore`: `FrontierSearch`
+folds it at **push time** (as each generated node is inserted — a richer pool than
+only expanded ones) using a **`MeasurableGoal` shortfall** (§3); `EntropySearch`
+fills it natively from its resume buffer + `found_goals`. A specialization that
+tracks nothing — BFS, or any run with no `MeasurableGoal` supplied — simply leaves
+the field `None`. **No trait obligation, no default-impl gymnastics**; the
+optionality is the whole point.
 
-#### Best-reached tracking (feeds the resumable handoff, §6)
-
-"Best" is a **fold over nodes seen** (`best = argmin(progress metric)`) and is
-**independent of ordering** — so it is *not* per-traversal logic. The shared
-search loop maintains it uniformly for every frontier traversal, at **push time**
-(`receive_children` sees every *generated* node — a richer pool than only
-expanded ones), using a **`MeasurableGoal` shortfall** as the metric (§3). A
-traversal **overrides** the default only when it already tracks something richer
-natively — entropy's resume buffer is the sole such case.
-
-- **Two distinct "bests," unified.** *Incumbent* = best complete solution (a
-  goal), what branch-and-bound prunes against; exists only after a goal is found.
-  *Best-reached partial* = most-progressed config (goal or not), what P&R resumes
-  from. `best_reached` returns the incumbent if one exists, else the most-
-  progressed partial. `Solved` is just the case where `best_reached` satisfies
-  the goal — so success and budget-exceed share one contract.
-- **Availability is metric-gated, not traversal-gated.** `best_reached` is
-  well-defined whenever a `MeasurableGoal` shortfall is supplied; the `Option`
-  reflects "no progress metric," not "which traversal." **No BFS special case.**
+- **Two fields, two roles.** `goal` = best *complete* solution (the incumbent
+  branch-and-bound prunes against); `best_reached` = most-*progressed* node (goal
+  or not), what P&R resumes from. Consumers read `goal.or(best_reached)` to get
+  "the config to report / resume from," so success and budget-exceed share one
+  contract (§6 maps this to `RouteOutcome.reached`).
+- **`None` is honest, not special-cased.** `best_reached` is `Some` whenever a
+  `MeasurableGoal` shortfall was supplied and the specialization tracked it;
+  otherwise `None`. BFS (or any metric-less run) leaves it `None` — the consumer
+  falls back to `goal`, then root. No BFS branch anywhere in the code.
 - **Cost.** The fold is O(1)/node and needs no post-hoc graph scan. It is *free*
   for A\*/DFS/IDS/entropy (they already evaluate the ordering signal per node) and
   costs *one extra metric eval per node* for BFS (FIFO, otherwise never touches
@@ -113,19 +150,81 @@ natively — entropy's resume buffer is the sole such case.
   (too expensive to use in practice), so its extra per-node eval never matters —
   do not shape the design around BFS performance.
 
-### The unified driver both traversals collapse to
+### The shared substrate + the specializations (not one function)
 
 ```rust
-fn search<G, O, B, Go, T>(
-    root: Config,
-    generator: &G,        // MoveGenerator   \
-    objective: &O,        // CostModel (g)    |  all graph-agnostic
-    bound:     &B,        // CompletionBound  |  B::Obj = O; NoBound<O> = pruning off
-    goal:      &Go,       // Goal             /
-    traversal: &mut T,    // <-- the only thing that differs between the two engines
-) -> SearchResult
-where O: CostModel, B: CompletionBound<Obj = O>, G: MoveGenerator, Go: Goal, T: Traversal;
+// Shared, monomorphized services every specialization is written against.
+struct SearchCore<'a> { /* graph arena, insert, goal-check, CompletionBound gate, best_reached fold, ctx */ }
+
+// Specialization 1: the materialized-open-list family, parameterized by Frontier.
+// This is today's `run_search`, minus the arch-bearing SearchContext.
+fn frontier_search<G, O, B, Go, F>(core: &mut SearchCore, generator: &G, objective: &O,
+                                   bound: &B, goal: &Go, frontier: &mut F) -> SearchResult
+where O: CostModel, B: CompletionBound<Obj = O>, G: MoveGenerator, Go: Goal, F: Frontier;
+
+// Specialization 2: entropy — its OWN loop over the same core; no Frontier.
+fn entropy_search<G, O, B, Go>(core: &mut SearchCore, generator: &G, objective: &O,
+                               bound: &B, goal: &Go, params: &EntropyParams) -> SearchResult
+where O: CostModel, B: CompletionBound<Obj = O>, G: MoveGenerator, Go: Goal;
 ```
+
+There is deliberately **no** single `search<…, T: Traversal>(…)`. The engines
+share `SearchCore` and the Tier-1 traits; they do **not** share a loop body. They
+are unified only at the `TargetSolver` face (§6) — the one polymorphic boundary.
+
+### Two-tier dispatch — monomorphized fast path + a `dyn` fallback
+
+Two requirements: (a) adding a new bound / objective / cost config should be
+cheap, and (b) experimental, non-enumerated configs should be possible without
+touching the fast dispatcher. Both fall out of writing each loop **once**,
+generic, with two front doors.
+
+**One generic loop.** `run<O: Objective, B: CompletionBound<Obj = O>, …>(core, obj,
+bound, …)` is written a single time; everything below is *how you reach it*.
+
+**Tier 1 (fast) — resolve one axis per match, let the compiler compose the
+product.** Do not hand-write the `strategy × bound × objective` cartesian product.
+Each axis gets a local match that resolves a concrete type and calls the next
+stage generically (continuation- or builder-style); the compiler generates the
+product of monomorphizations. Adding a bound = one arm in `with_bound`; adding an
+objective = one arm in `with_objective`. (A `macro_rules!` over the axis lists can
+generate the arms instead — same effect.) Every arm is fully monomorphized and
+inlined. Cost is code size, bounded by the number of concrete axis values you
+actually instantiate — keep the *runtime-open* axis set small (today: strategy ×
+bound, with objective/scorer pinned).
+
+**Tier 2 (flexible) — an object-safe shadow trait + wrapper, through the same
+loop.** `CompletionBound` is non-object-safe (`const TRIVIAL`, RPIT
+`as_heuristic`), so a boxed bound needs a shim:
+
+```rust
+// Object-safe: no const, no RPIT, no associated type.
+trait DynBound: Sync { fn objective_id(&self) -> ObjectiveId; fn estimate(&self, c: &Config) -> f64; }
+impl<T: CompletionBound> DynBound for T { /* blanket: every static bound is usable dynamically */ }
+
+// Bridges dyn -> the non-object-safe generic trait.
+struct ErasedBound<'a, O> { inner: &'a dyn DynBound, _o: PhantomData<O> }
+impl<'a, O: Objective> CompletionBound for ErasedBound<'a, O> {
+    type Obj = O;
+    const TRIVIAL: bool = false;                                    // supplies the const the vtable can't
+    fn objective_id(&self) -> ObjectiveId { self.inner.objective_id() }
+    fn estimate(&self, c: &Config) -> f64 { self.inner.estimate(c) } // <- per-node vtable call
+}
+```
+
+The experimental path is then `run::<O, ErasedBound<O>>(…)` — the **same loop**,
+one extra monomorphization, with dynamic dispatch happening *inside* `estimate`.
+An experimental bound impls `DynBound` (or gets it via the blanket) and is boxed;
+the Tier-1 dispatcher is untouched. The same wrapper applies to any other axis you
+want erasable (`ErasedObjective` over `dyn DynObjective`), so the fully-dynamic
+entry is `run::<ErasedObjective, ErasedBound<ErasedObjective>>`.
+
+**What Tier 2 trades (so keep it opt-in):** no inlining of `estimate` (a vtable
+call per node); no `NoBound::TRIVIAL` compile-away; and the compile-time objective
+pairing (`B::Obj = O`) degrades to the runtime `ObjectiveId` assert — which already
+exists ([entropy.rs:2369](../../..)), so correctness is still checked, just later.
+Gate it behind an explicit entry (`run_dynamic` / a `Strategy::Experimental` flag)
+so production always takes Tier 1 and never accidentally pays the vtable cost.
 
 ---
 
@@ -396,10 +495,20 @@ becomes goal-/pair-agnostic and `SearchContext.cz_pairs` disappears.
 5. **Other bound consumers.** Is `WeightedDistanceBound` the only thing needing
    `LaneAdditive`/`PointGoal`, or would a future zone-bus / phase bound want a
    different decomposition (affecting how those capability traits are shaped)?
-6. **`Traversal` unification.** Can one trait host both a materialized `Frontier`
-   and entropy's path+resume model, or do they stay two families over one shared
-   Tier-1 core? (`IdsFrontier` is evidence a backtracking search already fits the
-   `Frontier` shape.)
+6. **`Traversal` unification — RESOLVED: no universal trait; static
+   specializations over a shared `SearchCore` (see §2).** Tracing the entropy loop
+   ([entropy.rs:2459-2854](../../..)) settled it, method-by-method vs `Frontier`:
+   `check_goal_*` fits (entropy tests on generate); `best_reached` fits and entropy
+   already implements it richer (resume buffer + `found_goals`); but
+   `select_next` / `receive_children` do **not** — they presume batch-expand into a
+   *stored* open list, whereas entropy is incremental, outcome-driven, and
+   bounded-memory. Resolution is **not** to widen the trait (a `step`/driver
+   inversion would drag one engine's rules into a shared loop) but to share the
+   **substrate** (`SearchCore` + Tier-1 + `best_reached` + `RouteOutcome`) and let
+   each engine be its own monomorphized loop, unified only at `TargetSolver`.
+   Correction to an earlier note: `IdsFrontier` shows *materialized* backtracking
+   fits `Frontier` — it does **not** show entropy fits, because IDS keeps every
+   node in its heap while entropy deliberately keeps only a bounded resume buffer.
 
 Safety net for whatever migration follows: the deterministic benchmark baselines
 (`python/benchmarks/harness/latest_physical.csv` / `latest_logical.csv`,
