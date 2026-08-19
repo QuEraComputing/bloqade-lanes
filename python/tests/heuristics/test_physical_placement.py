@@ -102,6 +102,7 @@ def test_cz_placements_rust_raises_on_failure(monkeypatch):
     class _FakeResult:
         status = "unsolvable"
         nodes_expanded = 0
+        bound_stats: ClassVar[dict[str, float]] = {}
 
     class _FakeSolver:
         def solve(self, *_args):
@@ -183,6 +184,7 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     class _FakeResult:
         status = "solved"
         nodes_expanded = 1
+        bound_stats: ClassVar[dict[str, float]] = {}
         # move_layers: list[list[LaneAddress]] — MoveType.ZONE variant
         move_layers: ClassVar = [
             [NativeLane(MoveType.ZONE, 0, 0, 0, 0, BytecodeDirection.FORWARD)]
@@ -225,6 +227,7 @@ def test_cz_placements_counts_entropy_fallback_trace(monkeypatch):
     class _FakeResult:
         status = "solved"
         nodes_expanded = 1
+        bound_stats: ClassVar[dict[str, float]] = {}
         move_layers: ClassVar = []
         goal_config: ClassVar = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
         entropy_trace = _FakeTrace()
@@ -277,6 +280,7 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
         def __init__(self):
             self.status = "unsolvable"
             self.nodes_expanded = consumed
+            self.bound_stats: dict[str, float] = {}
 
     class _FakeSolver:
         def solve(self, _initial, _target, _blocked, max_expansions):
@@ -514,3 +518,139 @@ def test_move_to_placements_produces_user_moved():
     assert out.layout == (LocationAddress(1, 0), LocationAddress(2, 0))
     assert out.accumulated_move_layers == out.move_layers
     assert len(out.move_layers) > 0
+
+
+# ---------------------------------------------------------------------------
+# Branch-and-bound statistics accumulation
+# ---------------------------------------------------------------------------
+
+
+def _strategy() -> PhysicalPlacementStrategy:
+    return PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+
+
+def test_bound_stats_start_empty():
+    """Absence of a measurement must read as absence, not as a zeroed one."""
+    assert _strategy().rust_bound_stats_total == {}
+
+
+def test_bound_stats_counters_sum_across_solves():
+    """A placement pass calls the solver once per CZ candidate, so the reported
+    totals are only meaningful if each solve's counters are added rather than
+    overwritten."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats(
+        {
+            "cuts_by_g": 1,
+            "cuts_by_h": 2,
+            "cuts_infeasible": 3,
+            "cut_depth_sum": 10,
+            "cut_depth_g_only_sum": 14,
+        }
+    )
+    strategy._accumulate_bound_stats(
+        {
+            "cuts_by_g": 4,
+            "cuts_by_h": 5,
+            "cuts_infeasible": 6,
+            "cut_depth_sum": 20,
+            "cut_depth_g_only_sum": 26,
+        }
+    )
+    assert strategy.rust_bound_stats_total == {
+        "cuts_by_g": 5,
+        "cuts_by_h": 7,
+        "cuts_infeasible": 9,
+        "cut_depth_sum": 30,
+        "cut_depth_g_only_sum": 40,
+    }
+
+
+def test_bound_stats_counters_are_ints():
+    """The native layer hands these across as floats; they are counts, and a
+    CSV column of ``3.0`` would diff against a baseline of ``3``."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats({"cuts_by_h": 2.0, "cut_depth_sum": 7.0})
+    for key in ("cuts_by_h", "cut_depth_sum"):
+        assert isinstance(strategy.rust_bound_stats_total[key], int)
+
+
+def test_bound_stats_keeps_the_widest_optimality_gap():
+    """Gaps are per-solve fractions, so summing them is meaningless — the
+    widest one observed is what bounds the whole pass."""
+    strategy = _strategy()
+    for gap in (0.25, 0.75, 0.5):
+        strategy._accumulate_bound_stats({"optimality_gap": gap})
+    assert strategy.rust_bound_stats_total["max_optimality_gap"] == 0.75
+
+
+def test_bound_stats_records_a_zero_gap():
+    """A gap of exactly 0.0 is the strongest result the bound can report — the
+    incumbent is *provably optimal*. It is also falsy, so a truthiness check
+    here would silently drop precisely the solves worth knowing about, leaving
+    a pass that proved optimality indistinguishable from one that never ran a
+    bound at all."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats({"optimality_gap": 0.0})
+    assert strategy.rust_bound_stats_total == {"max_optimality_gap": 0.0}
+
+
+def test_bound_stats_preserves_a_negative_gap_as_the_first_reading():
+    """A negative gap means ``h(root) > incumbent`` — an inadmissible bound that
+    may have pruned the optimum, which Rust preserves the sign to signal. Seeding
+    the aggregate's ``max`` with ``0.0`` would mask a negative first reading
+    outright; it must survive instead."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats({"optimality_gap": -0.5})
+    assert strategy.rust_bound_stats_total["max_optimality_gap"] == -0.5
+
+
+def test_bound_stats_a_negative_gap_dominates_a_later_positive_one():
+    """The inadmissibility signal must not be smoothed away by an admissible
+    solve elsewhere in the same pass. A negative reading dominates any
+    non-negative one regardless of order, and the most negative (worst) wins."""
+    ascending = _strategy()
+    for gap in (-0.2, 0.9, -0.6, 0.3):
+        ascending._accumulate_bound_stats({"optimality_gap": gap})
+    assert ascending.rust_bound_stats_total["max_optimality_gap"] == -0.6
+
+    # Order-independent: a positive gap seen first is still overridden.
+    positive_first = _strategy()
+    for gap in (0.9, -0.4):
+        positive_first._accumulate_bound_stats({"optimality_gap": gap})
+    assert positive_first.rust_bound_stats_total["max_optimality_gap"] == -0.4
+
+
+def test_bound_stats_ignore_an_unbounded_solve():
+    """``SolveResult.bound_stats`` is an empty dict when bounding is off, so an
+    unbounded solve mixed in with bounded ones must contribute nothing rather
+    than folding in zeros or raising."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats({"cuts_by_h": 3, "optimality_gap": 0.4})
+    strategy._accumulate_bound_stats({})
+    assert strategy.rust_bound_stats_total == {
+        "cuts_by_h": 3,
+        "max_optimality_gap": 0.4,
+    }
+
+
+def test_bound_stats_total_is_a_copy():
+    """The property hands out a snapshot; mutating it must not corrupt the
+    running totals."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats({"cuts_by_h": 1})
+    snapshot = strategy.rust_bound_stats_total
+    snapshot["cuts_by_h"] = 999
+    assert strategy.rust_bound_stats_total == {"cuts_by_h": 1}
+
+
+def test_bound_stats_records_zero_counters():
+    """A counter that is genuinely zero must still be reported. ``cuts_by_g``
+    is zero on every benchmark case — the bound converts those cuts to
+    ``cuts_by_h`` — so a truthiness check would drop the column entirely and
+    make "the cost bound never fired" indistinguishable from "no bound ran"."""
+    strategy = _strategy()
+    strategy._accumulate_bound_stats({"cuts_by_g": 0, "cuts_by_h": 4})
+    assert strategy.rust_bound_stats_total == {"cuts_by_g": 0, "cuts_by_h": 4}

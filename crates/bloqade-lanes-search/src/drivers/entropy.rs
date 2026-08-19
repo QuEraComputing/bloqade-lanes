@@ -18,6 +18,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::bounds::{BoundStats, CompletionBound, NoBound};
+use crate::cost::UniformCost;
 use crate::drivers::result::SearchResult;
 use crate::feasibility::graph::LaneGraph;
 use crate::observer::{SearchEvent, SearchObserver};
@@ -33,7 +35,7 @@ use crate::primitives::ordering::{
 };
 use crate::primitives::path::find_path_occupied;
 use crate::push_rotate::{DEFAULT_MOVE_BUDGET, plan as push_rotate_plan};
-use crate::traits::Goal;
+use crate::traits::{Goal, Objective};
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -351,11 +353,15 @@ struct ScoredEntry {
 /// `score` is the unperturbed level-2 moveset score, cached at generation
 /// time so the resume buffer can rank untried candidates without re-running
 /// `score_moveset` on every descend.
+///
+/// Deliberately carries **no cost**: candidate generation is the entropy
+/// heuristic's business, and cost belongs to the [`Objective`]. The driver
+/// prices a candidate through `objective.edge_cost` at insert time, so `g` has
+/// exactly one source of truth.
 #[derive(Debug, Clone)]
 pub(crate) struct CandidateEntry {
     pub(crate) move_set: MoveSet,
     pub(crate) new_config: Config,
-    pub(crate) cost: f64,
     pub(crate) deadlock_breaker: bool,
     pub(crate) score: f64,
 }
@@ -551,6 +557,19 @@ impl Default for EntropyState {
 struct ScoredResumeState {
     node_id: NodeId,
     score: f64,
+    /// Lowest total cost any solution through this node can have: `g + h`,
+    /// accumulated objective cost plus the completion bound. Fixed at
+    /// insertion time, since both terms are functions of the node's
+    /// configuration alone. Equals `g` exactly when bounding is disabled.
+    ///
+    /// Used *only* by the incumbent gate in [`resume_buffer_pop_best`], never
+    /// by the ordering below — unlike the weighted `f_score` the frontier
+    /// driver ranks by, this is an unweighted floor used to prune.
+    min_total_cost: f64,
+    /// The node's accumulated cost alone, so the incumbent gate can classify
+    /// its own cuts as [`Cut::ByG`] or [`Cut::ByH`] without re-reading the
+    /// graph.
+    g: f64,
     depth: u32,
     order: u64,
 }
@@ -562,13 +581,17 @@ fn cmp_resume_states(a: &ScoredResumeState, b: &ScoredResumeState) -> Ordering {
         .then_with(|| b.order.cmp(&a.order))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resume_buffer_insert(
     buffer: &mut Vec<ScoredResumeState>,
     node_id: NodeId,
     score: f64,
+    min_total_cost: f64,
+    g: f64,
     depth: u32,
     capacity: usize,
     next_order: &mut u64,
+    best_cost: Option<f64>,
 ) {
     if capacity == 0 {
         return;
@@ -578,6 +601,8 @@ fn resume_buffer_insert(
     let candidate = ScoredResumeState {
         node_id,
         score,
+        min_total_cost,
+        g,
         depth,
         order: *next_order,
     };
@@ -585,6 +610,21 @@ fn resume_buffer_insert(
 
     if buffer.len() < capacity {
         buffer.push(candidate);
+        return;
+    }
+
+    // At capacity, evict a resident the incumbent already dominates before
+    // consulting the score ordering. `cmp_resume_states` deliberately ignores
+    // `min_total_cost`, so without this a dominated resident can out-rank a
+    // viable candidate on score and keep its slot — only for the next
+    // `resume_buffer_pop_best` to discard it anyway, having lost a resume point
+    // the buffer had room for.
+    let candidate_is_viable = best_cost.is_none_or(|cap| candidate.min_total_cost < cap);
+    if candidate_is_viable
+        && let Some(cap) = best_cost
+        && let Some(dominated_idx) = buffer.iter().position(|e| e.min_total_cost >= cap)
+    {
+        buffer[dominated_idx] = candidate;
         return;
     }
 
@@ -605,9 +645,26 @@ fn resume_buffer_discard(buffer: &mut Vec<ScoredResumeState>, node_id: NodeId) {
     buffer.retain(|entry| entry.node_id != node_id);
 }
 
-fn resume_buffer_pop_best(
+/// Pop the highest-priority resumable node, skipping any that the incumbent
+/// already dominates.
+///
+/// `best_cost` is the incumbent objective cost `C`. A buffered node whose
+/// `g + h` reaches `C` cannot lead to a strictly cheaper solution, so it is
+/// dropped rather than returned. Ordering is untouched by the gate — the
+/// priority comparison stays `(score, depth, order)`.
+///
+/// This is the third pruning gate, and its cuts are recorded like the other
+/// two: dropping a node here is the bound's work just as much as refusing it at
+/// the top of the loop, and a node reaching this gate is always uncounted (a
+/// node is only buffered after passing [`classify_cut`], and `best_cost` never
+/// rises, so a node that was ever cut is never re-inserted). Leaving it out
+/// undercounted `cuts_by_h` and biased the published depth ratio.
+fn resume_buffer_pop_best<B: CompletionBound>(
     buffer: &mut Vec<ScoredResumeState>,
-    best_goal_depth: Option<u32>,
+    best_cost: Option<f64>,
+    stats: &mut BoundStats,
+    counted: &mut Vec<bool>,
+    min_shot_cost: f64,
 ) -> Option<NodeId> {
     loop {
         let best_idx = buffer
@@ -616,9 +673,24 @@ fn resume_buffer_pop_best(
             .min_by(|(_, a), (_, b)| cmp_resume_states(a, b))
             .map(|(idx, _)| idx)?;
         let best = buffer.swap_remove(best_idx);
-        if let Some(depth_cap) = best_goal_depth
-            && best.depth >= depth_cap
+        if let Some(cost_cap) = best_cost
+            && best.min_total_cost >= cost_cap
         {
+            let cut = if best.g >= cost_cap {
+                Cut::ByG
+            } else {
+                Cut::ByH
+            };
+            record_cut::<B>(
+                stats,
+                counted,
+                best.node_id,
+                cut,
+                best.depth,
+                best.g,
+                best_cost,
+                min_shot_cost,
+            );
             continue;
         }
         return Some(best.node_id);
@@ -658,16 +730,39 @@ fn path_lexicographic_key(graph: &SearchGraph, goal_id: NodeId) -> Vec<Vec<u64>>
         .collect()
 }
 
+/// Relative slack for treating two accumulated costs as tied. Far above f64
+/// rounding noise over a plan of realistic length, far below any real cost
+/// difference (which is at least one `min_shot_cost`).
+const COST_TIE_RELATIVE_TOLERANCE: f64 = 1e-12;
+
+/// Pick the best goal: lowest objective cost, then the deterministic
+/// tiebreaks.
+///
+/// The primary key is `g_score` — the accumulated [`Objective`] cost — not
+/// depth. Under [`UniformCost`](crate::cost::UniformCost) the two are equal for
+/// every node, so this selects exactly what the previous min-depth rule did.
+/// Move time stays a *tiebreak* among equal-cost goals rather than being folded
+/// into the objective.
+///
+/// Costs are compared with a relative tolerance rather than bit-exactly: under
+/// a non-integral objective `g` is a running sum whose last bit depends on the
+/// order the shots were added, so two genuinely equal-cost goals can differ by
+/// an ulp. Exact filtering would drop one of them before the deterministic
+/// tiebreaks below ever see it, which is the opposite of this function's job.
 fn select_best_goal_with_tiebreak(
     found_goals: &[NodeId],
     graph: &SearchGraph,
     index: &LaneIndex,
 ) -> Option<NodeId> {
-    let min_depth = found_goals.iter().map(|&id| graph.depth(id)).min()?;
+    let min_cost = found_goals
+        .iter()
+        .map(|&id| graph.g_score(id))
+        .min_by(f64::total_cmp)?;
+    let tolerance = min_cost.abs().max(1.0) * COST_TIE_RELATIVE_TOLERANCE;
     found_goals
         .iter()
         .copied()
-        .filter(|&id| graph.depth(id) == min_depth)
+        .filter(|&id| graph.g_score(id) <= min_cost + tolerance)
         .map(|id| {
             (
                 id,
@@ -1168,6 +1263,175 @@ fn debug_assert_tables_match(tables: Option<&HeuristicTables>, params: &EntropyP
     }
 }
 
+/// Why a branch was cut, for [`BoundStats`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Cut {
+    /// `h = +∞`: no completion exists, whatever the incumbent.
+    Infeasible,
+    /// `g` alone reached the incumbent — would have been cut without a bound.
+    ByG,
+    /// Only the bound could make this cut: `g < C <= g + h`.
+    ByH,
+}
+
+/// Branch-and-bound test: can `node` still lead to something strictly better
+/// than the incumbent?
+///
+/// Returns `Some(reason)` when the branch is provably not worth exploring —
+/// either because the bound proves no completion exists (`h = +∞`) or because
+/// `g + h` already reaches the incumbent cost `C`. Ties are cut: an equal-cost
+/// completion adds nothing once one is held.
+///
+/// `h` is the *unweighted* admissible estimate. Ordering elsewhere in this
+/// driver may be perturbed or reweighted; a pruning decision may not be.
+///
+/// With a [`TRIVIAL`](CompletionBound::TRIVIAL) bound the `h` term folds to a
+/// constant `0.0` at monomorphization, so [`Cut::ByH`] and [`Cut::Infeasible`]
+/// become unreachable and this collapses to exactly the `g >= C` test it
+/// generalizes — the bound-disabled path is the same code, not merely
+/// equivalent code.
+/// `h` for `node`, computed once per node and memoized.
+///
+/// The bound is a pure function of a node's configuration, and a node's
+/// configuration never changes after insertion, so caching by [`NodeId`] is
+/// exact. Without it the main loop evaluates the same node's `h` up to three
+/// times per iteration — the resume gate, the buffer insert, and the child gate
+/// that the next iteration's resume gate then repeats. Stays empty (no
+/// allocation) when the bound is trivial.
+///
+/// Indexed by [`NodeId`] directly rather than hashed. [`SearchGraph`] is an
+/// append-only arena — a node's id *is* its index at insertion, nothing is ever
+/// removed, cleared, or reused (a cheaper re-discovery appends a new node and
+/// leaves the old one in place), and the only size limit is a hard panic past
+/// `2^32` nodes. So ids are dense, stable for the graph's lifetime, and always
+/// below `graph.len()`; hashing a `u32` to reach them was pure overhead on a
+/// path probed up to three times per iteration.
+///
+/// `None` marks "not yet computed". [`Option<f64>`] rather than a `NaN`
+/// sentinel: "unset" is then unrepresentable as an estimate, so no value a bound
+/// can return — `NaN` included — is mistaken for an empty slot. The cost is 16
+/// bytes per node against 8, which at this driver's own default cap is 31 KB
+/// instead of 15 KB, and a discriminant test in place of `is_nan()`. Both are
+/// far below anything measurable on a path that is a fraction of a percent of
+/// solve time; a sentinel that a caller can collide with is not worth saving
+/// them.
+#[inline]
+fn bound_estimate<B: CompletionBound>(
+    graph: &SearchGraph,
+    node: NodeId,
+    bound: &B,
+    h_cache: &mut Vec<Option<f64>>,
+) -> f64 {
+    if B::TRIVIAL {
+        return 0.0;
+    }
+    let idx = node.0 as usize;
+    if idx >= h_cache.len() {
+        h_cache.resize(idx + 1, None);
+    }
+    if let Some(cached) = h_cache[idx] {
+        return cached;
+    }
+    let h = bound.estimate(graph.config(node));
+    // The cache no longer cares about `NaN`, but `classify_cut` still does: it
+    // fails both `== f64::INFINITY` and `>= cost_cap`, so a `NaN` estimate
+    // silently disables pruning for this node rather than erring. It is not a
+    // meaningful lower bound either way — `0.0` certifies no floor, `+inf`
+    // asserts infeasibility.
+    debug_assert!(
+        !h.is_nan(),
+        "CompletionBound::estimate returned NaN; use 0.0 for \"no floor\" \
+         or f64::INFINITY for \"infeasible\""
+    );
+    h_cache[idx] = Some(h);
+    h
+}
+
+#[inline]
+fn classify_cut<B: CompletionBound>(
+    graph: &SearchGraph,
+    node: NodeId,
+    best_cost: Option<f64>,
+    bound: &B,
+    h_cache: &mut Vec<Option<f64>>,
+) -> Option<Cut> {
+    let h = bound_estimate(graph, node, bound, h_cache);
+    // `+∞` is the sentinel [`CompletionBound::estimate`] documents for "no
+    // completion exists"; `-∞` is not. Remaining cost is non-negative (C2), so
+    // `-∞` never *overestimates* — it is a sound but vacuous lower bound, and
+    // an external impl is entitled to return it. Matching on sign-agnostic
+    // `is_infinite()` would read that as a proof of infeasibility and prune a
+    // solvable branch. `-∞` instead falls through to the `g + h` test below,
+    // where it can never reach the cap, so a vacuous bound prunes nothing.
+    if h == f64::INFINITY {
+        return Some(Cut::Infeasible);
+    }
+    let cost_cap = best_cost?;
+    let g = graph.g_score(node);
+    if g >= cost_cap {
+        Some(Cut::ByG)
+    } else if g + h >= cost_cap {
+        Some(Cut::ByH)
+    } else {
+        None
+    }
+}
+
+/// Fold one child-expansion cut into [`BoundStats`].
+///
+/// For a [`Cut::ByH`] this also records how much earlier the bound fired than
+/// `g` alone would have. `g` grows by at least `min_shot_cost` per shot, so
+/// from cost `g` the earliest depth at which `g` alone could reach `C` is
+/// `depth + ceil((C - g) / min_shot_cost)` — a floor on the extra depth the
+/// unbounded search would have descended before cutting, hence a conservative
+/// estimate of the subtree saved.
+/// Fold one cut into [`BoundStats`], once per distinct node.
+///
+/// A no-op when the bound is [`TRIVIAL`](CompletionBound::TRIVIAL): with
+/// bounding disabled the `g >= C` arm of [`classify_cut`] still fires (it is
+/// the pre-existing incumbent test), but those cuts are not the bound's work,
+/// nobody reads them — `PySolveResult::bound_stats` returns an empty dict when
+/// `!bound_enabled` — and counting them would cost a hash insert per cut plus
+/// an ever-growing `HashSet` on the default production path. Skipping keeps
+/// `BoundStats` genuinely all-zero when bounding is off, as its docs promise.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn record_cut<B: CompletionBound>(
+    stats: &mut BoundStats,
+    counted: &mut Vec<bool>,
+    node: NodeId,
+    cut: Cut,
+    depth: u32,
+    g: f64,
+    best_cost: Option<f64>,
+    min_shot_cost: f64,
+) {
+    if B::TRIVIAL {
+        return;
+    }
+    // Dense arena index, same reasoning as `bound_estimate`'s cache.
+    let idx = node.0 as usize;
+    if idx >= counted.len() {
+        counted.resize(idx + 1, false);
+    }
+    if std::mem::replace(&mut counted[idx], true) {
+        return;
+    }
+    match cut {
+        Cut::Infeasible => stats.cuts_infeasible += 1,
+        Cut::ByG => stats.cuts_by_g += 1,
+        Cut::ByH => {
+            stats.cuts_by_h += 1;
+            stats.cut_depth_sum += u64::from(depth);
+            let extra = match best_cost {
+                Some(c) if min_shot_cost > 0.0 => ((c - g) / min_shot_cost).ceil().max(0.0) as u64,
+                _ => 0,
+            };
+            stats.cut_depth_g_only_sum += u64::from(depth) + extra;
+        }
+    }
+}
+
 fn unresolved_count(config: &Config, targets: &[(u32, u64)]) -> u32 {
     targets
         .iter()
@@ -1536,7 +1800,6 @@ pub(crate) fn generate_candidates(
         .map(|(_, score, move_set, new_config)| CandidateEntry {
             move_set,
             new_config,
-            cost: 1.0,
             deadlock_breaker: used_deadlock_breaker,
             score,
         })
@@ -1815,6 +2078,7 @@ fn budget_exhaustion_fallback(
     start: NodeId,
     ctx: &SearchContext,
     goal: &impl Goal,
+    objective: &impl Objective,
 ) -> (Option<NodeId>, u32) {
     let config = graph.config(start).clone();
     let lane_graph = LaneGraph::build(ctx.index, ctx.blocked);
@@ -1831,7 +2095,7 @@ fn budget_exhaustion_fallback(
         .map(|&(q, enc)| lane_graph.vertex_of(enc).map(|v| (q, v)))
         .collect();
     let (Some(initial_v), Some(target_v)) = (initial_v, target_v) else {
-        return sequential_fallback(graph, start, ctx, goal);
+        return sequential_fallback(graph, start, ctx, goal, objective);
     };
 
     let Ok(p) = push_rotate_plan(
@@ -1841,7 +2105,7 @@ fn budget_exhaustion_fallback(
         &target_v,
         DEFAULT_MOVE_BUDGET,
     ) else {
-        return sequential_fallback(graph, start, ctx, goal);
+        return sequential_fallback(graph, start, ctx, goal, objective);
     };
 
     // Graft the plan onto the search graph as a chain of single-lane moves —
@@ -1874,8 +2138,10 @@ fn budget_exhaustion_fallback(
             return (None, nodes_expanded);
         };
         let new_config = cur_config.with_moves(&[(moving_qid, LocationAddr::decode(dst_enc))]);
-        let new_g = graph.g_score(current) + 1.0;
-        let (child_id, _) = graph.insert(current, MoveSet::new([lane]), new_config, new_g);
+        let move_set = MoveSet::new([lane]);
+        let new_g =
+            graph.g_score(current) + objective.edge_cost(&move_set, &cur_config, &new_config);
+        let (child_id, _) = graph.insert(current, move_set, new_config, new_g);
         nodes_expanded += 1;
         current = child_id;
     }
@@ -1893,6 +2159,7 @@ fn sequential_fallback(
     start: NodeId,
     ctx: &SearchContext,
     goal: &impl Goal,
+    objective: &impl Objective,
 ) -> (Option<NodeId>, u32) {
     let targets = ctx.targets;
     let index = ctx.index;
@@ -1950,7 +2217,8 @@ fn sequential_fallback(
             };
 
             let new_config = cur_config.with_moves(&[(moving_qid, dst)]);
-            let new_g = graph.g_score(current) + 1.0;
+            let new_g =
+                graph.g_score(current) + objective.edge_cost(&move_set, &cur_config, &new_config);
             let (child_id, _) = graph.insert(current, move_set, new_config, new_g);
             nodes_expanded += 1;
             current = child_id;
@@ -1966,10 +2234,14 @@ fn sequential_fallback(
 
 // ── Main search loop ───────────────────────────────────────────────
 
-/// Run entropy-guided search.
+/// Run entropy-guided search under the default objective
+/// ([`UniformCost`] — minimize moveset count).
 ///
 /// This is a single-path DFS with entropy-based backtracking, NOT a
 /// standard frontier-based search. See module docs for algorithm details.
+///
+/// Use [`entropy_search_with_objective`] to search under a different
+/// [`Objective`].
 #[allow(clippy::too_many_arguments)]
 pub fn entropy_search(
     root: Config,
@@ -1981,6 +2253,74 @@ pub fn entropy_search(
     seed: u64,
     observer: &mut dyn SearchObserver,
 ) -> SearchResult {
+    entropy_search_with_objective(
+        root,
+        goal,
+        params,
+        ctx,
+        max_expansions,
+        max_depth,
+        seed,
+        observer,
+        &UniformCost,
+    )
+}
+
+/// [`entropy_search`] under an explicit [`Objective`].
+///
+/// The objective is the single source of truth for `g`: it prices every shot
+/// the driver appends and therefore defines what the incumbent comparison
+/// means. Swapping it requires no other change to the driver.
+#[allow(clippy::too_many_arguments)]
+pub fn entropy_search_with_objective<O>(
+    root: Config,
+    goal: &impl Goal,
+    params: &EntropyParams,
+    ctx: &SearchContext,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+    seed: u64,
+    observer: &mut dyn SearchObserver,
+    objective: &O,
+) -> SearchResult
+where
+    O: Objective,
+{
+    entropy_search_with_bound(
+        root,
+        goal,
+        params,
+        ctx,
+        max_expansions,
+        max_depth,
+        seed,
+        observer,
+        objective,
+        &NoBound::for_objective(objective),
+    )
+}
+
+/// [`entropy_search`] under an explicit [`Objective`] and completion bound.
+///
+/// The bound must be admissible for `objective` — see [`CompletionBound`].
+/// Pass [`NoBound`] to disable pruning entirely.
+#[allow(clippy::too_many_arguments)]
+pub fn entropy_search_with_bound<O, B>(
+    root: Config,
+    goal: &impl Goal,
+    params: &EntropyParams,
+    ctx: &SearchContext,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+    seed: u64,
+    observer: &mut dyn SearchObserver,
+    objective: &O,
+    bound: &B,
+) -> SearchResult
+where
+    O: Objective,
+    B: CompletionBound<Obj = O>,
+{
     entropy_search_with_tables(
         root,
         goal,
@@ -1991,6 +2331,8 @@ pub fn entropy_search(
         seed,
         observer,
         None,
+        objective,
+        bound,
     )
 }
 
@@ -2001,7 +2343,7 @@ pub fn entropy_search(
 /// `None` builds them internally, preserving the public entry point's
 /// behavior for tests, benches, and direct callers.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn entropy_search_with_tables(
+pub(crate) fn entropy_search_with_tables<O, B>(
     root: Config,
     goal: &impl Goal,
     params: &EntropyParams,
@@ -2011,15 +2353,56 @@ pub(crate) fn entropy_search_with_tables(
     seed: u64,
     observer: &mut dyn SearchObserver,
     tables: Option<&HeuristicTables>,
-) -> SearchResult {
+    objective: &O,
+    bound: &B,
+) -> SearchResult
+where
+    O: Objective,
+    B: CompletionBound<Obj = O>,
+{
+    // Admissibility is relative to an objective: pruning with a bound built
+    // against a *different* objective instance silently discards correct
+    // solutions. The associated type makes the objective *types* agree at
+    // compile time; this catches same-type/different-parameter instances.
+    // Once per solve, so it is a hard assert rather than a debug one — a wrong
+    // prune is a correctness failure, not a performance one.
+    assert_eq!(
+        bound.objective_id(),
+        objective.id(),
+        "completion bound was built against a different objective instance \
+         than the one accumulating g"
+    );
+
     // Early check.
     if goal.is_goal(&root) {
+        // Evaluate the bound at the root rather than leaving `root_lower_bound`
+        // at its `Default` of `0.0`. Reporting `bound_enabled` beside an
+        // unevaluated zero would publish a measurement the bound never made —
+        // indistinguishable, to a reader of `bound_stats`, from a bound that ran
+        // and certified a floor of zero. For a point-valued goal this *is* 0.0,
+        // since every atom is already home; the difference is that it is 0.0
+        // because the bound said so.
+        let root_lower_bound = if B::TRIVIAL {
+            0.0
+        } else {
+            bound.estimate(&root)
+        };
         let graph = SearchGraph::new(root);
         return SearchResult {
             goal: Some(graph.root()),
             nodes_expanded: 0,
             max_depth_reached: 0,
             graph,
+            // The root satisfies the goal: nothing was searched, and the
+            // optimum is trivially 0. `bound_enabled` still reflects whether a
+            // bound was supplied, so a bounded solve that starts at the goal is
+            // not misreported as an unbounded one.
+            bound_stats: BoundStats {
+                root_lower_bound,
+                incumbent_cost: Some(0.0),
+                bound_enabled: !B::TRIVIAL,
+                ..BoundStats::default()
+            },
         };
     }
 
@@ -2044,8 +2427,29 @@ pub(crate) fn entropy_search_with_tables(
     let resume_capacity = params.max_goal_candidates.saturating_sub(1);
     let mut resume_buffer: Vec<ScoredResumeState> = Vec::new();
     let mut resume_insert_order: u64 = 0;
-    let mut best_goal_depth: Option<u32> = None;
+    // Incumbent: the lowest objective cost among goals found so far. A node
+    // whose accumulated `g` already reaches it cannot lead anywhere strictly
+    // cheaper, so the three gates below drop it. Under `UniformCost`
+    // `g == depth` for every node, making this identical to the depth cap it
+    // replaces.
+    let mut best_cost: Option<f64> = None;
     let mut budget_exhausted = false;
+
+    // Nodes whose cut has already been folded into `bound_stats`, so a node
+    // tested at both gates or re-tested on resume is counted once. Left empty
+    // and never touched when bounding is disabled — see `note_cut`.
+    let mut cut_counted: Vec<bool> = Vec::new();
+    // Memoized `h` per node; see `bound_estimate`.
+    let mut h_cache: Vec<Option<f64>> = Vec::new();
+    // `h(root)` is a certified lower bound on this instance's optimum: it
+    // depends only on the configuration, so sampled branch generation cannot
+    // invalidate it. Captured once, before any search.
+    let mut bound_stats = BoundStats {
+        root_lower_bound: bound_estimate(&graph, root_id, bound, &mut h_cache),
+        // `incumbent_cost` stays `None` (the default) until a goal is found.
+        bound_enabled: !B::TRIVIAL,
+        ..BoundStats::default()
+    };
 
     // Safety cap: hard iteration limit prevents infinite loops when
     // max_expansions is None and the search gets stuck in reversion cycles.
@@ -2058,11 +2462,39 @@ pub(crate) fn entropy_search_with_tables(
             budget_exhausted = true;
             break;
         }
-        if let Some(depth_cap) = best_goal_depth
-            && graph.depth(current) >= depth_cap
-        {
-            current =
-                resume_buffer_pop_best(&mut resume_buffer, best_goal_depth).unwrap_or(root_id);
+        // Bounding decides which branches are worth exploring; it does not
+        // decide when the search is over. Termination stays exactly what it
+        // was: the expansion/iteration budget, or `max_goal_candidates` goals
+        // collected. In particular, a pruned root with an empty resume buffer
+        // does *not* end the search early even though the bound has proven
+        // nothing better exists — the loop falls back to the root and runs to
+        // the iteration cap, which then hands off to the budget-exhaustion
+        // fallback exactly as an unbounded run would.
+        if let Some(cut) = classify_cut(&graph, current, best_cost, bound, &mut h_cache) {
+            // Most post-incumbent pruning lands here rather than at the child
+            // gate: once a goal is found the driver jumps to a resume node,
+            // and this is where that node is tested. `record_cut` dedupes by
+            // node id so a node re-tested on later resumes (or the root, which
+            // the loop falls back to repeatedly once the buffer empties)
+            // counts once.
+            record_cut::<B>(
+                &mut bound_stats,
+                &mut cut_counted,
+                current,
+                cut,
+                graph.depth(current),
+                graph.g_score(current),
+                best_cost,
+                objective.min_shot_cost(),
+            );
+            current = resume_buffer_pop_best::<B>(
+                &mut resume_buffer,
+                best_cost,
+                &mut bound_stats,
+                &mut cut_counted,
+                objective.min_shot_cost(),
+            )
+            .unwrap_or(root_id);
             continue;
         }
 
@@ -2137,7 +2569,7 @@ pub(crate) fn entropy_search_with_tables(
             Some(tables),
         );
 
-        let Some((candidate_idx, move_set, new_config, cost, candidate_origin)) = candidate else {
+        let Some((candidate_idx, move_set, new_config, candidate_origin)) = candidate else {
             // No candidates available — bump entropy.
             let new_entropy = {
                 let current_es = entropy_map.entry(current).or_default();
@@ -2186,17 +2618,19 @@ pub(crate) fn entropy_search_with_tables(
         es.tried_moves.insert(move_key.clone());
         es.candidates_tried += 1;
 
-        // Insert into graph.
+        // Insert into graph. The objective prices the shot — the only place
+        // `g` grows in this driver besides the fallbacks.
         let trace_move_set = move_set.clone();
-        let new_g = graph.g_score(current) + cost;
+        let new_g = graph.g_score(current)
+            + objective.edge_cost(&move_set, graph.config(current), &new_config);
         let (child_id, is_new) = graph.insert(current, move_set, new_config, new_g);
 
         if !is_new {
             if goal.is_goal(graph.config(child_id)) {
-                let goal_depth = graph.depth(child_id);
+                let goal_cost = graph.g_score(child_id);
                 found_goals.push(child_id);
-                if best_goal_depth.is_none_or(|depth| goal_depth < depth) {
-                    best_goal_depth = Some(goal_depth);
+                if best_cost.is_none_or(|cost| goal_cost < cost) {
+                    best_cost = Some(goal_cost);
                 }
                 resume_buffer_discard(&mut resume_buffer, child_id);
                 if observer.wants_events() {
@@ -2236,8 +2670,14 @@ pub(crate) fn entropy_search_with_tables(
                 if found_goals.len() >= params.max_goal_candidates {
                     break;
                 }
-                current =
-                    resume_buffer_pop_best(&mut resume_buffer, best_goal_depth).unwrap_or(root_id);
+                current = resume_buffer_pop_best::<B>(
+                    &mut resume_buffer,
+                    best_cost,
+                    &mut bound_stats,
+                    &mut cut_counted,
+                    objective.min_shot_cost(),
+                )
+                .unwrap_or(root_id);
                 continue;
             }
             // Transposition: config seen at equal or better cost.
@@ -2293,13 +2733,18 @@ pub(crate) fn entropy_search_with_tables(
             .get(&current)
             .and_then(best_untried_moveset_score)
         {
+            let min_total_cost =
+                graph.g_score(current) + bound_estimate(&graph, current, bound, &mut h_cache);
             resume_buffer_insert(
                 &mut resume_buffer,
                 current,
                 next_best_score,
+                min_total_cost,
+                graph.g_score(current),
                 graph.depth(current),
                 resume_capacity,
                 &mut resume_insert_order,
+                best_cost,
             );
         }
 
@@ -2341,10 +2786,10 @@ pub(crate) fn entropy_search_with_tables(
         }
 
         if goal.is_goal(graph.config(child_id)) {
-            let goal_depth = graph.depth(child_id);
+            let goal_cost = graph.g_score(child_id);
             found_goals.push(child_id);
-            if best_goal_depth.is_none_or(|depth| goal_depth < depth) {
-                best_goal_depth = Some(goal_depth);
+            if best_cost.is_none_or(|cost| goal_cost < cost) {
+                best_cost = Some(goal_cost);
             }
             resume_buffer_discard(&mut resume_buffer, child_id);
             if observer.wants_events() {
@@ -2372,17 +2817,37 @@ pub(crate) fn entropy_search_with_tables(
             if found_goals.len() >= params.max_goal_candidates {
                 break;
             }
-            current =
-                resume_buffer_pop_best(&mut resume_buffer, best_goal_depth).unwrap_or(root_id);
+            current = resume_buffer_pop_best::<B>(
+                &mut resume_buffer,
+                best_cost,
+                &mut bound_stats,
+                &mut cut_counted,
+                objective.min_shot_cost(),
+            )
+            .unwrap_or(root_id);
             continue;
         }
 
-        if let Some(depth_cap) = best_goal_depth
-            && child_depth >= depth_cap
-        {
+        if let Some(cut) = classify_cut(&graph, child_id, best_cost, bound, &mut h_cache) {
+            record_cut::<B>(
+                &mut bound_stats,
+                &mut cut_counted,
+                child_id,
+                cut,
+                child_depth,
+                new_g,
+                best_cost,
+                objective.min_shot_cost(),
+            );
             resume_buffer_discard(&mut resume_buffer, child_id);
-            current =
-                resume_buffer_pop_best(&mut resume_buffer, best_goal_depth).unwrap_or(root_id);
+            current = resume_buffer_pop_best::<B>(
+                &mut resume_buffer,
+                best_cost,
+                &mut bound_stats,
+                &mut cut_counted,
+                objective.min_shot_cost(),
+            )
+            .unwrap_or(root_id);
             continue;
         }
         current = child_id; // descend
@@ -2390,7 +2855,8 @@ pub(crate) fn entropy_search_with_tables(
 
     if found_goals.is_empty() && budget_exhausted {
         fire_fallback_start_event(observer, &graph, root_id, ctx, &resume_buffer);
-        let (goal_id, fb_expanded) = budget_exhaustion_fallback(&mut graph, root_id, ctx, goal);
+        let (goal_id, fb_expanded) =
+            budget_exhaustion_fallback(&mut graph, root_id, ctx, goal, objective);
         nodes_expanded += fb_expanded;
         if let Some(gid) = goal_id {
             found_goals.push(gid);
@@ -2398,14 +2864,16 @@ pub(crate) fn entropy_search_with_tables(
     }
 
     // Return the best goal by:
-    // 1) shallowest depth, 2) lowest approximate path move time,
+    // 1) lowest objective cost, 2) lowest approximate path move time,
     // 3) lexicographic path key (deterministic), 4) node id (deterministic).
     let best = select_best_goal_with_tiebreak(&found_goals, &graph, ctx.index);
+    bound_stats.incumbent_cost = best.map(|id| graph.g_score(id));
     SearchResult {
         goal: best,
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
+        bound_stats,
     }
 }
 
@@ -2419,7 +2887,7 @@ fn get_next_candidate(
     graph: &SearchGraph,
     seed: u64,
     tables: Option<&HeuristicTables>,
-) -> Option<(usize, MoveSet, Config, f64, bool)> {
+) -> Option<(usize, MoveSet, Config, bool)> {
     let config = graph.config(node_id);
     let es = entropy_map.entry(node_id).or_default();
 
@@ -2443,7 +2911,6 @@ fn get_next_candidate(
                     es.candidates_tried,
                     entry.move_set.clone(),
                     entry.new_config.clone(),
-                    entry.cost,
                     entry.deadlock_breaker,
                 );
                 return Some(result);
@@ -2473,6 +2940,7 @@ fn get_next_candidate(
 mod tests {
     use super::*;
     use crate::test_utils::{example_arch_json, loc};
+    use crate::traits::CostFn;
     use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
     use bloqade_lanes_bytecode_core::arch::types::TransportPath;
 
@@ -2937,19 +3405,58 @@ mod tests {
         assert_eq!(entries[2].0, key_bus2);
     }
 
+    /// `resume_buffer_insert` with `g == min_total_cost` (the `h ≡ 0` shape
+    /// these ordering tests were written against) and no incumbent.
+    fn insert_for_test(
+        buffer: &mut Vec<ScoredResumeState>,
+        node_id: NodeId,
+        score: f64,
+        min_total_cost: f64,
+        depth: u32,
+        capacity: usize,
+        next_order: &mut u64,
+    ) {
+        resume_buffer_insert(
+            buffer,
+            node_id,
+            score,
+            min_total_cost,
+            min_total_cost,
+            depth,
+            capacity,
+            next_order,
+            None,
+        );
+    }
+
+    /// `resume_buffer_pop_best` with the cut bookkeeping discarded. `B` is only
+    /// a type parameter there, so a non-trivial bound needs no instance — and a
+    /// non-trivial one is what makes `record_cut` actually run.
+    fn pop_for_test(buffer: &mut Vec<ScoredResumeState>, best_cost: Option<f64>) -> Option<NodeId> {
+        let mut stats = BoundStats::default();
+        let mut counted = Vec::new();
+        resume_buffer_pop_best::<crate::bounds::WeightedDistanceBound<crate::cost::UniformCost>>(
+            buffer,
+            best_cost,
+            &mut stats,
+            &mut counted,
+            1.0,
+        )
+    }
+
     #[test]
     fn resume_buffer_orders_by_score_then_depth_then_order() {
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
 
-        resume_buffer_insert(&mut buffer, NodeId(1), 10.0, 2, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(2), 10.0, 4, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(3), 11.0, 1, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(1), 10.0, 2.0, 2, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(2), 10.0, 4.0, 4, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(3), 11.0, 1.0, 1, 3, &mut next_order);
 
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(NodeId(3)));
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(NodeId(2)));
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(NodeId(1)));
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), None);
+        assert_eq!(pop_for_test(&mut buffer, None), Some(NodeId(3)));
+        assert_eq!(pop_for_test(&mut buffer, None), Some(NodeId(2)));
+        assert_eq!(pop_for_test(&mut buffer, None), Some(NodeId(1)));
+        assert_eq!(pop_for_test(&mut buffer, None), None);
     }
 
     #[test]
@@ -2957,19 +3464,16 @@ mod tests {
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
 
-        resume_buffer_insert(&mut buffer, NodeId(11), 5.0, 1, 2, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(12), 9.0, 2, 2, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(13), 3.0, 3, 2, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(11), 5.0, 1.0, 1, 2, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(12), 9.0, 2.0, 2, 2, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(13), 3.0, 3.0, 3, 2, &mut next_order);
 
         // Lowest-priority node (13) is dropped at capacity.
         assert_eq!(buffer.len(), 2);
 
-        // best_goal_depth=2 blocks node 12 (depth 2), so 11 is next.
-        assert_eq!(
-            resume_buffer_pop_best(&mut buffer, Some(2)),
-            Some(NodeId(11))
-        );
-        assert_eq!(resume_buffer_pop_best(&mut buffer, Some(2)), None);
+        // An incumbent cost of 2 blocks node 12 (g = 2), so 11 is next.
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), Some(NodeId(11)));
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), None);
     }
 
     #[test]
@@ -2977,16 +3481,13 @@ mod tests {
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
 
-        resume_buffer_insert(&mut buffer, NodeId(20), 8.0, 3, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(21), 7.5, 2, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(22), 7.0, 1, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(20), 8.0, 3.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(21), 7.5, 2.0, 2, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(22), 7.0, 1.0, 1, 3, &mut next_order);
 
-        // Once best_goal_depth=2, depth>=2 candidates are skipped.
-        assert_eq!(
-            resume_buffer_pop_best(&mut buffer, Some(2)),
-            Some(NodeId(22))
-        );
-        assert_eq!(resume_buffer_pop_best(&mut buffer, Some(2)), None);
+        // Once the incumbent cost is 2, candidates with g >= 2 are skipped.
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), Some(NodeId(22)));
+        assert_eq!(pop_for_test(&mut buffer, Some(2.0)), None);
     }
 
     #[test]
@@ -2994,10 +3495,10 @@ mod tests {
         let root = NodeId(0);
         let mut buffer = Vec::new();
         let mut next_order = 0_u64;
-        resume_buffer_insert(&mut buffer, NodeId(31), 4.0, 1, 1, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(31), 4.0, 1.0, 1, 1, &mut next_order);
 
-        let first_resume = resume_buffer_pop_best(&mut buffer, Some(3)).unwrap_or(root);
-        let fallback_resume = resume_buffer_pop_best(&mut buffer, Some(3)).unwrap_or(root);
+        let first_resume = pop_for_test(&mut buffer, Some(3.0)).unwrap_or(root);
+        let fallback_resume = pop_for_test(&mut buffer, Some(3.0)).unwrap_or(root);
 
         assert_eq!(first_resume, NodeId(31));
         assert_eq!(fallback_resume, root);
@@ -3018,14 +3519,14 @@ mod tests {
         let mut next_order = 0_u64;
         let parent = NodeId(42);
 
-        resume_buffer_insert(&mut buffer, parent, 1.0, 3, 3, &mut next_order);
-        resume_buffer_insert(&mut buffer, NodeId(9), 2.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, parent, 1.0, 3.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, NodeId(9), 2.0, 3.0, 3, 3, &mut next_order);
         // Reinsert same parent with a better move score.
-        resume_buffer_insert(&mut buffer, parent, 5.0, 3, 3, &mut next_order);
+        insert_for_test(&mut buffer, parent, 5.0, 3.0, 3, 3, &mut next_order);
 
         // Node id is de-duplicated and priority is refreshed.
         assert_eq!(buffer.iter().filter(|e| e.node_id == parent).count(), 1);
-        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(parent));
+        assert_eq!(pop_for_test(&mut buffer, None), Some(parent));
     }
 
     #[test]
@@ -3530,6 +4031,473 @@ mod tests {
             trace.steps.iter().any(|step| step.event == "descend"
                 && step.reason.as_deref() == Some("deadlock-breaker")),
             "expected descend step marked with deadlock-breaker reason in trace"
+        );
+    }
+
+    // ── Objective: the single source of truth for `g` ───────────────
+
+    /// Pins the audited semantics of `g`: under [`UniformCost`] every shot
+    /// costs exactly `1.0`, so a node's accumulated objective cost equals its
+    /// tree depth.
+    ///
+    /// This equality is load-bearing, not incidental. The incumbent gate
+    /// compares `g` against the best goal's cost where it used to compare
+    /// depths, and `Strategy::Cascade` turns a solution cost into a depth
+    /// budget — both are only equivalent to their previous behaviour while
+    /// this holds. A change that priced shots differently by default would
+    /// break here first.
+    #[test]
+    fn g_score_equals_depth_under_uniform_cost() {
+        let result = run_entropy([(0, loc(0, 0))], [(0, loc(1, 5))], Some(200));
+        let goal = result.goal.expect("instance should solve");
+        assert!(result.graph.depth(goal) > 0, "goal must not be the root");
+
+        // Every node, not just the solution path: the two budget-exhaustion
+        // fallbacks grow `g` as well, and they must price shots through the
+        // objective rather than adding a literal 1.0.
+        for raw in 0..result.graph.len() {
+            let id = NodeId(raw as u32);
+            assert_eq!(
+                result.graph.g_score(id),
+                f64::from(result.graph.depth(id)),
+                "node {raw}: g must equal depth under UniformCost"
+            );
+        }
+    }
+
+    /// [`UniformCost`] honours the framework's C2/C3 contract: shot costs are
+    /// non-negative, and every shot costs at least the weight of each lane it
+    /// contains (with equality here, which is what makes the derived bound the
+    /// tightest one available for this objective).
+    ///
+    /// Step 3 generalizes this into a reusable
+    /// `assert_objective_bound_contract` helper every objective is checked
+    /// with; pinning the default objective is cheap now.
+    #[test]
+    fn uniform_cost_objective_honours_the_lane_floor() {
+        let index = make_index();
+        let objective = UniformCost;
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+
+        assert_eq!(objective.min_shot_cost(), 1.0);
+        assert_eq!(objective.id(), objective.id(), "id must be stable");
+
+        let mut lanes_checked = 0_usize;
+        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
+            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
+                let shot = MoveSet::new([lane]);
+                let cost = objective.edge_cost(&shot, &config, &config);
+                assert!(cost >= 0.0, "C2 violated for {lane:?}: {cost}");
+                assert!(
+                    cost >= objective.lane_weight(lane),
+                    "C3 violated for {lane:?}: shot cost {cost} < lane weight {}",
+                    objective.lane_weight(lane)
+                );
+                lanes_checked += 1;
+            }
+        }
+        assert!(lanes_checked > 0, "arch fixture should expose lanes");
+    }
+
+    /// The objective is swappable at the driver seam: `entropy_search` and
+    /// `entropy_search_with_objective(.., &UniformCost)` are the same search.
+    ///
+    /// Guards the delegation, so the default entry point cannot drift onto a
+    /// different objective than the one the audit and benchmarks assume.
+    #[test]
+    fn default_entry_point_matches_explicit_uniform_cost_objective() {
+        let index = make_index();
+        let target_encoded = vec![(0u32, loc(1, 5).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams::default();
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+
+        let implicit = entropy_search(
+            root.clone(),
+            &goal,
+            &params,
+            &ctx,
+            Some(200),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+        );
+        let explicit = entropy_search_with_objective(
+            root,
+            &goal,
+            &params,
+            &ctx,
+            Some(200),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &UniformCost,
+        );
+
+        assert_eq!(implicit.nodes_expanded, explicit.nodes_expanded);
+        assert_eq!(implicit.max_depth_reached, explicit.max_depth_reached);
+        assert_eq!(
+            implicit.solution_path().map(|p| p.len()),
+            explicit.solution_path().map(|p| p.len())
+        );
+        assert_eq!(
+            implicit.goal.map(|g| implicit.graph.g_score(g)),
+            explicit.goal.map(|g| explicit.graph.g_score(g))
+        );
+    }
+
+    /// Swapping the objective requires no driver change, and `g` really is
+    /// that objective's cost rather than a moveset count in disguise.
+    ///
+    /// The assertion that matters is the independent recomputation: the
+    /// solution's `g_score` must equal the sum of `edge_cost` over the emitted
+    /// move layers. If the driver had kept any inlined `+ 1.0`, `g` would come
+    /// out as the layer count instead.
+    #[test]
+    fn driver_accumulates_g_under_a_swapped_objective() {
+        use crate::cost::WeightedDuration;
+
+        let index = make_index();
+        let target_encoded = vec![(0u32, loc(1, 0).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+        let objective = WeightedDuration::new(&index, 10.0);
+
+        let result = entropy_search_with_objective(
+            root.clone(),
+            &goal,
+            &EntropyParams::default(),
+            &ctx,
+            Some(200),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &objective,
+        );
+
+        let goal_id = result.goal.expect("instance should solve");
+        let layers = result.solution_path().expect("solved run has a path");
+        assert!(!layers.is_empty());
+
+        // `WeightedDuration::edge_cost` is configuration-independent, so the
+        // endpoints passed here do not affect the recomputation.
+        let expected: f64 = layers
+            .iter()
+            .map(|ms| objective.edge_cost(ms, &root, &root))
+            .sum();
+        let actual = result.graph.g_score(goal_id);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "g {actual} should equal the summed objective cost {expected}"
+        );
+
+        // And it is genuinely not the moveset count: every shot costs
+        // `1 + dur/tau` with a positive duration term.
+        let depth = f64::from(result.graph.depth(goal_id));
+        assert!(
+            actual > depth,
+            "weighted g {actual} should exceed the layer count {depth}"
+        );
+    }
+
+    // ── Completion bound (branch-and-bound pruning) ─────────────────
+
+    /// Run the driver twice on one instance, with and without `h0`.
+    fn run_bounded_and_unbounded(
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        target: impl IntoIterator<Item = (u32, LocationAddr)>,
+        blocked_locs: &[LocationAddr],
+        max_expansions: Option<u32>,
+    ) -> (SearchResult, SearchResult) {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> =
+            target.into_iter().map(|(q, l)| (q, l.encode())).collect();
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams::default();
+        let root = Config::new(initial).unwrap();
+
+        let unbounded = entropy_search_with_bound(
+            root.clone(),
+            &goal,
+            &params,
+            &ctx,
+            max_expansions,
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
+        );
+        let bound = crate::bounds::WeightedDistanceBound::new(
+            &UniformCost,
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+        let bounded = entropy_search_with_bound(
+            root,
+            &goal,
+            &params,
+            &ctx,
+            max_expansions,
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &bound,
+        );
+        (unbounded, bounded)
+    }
+
+    /// An unreachable target makes `h0 = +∞` — an infeasibility proof
+    /// independent of any incumbent — so no node is ever expanded.
+    ///
+    /// The bound suppresses *expansion*, not termination: the run still ends
+    /// on the budget, then hands off to the budget-exhaustion fallback, which
+    /// also fails here because it carves out `blocked` too. Both runs report
+    /// no goal and zero expansions; the bounded one simply never had to
+    /// discover that by trying.
+    #[test]
+    fn infeasible_instance_expands_nothing_when_bounded() {
+        let (unbounded, bounded) = run_bounded_and_unbounded(
+            [(0, loc(0, 0))],
+            [(0, loc(99, 99))], // not a location in the fixture at all
+            &[],
+            Some(64),
+        );
+
+        assert!(unbounded.goal.is_none() && bounded.goal.is_none());
+        assert_eq!(
+            bounded.nodes_expanded, 0,
+            "h0 = +inf should keep every branch unexpanded"
+        );
+        // `nodes_expanded == 0` alone does not distinguish the two runs: with
+        // every target distance infinite the generator emits no candidates, so
+        // the *unbounded* run also expands nothing and that assertion stays
+        // green with the bound removed entirely. The infeasibility counter is
+        // what only the bound can move.
+        assert_eq!(
+            bounded.bound_stats.cuts_infeasible, 1,
+            "the bound must record the +inf proof it used"
+        );
+        assert_eq!(
+            unbounded.bound_stats.cuts_infeasible, 0,
+            "an unbounded run has no infeasibility proof to report"
+        );
+    }
+
+    /// Enabling the bound must never worsen the answer: pruning only removes
+    /// branches that provably cannot contain a strictly cheaper solution.
+    ///
+    /// Note what is deliberately *not* asserted: that bounding expands fewer
+    /// nodes. It often expands more, and that is not a defect. This driver
+    /// stops once it has collected `max_goal_candidates` goals; with ties
+    /// pruned, every goal after the first must be *strictly* cheaper, which is
+    /// far rarer, so the search keeps going — frequently until it has proven
+    /// no better solution exists. That is strictly more work than the
+    /// unbounded run performs, but it is also a stronger result, and it is why
+    /// bounding sometimes returns a cheaper plan. Measured node counts move in
+    /// both directions; see the step-5 instrumentation.
+    #[test]
+    fn bound_preserves_solution_cost() {
+        /// `(initial placement, target placement)` for one instance.
+        type Instance = (Vec<(u32, LocationAddr)>, Vec<(u32, LocationAddr)>);
+
+        let cases: [Instance; 3] = [
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))]),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 5))],
+                vec![(0, loc(1, 0)), (1, loc(1, 5))],
+            ),
+            (
+                vec![(0, loc(0, 0)), (1, loc(1, 0))],
+                vec![(0, loc(1, 0)), (1, loc(0, 0))],
+            ),
+        ];
+
+        for (initial, target) in cases {
+            let (unbounded, bounded) =
+                run_bounded_and_unbounded(initial.clone(), target.clone(), &[], Some(400));
+
+            match (unbounded.goal, bounded.goal) {
+                (Some(u), Some(b)) => {
+                    let uc = unbounded.graph.g_score(u);
+                    let bc = bounded.graph.g_score(b);
+                    assert!(
+                        bc <= uc,
+                        "bounded cost {bc} must not exceed unbounded {uc} for {initial:?}"
+                    );
+                }
+                (None, None) => {}
+                (u, b) => panic!("solvability disagreed: unbounded={u:?} bounded={b:?}"),
+            }
+        }
+    }
+
+    /// The bound's root estimate is a certified lower bound on the optimum,
+    /// so it can never exceed the cost of a solution actually found. This is
+    /// the admissibility property checked against a real search rather than
+    /// argued on paper.
+    #[test]
+    fn root_lower_bound_never_exceeds_the_incumbent() {
+        type Instance = (Vec<(u32, LocationAddr)>, Vec<(u32, LocationAddr)>);
+        let cases: [Instance; 3] = [
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))]),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 5))],
+                vec![(0, loc(1, 0)), (1, loc(1, 5))],
+            ),
+            (
+                vec![(0, loc(0, 0)), (1, loc(1, 0))],
+                vec![(0, loc(1, 0)), (1, loc(0, 0))],
+            ),
+        ];
+
+        for (initial, target) in cases {
+            let (_, bounded) = run_bounded_and_unbounded(initial.clone(), target, &[], Some(400));
+            let stats = bounded.bound_stats;
+            if let Some(goal) = bounded.goal {
+                let cost = bounded.graph.g_score(goal);
+                assert!(
+                    stats.root_lower_bound <= cost,
+                    "h(root) {} exceeded the solution cost {cost} for {initial:?}",
+                    stats.root_lower_bound
+                );
+                assert_eq!(stats.incumbent_cost, Some(cost));
+                let gap = stats.optimality_gap().expect("solved runs have a gap");
+                assert!((0.0..=1.0).contains(&gap), "gap {gap} out of range");
+            }
+        }
+    }
+
+    /// With bounding disabled every counter stays zero, so the instrumentation
+    /// cannot mislead a reader into thinking an unbounded run pruned anything.
+    #[test]
+    fn bound_stats_are_inert_when_bounding_is_disabled() {
+        let (unbounded, _) =
+            run_bounded_and_unbounded([(0, loc(0, 0))], [(0, loc(1, 0))], &[], Some(400));
+        let stats = unbounded.bound_stats;
+        assert_eq!(stats.total_cuts(), 0);
+        assert_eq!(stats.root_lower_bound, 0.0);
+        assert_eq!(stats.cut_depth_sum, 0);
+        assert_eq!(stats.cut_depth_g_only_sum, 0);
+    }
+
+    /// The bound must actually convert cuts that `g` alone could not make —
+    /// otherwise `h0` is dead weight on this architecture.
+    ///
+    /// `cut_depth_g_only_sum` exceeding `cut_depth_sum` is the statement that
+    /// those cuts fired *earlier* than the unbounded search would have managed,
+    /// which is the whole point: cut at the doomed commitment, not after paying
+    /// for the doomed prefix.
+    #[test]
+    fn bound_converts_cuts_that_g_alone_could_not_make() {
+        type Instance = (Vec<(u32, LocationAddr)>, Vec<(u32, LocationAddr)>);
+        let cases: [Instance; 4] = [
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 0))]),
+            (vec![(0, loc(0, 0))], vec![(0, loc(1, 5))]),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 5))],
+                vec![(0, loc(1, 0)), (1, loc(1, 5))],
+            ),
+            (
+                vec![(0, loc(0, 0)), (1, loc(0, 1))],
+                vec![(0, loc(0, 5)), (1, loc(0, 6))],
+            ),
+        ];
+
+        let mut seen = Vec::new();
+        let mut converted = false;
+        for (initial, target) in cases {
+            let (_, bounded) = run_bounded_and_unbounded(initial, target, &[], Some(400));
+            let stats = bounded.bound_stats;
+            assert!(
+                stats.cut_depth_g_only_sum >= stats.cut_depth_sum,
+                "g-only depth {} below actual cut depth {}",
+                stats.cut_depth_g_only_sum,
+                stats.cut_depth_sum
+            );
+            converted |= stats.cuts_by_h > 0;
+            seen.push(stats);
+        }
+        assert!(
+            converted,
+            "no instance produced a cut that only the bound could make: {seen:?}"
+        );
+    }
+
+    /// Pruning with a bound built against a different objective *instance*
+    /// would silently discard correct solutions. Both sides are
+    /// `WeightedDuration` here, so the associated type cannot tell them apart
+    /// and only the driver-entry id check can.
+    #[test]
+    #[should_panic(expected = "different objective instance")]
+    fn driver_rejects_a_bound_from_another_objective_instance() {
+        use crate::cost::WeightedDuration;
+
+        let index = make_index();
+        let target_encoded = vec![(0u32, loc(1, 0).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+
+        let accumulating = WeightedDuration::new(&index, 1.0);
+        let bound_from_other = crate::bounds::WeightedDistanceBound::new(
+            &WeightedDuration::new(&index, 10.0),
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+
+        let _ = entropy_search_with_bound(
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &goal,
+            &EntropyParams::default(),
+            &ctx,
+            Some(50),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &accumulating,
+            &bound_from_other,
         );
     }
 }

@@ -20,6 +20,12 @@ CSV_COLUMNS: tuple[str, ...] = (
     "estimated_fidelity",
     "nodes_explored",
     "max_depth_reached",
+    "cuts_by_g",
+    "cuts_by_h",
+    "cuts_infeasible",
+    "cut_depth_sum",
+    "cut_depth_g_only_sum",
+    "max_optimality_gap",
     "notes",
 )
 
@@ -56,6 +62,12 @@ def write_csv(rows: list[BenchmarkRow], output_path: Path) -> None:
                     "estimated_fidelity": _fmt_fidelity(row.estimated_fidelity),
                     "nodes_explored": row.nodes_explored,
                     "max_depth_reached": row.max_depth_reached,
+                    "cuts_by_g": row.cuts_by_g,
+                    "cuts_by_h": row.cuts_by_h,
+                    "cuts_infeasible": row.cuts_infeasible,
+                    "cut_depth_sum": row.cut_depth_sum,
+                    "cut_depth_g_only_sum": row.cut_depth_g_only_sum,
+                    "max_optimality_gap": _fmt_float(row.max_optimality_gap),
                     "notes": row.notes,
                 }
             )

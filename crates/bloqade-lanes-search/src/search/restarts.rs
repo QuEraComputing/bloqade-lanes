@@ -12,6 +12,7 @@
 
 use rayon::prelude::*;
 
+use crate::bounds::{NoBound, WeightedDistanceBound};
 use crate::cost::UniformCost;
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
@@ -21,8 +22,10 @@ use crate::observer::NoOpObserver;
 use crate::primitives::config::Config;
 use crate::primitives::context::{SearchContext, SearchState};
 use crate::scorers::DistanceScorer;
-use crate::search::options::{EntropyOptions, InnerStrategy, SolveOptions, Strategy};
+use crate::search::options::{BoundKind, EntropyOptions, InnerStrategy, SolveOptions, Strategy};
 use crate::search::result::{SolveResult, SolveStatus};
+// No `Objective` import: the cascade now bounds its refinement by cost
+// directly, so nothing here needs `min_shot_cost`.
 use crate::traits::{Goal, Heuristic, MoveGenerator};
 
 /// Extract a [`SolveResult`] from a [`SearchResult`].
@@ -37,6 +40,7 @@ pub(crate) fn extract(
     max_exp: Option<u32>,
     ctx: &SearchContext,
 ) -> SolveResult {
+    let bound_stats = result.bound_stats;
     match result.goal {
         Some(goal_id) => {
             let move_layers = result.solution_path().unwrap_or_default();
@@ -48,13 +52,15 @@ pub(crate) fn extract(
                 ctx.index.arch_spec(),
                 &goal_config,
             );
-            SolveResult::solved(
+            let mut solved = SolveResult::solved(
                 goal_config,
                 move_layers,
                 cost,
                 result.nodes_expanded,
                 deadlocks,
-            )
+            );
+            solved.bound_stats = bound_stats;
+            solved
         }
         None => {
             let root_config = result.graph.config(result.graph.root()).clone();
@@ -63,7 +69,10 @@ pub(crate) fn extract(
             } else {
                 SolveStatus::Unsolvable
             };
-            SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks)
+            let mut unsolved =
+                SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks);
+            unsolved.bound_stats = bound_stats;
+            unsolved
         }
     }
 }
@@ -104,6 +113,11 @@ fn frontier_deadlock_policy(requested: DeadlockPolicy) -> DeadlockPolicy {
 /// observer fixed to the values every call site in this module uses
 /// identically. Removes those four boilerplate arguments from
 /// `frontier::run_search`.
+///
+/// Still passes both of `run_search`'s limits through: `max_depth` is a layer
+/// horizon, `max_cost` an incumbent bound, and they are not interchangeable
+/// under a non-uniform objective.
+#[allow(clippy::too_many_arguments)]
 fn run_frontier<Gen, Go, F>(
     root: &Config,
     generator: &Gen,
@@ -112,6 +126,7 @@ fn run_frontier<Gen, Go, F>(
     frontier: &mut F,
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
+    max_cost: Option<f64>,
 ) -> SearchResult
 where
     Gen: MoveGenerator,
@@ -130,6 +145,7 @@ where
         &mut NoOpObserver,
         max_expansions,
         max_depth,
+        max_cost,
     )
 }
 
@@ -170,6 +186,9 @@ where
     let collect_entropy_trace = entropy.collect_entropy_trace;
     let w_t = entropy.w_t;
     let base_seed = entropy.seed;
+    // The objective this solve accumulates `g` with, named once, so the driver
+    // and the bound it is paired with cannot disagree about it.
+    let objective = UniformCost;
 
     // Build the entropy heuristic tables once per solve, shared across
     // restarts, exactly when the dispatch below will run the entropy driver.
@@ -193,19 +212,40 @@ where
     });
     let entropy_tables = entropy_tables.as_ref();
 
+    // Completion bound, built once per solve and shared by reference across
+    // the restart fan-out (hence `Objective: Sync` / `CompletionBound: Sync`).
+    //
+    // Built from `goal.exact_targets()`, not from `ctx.targets`, and only when
+    // the goal says it is point-valued. A set-valued goal — `EntanglingConstraintGoal`,
+    // where `ctx.targets` is one greedy Hungarian assignment among many
+    // acceptable placements, or `PartialPlacementGoal`, which requires only
+    // `min_placed` of them — is satisfiable without every qubit reaching its
+    // listed target, so a distance to those targets can exceed the true
+    // remaining cost, `h0` would be inadmissible, and pruning could discard
+    // the optimum. Asking the goal keeps that decision next to the definition
+    // that determines it, rather than inferring it from a context field.
+    let completion_bound = match entropy_opts.and_then(|o| o.completion_bound) {
+        Some(BoundKind::WeightedDistance) if entropy_tables.is_some() => goal
+            .exact_targets()
+            .map(|targets| WeightedDistanceBound::new(&objective, targets, ctx.index, ctx.blocked)),
+        _ => None,
+    };
+    let completion_bound = completion_bound.as_ref();
+    let no_bound = NoBound::for_objective(&objective);
+
     // Helper: run a single inner strategy with the given seed and budget.
     let run_inner = |inner: InnerStrategy, seed: u64, budget: Option<u32>| -> SolveResult {
         match inner {
             InnerStrategy::Ids => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = IdsFrontier::new(h_sum);
-                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
+                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
                 extract(result, move_gen.deadlock_count(), budget, ctx)
             }
             InnerStrategy::Dfs => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = DfsFrontier::new(h_sum);
-                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
+                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
                 extract(result, move_gen.deadlock_count(), budget, ctx)
             }
             InnerStrategy::Entropy => {
@@ -228,17 +268,37 @@ where
                             Some(trace) => trace,
                             None => &mut noop,
                         };
-                    crate::drivers::entropy::entropy_search_with_tables(
-                        root.clone(),
-                        goal,
-                        &entropy_params,
-                        ctx,
-                        budget,
-                        None,
-                        seed,
-                        observer,
-                        entropy_tables,
-                    )
+                    // Two monomorphizations rather than a runtime branch, so
+                    // the bound-disabled arm compiles to the same code as
+                    // having no bounding at all (`NoBound::TRIVIAL`).
+                    match completion_bound {
+                        Some(bound) => crate::drivers::entropy::entropy_search_with_tables(
+                            root.clone(),
+                            goal,
+                            &entropy_params,
+                            ctx,
+                            budget,
+                            None,
+                            seed,
+                            observer,
+                            entropy_tables,
+                            &objective,
+                            bound,
+                        ),
+                        None => crate::drivers::entropy::entropy_search_with_tables(
+                            root.clone(),
+                            goal,
+                            &entropy_params,
+                            ctx,
+                            budget,
+                            None,
+                            seed,
+                            observer,
+                            entropy_tables,
+                            &objective,
+                            &no_bound,
+                        ),
+                    }
                 };
                 let mut solve = extract(result, 0, budget, ctx);
                 solve.entropy_trace = entropy_trace;
@@ -275,7 +335,14 @@ where
             return inner_result;
         }
 
-        let max_depth = Some(inner_result.cost.ceil() as u32);
+        // The refinement is looking for something strictly cheaper than what
+        // the inner strategy already found, which is a statement about the
+        // objective — so bound it by that cost directly. It used to be
+        // converted into a tree-depth cutoff via `min_shot_cost`, which is only
+        // equivalent while `g == depth`: under a non-uniform objective a
+        // cheaper plan can be *deeper* (more shots, each cheaper), so a depth
+        // cap would exclude exactly the improvements sought here.
+        let max_cost = Some(inner_result.cost);
         let astar_move_gen = make_generator(0, frontier_deadlock_policy(deadlock_policy));
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
         let astar_result = run_frontier(
@@ -285,7 +352,8 @@ where
             ctx,
             &mut astar_f,
             max_expansions,
-            max_depth,
+            None,
+            max_cost,
         );
         let astar_solve = extract(
             astar_result,
@@ -295,8 +363,18 @@ where
         );
 
         if astar_solve.status == SolveStatus::Solved {
-            return pick_best(vec![inner_result, astar_solve])
-                .expect("two-element vec is non-empty");
+            // The refinement runs on a frontier driver, which never prunes
+            // against an incumbent and so reports an inert `BoundStats`. If it
+            // wins, the pruning the inner entropy pass really did still has to
+            // be reported — otherwise a bounded cascade whose A* leg happens to
+            // find a cheaper plan looks like a solve that was never bounded.
+            let inner_stats = inner_result.bound_stats;
+            let mut best =
+                pick_best(vec![inner_result, astar_solve]).expect("two-element vec is non-empty");
+            if !best.bound_stats.bound_enabled {
+                best.bound_stats = inner_stats;
+            }
+            return best;
         }
         return inner_result;
     }
@@ -357,15 +435,42 @@ where
     match strategy {
         Strategy::AStar => {
             let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         Strategy::Bfs => {
             let mut f = BfsFrontier::new();
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         Strategy::GreedyBestFirst => {
             let mut f = PriorityFrontier::greedy(heuristic_fn);
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         // Push and Rotate needs a concrete target placement, which this path
         // does not have: `run_with_components` is reached with a `Goal`
@@ -375,7 +480,16 @@ where
         // substitution is not a surprise.
         Strategy::PushRotate => {
             let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
+            run_frontier(
+                &root,
+                generator,
+                goal,
+                ctx,
+                &mut f,
+                max_expansions,
+                None,
+                None,
+            )
         }
         _ => {
             unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")
@@ -385,7 +499,268 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
+    use crate::generators::HeuristicGenerator;
+    use crate::goals::AllAtTarget;
+    use crate::primitives::distance::DistanceTable;
+    use crate::primitives::lane_index::LaneIndex;
+    use crate::test_utils::{example_arch_json, loc};
+
+    /// Drive one solve through the real dispatch. Every argument the wiring
+    /// tests need to vary is a parameter; everything else (arch, root, goal,
+    /// targets, budget) is held fixed, so any difference in the returned
+    /// `bound_stats` is attributable to the varied input alone.
+    fn solve_with(
+        strategy: Strategy,
+        completion_bound: Option<BoundKind>,
+        cz_pairs: Option<&[(u32, u32)]>,
+        initial: &[(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)],
+    ) -> SolveResult {
+        solve_with_goal(
+            AllAtTarget::new,
+            strategy,
+            completion_bound,
+            cz_pairs,
+            initial,
+        )
+    }
+
+    /// As [`solve_with`], but with the goal chosen by the caller — the input
+    /// that now decides whether a completion bound is admissible.
+    fn solve_with_goal<Go, F>(
+        make_goal: F,
+        strategy: Strategy,
+        completion_bound: Option<BoundKind>,
+        cz_pairs: Option<&[(u32, u32)]>,
+        initial: &[(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)],
+    ) -> SolveResult
+    where
+        Go: Goal + Sync,
+        F: FnOnce(&[(u32, u64)]) -> Go,
+    {
+        let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
+            serde_json::from_str(example_arch_json()).expect("example arch json parses");
+        let index = LaneIndex::new(spec);
+        let root = Config::new(initial.iter().copied()).expect("root is a valid config");
+        let targets: Vec<(u32, u64)> = vec![(0, loc(1, 5).encode()), (1, loc(1, 6).encode())];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = make_goal(&targets);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &targets,
+            cz_pairs,
+        };
+        let opts = SolveOptions {
+            strategy,
+            ..SolveOptions::default()
+        };
+        let entropy_opts = EntropyOptions {
+            completion_bound,
+            ..EntropyOptions::default()
+        };
+        // The entropy driver generates its own candidates, so this factory goes
+        // unused on that path; it exists to satisfy the type parameter, and is
+        // the real generator for the frontier strategies.
+        let make_generator = |seed: u64, policy: DeadlockPolicy| {
+            HeuristicGenerator::configured(seed, policy, false, None)
+        };
+        run_with_components(
+            root,
+            &goal,
+            make_generator,
+            |_: &Config| 0.0,
+            |_: &Config| 0.0,
+            &ctx,
+            Some(2000),
+            &opts,
+            Some(&entropy_opts),
+            None,
+        )
+    }
+
+    /// The placement `solve_with`'s fixed targets are stated against: two
+    /// qubits, both away from their targets.
+    fn start() -> Vec<(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)> {
+        vec![(0, loc(0, 0)), (1, loc(0, 1))]
+    }
+
+    /// The target placement itself, for the root-is-goal case.
+    fn already_at_target() -> Vec<(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)> {
+        vec![(0, loc(1, 5)), (1, loc(1, 6))]
+    }
+
+    /// Shorthand for the fixed-target entropy solve the wiring tests compare
+    /// against.
+    fn entropy_solve(completion_bound: Option<BoundKind>) -> SolveResult {
+        solve_with(Strategy::Entropy, completion_bound, None, &start())
+    }
+
+    /// An explicit `BoundKind` must reach the driver and actually prune;
+    /// leaving it unset must leave the search bit-for-bit unbounded.
+    ///
+    /// Both directions matter. Without the "on" half, a wiring bug that never
+    /// built the bound would look like a correctly disabled one; without the
+    /// "off" half, a bound that ignored the option would look enabled
+    /// everywhere. The cut count is what separates "the flag was recorded"
+    /// from "the bound is doing work".
+    #[test]
+    fn the_completion_bound_option_reaches_the_driver() {
+        let bounded = entropy_solve(Some(BoundKind::WeightedDistance));
+        assert_eq!(bounded.status, SolveStatus::Solved);
+        assert!(bounded.bound_stats.bound_enabled);
+        assert!(
+            bounded.bound_stats.total_cuts() > 0,
+            "the constructed bound must reach the driver and prune, not just set a flag"
+        );
+        assert!(
+            bounded.bound_stats.root_lower_bound > 0.0,
+            "a real h(root) must be recorded"
+        );
+
+        let unbounded = entropy_solve(None);
+        assert_eq!(unbounded.status, SolveStatus::Solved);
+        assert!(!unbounded.bound_stats.bound_enabled);
+        assert_eq!(unbounded.bound_stats.total_cuts(), 0);
+        assert_eq!(unbounded.bound_stats.root_lower_bound, 0.0);
+        assert_eq!(
+            unbounded.bound_stats.optimality_gap(),
+            None,
+            "an unbounded run has no gap to report, rather than a gap of 1.0"
+        );
+
+        // Pruning only removes branches that cannot hold a cheaper plan, so
+        // enabling it can improve the answer but never degrade it.
+        assert!(
+            bounded.cost <= unbounded.cost,
+            "bounded cost {} exceeded unbounded {}",
+            bounded.cost,
+            unbounded.cost
+        );
+    }
+
+    /// Only the entropy driver prunes against an incumbent, so a
+    /// `completion_bound` requested alongside a frontier strategy is a no-op
+    /// rather than an error.
+    ///
+    /// The bound is built next to the entropy dispatch and gated on the same
+    /// `entropy_tables.is_some()` condition. Were that gate to drift, the two
+    /// would disagree about whether this solve is bounded — and the frontier
+    /// drivers report `BoundStats::default()` unconditionally, so the request
+    /// would be silently dropped while the caller believed it applied.
+    #[test]
+    fn a_frontier_strategy_ignores_a_requested_completion_bound() {
+        for strategy in [Strategy::AStar, Strategy::Bfs, Strategy::Ids] {
+            let result = solve_with(strategy, Some(BoundKind::WeightedDistance), None, &start());
+            assert_eq!(
+                result.status,
+                SolveStatus::Solved,
+                "{strategy:?} should still solve with a bound requested"
+            );
+            assert!(
+                !result.bound_stats.bound_enabled,
+                "{strategy:?} does not prune against an incumbent; the request must be inert"
+            );
+            assert_eq!(result.bound_stats.total_cuts(), 0);
+        }
+    }
+
+    /// A solve whose root already satisfies the goal builds no bound, and says
+    /// so.
+    ///
+    /// This is the second thing the `entropy_tables.is_some()` condition
+    /// decides: those tables are skipped when the root is a goal, and the bound
+    /// rides on the same condition so a solve that never searches never pays
+    /// for a Dijkstra sweep it cannot use. The reported stats have to agree
+    /// with that — an empty `BoundStats` claiming `bound_enabled` would offer a
+    /// `root_lower_bound` of 0.0 as if it were a measurement.
+    #[test]
+    fn a_root_that_is_already_the_goal_builds_no_bound() {
+        let result = solve_with(
+            Strategy::Entropy,
+            Some(BoundKind::WeightedDistance),
+            None,
+            &already_at_target(),
+        );
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.cost, 0.0);
+        assert!(result.move_layers.is_empty(), "nothing needed moving");
+        assert!(
+            !result.bound_stats.bound_enabled,
+            "no search ran, so no bound was built; reporting one would be a claim about nothing"
+        );
+        assert_eq!(result.bound_stats.total_cuts(), 0);
+        assert_eq!(
+            result.bound_stats.optimality_gap(),
+            None,
+            "a zero-cost incumbent has no meaningful gap"
+        );
+    }
+
+    /// Loose-goal solves must refuse the completion bound even when the caller
+    /// asks for it.
+    ///
+    /// There, `ctx.targets` is a greedy Hungarian assignment of qubits to
+    /// entangling slots, but the goal accepts *any* valid entangling
+    /// placement: a qubit can satisfy the goal without ever reaching its
+    /// assigned target, so `h0` — a distance to that target — can exceed the
+    /// true remaining cost. `Goal::exact_targets()` is how a goal declares
+    /// itself point-valued, and only a goal that does gets a bound.
+    ///
+    /// Exercised with `PartialPlacementGoal`, the smallest set-valued goal:
+    /// requiring only `min_placed` of the targets means an atom can be left
+    /// where it is, so `h0` — a max over *all* unresolved atoms — overestimates.
+    /// `EntanglingConstraintGoal` is set-valued for the same reason and
+    /// inherits the same `None` default.
+    #[test]
+    fn a_set_valued_goal_refuses_the_completion_bound() {
+        // Point-valued: the request is honoured, so the assertion below cannot
+        // pass vacuously through some unrelated path that drops the bound.
+        let fixed = entropy_solve(Some(BoundKind::WeightedDistance));
+        assert_eq!(fixed.status, SolveStatus::Solved);
+        assert!(
+            fixed.bound_stats.bound_enabled,
+            "a fixed-target solve must honour an explicit completion-bound request"
+        );
+
+        let loose = solve_with_goal(
+            |targets| crate::goals::PartialPlacementGoal::new(targets, Some(1)),
+            Strategy::Entropy,
+            Some(BoundKind::WeightedDistance),
+            None,
+            &start(),
+        );
+        assert_eq!(
+            loose.status,
+            SolveStatus::Solved,
+            "refusing the bound must not cost the solve its answer"
+        );
+        assert!(
+            !loose.bound_stats.bound_enabled,
+            "h0 is not admissible against a set-valued goal; the bound must be refused"
+        );
+        assert_eq!(
+            loose.bound_stats.total_cuts(),
+            0,
+            "a refused bound must not prune"
+        );
+
+        // The CZ marker is no longer what decides this: a point-valued goal is
+        // bounded whether or not the context carries cz_pairs, because the goal
+        // is what determines admissibility.
+        let with_cz_marker = solve_with(
+            Strategy::Entropy,
+            Some(BoundKind::WeightedDistance),
+            Some(&[(0, 1)]),
+            &start(),
+        );
+        assert!(with_cz_marker.bound_stats.bound_enabled);
+    }
 
     /// The dispatch may *raise* a caller's deadlock policy to keep the plain
     /// frontier strategies functional on the defaults, but it must never lower
