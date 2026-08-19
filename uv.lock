@@ -436,7 +436,7 @@ requires-dist = [
     { name = "deprecated", specifier = ">=1.3.1" },
     { name = "ipywidgets", marker = "extra == 'msd-reprod'" },
     { name = "kahip", specifier = ">=3.25" },
-    { name = "kirin-toolchain", specifier = "~=0.22.6" },
+    { name = "kirin-toolchain", specifier = "~=0.22.14" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.9.4" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "ppvm", marker = "extra == 'ppvm'", git = "https://github.com/QuEraComputing/ppvm.git?subdirectory=ppvm-python" },
@@ -2423,7 +2423,7 @@ wheels = [
 
 [[package]]
 name = "kirin-toolchain"
-version = "0.22.11"
+version = "0.22.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beartype" },
@@ -2431,9 +2431,9 @@ dependencies = [
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/b6/768047b9bc4858b8ab51342ad464e34f8667cdbb864a1e91e9ecbbc17a42/kirin_toolchain-0.22.11.tar.gz", hash = "sha256:c4a725d40329aabd70aa26eed180c3fcd97c48e828a7b46a3909506af4ae8179", size = 1251166, upload-time = "2026-05-08T15:35:50.501Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/56/ab24210fa035098ddbf67748ce0b08ae908fdd7c65541efb689851d2df7a/kirin_toolchain-0.22.14.tar.gz", hash = "sha256:25e5157f784ff7f0889abe1fda11b2be150557abfa9093bb3f91aeb1cda90207", size = 1258005, upload-time = "2026-08-18T20:18:32.767Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/2f/5ac78fb8b495883dd3496b4b395334e1c6d7f9deac2cc18e667332e07012/kirin_toolchain-0.22.11-py3-none-any.whl", hash = "sha256:9d65975ef27ead55b82c3a592f1597dea8d7e7095da106c033492c6e6af4fd3b", size = 258663, upload-time = "2026-05-08T15:35:48.53Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/19/7b9a2956753c1fb89d52ebd6de764f9ab0a5a23ec7ce3dabe1e1fc7db955/kirin_toolchain-0.22.14-py3-none-any.whl", hash = "sha256:ea06d1a61323df1c04b78f8aacf61f163f9defddbc2e20cc7c8670e7437f22e5", size = 260211, upload-time = "2026-08-18T20:18:31.159Z" },
 ]
 
 [[package]]
