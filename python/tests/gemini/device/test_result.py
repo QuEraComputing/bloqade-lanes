@@ -7,6 +7,7 @@ from bloqade.core.device import (
     ShotFilter,
     ShotResult,
 )
+from kirin.dialects import ilist
 from kirin.serialization import JSONSerializer
 from qlam_core.plugins.tasks.api.tasks_models import (
     Program,
@@ -41,9 +42,21 @@ def _kernel_b():
     return logical.terminal_measure(q)
 
 
+@logical.kernel(num_physical_qubits=1, aggressive_unroll=True)
+def _kernel_with_postprocessing():
+    q = squin.qalloc(2)
+    measurements = logical.terminal_measure(q)
+    return squin.set_detector(
+        ilist.IList([measurements[0][0], measurements[1][0]]), [0, 1]
+    )
+
+
 _serializer = JSONSerializer()
 KERNEL_A_JSON = _serializer.encode(_kernel_a.dialects.encode(_kernel_a))
 KERNEL_B_JSON = _serializer.encode(_kernel_b.dialects.encode(_kernel_b))
+KERNEL_WITH_POSTPROCESSING_JSON = _serializer.encode(
+    _kernel_with_postprocessing.dialects.encode(_kernel_with_postprocessing)
+)
 
 
 def make_shot(
@@ -427,6 +440,33 @@ def test_postprocessing_functions_runs_each_call(storage, mocker):
 
     assert decode_spy.call_count == 2
     assert gen_spy.call_count == 2
+
+
+def test_logical_results_rebuilds_const_hints_after_serialization(storage):
+    """Stored logical kernels retain their post-processing behavior.
+
+    Kirin JSON does not preserve SSA ``const`` hints. The detector indexes its
+    terminal-measurement result with literal indices, so this covers the
+    serialization path used when retrieving logical task results.
+    """
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_WITH_POSTPROCESSING_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=2)],
+        ),
+    )
+    storage.add_shots(
+        [
+            make_shot(shot_index=0, bitstring=(True, False)),
+            make_shot(shot_index=1, bitstring=(True, True)),
+        ]
+    )
+
+    result = GeminiLogicalResult(storage=storage).logical_results()
+
+    assert list(result[0]) == [True, False]
 
 
 def test_logical_results_returns_raw_when_postprocessing_is_none(storage, monkeypatch):
