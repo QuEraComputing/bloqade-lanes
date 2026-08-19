@@ -128,10 +128,12 @@ struct SearchResult {
 *Computing* it is a **fold over nodes seen** (`argmin(progress metric)`),
 independent of ordering, so it lives in the shared `SearchCore`: `FrontierSearch`
 folds it at **push time** (as each generated node is inserted — a richer pool than
-only expanded ones) using a **`MeasurableGoal` shortfall** (§3); `EntropySearch`
-fills it natively from its resume buffer + `found_goals`. A specialization that
-tracks nothing — BFS, or any run with no `MeasurableGoal` supplied — simply leaves
-the field `None`. **No trait obligation, no default-impl gymnastics**; the
+only expanded ones) using a **`MeasurableGoal` shortfall** (§3). `EntropySearch`
+has a resume buffer + `found_goals` but does **not** track this today — producing
+`best_reached` there is *new plumbing through its loop*, not a free read-out (an
+earlier draft overstated it as "already implemented richer"). A specialization
+that tracks nothing — BFS, or any run with no `MeasurableGoal` supplied — simply
+leaves the field `None`. **No trait obligation, no default-impl gymnastics**; the
 optionality is the whole point.
 
 - **Two fields, two roles.** `goal` = best *complete* solution (the incumbent
@@ -143,12 +145,16 @@ optionality is the whole point.
   `MeasurableGoal` shortfall was supplied and the specialization tracked it;
   otherwise `None`. BFS (or any metric-less run) leaves it `None` — the consumer
   falls back to `goal`, then root. No BFS branch anywhere in the code.
-- **Cost.** The fold is O(1)/node and needs no post-hoc graph scan. It is *free*
-  for A\*/DFS/IDS/entropy (they already evaluate the ordering signal per node) and
-  costs *one extra metric eval per node* for BFS (FIFO, otherwise never touches
-  it). This is a non-issue: BFS is effectively **vestigial** for our graph sizes
-  (too expensive to use in practice), so its extra per-node eval never matters —
-  do not shape the design around BFS performance.
+- **Cost — a real per-node eval, not free.** The fold is O(1)/node and needs no
+  post-hoc graph scan, but it is *not* free: the frontier's per-node signal is the
+  ordering `h` (heuristic/bound, `frontier.rs:153`), a **different function** from
+  `MeasurableGoal::shortfall` (e.g. unresolved-qubit count), so computing
+  `best_reached` at push time is a genuine extra evaluation per node — on the hot
+  path of exactly the benchmark-gated strategies (A\*/DFS/IDS). (An earlier draft
+  claimed it was free by "reusing the ordering signal"; that was wrong — the two
+  metrics differ.) Mitigation: gate the fold on whether a `MeasurableGoal` was
+  supplied, so runs that don't need a resumable partial pay nothing. BFS is moot
+  either way — vestigial at our graph sizes.
 
 ### The shared substrate + the specializations (not one function)
 
@@ -261,10 +267,22 @@ impl<O: LaneAdditive> WeightedDistanceBound<O> {
 ```
 
 Effect: `LaneAddr` and target placements now appear *only* where a lane-graph
-distance bound is built. The current runtime `match goal.exact_targets() { Some
-=> build, None => skip }` ([restarts.rs:227-233](../../..)) becomes a
-compile-time fact — a set-valued goal can't even be offered to the bound
-constructor.
+distance bound is built.
+
+> **Caveat (don't oversell this as free).** Making "only a `PointGoal` reaches the
+> bound constructor" a *compile-time* fact is **not** a free consequence of the
+> trait split. Today the bound is built at
+> [restarts.rs:227-233](../../..) inside `run_with_components`, whose single
+> monomorphization (`<Go, Gen, Hmax, Hsum, MkGen>` + 10 args,
+> [restarts.rs:159](../../..)) is instantiated with **both** point goals
+> (`AllAtTarget`) and set goals (`EntanglingConstraintGoal`, `PartialPlacementGoal`)
+> flowing through the same dispatch. To enforce it statically you must either split
+> that already-overloaded god-function by goal kind — multiplying its
+> monomorphization breadth, which cuts against the inventory's monomorphization-cost
+> constraint (#11) — or keep a runtime
+> capability check. So this is a restructuring of the crate's most
+> over-parameterized function, not a rename. A reasonable interim: keep the
+> **runtime** `match goal.exact_targets()` gate and defer the compile-time version.
 
 ---
 
@@ -498,8 +516,9 @@ becomes goal-/pair-agnostic and `SearchContext.cz_pairs` disappears.
 6. **`Traversal` unification — RESOLVED: no universal trait; static
    specializations over a shared `SearchCore` (see §2).** Tracing the entropy loop
    ([entropy.rs:2459-2854](../../..)) settled it, method-by-method vs `Frontier`:
-   `check_goal_*` fits (entropy tests on generate); `best_reached` fits and entropy
-   already implements it richer (resume buffer + `found_goals`); but
+   `check_goal_*` fits (entropy tests on generate); `best_reached` fits *as a result
+   field* (though entropy would need new plumbing to populate it — it has a resume
+   buffer + `found_goals` but no `best_reached` output today); but
    `select_next` / `receive_children` do **not** — they presume batch-expand into a
    *stored* open list, whereas entropy is incremental, outcome-driven, and
    bounded-memory. Resolution is **not** to widen the trait (a `step`/driver
@@ -510,7 +529,67 @@ becomes goal-/pair-agnostic and `SearchContext.cz_pairs` disappears.
    fits `Frontier` — it does **not** show entropy fits, because IDS keeps every
    node in its heap while entropy deliberately keeps only a bounded resume buffer.
 
-Safety net for whatever migration follows: the deterministic benchmark baselines
-(`python/benchmarks/harness/latest_physical.csv` / `latest_logical.csv`,
-zero-diff CI gate) plus the search-crate tests now run by `just test-rust` /
-`just lint`.
+---
+
+## 9. Safety-net coverage & gaps (independent review, 2026-08-18)
+
+The behaviour-preserving story leans on the deterministic benchmark baselines
+(`python/benchmarks/harness/latest_physical.csv` / `latest_logical.csv`, zero-diff
+CI gate) plus the search-crate tests (`just test-rust` / `just lint`). But the
+coverage is **uneven — and thinnest on the paths this redesign most wants to
+change:**
+
+- **Gated (regression fails CI automatically):** the frontier strategies
+  (`astar` / `bfs` / `dfs` / `ids` / `greedy`) and entropy variants
+  (`entropy_{1,5,10,20}`, plus `entropy_5_bounded` on logical). Baseline columns
+  include the bound stats, so **§5's frontier bound-wiring will trip the gate** —
+  it is a behaviour change, not a pure refactor.
+- **NOT gated (silent or unit-test-only):**
+  - **Push-and-Rotate and Cascade are in *neither* baseline.** So the §6
+    resumable-`TargetSolver` / P&R-completion work and the cascade leg touched by
+    §5 are guarded only by the ~15 `target_solver.rs` tests, not the zero-diff
+    gate. **Write dedicated resume-vs-restart / chained-plan tests before touching
+    these.**
+  - **Resumable-handoff *quality*** (§8.3) — no test asserts resume ≥ restart.
+  - **The PyO3 adapter / string-label / dict-key ABI** — no Rust test crosses into
+    Python; a `SolveResult`→`RouteOutcome` reshape is caught only if the Python
+    integration tests exercise the changed getters.
+  - **The `SearchEvent` / `EntropyTrace` viz transport** — the `entropy_tree`
+    consumer is outside the Rust gate; a `SearchCore` extraction that perturbs
+    entropy event-emission order can break the 1:1 viz contract un-gated.
+- **Compiler-guarded (correctness only, no behaviour signal — fine):** trait
+  renames, the capability split, dead-code removal.
+
+## 10. Implementation sequencing (independent review, 2026-08-18)
+
+Overall size (independent review): **L–XL, ~8–16 person-weeks, bimodal** — steps
+1–5 are the cheap, safe ~40% (compiler-guarded, zero baseline move); steps 6–8
+(P&R composition + placement lift) are the expensive, weakly-guarded ~60%. Order
+"guarded-and-behaviour-preserving first, un-gated behavioural last."
+
+1. **Dead-code + re-export hygiene** (§4). Delete `MaxHopHeuristic` /
+   `SumHopHeuristic`; relocate `tests/public_bound_api.rs` to in-crate access (it
+   exercises `run_search` / `entropy_search_*` / `MaxBound` / `WeightedDuration`,
+   so those can't be demoted to `pub(crate)` until it does). Zero baseline move.
+2. **Trait renames + capability split** (§3), *minus* static-`PointGoal`
+   enforcement — keep the runtime `match goal.exact_targets()` gate for now.
+   Compiler-guarded; add `MeasurableGoal` impls (unused yet). Zero baseline move.
+3. **`SearchCore` extraction + scope `Frontier`** (§2) as pure code-motion; relies
+   on frontier + entropy baselines staying bit-identical.
+4. **`best_reached` as an additive, opt-in `SearchResult` field** (§2). Defaults
+   `None`; no existing solve supplies a `MeasurableGoal` → zero baseline move. Do
+   before step 5 (its `RouteOutcome.reached` depends on it).
+5. **`RouteOutcome` / resumable `TargetSolver` as an *internal* type** (§6, part 1).
+   `route()` returns best-partial, but `extract()` still maps back to today's
+   `SolveResult` and the PyO3 surface is unchanged — isolates the DTO reshape from
+   the ABI. Guarded by `target_solver.rs` tests.
+6. **P&R-as-completion behaviour** (§6, part 2). First un-gated behavioural step —
+   add resume-vs-restart + chained-plan-replay tests *before* landing.
+7. **§5 frontier bound-wiring.** Explicitly a behaviour change: expect
+   `nodes_explored` (and possibly which optimal-cost plan is returned) to shift on
+   `astar` / `ids` / `cascade`; regenerate + inspect both baselines, confirm
+   `success` unchanged. Do **not** bundle with steps 1–4.
+8. **Placement lift** (§7) — last, highest behaviour risk, feeds the logical
+   baseline via the loose-goal path; budget several baseline regen/inspect cycles.
+9. **Two-tier `DynBound`** (§2) — optional; isolated and consumer-less (candidate
+   to drop from scope until something needs a boxed experimental bound).
