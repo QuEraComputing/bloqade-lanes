@@ -1585,6 +1585,7 @@ mod tests {
             &mut NoOpObserver,
             Some(100),
             None,
+            None,
         );
 
         assert!(result.goal.is_some());
@@ -1628,6 +1629,7 @@ mod tests {
             &mut SearchState::default(),
             &mut NoOpObserver,
             Some(1000),
+            None,
             None,
         );
 
@@ -1694,6 +1696,7 @@ mod tests {
             &mut SearchState::default(),
             &mut NoOpObserver,
             Some(500),
+            None,
             None,
         );
 
@@ -1843,6 +1846,7 @@ mod tests {
             &mut NoOpObserver,
             Some(1000),
             None,
+            None,
         );
 
         let mut f_la = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
@@ -1857,6 +1861,7 @@ mod tests {
             &mut SearchState::default(),
             &mut NoOpObserver,
             Some(1000),
+            None,
             None,
         );
 

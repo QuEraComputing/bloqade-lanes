@@ -182,6 +182,11 @@ mod tests {
     use super::*;
     use crate::test_utils::{lane, loc};
 
+    /// One-atom config at site `site`, for building arena chains.
+    fn cfg(site: u32) -> Config {
+        Config::new([(0, loc(0, site))]).unwrap()
+    }
+
     #[test]
     fn root_creation() {
         let cfg = Config::new([(0, loc(0, 0))]).unwrap();
@@ -316,5 +321,47 @@ mod tests {
 
         assert!(!is_new);
         assert_eq!(returned_id, first_id);
+    }
+
+    /// `NodeId`s are dense arena indices: every id equals the node's position,
+    /// ids are handed out consecutively from 0, and none is ever reused.
+    ///
+    /// The entropy driver's per-node caches index `Vec`s by `NodeId` directly
+    /// instead of hashing, which is only sound while this holds. The transposition
+    /// path is the interesting case: a cheaper re-discovery *appends* a new node
+    /// and repoints the table, leaving the old id valid and its slot occupied —
+    /// lazy deletion, so indices are never invalidated or compacted.
+    #[test]
+    fn node_ids_are_dense_arena_indices() {
+        let mut graph = SearchGraph::new(Config::new([(0, loc(0, 0))]).unwrap());
+        assert_eq!(graph.root().0, 0);
+        assert_eq!(graph.len(), 1);
+
+        let a = graph
+            .insert(graph.root(), MoveSet::new([lane(0, 0, 0)]), cfg(1), 1.0)
+            .0;
+        let b = graph
+            .insert(a, MoveSet::new([lane(0, 0, 0)]), cfg(2), 2.0)
+            .0;
+        assert_eq!((a.0, b.0), (1, 2), "ids are consecutive from the root");
+        assert_eq!(graph.len(), 3);
+
+        // Re-discover `cfg(2)` more cheaply: a *new* id appears, the old one
+        // stays addressable, and the arena only grows.
+        let (cheaper, is_new) =
+            graph.insert(graph.root(), MoveSet::new([lane(0, 0, 0)]), cfg(2), 0.5);
+        assert!(is_new);
+        assert_eq!(cheaper.0, 3, "re-discovery appends rather than reusing");
+        assert_eq!(graph.len(), 4);
+        assert_eq!(
+            graph.g_score(b),
+            2.0,
+            "the superseded node is still readable"
+        );
+
+        // Every id ever handed out is a valid index into a `Vec` sized to `len()`.
+        for id in [graph.root(), a, b, cheaper] {
+            assert!((id.0 as usize) < graph.len());
+        }
     }
 }

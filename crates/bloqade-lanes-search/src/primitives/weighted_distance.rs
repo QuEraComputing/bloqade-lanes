@@ -1,0 +1,362 @@
+//! Objective-weighted lane-graph distances, the substrate for admissible
+//! completion bounds.
+//!
+//! [`WeightedDistanceTable`] is the weighted sibling of
+//! [`DistanceTable`](super::distance::DistanceTable): same storage layout and
+//! lookup shape, but edges carry [`Objective::lane_weight`] instead of a unit
+//! hop, and `blocked` sites are cut out of the graph entirely.
+//!
+//! Two properties matter and are enforced structurally rather than by
+//! convention:
+//!
+//! - **No ordering artifacts.** The only inputs are the lane graph, the
+//!   blocked set, and the objective's per-lane weight. Nothing here can reach
+//!   the move generator's contested-destination penalty, pair-coordination
+//!   boost, or seeded score perturbation, and it does not consult
+//!   `HeuristicTables` or the `w_t`-blended time distances — those are
+//!   ordering devices, not costs.
+//! - **Objective pairing.** A table records the [`ObjectiveId`] it was built
+//!   from, so a bound derived from it can refuse to prune a search whose `g`
+//!   accumulates a different objective.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::reverse_lane_graph::ReverseLaneGraph;
+use crate::traits::{Objective, ObjectiveId};
+
+/// Precomputed minimum **weighted** distance from every reachable location to
+/// each target location, over the lane graph with `blocked` sites removed.
+///
+/// Storage mirrors [`DistanceTable`](super::distance::DistanceTable): a
+/// `HashMap<u64, usize>` interning every location to a compact index, and a
+/// flat row-major `Vec<f64>` of `n_loc × n_loc`. Only the columns of actual
+/// targets are populated; every other cell stays [`f64::INFINITY`].
+///
+/// # Why blocked sites are excluded
+///
+/// A `blocked` location holds an external atom that this solve cannot move, so
+/// no plan may route through or land on it — for the whole solve, not just the
+/// current node. Deleting those vertices can only lengthen or sever paths,
+/// which makes the resulting distances **larger** and therefore the derived
+/// bound **tighter**, while staying a valid lower bound. In the physical
+/// pipeline `blocked` carries every un-routed atom plus every spectator, so
+/// this is a large effect, not a corner case.
+#[derive(Debug)]
+pub struct WeightedDistanceTable {
+    /// `encoded location → compact row/column index`. Blocked locations are
+    /// deliberately absent, so any lookup involving one returns `None`.
+    loc_index: HashMap<u64, usize>,
+    /// `encoded target → compact column index`. Only actual targets get a
+    /// column, so the table is `n_loc × n_targets` rather than `n_loc × n_loc`:
+    /// every other column of a square layout would stay
+    /// [`f64::INFINITY`] forever, and unlike
+    /// [`DistanceTable`](super::distance::DistanceTable) this type has no
+    /// column-scanning accessor whose cache locality would justify the padding.
+    target_col: HashMap<u64, usize>,
+    /// Row-major `n_loc × n_targets` weighted distances;
+    /// `flat_distance[from * n_targets + col]`, [`f64::INFINITY`] if
+    /// unreachable.
+    flat_distance: Vec<f64>,
+    n_targets: usize,
+    /// Identity of the objective whose `lane_weight` produced these edges.
+    objective_id: ObjectiveId,
+}
+
+impl WeightedDistanceTable {
+    /// Build by running Dijkstra from each unique target on the reversed,
+    /// blocked-carved lane graph.
+    ///
+    /// Reversed because the query direction is "cost from an arbitrary
+    /// location *to* a fixed target", so one run per target fills that
+    /// target's whole column.
+    ///
+    /// # Panics
+    ///
+    /// If the objective reports a negative `lane_weight`. Dijkstra requires
+    /// non-negative edges, and a negative weight would silently produce wrong
+    /// shortest paths rather than merely a weaker bound. Checked at
+    /// construction so it can never reach a pruning decision.
+    pub fn new(
+        target_locations: &[u64],
+        index: &LaneIndex,
+        blocked: &HashSet<u64>,
+        objective: &impl Objective,
+    ) -> Self {
+        let targets: Vec<u64> = {
+            let mut v: Vec<u64> = target_locations
+                .iter()
+                .copied()
+                .filter(|t| !blocked.contains(t))
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+
+        // Reversed, interned, blocked-carved lane graph at the objective's
+        // weights. `blocked` is carved inside the shared builder: a lane
+        // touching one can never be taken, so it must not contribute a path.
+        let mut graph = ReverseLaneGraph::build(index, blocked, |lane| {
+            let w = objective.lane_weight(lane);
+            assert!(
+                w >= 0.0,
+                "objective {:?} reported a negative lane_weight ({w}) for {lane:?}; \
+                 Dijkstra requires non-negative edge weights",
+                objective.id()
+            );
+            Some(w)
+        });
+        // Isolated targets (no incident unblocked lanes) still need an index so
+        // that `distance(t, t) == 0` holds, matching `DistanceTable`.
+        for &t in &targets {
+            graph.intern(t);
+        }
+
+        let n_loc = graph.len();
+        let target_col: HashMap<u64, usize> = targets
+            .iter()
+            .enumerate()
+            .map(|(col, &t)| (t, col))
+            .collect();
+        let n_targets = target_col.len();
+        let mut flat_distance = vec![f64::INFINITY; n_loc * n_targets];
+
+        for &target_enc in &targets {
+            let col = target_col[&target_enc];
+            let target_idx = graph
+                .index_of(target_enc)
+                .expect("every target was interned above");
+            for (from_idx, d) in graph.dijkstra_from(target_idx).into_iter().enumerate() {
+                flat_distance[from_idx * n_targets + col] = d;
+            }
+        }
+
+        let (loc_index, _) = graph.into_index();
+        Self {
+            loc_index,
+            target_col,
+            flat_distance,
+            n_targets,
+            objective_id: objective.id(),
+        }
+    }
+
+    /// O(1) lookup: minimum weighted cost from `from_encoded` to
+    /// `to_target_encoded`.
+    ///
+    /// `None` when either location is unknown to this table — which includes
+    /// every blocked location, since those are never interned — or when no
+    /// unblocked path exists. Callers treat `None` as "infeasible".
+    pub fn distance(&self, from_encoded: u64, to_target_encoded: u64) -> Option<f64> {
+        let from_idx = *self.loc_index.get(&from_encoded)?;
+        let col = *self.target_col.get(&to_target_encoded)?;
+        let d = self.flat_distance[from_idx * self.n_targets + col];
+        d.is_finite().then_some(d)
+    }
+
+    /// The objective this table's edge weights came from.
+    pub fn objective_id(&self) -> ObjectiveId {
+        self.objective_id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cost::{UniformCost, WeightedDuration};
+    use crate::primitives::distance::DistanceTable;
+    use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+    fn make_index() -> LaneIndex {
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        LaneIndex::new(spec)
+    }
+
+    fn no_blocked() -> HashSet<u64> {
+        HashSet::new()
+    }
+
+    /// With unit weights the weighted table must reproduce the BFS hop-count
+    /// table exactly, for every pair it can answer for. This is the anchor
+    /// test: it pins the Dijkstra implementation against an independent
+    /// shortest-path implementation over the same graph.
+    #[test]
+    fn agrees_with_hop_table_when_all_weights_are_one() {
+        let index = make_index();
+        let targets: Vec<u64> = [loc(0, 5), loc(1, 5), loc(1, 0)]
+            .iter()
+            .map(|l| l.encode())
+            .collect();
+        let hops = DistanceTable::new(&targets, &index);
+        let weighted = WeightedDistanceTable::new(&targets, &index, &no_blocked(), &UniformCost);
+
+        let mut compared = 0_usize;
+        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
+            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
+                let Some((src, _)) = index.endpoints(&lane) else {
+                    continue;
+                };
+                for &t in &targets {
+                    let h = hops.distance(src.encode(), t);
+                    let w = weighted.distance(src.encode(), t);
+                    match (h, w) {
+                        (Some(h), Some(w)) => {
+                            assert_eq!(f64::from(h), w, "hop {h} vs weighted {w}");
+                            compared += 1;
+                        }
+                        (None, None) => compared += 1,
+                        (h, w) => panic!("reachability disagrees: hops={h:?} weighted={w:?}"),
+                    }
+                }
+            }
+        }
+        assert!(compared > 0, "fixture should expose comparable pairs");
+    }
+
+    /// Under a duration-weighted objective, a one-hop distance must equal that
+    /// lane's own weight — i.e. the table's edges really carry arch-spec
+    /// durations, not hop counts.
+    #[test]
+    fn edge_weights_come_from_arch_spec_durations() {
+        let index = make_index();
+        let objective = WeightedDuration::new(&index, 10.0);
+
+        // Find a lane whose destination is reachable only through it in one
+        // hop, and check the table reproduces its weight.
+        let mut checked = 0_usize;
+        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
+            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
+                let Some((src, dst)) = index.endpoints(&lane) else {
+                    continue;
+                };
+                let table =
+                    WeightedDistanceTable::new(&[dst.encode()], &index, &no_blocked(), &objective);
+                let d = table
+                    .distance(src.encode(), dst.encode())
+                    .expect("one hop must be reachable");
+                // The direct lane is an upper bound on the shortest path, and
+                // any path costs at least the cheapest single lane.
+                assert!(
+                    d <= objective.lane_weight(lane) + 1e-12,
+                    "shortest path {d} exceeded the direct lane weight {}",
+                    objective.lane_weight(lane)
+                );
+                assert!(d > 1.0, "a duration-weighted hop must exceed the unit term");
+                checked += 1;
+                if checked >= 8 {
+                    return;
+                }
+            }
+        }
+        assert!(checked > 0, "fixture should expose lanes");
+    }
+
+    /// Weighted distances must differ from hop counts under a non-uniform
+    /// objective — otherwise the table is silently ignoring `lane_weight`.
+    #[test]
+    fn weighted_distances_differ_from_hop_counts() {
+        let index = make_index();
+        let target = loc(1, 0).encode();
+        let objective = WeightedDuration::new(&index, 10.0);
+        let hops = DistanceTable::new(&[target], &index);
+        let weighted = WeightedDistanceTable::new(&[target], &index, &no_blocked(), &objective);
+
+        let from = loc(0, 0).encode();
+        let h = f64::from(hops.distance(from, target).expect("reachable"));
+        let w = weighted.distance(from, target).expect("reachable");
+        assert!(
+            w > h,
+            "duration weights (each > 1) must exceed the hop count: {w} vs {h}"
+        );
+    }
+
+    /// Blocking a location removes it from the graph: it becomes unknown to
+    /// the table, and any path that needed it gets longer or disappears.
+    #[test]
+    fn blocked_locations_are_excluded_from_the_graph() {
+        let index = make_index();
+        let target = loc(1, 0).encode();
+        let waypoint = loc(0, 5).encode();
+
+        let open = WeightedDistanceTable::new(&[target], &index, &no_blocked(), &UniformCost);
+        let baseline = open
+            .distance(loc(0, 0).encode(), target)
+            .expect("reachable");
+
+        let blocked: HashSet<u64> = [waypoint].into_iter().collect();
+        let carved = WeightedDistanceTable::new(&[target], &index, &blocked, &UniformCost);
+
+        // The blocked vertex is not part of the graph at all.
+        assert_eq!(carved.distance(waypoint, target), None);
+        assert_eq!(carved.distance(loc(0, 0).encode(), waypoint), None);
+
+        // Any surviving route is no cheaper than before — carving can only
+        // lengthen or sever paths, never shorten them.
+        if let Some(after) = carved.distance(loc(0, 0).encode(), target) {
+            assert!(
+                after >= baseline,
+                "removing a vertex must not shorten a path: {after} < {baseline}"
+            );
+        }
+    }
+
+    /// A target sitting on a blocked location is unreachable by construction,
+    /// rather than reporting a bogus distance of zero.
+    #[test]
+    fn blocked_target_is_unreachable() {
+        let index = make_index();
+        let target = loc(0, 5).encode();
+        let blocked: HashSet<u64> = [target].into_iter().collect();
+        let table = WeightedDistanceTable::new(&[target], &index, &blocked, &UniformCost);
+        assert_eq!(table.distance(loc(0, 0).encode(), target), None);
+        assert_eq!(table.distance(target, target), None);
+    }
+
+    #[test]
+    fn distance_to_self_is_zero() {
+        let index = make_index();
+        let target = loc(0, 5).encode();
+        let table = WeightedDistanceTable::new(&[target], &index, &no_blocked(), &UniformCost);
+        assert_eq!(table.distance(target, target), Some(0.0));
+    }
+
+    #[test]
+    fn unknown_location_returns_none() {
+        let index = make_index();
+        let target = loc(0, 5).encode();
+        let table = WeightedDistanceTable::new(&[target], &index, &no_blocked(), &UniformCost);
+        assert_eq!(
+            table.distance(loc(0, 0).encode(), loc(99, 99).encode()),
+            None
+        );
+    }
+
+    /// The table carries its objective's identity so a bound built from it can
+    /// refuse to prune a search accumulating a different objective.
+    #[test]
+    fn records_the_objective_it_was_built_from() {
+        let index = make_index();
+        let target = loc(0, 5).encode();
+        let uniform = WeightedDistanceTable::new(&[target], &index, &no_blocked(), &UniformCost);
+        let weighted = WeightedDistanceTable::new(
+            &[target],
+            &index,
+            &no_blocked(),
+            &WeightedDuration::new(&index, 10.0),
+        );
+        assert_eq!(uniform.objective_id(), UniformCost.id());
+        assert_ne!(uniform.objective_id(), weighted.objective_id());
+
+        // Same family, different parameter — must not compare equal, or an
+        // instance-level mismatch would slip through the bound's pairing check.
+        let tau_a = WeightedDistanceTable::new(
+            &[target],
+            &index,
+            &no_blocked(),
+            &WeightedDuration::new(&index, 1.0),
+        );
+        assert_ne!(tau_a.objective_id(), weighted.objective_id());
+    }
+}

@@ -222,6 +222,29 @@ pub struct EntropyOptions {
     /// A non-zero base seed starts the per-restart sequence at that value
     /// so every run is reproducible.
     pub seed: u64,
+    /// Admissible completion bound used to prune branches that cannot beat
+    /// the incumbent. `None` (the default) means `h ≡ 0`: a branch is only cut
+    /// once its accumulated cost alone reaches the incumbent's.
+    ///
+    /// Affects only *which subtrees are explored*, never candidate generation
+    /// or entropy reweighting. With `None` the search is bit-identical to
+    /// having no bounding code at all.
+    pub completion_bound: Option<BoundKind>,
+}
+
+/// Which admissible completion bound to prune with.
+///
+/// Bounds compose by max, so this will grow into a set rather than a single
+/// choice once a second bound exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundKind {
+    /// `h0`: max over unresolved atoms of the objective-weighted distance to
+    /// its target, over the lane graph with blocked sites removed.
+    ///
+    /// Requires a fixed-target goal. It is **not** applied to loose-goal
+    /// (CZ-pair) solves, where the assigned targets are one arbitrary way to
+    /// satisfy the goal rather than a requirement — see `restarts.rs`.
+    WeightedDistance,
 }
 
 impl Default for EntropyOptions {
@@ -232,6 +255,7 @@ impl Default for EntropyOptions {
             w_t: 0.05,
             collect_entropy_trace: false,
             seed: 0,
+            completion_bound: None,
         }
     }
 }
