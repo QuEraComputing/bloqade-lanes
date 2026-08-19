@@ -32,11 +32,13 @@ def ghz_optimal():
     squin.broadcast.sqrt_y(qs)
     squin.z(qs[0])
     squin.cz(qs[0], qs[5])
+    squin.sqrt_y_adj(qs[5])
     squin.broadcast.cz(ilist.IList([qs[0], qs[5]]), ilist.IList([qs[1], qs[6]]))
+    squin.broadcast.sqrt_y_adj(ilist.IList([qs[1], qs[6]]))
     squin.broadcast.cz(qs[:2] + qs[5:7], qs[2:4] + qs[7:9])
+    squin.broadcast.sqrt_y_adj(qs[2:4] + qs[7:9])
     squin.broadcast.cz(ilist.IList([qs[3], qs[8]]), ilist.IList([qs[4], qs[9]]))
-    squin.broadcast.sqrt_y(qs)
-    squin.sqrt_y_adj(qs[0])
+    squin.broadcast.sqrt_y_adj(ilist.IList([qs[4], qs[9]]))
 
 
 mt = LogicalPipeline().emit(log_depth_ghz)
