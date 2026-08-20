@@ -603,6 +603,68 @@ class TransportPath:
     def __hash__(self) -> int: ...
 
 @final
+class MotionModel:
+    """Constant-jerk motion/timing model for AOD move durations.
+
+    Owns the physical timing constants and the derived move-duration formula.
+    Defaults to the FLAIR constants extracted from bloqade-flair; construct
+    with explicit values to model a different motion profile. This is the
+    single source of truth shared with the Rust move-search solver.
+
+    Args:
+        max_ramp_us (float): Maximum amplitude ramp rate (amplitude units per
+            µs); the pick/drop ramp time is ``amplitude / max_ramp_us``.
+            Defaults to the FLAIR value. Must be > 0.
+        max_jerk_um_per_us3 (float): Maximum jerk in µm/µs³. Must be > 0.
+        max_accel_um_per_us2 (float): Maximum acceleration in µm/µs². Must be > 0.
+    """
+
+    def __init__(
+        self,
+        max_ramp_us: float = ...,
+        max_jerk_um_per_us3: float = ...,
+        max_accel_um_per_us2: float = ...,
+    ) -> None: ...
+    @staticmethod
+    def flair() -> MotionModel:
+        """The FLAIR constant-jerk motion model (the default constants)."""
+        ...
+
+    @property
+    def max_ramp_us(self) -> float:
+        """Maximum amplitude ramp rate (amplitude units per µs)."""
+        ...
+
+    @property
+    def max_jerk_um_per_us3(self) -> float:
+        """Maximum jerk in µm/µs³."""
+        ...
+
+    @property
+    def max_accel_um_per_us2(self) -> float:
+        """Maximum acceleration in µm/µs²."""
+        ...
+
+    def const_jerk_min_duration_us(self, max_dist_um: float) -> float:
+        """Minimum duration (µs) of a constant-jerk move over ``max_dist_um``."""
+        ...
+
+    def lane_duration_us(
+        self,
+        waypoints: list[tuple[float, float]],
+        amplitude_delta: float = 1.0,
+    ) -> float:
+        """Lane duration (µs) over a waypoint path: ramp + Σ segments + ramp.
+
+        The pick and drop ramps are always charged, so a path with fewer than
+        two waypoints still costs ``2 * ramp`` rather than zero.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
 class ArchSpec:
     """Architecture specification for a quantum device.
 
