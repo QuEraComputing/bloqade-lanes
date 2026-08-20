@@ -72,7 +72,10 @@ trait CompletionBound: Sync {
 }
 ```
 
-### Tier 2 — search as *static specializations over a shared `SearchCore`*
+### The engines — static specializations over a shared `SearchCore`
+
+(Still part of the routing-search-core layer; "Tier 2" in this doc means the
+`TargetSolver` contract, §6.)
 
 There is **no universal `Traversal` trait** that both engines implement, and **no
 single `search()`** with a pluggable open-list. Tracing the entropy loop
@@ -185,10 +188,11 @@ cheap, and (b) experimental, non-enumerated configs should be possible without
 touching the fast dispatcher. Both fall out of writing each loop **once**,
 generic, with two front doors.
 
-**One generic loop.** `run<O: Objective, B: CompletionBound<Obj = O>, …>(core, obj,
-bound, …)` is written a single time; everything below is *how you reach it*.
+**Each loop written once, generic.** `run<O: CostModel, B: CompletionBound<Obj = O>,
+…>(core, obj, bound, …)` (one such per engine — this does *not* reintroduce a
+single `search()`); everything below is *how you reach it*.
 
-**Tier 1 (fast) — resolve one axis per match, let the compiler compose the
+**Fast path — resolve one axis per match, let the compiler compose the
 product.** Do not hand-write the `strategy × bound × objective` cartesian product.
 Each axis gets a local match that resolves a concrete type and calls the next
 stage generically (continuation- or builder-style); the compiler generates the
@@ -199,8 +203,8 @@ inlined. Cost is code size, bounded by the number of concrete axis values you
 actually instantiate — keep the *runtime-open* axis set small (today: strategy ×
 bound, with objective/scorer pinned).
 
-**Tier 2 (flexible) — an object-safe shadow trait + wrapper, through the same
-loop.** `CompletionBound` is non-object-safe (`const TRIVIAL`, RPIT
+**Dyn fallback (flexible) — an object-safe shadow trait + wrapper, through the
+same loop.** `CompletionBound` is non-object-safe (`const TRIVIAL`, RPIT
 `as_heuristic`), so a boxed bound needs a shim:
 
 ```rust
@@ -210,7 +214,7 @@ impl<T: CompletionBound> DynBound for T { /* blanket: every static bound is usab
 
 // Bridges dyn -> the non-object-safe generic trait.
 struct ErasedBound<'a, O> { inner: &'a dyn DynBound, _o: PhantomData<O> }
-impl<'a, O: Objective> CompletionBound for ErasedBound<'a, O> {
+impl<'a, O: CostModel> CompletionBound for ErasedBound<'a, O> {
     type Obj = O;
     const TRIVIAL: bool = false;                                    // supplies the const the vtable can't
     fn objective_id(&self) -> ObjectiveId { self.inner.objective_id() }
@@ -225,12 +229,13 @@ the Tier-1 dispatcher is untouched. The same wrapper applies to any other axis y
 want erasable (`ErasedObjective` over `dyn DynObjective`), so the fully-dynamic
 entry is `run::<ErasedObjective, ErasedBound<ErasedObjective>>`.
 
-**What Tier 2 trades (so keep it opt-in):** no inlining of `estimate` (a vtable
-call per node); no `NoBound::TRIVIAL` compile-away; and the compile-time objective
-pairing (`B::Obj = O`) degrades to the runtime `ObjectiveId` assert — which already
-exists ([entropy.rs:2369](../../..)), so correctness is still checked, just later.
-Gate it behind an explicit entry (`run_dynamic` / a `Strategy::Experimental` flag)
-so production always takes Tier 1 and never accidentally pays the vtable cost.
+**What the fallback trades (so keep it opt-in):** no inlining of `estimate` (a
+vtable call per node); no `NoBound::TRIVIAL` compile-away; and the compile-time
+objective pairing (`B::Obj = O`) degrades to the runtime `ObjectiveId` assert —
+which already exists ([entropy.rs:2369](../../..)), so correctness is still
+checked, just later. Gate it behind an explicit entry (`run_dynamic` / a
+`Strategy::Experimental` flag) so production always takes the fast path and never
+accidentally pays the vtable cost.
 
 ---
 
@@ -254,7 +259,7 @@ trait LaneAdditive: CostModel {
 }
 
 // "I am point-valued; here is my required placement." Set-valued goals don't implement it.
-trait PointGoal: Goal { fn required_placement(&self) -> &[(u32, LocationId)]; }
+trait PointGoal: Goal { fn required_placement(&self) -> &[(u32, LocationAddr)]; }
 
 // Progress signal for best-reached tracking (§2). 0.0 == is_goal. Keeps Goal a pure predicate.
 // e.g. AllAtTarget -> unresolved-qubit count; EntanglingConstraintGoal -> unsatisfied-pair count.
@@ -364,6 +369,15 @@ struct RouteOutcome {
 }
 ```
 
+> **Object-safety note.** As sketched, `route(&self, goal: &impl PointGoal, …)` is
+> a generic method, so `dyn TargetSolver` is impossible. That is acceptable —
+> "polymorphic face" here means *runtime selection at the adapter* via the strategy
+> `match`/builder (see Two-tier dispatch, §2), where each arm calls a concrete
+> solver and converges on the concrete `RouteOutcome`; the trait's day job is the
+> *composition* seam (search → P&R chaining), which works with concrete types. If a
+> stored `dyn TargetSolver` is ever wanted, `goal` must become a concrete type or a
+> closed enum — decide only when a real consumer appears.
+
 Two departures from today's `SolveResult` make it composable:
 
 1. **`start` is an explicit input** (today both engines always begin at the
@@ -457,15 +471,17 @@ becomes goal-/pair-agnostic and `SearchContext.cz_pairs` disappears.
 ## 8. Open questions / next steps
 
 1. **Best-partial extraction — mechanism now designed (§2), residual checks.**
-   Resolved: it is an incremental shared-loop fold, not a post-hoc scan, so "cheap"
-   is settled (O(1)/node, no scan; free wherever the ordering signal is already
-   computed; BFS's extra eval is moot since BFS is vestigial). Residual to confirm:
-   (a) that entropy's existing resume buffer maps cleanly onto the `best_reached`
-   *override* rather than fighting the default fold; (b) that a `MeasurableGoal`
-   shortfall is well-defined for the concrete goals (`AllAtTarget` →
-   unresolved-qubit count; `EntanglingConstraintGoal` → unsatisfied-pair count);
-   (c) whether best-reached should be tracked at push time (richer pool) given the
-   metric-eval cost on generated-but-never-expanded nodes.
+   Resolved: it is an incremental fold in `SearchCore` surfaced as the optional
+   `SearchResult.best_reached` field — O(1)/node, no post-hoc scan, gated on a
+   `MeasurableGoal` being supplied (it is **not** free: the shortfall is a distinct
+   per-node eval from the ordering `h` — see the corrected Cost bullet in §2).
+   Residual to confirm: (a) that entropy's resume buffer + `found_goals` can
+   populate the field with new-but-small plumbing (it tracks neither min-shortfall
+   nor a best-partial today); (b) that a `MeasurableGoal` shortfall is well-defined
+   for the concrete goals (`AllAtTarget` → unresolved-qubit count;
+   `EntanglingConstraintGoal` → unsatisfied-pair count); (c) whether best-reached
+   should be tracked at push time (richer pool) given the metric-eval cost on
+   generated-but-never-expanded nodes.
 2. **P&R starting-state needs — RESOLVED: the handoff is just a `Config`.**
    Verified in `push_rotate/`. `plan_with` derives everything from the start
    placement + arch graph: occupancy is `occupancy(&start)`
@@ -528,6 +544,13 @@ becomes goal-/pair-agnostic and `SearchContext.cz_pairs` disappears.
    Correction to an earlier note: `IdsFrontier` shows *materialized* backtracking
    fits `Frontier` — it does **not** show entropy fits, because IDS keeps every
    node in its heap while entropy deliberately keeps only a bounded resume buffer.
+7. **`CandidateScorer`'s fate.** The `frontier_search` sketch (§2) omits it. The
+   inventory found the seam real-but-inert (production always passes
+   `DistanceScorer`; `EntropyScorer` is PyO3-viz-only). Decide: fold candidate
+   scoring/ordering into `MoveGenerator` (the generator already ranks internally
+   on the entropy path), keep it as an explicit fifth parameter, or pin it. The
+   same question applies to `SearchState`/`entropy_map` (an entropy-only field on
+   the shared signature — presumably absorbed into `EntropySearch`'s own state).
 
 ---
 
@@ -567,7 +590,7 @@ Overall size (independent review): **L–XL, ~8–16 person-weeks, bimodal** —
 (P&R composition + placement lift) are the expensive, weakly-guarded ~60%. Order
 "guarded-and-behaviour-preserving first, un-gated behavioural last."
 
-1. **Dead-code + re-export hygiene** (§4). Delete `MaxHopHeuristic` /
+1. **Dead-code + re-export hygiene** (inventory §3.3). Delete `MaxHopHeuristic` /
    `SumHopHeuristic`; relocate `tests/public_bound_api.rs` to in-crate access (it
    exercises `run_search` / `entropy_search_*` / `MaxBound` / `WeightedDuration`,
    so those can't be demoted to `pub(crate)` until it does). Zero baseline move.

@@ -57,6 +57,9 @@ so today they ride on ~15 unit tests. Epic 1 closes that.
    bloqade-lanes-search API. If a crate-level interface changes, fix THIS module —
    do not edit case data. A failing compile/map = an API change to re-map here; a
    failing assertion = a behaviour regression to investigate in the crate change."*
+   Bind through the **outer solver surface** (`TargetSolver` / the `CzPlacement`
+   peers), not the inner `run_search`/`entropy_search_*` entry points — Epic 2's
+   step 1 demotes those to `pub(crate)`, and the net must survive that untouched.
 3. **Runner.** Iterates cases, calls the interface, asserts `Outcome == expected`
    (semantic cases) or golden-compares (characterization cases).
 
