@@ -98,31 +98,15 @@ def test_generate_is_deterministic_across_calls(arch):
     assert gen.generate(ctx) == gen.generate(ctx)
 
 
-def test_generate_single_pair_plan_is_cz_partnered(arch):
+def test_generate_single_pair_plan_is_cz_partnered(gate_arch):
     """For a single non-partnered pair the generator must still produce a
     plan whose qids form a valid CZ partnership."""
-    # Find a blocker-free non-partnered pair by scanning home_sites.
-    pf = PathFinder(arch)
-    chosen: tuple[LocationAddress, LocationAddress, LocationAddress] | None = None
-    for a in arch.home_sites:
-        pa = arch.get_cz_partner(a)
-        if pa is None or pa == a:
-            continue
-        for b in arch.home_sites:
-            if b in (a, pa):
-                continue
-            pb = arch.get_cz_partner(b)
-            if pb is None or pb in (a, pa):
-                continue
-            if pf.find_path(b, pa) and pf.find_path(a, pb):
-                chosen = (a, b, pa)
-                break
-        if chosen is not None:
-            break
-    if chosen is None:
-        pytest.skip("physical arch lacks a non-partnered feasible CZ pair fixture")
-
-    loc_tgt, loc_ctrl, _ = chosen
+    arch = gate_arch(num_cols=8)
+    # Control at home word 0, target at home word 2 -- feasible and not
+    # already CZ-partnered, so the generator must move one onto the
+    # other's blockade partner.
+    loc_ctrl = LocationAddress(0, 0)
+    loc_tgt = LocationAddress(2, 0)
     ctx = _ctx(arch, (loc_ctrl, loc_tgt), controls=(0,), targets=(1,))
     out = AODClusterTargetGenerator().generate(ctx)
     assert out, "generator returned empty on feasible pair"

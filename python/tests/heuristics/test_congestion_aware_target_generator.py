@@ -17,6 +17,7 @@ from bloqade.lanes.bytecode.encoding import (
 )
 from bloqade.lanes.heuristics.physical.target_generator import (
     CongestionAwareTargetGenerator,
+    DefaultTargetGenerator,
     TargetContext,
     _choose_control,
     _lane_key,
@@ -289,200 +290,208 @@ def test_generate_already_partnered_pair_is_noop(arch):
     assert out == [{0: loc0, 1: loc1}]
 
 
-def _find_two_distinct_cost_pairs(arch):
-    """Scan home_sites for two CZ-partnered pairs with different
-    uncongested path costs. Returns ((short_pair, short_cost),
-    (long_pair, long_cost)) or None if arch doesn't support this.
+def test_sort_longest_first_orders_by_descending_uncongested_min_cost(gate_arch):
+    """Longest-first orders pairs by descending minimal move cost.
+
+    The pair whose cheapest CZ move (control- or target-direction) is the
+    most expensive must be committed first. This requires two *non*-
+    partnered pairs: an already-partnered placement has a zero-length
+    move in both directions, so its score would be ``0`` and the sort
+    could never distinguish it.
     """
+    arch = gate_arch(num_cols=8)
+    # qids 0/1 are the "short" pair (single-hop CZ move: w0<->w2, w3<->w1);
+    # qids 2/3 the "long" pair (two-hop move: w4->w7, w6->w5). Distinct hop
+    # counts guarantee distinct move costs, and the two pairs occupy
+    # disjoint word regions so their paths do not interfere.
+    layout = (
+        LocationAddress(0, 0),
+        LocationAddress(3, 0),
+        LocationAddress(4, 0),
+        LocationAddress(6, 0),
+    )
+    ctx = _ctx(arch, layout, controls=(0, 2), targets=(1, 3))
     pf = PathFinder(arch)
-    candidates: list[tuple[LocationAddress, LocationAddress, float]] = []
-    seen: set[frozenset[LocationAddress]] = set()
-    for s in arch.home_sites:
-        p = arch.get_cz_partner(s)
-        if p is None or p == s:
-            continue
-        key = frozenset({s, p})
-        if key in seen:
-            continue
-        seen.add(key)
-        path = pf.find_path(s, p)
-        if path is None:
-            continue
-        candidates.append((s, p, _sum_base(path, pf)))
-    if len(candidates) < 2:
-        return None
-    costs = sorted(candidates, key=lambda t: t[2])
-    if costs[0][2] == costs[-1][2]:
-        return None
-    return costs[0], costs[-1]
 
+    # Fixture precondition, stated structurally (lane/hop count) rather than
+    # by re-deriving the generator's own min-cost score: the long pair's CZ
+    # move must span strictly more lanes than the short pair's, so it has the
+    # larger uncongested cost.
+    def move_hop_count(ctrl_loc: LocationAddress, tgt_loc: LocationAddress) -> int:
+        partner = arch.get_cz_partner(tgt_loc)
+        assert partner is not None
+        path = pf.find_path(ctrl_loc, partner)
+        assert path is not None
+        return len(path[0])
 
-def test_sort_longest_first_orders_by_descending_uncongested_min_cost(arch):
-    """Construct two pairs with different uncongested shortest-path
-    cost; verify the longer pair sorts first.
-    """
-    picked = _find_two_distinct_cost_pairs(arch)
-    if picked is None:
-        pytest.skip(
-            "physical arch has no two CZ-partnered pairs with distinct path costs; "
-            "replace with a tiny arch_builder fixture if this test is re-enabled "
-            "(follow-up issue)"
-        )
-    (loc_short, partner_short, _), (loc_long, partner_long, _) = picked
-    ctx = _ctx(
-        arch,
-        (loc_short, partner_short, loc_long, partner_long),
-        controls=(0, 2),
-        targets=(1, 3),
+    short_hops = move_hop_count(LocationAddress(0, 0), LocationAddress(3, 0))
+    long_hops = move_hop_count(LocationAddress(4, 0), LocationAddress(6, 0))
+    assert long_hops > short_hops, (
+        f"fixture prerequisite: the long pair must span more lanes than the "
+        f"short pair (short={short_hops}, long={long_hops})"
     )
-    sorted_pairs = CongestionAwareTargetGenerator()._sort_pairs_longest_first(
-        ctx, PathFinder(arch)
-    )
+
+    sorted_pairs = CongestionAwareTargetGenerator()._sort_pairs_longest_first(ctx, pf)
     assert sorted_pairs[0] == (
         2,
         3,
     ), f"longest-first expected (2,3) first, got {sorted_pairs}"
 
 
-def _find_blocker_scenario(arch):
-    """Return (loc_ctrl, loc_tgt, blocker) where the UNCONSTRAINED
-    shortest control-direction path passes through `blocker`, but the
-    UNCONSTRAINED target-direction path does not.
+def test_target_direction_chosen_when_target_path_cheaper(arch_builder):
+    """When moving the target is cheaper than moving the control, the
+    target-direction candidate wins.
 
-    Reason this is non-tautological: we compute both paths with
-    `occupied=frozenset()` and compare the location sequences.
+    Synthetic arch: the control move (``w0 -> w3``) has a cheap two-hop
+    route through hub ``w4`` and an expensive detour ``w0-w5-w6-w3``. The
+    target move (``w2 -> w1``) is a fixed two-hop route through ``w7`` that
+    the hub does not touch. With the hub free the control route is
+    cheapest, so the control moves; once a blocker occupies the hub, the
+    control atom is forced onto the detour, which costs more than the
+    target route, so the target-direction wins.
     """
-    pf = PathFinder(arch)
-    home = list(arch.home_sites)
-    for a in home:
-        pa = arch.get_cz_partner(a)
-        if pa is None or pa == a:
-            continue
-        for b in home:
-            if b in (a, pa):
-                continue
-            pb = arch.get_cz_partner(b)
-            if pb is None or pb in (a, pa):
-                continue
-            path_ctrl = pf.find_path(b, pa)  # control moves b -> partner(a)
-            path_tgt = pf.find_path(a, pb)  # target  moves a -> partner(b)
-            if path_ctrl is None or path_tgt is None:
-                continue
-            ctrl_locs = set(path_ctrl[1])
-            tgt_locs = set(path_tgt[1])
-            candidates = ctrl_locs - tgt_locs - {a, b, pa, pb}
-            if candidates:
-                return (b, a, next(iter(candidates)))
-    return None
+    #   w0 --w4-- w3        (control short route via hub w4)
+    #   |          |
+    #   w5 ------- w6       (control detour)
+    #   CZ pairs (w0,w1) and (w2,w3); target route w2 - w7 - w1
+    positions = [
+        (0.0, 0.0),  # 0: w0  control start (X)
+        (30.0, 200.0),  # 1: w1  partner(X)
+        (0.0, 200.0),  # 2: w2  target start (Y)
+        (20.0, 0.0),  # 3: w3  partner(Y)
+        (10.0, 0.0),  # 4: w4  hub (blocker site)
+        (0.0, 100.0),  # 5: w5  detour waypoint
+        (20.0, 100.0),  # 6: w6  detour waypoint
+        (15.0, 200.0),  # 7: w7  target-route midpoint
+    ]
+    buses = [(0, 4), (4, 3), (0, 5), (5, 6), (6, 3), (2, 7), (7, 1)]
+    entangling = [(0, 1), (2, 3)]
+    arch = arch_builder(positions, buses, entangling)
 
+    x = LocationAddress(0, 0, 0)
+    y = LocationAddress(2, 0, 0)
+    hub = LocationAddress(4, 0, 0)
+    partner_x = arch.get_cz_partner(x)  # w1
+    partner_y = arch.get_cz_partner(y)  # w3
+    gen = CongestionAwareTargetGenerator()
 
-def test_target_direction_chosen_when_target_path_cheaper(arch):
-    scenario = _find_blocker_scenario(arch)
-    if scenario is None:
-        pytest.skip(
-            "physical arch has no asymmetric-blocker scenario; "
-            "re-enable with synthetic fixture (follow-up issue)"
-        )
-    loc_ctrl, loc_tgt, blocker = scenario
-    # Verify that placing the blocker atom in working actually produces an
-    # asymmetric cost advantage for the target direction at runtime.  On some
-    # arch geometries the PathFinder reroutes both directions to equal-cost
-    # alternatives, so the scenario degenerates to a tiebreak (ctrl wins).
-    import math as _math
-
-    from bloqade.lanes.heuristics.physical.target_generator import (
-        _make_weight_fn,
-        _sum_weighted,
+    # Hub free: the control route (via the hub) is cheapest -> control moves.
+    ctx_free = _ctx(arch, (x, y), controls=(0,), targets=(1,))
+    plan_free = gen.generate(ctx_free)[0]
+    assert plan_free[0] == partner_y and plan_free[1] == y, (
+        f"with the hub free the control should move to {partner_y}; " f"got {plan_free}"
     )
 
-    pf_check = PathFinder(arch)
-    working_check = {0: loc_ctrl, 1: loc_tgt, 2: blocker}
-    occ_c = frozenset(loc for q, loc in working_check.items() if q != 0)
-    occ_t = frozenset(loc for q, loc in working_check.items() if q != 1)
-    ctrl_partner_check = arch.get_cz_partner(loc_tgt)
-    tgt_partner_check = arch.get_cz_partner(loc_ctrl)
-    gen_check = CongestionAwareTargetGenerator()
-    wfn = _make_weight_fn(pf_check, {}, set(), gen_check)
-    pc = pf_check.find_path(
-        loc_ctrl, ctrl_partner_check, occupied=occ_c, edge_weight=wfn
+    # Blocker on the hub forces the control detour; the target route is
+    # now cheaper -> target moves, control stays put.
+    ctx_blocked = _ctx(arch, (x, y, hub), controls=(0,), targets=(1,))
+    plan_blocked = gen.generate(ctx_blocked)[0]
+    assert plan_blocked[0] == x
+    assert plan_blocked[1] == partner_x, (
+        f"with the hub blocked the target should move to {partner_x}; "
+        f"got {plan_blocked}"
     )
-    pt = pf_check.find_path(loc_tgt, tgt_partner_check, occupied=occ_t, edge_weight=wfn)
-    cost_c = _sum_weighted(pc, wfn) if pc else _math.inf
-    cost_t = _sum_weighted(pt, wfn) if pt else _math.inf
-    if cost_t >= cost_c:
-        pytest.skip(
-            "arch reroutes ctrl path to equal or cheaper cost; "
-            "asymmetric runtime cost requires synthetic fixture (follow-up issue)"
-        )
-    # Layout: qid 0 = control, qid 1 = target, qid 2 = blocker atom
-    ctx = _ctx(
-        arch,
-        (loc_ctrl, loc_tgt, blocker),
-        controls=(0,),
-        targets=(1,),
-    )
-    out = CongestionAwareTargetGenerator().generate(ctx)
-    assert out, "generator returned empty"
-    plan = out[0]
-    partner_of_tgt = arch.get_cz_partner(loc_tgt)
-    partner_of_ctrl = arch.get_cz_partner(loc_ctrl)
-    # Target-direction chosen: control stays, target moves to partner(ctrl).
-    assert plan[0] == loc_ctrl
-    assert plan[1] == partner_of_ctrl, (
-        f"expected target moved to {partner_of_ctrl}, got {plan[1]}; "
-        f"control would have moved to {partner_of_tgt}"
-    )
-    assert plan[2] == blocker
+    assert plan_blocked[2] == hub
 
 
-def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
+def test_neutral_factors_reproduce_default_on_symmetric_stage(gate_arch):
     """With ``direction_factor = shared_site_factor = 1.0`` (neutral
     multipliers) and a single-pair symmetric stage, the congestion-aware
     heuristic reduces to the default (control-moves) by symmetry +
     tiebreak. Sanity check the reduction.
     """
-    from bloqade.lanes.heuristics.physical.target_generator import (
-        DefaultTargetGenerator,
-    )
-
-    _loc0, _loc1 = _pick_cz_pair(arch)
-    # Seed a fresh pair of qubits at non-partnered storage locations so
-    # both directions have non-trivial paths (not already-partnered).
-    scenario = _find_blocker_scenario(arch)
-    if scenario is None:
-        pytest.skip("arch has no suitable non-partnered pair; see follow-up issue")
-    loc_ctrl, loc_tgt, _blocker = scenario
-    ctx = _ctx(arch, (loc_ctrl, loc_tgt), controls=(0,), targets=(1,))
-    gen_neutral = CongestionAwareTargetGenerator(1.0, 1.0)
-    gen_default = DefaultTargetGenerator()
-    out_neutral = gen_neutral.generate(ctx)
-    out_default = gen_default.generate(ctx)
+    arch = gate_arch(num_cols=8)
+    # A single non-partnered pair whose control- and target-direction
+    # moves are symmetric (equal cost and length), so the tiebreak in
+    # ``_choose_control`` prefers control -- matching DefaultTargetGenerator.
+    layout = (LocationAddress(0, 0), LocationAddress(2, 0))
+    ctx = _ctx(arch, layout, controls=(0,), targets=(1,))
+    out_neutral = CongestionAwareTargetGenerator(1.0, 1.0).generate(ctx)
+    out_default = DefaultTargetGenerator().generate(ctx)
     assert out_neutral == out_default, (
         f"neutral factors (1.0) should match DefaultTargetGenerator "
         f"on symmetric stages.\nneutral: {out_neutral}\ndefault: {out_default}"
     )
 
 
-@pytest.mark.skip(
-    reason="requires synthetic multi-lane arch fixture; tracked as follow-up issue"
-)
-def test_multi_pair_avoids_opposite_direction_reuse(arch):
-    """Two pairs whose uncongested shortest paths would traverse the
-    same lane in opposite directions. With ``direction_factor`` small
-    enough, the second-committed pair picks its more-expensive direction
-    to avoid the conflict.
-    """
+def test_multi_pair_avoids_opposite_direction_reuse(arch_builder):
+    """A small ``direction_factor`` makes the second-committed pair avoid
+    reusing a lane in the opposite direction.
 
+    Bridge arch: lane ``L = (w1, w2)`` is the only connection between the
+    left cluster (``w0``, ``w5``, ...) and the right cluster (``w3``,
+    ``w4``, ...). Pair A (the longer pair, committed first) crosses ``L``
+    forward (``w0 -> w1 -> w2 -> w3``). Pair B's cheaper control direction
+    would cross ``L`` backward (``w4 -> w2 -> w1 -> w5``); its target
+    direction (``w8 -> w10 -> w11 -> w9``) avoids ``L`` but costs slightly
+    more.
 
-@pytest.mark.skip(
-    reason="covered by Task 3 unit test of _choose_control; end-to-end "
-    "version requires arch-specific fixture, tracked as follow-up"
-)
-def test_move_count_tiebreak_at_commit_end_to_end(arch):
-    """End-to-end verification that move-count breaks cost ties at
-    commit. Unit test `test_choose_control_cost_tie_uses_length`
-    already covers the logic directly.
+    With ``direction_factor = 1`` (neutral) B takes the cheaper
+    L-crossing control direction. With the default ``direction_factor =
+    0.5`` the opposite-direction penalty on ``L`` makes B's control
+    direction more expensive than its target direction, so B flips to the
+    L-avoiding target direction.
     """
+    positions = [
+        (0.0, 70.0),  # 0  ctrl A (left)
+        (0.0, 0.0),  # 1  L0  (bridge left end)
+        (60.0, 0.0),  # 2  R0  (bridge right end); L = (w1, w2)
+        (60.0, 70.0),  # 3  partner(tgtA); A-ctrl destination (right)
+        (60.0, -60.0),  # 4  ctrl B (right)
+        (0.0, -60.0),  # 5  partner(tgtB); B-ctrl destination (left)
+        (0.0, 140.0),  # 6  tgt A (partner of w3)
+        (60.0, 140.0),  # 7  partner(ctrlA); A-tgt dest (isolated)
+        (0.0, -140.0),  # 8  tgt B (partner of w5)
+        (195.0, -140.0),  # 9  partner(ctrlB); B-tgt destination
+        (65.0, -140.0),  # 10 B-tgt route waypoint
+        (130.0, -140.0),  # 11 B-tgt route waypoint
+    ]
+    buses = [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (2, 4),
+        (1, 5),
+        (8, 10),
+        (10, 11),
+        (11, 9),
+    ]
+    entangling = [(0, 7), (3, 6), (5, 8), (4, 9)]
+    arch = arch_builder(positions, buses, entangling)
+
+    layout = (
+        LocationAddress(0, 0, 0),  # q0 ctrl A
+        LocationAddress(6, 0, 0),  # q1 tgt A
+        LocationAddress(4, 0, 0),  # q2 ctrl B
+        LocationAddress(8, 0, 0),  # q3 tgt B
+    )
+    ctx = _ctx(arch, layout, controls=(0, 2), targets=(1, 3))
+
+    def b_direction(direction_factor: float) -> str:
+        plan = CongestionAwareTargetGenerator(
+            direction_factor=direction_factor
+        ).generate(ctx)[0]
+        # Pair B is (ctrl=q2 @ w4, tgt=q3 @ w8). The control direction moves
+        # q2 to partner(w8)=w5 (crossing L); the target direction moves q3
+        # to partner(w4)=w9 (avoiding L).
+        ctrl_side = plan[2] == LocationAddress(5, 0, 0) and plan[3] == LocationAddress(
+            8, 0, 0
+        )
+        tgt_side = plan[3] == LocationAddress(9, 0, 0) and plan[2] == LocationAddress(
+            4, 0, 0
+        )
+        if ctrl_side:
+            return "ctrl"
+        if tgt_side:
+            return "tgt"
+        raise AssertionError(f"unexpected plan for pair B: {plan}")
+
+    assert (
+        b_direction(1.0) == "ctrl"
+    ), "neutral direction_factor: B should reuse lane L (control direction)"
+    assert (
+        b_direction(0.5) == "tgt"
+    ), "small direction_factor: B should avoid opposite-direction reuse of L"
 
 
 def test_direction_factor_zero_or_negative_raises():
@@ -507,18 +516,20 @@ def test_generate_is_deterministic_across_calls(arch):
     assert gen.generate(ctx) == gen.generate(ctx)
 
 
-@pytest.mark.skip(
-    reason="requires a blocker set that provably isolates both partners "
-    "from the full physical lane graph; deferred to a synthetic arch "
-    "fixture follow-up (same issue as opposite-direction-reuse test)"
-)
-def test_both_directions_infeasible_returns_empty_list():
-    """Surround both endpoints of a pair by blockers so that no path
-    exists; verify generate() returns [].
-
-    Fixture construction sketch for the follow-up: use arch_builder to
-    build a 2-word arch where both partners of the test pair are
-    reachable only through a single lane, then place atoms on that
-    lane's two endpoints. The all-paths-infeasible property follows
-    from the arch's topology.
-    """
+def test_both_directions_infeasible_returns_empty_list(gate_arch):
+    """When neither CZ-move direction is feasible, generate() returns []."""
+    arch = gate_arch(num_cols=4)
+    ctrl = LocationAddress(0, 0, 0)
+    tgt = LocationAddress(2, 0, 0)
+    # Occupy both partner destinations so neither the control move
+    # (ctrl -> partner(tgt)) nor the target move (tgt -> partner(ctrl))
+    # has a free endpoint to route to.
+    blocker_ctrl = arch.get_cz_partner(tgt)
+    blocker_tgt = arch.get_cz_partner(ctrl)
+    ctx = _ctx(
+        arch,
+        (ctrl, tgt, blocker_ctrl, blocker_tgt),
+        controls=(0,),
+        targets=(1,),
+    )
+    assert CongestionAwareTargetGenerator().generate(ctx) == []
