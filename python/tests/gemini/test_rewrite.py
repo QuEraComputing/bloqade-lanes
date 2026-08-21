@@ -182,7 +182,10 @@ def test_remove_postprocessing_and_terminal_measure_2():
 
 
 def test_remove_postprocessing_and_terminal_measure_3():
-    @logical.kernel(aggressive_unroll=True)
+    # This fixture deliberately has no terminal measurement: the rewrite must
+    # also be a no-op for an incomplete program constructed with verification
+    # disabled.
+    @logical.kernel(aggressive_unroll=True, verify=False)
     def main():
         squin.qalloc(2)
 

@@ -197,16 +197,18 @@ def test_move_to_cz_full_pipeline_regression():
     )
     q1_cz_slot = LocationAddress(zone_id=0, word_id=1, site_id=0)
 
-    @plain_kernel(verify=False)
+    @plain_kernel(verify=False, aggressive_unroll=True)
     def k_plain():
         q = squin.qalloc(2)
         squin.cz(q[0], q[1])
+        return terminal_measure(q)
 
-    @movement_kernel(verify=False)
+    @movement_kernel(verify=False, aggressive_unroll=True)
     def k_prepos():
         q = squin.qalloc(2)
         move_to([q[1]], [q1_cz_slot])
         squin.cz(q[0], q[1])
+        return terminal_measure(q)
 
     move_plain = LogicalPipeline().emit(k_plain, no_raise=False)
     move_prepos = LogicalPipeline().emit(k_prepos, no_raise=False)

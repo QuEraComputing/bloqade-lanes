@@ -85,7 +85,10 @@ class GeminiTerminalMeasurementValidation(ValidationPass):
 
         errors = list(analysis.get_validation_errors())
 
-        if not analysis.terminal_measurement_encountered:
+        if (
+            unique_qubits_allocated > 0
+            and not analysis.terminal_measurement_encountered
+        ):
             return_stmt = method.callable_region.blocks[0].last_stmt
             assert return_stmt is not None
             errors.append(

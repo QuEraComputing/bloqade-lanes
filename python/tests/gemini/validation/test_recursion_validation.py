@@ -171,10 +171,11 @@ def test_original_hang_reproducer_is_rejected_quickly():
 
 
 def test_check_call_graph_accepts_an_acyclic_kernel():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(2)
         squin.h(q[0])
+        gemini.logical.terminal_measure(q)
 
     check_call_graph(main)
 
@@ -305,11 +306,12 @@ def test_non_recursive_subkernel_calls_are_unaffected():
     def flip(q):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(2)
         flip(q[0])
         flip(q[1])
+        gemini.logical.terminal_measure(q)
 
     main.print()
 
@@ -329,11 +331,12 @@ def test_diamond_call_graph_is_not_a_cycle():
     def right(q):
         leaf(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(2)
         left(q[0])
         right(q[1])
+        gemini.logical.terminal_measure(q)
 
     assert CallGraph(main).find_cycles() == []
 
@@ -444,10 +447,11 @@ def test_cycle_below_the_entry_reports_the_route():
 
 
 def test_no_recursion_validation_pass_reports_no_errors_for_acyclic_kernel():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(2)
         squin.h(q[0])
+        gemini.logical.terminal_measure(q)
 
     ValidationSuite([NoRecursionValidation]).validate(main).raise_if_invalid()
 
