@@ -1794,5 +1794,40 @@ mod tests {
                 "a backward mover is cleared by a backward follower, not a forward one"
             );
         }
+
+        /// [`vacating_lane`] is the single primitive every chain path funnels
+        /// through, so proving it is always `None` on an endpoint-disjoint bus
+        /// proves the whole feature is unreachable on the shipped Gemini specs
+        /// — not just that `close_chain_entries` declines to fire.
+        ///
+        /// Checked exhaustively over the bus rather than at one site, so a
+        /// future spec change that made a destination double as a source would
+        /// fail here instead of silently switching chain assembly on.
+        #[test]
+        fn vacating_lane_is_always_none_on_an_endpoint_disjoint_bus() {
+            let index = disjoint_index();
+            // Site bus 0 maps sources 0-4 onto destinations 5-9.
+            for site in 0u32..5 {
+                let mover = lane(0, site, 0);
+                let destination = loc(0, site + 5);
+                assert!(
+                    vacating_lane(destination, &mover, &index).is_none(),
+                    "site {} is a destination of the disjoint bus and must have no \
+                     outgoing lane on it, or chain assembly would silently engage \
+                     on the shipped specs",
+                    site + 5
+                );
+                // The reverse direction must be equally chain-free.
+                let backward = LaneAddr {
+                    direction: Direction::Backward,
+                    ..mover
+                };
+                assert!(
+                    vacating_lane(loc(0, site), &backward, &index).is_none(),
+                    "backward lane from site {} must not find a follower either",
+                    site + 5
+                );
+            }
+        }
     }
 }

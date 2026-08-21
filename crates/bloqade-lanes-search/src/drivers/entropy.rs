@@ -3889,7 +3889,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "greedy_init sorts by src_encoded ascending, so follow-move chains fail to seed valid single-element rects; pre-existing limitation unrelated to deadlock-breaker"]
     fn generate_candidates_allows_follow_moves_into_moving_occupants() {
         let index = make_chain_index();
         let config = Config::new([(0, loc(0, 0)), (2, loc(0, 2)), (4, loc(0, 4))]).unwrap();
@@ -3915,14 +3914,23 @@ mod tests {
 
         let out = generate_candidates(&config, 1, &params, &ctx, 0, None);
 
+        let chain = out.iter().find(|entry| {
+            let candidate_config = &entry.new_config;
+            candidate_config.location_of(0) == Some(loc(0, 2))
+                && candidate_config.location_of(2) == Some(loc(0, 4))
+                && candidate_config.location_of(4) == Some(loc(0, 6))
+        });
         assert!(
-            out.iter().any(|entry| {
-                let candidate_config = &entry.new_config;
-                candidate_config.location_of(0) == Some(loc(0, 2))
-                    && candidate_config.location_of(2) == Some(loc(0, 4))
-                    && candidate_config.location_of(4) == Some(loc(0, 6))
-            }),
+            chain.is_some(),
             "expected a candidate that moves 0->2, 2->4, and 4->6 in one AOD layer; got {out:?}"
+        );
+        // Assert the op count, not just the outcome: three separate one-hop
+        // candidates would satisfy the placement check above while completely
+        // defeating the point of chain assembly.
+        assert_eq!(
+            chain.expect("checked above").move_set.len(),
+            3,
+            "the follow-move chain must be a single three-lane operation"
         );
     }
 
@@ -4557,5 +4565,95 @@ mod chain_assembly {
             2,
             "the chain must be a single two-lane operation"
         );
+    }
+
+    /// Closes the second half of #887's entropy scope box — "does it prefer
+    /// chains when they are strictly better?" — with a stronger answer than
+    /// *prefer*: the chain is the **only** candidate entropy emits. A score
+    /// comparison against the serialized follower-only move would pass
+    /// vacuously, because that rival is never generated.
+    ///
+    /// Only the leader is targeted, which is what makes this test bite on
+    /// `close_chain_entries` rather than on the grid-layer repair: the repair
+    /// (#896) can only pull in cells whose source is already an entry, and an
+    /// untargeted spectator is never nominated by scoring. With the closure
+    /// stubbed out, entropy generates **no candidates at all** rather than a
+    /// serialized plan — cause 3 of #910, a silent deadlock.
+    ///
+    /// Verified in both directions: passes as written, fails with
+    /// `close_chain_entries` stubbed to return no links.
+    #[test]
+    fn entropy_offers_only_the_chain_when_it_is_strictly_better() {
+        let spec: ArchSpec = serde_json::from_str(&crate::test_utils::chain_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
+        // Only the leader is targeted. The followers are spectators, so scoring
+        // never nominates them and the chain can only assemble if selection
+        // closes over them — this is what makes `close_chain_entries`
+        // load-bearing here rather than the grid-layer repair, which can only
+        // pull in cells whose source is already an entry.
+        let target_encoded = vec![(0u32, loc(0, 1).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, e)| e).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams {
+            max_movesets_per_group: 16,
+            ..EntropyParams::default()
+        };
+
+        let out = generate_candidates(&config, 1, &params, &ctx, 0, None);
+
+        let describe = || {
+            out.iter()
+                .map(|c| {
+                    (
+                        c.move_set.len(),
+                        c.score,
+                        (0..3)
+                            .map(|q| c.new_config.location_of(q).map(|l| l.site_id))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // The whole run advances one site in a single three-lane operation.
+        let best = out
+            .iter()
+            .max_by(|a, b| a.score.total_cmp(&b.score))
+            .unwrap_or_else(|| panic!("entropy generated no candidates"));
+        assert_eq!(
+            best.move_set.len(),
+            3,
+            "the top candidate must be the three-lane chain; got {:?}",
+            describe()
+        );
+        for (qubit, site) in [(0u32, 1u32), (1, 2), (2, 3)] {
+            assert_eq!(
+                best.new_config.location_of(qubit),
+                Some(loc(0, site)),
+                "q{qubit} did not ride the chain; got {:?}",
+                describe()
+            );
+        }
+
+        // Nothing serialized is on offer: no candidate moves a follower while
+        // leaving the atom behind it parked.
+        for candidate in &out {
+            let leader_stayed = candidate.new_config.location_of(0) == Some(loc(0, 0));
+            let follower_advanced = candidate.new_config.location_of(1) == Some(loc(0, 2));
+            assert!(
+                !(leader_stayed && follower_advanced),
+                "entropy offered a serialized follower-only move: {:?}",
+                describe()
+            );
+        }
     }
 }
