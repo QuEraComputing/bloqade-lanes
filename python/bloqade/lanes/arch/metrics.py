@@ -1,24 +1,30 @@
 import itertools
 import math
-from dataclasses import dataclass
-from typing import Any, ClassVar
+from dataclasses import dataclass, field
+from typing import Any
+
+from bloqade.lanes.bytecode import MotionModel
 
 
 @dataclass
 class MoveMetricCalculator:
     """Move-metric computation: lane durations, distances, and costs.
 
-    Owns timing constants extracted from bloqade-flair and provides
-    cached lane duration / cost lookups.  Lives in the ``layout``
-    package so that ``PathFinder`` and heuristics can consume it
-    without pulling in the heavy compilation imports of ``Metrics``.
+    The constant-jerk timing model (ramp/jerk/accel constants and the
+    move-duration formula) lives in the Rust
+    :class:`~bloqade.lanes.bytecode.MotionModel`, the single source of truth
+    shared with the move-search solver.  This calculator delegates all timing
+    to that object (defaulting to the FLAIR constants) and adds cached lane
+    duration / cost lookups on top.  Lives in the ``arch`` package so that
+    ``PathFinder`` and heuristics can consume it without pulling in the heavy
+    compilation imports of ``Metrics``.
+
+    Pass a non-default ``motion_model`` to price durations with a different
+    motion profile.
     """
 
     arch_spec: Any  # ArchSpec — use Any to avoid circular import
-
-    _FLAIR_MAX_RAMP_US: ClassVar[float] = 0.2
-    _FLAIR_MAX_JERK_UM_PER_US3: ClassVar[float] = 0.0004
-    _FLAIR_MAX_ACCEL_UM_PER_US2: ClassVar[float] = 0.0015
+    motion_model: MotionModel = field(default_factory=MotionModel)
 
     def __post_init__(self) -> None:
         self._lane_duration_cache_us: dict[tuple[Any, float], float] = {}
@@ -34,23 +40,6 @@ class MoveMetricCalculator:
             for (x0, y0), (x1, y1) in itertools.pairwise(path)
         )
 
-    def _const_jerk_min_duration_us(self, max_dist_um: float) -> float:
-        max_dist_um = abs(max_dist_um)
-        if max_dist_um < 1e-8:
-            return 0.0
-
-        t1 = self._FLAIR_MAX_ACCEL_UM_PER_US2 / self._FLAIR_MAX_JERK_UM_PER_US3
-        a = self._FLAIR_MAX_JERK_UM_PER_US3 * t1
-        b = 3 * self._FLAIR_MAX_JERK_UM_PER_US3 * t1**2
-        c = 2 * self._FLAIR_MAX_JERK_UM_PER_US3 * t1**3 - max_dist_um
-        if c >= 0:
-            t1_jerk = (max_dist_um / (2 * self._FLAIR_MAX_JERK_UM_PER_US3)) ** (1 / 3)
-            return 4 * t1_jerk
-
-        discriminant = b**2 - 4 * a * c
-        t2 = (-b + math.sqrt(discriminant)) / (2 * a)
-        return 4 * t1 + 2 * t2
-
     def get_lane_duration_us(
         self, lane_address: Any, *, amplitude_delta: float = 1.0
     ) -> float:
@@ -60,14 +49,8 @@ class MoveMetricCalculator:
         if (duration_us := self._lane_duration_cache_us.get(cache_key)) is not None:
             return duration_us
 
-        segment_distances = self.path_segment_distances_um(
-            self.arch_spec.get_path(lane_address)
-        )
-        ramp_time_us = normalized_amp / self._FLAIR_MAX_RAMP_US
-        duration_us = (
-            ramp_time_us
-            + sum(self._const_jerk_min_duration_us(dist) for dist in segment_distances)
-            + ramp_time_us
+        duration_us = self.motion_model.lane_duration_us(
+            self.arch_spec.get_path(lane_address), normalized_amp
         )
         self._lane_duration_cache_us[cache_key] = duration_us
         return duration_us

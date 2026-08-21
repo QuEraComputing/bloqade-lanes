@@ -4,11 +4,38 @@ import pytest
 
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
+from bloqade.lanes.bytecode import MotionModel
 
 
 def _build_move_calc() -> MoveMetricCalculator:
     arch_spec = logical.get_arch_spec()
     return MoveMetricCalculator(arch_spec=arch_spec)
+
+
+def test_motion_model_pins_flair_defaults_and_known_durations():
+    """Guard the shared FLAIR model reachable from Python.
+
+    Pins the default constants and known durations so an accidental edit to
+    the Rust constants/formula — or to the ``bytecode.MotionModel`` binding
+    wiring — is caught by the Python suite, not only the Rust tests.
+    """
+    model = MotionModel()
+    assert (
+        model.max_ramp_us,
+        model.max_jerk_um_per_us3,
+        model.max_accel_um_per_us2,
+    ) == (0.2, 0.0004, 0.0015)
+    assert MotionModel.flair() == model
+
+    # Known constant-jerk duration for a 5 µm move (quadratic-branch value).
+    assert model.const_jerk_min_duration_us(5.0) == pytest.approx(
+        119.280930201974, rel=1e-12
+    )
+    # Lane duration = pick ramp + one 5 µm segment + drop ramp.
+    ramp_us = 1.0 / 0.2
+    assert model.lane_duration_us([(0.0, 0.0), (3.0, 4.0)], 1.0) == pytest.approx(
+        ramp_us + model.const_jerk_min_duration_us(5.0) + ramp_us, rel=1e-12
+    )
 
 
 def test_metrics_get_lane_duration_us_positive():

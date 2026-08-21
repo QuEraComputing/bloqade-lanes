@@ -218,10 +218,11 @@ class Metrics:
                 path = self.arch_spec.get_path(lane)
                 segment_distances_um = list(mc.path_segment_distances_um(path))
                 segment_durations_us = [
-                    mc._const_jerk_min_duration_us(d) for d in segment_distances_um
+                    mc.motion_model.const_jerk_min_duration_us(d)
+                    for d in segment_distances_um
                 ]
                 normalized_amp = abs(float(flair_amplitude_delta))
-                ramp_time_us = normalized_amp / mc._FLAIR_MAX_RAMP_US
+                ramp_time_us = normalized_amp / mc.motion_model.max_ramp_us
                 lane_duration_us = (
                     ramp_time_us + sum(segment_durations_us) + ramp_time_us
                 )
