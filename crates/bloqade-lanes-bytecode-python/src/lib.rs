@@ -18,6 +18,7 @@ mod arch_python;
 mod atom_state_python;
 pub(crate) mod errors;
 mod instruction_python;
+mod metrics_python;
 mod policy_runner_python;
 mod program_python;
 mod search_python;
@@ -37,6 +38,9 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<arch_python::PyZone>()?;
     m.add_class::<arch_python::PyMode>()?;
     m.add_class::<arch_python::PyTransportPath>()?;
+
+    // Move-metric timing model
+    m.add_class::<metrics_python::PyMotionModel>()?;
 
     // Address types and enums
     m.add_class::<arch_python::PyDirection>()?;
