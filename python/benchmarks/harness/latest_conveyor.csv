@@ -1,0 +1,82 @@
+case_id,strategy_id,arch_spec_id,backend,generator_id,success,wall_time_ms,move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,max_depth_reached,cuts_by_g,cuts_by_h,cuts_infeasible,cut_depth_sum,cut_depth_g_only_sum,max_optimality_gap,notes
+adder_4,rust_astar,gemini-conveyor,rust,rust_solver,True,212.783167,30,42,0.6425234943,15,,,,,,,,
+adder_4,rust_bfs,gemini-conveyor,rust,rust_solver,True,211.744208,30,42,0.6425234943,15,,,,,,,,
+adder_4,rust_dfs,gemini-conveyor,rust,rust_solver,True,290.761000,30,42,0.6425234943,15,,,,,,,,
+adder_4,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,232.844083,30,42,0.6425234943,15,,,,,,,,
+adder_4,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,3537.544042,30,42,0.6425234943,109,,,,,,,,
+adder_4,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,3624.518667,30,42,0.6425234943,109,,,,,,,,
+adder_4,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,3682.163708,30,42,0.6425234943,109,,,,,,,,
+adder_4,rust_greedy,gemini-conveyor,rust,rust_solver,True,219.060000,30,42,0.6425234943,15,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+adder_4,rust_ids,gemini-conveyor,rust,rust_solver,True,215.682500,30,42,0.6425234943,15,,,,,,,,
+adder_64,rust_astar,gemini-conveyor,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+adder_64,rust_bfs,gemini-conveyor,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+adder_64,rust_dfs,gemini-conveyor,rust,rust_solver,True,8370.340875,1596,1646,0.0000000000,798,,,,,,,,
+adder_64,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,9034.109916,1528,1648,0.0000000000,764,,,,,,,,
+adder_64,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,292417.995792,1482,1634,0.0000000000,25774,,,,,,,,
+adder_64,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,293154.029000,1482,1634,0.0000000000,32793,,,,,,,,
+adder_64,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,281467.865000,1492,1634,0.0000000000,20349,,,,,,,,
+adder_64,rust_greedy,gemini-conveyor,rust,rust_solver,True,9279.606541,1496,1634,0.0000000000,749,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+adder_64,rust_ids,gemini-conveyor,rust,rust_solver,True,9335.117083,1510,1634,0.0000000000,756,,,,,,,,
+bv_70,rust_astar,gemini-conveyor,rust,rust_solver,True,402.404958,160,160,0.0000000006,80,,,,,,,,
+bv_70,rust_bfs,gemini-conveyor,rust,rust_solver,True,381.100250,160,160,0.0000000006,80,,,,,,,,
+bv_70,rust_dfs,gemini-conveyor,rust,rust_solver,True,378.458625,160,160,0.0000000006,80,,,,,,,,
+bv_70,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,408.620917,160,160,0.0000000006,80,,,,,,,,
+bv_70,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,29748.111625,160,160,0.0000000006,529,,,,,,,,
+bv_70,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,29475.315208,160,160,0.0000000006,529,,,,,,,,
+bv_70,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,29566.660041,160,160,0.0000000006,529,,,,,,,,
+bv_70,rust_greedy,gemini-conveyor,rust,rust_solver,True,470.140667,160,160,0.0000000006,80,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+bv_70,rust_ids,gemini-conveyor,rust,rust_solver,True,456.391500,160,160,0.0000000006,80,,,,,,,,
+ghz_4,rust_astar,gemini-conveyor,rust,rust_solver,True,166.479417,10,12,0.8834277069,5,,,,,,,,
+ghz_4,rust_bfs,gemini-conveyor,rust,rust_solver,True,166.101667,10,12,0.8834277069,5,,,,,,,,
+ghz_4,rust_dfs,gemini-conveyor,rust,rust_solver,True,164.832459,10,12,0.8834277069,5,,,,,,,,
+ghz_4,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,168.289083,10,14,0.8781419138,5,,,,,,,,
+ghz_4,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,1188.638125,10,14,0.8781419138,24,,,,,,,,
+ghz_4,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,1204.369500,10,14,0.8781419138,24,,,,,,,,
+ghz_4,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,1171.610875,10,14,0.8781419138,24,,,,,,,,
+ghz_4,rust_greedy,gemini-conveyor,rust,rust_solver,True,161.914709,10,12,0.8834277069,5,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+ghz_4,rust_ids,gemini-conveyor,rust,rust_solver,True,164.366750,10,12,0.8834277069,5,,,,,,,,
+ghz_6,rust_astar,gemini-conveyor,rust,rust_solver,True,255.067375,14,20,0.7883461537,7,,,,,,,,
+ghz_6,rust_bfs,gemini-conveyor,rust,rust_solver,True,264.527833,14,20,0.7883461537,7,,,,,,,,
+ghz_6,rust_dfs,gemini-conveyor,rust,rust_solver,True,252.799000,14,20,0.7883461537,7,,,,,,,,
+ghz_6,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,253.504834,14,20,0.7883461537,7,,,,,,,,
+ghz_6,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,1969.496750,14,20,0.7883461537,41,,,,,,,,
+ghz_6,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,1977.432083,14,20,0.7883461537,41,,,,,,,,
+ghz_6,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,1918.509000,14,20,0.7883461537,41,,,,,,,,
+ghz_6,rust_greedy,gemini-conveyor,rust,rust_solver,True,250.096500,14,20,0.7883461537,7,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+ghz_6,rust_ids,gemini-conveyor,rust,rust_solver,True,359.849333,14,20,0.7883461537,7,,,,,,,,
+qpe_9,rust_astar,gemini-conveyor,rust,rust_solver,True,866.560125,196,200,0.0161077949,98,,,,,,,,
+qpe_9,rust_bfs,gemini-conveyor,rust,rust_solver,True,869.361875,196,200,0.0161077949,104,,,,,,,,
+qpe_9,rust_dfs,gemini-conveyor,rust,rust_solver,True,967.453583,196,200,0.0161077949,98,,,,,,,,
+qpe_9,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,991.206667,196,200,0.0161077949,98,,,,,,,,
+qpe_9,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,18692.089208,196,200,0.0161077949,786,,,,,,,,
+qpe_9,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,18657.175583,196,200,0.0161077949,786,,,,,,,,
+qpe_9,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,18596.729625,196,200,0.0161077949,786,,,,,,,,
+qpe_9,rust_greedy,gemini-conveyor,rust,rust_solver,True,865.902375,196,200,0.0161077949,98,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+qpe_9,rust_ids,gemini-conveyor,rust,rust_solver,True,860.099667,196,200,0.0161077949,98,,,,,,,,
+steane_logical_5,rust_astar,gemini-conveyor,rust,rust_solver,True,48.695833,12,20,0.8300469037,6,,,,,,,,
+steane_logical_5,rust_bfs,gemini-conveyor,rust,rust_solver,True,49.920916,12,20,0.8300469037,6,,,,,,,,
+steane_logical_5,rust_dfs,gemini-conveyor,rust,rust_solver,True,51.467750,12,20,0.8300469037,6,,,,,,,,
+steane_logical_5,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,55.316000,12,20,0.8300469037,6,,,,,,,,
+steane_logical_5,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,1723.558625,12,20,0.8300469037,43,,,,,,,,
+steane_logical_5,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,1682.596291,12,20,0.8300469037,43,,,,,,,,
+steane_logical_5,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,1685.245875,12,20,0.8300469037,43,,,,,,,,
+steane_logical_5,rust_greedy,gemini-conveyor,rust,rust_solver,True,48.462166,12,20,0.8300469037,6,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+steane_logical_5,rust_ids,gemini-conveyor,rust,rust_solver,True,46.866584,12,20,0.8300469037,6,,,,,,,,
+steane_physical_35,rust_astar,gemini-conveyor,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+steane_physical_35,rust_bfs,gemini-conveyor,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+steane_physical_35,rust_dfs,gemini-conveyor,rust,rust_solver,True,119.989916,106,142,0.0077855834,53,,,,,,,,
+steane_physical_35,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,126.648084,90,138,0.0144079092,45,,,,,,,,
+steane_physical_35,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,2814.953875,88,138,0.0155368550,3439,,,,,,,,
+steane_physical_35,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,3294.175959,86,136,0.0168551092,5184,,,,,,,,
+steane_physical_35,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,1516.491875,88,138,0.0155368550,4320,,,,,,,,
+steane_physical_35,rust_greedy,gemini-conveyor,rust,rust_solver,True,120.588375,86,138,0.0167542604,43,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+steane_physical_35,rust_ids,gemini-conveyor,rust,rust_solver,True,119.654042,90,134,0.0145818821,45,,,,,,,,
+trotter_rand_35,rust_astar,gemini-conveyor,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+trotter_rand_35,rust_bfs,gemini-conveyor,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+trotter_rand_35,rust_dfs,gemini-conveyor,rust,rust_solver,True,1756.916750,1292,1474,0.0000000000,646,,,,,,,,
+trotter_rand_35,rust_entropy_1,gemini-conveyor,rust,rust_solver,True,1874.864041,1198,1520,0.0000000000,599,,,,,,,,
+trotter_rand_35,rust_entropy_10,gemini-conveyor,rust,rust_solver,True,40245.980292,1028,1452,0.0000000000,54576,,,,,,,,
+trotter_rand_35,rust_entropy_20,gemini-conveyor,rust,rust_solver,True,48846.730625,1008,1420,0.0000000000,63980,,,,,,,,
+trotter_rand_35,rust_entropy_5,gemini-conveyor,rust,rust_solver,True,22368.675708,1050,1402,0.0000000000,14281,,,,,,,,
+trotter_rand_35,rust_greedy,gemini-conveyor,rust,rust_solver,True,1833.472000,1140,1376,0.0000000000,1351,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+trotter_rand_35,rust_ids,gemini-conveyor,rust,rust_solver,True,1714.889666,1150,1392,0.0000000000,581,,,,,,,,

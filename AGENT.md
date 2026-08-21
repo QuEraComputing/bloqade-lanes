@@ -52,6 +52,7 @@ just install-mdbook    # Install pinned mdBook version
 just test-python       # Run Python tests via pytest
 just benchmark-physical # Run + compare the physical routing benchmark suite
 just benchmark-logical  # Run + compare the logical routing benchmark suite
+just benchmark-conveyor # Run + compare the conveyor (chain-capable) suite
 
 # Rust
 just test-rust         # Run Rust tests (core + cli crates)
@@ -79,15 +80,53 @@ Direct test run: `uv run coverage run -m pytest python/tests`
 
 The routing benchmark harness (`python/benchmarks/`) compiles a fixed set of
 kernels across every search strategy and records per-case metrics. CI runs
-`just benchmark-physical` and `just benchmark-logical`, each of which compares
-the fresh run against a committed baseline CSV and **exits non-zero on any
-difference** — so a change that shifts routing behaviour will fail CI until its
-baselines are regenerated and committed.
+`just benchmark-physical`, `just benchmark-logical` and
+`just benchmark-conveyor`, each of which compares the fresh run against a
+committed baseline CSV and **exits non-zero on any difference** — so a change
+that shifts routing behaviour will fail CI until its baselines are regenerated
+and committed.
 
 Committed baselines:
 
 - `python/benchmarks/harness/latest_physical.csv`
 - `python/benchmarks/harness/latest_logical.csv`
+- `python/benchmarks/harness/latest_conveyor.csv`
+
+The **conveyor** suite runs the physical pipeline against
+`examples/arch/gemini-conveyor.json` — the bundled Gemini physical spec with each
+hypercube site bus converted to conveyor form (`i -> i + 2^d`), so buses overlap
+and conveyor chain assembly is reachable (#939). Both shipped specs are
+endpoint-disjoint, which makes every chain path dead code, so without this suite
+CI cannot see a chain regression.
+
+Two things to know before reading its numbers:
+
+- `--arch-spec` *replaces* the built-in spec rather than adding to it, so this
+  run emits only `arch_spec_id=gemini-conveyor` rows (the id is the file's stem)
+  and cannot perturb the shipped baselines. The recipe passes `--output`
+  explicitly because the default output path is derived from `--architecture`,
+  which is `physical` here — omitting it overwrites `latest_physical.csv`.
+- Each conveyor bus is a strict lane **superset** of the hypercube bus it
+  replaces, so its gains conflate richer connectivity with chain assembly.
+  `rust_greedy` is chain-incapable by construction, so it serves as the
+  connectivity-only control — do not remove it. Chain assembly itself is pinned
+  by tests in `crates/bloqade-lanes-search`, not by these metrics.
+- The superset property makes *plan existence* monotone, which is **not** the
+  same as "results can only improve" — every strategy is a bounded heuristic
+  search. The measured zero-regression result is empirical.
+
+Beyond guarding chain assembly, this suite is also the standing evidence that
+overlapping site buses are worth exploring as a hardware extension: fidelity
+improves on every row that can move (median +6%, up to 2.6× on the deepest
+circuit, 9 rows lifted off the underflow floor) with no regression anywhere, on a
+router that already exploits it. See
+`docs/superpowers/specs/2026-08-21-conveyor-benchmark-arch-design.md` for the
+argument and for the hardware questions it does *not* answer.
+
+The spec is generated, not hand-maintained. `just benchmark-conveyor` first runs
+`python scripts/gen_conveyor_arch.py --check` and fails if the committed JSON has
+drifted from the bundled Gemini spec; regenerate with
+`python scripts/gen_conveyor_arch.py`.
 
 ### When to regenerate
 
@@ -122,6 +161,7 @@ treat wall-time noise as a real diff.
    ```bash
    just benchmark-physical
    just benchmark-logical
+   just benchmark-conveyor
    ```
 
    To regenerate without the compare gate (e.g. to a scratch file), call the CLI

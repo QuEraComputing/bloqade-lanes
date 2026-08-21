@@ -190,6 +190,18 @@ benchmark-physical:
 benchmark-logical:
     uv run --locked python -m benchmarks.cli --architecture logical --compare python/benchmarks/harness/latest_logical.csv
 
+# Run benchmark harness on the conveyor-capable (chain-assembling) archspec.
+# --arch-spec replaces the built-in spec rather than adding to it, so this run
+# emits only conveyor rows and compares against a conveyor-only baseline; the
+# shipped baselines cannot be perturbed by it.
+#
+# --output is REQUIRED: the default output path is derived from --architecture,
+# which is "physical" here, so omitting it overwrites latest_physical.csv with
+# conveyor rows.
+benchmark-conveyor:
+    uv run --locked python scripts/gen_conveyor_arch.py --check
+    uv run --locked python -m benchmarks.cli --architecture physical --arch-spec examples/arch/gemini-conveyor.json --output python/benchmarks/harness/latest_conveyor.csv --compare python/benchmarks/harness/latest_conveyor.csv
+
 # Run fast Python tests only (skip slow integration tests)
 test-python-fast:
     uv run --locked pytest python/tests/ -v -m "not slow"

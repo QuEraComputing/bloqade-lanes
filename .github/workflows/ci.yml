@@ -186,7 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        architecture: [logical, physical]
+        architecture: [logical, physical, conveyor]
 
     steps:
       - uses: actions/checkout@v7
