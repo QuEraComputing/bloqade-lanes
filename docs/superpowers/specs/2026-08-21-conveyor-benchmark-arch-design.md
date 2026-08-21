@@ -4,11 +4,66 @@ Design for #939 (part of #887, last scope bullet): add a conveyor-capable
 ArchSpec to the benchmark registry so chain assembly is measured and protected
 by CI.
 
-**Status: implemented.** The suite measures the *architecture*; chain assembly
-itself is pinned by tests in `crates/bloqade-lanes-search` rather than by
-benchmark metrics — see "Attribution problem" below for why that split is
-necessary. No packed-corridor kernel was added, so the shipped baselines are
-untouched.
+**Status: implemented, then BLOCKED — not merged.** PR #945 was closed pending an
+upper bound on move-generator rectangle size. See "Blocker" immediately below
+before acting on any number in this document. The work lives on branch
+`feat/conveyor-benchmark-arch`.
+
+The suite measures the *architecture*; chain assembly itself is pinned by tests
+in `crates/bloqade-lanes-search` rather than by benchmark metrics — see
+"Attribution problem" below for why that split is necessary. No packed-corridor
+kernel was added, so the shipped baselines are untouched.
+
+## Blocker: rectangle size is unbounded
+
+Neither the frontier (heuristic-generator) nor the entropy path bounds the **size
+of a generated AOD rectangle**. `EntropyParams` bounds the *number* of candidates
+and movesets (`max_candidates`, `max_movesets_per_group`, `max_goal_candidates`)
+but never the size of one rectangle, and `ops/aod_grid.rs` has no size limit in
+`greedy_init`, `try_add_point` or `merge_clusters`.
+
+This makes the results below unsafe to publish. A conveyor bus is a strict lane
+superset and chain assembly lets a single rectangle span an entire 8-site chain,
+so the measured "fewer, larger operations" win can in principle be bought with
+shots the AOD cannot drive. A fidelity gain that partly comes from physically
+unrealizable operations is worse than no number at all.
+
+**The gap is pre-existing, not introduced here.** The shipped `latest_physical.csv`
+is produced by the same unbounded generators. What this work does is raise the
+ceiling and make the gap consequential, since overlapping buses are exactly the
+mechanism that would produce large rectangles.
+
+Measured before closing — max lanes in a single `move.Move`:
+
+| spec | case | max | mean | largest sizes (count) |
+|---|---|---|---|---|
+| builtin | `ghz_6` | 2 | 1.3 | — |
+| conveyor | `ghz_6` | 2 | 1.4 | — |
+| builtin | `steane_physical_35` | 6 | 1.6 | 3→12, 4→6, 6→2 |
+| conveyor | `steane_physical_35` | 6 | 1.9 | 3→2, **4→16**, 6→2 |
+| builtin | `adder_64` | **9** | 1.2 | 4→62, 6→8, **9→2** |
+| conveyor | `adder_64` | **9** | 1.2 | 4→50, 6→6, **9→6** |
+| builtin | `trotter_rand_35` | **9** | 1.4 | 4→54, 6→4, **9→10** |
+| conveyor | `trotter_rand_35` | **9** | 1.5 | 4→72, **6→18**, 9→4 |
+
+Two conclusions, and the second is the important one:
+
+1. The conveyor spec does not raise the **maximum** — 9 on both, 6 on both for
+   the mid-size case. It shifts mass toward larger rectangles (`trotter_rand_35`
+   6-lane shots go 4 → 18) but does not introduce a new ceiling.
+2. **The shipped spec already emits 9-lane rectangles today.** `adder_64` and
+   `trotter_rand_35` produce them on bundled Gemini, on `main`, with no conveyor
+   involved. So the unbounded-rectangle problem is live and observable in the
+   committed `latest_physical.csv`, not a hypothetical this branch would create.
+
+That reframes the fix as its own piece of work rather than a prerequisite this
+branch happens to trip over: whatever bound is chosen has to be applied to the
+existing baselines too, and it may change them.
+
+To unblock: bound rectangle size in both generator paths, decide the bound from
+AOD capability (tone count / power per tone), regenerate all three baselines
+against the bounded generators, and re-run the comparison. Every number below was
+produced by unbounded generators and must be regenerated, not merely re-read.
 
 | Artifact | Path |
 |---|---|
