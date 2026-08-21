@@ -73,6 +73,9 @@ impl PyMotionModel {
     }
 
     /// Minimum duration (µs) of a constant-jerk move over `max_dist_um`.
+    ///
+    /// The sign of `max_dist_um` is ignored; a distance below ~1e-8 µm is
+    /// treated as no move and returns 0.0.
     fn const_jerk_min_duration_us(&self, max_dist_um: f64) -> f64 {
         self.inner.const_jerk_min_duration_us(max_dist_um)
     }
@@ -81,7 +84,8 @@ impl PyMotionModel {
     ///
     /// `waypoints` are `(x, y)` coordinates in µm. The pick/drop ramps are
     /// always charged, so a path with no motion segments (fewer than two
-    /// waypoints) still costs `2 * ramp` rather than zero.
+    /// waypoints) still costs `2 * ramp` rather than zero. `amplitude_delta`
+    /// scales the ramp time; its sign is ignored.
     #[pyo3(signature = (waypoints, amplitude_delta = 1.0))]
     fn lane_duration_us(&self, waypoints: Vec<(f64, f64)>, amplitude_delta: f64) -> f64 {
         let waypoints: Vec<[f64; 2]> = waypoints.into_iter().map(|(x, y)| [x, y]).collect();

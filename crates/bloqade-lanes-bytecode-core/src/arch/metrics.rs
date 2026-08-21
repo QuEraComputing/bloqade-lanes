@@ -90,6 +90,9 @@ impl MotionModel {
     /// Solves the constant-jerk trajectory: below the acceleration cap the
     /// move is jerk-limited (four jerk phases); above it, two extra
     /// constant-acceleration phases are inserted.
+    ///
+    /// The sign of `max_dist_um` is ignored (the absolute distance is used);
+    /// a distance below ~1e-8 µm is treated as no move and returns 0.0.
     pub fn const_jerk_min_duration_us(&self, max_dist_um: f64) -> f64 {
         let max_dist_um = max_dist_um.abs();
         if max_dist_um < MIN_MOVE_DISTANCE_UM {

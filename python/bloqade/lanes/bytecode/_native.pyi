@@ -617,6 +617,9 @@ class MotionModel:
             Defaults to the FLAIR value. Must be > 0.
         max_jerk_um_per_us3 (float): Maximum jerk in µm/µs³. Must be > 0.
         max_accel_um_per_us2 (float): Maximum acceleration in µm/µs². Must be > 0.
+
+    Raises:
+        ValueError: If any constant is non-finite or not strictly positive.
     """
 
     def __init__(
@@ -646,7 +649,11 @@ class MotionModel:
         ...
 
     def const_jerk_min_duration_us(self, max_dist_um: float) -> float:
-        """Minimum duration (µs) of a constant-jerk move over ``max_dist_um``."""
+        """Minimum duration (µs) of a constant-jerk move over ``max_dist_um``.
+
+        The sign of ``max_dist_um`` is ignored; a distance below ~1e-8 µm is
+        treated as no move and returns ``0.0``.
+        """
         ...
 
     def lane_duration_us(
@@ -658,6 +665,7 @@ class MotionModel:
 
         The pick and drop ramps are always charged, so a path with fewer than
         two waypoints still costs ``2 * ramp`` rather than zero.
+        ``amplitude_delta`` scales the ramp time; its sign is ignored.
         """
         ...
 
