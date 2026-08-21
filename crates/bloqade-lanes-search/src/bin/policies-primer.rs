@@ -96,6 +96,10 @@ fn main() {
         print!("{regenerated}");
     } else if check {
         let on_disk = std::fs::read_to_string(PRIMER_PATH).unwrap_or_default();
+        // `regenerated` is LF-only by construction; compare against an
+        // LF-normalized read so a CRLF checkout doesn't report every line
+        // as stale.
+        let on_disk = on_disk.replace("\r\n", "\n");
         if on_disk.trim() != regenerated.trim() {
             let diff = unified_diff(&on_disk, &regenerated);
             eprintln!("{PRIMER_PATH} is stale. Diff:\n{diff}");
