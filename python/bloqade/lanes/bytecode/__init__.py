@@ -17,6 +17,7 @@ Architecture building blocks:
     - :class:`Word`, :class:`Grid`
     - :class:`SiteBus`, :class:`WordBus`, :class:`ZoneBus`
     - :class:`Zone`, :class:`Mode`, :class:`TransportPath`
+    - :class:`MotionModel` -- configurable constant-jerk move-duration model
 
 Enums:
     - :class:`Direction` -- FORWARD / BACKWARD
@@ -56,6 +57,7 @@ from bloqade.lanes.bytecode._native import (
     LocationAddress as LocationAddress,
     LooseGoalCzPlacement as LooseGoalCzPlacement,
     Mode as Mode,
+    MotionModel as MotionModel,
     MoveSearch as MoveSearch,
     MovesetMetrics as MovesetMetrics,
     MoveType as MoveType,
