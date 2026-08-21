@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["addr","query","types","validate"]};
+window.SIDEBAR_ITEMS = {"mod":["addr","metrics","query","types","validate"]};
