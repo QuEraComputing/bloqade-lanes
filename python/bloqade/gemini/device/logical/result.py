@@ -62,7 +62,8 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             kernel_json = program["content"]
             kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
             slm_to_raw, postprocessing_function = get_slm_mapping_postprocessing(
-                kernel_mt
+                kernel_mt,
+                invert_bits=True,
             )
             # NOTE: what if err in postproc fn generation/errors here??
             postprocessing_functions[idx] = (slm_to_raw, postprocessing_function)
