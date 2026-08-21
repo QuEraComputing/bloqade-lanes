@@ -10,6 +10,7 @@ from kirin import ir
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import SiteLaneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.physical.placement import (
@@ -283,3 +284,127 @@ def test_compile_reads_rust_nodes_from_strategy(monkeypatch):
     artifacts = runner._compile(job)
     assert artifacts.nodes_explored == 321
     assert artifacts.notes == ""
+
+
+def _fake_job(*, arch_spec: object, logical_initialize: bool) -> BenchmarkJob:
+    @dataclass
+    class _FakePlacement:
+        arch_spec: object
+
+    return BenchmarkJob(
+        case=BenchmarkCase(
+            case_id="case_x",
+            kernel=cast(ir.Method, object()),
+            logical_initialize=logical_initialize,
+        ),
+        strategy=StrategyConfig(
+            strategy_id="rust_astar",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: cast(
+                PlacementStrategyABC, _FakePlacement(arch_spec=arch_spec)
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("logical_initialize", [False, True])
+def test_build_layout_heuristic_uses_the_strategy_arch_spec(logical_initialize):
+    """The layout stage must target the strategy's arch, not a bundled default.
+
+    Regression test: both heuristics used to be constructed with no arguments,
+    so they silently fell back to the bundled Gemini specs and ``--arch-spec``
+    only reached the placement stage.
+    """
+    sentinel = object()
+    runner = BenchmarkRunner()
+    job = _fake_job(arch_spec=sentinel, logical_initialize=logical_initialize)
+
+    heuristic = runner._build_layout_heuristic(job, cast(ArchSpec, sentinel))
+
+    assert heuristic.arch_spec is sentinel
+
+
+def test_compile_threads_strategy_arch_spec_into_the_layout_heuristic(monkeypatch):
+    """``_compile`` must hand the layout heuristic the strategy's arch spec."""
+    sentinel = object()
+    seen: dict[str, object] = {}
+
+    def _fake_squin_to_move(mt, *, layout_heuristic, placement_strategy, **kwargs):
+        seen["layout_arch_spec"] = layout_heuristic.arch_spec
+        seen["placement_arch_spec"] = placement_strategy.arch_spec
+        return cast(ir.Method, object())
+
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr(
+        "benchmarks.harness.runner._assert_move_lowering_complete", lambda mt: None
+    )
+
+    artifacts = BenchmarkRunner()._compile(
+        _fake_job(arch_spec=sentinel, logical_initialize=False)
+    )
+
+    assert seen["layout_arch_spec"] is sentinel
+    assert seen["placement_arch_spec"] is sentinel
+    assert artifacts.arch_spec is sentinel
+
+
+def test_estimate_fidelity_physical_mode_uses_the_strategy_arch_spec(monkeypatch):
+    """Fidelity must be measured against the strategy's arch, not bundled Gemini.
+
+    The pipeline and the noise-insertion step both used a hardcoded
+    ``get_physical_arch_spec()``, so a custom-arch run reported a fidelity for
+    the wrong architecture (and failed lowering with a misleading
+    "SSAValue ... stmt: fill ... not found").
+    """
+    sentinel = object()
+    seen: dict[str, object] = {}
+
+    class _FakeGateFidelity:
+        min = 0.5
+
+    class _FakeFidelityAnalysis:
+        def __init__(self, dialects):
+            self.gate_fidelities = [_FakeGateFidelity()]
+
+        def run(self, kernel):
+            return None
+
+    class _FakePhysicalPipeline:
+        def __init__(self, **kwargs):
+            seen["pipeline_arch_spec"] = kwargs["arch_spec"]
+            seen["pipeline_layout_arch_spec"] = kwargs["layout_heuristic"].arch_spec
+
+        def emit(self, kernel, **kwargs):
+            return cast(ir.Method, object())
+
+    class _FakeMoveToSquinPhysical:
+        def __init__(self, **kwargs):
+            seen["noise_arch_spec"] = kwargs["arch_spec"]
+
+        def emit(self, move_mt, **kwargs):
+            class _S:
+                dialects = object()
+
+            return _S()
+
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.PhysicalPipeline", _FakePhysicalPipeline
+    )
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.MoveToSquinPhysical", _FakeMoveToSquinPhysical
+    )
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.FidelityAnalysis", _FakeFidelityAnalysis
+    )
+
+    fidelity = BenchmarkRunner()._estimate_fidelity(
+        _fake_job(arch_spec=sentinel, logical_initialize=False)
+    )
+
+    assert fidelity == 0.5
+    # All three consumers must agree on the arch, or the plan and the noise
+    # model describe different machines.
+    assert seen["pipeline_arch_spec"] is sentinel
+    assert seen["pipeline_layout_arch_spec"] is sentinel
+    assert seen["noise_arch_spec"] is sentinel
