@@ -83,4 +83,17 @@ class GeminiTerminalMeasurementValidation(ValidationPass):
 
         frame, _ = analysis.run(method)
 
-        return frame, analysis.get_validation_errors()
+        errors = list(analysis.get_validation_errors())
+
+        if not analysis.terminal_measurement_encountered:
+            return_stmt = method.callable_region.blocks[0].last_stmt
+            assert return_stmt is not None
+            errors.append(
+                ir.ValidationError(
+                    return_stmt,
+                    "Gemini logical programs must contain exactly one "
+                    "logical.terminal_measure statement.",
+                )
+            )
+
+        return frame, errors
