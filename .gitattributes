@@ -1,0 +1,7 @@
+# Normalize line endings to LF in the working tree on every platform.
+#
+# Without this, Git for Windows checks text files out with CRLF, which breaks
+# golden-file tests that compare a committed fixture against generator output
+# built from `\n` literals (see crates/bloqade-lanes-search/tests/primer_golden.rs).
+# Binary files are still detected and left untouched by `text=auto`.
+* text=auto eol=lf
