@@ -181,7 +181,9 @@ class BenchmarkRunner:
 
     def _compile(self, job: BenchmarkJob) -> _RunArtifacts:
         placement_strategy = self._build_placement_strategy(job)
-        layout_heuristic = self._build_layout_heuristic(job)
+        layout_heuristic = self._build_layout_heuristic(
+            job, placement_strategy.arch_spec
+        )
 
         move_mt = _squin_to_move(
             job.case.kernel,
@@ -239,10 +241,14 @@ class BenchmarkRunner:
             return fidelity_product
 
         placement_strategy = self._build_placement_strategy(job)
-        layout_heuristic = self._build_layout_heuristic(job)
-        # Construct one ArchSpec and reuse it for both the move compilation and
-        # the noise-insertion step so they cannot disagree on the target arch.
-        arch_spec = get_physical_arch_spec()
+        # Take the arch spec from the strategy and reuse it for the layout
+        # heuristic, the move compilation and the noise-insertion step, so all
+        # four cannot disagree on the target arch. Using a bundled default here
+        # instead makes PhysicalPipeline warn about the placement/pipeline
+        # mismatch and then fail deep in lowering with an unrelated-looking
+        # "SSAValue ... stmt: fill ... not found".
+        arch_spec = placement_strategy.arch_spec
+        layout_heuristic = self._build_layout_heuristic(job, arch_spec)
         move_mt = PhysicalPipeline(
             arch_spec=arch_spec,
             layout_heuristic=layout_heuristic,
@@ -260,10 +266,18 @@ class BenchmarkRunner:
             fidelity_product *= gate_fid.min
         return fidelity_product
 
-    def _build_layout_heuristic(self, job: BenchmarkJob):
+    def _build_layout_heuristic(self, job: BenchmarkJob, arch_spec: ArchSpec):
+        """Build the layout heuristic for ``job`` against ``arch_spec``.
+
+        ``arch_spec`` is the strategy's spec rather than a bundled default so
+        the layout and placement stages cannot disagree on the target
+        architecture. Passing it is a no-op for the shipped suites (each
+        heuristic's default is exactly the spec its suite's strategies carry),
+        but it is what makes ``--arch-spec`` work at all.
+        """
         if job.case.logical_initialize:
-            return logical_layout.LogicalLayoutHeuristic()
-        return PhysicalLayoutHeuristicGraphPartitionCenterOut()
+            return logical_layout.LogicalLayoutHeuristic(arch_spec=arch_spec)
+        return PhysicalLayoutHeuristicGraphPartitionCenterOut(arch_spec=arch_spec)
 
     def _build_placement_strategy(self, job: BenchmarkJob):
         return job.strategy.build_placement_strategy()
