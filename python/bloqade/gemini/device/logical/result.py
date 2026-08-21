@@ -34,23 +34,25 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             subtask scope. Defaults to the DETECTED frame type.
     """
 
-    @cached_property
     def _slm_postprocessing_functions(
         self,
+        *,
+        invert_bits: bool = True,
     ) -> dict[
         int,
         tuple[Callable[[np.ndarray], list[list[bool]]], PostProcessing[RetType]],
     ]:
-        """Decode stored programs and build post-processing functions.
+        """Decode stored programs and build SLM-frame postprocessors.
 
-        Program records are scoped by `shot_filter.task_ids`. When multiple
-        task IDs share a `program_index`, the first stored program at that index
-        is used.
-
-        Returns:
-            dict[int, Callable | None]: Mapping from program index to its
-                generated post-processing function.
+        Results are cached independently for each bit convention. ``True`` is
+        the default because QLAM DETECTED frames encode bright/atom-present as
+        ``True``, opposite to the simulator/Atom postprocessing convention.
         """
+        cache = self._slm_postprocessing_functions_cache
+        cached = cache.get(invert_bits)
+        if cached is not None:
+            return cached
+
         task_ids = self.shot_filter.task_ids
         programs = self.storage.get_programs(task_ids=task_ids)
         postprocessing_functions = {}
@@ -63,12 +65,28 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
             slm_to_raw, postprocessing_function = get_slm_mapping_postprocessing(
                 kernel_mt,
-                invert_bits=True,
+                invert_bits=invert_bits,
             )
             # NOTE: what if err in postproc fn generation/errors here??
             postprocessing_functions[idx] = (slm_to_raw, postprocessing_function)
 
+        cache[invert_bits] = postprocessing_functions
         return postprocessing_functions
+
+    @cached_property
+    def _slm_postprocessing_functions_cache(
+        self,
+    ) -> dict[
+        bool,
+        dict[
+            int,
+            tuple[
+                Callable[[np.ndarray], list[list[bool]]],
+                PostProcessing[RetType],
+            ],
+        ],
+    ]:
+        return {}
 
     def postprocessing_functions(self) -> dict[int, Callable | None]:
         """Build legacy compact-shot postprocessors from stored programs.
@@ -95,7 +113,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         ret_vals: list[list[list[bool]]] = []
         # TODO: OK to set verify=True?
         subtasks = self.subtasks(verify=True)
-        postprocessing_functions = self._slm_postprocessing_functions
+        postprocessing_functions = self._slm_postprocessing_functions()
         shot_results = shot_results_for_subtasks(
             self.storage, self.shot_filter, subtasks, frame_type="DETECTED"
         )
@@ -168,7 +186,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             )
 
         if all(is_raw_slm_frame):
-            generated_postprocessors = self._slm_postprocessing_functions
+            generated_postprocessors = self._slm_postprocessing_functions()
             return_values: list[list[RetType]] = []
             for shot_result, subtask in zip(shot_results, subtasks):
                 slm_to_measurements, atom_postprocessor = generated_postprocessors[
@@ -192,7 +210,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
     def return_values(self) -> Sequence[Sequence[RetType]]:
         return [
             list(
-                self._slm_postprocessing_functions[subtask["program_index"]][
+                self._slm_postprocessing_functions()[subtask["program_index"]][
                     1
                 ].emit_return(measurements)
             )
@@ -203,7 +221,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
     def detectors(self) -> Sequence[Sequence[Sequence[bool]]]:
         return [
             list(
-                self._slm_postprocessing_functions[subtask["program_index"]][
+                self._slm_postprocessing_functions()[subtask["program_index"]][
                     1
                 ].emit_detectors(measurements)
             )
@@ -214,7 +232,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
     def observables(self) -> Sequence[Sequence[Sequence[bool]]]:
         return [
             list(
-                self._slm_postprocessing_functions[subtask["program_index"]][
+                self._slm_postprocessing_functions()[subtask["program_index"]][
                     1
                 ].emit_observables(measurements)
             )
@@ -225,7 +243,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
     def filling_at_start(self) -> Sequence[Sequence[Sequence[bool]]]:
         ret_vals: list[list[list[bool]]] = []
         subtasks = self.subtasks(verify=True)
-        postprocessing_functions = self._slm_postprocessing_functions
+        postprocessing_functions = self._slm_postprocessing_functions(invert_bits=False)
         _, shot_results = aligned_detected_and_sorted_shots_for_subtasks(
             self.storage,
             self.shot_filter,
