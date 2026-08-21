@@ -189,3 +189,71 @@ def test_per_cz_motion_rejects_inexecutable_move():
     with pytest.raises(MoveValidationError) as excinfo:
         metrics.analyze_per_cz_motion(main)
     assert any(isinstance(e, DestinationOccupiedError) for e in excinfo.value.errors)
+
+
+def test_analyze_move_time_prices_events_through_motion_model():
+    """Cover the move-time reporting path.
+
+    ``analyze_move_time_from_move_ir`` walks each ``move`` event and prices its
+    lanes through the shared ``MotionModel`` (pick/drop ramps + per-segment
+    constant-jerk durations). This exercises that per-lane loop end to end.
+    """
+    arch_spec = ArchSpec(RustArchSpec.from_json_validated(CHAIN_ARCH_JSON))
+
+    @kernel
+    def main():
+        state0 = move.load()
+        state1 = move.fill(
+            state0,
+            location_addresses=(
+                move.LocationAddress(0, 0),
+                move.LocationAddress(1, 0),
+            ),
+        )
+        state2 = move.logical_initialize(
+            state1,
+            thetas=(0.0, 0.0),
+            phis=(0.0, 0.0),
+            lams=(0.0, 0.0),
+            location_addresses=(
+                move.LocationAddress(0, 0),
+                move.LocationAddress(1, 0),
+            ),
+        )
+        state3 = move.move(
+            state2,
+            lanes=(WordLaneAddress(0, 0, 0), WordLaneAddress(1, 0, 0)),
+        )
+        state4 = move.cz(state3, zone_address=ZoneAddress(0))
+        future = move.end_measure(state4, zone_addresses=(move.ZoneAddress(0),))
+        return move.get_future_result(
+            future,
+            zone_address=move.ZoneAddress(0),
+            location_address=move.LocationAddress(1, 0),
+        )
+
+    metrics = Metrics(arch_spec=arch_spec)
+    result = metrics.analyze_move_time_from_move_ir(main)
+
+    assert result.timing_model == "flair_extracted_const_jerk"
+    assert len(result.events) == 1
+    event = result.events[0]
+    assert event.lane_count == 2
+
+    motion_model = metrics.move_calc.motion_model
+    # Pick/drop ramps are geometry-independent and come from the shared model.
+    expected_ramp_us = 1.0 / motion_model.max_ramp_us
+    assert event.pick_time_us == pytest.approx(expected_ramp_us)
+    assert event.drop_time_us == pytest.approx(expected_ramp_us)
+    # Per-segment durations are priced through the shared MotionModel.
+    assert event.segment_distances_um
+    for dist, dur in zip(event.segment_distances_um, event.segment_durations_us):
+        assert dur == pytest.approx(motion_model.const_jerk_min_duration_us(dist))
+    # Lane duration is ramp + Σ segment durations + ramp; the event duration is
+    # the max over the event's lanes and the total is the sum over events.
+    assert max(event.lane_durations_us) == pytest.approx(
+        event.pick_time_us + sum(event.segment_durations_us) + event.drop_time_us
+    )
+    assert event.event_duration_us == pytest.approx(max(event.lane_durations_us))
+    assert event.event_duration_us > 0.0
+    assert result.total_move_time_us == pytest.approx(event.event_duration_us)
