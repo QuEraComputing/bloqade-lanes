@@ -19,6 +19,9 @@ from qlam_core.plugins.tasks.api.tasks_models import (
 from bloqade import squin
 from bloqade.gemini import GeminiLogicalResult, logical
 from bloqade.gemini.device.logical import result as result_module
+from bloqade.gemini.device.logical.utils import (
+    aligned_detected_and_sorted_shots_for_subtasks,
+)
 
 CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
@@ -369,6 +372,69 @@ def test_shot_results_default_filter_excludes_non_detected_frames(storage):
     np.testing.assert_array_equal(shots_per_subtask[0], np.array([[True, False]]))
 
 
+def test_aligned_detected_and_sorted_shots_use_full_shot_identity(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=2)]),
+    )
+    storage.add_shots(
+        [
+            make_shot(
+                shot_index=2,
+                subtask_shot_index=1,
+                frame_type="SORTED",
+                bitstring=(False, True),
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_shot_index=0,
+                frame_type="DETECTED",
+                bitstring=(True, False),
+            ),
+            make_shot(
+                shot_index=2,
+                subtask_shot_index=1,
+                frame_type="DETECTED",
+                bitstring=(True, True),
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_shot_index=0,
+                frame_type="SORTED",
+                bitstring=(False, False),
+            ),
+        ]
+    )
+
+    detected, sorted_ = aligned_detected_and_sorted_shots_for_subtasks(
+        storage,
+        ShotFilter(task_ids=("task-1",)),
+        GeminiLogicalResult(storage=storage).subtasks(),
+    )
+
+    np.testing.assert_array_equal(detected[0], np.array([[True, False], [True, True]]))
+    np.testing.assert_array_equal(sorted_[0], np.array([[False, False], [False, True]]))
+
+
+def test_aligned_detected_and_sorted_shots_reject_missing_frame(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=1)]),
+    )
+    storage.add_shots(
+        [make_shot(shot_index=0, frame_type="DETECTED", bitstring=(True, False))]
+    )
+
+    with pytest.raises(ValueError, match="not aligned"):
+        aligned_detected_and_sorted_shots_for_subtasks(
+            storage,
+            ShotFilter(task_ids=("task-1",)),
+            GeminiLogicalResult(storage=storage).subtasks(),
+        )
+
+
 def test_shot_results_empty_when_no_subtasks(storage):
     res = GeminiLogicalResult(storage=storage)
     assert res.shot_results() == []
@@ -467,6 +533,54 @@ def test_logical_results_rebuilds_const_hints_after_serialization(storage):
     result = GeminiLogicalResult(storage=storage).logical_results()
 
     assert list(result[0]) == [True, False]
+
+
+def test_logical_results_supports_legacy_postprocessor_override(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=1)]),
+    )
+    storage.add_shots([make_shot(shot_index=0, bitstring=(True, False))])
+
+    result = GeminiLogicalResult(storage=storage).logical_results(
+        verify=True,
+        postprocessing_functions={
+            0: lambda shots: ("legacy", shots.shape, shots.tolist())
+        },
+    )
+
+    assert result == [("legacy", (1, 2), [[True, False]])]
+
+
+def test_logical_results_legacy_override_can_skip_merge_validation(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            subtasks=[Subtask(program_index=0, num_shots=1, arguments={"a": 1})]
+        ),
+    )
+    add_task_definition(
+        storage,
+        "task-2",
+        make_task_definition(
+            subtasks=[Subtask(program_index=0, num_shots=1, arguments={"a": 2})]
+        ),
+    )
+    storage.add_shots(
+        [
+            make_shot(task_id="task-1", shot_index=0, bitstring=(True, False)),
+            make_shot(task_id="task-2", shot_index=0, bitstring=(False, True)),
+        ]
+    )
+
+    result = GeminiLogicalResult(storage=storage).logical_results(
+        verify=False,
+        postprocessing_functions={0: lambda shots: shots.tolist()},
+    )
+
+    assert result == [[[True, False], [False, True]]]
 
 
 def test_logical_results_returns_raw_when_postprocessing_is_none(storage, monkeypatch):
