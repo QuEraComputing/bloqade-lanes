@@ -22,7 +22,9 @@ OBS = [[1], [1]]  # 2 measurements, 1 observable
 
 
 def _make_kernel(num_qubits: int, *, with_measure: bool = False):
-    @gemini_logical.kernel(aggressive_unroll=True)
+    # These fixtures deliberately omit terminal measurement so
+    # append_measurements_and_annotations can add it below.
+    @gemini_logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = qubit.qalloc(num_qubits)
         squin.h(reg[0])
@@ -50,7 +52,7 @@ def test_find_qubit_ssas_no_qubits():
 
 
 def test_find_qubit_ssas_includes_new_at_allocations():
-    @gemini_logical.kernel(aggressive_unroll=True)
+    @gemini_logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         new_at(0, 0, 0)
         qubit.qalloc(2)

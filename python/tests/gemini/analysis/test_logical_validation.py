@@ -53,12 +53,14 @@ def test_if_stmt_invalid():
 
 
 def test_for_loop():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def valid_loop():
         q = squin.qalloc(3)
 
         for i in range(3):
             squin.x(q[i])
+
+        gemini.logical.terminal_measure(q)
 
     valid_loop.print()
 
@@ -77,10 +79,11 @@ def test_func():
     def sub_kernel(q: Qubit):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(3)
         sub_kernel(q[0])
+        gemini.logical.terminal_measure(q)
 
     main.print()
 
@@ -93,13 +96,14 @@ def test_func():
 
 
 def test_clifford_gates():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(2)
         squin.u3(0.123, 0.253, 1.2, q[0])
 
         squin.h(q[0])
         squin.cx(q[0], q[1])
+        gemini.logical.terminal_measure(q)
 
     with pytest.raises(ValidationErrorGroup):
 
@@ -127,6 +131,7 @@ def test_star_rz_marks_qubit_as_acted_on_without_rejecting_mid_circuit_use():
         q = squin.qalloc(1)
         squin.h(q[0])
         gemini.logical.star_rz(0.125, q[0])
+        gemini.logical.terminal_measure(q)
 
     validator = ValidationSuite([GeminiLogicalValidation])
     validator.validate(valid).raise_if_invalid()
@@ -150,6 +155,21 @@ def test_qalloc_and_terminal_measure_type_valid():
     validation_result = validator.validate(main)
 
     validation_result.raise_if_invalid()
+
+
+def test_missing_terminal_measurement_is_invalid():
+    @gemini.logical.kernel(verify=False, aggressive_unroll=True)
+    def main():
+        q = squin.qalloc(1)
+        squin.x(q[0])
+
+    validator = ValidationSuite([GeminiTerminalMeasurementValidation])
+
+    with pytest.raises(
+        ValidationErrorGroup,
+        match="must contain exactly one.*terminal_measure",
+    ):
+        validator.validate(main).raise_if_invalid()
 
 
 def test_terminal_measurement():
@@ -208,13 +228,13 @@ def test_multiple_errors():
 
     except ValidationErrorGroup as e:
         did_error = True
-        assert len(e.errors) == 4
+        assert len(e.errors) == 5
 
     assert did_error
 
 
 def test_non_clifford_parallel_gates():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(5)
         squin.rx(0.123, q[0])
@@ -222,6 +242,7 @@ def test_non_clifford_parallel_gates():
 
         squin.broadcast.x(q)
         squin.broadcast.h(q[1:])
+        gemini.logical.terminal_measure(q)
 
     main.print()
 
@@ -289,10 +310,11 @@ def test_allocation_exceeded_summed_across_registers():
 
 
 def test_allocation_at_limit_is_valid():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         reg = squin.qalloc(MAX_QUBITS)
         squin.h(reg[0])
+        gemini.logical.terminal_measure(reg)
 
     validator = ValidationSuite([GeminiLogicalValidation])
     validator.validate(main).raise_if_invalid()

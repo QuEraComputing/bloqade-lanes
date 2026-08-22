@@ -129,7 +129,9 @@ def test_no_double_init_in_compiled_output():
     from bloqade.lanes.noise_model import generate_logical_noise_model
     from bloqade.lanes.transform import LogicalPipeline, MoveToSquinLogical
 
-    @gemini_logical.kernel
+    # This test exercises initialization lowering only; it intentionally does
+    # not construct a runnable terminally measured logical program.
+    @gemini_logical.kernel(verify=False)
     def main():
         reg = qubit.qalloc(1)
         squin.h(reg[0])
