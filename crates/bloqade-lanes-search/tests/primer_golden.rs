@@ -8,6 +8,14 @@
 use assert_cmd::Command;
 use std::path::PathBuf;
 
+/// The generator emits `\n` unconditionally, so a CRLF checkout of the
+/// fixture would mismatch on every line while printing an identical-looking
+/// diff. `.gitattributes` pins the working tree to LF; this is the backstop
+/// for checkouts that predate it or override it.
+fn lf(s: &str) -> String {
+    s.replace("\r\n", "\n")
+}
+
 #[test]
 fn primer_generator_matches_golden_for_curated_stubs() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -26,7 +34,7 @@ fn primer_generator_matches_golden_for_curated_stubs() {
         .stdout
         .clone();
     let actual = String::from_utf8(out).unwrap();
-    if actual.trim() != expected.trim() {
+    if lf(&actual).trim() != lf(&expected).trim() {
         panic!("primer-golden mismatch.\n--- expected ---\n{expected}\n--- actual ---\n{actual}");
     }
 }
