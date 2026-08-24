@@ -10,12 +10,6 @@ from bloqade.gemini import logical
 from bloqade.gemini.post_processing import generate_post_processing
 from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
-from .utils import (
-    aligned_detected_and_sorted_shots_for_subtasks,
-    get_slm_mapping_postprocessing,
-    shot_results_for_subtasks,
-)
-
 RetType = TypeVar("RetType")
 
 
@@ -48,6 +42,11 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         the default because QLAM DETECTED frames encode bright/atom-present as
         ``True``, opposite to the simulator/Atom postprocessing convention.
         """
+        # Import lazily: the mapping helper imports the Lanes transform stack.
+        # This result class is imported while the public Gemini package is
+        # initialized, which can itself happen during Lanes analysis imports.
+        from .utils import get_slm_mapping_postprocessing
+
         cache = self._slm_postprocessing_functions_cache
         cached = cache.get(invert_bits)
         if cached is not None:
@@ -110,6 +109,8 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @cached_property
     def measurements(self) -> Sequence[Sequence[Sequence[bool]]]:
+        from .utils import shot_results_for_subtasks
+
         ret_vals: list[list[list[bool]]] = []
         # TODO: OK to set verify=True?
         subtasks = self.subtasks(verify=True)
@@ -158,6 +159,8 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             postprocessing_functions: Optional legacy mapping from program
                 index to a function accepting that subtask's raw shot array.
         """
+        from .utils import shot_results_for_subtasks
+
         subtasks = self.subtasks(verify=verify)
         shot_results = shot_results_for_subtasks(
             self.storage,
@@ -241,6 +244,8 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @cached_property
     def filling_at_start(self) -> Sequence[Sequence[Sequence[bool]]]:
+        from .utils import aligned_detected_and_sorted_shots_for_subtasks
+
         ret_vals: list[list[list[bool]]] = []
         subtasks = self.subtasks(verify=True)
         postprocessing_functions = self._slm_postprocessing_functions(invert_bits=False)
