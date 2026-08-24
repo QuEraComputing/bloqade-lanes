@@ -19,17 +19,22 @@ from bloqade.lanes.rewrite.move2squin import (
     SimpleLogicalNoiseModel as SimpleLogicalNoiseModel,
     SimpleNoiseModel as SimpleNoiseModel,
 )
+from bloqade.lanes.transform.base import TransformABC
 
 InitKernel = LogicalInitKernel | None
 
 
 @dataclass
-class MoveToSquinBase(abc.ABC):
+class MoveToSquinBase(TransformABC):
     """Base class for all MoveToSquin variants.
 
     Subclasses must implement ``_get_initialize_kernel``,
     ``_get_noise_model``, and ``_get_initialize_noise_kernel`` to control
     which kernels are passed to the rewrite rules.
+
+    ``emit`` is inherited from ``TransformABC``, which checks that no ``move``
+    statement survived the ``dialects.discard(move.dialect)`` at the end of
+    ``_emit`` (``no_raise=False`` only).
     """
 
     arch_spec: ArchSpec
@@ -50,8 +55,8 @@ class MoveToSquinBase(abc.ABC):
         """Return the noisy initialization kernel for InsertNoise, or None."""
         ...
 
-    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
-        main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
+    def _emit(self, mt: ir.Method, no_raise: bool = True) -> ir.Method:
+        main = mt.similar(mt.dialects.union(squin.kernel.discard(scf.lowering)))
 
         vqpu = atom.AtomInterpreter(main.dialects, arch_spec=self.arch_spec)
         run_method = vqpu.run_no_raise if no_raise else vqpu.run

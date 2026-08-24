@@ -34,11 +34,12 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place
+from bloqade.lanes.transform.base import TransformABC
 from bloqade.lanes.validation.address import get_validation
 
 
 @dataclass
-class NativeToPlaceBase:
+class NativeToPlaceBase(TransformABC):
     """Template-method base for the squin-native → place compilation stage.
 
     Subclasses override up to three hooks; all other steps are shared:
@@ -57,6 +58,10 @@ class NativeToPlaceBase:
       Physical subclass runs ``RewriteQubitsToPinnedQubits`` +
       ``RewritePhysicalMeasure``; logical subclass runs the four initialize
       rewrites.
+
+    ``emit`` is inherited from ``TransformABC``, which checks that no
+    ``native_gate``/``gemini_qubit``/``squin_qubit`` statement survived the
+    ``dialects.discard(...)`` at the end of ``_emit`` (``no_raise=False`` only).
 
     The ``arch_spec`` field controls whether post-unroll address and duplicate
     validation runs (the ``if self.arch_spec is not None`` block).  Both
@@ -78,7 +83,7 @@ class NativeToPlaceBase:
     def _lower_qubits(self, out: Method) -> None:
         raise NotImplementedError
 
-    def emit(self, mt: Method, no_raise: bool = True) -> Method:
+    def _emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = mt.similar(mt.dialects.add(place))
         out = self._pre_native_rewrites(mt, out, no_raise)
 

@@ -64,6 +64,39 @@ def statements_outside_dialect_group(method: ir.Method) -> list[ir.Statement]:
     ]
 
 
+def raise_if_statements_outside_dialect_group(
+    method: ir.Method, stage: str, hint: str | None = None
+) -> None:
+    """Raise if *method* contains statements outside its own dialect group.
+
+    Thin wrapper around :func:`statements_outside_dialect_group` that turns the
+    offending statements into a single, precise error naming the statement kinds
+    involved. Call it at the end of a lowering stage that dropped a source
+    dialect from the group — see
+    :class:`bloqade.lanes.transform.base.TransformABC`, which applies it to
+    every transformation's ``emit``.
+
+    Args:
+        method: The kernel to scan.
+        stage: Name of the stage that produced ``method``, used in the message.
+        hint: Optional extra clause appended to the message, e.g. naming the
+            rewrite rule that was expected to lower the statements.
+
+    Raises:
+        ValueError: If any statement's dialect is not a member of
+            ``method.dialects``.
+    """
+    leftover = statements_outside_dialect_group(method)
+    if not leftover:
+        return
+
+    kinds = ", ".join(sorted({type(stmt).__name__ for stmt in leftover}))
+    message = f"{stage} left statements outside the kernel's dialect group: {kinds}"
+    if hint is not None:
+        message = f"{message}; {hint}"
+    raise ValueError(message)
+
+
 def check_circuit(
     squin_method: ir.Method[[], None],
     other_squin_method: ir.Method[[], None],

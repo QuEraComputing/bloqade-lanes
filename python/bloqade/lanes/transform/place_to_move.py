@@ -10,22 +10,28 @@ from kirin.rewrite.abc import RewriteRule
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite import place2move, resolve_pinned, state
+from bloqade.lanes.transform.base import TransformABC
 
 
 @dataclass
-class PlaceToMove:
+class PlaceToMove(TransformABC):
     """Shared place → move compilation stage for both pipelines.
 
     The only difference between the physical and logical pipelines at this
     stage is whether ``InsertInitialize`` is included in the rewrite rules.
     Pass ``insert_initialize=True`` for the logical pipeline.
+
+    ``emit`` is inherited from ``TransformABC``. This stage only *adds* the
+    ``move`` dialect (``place`` statements are rewritten away but the dialect
+    stays in the group, since downstream passes still reference it), so the
+    dialect-group check is a cheap invariant here rather than a discard guard.
     """
 
     layout_heuristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
     insert_initialize: bool = False
 
-    def emit(self, mt: Method, no_raise: bool = True) -> Method:
+    def _emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = mt.similar(mt.dialects.add(move))
 
         address_analysis = address.AddressAnalysis(out.dialects)
