@@ -48,7 +48,7 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
             ]
         )
     )
-    dialect_group: ir.DialectGroup = logical_kernel
+    dialect_group: ir.DialectGroup = field(default_factory=lambda: logical_kernel)
 
     future_cls: type[GeminiLogicalFuture] = GeminiLogicalFuture
     single_kernel_task_cls: type[SingleKernelTask[GeminiLogicalFuture]] = field(
