@@ -8,7 +8,7 @@ from bloqade.core.device import Result
 
 from bloqade.gemini import logical
 from bloqade.gemini.post_processing import generate_post_processing
-from bloqade.lanes.analysis.atom import PostProcessing
+from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
 from .utils import (
     aligned_detected_and_sorted_shots_for_subtasks,
