@@ -34,6 +34,7 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place
+from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
 
 
@@ -116,6 +117,10 @@ class NativeToPlaceBase:
         passes.TypeInfer(out.dialects, no_raise=no_raise)(out)
 
         if not no_raise:
+            # verify() does not police dialect-group membership, so a gate or
+            # qubit statement the rewrites above missed would slip through the
+            # discard() and only fail lazily downstream. Check it explicitly.
+            raise_if_statements_outside_dialect_group(out, type(self).__name__)
             out.verify()
             out.verify_type()
 

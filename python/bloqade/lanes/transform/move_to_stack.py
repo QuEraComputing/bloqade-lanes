@@ -8,7 +8,7 @@ from bloqade.lanes.bytecode.encode import dump_program
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.move2stack_move import RewriteMoveToStackMove
 from bloqade.lanes.rewrite.stackify import stackify
-from bloqade.lanes.utils import statements_outside_dialect_group
+from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 
 
 @dataclass
@@ -28,10 +28,11 @@ class MoveToStackMove:
 
     ``RewriteMoveToStackMove`` only lowers the subset of ``move`` statements
     the bytecode path supports. When ``no_raise`` is ``False``, ``emit`` runs
-    ``statements_outside_dialect_group`` after dropping ``move`` from the group
-    and raises if any statement is left outside it — Kirin's ``verify()`` does
-    not check dialect-group membership, so an unlowered statement would
-    otherwise slip through and fail lazily inside ``dump_program``.
+    ``raise_if_statements_outside_dialect_group`` right after dropping ``move``
+    from the group — before ``stackify``, so an unlowered statement is reported
+    precisely instead of garbled by a later stage. Kirin's ``verify()`` does not
+    check dialect-group membership, so such a statement would otherwise slip
+    through and fail lazily inside ``dump_program``.
 
     ``emit_bytecode`` runs ``emit`` and encodes the result to a bytecode
     ``Program`` via ``dump_program``.
@@ -66,15 +67,14 @@ class MoveToStackMove:
             # so an unlowered statement would otherwise surface as a confusing
             # EncodingError deep inside dump_program. Fail fast with a precise
             # error naming the offending statement kinds.
-            leftover = statements_outside_dialect_group(out)
-            if leftover:
-                kinds = sorted({type(stmt).__name__ for stmt in leftover})
-                raise ValueError(
-                    "MoveToStackMove left statements outside the stack_move "
-                    f"dialect group: {', '.join(kinds)}; RewriteMoveToStackMove "
-                    "does not lower them, so the kernel cannot be emitted as "
-                    "stack_move IR"
-                )
+            raise_if_statements_outside_dialect_group(
+                out,
+                "MoveToStackMove",
+                hint=(
+                    "RewriteMoveToStackMove does not lower them, so the kernel "
+                    "cannot be emitted as stack_move IR"
+                ),
+            )
 
         # Canonicalize into stack-consistent form, ready for dump_program.
         stackify(out)
