@@ -255,6 +255,7 @@ class _SimulatorTaskBase(Generic[RetType]):
     @cached_property
     def _move_program_metrics(self) -> _MoveProgramMetrics:
         """Compute metrics shared by the public move-program properties."""
+        from bloqade.lanes.analysis import atom
         from bloqade.lanes.arch.metrics import MoveMetricCalculator
         from bloqade.lanes.dialects import move
 
@@ -270,12 +271,22 @@ class _SimulatorTaskBase(Generic[RetType]):
             move.GlobalRz,
             move.StarRz,
         )
+        state_frame, _ = atom.AtomInterpreter(
+            self.physical_move_kernel.dialects,
+            arch_spec=self.physical_arch_spec,
+        ).run(self.physical_move_kernel)
 
         for stmt in self.physical_move_kernel.callable_region.walk():
             if isinstance(stmt, move.Move):
                 move_depth += 1
+                consumes_state = stmt.get_trait(move.ConsumesState)
+                assert consumes_state is not None
+                state = state_frame.get(consumes_state.get_state_argument(stmt))
+                assert isinstance(state, atom.AtomState)
                 total_distance_moved_um += sum(
-                    move_metric_calculator.lane_distance_um(lane) for lane in stmt.lanes
+                    move_metric_calculator.lane_distance_um(lane)
+                    for lane in stmt.lanes
+                    if state.data.get_qubit(lane.src_site()) is not None
                 )
             elif isinstance(stmt, move.CZ):
                 cz_pulse_count += 1
