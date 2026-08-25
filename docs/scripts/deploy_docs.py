@@ -38,64 +38,9 @@ from packaging.version import Version
 
 log = logging.getLogger("deploy_docs")
 
-BOOK_TOML = Path("book.toml")
-VERSION_SWITCHER_JS = "docs/theme/version-switcher.js"
-VERSION_SWITCHER_CSS = "docs/theme/version-switcher.css"
-
-
-def patch_book_toml() -> str:
-    """Add version-switcher JS and CSS to book.toml and return the original content.
-
-    Inserts additional-js and additional-css lines under the [output.html]
-    section where mdBook expects them, rather than appending at the file root.
-    """
-    original = BOOK_TOML.read_text()
-
-    if "additional-js" in original or "additional-css" in original:
-        log.warning("book.toml already contains additional-js/css, skipping patch.")
-        return original
-
-    # Insert under [output.html] by finding that section header
-    # and appending after its last existing key.
-    js_line = f'additional-js = ["{VERSION_SWITCHER_JS}"]'
-    css_line = f'additional-css = ["{VERSION_SWITCHER_CSS}"]'
-    lines = original.splitlines(keepends=True)
-    insert_idx = None
-    in_output_html = False
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == "[output.html]":
-            in_output_html = True
-            insert_idx = i + 1
-            continue
-        if in_output_html:
-            # Stop at the next section header
-            if stripped.startswith("[") and stripped.endswith("]"):
-                break
-            # Track the last non-empty line in this section
-            if stripped:
-                insert_idx = i + 1
-
-    if insert_idx is None:
-        log.error("Could not find [output.html] section in book.toml")
-        sys.exit(1)
-
-    lines.insert(insert_idx, js_line + "\n")
-    lines.insert(insert_idx + 1, css_line + "\n")
-    BOOK_TOML.write_text("".join(lines))
-    log.info("Patched book.toml to include version-switcher JS and CSS")
-    return original
-
-
-def restore_book_toml(original: str) -> None:
-    """Restore book.toml to its original content."""
-    BOOK_TOML.write_text(original)
-    log.info("Restored book.toml to original state.")
-
 
 def build_docs() -> None:
-    """Build the mdBook site and Rust API docs via `just doc-all`."""
+    """Build the MkDocs site and Rust API docs via ``just doc-all``."""
     log.info("Building documentation with `just doc-all`...")
     result = subprocess.run(
         ["just", "doc-all"], capture_output=True, text=True, check=False
@@ -216,7 +161,7 @@ def main() -> None:
         "--book-dir",
         type=Path,
         default=Path("target/book"),
-        help="mdBook build output directory. Default: target/book",
+        help="Documentation build output directory. Default: target/book",
     )
     parser.add_argument(
         "--skip-build",
@@ -238,17 +183,14 @@ def main() -> None:
 
     log.info("Deploying documentation for version: %s", args.version)
 
-    # Build docs with version switcher injected
+    # The MkDocs configuration always includes the version-switcher assets. On
+    # local builds they disable themselves when versions.json is unavailable.
     if not args.skip_build:
-        original_toml = patch_book_toml()
-        try:
-            build_docs()
-        finally:
-            restore_book_toml(original_toml)
+        build_docs()
     else:
         log.info("Skipping build (--skip-build).")
 
-    # Verify book output exists
+    # Verify the documentation output exists.
     if not args.book_dir.exists():
         log.error(
             "Book output directory does not exist: %s. "

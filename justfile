@@ -1,6 +1,3 @@
-# Pinned tool versions (single source of truth for CI and local builds)
-mdbook_version := "0.4.36"
-
 # Default recipe
 default:
     @just --list
@@ -81,27 +78,36 @@ demo-qalloc-at:
 
 demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at
 
-# Install mdBook at the pinned version
-install-mdbook:
-    cargo install mdbook@{{ mdbook_version }}
-
 # Build Rust API documentation
 doc-rust:
     cargo doc --no-deps -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
 
-# Build the mdBook documentation site
-doc-book: install-mdbook
-    mdbook build
+# Build the unified MkDocs site. Curated notebooks are rendered as first-class
+# pages in the same navigation as the prose documentation.
+doc-site:
+    uv run --group doc python docs/scripts/stage_docs.py
+    uv run --group doc mkdocs build --clean --strict
 
-# Build complete documentation site (book + Rust API at /api/)
-doc-all: doc-book doc-rust
+# Compatibility aliases for the previous documentation recipes.
+doc-book: doc-site
+
+doc-notebooks: doc-site
+
+# Execute notebook cells before rendering (requires the project extras).
+doc-notebooks-execute:
+    uv run --group doc --all-extras python docs/scripts/stage_docs.py
+    EXECUTE_NOTEBOOKS=true uv run --group doc --all-extras mkdocs build --clean --strict
+
+# Build complete documentation site (MkDocs + Rust API at /api/)
+doc-all: doc-site doc-rust
     rm -rf target/book/api
     cp -r target/doc target/book/api
-    @echo "Site: target/book/ (open target/book/index.html)"
+    @echo "Site built at target/book/ (run 'just doc' for a local HTTP preview)"
 
-# Build and open documentation site in browser
+# Build, serve, and open the documentation site. MkDocs uses directory URLs,
+# which need an HTTP server to resolve /page/ to /page/index.html.
 doc: doc-all
-    open target/book/index.html
+    uv run python docs/scripts/serve_docs.py
 
 # Deploy versioned documentation to target/site/
 doc-deploy version:

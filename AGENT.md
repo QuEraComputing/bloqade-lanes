@@ -43,12 +43,14 @@ just coverage          # Run Python tests with coverage + generate XML report
 just coverage-run      # Run Python tests only
 just coverage-html     # Generate HTML coverage report
 just demo              # Run all demo scripts
-just doc               # Build and open documentation site in browser
-just doc-all           # Build documentation site (book + Rust API)
-just doc-book          # Build mdBook only
+just doc               # Build and serve docs at http://localhost:8000
+just doc-all           # Build MkDocs site (notebooks + Rust API)
+just doc-site          # Build the unified MkDocs site
+just doc-book          # Compatibility alias for doc-site
+just doc-notebooks     # Build docs with notebook pages
+just doc-notebooks-execute # Execute notebooks, then build docs
 just doc-rust          # Build Rust API docs only
 just doc-deploy <ver>  # Deploy versioned docs (e.g. dev, v0.5.0)
-just install-mdbook    # Install pinned mdBook version
 just test-python       # Run Python tests via pytest
 just benchmark-physical # Run + compare the physical routing benchmark suite
 just benchmark-logical  # Run + compare the logical routing benchmark suite
@@ -231,7 +233,7 @@ bloqade-lanes/
 ├── Cargo.lock
 ├── pyproject.toml           # Maturin build config + Python project metadata
 ├── justfile                 # Task automation (pinned tool versions + all recipes)
-├── book.toml                # mdBook configuration
+├── mkdocs.yml               # Unified prose + notebook documentation
 ├── crates/                  # Rust workspace
 │   ├── bloqade-lanes-bytecode-core/     # Pure Rust: bytecode format, arch spec, validation
 │   ├── bloqade-lanes-bytecode-python/   # PyO3 bindings (cdylib → _native module)
@@ -260,8 +262,10 @@ bloqade-lanes/
 │   └── ...                  # Tests mirror python/bloqade/lanes structure
 ├── tests/                   # Rust integration tests
 ├── docs/
-│   ├── src/                 # mdBook source (SUMMARY.md, arch/, bytecode/)
-│   ├── theme/               # Custom mdBook theme assets (version-switcher.js)
+│   ├── src/                 # Prose documentation (arch/, bytecode/, migration/)
+│   ├── notebooks/           # Notebook manifest and demos landing page
+│   ├── notebook-theme/      # MkDocs Material notebook template override
+│   ├── theme/               # Version-switcher assets
 │   ├── scripts/             # Documentation deploy scripts (deploy_docs.py)
 │   └── superpowers/         # Design artifacts
 │       ├── specs/           # Spec / design documents (e.g. *-design.md)
