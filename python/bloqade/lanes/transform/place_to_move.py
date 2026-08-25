@@ -10,28 +10,29 @@ from kirin.rewrite.abc import RewriteRule
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite import place2move, resolve_pinned, state
-from bloqade.lanes.transform.base import TransformABC
+from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 
 
 @dataclass
-class PlaceToMove(TransformABC):
+class PlaceToMove:
     """Shared place → move compilation stage for both pipelines.
 
     The only difference between the physical and logical pipelines at this
     stage is whether ``InsertInitialize`` is included in the rewrite rules.
     Pass ``insert_initialize=True`` for the logical pipeline.
 
-    ``emit`` is inherited from ``TransformABC``. This stage only *adds* the
-    ``move`` dialect (``place`` statements are rewritten away but the dialect
-    stays in the group, since downstream passes still reference it), so the
-    dialect-group check is a cheap invariant here rather than a discard guard.
+    This stage only *adds* the ``move`` dialect — ``place`` stays in the group
+    on purpose, since ``place.ConvertToPhysicalMeasurements`` carries the
+    measurement dataflow past this point (see ``circuit2place``). The
+    dialect-group check at the end is therefore a cheap invariant here rather
+    than a discard guard.
     """
 
     layout_heuristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
     insert_initialize: bool = False
 
-    def _emit(self, mt: Method, no_raise: bool = True) -> Method:
+    def emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = mt.similar(mt.dialects.add(move))
 
         address_analysis = address.AddressAnalysis(out.dialects)
@@ -104,6 +105,10 @@ class PlaceToMove(TransformABC):
 
         passes.TypeInfer(out.dialects, no_raise=no_raise)(out)
         if not no_raise:
+            # verify() does not police dialect-group membership; this stage adds
+            # move rather than discarding anything, so the check just asserts
+            # the rewrites above did not introduce an out-of-group statement.
+            raise_if_statements_outside_dialect_group(out, "PlaceToMove")
             out.verify()
             out.verify_type()
 

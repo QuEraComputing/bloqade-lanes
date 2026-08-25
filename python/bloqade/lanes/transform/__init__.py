@@ -1,4 +1,3 @@
-from bloqade.lanes.transform.base import TransformABC as TransformABC
 from bloqade.lanes.transform.move_to_squin import (
     InitKernel as InitKernel,
     LogicalInitKernel as LogicalInitKernel,

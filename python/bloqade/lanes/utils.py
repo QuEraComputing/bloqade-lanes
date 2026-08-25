@@ -72,9 +72,8 @@ def raise_if_statements_outside_dialect_group(
     Thin wrapper around :func:`statements_outside_dialect_group` that turns the
     offending statements into a single, precise error naming the statement kinds
     involved. Call it at the end of a lowering stage that dropped a source
-    dialect from the group — see
-    :class:`bloqade.lanes.transform.base.TransformABC`, which applies it to
-    every transformation's ``emit``.
+    dialect from the group — every ``emit`` in ``bloqade.lanes.transform`` does
+    so under ``no_raise=False``.
 
     Args:
         method: The kernel to scan.

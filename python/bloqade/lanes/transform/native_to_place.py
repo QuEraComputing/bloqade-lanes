@@ -34,12 +34,12 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place
-from bloqade.lanes.transform.base import TransformABC
+from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
 
 
 @dataclass
-class NativeToPlaceBase(TransformABC):
+class NativeToPlaceBase:
     """Template-method base for the squin-native → place compilation stage.
 
     Subclasses override up to three hooks; all other steps are shared:
@@ -58,10 +58,6 @@ class NativeToPlaceBase(TransformABC):
       Physical subclass runs ``RewriteQubitsToPinnedQubits`` +
       ``RewritePhysicalMeasure``; logical subclass runs the four initialize
       rewrites.
-
-    ``emit`` is inherited from ``TransformABC``, which checks that no
-    ``native_gate``/``gemini_qubit``/``squin_qubit`` statement survived the
-    ``dialects.discard(...)`` at the end of ``_emit`` (``no_raise=False`` only).
 
     The ``arch_spec`` field controls whether post-unroll address and duplicate
     validation runs (the ``if self.arch_spec is not None`` block).  Both
@@ -83,7 +79,7 @@ class NativeToPlaceBase(TransformABC):
     def _lower_qubits(self, out: Method) -> None:
         raise NotImplementedError
 
-    def _emit(self, mt: Method, no_raise: bool = True) -> Method:
+    def emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = mt.similar(mt.dialects.add(place))
         out = self._pre_native_rewrites(mt, out, no_raise)
 
@@ -121,6 +117,10 @@ class NativeToPlaceBase(TransformABC):
         passes.TypeInfer(out.dialects, no_raise=no_raise)(out)
 
         if not no_raise:
+            # verify() does not police dialect-group membership, so a gate or
+            # qubit statement the rewrites above missed would slip through the
+            # discard() and only fail lazily downstream. Check it explicitly.
+            raise_if_statements_outside_dialect_group(out, type(self).__name__)
             out.verify()
             out.verify_type()
 

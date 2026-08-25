@@ -19,22 +19,18 @@ from bloqade.lanes.rewrite.move2squin import (
     SimpleLogicalNoiseModel as SimpleLogicalNoiseModel,
     SimpleNoiseModel as SimpleNoiseModel,
 )
-from bloqade.lanes.transform.base import TransformABC
+from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 
 InitKernel = LogicalInitKernel | None
 
 
 @dataclass
-class MoveToSquinBase(TransformABC):
+class MoveToSquinBase(abc.ABC):
     """Base class for all MoveToSquin variants.
 
     Subclasses must implement ``_get_initialize_kernel``,
     ``_get_noise_model``, and ``_get_initialize_noise_kernel`` to control
     which kernels are passed to the rewrite rules.
-
-    ``emit`` is inherited from ``TransformABC``, which checks that no ``move``
-    statement survived the ``dialects.discard(move.dialect)`` at the end of
-    ``_emit`` (``no_raise=False`` only).
     """
 
     arch_spec: ArchSpec
@@ -55,8 +51,8 @@ class MoveToSquinBase(TransformABC):
         """Return the noisy initialization kernel for InsertNoise, or None."""
         ...
 
-    def _emit(self, mt: ir.Method, no_raise: bool = True) -> ir.Method:
-        main = mt.similar(mt.dialects.union(squin.kernel.discard(scf.lowering)))
+    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
+        main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
 
         vqpu = atom.AtomInterpreter(main.dialects, arch_spec=self.arch_spec)
         run_method = vqpu.run_no_raise if no_raise else vqpu.run
@@ -109,6 +105,10 @@ class MoveToSquinBase(TransformABC):
 
         TypeInfer(out.dialects, no_raise=no_raise)(out)
         if not no_raise:
+            # verify() does not police dialect-group membership, so a move
+            # statement CleanUpMoveDialect failed to remove would slip through
+            # and only fail lazily downstream. Check it explicitly.
+            raise_if_statements_outside_dialect_group(out, "MoveToSquin")
             out.verify()
             out.verify_type()
 

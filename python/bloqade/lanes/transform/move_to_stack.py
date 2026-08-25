@@ -8,12 +8,11 @@ from bloqade.lanes.bytecode.encode import dump_program
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.move2stack_move import RewriteMoveToStackMove
 from bloqade.lanes.rewrite.stackify import stackify
-from bloqade.lanes.transform.base import TransformABC
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 
 
 @dataclass
-class MoveToStackMove(TransformABC):
+class MoveToStackMove:
     """Lower a ``move``-dialect kernel to a canonicalized ``stack_move`` kernel.
 
     ``emit`` runs the full move → stack_move lowering pipeline, producing an
@@ -28,11 +27,12 @@ class MoveToStackMove(TransformABC):
        each SSA value used at most once, defining statements in stack order).
 
     ``RewriteMoveToStackMove`` only lowers the subset of ``move`` statements
-    the bytecode path supports. When ``no_raise`` is ``False``, ``_emit`` runs
-    the shared dialect-group check (see ``TransformABC``) right after dropping
-    ``move`` from the group — earlier than the inherited ``emit`` would, so an
-    unlowered statement is reported before ``stackify`` gets a chance to garble
-    the error.
+    the bytecode path supports. When ``no_raise`` is ``False``, ``emit`` runs
+    ``raise_if_statements_outside_dialect_group`` right after dropping ``move``
+    from the group — before ``stackify``, so an unlowered statement is reported
+    precisely instead of garbled by a later stage. Kirin's ``verify()`` does not
+    check dialect-group membership, so such a statement would otherwise slip
+    through and fail lazily inside ``dump_program``.
 
     ``emit_bytecode`` runs ``emit`` and encodes the result to a bytecode
     ``Program`` via ``dump_program``.
@@ -40,10 +40,10 @@ class MoveToStackMove(TransformABC):
 
     arch_spec: ArchSpec
 
-    def _emit(self, mt: ir.Method, no_raise: bool = True) -> ir.Method:
+    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
         # Copy into a dialect group that includes stack_move so the rewritten
         # statements are legal members of the method's dialects.
-        out = mt.similar(mt.dialects.union([stack_move.dialect]))
+        out = main.similar(main.dialects.union([stack_move.dialect]))
 
         # move → stack_move (single pass; the rule deletes the move statements).
         rewrite.Walk(RewriteMoveToStackMove(arch_spec=self.arch_spec)).rewrite(out.code)
@@ -69,7 +69,7 @@ class MoveToStackMove(TransformABC):
             # error naming the offending statement kinds.
             raise_if_statements_outside_dialect_group(
                 out,
-                type(self).__name__,
+                "MoveToStackMove",
                 hint=(
                     "RewriteMoveToStackMove does not lower them, so the kernel "
                     "cannot be emitted as stack_move IR"
