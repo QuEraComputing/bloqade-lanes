@@ -47,6 +47,7 @@ def star_on_plus_kernel():
     reg = squin.qalloc(1)
     squin.h(reg[0])
     gemini_logical.star_rz(THETA, reg[0])
+    return gemini_logical.terminal_measure(reg)
 
 
 # %%
