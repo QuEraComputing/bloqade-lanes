@@ -1,11 +1,15 @@
 """Tests for bloqade.lanes.utils helpers."""
 
+import pytest
 from kirin import ir, types
 from kirin.dialects import func
 
 from bloqade.lanes.bytecode.encoding import ZoneAddress
 from bloqade.lanes.dialects import move, stack_move
-from bloqade.lanes.utils import statements_outside_dialect_group
+from bloqade.lanes.utils import (
+    raise_if_statements_outside_dialect_group,
+    statements_outside_dialect_group,
+)
 
 
 def _method(*stmts, dialects: list) -> ir.Method:
@@ -32,6 +36,34 @@ def test_no_offenders_when_all_in_group():
     method = _method(cf, ret, dialects=[stack_move.dialect, func.dialect])
 
     assert statements_outside_dialect_group(method) == []
+
+
+def test_raise_if_outside_group_is_silent_when_clean():
+    cf = stack_move.ConstFloat(value=0.5)
+    ret = func.Return(cf.result)
+    method = _method(cf, ret, dialects=[stack_move.dialect, func.dialect])
+
+    raise_if_statements_outside_dialect_group(method, "SomeStage")
+
+
+def test_raise_if_outside_group_names_stage_and_kinds():
+    cz = move.ConstZone(value=ZoneAddress(0))
+    ret = func.Return(cz.result)
+    method = _method(cz, ret, dialects=[stack_move.dialect, func.dialect])
+
+    with pytest.raises(ValueError, match="SomeStage.*ConstZone"):
+        raise_if_statements_outside_dialect_group(method, "SomeStage")
+
+
+def test_raise_if_outside_group_appends_hint():
+    cz = move.ConstZone(value=ZoneAddress(0))
+    ret = func.Return(cz.result)
+    method = _method(cz, ret, dialects=[stack_move.dialect, func.dialect])
+
+    with pytest.raises(ValueError, match="ConstZone; go fix the rewrite rule"):
+        raise_if_statements_outside_dialect_group(
+            method, "SomeStage", hint="go fix the rewrite rule"
+        )
 
 
 def test_detects_statement_outside_group():

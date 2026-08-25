@@ -258,6 +258,21 @@ class RewritePlaceOperations(abc.RewriteRule):
             gate_stmt, qubits=inputs, body=body, block=block
         )
         new_node.insert_before(node)
+        # This conversion outlives the place dialect on purpose: it carries the
+        # measurement dataflow down the logical -> physical lowering, narrowing
+        # once per level.
+        #
+        #   squin: Qubit -> List[MeasurementResult]   (Qubit is a *logical* qubit)
+        #   move:  Measurement -> List[Measurement]   (qubits gone; logical blocks)
+        #   physical move: erased entirely            (measurements now physical)
+        #
+        # So a surviving ConvertToPhysicalMeasurements in move-level or even
+        # squin-level output is correct, not a missed lowering — MoveToSquin
+        # output is still a logical-qubit program. Only the last step can drop
+        # it, which is why the sole eraser is RewriteLogicalToPhysicalConversion
+        # (rewrite/transversal.py), run by TransversalRewritePass *after*
+        # PlaceToMove and only when transversal_rewrite=True. Corollary: never
+        # add discard(place.dialect) to PlaceToMove or MoveToSquinBase.
         node.replace_by(
             place.ConvertToPhysicalMeasurements(
                 tuple(new_node.results),

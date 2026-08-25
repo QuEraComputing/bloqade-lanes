@@ -19,6 +19,7 @@ from bloqade.lanes.rewrite.move2squin import (
     SimpleLogicalNoiseModel as SimpleLogicalNoiseModel,
     SimpleNoiseModel as SimpleNoiseModel,
 )
+from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 
 InitKernel = LogicalInitKernel | None
 
@@ -104,6 +105,10 @@ class MoveToSquinBase(abc.ABC):
 
         TypeInfer(out.dialects, no_raise=no_raise)(out)
         if not no_raise:
+            # verify() does not police dialect-group membership, so a move
+            # statement CleanUpMoveDialect failed to remove would slip through
+            # and only fail lazily downstream. Check it explicitly.
+            raise_if_statements_outside_dialect_group(out, "MoveToSquin")
             out.verify()
             out.verify_type()
 
