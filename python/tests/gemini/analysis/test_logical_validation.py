@@ -125,6 +125,28 @@ def test_clifford_gates():
         invalid.print(analysis=frame.entries)
 
 
+def test_swap_is_clifford():
+    @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
+    def valid():
+        q = squin.qalloc(2)
+        squin.h(q[0])
+        squin.swap(q[0], q[1])
+        gemini.logical.terminal_measure(q)
+
+    validator = ValidationSuite([GeminiLogicalValidation])
+    validator.validate(valid).raise_if_invalid()
+
+    # NOTE: swap marks both operands as acted on, so a following non-clifford
+    # gate on either of them is no longer state preparation
+    with pytest.raises(ValidationErrorGroup):
+
+        @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
+        def invalid():
+            q = squin.qalloc(2)
+            squin.swap(q[0], q[1])
+            squin.u3(0.1, 0.2, 0.3, q[1])
+
+
 def test_star_rz_marks_qubit_as_acted_on_without_rejecting_mid_circuit_use():
     @gemini.logical.kernel(aggressive_unroll=True)
     def valid():
@@ -231,6 +253,26 @@ def test_multiple_errors():
         assert len(e.errors) == 5
 
     assert did_error
+
+
+def test_unsupported_gate_is_a_validation_error():
+    # NOTE: an unhandled gate must be reported alongside the other errors rather
+    # than aborting the analysis, so the second error below has to show up too
+    try:
+
+        @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
+        def main():
+            q = squin.qalloc(3)
+            squin.ccz(q[0], q[1], q[2])
+            squin.h(q[0])
+            squin.u3(0.1, 0.2, 0.3, q[0])
+
+    except ValidationErrorGroup as e:
+        messages = [str(err) for err in e.errors]
+        assert any("Gate ccz is not supported" in m for m in messages), messages
+        assert any("Non-clifford gate u3" in m for m in messages), messages
+    else:
+        pytest.fail("expected a ValidationErrorGroup")
 
 
 def test_non_clifford_parallel_gates():

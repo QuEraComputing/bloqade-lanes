@@ -113,14 +113,18 @@ class __GateGeminiLogicalValidation(_interp.MethodTable):
     @_interp.impl(gate.stmts.CX)
     @_interp.impl(gate.stmts.CY)
     @_interp.impl(gate.stmts.CZ)
-    def controlled_gate(
+    @_interp.impl(gate.stmts.Swap)
+    def two_qubit_gate(
         self,
         interp: _GeminiLogicalValidationAnalysis,
         frame: ForwardFrame,
-        stmt: gate.stmts.ControlledGate,
+        stmt: gate.stmts.ControlledGate | gate.stmts.TwoQubitGate,
     ):
-        interp.check_first_gate(stmt.controls)
-        interp.check_first_gate(stmt.targets)
+        # NOTE: both register operands are acted on; iterate over `args` so this
+        # covers the (controls, targets) and (qubits1, qubits2) spellings alike
+        for qubits in stmt.args:
+            interp.check_first_gate(qubits)
+
         return ()
 
 
