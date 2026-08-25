@@ -21,12 +21,42 @@ class GeminiLogicalResult(Result, Generic[RetType]):
     structure. Post-processing is applied to each selected subtask's flat shot
     array.
 
+    Raw SLM result properties reconstruct their measurement mapping by compiling
+    the stored logical kernel with the locally installed Bloqade Lanes compiler
+    and Gemini physical architecture. The reconstructed mapping is valid only
+    when those match the compiler and architecture used for remote execution.
+
     Attributes:
         storage (StorageBackend): Storage backend that holds shots and task
             metadata.
         shot_filter (ShotFilter): Filter used when reading shots and deriving
             subtask scope. Defaults to the DETECTED frame type.
     """
+
+    def _program_contents_by_index(self) -> dict[int, str]:
+        """Return one kernel payload per selected program index.
+
+        Program indices are local to a task. Multiple selected task IDs may
+        reuse an index only when the serialized kernel contents are identical.
+        """
+        programs_by_index: dict[int, tuple[str, str]] = {}
+        selected_task_ids = tuple(
+            sorted({subtask["task_id"] for subtask in self.full_subtasks()})
+        )
+        for program in self.storage.get_programs(task_ids=selected_task_ids):
+            idx = program["program_index"]
+            task_id = program["task_id"]
+            content = program["content"]
+            previous = programs_by_index.get(idx)
+            if previous is not None and previous[1] != content:
+                raise ValueError(
+                    "Selected task IDs contain different kernels for "
+                    f"program_index={idx}: {previous[0]!r} and {task_id!r}. "
+                    "Narrow the result view to compatible task IDs."
+                )
+            programs_by_index[idx] = (task_id, content)
+
+        return {idx: content for idx, (_, content) in programs_by_index.items()}
 
     def _slm_postprocessing_functions(
         self,
@@ -52,15 +82,8 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         if cached is not None:
             return cached
 
-        task_ids = self.shot_filter.task_ids
-        programs = self.storage.get_programs(task_ids=task_ids)
         postprocessing_functions = {}
-        for program in programs:
-            idx = program["program_index"]
-            if idx in postprocessing_functions:
-                # NOTE: merging across task_ids means we assume all of them identical
-                continue
-            kernel_json = program["content"]
+        for idx, kernel_json in self._program_contents_by_index().items():
             kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
             slm_to_raw, postprocessing_function = get_slm_mapping_postprocessing(
                 kernel_mt,
@@ -95,14 +118,9 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         measurement order. Raw 160-site SLM frames use
         ``_slm_postprocessing_functions`` instead.
         """
-        task_ids = self.shot_filter.task_ids
-        programs = self.storage.get_programs(task_ids=task_ids)
         postprocessing_functions = {}
-        for program in programs:
-            idx = program["program_index"]
-            if idx in postprocessing_functions:
-                continue
-            kernel_mt = logical.kernel.decode_json(program["content"])  # type: ignore[attr-defined]
+        for idx, kernel_json in self._program_contents_by_index().items():
+            kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
             postprocessing_functions[idx] = generate_post_processing(kernel_mt)
 
         return postprocessing_functions
@@ -161,6 +179,11 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @cached_property
     def return_values(self) -> Sequence[Sequence[RetType]]:
+        """Return canonical logical values reconstructed from raw SLM shots.
+
+        Results are grouped as ``subtask -> shot -> kernel return value``. Use
+        ``logical_results`` only for the legacy compact-shot API.
+        """
         return [
             list(
                 self._slm_postprocessing_functions()[subtask["program_index"]][

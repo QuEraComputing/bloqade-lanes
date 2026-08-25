@@ -109,7 +109,16 @@ def aligned_detected_and_sorted_shots_for_subtasks(
 def get_slm_mapping_postprocessing(
     sim_kernel: ir.Method[..., RetType], *, invert_bits=False
 ) -> tuple[Callable[[np.ndarray], Any], atom.PostProcessing[RetType]]:
-    """Create a logical_results-compatible postprocessor for Zone-0 shots."""
+    """Create a result postprocessor for full Zone-0 SLM shots.
+
+    Warning:
+        This reconstructs the physical measurement mapping by compiling the
+        stored logical kernel with the locally installed Bloqade Lanes compiler
+        and Gemini architecture. The result is valid only when they match the
+        compiler and architecture used to execute the remote task. The exact
+        remote physical compilation artifact is not currently stored with the
+        result.
+    """
 
     arch_spec = physical.get_arch_spec()
     physical_move_kernel = LogicalPipeline(transversal_rewrite=True).emit(sim_kernel)
@@ -194,6 +203,8 @@ def get_slm_mapping_postprocessing(
     def postprocess(zone0_shots):
         zone0_shots = np.asarray(zone0_shots, dtype=bool)
 
+        if zone0_shots.size == 0:
+            return []
         if zone0_shots.ndim != 2:
             raise ValueError(f"Expected a 2-D array, got {zone0_shots.shape}.")
         if zone0_shots.shape[1] != expected_zone0_sites:

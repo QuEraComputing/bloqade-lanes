@@ -543,6 +543,39 @@ def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
     assert False in conventions
 
 
+def test_slm_result_views_return_empty_lists_after_shot_filter(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=1)],
+        ),
+    )
+    storage.add_shots(
+        [
+            make_shot(
+                shot_index=0,
+                frame_type="DETECTED",
+                bitstring=(False,) * 160,
+            ),
+            make_shot(
+                shot_index=0,
+                frame_type="SORTED",
+                bitstring=(True,) * 160,
+            ),
+        ]
+    )
+
+    result = GeminiLogicalResult(storage=storage).where_shots(lambda shot: False)
+
+    assert result.measurements == [[]]
+    assert result.return_values == [[]]
+    assert result.detectors == [[]]
+    assert result.observables == [[]]
+    assert result.filling_at_start == [[]]
+
+
 def test_return_values_rejects_compact_frames(storage):
     add_task_definition(
         storage,
@@ -657,6 +690,52 @@ def test_postprocessing_functions_filters_by_shot_filter_task_ids(storage, mocke
     # Only task-1's program should be decoded.
     assert decode_spy.call_count == 1
     assert decode_spy.call_args.args[0] == KERNEL_A_JSON
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["postprocessing_functions", "_slm_postprocessing_functions"],
+)
+def test_postprocessing_rejects_different_kernels_at_same_program_index(
+    storage, method_name
+):
+    add_task_definition(
+        storage,
+        "task-a",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+    add_task_definition(
+        storage,
+        "task-b",
+        make_task_definition(programs=[Program(content=KERNEL_B_JSON)]),
+    )
+
+    result = GeminiLogicalResult(storage=storage)
+
+    with pytest.raises(
+        ValueError,
+        match="different kernels for program_index=0: 'task-a' and 'task-b'",
+    ):
+        getattr(result, method_name)()
+
+
+def test_postprocessing_program_validation_respects_narrowed_task_scope(storage):
+    add_task_definition(
+        storage,
+        "task-a",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+    add_task_definition(
+        storage,
+        "task-b",
+        make_task_definition(programs=[Program(content=KERNEL_B_JSON)]),
+    )
+
+    result = GeminiLogicalResult(storage=storage).where_subtasks(
+        lambda subtask: subtask["task_id"] == "task-a"
+    )
+
+    assert set(result.postprocessing_functions()) == {0}
 
 
 def test_postprocessing_functions_runs_each_call(storage, mocker):
