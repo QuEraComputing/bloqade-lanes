@@ -536,7 +536,6 @@ def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
 
     result = GeminiLogicalResult(storage=storage)
     assert result.measurements == [[[True, False]]]
-    assert result.logical_results() == [[[True, False]]]
     assert result.return_values == [[[True, False]]]
     assert result.detectors == [[[True]]]
     assert result.observables == [[[False]]]
@@ -544,7 +543,7 @@ def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
     assert False in conventions
 
 
-def test_logical_results_rejects_mixed_slm_and_compact_frames(storage):
+def test_return_values_rejects_compact_frames(storage):
     add_task_definition(
         storage,
         "task-1",
@@ -571,8 +570,38 @@ def test_logical_results_rejects_mixed_slm_and_compact_frames(storage):
         ]
     )
 
-    with pytest.raises(ValueError, match="Cannot combine raw 160-site SLM frames"):
-        GeminiLogicalResult(storage=storage).logical_results()
+    with pytest.raises(ValueError, match="Expected 160 Zone-0 columns, got 2"):
+        _ = GeminiLogicalResult(storage=storage).return_values
+
+
+def test_logical_results_preserves_legacy_path_for_slm_width_shots(
+    storage, monkeypatch
+):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=1)],
+        ),
+    )
+    storage.add_shots(
+        [make_shot(shot_index=0, subtask_index=0, bitstring=(False,) * 160)]
+    )
+
+    def unexpected_slm_postprocessing(*args, **kwargs):
+        raise AssertionError("logical_results must not use SLM postprocessing")
+
+    monkeypatch.setattr(
+        GeminiLogicalResult,
+        "_slm_postprocessing_functions",
+        unexpected_slm_postprocessing,
+    )
+
+    legacy_results = GeminiLogicalResult(storage=storage).logical_results()
+
+    assert len(legacy_results) == 1
+    assert len(list(legacy_results[0])) == 1
 
 
 def test_shot_results_empty_when_no_subtasks(storage):

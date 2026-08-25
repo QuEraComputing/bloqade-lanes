@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Generic, TypeVar, overload
+from typing import Generic, TypeVar
 
 import numpy as np
 from bloqade.core.device import Result
@@ -126,89 +126,38 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         return ret_vals
 
-    @overload
-    def logical_results(
-        self,
-        verify: bool = True,
-        postprocessing_functions: None = None,
-    ) -> list[list[RetType]]: ...
-
-    @overload
-    def logical_results(
-        self,
-        verify: bool,
-        postprocessing_functions: dict[int, Callable[[np.ndarray], RetType] | None],
-    ) -> list[RetType | np.ndarray]: ...
-
     def logical_results(
         self,
         verify: bool = True,
         postprocessing_functions: (
             dict[int, Callable[[np.ndarray], RetType] | None] | None
         ) = None,
-    ) -> list[list[RetType]] | list[RetType | np.ndarray]:
-        """Return logical kernel results grouped by merged subtask.
+    ) -> list[RetType | np.ndarray]:
+        """Return legacy post-processed results grouped by merged subtask.
 
-        When no postprocessor override is supplied, raw 160-site DETECTED
-        frames are mapped into compact physical-measurement order and evaluated
-        with the Atom postprocessor derived from each program. An explicitly
-        supplied postprocessor retains the legacy behavior: it receives the
-        raw DETECTED-frame array for its subtask.
+        This method preserves the original compact-shot result API. Each
+        postprocessor receives the stored shot array directly; raw 160-site
+        SLM results should instead be accessed through ``return_values`` and
+        the other canonical result properties.
 
         Args:
             verify: Validate that selected task IDs can be merged.
-            postprocessing_functions: Optional legacy mapping from program
-                index to a function accepting that subtask's raw shot array.
+            postprocessing_functions: Optional mapping from program index to a
+                function accepting that subtask's stored shot array. When
+                omitted, legacy postprocessors are generated from the stored
+                logical kernels.
         """
-        from .utils import shot_results_for_subtasks
-
+        ret_vals: list[RetType | np.ndarray] = []
         subtasks = self.subtasks(verify=verify)
-        shot_results = shot_results_for_subtasks(
-            self.storage,
-            self.shot_filter,
-            subtasks,
-            frame_type="DETECTED",
-        )
+        if postprocessing_functions is None:
+            postprocessing_functions = self.postprocessing_functions()
+        shot_results = self._shot_results_for_subtasks(subtasks)
 
-        if postprocessing_functions is not None:
-            legacy_results: list[RetType | np.ndarray] = []
-            for shot_result, subtask in zip(shot_results, subtasks):
-                func = postprocessing_functions[subtask["program_index"]]
-                legacy_results.append(
-                    shot_result if func is None else func(shot_result)
-                )
-            return legacy_results
-
-        is_raw_slm_frame = [
-            shot_result.ndim == 2 and shot_result.shape[1] == 160
-            for shot_result in shot_results
-        ]
-        if any(is_raw_slm_frame) and not all(is_raw_slm_frame):
-            raise ValueError(
-                "Cannot combine raw 160-site SLM frames with compact physical "
-                "measurement frames in one result view."
-            )
-
-        if all(is_raw_slm_frame):
-            generated_postprocessors = self._slm_postprocessing_functions()
-            return_values: list[list[RetType]] = []
-            for shot_result, subtask in zip(shot_results, subtasks):
-                slm_to_measurements, atom_postprocessor = generated_postprocessors[
-                    subtask["program_index"]
-                ]
-                return_values.append(
-                    list(
-                        atom_postprocessor.emit_return(slm_to_measurements(shot_result))
-                    )
-                )
-            return return_values
-
-        legacy_postprocessors = self.postprocessing_functions()
-        legacy_results: list[RetType | np.ndarray] = []
         for shot_result, subtask in zip(shot_results, subtasks):
-            func = legacy_postprocessors[subtask["program_index"]]
-            legacy_results.append(shot_result if func is None else func(shot_result))
-        return legacy_results
+            func = postprocessing_functions[subtask["program_index"]]
+            ret_vals.append(shot_result if func is None else func(shot_result))
+
+        return ret_vals
 
     @cached_property
     def return_values(self) -> Sequence[Sequence[RetType]]:
