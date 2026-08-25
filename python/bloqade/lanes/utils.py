@@ -71,9 +71,19 @@ def raise_if_statements_outside_dialect_group(
 
     Thin wrapper around :func:`statements_outside_dialect_group` that turns the
     offending statements into a single, precise error naming the statement kinds
-    involved. Call it at the end of a lowering stage that dropped a source
-    dialect from the group — every ``emit`` in ``bloqade.lanes.transform`` does
-    so under ``no_raise=False``.
+    involved.
+
+    Call it at the end of a lowering stage under ``no_raise=False``, alongside
+    ``verify()``. It serves two purposes there:
+
+    * a real guard for a stage that drops a source dialect via
+      ``dialects.discard(...)`` and so must leave none of its statements behind
+      — ``NativeToPlace*``, ``MoveToSquin*``, ``MoveToStackMove``;
+    * a cheap invariant for a stage that discards nothing, such as
+      ``PlaceToMove``, which only *adds* the ``move`` dialect.
+
+    The composite ``PhysicalPipeline``/``LogicalPipeline`` entry points do not
+    call it themselves — they inherit the checks from the stages they compose.
 
     Args:
         method: The kernel to scan.
