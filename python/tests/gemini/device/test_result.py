@@ -18,10 +18,11 @@ from qlam_core.plugins.tasks.api.tasks_models import (
 
 from bloqade import squin
 from bloqade.gemini import GeminiLogicalResult, logical
-from bloqade.gemini.device.logical import result as result_module
+from bloqade.gemini.device.logical import result as result_module, utils as utils_module
 from bloqade.gemini.device.logical.utils import (
     aligned_detected_and_sorted_shots_for_subtasks,
 )
+from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
 CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
@@ -433,6 +434,145 @@ def test_aligned_detected_and_sorted_shots_reject_missing_frame(storage):
             ShotFilter(task_ids=("task-1",)),
             GeminiLogicalResult(storage=storage).subtasks(),
         )
+
+
+def test_get_slm_mapping_postprocessing_maps_and_validates_frames():
+    map_shots, _ = utils_module.get_slm_mapping_postprocessing(_kernel_a)
+    map_inverted_shots, _ = utils_module.get_slm_mapping_postprocessing(
+        _kernel_a,
+        invert_bits=True,
+    )
+
+    empty_slm_frame = np.zeros((1, 160), dtype=bool)
+    assert map_shots(empty_slm_frame) == [[False] * 14]
+    assert map_inverted_shots(empty_slm_frame) == [[True] * 14]
+
+    with pytest.raises(ValueError, match="Expected a 2-D array"):
+        map_shots(np.zeros(160, dtype=bool))
+
+    with pytest.raises(ValueError, match="Expected 160 Zone-0 columns"):
+        map_shots(np.zeros((1, 159), dtype=bool))
+
+
+def test_slm_postprocessing_functions_cache_by_bit_convention(
+    storage, monkeypatch, mocker
+):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+    add_task_definition(
+        storage,
+        "task-2",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (list(row) for row in rows),
+        emit_detectors=lambda rows: (list(row) for row in rows),
+        emit_observables=lambda rows: (list(row) for row in rows),
+    )
+    mapping_calls = []
+
+    def get_mapping(_kernel, *, invert_bits=False):
+        mapping_calls.append(invert_bits)
+        return lambda shots: shots.tolist(), post_processing
+
+    monkeypatch.setattr(utils_module, "get_slm_mapping_postprocessing", get_mapping)
+    decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
+
+    result = GeminiLogicalResult(storage=storage)
+    default_mapping = result._slm_postprocessing_functions()
+    assert result._slm_postprocessing_functions() is default_mapping
+    noninverted_mapping = result._slm_postprocessing_functions(invert_bits=False)
+
+    assert default_mapping is not noninverted_mapping
+    assert mapping_calls == [True, False]
+    # The duplicate program index across task IDs is decoded once per bit
+    # convention, then served from the corresponding cache.
+    assert decode_spy.call_count == 2
+
+
+def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=1)],
+        ),
+    )
+    detected = (True, False) + (False,) * 158
+    sorted_ = (False, True) + (False,) * 158
+    storage.add_shots(
+        [
+            make_shot(shot_index=0, frame_type="DETECTED", bitstring=detected),
+            make_shot(shot_index=0, frame_type="SORTED", bitstring=sorted_),
+        ]
+    )
+
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (list(row) for row in rows),
+        emit_detectors=lambda rows: ([row[0]] for row in rows),
+        emit_observables=lambda rows: ([row[1]] for row in rows),
+    )
+    conventions = []
+
+    def postprocessing_functions(self, *, invert_bits=True):
+        conventions.append(invert_bits)
+        return {
+            0: (
+                lambda shots: shots[:, :2].tolist(),
+                post_processing,
+            )
+        }
+
+    monkeypatch.setattr(
+        GeminiLogicalResult,
+        "_slm_postprocessing_functions",
+        postprocessing_functions,
+    )
+
+    result = GeminiLogicalResult(storage=storage)
+    assert result.measurements == [[[True, False]]]
+    assert result.logical_results() == [[[True, False]]]
+    assert result.return_values == [[[True, False]]]
+    assert result.detectors == [[[True]]]
+    assert result.observables == [[[False]]]
+    assert result.filling_at_start == [[[False, True]]]
+    assert False in conventions
+
+
+def test_logical_results_rejects_mixed_slm_and_compact_frames(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[
+                Subtask(program_index=0, num_shots=1),
+                Subtask(program_index=0, num_shots=1),
+            ],
+        ),
+    )
+    storage.add_shots(
+        [
+            make_shot(
+                shot_index=0,
+                subtask_index=0,
+                bitstring=(False,) * 160,
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_index=1,
+                bitstring=(False, True),
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Cannot combine raw 160-site SLM frames"):
+        GeminiLogicalResult(storage=storage).logical_results()
 
 
 def test_shot_results_empty_when_no_subtasks(storage):
