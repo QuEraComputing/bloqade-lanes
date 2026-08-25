@@ -37,6 +37,8 @@ from bloqade.gemini.device.physical_simulator import (
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.arch.metrics import MoveMetricCalculator
+from bloqade.lanes.dialects import move
 from bloqade.lanes.transform import PhysicalPipeline
 
 _HAS_CLIFFT = importlib.util.find_spec("clifft") is not None
@@ -48,6 +50,14 @@ msd-reprod extra); backends using it must be skipped when it is absent."""
 def small_physical_kernel():
     reg = squin.qalloc(1)
     squin.x(reg[0])
+    return squin.broadcast.measure(reg)
+
+
+@squin.kernel
+def physical_kernel_with_moves_and_gates():
+    reg = squin.qalloc(2)
+    squin.h(reg[0])
+    squin.cz(reg[0], reg[1])
     return squin.broadcast.measure(reg)
 
 
@@ -130,6 +140,39 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
     assert issubclass(PhysicalSimulatorTask, _SimulatorTaskBase)
 
 
+def test_compiled_task_exposes_move_program_metrics():
+    task = PhysicalSimulator().task(physical_kernel_with_moves_and_gates)
+    statements = tuple(task.physical_move_kernel.callable_region.walk())
+    move_statements = tuple(
+        statement for statement in statements if isinstance(statement, move.Move)
+    )
+    single_qubit_gate_types = (
+        move.LocalR,
+        move.GlobalR,
+        move.LocalRz,
+        move.GlobalRz,
+        move.StarRz,
+    )
+    move_metric_calculator = MoveMetricCalculator(task.physical_arch_spec)
+
+    assert task.move_depth == len(move_statements)
+    assert task.cz_pulse_count == sum(
+        isinstance(statement, move.CZ) for statement in statements
+    )
+    assert task.single_qubit_gate_count == sum(
+        isinstance(statement, single_qubit_gate_types) for statement in statements
+    )
+    assert task.total_gate_count == (task.cz_pulse_count + task.single_qubit_gate_count)
+    assert task.total_distance_moved_um == pytest.approx(
+        sum(
+            move_metric_calculator.lane_distance_um(lane)
+            for statement in move_statements
+            for lane in statement.lanes
+        )
+    )
+    assert task._move_program_metrics is task._move_program_metrics
+
+
 @pytest.mark.parametrize("simulator_type", [GeminiLogicalSimulator, PhysicalSimulator])
 @pytest.mark.parametrize(
     "method",
@@ -141,6 +184,11 @@ def test_logical_and_physical_tasks_share_non_dataclass_runtime():
         "physical_move_kernel",
         "tsim_circuit",
         "fidelity_bounds",
+        "move_depth",
+        "cz_pulse_count",
+        "single_qubit_gate_count",
+        "total_gate_count",
+        "total_distance_moved_um",
     ],
 )
 def test_simulators_expose_task_only_execution_api(simulator_type, method):

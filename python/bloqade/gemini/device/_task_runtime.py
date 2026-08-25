@@ -202,6 +202,18 @@ class Result(Generic[RetType]):
         return list(self._post_processing.emit_observables(self._raw_measurements))
 
 
+@dataclass(frozen=True)
+class _MoveProgramMetrics:
+    move_depth: int
+    cz_pulse_count: int
+    single_qubit_gate_count: int
+    total_distance_moved_um: float
+
+    @property
+    def total_gate_count(self) -> int:
+        return self.cz_pulse_count + self.single_qubit_gate_count
+
+
 class _SimulatorTaskBase(Generic[RetType]):
     """Shared execution runtime for compiled logical and physical tasks."""
 
@@ -239,6 +251,72 @@ class _SimulatorTaskBase(Generic[RetType]):
     def detector_error_model(self) -> DetectorErrorModel:
         """Guaranteed detector error model for the noisy physical kernel."""
         return self._backend._detector_error_model(self._physical_kernel)
+
+    @cached_property
+    def _move_program_metrics(self) -> _MoveProgramMetrics:
+        """Compute metrics shared by the public move-program properties."""
+        from bloqade.lanes.arch.metrics import MoveMetricCalculator
+        from bloqade.lanes.dialects import move
+
+        move_depth = 0
+        cz_pulse_count = 0
+        single_qubit_gate_count = 0
+        total_distance_moved_um = 0.0
+        move_metric_calculator = MoveMetricCalculator(self.physical_arch_spec)
+        single_qubit_gate_types = (
+            move.LocalR,
+            move.GlobalR,
+            move.LocalRz,
+            move.GlobalRz,
+            move.StarRz,
+        )
+
+        for stmt in self.physical_move_kernel.callable_region.walk():
+            if isinstance(stmt, move.Move):
+                move_depth += 1
+                total_distance_moved_um += sum(
+                    move_metric_calculator.lane_distance_um(lane) for lane in stmt.lanes
+                )
+            elif isinstance(stmt, move.CZ):
+                cz_pulse_count += 1
+            elif isinstance(stmt, single_qubit_gate_types):
+                single_qubit_gate_count += 1
+
+        return _MoveProgramMetrics(
+            move_depth=move_depth,
+            cz_pulse_count=cz_pulse_count,
+            single_qubit_gate_count=single_qubit_gate_count,
+            total_distance_moved_um=total_distance_moved_um,
+        )
+
+    @property
+    def move_depth(self) -> int:
+        """Number of parallel move instructions in the compiled move program."""
+        return self._move_program_metrics.move_depth
+
+    @property
+    def cz_pulse_count(self) -> int:
+        """Number of CZ pulse instructions in the compiled move program."""
+        return self._move_program_metrics.cz_pulse_count
+
+    @property
+    def single_qubit_gate_count(self) -> int:
+        """Number of single-qubit gate instructions in the move program.
+
+        A local or global pulse counts once, independent of how many qubits it
+        addresses.
+        """
+        return self._move_program_metrics.single_qubit_gate_count
+
+    @property
+    def total_gate_count(self) -> int:
+        """Total number of single-qubit gate and CZ pulse instructions."""
+        return self._move_program_metrics.total_gate_count
+
+    @property
+    def total_distance_moved_um(self) -> float:
+        """Distance travelled by all moved atoms, in micrometres."""
+        return self._move_program_metrics.total_distance_moved_um
 
     @property
     def _loss_replace_vals(self) -> tuple[Any, Any]:
