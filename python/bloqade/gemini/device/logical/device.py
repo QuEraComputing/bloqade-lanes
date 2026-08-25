@@ -33,7 +33,7 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
     """
 
     program_language: str = "squin"
-    language_version: str = "0.1.0"
+    language_version: str = _bloqade_version
     validation_suite: ValidationSuite | None = field(
         default_factory=lambda: ValidationSuite(
             [
