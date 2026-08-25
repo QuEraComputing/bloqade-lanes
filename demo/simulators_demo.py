@@ -7,7 +7,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: bloqade-lanes (3.12.13.final.0)
+#     display_name: bloqade-lanes (3.12.13)
 #     language: python
 #     name: python3
 # ---
@@ -30,6 +30,7 @@
 # %%
 # For postprocessing
 import numpy as np
+from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
 
 # Defining dialects to program logical or physical kernels in
 from bloqade import squin
@@ -40,7 +41,9 @@ from bloqade.gemini.device import (
     CliffTSimulatorBackend,
     GeminiLogicalSimulator,
     GeminiPhysicalSimulator,
+    PPVMSimulatorBackend,
 )
+from bloqade.lanes.noise_model import generate_simple_noise_model
 
 # %% [markdown]
 # ## Basic Path for Constructing and Using a Logical Simulator
@@ -129,5 +132,24 @@ physical_result_clifft = physical_task_clifft.run(shots=1000)
 
 # %%
 print(np.asarray(physical_result_clifft.measurements).shape)
+
+# %% [markdown]
+# You can also use our PPVM Simulation backend with a noise model that has atom loss, as shown below.
+
+# %%
+noise_model_atom_loss = generate_simple_noise_model(
+    GeminiOneZoneNoiseModel(cz_gate_loss_prob=0.001)
+)
+
+# %%
+simulator_with_loss = GeminiPhysicalSimulator(
+    noise_model=noise_model_atom_loss, backend=PPVMSimulatorBackend()
+)
+
+# %%
+task_with_loss = simulator_with_loss.task(test_physical_program)
+
+# %%
+result_with_loss = task_with_loss.run(shots=1000)
 
 # %%
