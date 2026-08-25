@@ -186,7 +186,7 @@ def get_slm_mapping_postprocessing(
         [raw_slm_index_by_location[record.location_address] for record in records],
         dtype=int,
     )
-    print(f"row-major SLM mapping: {mapping}")
+    # print(f"row-major SLM mapping: {mapping}")
     expected_zone0_sites = len(zone0_locations)
 
     post_processing = interpreter.get_post_processing(physical_move_kernel)

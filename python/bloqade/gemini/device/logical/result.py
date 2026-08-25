@@ -109,6 +109,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @cached_property
     def measurements(self) -> Sequence[Sequence[Sequence[bool]]]:
+        """True indicates a projective measurement of the |1> state or atom loss; False indicates a projective measurement of the |0> state."""
         from .utils import shot_results_for_subtasks
 
         ret_vals: list[list[list[bool]]] = []
@@ -244,6 +245,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @cached_property
     def filling_at_start(self) -> Sequence[Sequence[Sequence[bool]]]:
+        """True indicates that the atom was present during the sorted frame; False indicates that it was not."""
         from .utils import aligned_detected_and_sorted_shots_for_subtasks
 
         ret_vals: list[list[list[bool]]] = []
