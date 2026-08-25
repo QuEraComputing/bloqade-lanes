@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 #   kernelspec:
 #     display_name: kirin-workspace (3.12.13)
 #     language: python
@@ -34,17 +34,13 @@
 # Import utilities to define the SQuIN kernel dialect that we will be writing our programs in.
 
 # %%
-import itertools
-import math
 from typing import Any, Literal, TypeVar
 
 # For postprocessing
-import matplotlib.pyplot as plt
 import numpy as np
 from bloqade.types import Qubit
 from kirin.dialects import ilist
 from kirin.dialects.ilist import IList
-from matplotlib.patches import FancyArrowPatch, Rectangle
 
 from bloqade import squin
 from bloqade.gemini.common.dialects import qubit
@@ -54,336 +50,18 @@ from bloqade.gemini.device import PhysicalSimulator
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
 
 # Define physical architecture
-from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.bytecode.encoding import ZoneAddress
 from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
 from bloqade.lanes.passes import ALAPPlacePass, ASAPPlacePass
 
+# %% [markdown]
+# We first display the layout of words/sites on the physical architecture.
+#
+# <img src="./star_demo_imgs/phys_arch_words_sites.png" height=500>
 
-# We define a helper function that visualizes an architecture specification.
-def plot_labeled_arch(
-    arch_spec,
-    zone_id: int = 0,
-    *,
-    title: str = "Architecture Words",
-    label_sites: bool = False,
-    show_pair_boxes: bool = True,
-    show_site_boxes: bool = False,
-    row_label: str | None = None,
-    marker_size: float | None = None,
-    font_size: float | None = None,
-):
-    locations = []
-    for loc in arch_spec.yield_zone_locations(ZoneAddress(zone_id)):
-        pos = arch_spec.try_get_position(loc)
-        if pos is not None:
-            locations.append((loc, pos))
-
-    x_values = sorted({pos[0] for _, pos in locations})
-    y_values = sorted({pos[1] for _, pos in locations})
-    dx = min((b - a for a, b in itertools.pairwise(x_values)), default=2.0)
-    dy = min((b - a for a, b in itertools.pairwise(y_values)), default=10.0)
-
-    fig_width = max(6, 0.75 * len(x_values))
-    fig_height = max(5, 0.95 * len(y_values) + 2)
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    fig.subplots_adjust(left=0.1)
-    ax.set_facecolor("#fbfbfb")
-
-    for row, y in enumerate(y_values):
-        ax.add_patch(
-            Rectangle(
-                (x_values[0] - 2 * dx, y - 0.28 * dy),
-                (x_values[-1] - x_values[0]) + 4 * dx,
-                0.56 * dy,
-                facecolor=("#f5f9ff" if row % 2 == 0 else "#fff8f0"),
-                edgecolor="none",
-                zorder=0,
-            )
-        )
-        if row_label is not None:
-            ax.text(
-                -0.055,
-                y,
-                f"{row_label} {row}",
-                transform=ax.get_yaxis_transform(),
-                ha="right",
-                va="center",
-                fontsize=8,
-                color="#666666",
-                fontweight="bold",
-                clip_on=False,
-            )
-
-    if show_site_boxes:
-        site_id_to_xs: dict[int, list[float]] = {}
-        for loc, (x, _y) in locations:
-            site_id_to_xs.setdefault(loc.site_id, []).append(x)
-
-        site_box_cmap = plt.get_cmap("tab10")
-        site_box_colors = [site_box_cmap(i) for i in range(10)]
-
-        for site_box_index, site_id in enumerate(sorted(site_id_to_xs)):
-            site_xs = sorted(set(site_id_to_xs[site_id]))
-            left_x = site_xs[0]
-            right_x = site_xs[-1]
-            edge = site_box_colors[site_box_index % len(site_box_colors)]
-
-            ax.add_patch(
-                Rectangle(
-                    (left_x - 0.55 * dx, y_values[0] - 0.45 * dy),
-                    (right_x - left_x) + 1.1 * dx,
-                    (y_values[-1] - y_values[0]) + 0.9 * dy,
-                    facecolor=edge,
-                    alpha=0.08,
-                    edgecolor=edge,
-                    linewidth=1.6,
-                    zorder=1,
-                )
-            )
-            ax.text(
-                (left_x + right_x) / 2,
-                y_values[-1] + 0.55 * dy,
-                f"site ID {site_id}",
-                ha="center",
-                va="bottom",
-                fontsize=8,
-                color=edge,
-                fontweight="bold",
-                zorder=5,
-            )
-
-    if show_pair_boxes:
-        for pair_index in range(len(x_values) // 2):
-            left_x = x_values[2 * pair_index]
-            right_x = x_values[2 * pair_index + 1]
-            ax.add_patch(
-                Rectangle(
-                    (left_x - 0.8 * dx, y_values[0] - 0.45 * dy),
-                    (right_x - left_x) + 1.6 * dx,
-                    (y_values[-1] - y_values[0]) + 0.9 * dy,
-                    facecolor="none",
-                    edgecolor="#d7d7d7",
-                    linewidth=0.8,
-                    zorder=1,
-                )
-            )
-            ax.text(
-                (left_x + right_x) / 2,
-                y_values[0] - 0.75 * dy,
-                f"pair {pair_index}",
-                ha="center",
-                va="top",
-                fontsize=8,
-                color="#777777",
-            )
-
-    if marker_size is None:
-        marker_size = 355 if not label_sites else 170
-    if font_size is None:
-        font_size = 6.2 if not label_sites else 4.6
-
-    for loc, (x, y) in locations:
-        color = "#2878d4" if loc.word_id % 2 == 0 else "#f58518"
-        edge = "#1c5fa8" if loc.word_id % 2 == 0 else "#bd6412"
-        label = f"w{loc.word_id}"
-        if label_sites:
-            label = f"w{loc.word_id}\ns{loc.site_id}"
-        ax.scatter(
-            [x],
-            [y],
-            s=marker_size,
-            color=color,
-            edgecolor=edge,
-            linewidth=1.1,
-            zorder=3,
-        )
-        ax.text(
-            x,
-            y,
-            label,
-            ha="center",
-            va="center",
-            fontsize=font_size,
-            color="white",
-            fontweight="bold",
-            family="DejaVu Sans Mono",
-            linespacing=0.86,
-            zorder=4,
-        )
-
-    ax.set_title(title, fontsize=18, pad=18, fontweight="bold")
-    ax.text(
-        0.5,
-        0.965,
-        f"Zone {zone_id}. Boxes group columns by site ID.",
-        transform=ax.transAxes,
-        ha="center",
-        va="top",
-        fontsize=10,
-        color="#555555",
-    )
-    ax.set_xlabel("physical x position (um)")
-    ax.set_ylabel("physical y position (um)")
-    ax.set_xlim(x_values[0] - 3 * dx, x_values[-1] + 2 * dx)
-    ax.set_ylim(y_values[0] - dy, y_values[-1] + 1.05 * dy)
-    ax.set_aspect("equal", adjustable="box")
-    ax.grid(True, color="#e9e9e9", linewidth=0.5, zorder=0)
-    return fig, ax
-
-
-physical_arch_spec = get_physical_arch_spec()
-plot_labeled_arch(
-    physical_arch_spec,
-    title="Gemini Physical Architecture Word/Site Labels",
-    label_sites=True,
-    show_pair_boxes=False,
-    show_site_boxes=True,
-)
-
-
-# %%
-def _as_int(ref):
-    """Handle either plain ints or ref-like objects."""
-    if isinstance(ref, int):
-        return ref
-    if hasattr(ref, "id"):
-        return int(ref.id)
-    if hasattr(ref, "value"):
-        return int(ref.value)
-    return int(ref)
-
-
-def _location_positions(arch_spec, zone_id: int):
-    pos_by_word_site = {}
-    for loc in arch_spec.yield_zone_locations(ZoneAddress(zone_id)):
-        pos = arch_spec.try_get_position(loc)
-        if pos is not None:
-            pos_by_word_site[(loc.word_id, loc.site_id)] = pos
-    return pos_by_word_site
-
-
-def _draw_arch_points(ax, pos_by_word_site, *, point_size=18):
-    xs = [pos[0] for pos in pos_by_word_site.values()]
-    ys = [pos[1] for pos in pos_by_word_site.values()]
-
-    ax.scatter(xs, ys, s=point_size, color="#d8d8d8", edgecolor="#777777", zorder=2)
-    ax.set_aspect("equal", adjustable="box")
-    ax.grid(True, color="#eeeeee", linewidth=0.5, zorder=0)
-    ax.tick_params(labelsize=7)
-
-
-def _draw_bus_lines(ax, lines, *, color, curved: bool = False, rad: float = 0.35):
-    for i, ((x0, y0), (x1, y1)) in enumerate(lines):
-        if curved:
-            # Alternate curvature so overlapping nearby site-bus links are easier to see.
-            signed_rad = -rad
-            patch = FancyArrowPatch(
-                (x0, y0),
-                (x1, y1),
-                arrowstyle="-",
-                connectionstyle=f"arc3,rad={signed_rad}",
-                color=color,
-                linewidth=1.5,
-                alpha=0.85,
-                zorder=3,
-                shrinkA=2,
-                shrinkB=2,
-            )
-            ax.add_patch(patch)
-        else:
-            ax.plot(
-                [x0, x1],
-                [y0, y1],
-                color=color,
-                linewidth=1.5,
-                alpha=0.8,
-                zorder=3,
-            )
-
-
-def plot_physical_arch_buses(arch_spec=None, zone_id: int = 0, *, cols: int = 4):
-    if arch_spec is None:
-        arch_spec = get_physical_arch_spec()
-
-    zone = arch_spec.zones[zone_id]
-    pos_by_word_site = _location_positions(arch_spec, zone_id)
-
-    bus_panels = []
-
-    for bus_id, bus in enumerate(zone.site_buses):
-        lines = []
-        for word_id in zone.words_with_site_buses:
-            for src_site, dst_site in zip(bus.src, bus.dst):
-                src = pos_by_word_site[(_as_int(word_id), _as_int(src_site))]
-                dst = pos_by_word_site[(_as_int(word_id), _as_int(dst_site))]
-                lines.append((src, dst))
-
-        bus_panels.append(
-            {
-                "kind": "site",
-                "bus_id": bus_id,
-                "lines": lines,
-                "title": f"site bus {bus_id}",
-            }
-        )
-
-    for bus_id, bus in enumerate(zone.word_buses):
-        lines = []
-        for site_id in zone.sites_with_word_buses:
-            for src_word, dst_word in zip(bus.src, bus.dst):
-                src = pos_by_word_site[(_as_int(src_word), _as_int(site_id))]
-                dst = pos_by_word_site[(_as_int(dst_word), _as_int(site_id))]
-                lines.append((src, dst))
-
-        bus_panels.append(
-            {
-                "kind": "word",
-                "bus_id": bus_id,
-                "lines": lines,
-                "title": f"word bus {bus_id}",
-            }
-        )
-
-    rows = math.ceil(len(bus_panels) / cols)
-    fig, axes = plt.subplots(
-        rows,
-        cols,
-        figsize=(4.4 * cols, 2.9 * rows),
-        squeeze=False,
-    )
-
-    site_color = "#8f78ff"
-    word_color = "#2878d4"
-
-    for ax, panel in zip(axes.flat, bus_panels):
-        _draw_arch_points(ax, pos_by_word_site)
-        _draw_bus_lines(
-            ax,
-            panel["lines"],
-            color=site_color if panel["kind"] == "site" else word_color,
-            curved=panel["kind"] == "site",
-            rad=0.42,
-        )
-        ax.set_title(panel["title"], fontsize=10, fontweight="bold")
-        ax.set_xlabel("x (um)", fontsize=8)
-        ax.set_ylabel("y (um)", fontsize=8)
-
-    for ax in axes.flat[len(bus_panels) :]:
-        ax.axis("off")
-
-    fig.suptitle(
-        f"Gemini Physical Architecture Buses, Zone {zone_id}",
-        fontsize=16,
-        fontweight="bold",
-        y=0.995,
-    )
-    fig.tight_layout()
-    return fig, axes
-
-
-physical_arch_spec = get_physical_arch_spec()
-plot_physical_arch_buses(physical_arch_spec, cols=4)
+# %% [markdown]
+# Regarding the buses that are available on the architecture, we depict it below.
+#
+# <img src="./star_demo_imgs/phys_arch_buses.png" width=1000>
 
 # %% [markdown]
 # A "zone" is the top-level collection of words; a "word" is a collection of "sites", and a "site" contains one atom.
