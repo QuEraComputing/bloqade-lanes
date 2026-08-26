@@ -1,0 +1,22 @@
+#version-switcher-wrapper {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.6rem;
+  white-space: nowrap;
+}
+
+#version-switcher-label {
+  font-size: 0.85rem;
+  color: var(--md-primary-bg-color);
+  margin-right: 0.25rem;
+}
+
+#version-switcher {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--md-primary-bg-color) 55%, transparent);
+  background: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
