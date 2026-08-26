@@ -33,7 +33,7 @@ from bloqade.gemini.logical.validation.measurement.analysis import (
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
-from bloqade.lanes.rewrite import circuit2place
+from bloqade.lanes.rewrite import circuit2place, clifford2native
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
 
@@ -42,12 +42,17 @@ from bloqade.lanes.validation.address import get_validation
 class NativeToPlaceBase:
     """Template-method base for the squin-native → place compilation stage.
 
-    Subclasses override up to three hooks; all other steps are shared:
+    Subclasses override up to four hooks; all other steps are shared:
 
     * ``_pre_native_rewrites(mt, out, no_raise)`` — called after ``out`` is
       created (dialect-extended copy of ``mt``) but before ``SquinToNative``.
       Default is a no-op.  Logical subclass runs ``ValidationSuite`` on ``mt``
       and applies callgraph rewrites to ``out``.
+
+    * ``_squin_clifford_rules()`` — squin→squin rules run over the call graph
+      as the last step before ``SquinToNative``.  The base implementation
+      decomposes composite Cliffords into the neutral-atom gate set; the
+      logical subclass appends the Steane transversal adjoint swap.
 
     * ``_post_unroll_validation(out)`` — called after ``AggressiveUnroll``,
       before ``ScfToCfRule``.  Default is a no-op.  Physical subclass runs
@@ -73,6 +78,16 @@ class NativeToPlaceBase:
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
         return out
 
+    def _squin_clifford_rules(self) -> list[RewriteRule]:
+        """Squin→squin rules applied just before ``SquinToNative``.
+
+        Composite Cliffords (H, CX, CY, Swap) are expanded here rather than
+        inside the ``bloqade.native`` stdlib kernels, so that any rule appended
+        by a subclass sees the individual sqrt(X)/sqrt(Y)/S layers the hardware
+        will run instead of the opaque composite statement.
+        """
+        return [rewrite.Walk(clifford2native.DecomposeCliffordToNative())]
+
     def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
         pass
 
@@ -87,6 +102,13 @@ class NativeToPlaceBase:
             # Bind arch_spec on every arch-resolved statement (Loc, CzPartner) reachable
             # so const-prop resolves them during AggressiveUnroll.
             CallGraphPass(out.dialects, rewrite.Walk(BindArchSpec(self.arch_spec)))(out)
+
+        if squin_clifford_rules := self._squin_clifford_rules():
+            CallGraphPass(
+                out.dialects,
+                rewrite.Chain(*squin_clifford_rules),
+                no_raise=no_raise,
+            )(out)
 
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
@@ -172,17 +194,26 @@ class LogicalNativeToPlace(NativeToPlaceBase):
         if not result.is_valid and not no_raise:
             result.raise_if_invalid()
 
-        rules: list[RewriteRule] = []
-        if self.transversal_rewrite:
-            # For [[7,1,3]] Steane code, logical sqrt-X and sqrt-Z are implemented
-            # as transversal sqrt-X-adj and sqrt-Z-adj, respectively.
-            rules.append(rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()))
-        rules += [
+        rules: list[RewriteRule] = [
             rewrite.Walk(RewriteNonCliffordToU3()),
             rewrite.Walk(_RewriteU3ToInitialize()),
         ]
         CallGraphPass(mt.dialects, rewrite.Chain(*rules))(out)
         return out
+
+    def _squin_clifford_rules(self) -> list[RewriteRule]:
+        rules = super()._squin_clifford_rules()
+        if self.transversal_rewrite:
+            # For [[7,1,3]] Steane code, logical sqrt-X and sqrt-Z are implemented
+            # as transversal sqrt-X-adj and sqrt-Z-adj, respectively.
+            #
+            # This has to run *after* the Clifford decomposition above, not in
+            # _pre_native_rewrites: squin.cy's two sqrt(X) layers do not exist
+            # as statements until CY has been expanded, so flipping earlier
+            # leaves logical CY as Zbar(control) . CY
+            # (QuEraComputing/bloqade-internal#404).
+            rules.append(rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()))
+        return rules
 
     def _lower_qubits(self, out: Method) -> None:
         rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
