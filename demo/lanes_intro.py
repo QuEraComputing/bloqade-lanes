@@ -24,7 +24,7 @@
 # To run this notebook, you need to run `pip install bloqade-lanes[visualization]`.
 
 # %% [markdown]
-# TODO: insert figure containing the compilation pipeline from a circuit down.
+# <img src="star_demo_imgs/comp_workflow.png" height=500>
 #
 # `bloqade-lanes` sits in the "middle" of our compiler stack and primarily serves the purpose of compiling a user's quantum circuit down to atom moves.
 
@@ -52,11 +52,10 @@ bell_task = GeminiPhysicalSimulator().task(bell_state)
 
 # %%
 # Visualize the compiled atom move program
-# bell_task.visualize()
+bell_task.visualize()
 
 # %% [markdown]
 # From visualizing the program, we see the steps of the atom program: applying a series of local gates on the first atom (Hadamard), then moving the atom to its CZ partner, applying the Rydberg beam, and then moving the atom back.
 
 # %% [markdown]
 # This is the indended paradigm for using `bloqade-lanes`: the user provides their program at the circuit level, and our compiler will figure out the schedule of atom moves and pulses needed to realize that program.
-# In later demos, we explore how you can write programs specifically for our Gemini Logical machine, as well as ways to write your circuit to maximize performance from the machine.
