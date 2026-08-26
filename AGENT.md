@@ -101,9 +101,16 @@ Regenerate whenever a change alters the deterministic benchmark metrics
   selection.
 - Changes to move metrics, search strategies, the Rust solver, or the benchmark
   kernels/registry.
+- Changes to the defaults resolved by `make_physical_placement_strategy` —
+  placement family, `backwards_search`, `block_spectators`, `search_budget`,
+  `move_solutions_per_layer`. The `pipeline_default` strategy row deliberately
+  leaves these unpinned so it tracks whatever `PhysicalPipeline` gives a user
+  who passes no strategy; that is the row's entire purpose, so a default change
+  is *expected* to move it.
 
 `wall_time_ms` varies run-to-run and is **not** part of the comparison; do not
-treat wall-time noise as a real diff.
+treat wall-time noise as a real diff. It also varies by machine, so do not
+compare a fresh local run's wall times against the committed baselines.
 
 ### How to regenerate
 
