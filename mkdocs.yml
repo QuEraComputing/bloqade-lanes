@@ -14,14 +14,23 @@ nav:
   - Getting Started:
       - Introduction: demos/lanes_intro.py
       - Programming for Gemini Logical: demos/logical_dialect_demo.py
+      - Programming for Gemini Physical: demos/physical_arch_customization.py
   - Demos:
       - Overview: demos/index.md
-      - Logical programming:
-          - STAR Rz: demos/star_logical_demo.py
-      - Compilation and simulation:
-          - Physical architecture customization: demos/physical_arch_customization.py
-          - Simulator device: demos/simulator_device_demo.ipynb
-          - Logical and physical simulators: demos/simulators_demo.py
+      - Defining custom architectures:
+          - Architecture creation and visualization: demos/tutorials/custom_architectures.py
+      - Other language conversions:
+          - CUDA-Q: demos/tutorials/cudaq_conversion.py
+      - Layout and move control:
+          - qalloc_at and new_at: demos/tutorials/allocation_control.py
+          - move_to and qubit permutations: demos/tutorials/move_control.py
+      - Compilation pipeline details:
+          - Pipeline details and dialects: demos/tutorials/compilation_pipeline.py
+      - Simulators:
+          - Simulator construction and backends: demos/simulators_demo.py
+      - Specific use cases:
+          - "[[8,3,2]] code": demos/tutorials/eight_three_two_code.py
+          - Logical STAR Rz: demos/star_logical_demo.py
   - Architecture:
       - Architecture specification: arch/archspec.md
       - Zone-centric concepts: arch/zone-centric-concepts.md
@@ -61,6 +70,12 @@ plugins:
       allow_errors: false
       include_source: true
       include:
+        - demos/tutorials/custom_architectures.py
+        - demos/tutorials/eight_three_two_code.py
+        - demos/tutorials/cudaq_conversion.py
+        - demos/tutorials/allocation_control.py
+        - demos/tutorials/move_control.py
+        - demos/tutorials/compilation_pipeline.py
         - demos/logical_dialect_demo.py
         - demos/physical_arch_customization.py
         - demos/simulator_device_demo.ipynb

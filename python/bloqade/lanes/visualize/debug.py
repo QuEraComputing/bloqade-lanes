@@ -11,6 +11,23 @@ from .app import DebuggerController
 from .artist import get_drawer, render_generator
 
 
+def _activate_qt_backend_in_jupyter() -> None:
+    """Select Matplotlib's Qt backend when running in a Jupyter kernel.
+
+    IPython is optional at runtime, and terminal IPython sessions use a
+    different shell class, so scripts and non-notebook interactive sessions are
+    deliberately left unchanged.
+    """
+    try:
+        from IPython.core.getipython import get_ipython
+    except ImportError:
+        return
+
+    shell = get_ipython()
+    if shell is not None and type(shell).__name__ == "ZMQInteractiveShell":
+        shell.run_line_magic("matplotlib", "qt")
+
+
 @dataclass
 class StaticDebuggerController(DebuggerController):
     ax: Axes
@@ -173,6 +190,7 @@ def debugger(
 ):
     # set up matplotlib figure with buttons
     if ax is None:
+        _activate_qt_backend_in_jupyter()
         fig, ax = plt.subplots(figsize=(14, 8))
     else:
         fig = ax.figure
@@ -199,6 +217,7 @@ def animated_debugger(
     fps: int = 30,
 ):
     if ax is None:
+        _activate_qt_backend_in_jupyter()
         fig, ax = plt.subplots(figsize=(14, 8))
     else:
         fig = ax.figure

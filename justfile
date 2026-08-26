@@ -40,26 +40,29 @@ coverage-all: coverage-run coverage-xml coverage-rust
 coverage-all-open: coverage-all
     open htmlcov-all/index.html
 
-demo-msd:
-    python demo/msd.py
+demo-introduction:
+    python demo/lanes_intro.py
+
+demo-custom-architectures:
+    python demo/tutorials/custom_architectures.py
+
+demo-eight-three-two:
+    python demo/tutorials/eight_three_two_code.py
+
+demo-cudaq-conversion:
+    python demo/tutorials/cudaq_conversion.py
+
+demo-allocation-control:
+    python demo/tutorials/allocation_control.py
+
+demo-move-control:
+    python demo/tutorials/move_control.py
 
 demo-pipeline:
-    python demo/pipeline_demo.py
-
-pipeline-details:
-    python demo/pipeline_details.py
-
-simulator-device-demo:
-    python demo/simulator_device_demo.py
-
-demo-explicit-allocation:
-    python demo/explicit_allocation.py
+    python demo/tutorials/compilation_pipeline.py
 
 demo-logical-dialect:
     python demo/logical_dialect_demo.py
-
-demo-logical-new-at:
-    python demo/logical_new_at_demo.py
 
 demo-msd-postselection-experiment:
     python demo/msd_postselection_experiment.py
@@ -73,10 +76,7 @@ demo-star-logical-demo:
 demo-simulators:
     python demo/simulators_demo.py
 
-demo-qalloc-at:
-    python demo/logical_qalloc_at_demo.py
-
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at
+demo: demo-introduction demo-custom-architectures demo-eight-three-two demo-cudaq-conversion demo-allocation-control demo-move-control demo-pipeline demo-logical-dialect demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo
 
 # Build Rust API documentation
 doc-rust:
@@ -103,6 +103,13 @@ doc-all: doc-site doc-rust
     rm -rf target/book/api
     cp -r target/doc target/book/api
     @echo "Site built at target/book/ (run 'just doc' for a local HTTP preview)"
+
+# Executed variant used for deployment so generated notebook output, including
+# interactive Plotly figures, is present on the published site.
+doc-all-execute: doc-notebooks-execute doc-rust
+    rm -rf target/book/api
+    cp -r target/doc target/book/api
+    @echo "Executed site built at target/book/"
 
 # Build, serve, and open the documentation site. MkDocs uses directory URLs,
 # which need an HTTP server to resolve /page/ to /page/index.html.

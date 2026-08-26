@@ -40,10 +40,10 @@ log = logging.getLogger("deploy_docs")
 
 
 def build_docs() -> None:
-    """Build the MkDocs site and Rust API docs via ``just doc-all``."""
-    log.info("Building documentation with `just doc-all`...")
+    """Build executed notebooks and Rust API docs for publication."""
+    log.info("Building documentation with `just doc-all-execute`...")
     result = subprocess.run(
-        ["just", "doc-all"], capture_output=True, text=True, check=False
+        ["just", "doc-all-execute"], capture_output=True, text=True, check=False
     )
     if result.stdout:
         log.info(result.stdout.rstrip())

@@ -7,6 +7,7 @@ Covers the :class:`ArchVisualizer` class and verifies that the legacy
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ from bloqade.lanes.bytecode._native import (
     WordBus,
     Zone as RustZone,
 )
+from bloqade.lanes.bytecode.encoding import Direction, SiteLaneAddress
 from bloqade.lanes.bytecode.word import Word
 from bloqade.lanes.visualize.arch import ArchVisualizer
 
@@ -49,10 +51,18 @@ def small_arch_spec() -> ArchSpec:
             RustLocAddr(0, 1, 1),
         ],
     )
+    site_lane = SiteLaneAddress(
+        word_id=0,
+        site_id=0,
+        bus_id=0,
+        direction=Direction.FORWARD,
+        zone_id=0,
+    )
     return ArchSpec.from_components(
         words=(word, word),
         zones=(rust_zone,),
         modes=[rust_mode],
+        paths={site_lane: ((0.0, 0.0), (0.5, 0.75), (1.0, 0.0))},
     )
 
 
@@ -106,6 +116,164 @@ def test_plot_returns_axes(small_arch_spec: ArchSpec) -> None:
     assert result is mock_ax
     assert mock_ax.scatter.called
     assert mock_ax.plot.called
+
+
+def test_plot_interactive_starts_with_bus_paths_hidden(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    figure_data = cast(Any, figure.data)
+
+    bus_traces = [trace for trace in figure_data if trace.showlegend]
+    assert [trace.name for trace in bus_traces] == [
+        "zone 0 · site bus 0",
+        "zone 0 · word bus 0",
+    ]
+    assert all(trace.visible == "legendonly" for trace in bus_traces)
+    assert figure.layout.dragmode == "zoom"
+    assert figure.layout.legend.groupclick == "toggleitem"
+    assert figure.layout.paper_bgcolor == "#ffffff"
+    assert figure.layout.plot_bgcolor == "#f8fafc"
+    assert figure.layout.width == 1300
+
+
+def test_plot_interactive_uses_architecture_paths(
+    small_arch_spec: ArchSpec,
+) -> None:
+    visualizer = ArchVisualizer(small_arch_spec)
+    figure = visualizer.plot_interactive(show_all_buses=True)
+    figure_data = cast(Any, figure.data)
+    site_trace = next(
+        trace for trace in figure_data if trace.name == "zone 0 · site bus 0"
+    )
+    expected_path = next(visualizer.iter_site_bus_paths([0], [0]))
+
+    assert len(expected_path) == 3
+    assert list(zip(site_trace.x, site_trace.y))[: len(expected_path)] == list(
+        expected_path
+    )
+    assert site_trace.visible is True
+
+
+def test_plot_interactive_bus_hover_identifies_endpoints(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive(show_all_buses=True)
+    site_bus_trace = cast(Any, figure.data)[0]
+    hover_data = next(value for value in site_bus_trace.customdata if value is not None)
+
+    assert tuple(hover_data) == (
+        "zone 0 · site bus 0",
+        "(0, 0, 0)",
+        "(0, 0, 1)",
+    )
+    assert "source: %{customdata[1]}" in site_bus_trace.hovertemplate
+    assert "destination: %{customdata[2]}" in site_bus_trace.hovertemplate
+
+
+def test_plot_interactive_html_highlights_hovered_bus(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    html = figure.to_html(full_html=False, include_plotlyjs=False)
+
+    assert "plotly_hover" in html
+    assert "plotly_unhover" in html
+    assert "data-arch-visualizer-bus-highlight" in html
+    assert "hoverLayer.insertBefore(path, hoverLayer.firstChild)" in html
+    assert '"scrollZoom": true' in html
+    assert '"responsive": true' in html
+    assert list(figure.layout.meta["archVisualizerBusTraceIndices"]) == [0, 1]
+
+
+def test_plot_interactive_html_preserves_caller_config(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    html = figure.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        config={"scrollZoom": False, "displayModeBar": False},
+    )
+
+    assert '"scrollZoom": false' in html
+    assert '"responsive": true' in html
+    assert '"displayModeBar": false' in html
+
+
+def test_plot_interactive_site_identity_toggle(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive(show_site_ids=True)
+    label_trace = cast(Any, figure.data)[-1]
+
+    assert set(label_trace.text) == {
+        "(0,0,0)",
+        "(0,0,1)",
+        "(0,1,0)",
+        "(0,1,1)",
+    }
+    assert list(label_trace.textposition) == [
+        "top left",
+        "top left",
+        "bottom right",
+        "bottom right",
+    ]
+    assert label_trace.mode == "markers+text"
+    assert label_trace.marker.size == 18
+    assert label_trace.marker.opacity == 0
+    assert label_trace.textfont.size == 9
+    assert label_trace.cliponaxis is False
+    assert figure.layout.updatemenus[0].active == 1
+
+
+def test_plot_interactive_controls_can_show_and_hide_all_buses(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    hide_button, show_button = figure.layout.updatemenus[1].buttons
+
+    assert hide_button.args[0]["visible"] == "legendonly"
+    assert show_button.args[0]["visible"] is True
+    assert list(hide_button.args[1]) == [0, 1]
+
+
+def test_plot_interactive_cartoon_paths_curve_site_buses(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive(
+        path_style="cartoon", show_all_buses=True
+    )
+    figure_data = cast(Any, figure.data)
+    site_trace = next(
+        trace for trace in figure_data if trace.name == "zone 0 · site bus 0"
+    )
+    site_path = [(x, y) for x, y in zip(site_trace.x, site_trace.y) if x is not None]
+
+    assert len(site_path) == 21
+    assert min(y for _, y in site_path) < 0.0
+    assert figure.layout.updatemenus[2].active == 1
+
+
+def test_plot_interactive_path_toggle_preserves_bus_selection(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    exact_button, cartoon_button = figure.layout.updatemenus[2].buttons
+
+    assert exact_button.method == "update"
+    assert cartoon_button.method == "update"
+    assert "visible" not in cartoon_button.args[0]
+    assert list(cartoon_button.args[2]) == [0, 1]
+
+
+def test_plot_interactive_supports_dark_theme(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive(theme="dark")
+
+    assert figure.layout.paper_bgcolor == "#0f172a"
+    assert figure.layout.plot_bgcolor == "#111827"
 
 
 def test_plot_uses_plt_gca_when_ax_is_none(small_arch_spec: ArchSpec) -> None:
