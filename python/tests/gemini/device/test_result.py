@@ -20,7 +20,9 @@ from bloqade import squin
 from bloqade.gemini import GeminiLogicalResult, logical
 from bloqade.gemini.device.logical import result as result_module, utils as utils_module
 from bloqade.gemini.device.logical.utils import (
+    ShotRemappingException,
     aligned_detected_and_sorted_shots_for_subtasks,
+    get_slm_mapping_postprocessing,
 )
 from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
@@ -371,6 +373,156 @@ def test_shot_results_default_filter_excludes_non_detected_frames(storage):
     shots_per_subtask = res.shot_results()
     assert len(shots_per_subtask) == 1
     np.testing.assert_array_equal(shots_per_subtask[0], np.array([[True, False]]))
+
+
+# tests for the postprocessing utility
+def test_postproc_termmeasure():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(qubits[0])
+        squin.cx(qubits[0], qubits[1])
+        return logical.terminal_measure(qubits)
+
+    expected_indices = [64, 65, 66, 67, 68, 69, 70, 80, 81, 82, 83, 84, 85, 86]
+    meas_postproc, _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+    mock_shots = np.asarray([np.zeros(160, dtype=bool)])
+    mock_shots[:, expected_indices] = True
+    ret_shots = meas_postproc(mock_shots)
+    assert ret_shots == [[True for _ in range(len(expected_indices))]]
+
+
+def test_postproc_termmeasure_one():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([4]))
+        squin.h(qubits[0])
+        # squin.cx(qubits[0], qubits[1])
+        return logical.terminal_measure(qubits)
+
+    expected_indices = [64, 65, 66, 67, 68, 69, 70]
+    meas_postproc, _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+    mock_shots = np.asarray([np.zeros(160, dtype=bool)])
+    mock_shots[:, expected_indices] = True
+    ret_shots = meas_postproc(mock_shots)
+    assert ret_shots == [[True for _ in range(len(expected_indices))]]
+
+
+def test_postproc_termmeasure_none():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        _ = logical.qalloc_at(ilist.IList([]))
+        # squin.h(qubits[0])
+        # squin.cx(qubits[0], qubits[1])
+        # return logical.terminal_measure(qubits)
+
+    with pytest.raises(
+        ShotRemappingException, match="outer return value did not refine to IListResult"
+    ):
+        _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+
+
+def test_postproc_termmeasure_all():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
+        squin.h(qubits[0])
+        squin.cx(qubits[0], qubits[1])
+        return logical.terminal_measure(qubits)
+
+    expected_indices = [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+    ]
+    meas_postproc, _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+    mock_shots = np.asarray([np.zeros(160, dtype=bool)])
+    mock_shots[:, expected_indices] = True
+    ret_shots = meas_postproc(mock_shots)
+    assert ret_shots == [[True for _ in range(len(expected_indices))]]
+
+
+@pytest.mark.xfail(
+    raises=ShotRemappingException,
+    reason="Shot remapping does not yet support kernels returning post-processing tuples",
+    strict=True,
+)
+def test_default_postproc_remapping():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(qubits[0])
+        squin.cx(qubits[0], qubits[1])
+        return logical.default_post_processing(qubits)
+
+    _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
 
 
 def test_aligned_detected_and_sorted_shots_use_full_shot_identity(storage):
