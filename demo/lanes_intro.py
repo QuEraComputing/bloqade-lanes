@@ -24,7 +24,7 @@
 # To run this notebook, you need to run `pip install bloqade-lanes[visualization]`.
 
 # %% [markdown]
-# <img src="star_demo_imgs/comp_workflow.png" height=500>
+# <img src="star_demo_imgs/comp_workflow.png" style="height: 300px; width: auto;">
 #
 # `bloqade-lanes` sits in the "middle" of our compiler stack and primarily serves the purpose of compiling a user's quantum circuit down to atom moves.
 

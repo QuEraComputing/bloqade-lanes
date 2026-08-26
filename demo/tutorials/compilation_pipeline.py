@@ -1,87 +1,220 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#   kernelspec:
-#     display_name: Python 3
-#     language: python
-#     name: python3
-# ---
-
 # %% [markdown]
-# # Compilation pipeline and dialects
-#
-# Bloqade Lanes progressively lowers a circuit through multiple intermediate
-# representations. A logical program follows this simplified path:
-#
-# ```text
-# logical SQuIN -> native gates -> place dialect -> move dialect
-#               -> physical SQuIN / hardware lowering
-# ```
-#
-# A *dialect* is a collection of IR statements with shared semantics. Keeping
-# placement and movement in separate dialects lets analyses reason about the
-# circuit before committing to concrete atom paths.
+# # Example: Gemini Logical Lanes Compilation Pipeline
+# ---
+# In this example, we demonstrate the compilation pipeline for a simple quantum kernel
+# using the Gemini logical lanes architecture. We will walk through the steps of compiling
+# a basic squin kernel, performing layout and placement analyses, rewriting to move dialect,
+# and finally inverting back to the squin dialect with physical qubits and noise models inserted.
+
+# To start we create a simple squin kernel that uses the gemini logical dialect to define a
+# terminal measurement on the circuit.
 
 # %%
 from bloqade import squin
-from bloqade.gemini import logical
-from bloqade.lanes.dialects import move, place
-from bloqade.lanes.transform import LogicalNativeToPlace, LogicalPipeline
+from bloqade.gemini import logical as gemini_logical
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
 
 
-# %%
-@logical.kernel(aggressive_unroll=True)
-def bell_program():
-    qubits = squin.qalloc(2)
-    squin.h(qubits[0])
-    squin.cx(qubits[0], qubits[1])
-    return logical.terminal_measure(qubits)
+@gemini_logical.kernel(aggressive_unroll=True)
+def example_kernel():
+    reg = squin.qalloc(2)
+
+    squin.cx(reg[0], reg[1])
+
+    gemini_logical.terminal_measure(reg)
 
 
-# %% [markdown]
-# The source kernel contains circuit-level operations.
-
-# %%
-bell_program.print()
+example_kernel.print()
 
 # %% [markdown]
-# `LogicalNativeToPlace` lowers gates and allocations into static placement
-# regions. The result contains statements from the `place` dialect.
+# ## Compilation Pipeline
+# The first step is to compile the logical squin kernel to the native gate set.
+# this can be done by using the existing SquinToNative transformer inside bloqade-circuit.
 
 # %%
-logical_pipeline = LogicalPipeline()
-place_program = LogicalNativeToPlace(arch_spec=logical_pipeline.arch_spec).emit(
-    bell_program, no_raise=False
+from bloqade.native.upstream import SquinToNative
+
+example_kernel = SquinToNative().emit(example_kernel)
+example_kernel.print()
+
+# %% [markdown]
+# Note that the kernel looks identical to before, because the rewrite pass rewrites the call
+# graph (after copying) but does not change the call graph structure itself.
+
+# %% [markdown]
+# Next, we lowering from the native dialect to the place dialect. The place dialect attempts
+# to encapsulate the circuit into code blocks stored in regions which can be used later on for
+# placement and routing analyses. Another important aspect of the insert special qubit allocation
+# statements that are used to indicate the logical state prepration of the qubits. Given the nature
+# of how the current move synthesis works the call graph is flattened out into a single kernel.
+
+# %%
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.transform import LogicalNativeToPlace as NativeToPlace
+
+example_kernel = NativeToPlace().emit(example_kernel)
+SequentialPlacePass(example_kernel.dialects)(example_kernel)
+example_kernel.print()
+
+# %% [markdown]
+# Now that we have the place dialect inside the kernel we can run the initial layout analysis
+# to determine the initial placement of logical qubits onto the gemini logical lanes architecture.
+
+# Part of the input to the layout analysis is the layout heuristic which takes data collected from
+# the analysis interpreter to generate the initial layout. In this example we use a heuristic
+# that priorities placing qubits that interact frequently within the same word. This heuristic
+# is implemented in the `logical_layout` module inside bloqade-lanes.
+
+# %%
+from bloqade.analysis import address
+
+from bloqade.lanes.analysis import layout
+from bloqade.lanes.heuristics.logical import layout as logical_layout
+
+address_frame, _ = address.AddressAnalysis(example_kernel.dialects).run(example_kernel)
+
+
+layout_analysis = layout.LayoutAnalysis(
+    example_kernel.dialects,
+    logical_layout.LogicalLayoutHeuristic(),
+    address_frame.entries,
+    tuple(range(2)),
 )
 
-place_statements = [
-    statement
-    for statement in place_program.callable_region.walk()
-    if type(statement).__module__.startswith(place.__name__)
-]
-print(f"place statements: {len(place_statements)}")
-place_program.print()
+initial_layout = layout_analysis.get_layout(example_kernel)
+print(initial_layout)
 
 # %% [markdown]
-# The complete `LogicalPipeline` additionally schedules placement regions,
-# computes an initial layout, chooses routes, and rewrites the result into the
-# move dialect.
+# After running the layout analysis we can use it to plot the initial placement of logical qubits
 
 # %%
-move_program = logical_pipeline.emit(bell_program, no_raise=False)
-move_statements = [
-    statement
-    for statement in move_program.callable_region.walk()
-    if type(statement).__module__.startswith(move.__name__)
-]
-print(f"move statements: {len(move_statements)}")
-move_program.print()
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.visualize.arch import ArchVisualizer
+
+logical_arch = get_arch_spec()
+
+ax = ArchVisualizer(logical_arch).plot(show_words=(0, 1))
+
+pos_0 = logical_arch.get_position(initial_layout[0])
+pos_1 = logical_arch.get_position(initial_layout[1])
+ax.scatter(
+    [pos_0[0], pos_1[0]],
+    [pos_0[1], pos_1[1]],
+    s=200,
+    label="Initial Placement",
+)
 
 # %% [markdown]
-# The public simulator/device APIs run these stages for you. Calling the passes
-# directly is useful for compiler development, inspecting intermediate IR, and
-# experimenting with layout or placement strategies.
+# Next, we can run the placement analysis to determine the intermediate  placement of logical qubits
+# during the circuit execution. The difference here being that the placement analysis will be
+# mapped onto the linear logic within the bodies of the StaticPlacement statements.
+
+# %%
+from bloqade.lanes.analysis import placement
+
+placement_analysis = placement.PlacementAnalysis(
+    example_kernel.dialects,
+    initial_layout,
+    address_frame.entries,
+    LogicalPlacementStrategy(),
+)
+
+placement_frame, _ = placement_analysis.run(example_kernel)
+example_kernel.print(analysis=placement_frame.entries)
+
+# %% [markdown]
+# With the placement analysis complete we can now proceed to rewrite the place dialect to the
+# move dialect. This involves using the MoveScheduler to insert move operations before gates
+# in the place dialect to based on the current placement of qubits and the placement of the qubits
+# required for the gate operation. There are also options to insert return moves after gates
+# to move the qubits back to their original locations at the end of the StaticPlacement body.
+# Here we never have more than one CZ operation within a StaticPlacement body because we want
+# the logical qubits to always return back to their original locations after each gate. Hence
+# we set `insert_return_moves=True` in the MoveToSquin transformer.
+
+
+# %%
+from bloqade.lanes.transform import PlaceToMove
+
+example_kernel = PlaceToMove(
+    layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
+    placement_strategy=LogicalPlacementStrategy(),
+    insert_initialize=True,
+).emit(example_kernel)
+
+example_kernel.print()
+
+# %% [markdown]
+# Now at this point we can either continue to hardware by specializing the move dialect
+# to a gemini specific statements which can be further lowered to pulse level control. We
+# will not cover that here, instead we will demonstrate to integrate with the tsim but rewriting
+# the move program back to squin dialect on the physical qubits along with inserting noise.
+
+# Before we rewrite to physical squin we can also run the atom state analysis on the logical program
+# just to demonstrate how the analysis works on the move dialect.
+
+# To start we simply construct the atom interpreter with the logical architecture spec, then
+# run the analysis on the move dialect kernel.
+
+# %%
+from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
+
+frame, _ = atom.AtomInterpreter(example_kernel.dialects, arch_spec=logical_arch).run(
+    example_kernel
+)
+example_kernel.print(analysis=frame.entries)
+
+# %% [markdown]
+
+# Now if we want the physical noise model of the program we first have to rewrite from logical moves
+# on the logical architecture to physical squin on the physical architecture. Because all the gates
+# are clifford gates and can be implemented transversally we simply rewrite all logical addresses
+# to groups of physical addresses. If you are interested in how this is done please see the
+# `transversal_rewrites` function inside the `bloqade.lanes.transform` module.
+
+# %%
+from bloqade.lanes.transform import transversal_rewrites
+
+example_kernel = transversal_rewrites(example_kernel)
+example_kernel.print()
+
+# %% [markdown]
+# Now that we have the physical move kernel we can run the atom state analysis again on the physical
+# architecture to get the atom states on physical qubits.
+
+# %%
+from bloqade.lanes.arch.gemini.physical import (
+    get_arch_spec as get_physical_arch_spec,
+)
+
+physical_arch = get_physical_arch_spec()
+
+frame, _ = atom.AtomInterpreter(example_kernel.dialects, arch_spec=physical_arch).run(
+    example_kernel
+)
+example_kernel.print(analysis=frame.entries)
+
+# %% [markdown]
+# From here we can rewrite the physical move program to physical squin with noise models inserted.
+# This is done using the `MoveToSquinLogical` transformer inside the `bloqade.lanes.transform` module.
+# This transformation requires the physical architecture spec and a logical noise model that provides
+# both initialization kernels and noise channels for the compilation.
+
+# %%
+
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.transform import MoveToSquinLogical
+
+noise_model = generate_logical_noise_model()
+example_kernel = MoveToSquinLogical(
+    arch_spec=physical_arch,
+    noise_model=noise_model,
+    add_noise=True,
+).emit(example_kernel)
+
+example_kernel.print()
+
+# %% [markdown]
+# From here we can use the existing tools within bloqade-circuit to simulate the physical squin
+# program with noise, or compile to stim programs for further analysis.

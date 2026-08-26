@@ -69,6 +69,9 @@ plugins:
       execute: !ENV [EXECUTE_NOTEBOOKS, false]
       allow_errors: false
       include_source: true
+      # mkdocs-jupyter otherwise passes an empty MathJax URL to nbconvert,
+      # leaving notebook equations as raw ``$$ ... $$`` text.
+      custom_mathjax_url: https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS_CHTML-full,Safe
       include:
         - demos/tutorials/custom_architectures.py
         - demos/tutorials/eight_three_two_code.py
