@@ -46,6 +46,26 @@ class DecomposeCliffordToNative(rewrite_abc.RewriteRule):
     statements that lower one-to-one onto Gemini's native gate set.
 
     Idempotent: the expansions only emit statements the rule does not match.
+
+    Ordering
+    --------
+    The ``_hadamard`` / ``_controlled_*`` / ``_swap`` helpers return their
+    statements in **circuit order** -- element 0 runs first -- and ``_expand``
+    preserves that order in the IR.
+
+    Their docstrings state the identity as an **operator product**, which reads
+    the other way round, right to left.  So
+
+        CX = sqrt(Y) . CZ . sqrt(Y)^dag      (operator product)
+
+    is emitted as, and appears in the IR as,
+
+        sqrt_y_adj(targets); cz(controls, targets); sqrt_y(targets)
+
+    The two are reverses of each other by convention, not by accident: the
+    conjugator adjacent to the ket in the product is the gate applied *first*.
+    Read the formula when you want to check the conjugation direction, and the
+    returned list when you want to know what the hardware runs.
     """
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
@@ -63,6 +83,10 @@ class DecomposeCliffordToNative(rewrite_abc.RewriteRule):
     def _expand(
         node: ir.Statement, replacement: list[ir.Statement]
     ) -> rewrite_abc.RewriteResult:
+        # Each insert lands immediately before `node` and therefore after the
+        # previously inserted one, so the IR ends up in `replacement` order --
+        # circuit order, not the reversed operator-product order the
+        # decomposition docstrings use. See the class docstring.
         for stmt in replacement:
             stmt.insert_before(node)
         # Clifford gate statements carry no results, so nothing to reconnect.
@@ -71,7 +95,11 @@ class DecomposeCliffordToNative(rewrite_abc.RewriteRule):
 
     @staticmethod
     def _hadamard(node: gate.H) -> list[ir.Statement]:
-        """``H = S . sqrt(X) . S`` (up to global phase)."""
+        """``H = S . sqrt(X) . S`` (up to global phase).
+
+        A palindrome, so the operator product and the emitted circuit order
+        read alike here.
+        """
         return [
             gate.S(node.qubits),
             gate.SqrtX(node.qubits),
@@ -80,7 +108,11 @@ class DecomposeCliffordToNative(rewrite_abc.RewriteRule):
 
     @staticmethod
     def _controlled_x(node: gate.CX) -> list[ir.Statement]:
-        """``CX = sqrt(Y) . CZ . sqrt(Y)^dag``, conjugating on the target."""
+        """``CX = sqrt(Y) . CZ . sqrt(Y)^dag``, conjugating on the target.
+
+        Operator product; emitted in circuit order as
+        ``sqrt_y_adj; cz; sqrt_y``.
+        """
         return [
             gate.SqrtY(node.targets, adjoint=True),
             gate.CZ(node.controls, node.targets),
@@ -89,7 +121,13 @@ class DecomposeCliffordToNative(rewrite_abc.RewriteRule):
 
     @staticmethod
     def _controlled_y(node: gate.CY) -> list[ir.Statement]:
-        """``CY = sqrt(X)^dag . CZ . sqrt(X)``, conjugating on the target."""
+        """``CY = sqrt(X)^dag . CZ . sqrt(X)``, conjugating on the target.
+
+        Operator product; emitted in circuit order as
+        ``sqrt_x; cz; sqrt_x_adj``.  The transversal rewrite flips both sqrt(X)
+        layers on the logical path, which is what makes logical CY come out as
+        CY rather than ``Zbar(control) . CY``.
+        """
         return [
             gate.SqrtX(node.targets),
             gate.CZ(node.controls, node.targets),
@@ -98,7 +136,12 @@ class DecomposeCliffordToNative(rewrite_abc.RewriteRule):
 
     @staticmethod
     def _swap(node: gate.Swap) -> list[ir.Statement]:
-        """Three ``CZ`` rounds interleaved with sqrt(Y) layers."""
+        """Three ``CZ`` rounds interleaved with sqrt(Y) layers, in circuit order.
+
+        The leading ``py.Add`` is the ``qubits1 + qubits2`` concatenation the
+        two middle sqrt(Y) layers broadcast over; it has to be emitted before
+        its uses.
+        """
         both = py.Add(node.qubits1, node.qubits2)
         return [
             both,
