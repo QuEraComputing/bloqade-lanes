@@ -1,0 +1,179 @@
+name: Documentation Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+# Publishing writes a subdirectory of gh-pages and the optional status comment
+# is attached to the pull request. GitHub keeps contents read-only for forked
+# pull requests; the job-level repository check below skips those PRs entirely.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+# Share the production documentation lock. Both workflows update gh-pages, so
+# allowing them to overlap could lose either a versioned site or a PR preview.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  PREVIEW_BASE_URL: https://queracomputing.github.io/bloqade-lanes
+
+jobs:
+  publish:
+    name: Publish preview
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.1"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - uses: extractions/setup-just@v4
+
+      # Do not execute notebook cells in a job with a write-capable token.
+      - name: Build documentation preview
+        run: just doc-notebooks
+
+      - name: Check out existing GitHub Pages site
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: target/site
+
+      - name: Publish preview directory
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        working-directory: target/site
+        run: |
+          if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "Invalid pull request number: ${PR_NUMBER}" >&2
+            exit 1
+          fi
+
+          preview_path="previews/pr-${PR_NUMBER}"
+          rm -rf "${preview_path}"
+          mkdir -p "${preview_path}"
+          cp -a ../book/. "${preview_path}/"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- "${preview_path}"
+
+          if git diff --cached --quiet; then
+            echo "Preview is already up to date."
+            exit 0
+          fi
+
+          git commit -n -m "docs: update preview for PR #${PR_NUMBER}"
+          git push origin HEAD:gh-pages
+
+      - name: Add preview link to pull request
+        uses: actions/github-script@v8
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_URL: ${{ env.PREVIEW_BASE_URL }}/previews/pr-${{ github.event.pull_request.number }}/
+        with:
+          script: |
+            const marker = "<!-- bloqade-lanes-docs-preview -->";
+            const issue_number = Number(process.env.PR_NUMBER);
+            const body = [
+              marker,
+              "### Documentation preview",
+              "",
+              `The preview for this pull request is available at ${process.env.PREVIEW_URL}`,
+              "",
+              "The preview is rebuilt whenever the pull request is updated.",
+            ].join("\n");
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...context.repo, issue_number, per_page: 100 },
+            );
+            const previous = comments.find(
+              (comment) => comment.user?.type === "Bot" && comment.body?.includes(marker),
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number,
+                body,
+              });
+            }
+
+  cleanup:
+    name: Remove preview
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out existing GitHub Pages site
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+
+      - name: Remove preview directory
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "Invalid pull request number: ${PR_NUMBER}" >&2
+            exit 1
+          fi
+
+          preview_path="previews/pr-${PR_NUMBER}"
+          git rm -r --ignore-unmatch -- "${preview_path}"
+
+          if git diff --cached --quiet; then
+            echo "No preview exists for PR #${PR_NUMBER}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -n -m "docs: remove preview for PR #${PR_NUMBER}"
+          git push origin HEAD:gh-pages
+
+      - name: Mark preview as removed
+        uses: actions/github-script@v8
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          script: |
+            const marker = "<!-- bloqade-lanes-docs-preview -->";
+            const issue_number = Number(process.env.PR_NUMBER);
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...context.repo, issue_number, per_page: 100 },
+            );
+            const previous = comments.find(
+              (comment) => comment.user?.type === "Bot" && comment.body?.includes(marker),
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: previous.id,
+                body: `${marker}\nDocumentation preview removed because this pull request is closed.`,
+              });
+            }
