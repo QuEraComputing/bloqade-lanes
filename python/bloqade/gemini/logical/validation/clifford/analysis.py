@@ -4,7 +4,6 @@ from typing import Any, ClassVar
 from bloqade.analysis.address import Address, AddressAnalysis, AddressReg
 from kirin import ir
 from kirin.analysis import Forward, ForwardFrame
-from kirin.interp import InterpreterError
 from kirin.lattice import EmptyLattice
 from kirin.validation import ValidationPass
 
@@ -24,7 +23,15 @@ class _GeminiLogicalValidationAnalysis(Forward[EmptyLattice]):
 
     def eval_fallback(self, frame: ForwardFrame, node: ir.Statement):
         if isinstance(node, squin.gate.stmts.Gate):
-            raise InterpreterError(f"Missing implementation for gate {node}")
+            # NOTE: report instead of raising so an unsupported gate is listed
+            # alongside every other validation error rather than aborting the run
+            self.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"Gate {node.name} is not supported in logical Gemini programs!",
+                ),
+            )
 
         return tuple(self.lattice.bottom() for _ in range(len(node.results)))
 
