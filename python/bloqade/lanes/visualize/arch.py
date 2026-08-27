@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from matplotlib.axes import Axes
-    from plotly.graph_objects import Figure
+    from plotly.graph_objects import Figure  # type: ignore[reportMissingImports]
 
     from bloqade.lanes.arch.spec import ArchSpec
 
@@ -483,7 +483,7 @@ class ArchVisualizer:
             ValueError: If ``path_style`` or ``theme`` is unsupported.
         """
         try:
-            import plotly.graph_objects as go
+            import plotly.graph_objects as go  # type: ignore[reportMissingImports]
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise ImportError(
                 "Interactive architecture plots require Plotly. Install "

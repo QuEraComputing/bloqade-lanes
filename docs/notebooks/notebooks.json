@@ -10,5 +10,9 @@
   "simulator_device_demo.ipynb",
   "simulators_demo.py",
   "star_logical_demo.py",
-  "lanes_intro.py"
+  "lanes_intro.py",
+  "tutorials/msd.py",
+  "tutorials/msd_postselection_experiment.py",
+  "tutorials/zone_based_arch_demo.py",
+  "tutorials/ghz_moves_demo.py"
 ]

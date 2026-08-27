@@ -19,6 +19,7 @@ nav:
       - Overview: demos/index.md
       - Defining custom architectures:
           - Architecture creation and visualization: demos/tutorials/custom_architectures.py
+          - Zone-based architectures: demos/tutorials/zone_based_arch_demo.py
       - Other language conversions:
           - CUDA-Q: demos/tutorials/cudaq_conversion.py
       - Layout and move control:
@@ -31,6 +32,8 @@ nav:
       - Specific use cases:
           - "[[8,3,2]] code": demos/tutorials/eight_three_two_code.py
           - Logical STAR Rz: demos/star_logical_demo.py
+          - Magic State Distillation: demos/tutorials/msd.py
+          - GHZ State Preparation: demos/tutorials/ghz_moves_demo.py
   - Architecture:
       - Architecture specification: arch/archspec.md
       - Zone-centric concepts: arch/zone-centric-concepts.md
@@ -85,6 +88,10 @@ plugins:
         - demos/simulators_demo.py
         - demos/star_logical_demo.py
         - demos/lanes_intro.py
+        - demos/tutorials/ghz_moves_demo.py
+        - demos/tutorials/msd_postselection_experiment.py
+        - demos/tutorials/msd.py
+        - demos/tutorials/zone_based_arch_demo.py
 
 markdown_extensions:
   - attr_list
