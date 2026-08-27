@@ -110,7 +110,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         return postprocessing_functions
 
-    @cached_property
+    @property
     def measurements(self) -> Sequence[Sequence[Sequence[bool]]]:
         """True indicates a projective measurement of the |1> state or atom loss; False indicates a projective measurement of the |0> state."""
         from .utils import shot_results_for_subtasks
@@ -162,7 +162,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         return ret_vals
 
-    @cached_property
+    @property
     def return_values(self) -> Sequence[Sequence[RetType]]:
         """Return canonical logical values reconstructed from raw SLM shots.
 
@@ -178,7 +178,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             for measurements, subtask in zip(self.measurements, self.subtasks())
         ]
 
-    @cached_property
+    @property
     def detectors(self) -> Sequence[Sequence[Sequence[bool]]]:
         return [
             list(
@@ -189,7 +189,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             for measurements, subtask in zip(self.measurements, self.subtasks())
         ]
 
-    @cached_property
+    @property
     def observables(self) -> Sequence[Sequence[Sequence[bool]]]:
         return [
             list(
@@ -200,7 +200,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             for measurements, subtask in zip(self.measurements, self.subtasks())
         ]
 
-    @cached_property
+    @property
     def filling_at_start(self) -> Sequence[Sequence[Sequence[bool]]]:
         """True indicates that the atom was present during the sorted frame; False indicates that it was not."""
         from .utils import aligned_detected_and_sorted_shots_for_subtasks

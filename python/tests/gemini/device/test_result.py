@@ -689,7 +689,42 @@ def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
     assert result.observables == [[[True]]]
     assert result.filling_at_start == [[[False, True]]]
     assert len(mapping_calls) == 1
-    assert conventions == [True, False]
+    assert conventions.count(True) == 4
+    assert conventions.count(False) == 1
+
+
+def test_measurements_re_reads_shared_storage(storage, monkeypatch):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=2)],
+        ),
+    )
+    storage.add_shots(
+        [make_shot(shot_index=0, bitstring=(False, True) + (False,) * 158)]
+    )
+
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (list(row) for row in rows),
+        emit_detectors=lambda rows: (list(row) for row in rows),
+        emit_observables=lambda rows: (list(row) for row in rows),
+    )
+
+    def get_mapping(_kernel):
+        return lambda shots, *, invert: shots[:, :2].tolist(), post_processing
+
+    monkeypatch.setattr(utils_module, "get_slm_mapping_postprocessing", get_mapping)
+
+    result = GeminiLogicalResult(storage=storage)
+    assert result.measurements == [[[False, True]]]
+
+    storage.add_shots(
+        [make_shot(shot_index=1, bitstring=(True, False) + (False,) * 158)]
+    )
+
+    assert result.measurements == [[[False, True], [True, False]]]
 
 
 def test_slm_result_views_return_empty_lists_after_shot_filter(storage):
