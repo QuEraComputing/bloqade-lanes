@@ -35,7 +35,13 @@ from bloqade.gemini.logical.stdlib import default_post_processing
 # In this demo, we use the injected angle as THETA = pi / 16. Note that this is the logical injected angle. Our compiler will convert the logical injected angle into the physical rotation angle using the following formula:
 
 # %% [markdown]
-# $$\theta^{*} = -\,\mathrm{sign}(\theta)\; 2\arctan\!\left(\left|\tan\!\left(\tfrac{\theta}{2}\right)\right|^{1/3}\right)$$
+# $$
+# \theta^\star
+# = -2\,\operatorname{sgn}(\theta)\,
+# \arctan\!\left[
+#     \left|\tan\!\left(\frac{\theta}{2}\right)\right|^{1/3}
+# \right].
+# $$
 
 # %%
 THETA = math.pi / 16

@@ -11,6 +11,20 @@ from bloqade.lanes.visualize.debug import (
 )
 
 
+class ZMQInteractiveShell:
+    """Minimal shell double whose class name matches a Jupyter kernel."""
+
+    def __init__(self):
+        self.run_line_magic = MagicMock()
+
+
+class TerminalInteractiveShell:
+    """Minimal shell double for a non-kernel IPython session."""
+
+    def __init__(self):
+        self.run_line_magic = MagicMock()
+
+
 @pytest.fixture
 def dummy_ax():
     ax = MagicMock(spec=mpl_axes.Axes)
@@ -29,6 +43,23 @@ def dummy_get_renderer():
         return 3, MagicMock()
 
     return get_renderer
+
+
+def test_activate_qt_backend_in_jupyter_kernel():
+    shell = ZMQInteractiveShell()
+    with patch("IPython.core.getipython.get_ipython", return_value=shell):
+        debug_mod._activate_qt_backend_in_jupyter()
+
+    shell.run_line_magic.assert_called_once_with("matplotlib", "qt")
+
+
+@pytest.mark.parametrize("shell", [None, TerminalInteractiveShell()])
+def test_activate_qt_backend_ignores_non_kernel_sessions(shell):
+    with patch("IPython.core.getipython.get_ipython", return_value=shell):
+        debug_mod._activate_qt_backend_in_jupyter()
+
+    if shell is not None:
+        shell.run_line_magic.assert_not_called()
 
 
 def test_static_debugger_on_next_prev_exit(dummy_ax, dummy_draw):
@@ -309,7 +340,10 @@ def test_debugger_noninteractive(monkeypatch, dummy_ax, dummy_draw):
     def draw(idx):
         called.append(idx)
 
-    with patch("bloqade.lanes.visualize.debug.get_drawer", return_value=(draw, 2)):
+    with (
+        patch("bloqade.lanes.visualize.debug.get_drawer", return_value=(draw, 2)),
+        patch.object(debug_mod, "_activate_qt_backend_in_jupyter") as activate_qt,
+    ):
         monkeypatch.setattr(plt, "pause", lambda t: None)
         monkeypatch.setattr(dummy_ax, "cla", lambda: None)
         debug_mod.debugger(
@@ -320,6 +354,7 @@ def test_debugger_noninteractive(monkeypatch, dummy_ax, dummy_draw):
             atom_marker="o",
             ax=dummy_ax,
         )
+    activate_qt.assert_not_called()
     assert called == [0, 1], f"Expected draw to be called with [0, 1], got {called}"
 
 
@@ -336,11 +371,45 @@ def test_animated_debugger_noninteractive(monkeypatch, dummy_ax):
     )
     monkeypatch.setattr(plt, "pause", lambda t: None)
     monkeypatch.setattr(dummy_ax, "cla", lambda: None)
-    debug_mod.animated_debugger(
+    with patch.object(debug_mod, "_activate_qt_backend_in_jupyter") as activate_qt:
+        debug_mod.animated_debugger(
+            mt=MagicMock(),
+            arch_spec=MagicMock(),
+            interactive=False,
+            atom_marker="o",
+            ax=dummy_ax,
+            fps=30,
+        )
+    activate_qt.assert_not_called()
+
+
+@pytest.mark.parametrize("debugger_name", ["debugger", "animated_debugger"])
+def test_debuggers_activate_qt_before_creating_figure(monkeypatch, debugger_name):
+    order: list[str] = []
+    fig = MagicMock()
+    ax = MagicMock(spec=mpl_axes.Axes)
+    ax.figure = fig
+
+    activate_qt = MagicMock(side_effect=lambda: order.append("activate"))
+
+    def subplots(*args, **kwargs):
+        order.append("subplots")
+        return fig, ax
+
+    monkeypatch.setattr(debug_mod, "_activate_qt_backend_in_jupyter", activate_qt)
+    monkeypatch.setattr(plt, "subplots", subplots)
+    monkeypatch.setattr(debug_mod, "get_drawer", lambda *args: (MagicMock(), 0))
+    monkeypatch.setattr(
+        debug_mod,
+        "render_generator",
+        lambda *args: (lambda _step: (0, MagicMock()), 0),
+    )
+
+    getattr(debug_mod, debugger_name)(
         mt=MagicMock(),
         arch_spec=MagicMock(),
         interactive=False,
-        atom_marker="o",
-        ax=dummy_ax,
-        fps=30,
+        ax=None,
     )
+
+    assert order[:2] == ["activate", "subplots"]

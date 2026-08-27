@@ -1,6 +1,3 @@
-# Pinned tool versions (single source of truth for CI and local builds)
-mdbook_version := "0.4.36"
-
 # Default recipe
 default:
     @just --list
@@ -43,26 +40,29 @@ coverage-all: coverage-run coverage-xml coverage-rust
 coverage-all-open: coverage-all
     open htmlcov-all/index.html
 
-demo-msd:
-    python demo/msd.py
+demo-introduction:
+    python demo/lanes_intro.py
+
+demo-custom-architectures:
+    python demo/tutorials/custom_architectures.py
+
+demo-eight-three-two:
+    python demo/tutorials/eight_three_two_code.py
+
+demo-cudaq-conversion:
+    python demo/tutorials/cudaq_conversion.py
+
+demo-allocation-control:
+    python demo/tutorials/allocation_control.py
+
+demo-move-control:
+    python demo/tutorials/move_control.py
 
 demo-pipeline:
-    python demo/pipeline_demo.py
-
-pipeline-details:
-    python demo/pipeline_details.py
-
-simulator-device-demo:
-    python demo/simulator_device_demo.py
-
-demo-explicit-allocation:
-    python demo/explicit_allocation.py
+    python demo/tutorials/compilation_pipeline.py
 
 demo-logical-dialect:
     python demo/logical_dialect_demo.py
-
-demo-logical-new-at:
-    python demo/logical_new_at_demo.py
 
 demo-msd-postselection-experiment:
     python demo/msd_postselection_experiment.py
@@ -76,32 +76,45 @@ demo-star-logical-demo:
 demo-simulators:
     python demo/simulators_demo.py
 
-demo-qalloc-at:
-    python demo/logical_qalloc_at_demo.py
-
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at
-
-# Install mdBook at the pinned version
-install-mdbook:
-    cargo install mdbook@{{ mdbook_version }}
+demo: demo-introduction demo-custom-architectures demo-eight-three-two demo-cudaq-conversion demo-allocation-control demo-move-control demo-pipeline demo-logical-dialect demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo
 
 # Build Rust API documentation
 doc-rust:
     cargo doc --no-deps -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
 
-# Build the mdBook documentation site
-doc-book: install-mdbook
-    mdbook build
+# Build the unified MkDocs site. Curated notebooks are rendered as first-class
+# pages in the same navigation as the prose documentation.
+doc-site:
+    uv run --group doc python docs/scripts/stage_docs.py
+    uv run --group doc mkdocs build --clean --strict
 
-# Build complete documentation site (book + Rust API at /api/)
-doc-all: doc-book doc-rust
+# Compatibility aliases for the previous documentation recipes.
+doc-book: doc-site
+
+doc-notebooks: doc-site
+
+# Execute notebook cells before rendering (requires the project extras).
+doc-notebooks-execute:
+    uv run --group doc --all-extras python docs/scripts/stage_docs.py
+    EXECUTE_NOTEBOOKS=true uv run --group doc --all-extras mkdocs build --clean --strict
+
+# Build complete documentation site (MkDocs + Rust API at /api/)
+doc-all: doc-site doc-rust
     rm -rf target/book/api
     cp -r target/doc target/book/api
-    @echo "Site: target/book/ (open target/book/index.html)"
+    @echo "Site built at target/book/ (run 'just doc' for a local HTTP preview)"
 
-# Build and open documentation site in browser
+# Executed variant used for deployment so generated notebook output, including
+# interactive Plotly figures, is present on the published site.
+doc-all-execute: doc-notebooks-execute doc-rust
+    rm -rf target/book/api
+    cp -r target/doc target/book/api
+    @echo "Executed site built at target/book/"
+
+# Build, serve, and open the documentation site. MkDocs uses directory URLs,
+# which need an HTTP server to resolve /page/ to /page/index.html.
 doc: doc-all
-    open target/book/index.html
+    uv run python docs/scripts/serve_docs.py
 
 # Deploy versioned documentation to target/site/
 doc-deploy version:

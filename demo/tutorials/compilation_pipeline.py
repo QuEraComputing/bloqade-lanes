@@ -6,7 +6,7 @@
 # a basic squin kernel, performing layout and placement analyses, rewriting to move dialect,
 # and finally inverting back to the squin dialect with physical qubits and noise models inserted.
 
-# to start we create a simple squin kernel that uses the gemini logical dialect to define a
+# To start we create a simple squin kernel that uses the gemini logical dialect to define a
 # terminal measurement on the circuit.
 
 # %%
@@ -57,10 +57,10 @@ SequentialPlacePass(example_kernel.dialects)(example_kernel)
 example_kernel.print()
 
 # %% [markdown]
-# now that we have the place dialect inside the kernel we can run the initial layout analysis
+# Now that we have the place dialect inside the kernel we can run the initial layout analysis
 # to determine the initial placement of logical qubits onto the gemini logical lanes architecture.
 
-# part of the input to the layout analysis is the layout heuristic which takes data collected from
+# Part of the input to the layout analysis is the layout heuristic which takes data collected from
 # the analysis interpreter to generate the initial layout. In this example we use a heuristic
 # that priorities placing qubits that interact frequently within the same word. This heuristic
 # is implemented in the `logical_layout` module inside bloqade-lanes.
@@ -196,7 +196,7 @@ frame, _ = atom.AtomInterpreter(example_kernel.dialects, arch_spec=physical_arch
 example_kernel.print(analysis=frame.entries)
 
 # %% [markdown]
-# from here we can rewrite the physical move program to physical squin with noise models inserted.
+# From here we can rewrite the physical move program to physical squin with noise models inserted.
 # This is done using the `MoveToSquinLogical` transformer inside the `bloqade.lanes.transform` module.
 # This transformation requires the physical architecture spec and a logical noise model that provides
 # both initialization kernels and noise channels for the compilation.

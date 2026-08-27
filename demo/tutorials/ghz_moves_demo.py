@@ -1,11 +1,19 @@
+# %% [markdown]
+# # Preparing a GHZ State
+# Here, we provide a short tutorial notebook for how you might prepare a GHZ state in `bloqade-lanes`.
+
+# %%
+# Define imports
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes import visualize
-from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.transform import LogicalPipeline
 
+# %% [markdown]
+# We can define two GHZ kernels in `squin` and compile them down to the `move` level.
 
+
+# %%
 @squin.kernel(typeinfer=True, fold=True)
 def log_depth_ghz():
     size = 10
@@ -26,6 +34,7 @@ def log_depth_ghz():
             reg = reg + new_qubits
 
 
+# %%
 @squin.kernel(typeinfer=True, fold=True)
 def ghz_optimal():
     qs = qubit.qalloc(10)
@@ -41,13 +50,18 @@ def ghz_optimal():
     squin.broadcast.sqrt_y_adj(ilist.IList([qs[4], qs[9]]))
 
 
+# %%
 mt = LogicalPipeline().emit(log_depth_ghz)
-visualize.debugger(mt, logical.get_arch_spec(), interactive=True, atom_marker="s")
+# visualize.debugger(mt, logical.get_arch_spec(), interactive=True, atom_marker="s")
 
+# %%
 mt = LogicalPipeline().emit(ghz_optimal)
-visualize.debugger(mt, logical.get_arch_spec(), interactive=True, atom_marker="s")
+# visualize.debugger(mt, logical.get_arch_spec(), interactive=True, atom_marker="s")
 
+# %%
 mt = LogicalPipeline(transversal_rewrite=True).emit(ghz_optimal)
-visualize.animated_debugger(
-    mt, physical.get_arch_spec(), interactive=True, atom_marker="o"
-)
+# visualize.animated_debugger(
+#     mt, physical.get_arch_spec(), interactive=True, atom_marker="o"
+# )
+
+# %%

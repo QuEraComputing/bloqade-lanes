@@ -1,0 +1,112 @@
+site_name: Bloqade Lanes
+site_description: Atom shuttle compiler tools for fixed-lane neutral-atom architectures
+repo_name: QuEraComputing/bloqade-lanes
+repo_url: https://github.com/QuEraComputing/bloqade-lanes
+
+# The source documentation and curated demos are combined here by
+# docs/scripts/stage_docs.py. This keeps demo/ as the executable source of truth
+# while allowing notebooks to be first-class pages in the main documentation.
+docs_dir: target/site-docs
+site_dir: target/book
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Introduction: demos/lanes_intro.py
+      - Programming for Gemini Logical: demos/logical_dialect_demo.py
+      - Programming for Gemini Physical: demos/physical_arch_customization.py
+  - Demos:
+      - Overview: demos/index.md
+      - Defining custom architectures:
+          - Architecture creation and visualization: demos/tutorials/custom_architectures.py
+          - Zone-based architectures: demos/tutorials/zone_based_arch_demo.py
+      - Other language conversions:
+          - CUDA-Q: demos/tutorials/cudaq_conversion.py
+      - Layout and move control:
+          - qalloc_at and new_at: demos/tutorials/allocation_control.py
+          - move_to and qubit permutations: demos/tutorials/move_control.py
+      - Compilation pipeline details:
+          - Pipeline details and dialects: demos/tutorials/compilation_pipeline.py
+      - Simulators:
+          - Simulator construction and backends: demos/simulators_demo.py
+      - Specific use cases:
+          - "[[8,3,2]] code": demos/tutorials/eight_three_two_code.py
+          - Logical STAR Rz: demos/star_logical_demo.py
+          - Magic State Distillation: demos/tutorials/msd.py
+          - GHZ State Preparation: demos/tutorials/ghz_moves_demo.py
+  - Architecture:
+      - Architecture specification: arch/archspec.md
+      - Zone-centric concepts: arch/zone-centric-concepts.md
+  - Bytecode:
+      - Instruction quick reference: bytecode/inst-quick-ref.md
+      - Instruction set: bytecode/inst-spec.md
+      - CLI reference: bytecode/cli.md
+  - Migration guides:
+      - Migrating to v0.11: migration/migration_guide_0_11.md
+
+theme:
+  name: material
+  custom_dir: docs/notebook-theme
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocs-jupyter:
+      # The normal docs build renders the notebook structure and saved outputs
+      # without running demos. Set EXECUTE_NOTEBOOKS=true to refresh outputs.
+      execute: !ENV [EXECUTE_NOTEBOOKS, false]
+      allow_errors: false
+      include_source: true
+      # mkdocs-jupyter otherwise passes an empty MathJax URL to nbconvert,
+      # leaving notebook equations as raw ``$$ ... $$`` text.
+      custom_mathjax_url: https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS_CHTML-full,Safe
+      include:
+        - demos/tutorials/custom_architectures.py
+        - demos/tutorials/eight_three_two_code.py
+        - demos/tutorials/cudaq_conversion.py
+        - demos/tutorials/allocation_control.py
+        - demos/tutorials/move_control.py
+        - demos/tutorials/compilation_pipeline.py
+        - demos/logical_dialect_demo.py
+        - demos/physical_arch_customization.py
+        - demos/simulator_device_demo.ipynb
+        - demos/simulators_demo.py
+        - demos/star_logical_demo.py
+        - demos/lanes_intro.py
+        - demos/tutorials/ghz_moves_demo.py
+        - demos/tutorials/msd_postselection_experiment.py
+        - demos/tutorials/msd.py
+        - demos/tutorials/zone_based_arch_demo.py
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+
+extra_javascript:
+  - assets/version-switcher.js
+
+extra_css:
+  - assets/version-switcher.css
+
+validation:
+  links:
+    # Rust API HTML is copied into the finished site after MkDocs runs.
+    not_found: info

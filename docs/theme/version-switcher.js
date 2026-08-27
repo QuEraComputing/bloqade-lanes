@@ -1,4 +1,4 @@
-// Version switcher for mdBook — reads versions.json and renders a dropdown.
+// Version switcher for MkDocs Material — reads versions.json and renders a dropdown.
 // Auto-detects the base path from the URL so it works on any deployment
 // (GitHub Pages project sites, custom domains, etc.) without configuration.
 (function () {
@@ -86,11 +86,13 @@
         window.location.href = this.value;
       });
 
-      // Insert into the mdBook menu bar
-      var menuBar = document.querySelector(".right-buttons");
+      // Insert beside the MkDocs Material repository link. The fallback keeps
+      // the switcher usable if Material changes that part of its header.
+      var menuBar = document.querySelector(".md-header__source") ||
+        document.querySelector(".md-header__inner");
       if (!menuBar) {
         console.warn(
-          "[version-switcher] Could not find .right-buttons element. " +
+          "[version-switcher] Could not find the Material header. " +
           "Version dropdown not rendered."
         );
         return;
@@ -105,7 +107,7 @@
 
       wrapper.appendChild(label);
       wrapper.appendChild(select);
-      menuBar.prepend(wrapper);
+      menuBar.insertBefore(wrapper, menuBar.firstChild);
     })
     .catch(function (err) {
       console.warn(

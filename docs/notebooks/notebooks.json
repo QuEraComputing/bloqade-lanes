@@ -1,0 +1,18 @@
+[
+  "tutorials/custom_architectures.py",
+  "tutorials/eight_three_two_code.py",
+  "tutorials/cudaq_conversion.py",
+  "tutorials/allocation_control.py",
+  "tutorials/move_control.py",
+  "tutorials/compilation_pipeline.py",
+  "logical_dialect_demo.py",
+  "physical_arch_customization.py",
+  "simulator_device_demo.ipynb",
+  "simulators_demo.py",
+  "star_logical_demo.py",
+  "lanes_intro.py",
+  "tutorials/msd.py",
+  "tutorials/msd_postselection_experiment.py",
+  "tutorials/zone_based_arch_demo.py",
+  "tutorials/ghz_moves_demo.py"
+]

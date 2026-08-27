@@ -1,3 +1,9 @@
+# %% [markdown]
+# # MSD Demonstration
+# We provide a short notebook demonstrating how you might program the MSD experiment in `bloqade-lanes`.
+
+# %%
+# Define imports
 import math
 
 from kirin.dialects import ilist
@@ -8,6 +14,7 @@ from bloqade.gemini.compile import compile_to_stim_program
 from bloqade.gemini.logical.stdlib import default_post_processing
 
 
+# %%
 @gemini_logical.kernel(aggressive_unroll=True)
 def main():
     # see arXiv: 2412.15165v1, Figure 3a
@@ -25,10 +32,12 @@ def main():
     default_post_processing(reg)
 
 
-### Visualize ###
-# from bloqade.lanes import visualize
-# from bloqade.lanes.arch.gemini import physical
-# from bloqade.lanes.transform import LogicalPipeline
-# mt = LogicalPipeline(transversal_rewrite=True).emit(main)
+# %% [markdown]
+# You can compile down the program to the move level, as well as convert it to stim.
+
+# %%
+from bloqade.lanes.transform import LogicalPipeline
+
+mt = LogicalPipeline(transversal_rewrite=True).emit(main)
 # visualize.debugger(mt, physical.get_arch_spec(), interactive=True, atom_marker="o")
 result = compile_to_stim_program(main)
