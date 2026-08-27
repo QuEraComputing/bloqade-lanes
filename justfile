@@ -34,7 +34,7 @@ coverage-rust:
 
 # Run all tests with coverage and generate merged HTML report (Python + Rust)
 coverage-all: coverage-run coverage-xml coverage-rust
-    uv run python scripts/merge_coverage.py coverage.xml rust-coverage.xml -o combined-coverage.xml
+    uv run --locked python scripts/merge_coverage.py coverage.xml rust-coverage.xml -o combined-coverage.xml
     mkdir -p htmlcov-all
     uv run pycobertura show --format html --output htmlcov-all/index.html combined-coverage.xml
     @echo "Combined coverage report: htmlcov-all/index.html"
@@ -44,40 +44,40 @@ coverage-all-open: coverage-all
     open htmlcov-all/index.html
 
 demo-msd:
-    python demo/msd.py
+    uv run --locked python demo/msd.py
 
 demo-pipeline:
-    python demo/pipeline_demo.py
+    uv run --locked python demo/pipeline_demo.py
 
 pipeline-details:
-    python demo/pipeline_details.py
+    uv run --locked python demo/pipeline_details.py
 
 simulator-device-demo:
-    python demo/simulator_device_demo.py
+    uv run --locked python demo/simulator_device_demo.py
 
 demo-explicit-allocation:
-    python demo/explicit_allocation.py
+    uv run --locked python demo/explicit_allocation.py
 
 demo-logical-dialect:
-    python demo/logical_dialect_demo.py
+    uv run --locked python demo/logical_dialect_demo.py
 
 demo-logical-new-at:
-    python demo/logical_new_at_demo.py
+    uv run --locked python demo/logical_new_at_demo.py
 
 demo-msd-postselection-experiment:
-    python demo/msd_postselection_experiment.py
+    uv run --locked python demo/msd_postselection_experiment.py
 
 demo-phys-arch-customization:
-    python demo/physical_arch_customization.py
+    uv run --locked python demo/physical_arch_customization.py
 
 demo-star-logical-demo:
-    python demo/star_logical_demo.py
+    uv run --locked python demo/star_logical_demo.py
 
 demo-simulators:
-    python demo/simulators_demo.py
+    uv run --locked python demo/simulators_demo.py
 
 demo-qalloc-at:
-    python demo/logical_qalloc_at_demo.py
+    uv run --locked python demo/logical_qalloc_at_demo.py
 
 demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at
 
@@ -105,7 +105,7 @@ doc: doc-all
 
 # Deploy versioned documentation to target/site/
 doc-deploy version:
-    uv run --dev python docs/scripts/deploy_docs.py {{ version }}
+    uv run --locked --dev python docs/scripts/deploy_docs.py {{ version }}
 
 sync:
     uv sync --dev --all-extras --index-strategy=unsafe-best-match
