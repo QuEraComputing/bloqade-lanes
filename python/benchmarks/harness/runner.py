@@ -18,6 +18,7 @@ from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arc
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.logical import layout as logical_layout
+from bloqade.lanes.heuristics.physical._no_return_base import NoReturnStrategyBase
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
@@ -201,6 +202,14 @@ class BenchmarkRunner:
         ):
             nodes = inner.rust_nodes_expanded_total
             bound_stats = inner.rust_bound_stats_total
+        elif isinstance(inner, NoReturnStrategyBase):
+            # The no-return family (NoHome / NoReturn / RecedingHorizon) mirrors
+            # PhysicalPlacementStrategy's expansion counter, so search effort is
+            # recorded the same way. It has no completion bound, hence no bound
+            # stats. Without this branch `nodes_explored` is silently empty for
+            # `pipeline_default`, which is the row that tracks the shipped
+            # default -- see the family assumption this parallels in matrix.py.
+            nodes = inner.rust_nodes_expanded_total
         return _RunArtifacts(
             move_mt=move_mt,
             arch_spec=placement_strategy.arch_spec,
