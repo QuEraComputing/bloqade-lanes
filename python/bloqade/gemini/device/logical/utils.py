@@ -140,7 +140,7 @@ def get_slm_mapping_postprocessing(
         )
     mapping = shot_mapping.mapping
     zone0_locations = list(arch_spec.yield_zone_locations(zone0))
-    print(f"row-major SLM mapping: {mapping}")
+    # print(f"row-major SLM mapping: {mapping}")
     expected_zone0_sites = len(zone0_locations)
 
     post_processing = interpreter.get_post_processing(physical_move_kernel)
