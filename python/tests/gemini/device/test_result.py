@@ -590,23 +590,19 @@ def test_aligned_detected_and_sorted_shots_reject_missing_frame(storage):
 
 def test_get_slm_mapping_postprocessing_maps_and_validates_frames():
     map_shots, _ = utils_module.get_slm_mapping_postprocessing(_kernel_a)
-    map_inverted_shots, _ = utils_module.get_slm_mapping_postprocessing(
-        _kernel_a,
-        invert_bits=True,
-    )
 
     empty_slm_frame = np.zeros((1, 160), dtype=bool)
-    assert map_shots(empty_slm_frame) == [[False] * 14]
-    assert map_inverted_shots(empty_slm_frame) == [[True] * 14]
+    assert map_shots(empty_slm_frame, invert=False) == [[False] * 14]
+    assert map_shots(empty_slm_frame, invert=True) == [[True] * 14]
 
     with pytest.raises(ValueError, match="Expected a 2-D array"):
-        map_shots(np.zeros(160, dtype=bool))
+        map_shots(np.zeros(160, dtype=bool), invert=False)
 
     with pytest.raises(ValueError, match="Expected 160 Zone-0 columns"):
-        map_shots(np.zeros((1, 159), dtype=bool))
+        map_shots(np.zeros((1, 159), dtype=bool), invert=False)
 
 
-def test_slm_postprocessing_functions_cache_by_bit_convention(
+def test_slm_postprocessing_functions_compile_once_independent_of_bit_convention(
     storage, monkeypatch, mocker
 ):
     add_task_definition(
@@ -627,23 +623,21 @@ def test_slm_postprocessing_functions_cache_by_bit_convention(
     )
     mapping_calls = []
 
-    def get_mapping(_kernel, *, invert_bits=False):
-        mapping_calls.append(invert_bits)
-        return lambda shots: shots.tolist(), post_processing
+    def get_mapping(_kernel):
+        mapping_calls.append(_kernel)
+        return lambda shots, *, invert: shots.tolist(), post_processing
 
     monkeypatch.setattr(utils_module, "get_slm_mapping_postprocessing", get_mapping)
     decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
 
     result = GeminiLogicalResult(storage=storage)
-    default_mapping = result._slm_postprocessing_functions()
-    assert result._slm_postprocessing_functions() is default_mapping
-    noninverted_mapping = result._slm_postprocessing_functions(invert_bits=False)
+    mappings = result._slm_postprocessing_functions()
+    assert result._slm_postprocessing_functions() is mappings
 
-    assert default_mapping is not noninverted_mapping
-    assert mapping_calls == [True, False]
-    # The duplicate program index across task IDs is decoded once per bit
-    # convention, then served from the corresponding cache.
-    assert decode_spy.call_count == 2
+    assert len(mapping_calls) == 1
+    # The duplicate program index across task IDs is decoded once and served
+    # from the convention-independent cache.
+    assert decode_spy.call_count == 1
 
 
 def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
@@ -669,30 +663,33 @@ def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
         emit_detectors=lambda rows: ([row[0]] for row in rows),
         emit_observables=lambda rows: ([row[1]] for row in rows),
     )
+    mapping_calls = []
     conventions = []
 
-    def postprocessing_functions(self, *, invert_bits=True):
-        conventions.append(invert_bits)
-        return {
-            0: (
-                lambda shots: shots[:, :2].tolist(),
-                post_processing,
-            )
-        }
+    def get_mapping(_kernel):
+        mapping_calls.append(_kernel)
+
+        def postprocess(shots, *, invert):
+            conventions.append(invert)
+            measurements = shots[:, :2]
+            return (~measurements if invert else measurements).tolist()
+
+        return postprocess, post_processing
 
     monkeypatch.setattr(
-        GeminiLogicalResult,
-        "_slm_postprocessing_functions",
-        postprocessing_functions,
+        utils_module,
+        "get_slm_mapping_postprocessing",
+        get_mapping,
     )
 
     result = GeminiLogicalResult(storage=storage)
-    assert result.measurements == [[[True, False]]]
-    assert result.return_values == [[[True, False]]]
-    assert result.detectors == [[[True]]]
-    assert result.observables == [[[False]]]
+    assert result.measurements == [[[False, True]]]
+    assert result.return_values == [[[False, True]]]
+    assert result.detectors == [[[False]]]
+    assert result.observables == [[[True]]]
     assert result.filling_at_start == [[[False, True]]]
-    assert False in conventions
+    assert len(mapping_calls) == 1
+    assert conventions == [True, False]
 
 
 def test_slm_result_views_return_empty_lists_after_shot_filter(storage):

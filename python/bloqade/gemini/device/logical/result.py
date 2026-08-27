@@ -60,55 +60,40 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     def _slm_postprocessing_functions(
         self,
-        *,
-        invert_bits: bool = True,
     ) -> dict[
         int,
-        tuple[Callable[[np.ndarray], list[list[bool]]], PostProcessing[RetType]],
+        tuple[Callable[..., list[list[bool]]], PostProcessing[RetType]],
     ]:
         """Decode stored programs and build SLM-frame postprocessors.
 
-        Results are cached independently for each bit convention. ``True`` is
-        the default because QLAM DETECTED frames encode bright/atom-present as
-        ``True``, opposite to the simulator/Atom postprocessing convention.
+        The compiled mapping and logical postprocessor are cached per program.
+        Callers select their SLM bit convention through the mapper's
+        ``invert`` keyword argument.
         """
+        return self._slm_postprocessing_functions_cache
+
+    @cached_property
+    def _slm_postprocessing_functions_cache(
+        self,
+    ) -> dict[
+        int,
+        tuple[Callable[..., list[list[bool]]], PostProcessing[RetType]],
+    ]:
         # Import lazily: the mapping helper imports the Lanes transform stack.
         # This result class is imported while the public Gemini package is
         # initialized, which can itself happen during Lanes analysis imports.
         from .utils import get_slm_mapping_postprocessing
-
-        cache = self._slm_postprocessing_functions_cache
-        cached = cache.get(invert_bits)
-        if cached is not None:
-            return cached
 
         postprocessing_functions = {}
         for idx, kernel_json in self._program_contents_by_index().items():
             kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
             slm_to_raw, postprocessing_function = get_slm_mapping_postprocessing(
                 kernel_mt,
-                invert_bits=invert_bits,
             )
             # NOTE: what if err in postproc fn generation/errors here??
             postprocessing_functions[idx] = (slm_to_raw, postprocessing_function)
 
-        cache[invert_bits] = postprocessing_functions
         return postprocessing_functions
-
-    @cached_property
-    def _slm_postprocessing_functions_cache(
-        self,
-    ) -> dict[
-        bool,
-        dict[
-            int,
-            tuple[
-                Callable[[np.ndarray], list[list[bool]]],
-                PostProcessing[RetType],
-            ],
-        ],
-    ]:
-        return {}
 
     def postprocessing_functions(self) -> dict[int, Callable | None]:
         """Build legacy compact-shot postprocessors from stored programs.
@@ -140,7 +125,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         for shot_result, subtask in zip(shot_results, subtasks):
             func = postprocessing_functions[subtask["program_index"]][0]
-            ret_vals.append(func(shot_result))
+            ret_vals.append(func(shot_result, invert=True))
 
         return ret_vals
 
@@ -222,7 +207,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         ret_vals: list[list[list[bool]]] = []
         subtasks = self.subtasks(verify=True)
-        postprocessing_functions = self._slm_postprocessing_functions(invert_bits=False)
+        postprocessing_functions = self._slm_postprocessing_functions()
         _, shot_results = aligned_detected_and_sorted_shots_for_subtasks(
             self.storage,
             self.shot_filter,
@@ -231,7 +216,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         for shot_result, subtask in zip(shot_results, subtasks):
             func = postprocessing_functions[subtask["program_index"]][0]
-            ret_vals.append(func(shot_result))
+            ret_vals.append(func(shot_result, invert=False))
 
         # TOOD: can do validation later on sorted/detected frames
         return ret_vals

@@ -112,8 +112,8 @@ def aligned_detected_and_sorted_shots_for_subtasks(
 
 
 def get_slm_mapping_postprocessing(
-    sim_kernel: ir.Method[..., RetType], *, invert_bits=False
-) -> tuple[Callable[[np.ndarray], Any], atom.PostProcessing[RetType]]:
+    sim_kernel: ir.Method[..., RetType],
+) -> tuple[Callable[..., Any], atom.PostProcessing[RetType]]:
     """Create a result postprocessor for full Zone-0 SLM shots.
 
     Warning:
@@ -145,7 +145,7 @@ def get_slm_mapping_postprocessing(
 
     post_processing = interpreter.get_post_processing(physical_move_kernel)
 
-    def postprocess(zone0_shots):
+    def postprocess(zone0_shots, *, invert: bool = False):
         zone0_shots = np.asarray(zone0_shots, dtype=bool)
 
         if zone0_shots.size == 0:
@@ -162,7 +162,7 @@ def get_slm_mapping_postprocessing(
 
         # Enable only if the stored QLAM bit convention is opposite to the
         # simulator/post-processing convention.
-        if invert_bits:
+        if invert:
             measurement_shots = ~measurement_shots
 
         return measurement_shots.tolist()
