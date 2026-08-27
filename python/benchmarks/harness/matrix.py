@@ -14,6 +14,7 @@ from benchmarks.harness.models import (
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch import ArchSpec
 from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
@@ -60,6 +61,26 @@ def default_strategy_configs(
     else:
         arch_spec_id, factory = arch_spec
     return (
+        StrategyConfig(
+            strategy_id="pipeline_default",
+            backend="rust",
+            generator_id="rust_solver",
+            # Deliberately unpinned: this row tracks whatever
+            # `make_physical_placement_strategy` resolves to, which is what
+            # `PhysicalPipeline` gives a user who passes no strategy. Pinning
+            # the knobs here would reproduce the blind spot one level down --
+            # the point is that a change to the placement family,
+            # `backwards_search`, `block_spectators`, or the `search_budget` /
+            # `move_solutions_per_layer` defaults shows up as a baseline diff.
+            # The factory already wraps its result in
+            # PalindromePlacementStrategy when return_moves is on, so this must
+            # not be wrapped again.
+            build_placement_strategy=lambda: make_physical_placement_strategy(
+                arch_spec=factory()
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="shipped PhysicalPipeline default; knobs intentionally unpinned",
+        ),
         StrategyConfig(
             strategy_id="rust_entropy_1",
             backend="rust",
