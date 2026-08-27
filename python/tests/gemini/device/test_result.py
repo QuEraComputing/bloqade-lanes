@@ -18,7 +18,13 @@ from qlam_core.plugins.tasks.api.tasks_models import (
 
 from bloqade import squin
 from bloqade.gemini import GeminiLogicalResult, logical
-from bloqade.gemini.device.logical import result as result_module
+from bloqade.gemini.device.logical import result as result_module, utils as utils_module
+from bloqade.gemini.device.logical.utils import (
+    ShotRemappingException,
+    aligned_detected_and_sorted_shots_for_subtasks,
+    get_slm_mapping_postprocessing,
+)
+from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
 CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
@@ -369,6 +375,452 @@ def test_shot_results_default_filter_excludes_non_detected_frames(storage):
     np.testing.assert_array_equal(shots_per_subtask[0], np.array([[True, False]]))
 
 
+# tests for the postprocessing utility
+def test_postproc_termmeasure():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(qubits[0])
+        squin.cx(qubits[0], qubits[1])
+        return logical.terminal_measure(qubits)
+
+    expected_indices = [64, 65, 66, 67, 68, 69, 70, 80, 81, 82, 83, 84, 85, 86]
+    meas_postproc, _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+    mock_shots = np.asarray([np.zeros(160, dtype=bool)])
+    mock_shots[:, expected_indices] = True
+    ret_shots = meas_postproc(mock_shots)
+    assert ret_shots == [[True for _ in range(len(expected_indices))]]
+
+
+def test_postproc_termmeasure_one():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([4]))
+        squin.h(qubits[0])
+        # squin.cx(qubits[0], qubits[1])
+        return logical.terminal_measure(qubits)
+
+    expected_indices = [64, 65, 66, 67, 68, 69, 70]
+    meas_postproc, _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+    mock_shots = np.asarray([np.zeros(160, dtype=bool)])
+    mock_shots[:, expected_indices] = True
+    ret_shots = meas_postproc(mock_shots)
+    assert ret_shots == [[True for _ in range(len(expected_indices))]]
+
+
+def test_postproc_termmeasure_none():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        _ = logical.qalloc_at(ilist.IList([]))
+        # squin.h(qubits[0])
+        # squin.cx(qubits[0], qubits[1])
+        # return logical.terminal_measure(qubits)
+
+    with pytest.raises(
+        ShotRemappingException, match="outer return value did not refine to IListResult"
+    ):
+        _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+
+
+def test_postproc_termmeasure_all():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
+        squin.h(qubits[0])
+        squin.cx(qubits[0], qubits[1])
+        return logical.terminal_measure(qubits)
+
+    expected_indices = [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+    ]
+    meas_postproc, _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+    mock_shots = np.asarray([np.zeros(160, dtype=bool)])
+    mock_shots[:, expected_indices] = True
+    ret_shots = meas_postproc(mock_shots)
+    assert ret_shots == [[True for _ in range(len(expected_indices))]]
+
+
+@pytest.mark.xfail(
+    raises=ShotRemappingException,
+    reason="Shot remapping does not yet support kernels returning post-processing tuples",
+    strict=True,
+)
+def test_default_postproc_remapping():
+    @logical.kernel(aggressive_unroll=True)
+    def test_qalloc_4_5():
+        qubits = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(qubits[0])
+        squin.cx(qubits[0], qubits[1])
+        return logical.default_post_processing(qubits)
+
+    _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
+
+
+def test_aligned_detected_and_sorted_shots_use_full_shot_identity(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=2)]),
+    )
+    storage.add_shots(
+        [
+            make_shot(
+                shot_index=2,
+                subtask_shot_index=1,
+                frame_type="SORTED",
+                bitstring=(False, True),
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_shot_index=0,
+                frame_type="DETECTED",
+                bitstring=(True, False),
+            ),
+            make_shot(
+                shot_index=2,
+                subtask_shot_index=1,
+                frame_type="DETECTED",
+                bitstring=(True, True),
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_shot_index=0,
+                frame_type="SORTED",
+                bitstring=(False, False),
+            ),
+        ]
+    )
+
+    detected, sorted_ = aligned_detected_and_sorted_shots_for_subtasks(
+        storage,
+        ShotFilter(task_ids=("task-1",)),
+        GeminiLogicalResult(storage=storage).subtasks(),
+    )
+
+    np.testing.assert_array_equal(detected[0], np.array([[True, False], [True, True]]))
+    np.testing.assert_array_equal(sorted_[0], np.array([[False, False], [False, True]]))
+
+
+def test_aligned_detected_and_sorted_shots_reject_missing_frame(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=1)]),
+    )
+    storage.add_shots(
+        [make_shot(shot_index=0, frame_type="DETECTED", bitstring=(True, False))]
+    )
+
+    with pytest.raises(ValueError, match="not aligned"):
+        aligned_detected_and_sorted_shots_for_subtasks(
+            storage,
+            ShotFilter(task_ids=("task-1",)),
+            GeminiLogicalResult(storage=storage).subtasks(),
+        )
+
+
+def test_get_slm_mapping_postprocessing_maps_and_validates_frames():
+    map_shots, _ = utils_module.get_slm_mapping_postprocessing(_kernel_a)
+
+    empty_slm_frame = np.zeros((1, 160), dtype=bool)
+    assert map_shots(empty_slm_frame, invert=False) == [[False] * 14]
+    assert map_shots(empty_slm_frame, invert=True) == [[True] * 14]
+
+    with pytest.raises(ValueError, match="Expected a 2-D array"):
+        map_shots(np.zeros(160, dtype=bool), invert=False)
+
+    with pytest.raises(ValueError, match="Expected 160 Zone-0 columns"):
+        map_shots(np.zeros((1, 159), dtype=bool), invert=False)
+
+
+def test_slm_postprocessing_functions_compile_once_independent_of_bit_convention(
+    storage, monkeypatch, mocker
+):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+    add_task_definition(
+        storage,
+        "task-2",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (list(row) for row in rows),
+        emit_detectors=lambda rows: (list(row) for row in rows),
+        emit_observables=lambda rows: (list(row) for row in rows),
+    )
+    mapping_calls = []
+
+    def get_mapping(_kernel):
+        mapping_calls.append(_kernel)
+        return lambda shots, *, invert: shots.tolist(), post_processing
+
+    monkeypatch.setattr(utils_module, "get_slm_mapping_postprocessing", get_mapping)
+    decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
+
+    result = GeminiLogicalResult(storage=storage)
+    mappings = result._slm_postprocessing_functions()
+    assert result._slm_postprocessing_functions() is mappings
+
+    assert len(mapping_calls) == 1
+    # The duplicate program index across task IDs is decoded once and served
+    # from the convention-independent cache.
+    assert decode_spy.call_count == 1
+
+
+def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=1)],
+        ),
+    )
+    detected = (True, False) + (False,) * 158
+    sorted_ = (False, True) + (False,) * 158
+    storage.add_shots(
+        [
+            make_shot(shot_index=0, frame_type="DETECTED", bitstring=detected),
+            make_shot(shot_index=0, frame_type="SORTED", bitstring=sorted_),
+        ]
+    )
+
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (list(row) for row in rows),
+        emit_detectors=lambda rows: ([row[0]] for row in rows),
+        emit_observables=lambda rows: ([row[1]] for row in rows),
+    )
+    mapping_calls = []
+    conventions = []
+
+    def get_mapping(_kernel):
+        mapping_calls.append(_kernel)
+
+        def postprocess(shots, *, invert):
+            conventions.append(invert)
+            measurements = shots[:, :2]
+            return (~measurements if invert else measurements).tolist()
+
+        return postprocess, post_processing
+
+    monkeypatch.setattr(
+        utils_module,
+        "get_slm_mapping_postprocessing",
+        get_mapping,
+    )
+
+    result = GeminiLogicalResult(storage=storage)
+    assert result.measurements == [[[False, True]]]
+    assert result.return_values == [[[False, True]]]
+    assert result.detectors == [[[False]]]
+    assert result.observables == [[[True]]]
+    assert result.filling_at_start == [[[False, True]]]
+    assert len(mapping_calls) == 1
+    assert conventions.count(True) == 4
+    assert conventions.count(False) == 1
+
+
+def test_measurements_re_reads_shared_storage(storage, monkeypatch):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=2)],
+        ),
+    )
+    storage.add_shots(
+        [make_shot(shot_index=0, bitstring=(False, True) + (False,) * 158)]
+    )
+
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (list(row) for row in rows),
+        emit_detectors=lambda rows: (list(row) for row in rows),
+        emit_observables=lambda rows: (list(row) for row in rows),
+    )
+
+    def get_mapping(_kernel):
+        return lambda shots, *, invert: shots[:, :2].tolist(), post_processing
+
+    monkeypatch.setattr(utils_module, "get_slm_mapping_postprocessing", get_mapping)
+
+    result = GeminiLogicalResult(storage=storage)
+    assert result.measurements == [[[False, True]]]
+
+    storage.add_shots(
+        [make_shot(shot_index=1, bitstring=(True, False) + (False,) * 158)]
+    )
+
+    assert result.measurements == [[[False, True], [True, False]]]
+
+
+def test_slm_result_views_return_empty_lists_after_shot_filter(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=1)],
+        ),
+    )
+    storage.add_shots(
+        [
+            make_shot(
+                shot_index=0,
+                frame_type="DETECTED",
+                bitstring=(False,) * 160,
+            ),
+            make_shot(
+                shot_index=0,
+                frame_type="SORTED",
+                bitstring=(True,) * 160,
+            ),
+        ]
+    )
+
+    result = GeminiLogicalResult(storage=storage).where_shots(lambda shot: False)
+
+    assert result.measurements == [[]]
+    assert result.return_values == [[]]
+    assert result.detectors == [[]]
+    assert result.observables == [[]]
+    assert result.filling_at_start == [[]]
+
+
+def test_return_values_rejects_compact_frames(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[
+                Subtask(program_index=0, num_shots=1),
+                Subtask(program_index=0, num_shots=1),
+            ],
+        ),
+    )
+    storage.add_shots(
+        [
+            make_shot(
+                shot_index=0,
+                subtask_index=0,
+                bitstring=(False,) * 160,
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_index=1,
+                bitstring=(False, True),
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Expected 160 Zone-0 columns, got 2"):
+        _ = GeminiLogicalResult(storage=storage).return_values
+
+
+def test_logical_results_preserves_legacy_path_for_slm_width_shots(
+    storage, monkeypatch
+):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content=KERNEL_A_JSON)],
+            subtasks=[Subtask(program_index=0, num_shots=1)],
+        ),
+    )
+    storage.add_shots(
+        [make_shot(shot_index=0, subtask_index=0, bitstring=(False,) * 160)]
+    )
+
+    def unexpected_slm_postprocessing(*args, **kwargs):
+        raise AssertionError("logical_results must not use SLM postprocessing")
+
+    monkeypatch.setattr(
+        GeminiLogicalResult,
+        "_slm_postprocessing_functions",
+        unexpected_slm_postprocessing,
+    )
+
+    legacy_results = GeminiLogicalResult(storage=storage).logical_results()
+
+    assert len(legacy_results) == 1
+    assert len(list(legacy_results[0])) == 1
+
+
 def test_shot_results_empty_when_no_subtasks(storage):
     res = GeminiLogicalResult(storage=storage)
     assert res.shot_results() == []
@@ -424,6 +876,52 @@ def test_postprocessing_functions_filters_by_shot_filter_task_ids(storage, mocke
     assert decode_spy.call_args.args[0] == KERNEL_A_JSON
 
 
+@pytest.mark.parametrize(
+    "method_name",
+    ["postprocessing_functions", "_slm_postprocessing_functions"],
+)
+def test_postprocessing_rejects_different_kernels_at_same_program_index(
+    storage, method_name
+):
+    add_task_definition(
+        storage,
+        "task-a",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+    add_task_definition(
+        storage,
+        "task-b",
+        make_task_definition(programs=[Program(content=KERNEL_B_JSON)]),
+    )
+
+    result = GeminiLogicalResult(storage=storage)
+
+    with pytest.raises(
+        ValueError,
+        match="different kernels for program_index=0: 'task-a' and 'task-b'",
+    ):
+        getattr(result, method_name)()
+
+
+def test_postprocessing_program_validation_respects_narrowed_task_scope(storage):
+    add_task_definition(
+        storage,
+        "task-a",
+        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+    )
+    add_task_definition(
+        storage,
+        "task-b",
+        make_task_definition(programs=[Program(content=KERNEL_B_JSON)]),
+    )
+
+    result = GeminiLogicalResult(storage=storage).where_subtasks(
+        lambda subtask: subtask["task_id"] == "task-a"
+    )
+
+    assert set(result.postprocessing_functions()) == {0}
+
+
 def test_postprocessing_functions_runs_each_call(storage, mocker):
     add_task_definition(
         storage,
@@ -467,6 +965,54 @@ def test_logical_results_rebuilds_const_hints_after_serialization(storage):
     result = GeminiLogicalResult(storage=storage).logical_results()
 
     assert list(result[0]) == [True, False]
+
+
+def test_logical_results_supports_legacy_postprocessor_override(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=1)]),
+    )
+    storage.add_shots([make_shot(shot_index=0, bitstring=(True, False))])
+
+    result = GeminiLogicalResult(storage=storage).logical_results(
+        verify=True,
+        postprocessing_functions={
+            0: lambda shots: ("legacy", shots.shape, shots.tolist())
+        },
+    )
+
+    assert result == [("legacy", (1, 2), [[True, False]])]
+
+
+def test_logical_results_legacy_override_can_skip_merge_validation(storage):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            subtasks=[Subtask(program_index=0, num_shots=1, arguments={"a": 1})]
+        ),
+    )
+    add_task_definition(
+        storage,
+        "task-2",
+        make_task_definition(
+            subtasks=[Subtask(program_index=0, num_shots=1, arguments={"a": 2})]
+        ),
+    )
+    storage.add_shots(
+        [
+            make_shot(task_id="task-1", shot_index=0, bitstring=(True, False)),
+            make_shot(task_id="task-2", shot_index=0, bitstring=(False, True)),
+        ]
+    )
+
+    result = GeminiLogicalResult(storage=storage).logical_results(
+        verify=False,
+        postprocessing_functions={0: lambda shots: shots.tolist()},
+    )
+
+    assert result == [[[True, False], [False, True]]]
 
 
 def test_logical_results_returns_raw_when_postprocessing_is_none(storage, monkeypatch):
