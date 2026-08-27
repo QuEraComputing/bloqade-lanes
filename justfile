@@ -8,16 +8,16 @@ default:
 # ── Python ──────────────────────────────────────────────────────────
 
 coverage-run:
-    uv run pytest python/tests --cov --cov-report= -n auto -m "not msd_numerical_regression"
+    uv run --locked pytest python/tests --cov --cov-report= -n auto -m "not msd_numerical_regression"
 
 coverage-xml: coverage-run
-    uv run coverage xml
+    uv run --locked coverage xml
 
 coverage-html: coverage-run
-    uv run coverage html
+    uv run --locked coverage html
 
 coverage-report: coverage-run
-    uv run coverage report
+    uv run --locked coverage report
 
 coverage-open: coverage-html
     open htmlcov/index.html
@@ -36,7 +36,7 @@ coverage-rust:
 coverage-all: coverage-run coverage-xml coverage-rust
     uv run --locked python scripts/merge_coverage.py coverage.xml rust-coverage.xml -o combined-coverage.xml
     mkdir -p htmlcov-all
-    uv run pycobertura show --format html --output htmlcov-all/index.html combined-coverage.xml
+    uv run --locked pycobertura show --format html --output htmlcov-all/index.html combined-coverage.xml
     @echo "Combined coverage report: htmlcov-all/index.html"
 
 # Open combined coverage HTML report
@@ -44,40 +44,40 @@ coverage-all-open: coverage-all
     open htmlcov-all/index.html
 
 demo-msd:
-    uv run --locked python demo/msd.py
+    uv run --locked --no-sync python demo/msd.py
 
 demo-pipeline:
-    uv run --locked python demo/pipeline_demo.py
+    uv run --locked --no-sync python demo/pipeline_demo.py
 
 pipeline-details:
-    uv run --locked python demo/pipeline_details.py
+    uv run --locked --no-sync python demo/pipeline_details.py
 
 simulator-device-demo:
-    uv run --locked python demo/simulator_device_demo.py
+    uv run --locked --no-sync python demo/simulator_device_demo.py
 
 demo-explicit-allocation:
-    uv run --locked python demo/explicit_allocation.py
+    uv run --locked --no-sync python demo/explicit_allocation.py
 
 demo-logical-dialect:
-    uv run --locked python demo/logical_dialect_demo.py
+    uv run --locked --no-sync python demo/logical_dialect_demo.py
 
 demo-logical-new-at:
-    uv run --locked python demo/logical_new_at_demo.py
+    uv run --locked --no-sync python demo/logical_new_at_demo.py
 
 demo-msd-postselection-experiment:
-    uv run --locked python demo/msd_postselection_experiment.py
+    uv run --locked --no-sync python demo/msd_postselection_experiment.py
 
 demo-phys-arch-customization:
-    uv run --locked python demo/physical_arch_customization.py
+    uv run --locked --no-sync python demo/physical_arch_customization.py
 
 demo-star-logical-demo:
-    uv run --locked python demo/star_logical_demo.py
+    uv run --locked --no-sync python demo/star_logical_demo.py
 
 demo-simulators:
-    uv run --locked python demo/simulators_demo.py
+    uv run --locked --no-sync python demo/simulators_demo.py
 
 demo-qalloc-at:
-    uv run --locked python demo/logical_qalloc_at_demo.py
+    uv run --locked --no-sync python demo/logical_qalloc_at_demo.py
 
 demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at
 
@@ -130,7 +130,7 @@ develop: build-cli stage-clib
 
 # Build only the Python extension (no CLI/C artifacts)
 develop-python:
-    uv run maturin develop
+    uv run --locked maturin develop
 
 # Type-check Rust (fast, no linking)
 check:
@@ -180,23 +180,23 @@ test-rust:
 
 # Run Python tests
 test-python:
-    uv run --locked pytest python/tests/ -v
+    uv run --locked --no-sync pytest python/tests/ -v
 
 # Run benchmark harness in physical architecture mode
 benchmark-physical:
-    uv run --locked python -m benchmarks.cli --architecture physical --compare python/benchmarks/harness/latest_physical.csv
+    uv run --locked --no-sync python -m benchmarks.cli --architecture physical --compare python/benchmarks/harness/latest_physical.csv
 
 # Run benchmark harness in logical architecture mode
 benchmark-logical:
-    uv run --locked python -m benchmarks.cli --architecture logical --compare python/benchmarks/harness/latest_logical.csv
+    uv run --locked --no-sync python -m benchmarks.cli --architecture logical --compare python/benchmarks/harness/latest_logical.csv
 
 # Run fast Python tests only (skip slow integration tests)
 test-python-fast:
-    uv run --locked pytest python/tests/ -v -m "not slow"
+    uv run --locked --no-sync pytest python/tests/ -v -m "not slow"
 
 # Run all Python tests in parallel
 test-python-parallel:
-    uv run --locked pytest python/tests/ -v -n auto
+    uv run --locked --no-sync pytest python/tests/ -v -n auto
 
 # Run all tests
 test: test-rust test-python
