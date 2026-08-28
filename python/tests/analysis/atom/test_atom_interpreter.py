@@ -249,21 +249,20 @@ def _build_measure_method(zones: tuple[move.ZoneAddress, ...]) -> ir.Method:
 def test_atom_interpreter_tracks_measure_zones_and_count():
     method = _build_measure_method((move.ZoneAddress(0),))
     interp = atom.AtomInterpreter(method.dialects, arch_spec=get_arch_spec())
-    interp.run(method)
+    result = interp.get_measurement_positions(method)
 
     assert interp.final_measurement_count == 1
-    assert len(interp.measure_sites) == 1
-    site = interp.measure_sites[0]
-    assert isinstance(site["stmt"], move.Measure)
-    assert site["zones"] == (move.ZoneAddress(0),)
+    assert len(result.measurements) == 1
+    assert result.measurements[0].index == 0
+    assert result.measurements[0].zone_addresses == (move.ZoneAddress(0),)
 
 
 def test_atom_interpreter_tracks_multi_zone_measure():
     zones = (move.ZoneAddress(0), move.ZoneAddress(1))
     method = _build_measure_method(zones)
     interp = atom.AtomInterpreter(method.dialects, arch_spec=get_arch_spec())
-    interp.run(method)
+    result = interp.get_measurement_positions(method)
 
     assert interp.final_measurement_count == 1
-    assert len(interp.measure_sites) == 1
-    assert interp.measure_sites[0]["zones"] == zones
+    assert len(result.measurements) == 1
+    assert result.measurements[0].zone_addresses == zones
