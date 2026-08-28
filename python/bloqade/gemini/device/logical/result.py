@@ -117,7 +117,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         where `list[i]` represents the results for subtask `i`, `list[i][j]` represents the results for subtask `i` and shot `j`, and `list[i][j][k]` represents the specific measurement value for subtask `i` and shot `j`.
 
         True indicates a projective measurement of the |1> state or atom loss; False indicates a projective measurement of the |0> state.
-        > To be specific, True means that the atom was not detected, meaning that it could be lost or in an excited state. False means the atom is in the ground state.
+        > To be specific, True means that the atom was not detected, meaning that it could be lost or in an excited state. False means the atom was detected, so it was in the ground state.
         """
         from .utils import shot_results_for_subtasks
 
