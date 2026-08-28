@@ -38,17 +38,16 @@ class __GeminiLogicalMeasurementValidation(_interp.MethodTable):
         measurement_analysis_results = interp.measurement_analysis_results
         total_qubits_allocated = interp.unique_qubits_allocated
 
-        # NOTE: `Frame.get` *raises* on a missing key rather than returning
-        # None, and the analysis has no entry for this value when the statement
-        # sits inside a callee that was not inlined -- it was evaluated in a
-        # nested frame. The branch below already handles "no usable result", so
-        # route the miss into it instead of letting an `InterpreterError` escape
-        # for `ValidationSuite` to re-report as "Validation pass '...' failed:"
-        # plus a traceback.
-        try:
-            measure_lattice_element = measurement_analysis_results.get(stmt.result)
-        except _interp.InterpreterError:
-            measure_lattice_element = None
+        # NOTE: `entries` rather than `Frame.get`, which *raises* on a missing
+        # key. The analysis has no entry for this value when the statement sits
+        # inside a callee that was not inlined -- it was evaluated in a nested
+        # frame -- and the branch below already handles "no usable result", so a
+        # miss belongs there rather than escaping as an `InterpreterError` for
+        # `ValidationSuite` to re-report as "Validation pass '...' failed:" plus
+        # a traceback. Reading `entries` directly also skips `get`'s parent-frame
+        # fallback, which is unreachable here: this is the root frame the suite
+        # cached, so its `parent` is None.
+        measure_lattice_element = measurement_analysis_results.entries.get(stmt.result)
 
         if not isinstance(measure_lattice_element, MeasureIdTuple):
             interp.add_validation_error(

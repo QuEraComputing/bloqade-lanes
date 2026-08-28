@@ -41,7 +41,14 @@ def _run(method):
 
 
 def _messages(result):
-    return [str(e.args[0]) for errors in result.errors.values() for e in errors]
+    # `args[0] if args else str(e)` matches `test_recursion_validation`: an error
+    # built without a message would otherwise raise `IndexError` here and hide
+    # whatever actually went wrong.
+    return [
+        str(e.args[0]) if e.args else str(e)
+        for errors in result.errors.values()
+        for e in errors
+    ]
 
 
 def test_untyped_register_parameter_is_reported_not_asserted():
