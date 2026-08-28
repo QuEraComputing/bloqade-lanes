@@ -112,7 +112,12 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @property
     def measurements(self) -> Sequence[Sequence[Sequence[bool]]]:
-        """True indicates a projective measurement of the |1> state or atom loss; False indicates a projective measurement of the |0> state."""
+        """
+        Returns a nested list of "[subtask[shot_per_subtask[measurement_val]]]",
+        where `list[i]` represents the results for subtask `i`, `list[i][j]` represents the results for subtask `i` and shot `j`, and `list[i][j][k]` represents the specific measurement value for subtask `i` and shot `j`.
+
+        True indicates a projective measurement of the |1> state or atom loss; False indicates a projective measurement of the |0> state.
+        """
         from .utils import shot_results_for_subtasks
 
         ret_vals: list[list[list[bool]]] = []
@@ -180,6 +185,10 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @property
     def detectors(self) -> Sequence[Sequence[Sequence[bool]]]:
+        """
+        Returns a nested list of "[subtask[shot_per_subtask[detector_val]]]",
+        where `list[i]` represents the results for subtask `i`, `list[i][j]` represents the results for subtask `i` and shot `j`, and `list[i][j][k]` represents the specific detector value for subtask `i` and shot `j`.
+        """
         return [
             list(
                 self._slm_postprocessing_functions()[subtask["program_index"]][
@@ -191,6 +200,10 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @property
     def observables(self) -> Sequence[Sequence[Sequence[bool]]]:
+        """
+        Returns a nested list of "[subtask[shot_per_subtask[observable_val]]]",
+        where `list[i]` represents the results for subtask `i`, `list[i][j]` represents the results for subtask `i` and shot `j`, and `list[i][j][k]` represents the specific observable value for subtask `i` and shot `j`.
+        """
         return [
             list(
                 self._slm_postprocessing_functions()[subtask["program_index"]][
@@ -202,7 +215,12 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
     @property
     def filling_at_start(self) -> Sequence[Sequence[Sequence[bool]]]:
-        """True indicates that the atom was present during the sorted frame; False indicates that it was not."""
+        """
+        Returns a nested list of "[subtask[shot_per_subtask[filling_val]]]",
+        where `list[i]` represents the results for subtask `i`, `list[i][j]` represents the results for subtask `i` and shot `j`, and `list[i][j][k]` represents the specific filling value for subtask `i` and shot `j`.
+
+        True indicates that the atom was present in the sorted frame; False indicates that the atom was not present in the sorted frame.
+        """
         from .utils import aligned_detected_and_sorted_shots_for_subtasks
 
         ret_vals: list[list[list[bool]]] = []
