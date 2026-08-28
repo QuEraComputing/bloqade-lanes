@@ -1,70 +1,88 @@
-"""Shot-remapping helper.
+"""Shot-remapping helper: hardware frame -> per-measurement array.
 
-A *shot* coming back from hardware is a full Zone-0 bitstring: one
-bit per ``LocationAddress`` in ``arch_spec.yield_zone_locations(
-ZoneAddress(0))``, including bits for sites that no atom is ever
-moved into. Downstream post-processing (detector / observable
-synthesis, user-level result reconstruction) operates on a *per-
-measurement* flat array — typically shape ``(n_shots, n_measurements)``
-— that's been projected out of the full bitstring at exactly the
-sites the program actually measures, in the order the post-processing
-callable expects.
+Result post-processing runs in two steps, and this module is the join
+between them.
 
-This module provides the bridge: given the analysis output for a
-``terminal_measure`` (or equivalent) ``IListResult[IListResult[
-MeasureResult]]`` value, plus the architecture spec, produce a flat
-list of Zone-0 bitstring indices whose order matches the per-
-measurement array consumed by ``generate_post_processing``.
+**Step 1 — value reconstruction.** ``bloqade.gemini.post_processing``
+(built on ``MeasurementIDAnalysis`` from bloqade-circuit) abstract-
+interprets the *user's* kernel, tracing values from ``terminal_measure``
+through whatever operations construct the return value. It yields a
+callable over a flat per-measurement array of shape
+``(n_shots, n_measurements)``, indexed by ``RawMeasureId.idx``.
 
-See: issue #563.
+**Step 2 — frame projection.** The machine's API returns a *frame*: one
+flat bitstring per shot covering every location in the measurement
+mode's zones, including sites no atom is ever moved into. This module
+produces the index list that projects a frame down to the array step 1
+expects::
+
+    frame --[mapping]--> per-measurement array --[post-processing]--> values
+
+so a caller writes ``per_measurement = frame[:, mapping]``.
+
+The join key is the measurement record index: step 1's
+``RawMeasureId.idx`` and step 2's ``MeasureResult.measurement_id`` count
+the same measurements in the same order. ``mapping[k]`` is therefore the
+frame slot of record ``k``, and ``len(mapping)`` is the total number of
+records the program emits.
+
+Records come from the analysis's own per-``GetFutureResult`` bookkeeping
+(via ``AtomInterpreter.get_measurement_positions``), *not* from walking
+the kernel's return value. Those differ: a kernel is free to return a
+subset of its measurements, or return them out of order, while still
+emitting every record to hardware. Deriving the mapping from the return
+value produced a short or permuted list that silently disagreed with
+step 1 — see issue #967.
+
+See: issues #563, #967.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
-
-from .lattice import IListResult, MeasureResult, MoveExecution
+from ._measurement_positions import MeasurementPositions
 
 
 @dataclass(frozen=True)
 class ShotRemappingDiagnostic:
     """Compiler-developer-facing diagnostic emitted when
-    ``get_shot_remapping`` cannot derive a Zone-0 index list.
+    ``get_shot_remapping`` cannot derive a frame index list.
 
-    A failure here indicates an analysis or pipeline regression
-    rather than a user error — the user supplied a kernel, the
-    compiler service lowered it, and somewhere along the way the
-    analysis output drifted away from the expected
-    ``IListResult[IListResult[MeasureResult]]`` shape (or pointed
-    to a hardware location the architecture doesn't know about).
-    The fields below carry enough context for a compiler developer
-    to find the offending pass.
+    A failure here indicates an analysis or pipeline regression rather
+    than a user error — the user supplied a kernel, the compiler service
+    lowered it, and somewhere along the way the analysis stopped
+    producing a coherent set of measurement records.
 
     Attributes:
-        message: human-readable description with the failure path
-            baked in (e.g. ``"logical[2].physical[5]: …"``).
-        offending_value: the lattice value or address that triggered
-            the failure.
+        message: human-readable description of the failure.
+        offending_value: the value that triggered it, when there is a
+            single one to point at.
     """
 
     message: str
-    offending_value: MoveExecution | LocationAddress
+    offending_value: object | None = None
 
 
 @dataclass(frozen=True)
 class ShotRemappingOk:
     """Successful shot-remapping result.
 
-    ``mapping`` is the flat list of Zone-0 bitstring indices in
-    row-major order over the input
-    ``IListResult[IListResult[MeasureResult]]`` analysis output.
-    Index directly into the post-processing flat array.
+    Attributes:
+        mapping: ``mapping[k]`` is the frame slot holding measurement
+            record ``k``. Index a hardware frame with it directly —
+            ``frame[:, mapping]`` yields the per-measurement array that
+            post-processing consumes.
+        frame_size: width of the frame ``mapping`` indexes into. A
+            caller should check its hardware rows are this wide before
+            projecting.
+        measurement_index: IR position of the measurement statement
+            whose frame this is.
     """
 
     mapping: list[int]
+    frame_size: int = 0
+    measurement_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -72,113 +90,120 @@ class ShotRemappingErr:
     """Failed shot-remapping result.
 
     ``diagnostic`` carries the contextual message and the offending
-    lattice value or address, aimed at the compiler developer
-    debugging the failed lowering.
+    value, aimed at the compiler developer debugging the failed
+    lowering.
     """
 
     diagnostic: ShotRemappingDiagnostic
 
 
 def get_shot_remapping(
-    return_value: MoveExecution,
-    arch_spec: ArchSpec,
+    positions: MeasurementPositions,
 ) -> ShotRemappingOk | ShotRemappingErr:
-    """Project an analysis ``IListResult[IListResult[MeasureResult]]``
-    value onto a flat list of Zone-0 bitstring indices.
+    """Derive the frame -> per-measurement projection for ``positions``.
 
     Args:
-        return_value: lattice value for the SSA result of a
-            ``terminal_measure`` (or any value with the nested-IList
-            shape produced by lowering a logical-qubit measurement
-            through the atom-analysis chain). The outer ``IListResult``
-            indexes logical qubits; each inner ``IListResult`` indexes
-            the physical qubits making up that logical block. The
-            nested structure is walked in row-major order; the result
-            is flat.
-        arch_spec: architecture spec; ``arch_spec.yield_zone_locations(
-            ZoneAddress(0))`` defines the canonical Zone-0 bitstring
-            layout that hardware shots are reported against. Must
-            contain at least one zone (``zone 0`` is the projection
-            target).
+        positions: result of
+            ``AtomInterpreter.get_measurement_positions``. The *last*
+            measurement statement supplies the frame, since that is the
+            terminal readout whose bitstring the machine returns.
 
     Returns:
-        ``ShotRemappingOk`` carrying the flat list of Zone-0 indices
-        on success, or ``ShotRemappingErr`` carrying a
-        ``ShotRemappingDiagnostic`` on failure. Failure modes:
+        ``ShotRemappingOk`` carrying the index list on success, or
+        ``ShotRemappingErr`` on failure. Failure modes:
 
-        - ``return_value`` is not an ``IListResult`` (any other
-          ``MoveExecution`` lattice element — ``Bottom``, ``Unknown``,
-          ``Value``, ``MeasureFuture``, ``MeasureResult``,
-          ``DetectorResult``, ``ObservableResult``, ``TupleResult``).
-        - Any element of the outer ``IListResult.data`` is not itself
-          an ``IListResult`` (same set of rejected types as above).
-        - Any element of an inner ``IListResult.data`` is not a
-          ``MeasureResult``.
-        - A ``MeasureResult.location_address`` resolves outside
-          ``arch_spec``'s Zone-0 iteration — i.e. the analysis and
-          arch spec disagree about hardware layout.
+        - the analysis crashed and the exception was swallowed, leaving
+          only the records captured before the failure. Their ids are
+          still a contiguous prefix, so the truncation is invisible to
+          every other check here and would yield a short mapping;
+        - the program contains no measurement statement, so there is no
+          frame to project;
+        - a measurement statement before the last one also produced
+          readouts. Post-processing indexes one flat array by record id,
+          which cannot span two separately-returned frames, so this is
+          rejected rather than silently mapped against the wrong frame;
+        - the record ids are not a contiguous ``0..n-1`` cover, which
+          would leave holes in ``mapping``;
+        - a record has no slot in its own frame, which would mean the
+          analysis and arch spec disagree about hardware layout.
 
-        The diagnostic is aimed at the compiler service / compiler
-        developers, not end users; failures here indicate pipeline
-        regressions rather than malformed kernels.
+        The diagnostic is aimed at compiler developers, not end users; a
+        failure here indicates a pipeline regression rather than a
+        malformed kernel.
     """
-    # Zone-0 is the projection target. ``ArchSpec.get_zone_index``
-    # returns ``None`` both for addresses outside Zone-0 *and* when
-    # the spec has no Zone-0 at all; assert the second case up front
-    # so the diagnostic's "address is not in Zone-0" wording stays
-    # truthful.
-    assert (
-        len(arch_spec.zones) > 0
-    ), "arch spec invariant violation: no zones (zone 0 expected)"
-    zone0 = ZoneAddress(0)
-
-    if not isinstance(return_value, IListResult):
+    if positions.analysis_failed:
         return ShotRemappingErr(
             diagnostic=ShotRemappingDiagnostic(
                 message=(
-                    "outer return value did not refine to IListResult; "
-                    f"got {type(return_value).__name__}"
+                    "the atom analysis did not complete, so its measurement "
+                    "records are a prefix rather than the whole program; a "
+                    "mapping built from them would be silently short"
                 ),
-                offending_value=return_value,
             ),
         )
 
-    remapping: list[int] = []
-    for i, logical in enumerate(return_value.data):
-        if not isinstance(logical, IListResult):
+    if not positions.measurements:
+        return ShotRemappingErr(
+            diagnostic=ShotRemappingDiagnostic(
+                message="program contains no measurement statement to project",
+            ),
+        )
+
+    frame = positions.measurements[-1]
+    stale = [
+        atom_position
+        for snapshot in positions.measurements[:-1]
+        for atom_position in snapshot.readout
+    ]
+    if stale:
+        return ShotRemappingErr(
+            diagnostic=ShotRemappingDiagnostic(
+                message=(
+                    f"{len(stale)} measurement record(s) belong to a frame "
+                    f"before the last one (measurement {frame.index}); a "
+                    "single flat projection cannot span multiple frames"
+                ),
+                offending_value=stale[0],
+            ),
+        )
+
+    records = frame.readout
+    record_ids = sorted(
+        atom_position.measurement_id
+        for atom_position in records
+        if atom_position.measurement_id is not None
+    )
+    if record_ids != list(range(len(records))):
+        return ShotRemappingErr(
+            diagnostic=ShotRemappingDiagnostic(
+                message=(
+                    "measurement record ids are not a contiguous 0..n-1 "
+                    f"cover of {len(records)} record(s); got {record_ids}"
+                ),
+                offending_value=record_ids,
+            ),
+        )
+
+    mapping = [0] * len(records)
+    for atom_position in records:
+        if atom_position.frame_index is None:
             return ShotRemappingErr(
                 diagnostic=ShotRemappingDiagnostic(
                     message=(
-                        f"logical[{i}] did not refine to IListResult; "
-                        f"got {type(logical).__name__}"
+                        f"record {atom_position.measurement_id} at "
+                        f"{atom_position.location_address} has no slot in "
+                        "its own measurement frame"
                     ),
-                    offending_value=logical,
+                    offending_value=atom_position,
                 ),
             )
-        for j, physical in enumerate(logical.data):
-            if not isinstance(physical, MeasureResult):
-                return ShotRemappingErr(
-                    diagnostic=ShotRemappingDiagnostic(
-                        message=(
-                            f"logical[{i}].physical[{j}] did not refine "
-                            f"to MeasureResult; got {type(physical).__name__}"
-                        ),
-                        offending_value=physical,
-                    ),
-                )
-            # ``ArchSpec.get_zone_index`` is O(1) via the Rust backend
-            # and returns ``None`` for addresses outside Zone-0.
-            idx = arch_spec.get_zone_index(physical.location_address, zone0)
-            if idx is None:
-                return ShotRemappingErr(
-                    diagnostic=ShotRemappingDiagnostic(
-                        message=(
-                            f"logical[{i}].physical[{j}]: "
-                            f"location_address {physical.location_address} "
-                            "is not in Zone-0 of the arch spec"
-                        ),
-                        offending_value=physical.location_address,
-                    ),
-                )
-            remapping.append(idx)
-    return ShotRemappingOk(mapping=remapping)
+        # ``measurement_id`` is non-None here: the contiguity check above
+        # rejects any record missing one.
+        assert atom_position.measurement_id is not None
+        mapping[atom_position.measurement_id] = atom_position.frame_index
+
+    return ShotRemappingOk(
+        mapping=mapping,
+        frame_size=frame.frame_size,
+        measurement_index=frame.index,
+    )

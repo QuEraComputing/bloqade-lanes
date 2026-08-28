@@ -143,10 +143,6 @@ class Move(interp.MethodTable):
                 if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
                     result[loc_addr] = qubit_id
 
-        interp_.record_measure_snapshot(
-            stmt, stmt.zone_addresses, results, current_state
-        )
-
         return (
             MeasureFuture(
                 results=results,
@@ -191,10 +187,6 @@ class Move(interp.MethodTable):
             for loc_addr in interp_.arch_spec.yield_zone_locations(zone_address):
                 if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
                     result[loc_addr] = qubit_id
-
-        interp_.record_measure_snapshot(
-            stmt, tuple(zone_addresses), results, current_state
-        )
 
         # move.Measure has two results: (new_state, future). Measurement
         # observes the state but does not reshape it on the Python
@@ -251,14 +243,6 @@ class Move(interp.MethodTable):
         # to Bottom emit no measurement and must not consume an index.
         measurement_id = interp_.measurement_record_count
         interp_.measurement_record_count += 1
-
-        interp_.record_readout(
-            stmt,
-            measurement_id=measurement_id,
-            qubit_id=qubit_id,
-            location_address=stmt.location_address,
-            measurement_count=future.measurement_count,
-        )
 
         return (MeasureResult(measurement_id, qubit_id, stmt.location_address),)
 

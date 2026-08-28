@@ -192,6 +192,72 @@ def test_readout_is_stable_across_repeated_runs():
     assert first.measurements[0].processor == second.measurements[0].processor
 
 
+def test_collection_is_a_pure_function_of_the_converged_frame():
+    """Snapshots are read out of the frame after the analysis converges,
+    not accumulated while it runs. Abstract interpretation may visit a
+    statement any number of times before reaching a fixpoint, so anything
+    accumulated during the walk has to be made idempotent by hand;
+    collecting afterwards makes repeat visits irrelevant by construction.
+    """
+    interp = atom.AtomInterpreter(kernel, arch_spec=_ARCH)
+    frame, _ = interp.run(_partial_readout)
+
+    first = interp.collect_measurement_positions(_partial_readout, frame)
+    second = interp.collect_measurement_positions(_partial_readout, frame)
+    assert first == second
+    assert len(first.measurements) == 1
+    assert len(first.measurements[0].readout) == 1
+
+
+def test_a_measurement_executing_twice_is_rejected():
+    """One snapshot per measurement *statement* only models a program
+    where each statement runs once. A second visit mints a fresh
+    ``measurement_id``, the two ``MeasureResult`` values are incomparable
+    so the lattice joins them to ``Unknown``, and the readout drops out of
+    the walk — leaving a record set that no longer covers 0..n-1. That is
+    a genuine modelling failure (overlapping snapshots), so it must be
+    reported rather than silently producing partial snapshots."""
+    interp = atom.AtomInterpreter(kernel, arch_spec=_ARCH)
+    frame, _ = interp.run(_partial_readout)
+
+    (readout_stmt,) = [
+        stmt
+        for stmt in _partial_readout.callable_region.walk()
+        if isinstance(stmt, move.GetFutureResult)
+    ]
+    first_visit = frame.get(readout_stmt.result)
+    assert isinstance(first_visit, atom.MeasureResult)
+
+    # A second visit mints the next id for the same location; joining the
+    # two is what the fixpoint would store.
+    second_visit = atom.MeasureResult(
+        first_visit.measurement_id + 1,
+        first_visit.qubit_id,
+        first_visit.location_address,
+    )
+    frame.set(readout_stmt.result, first_visit.join(second_visit))
+    assert isinstance(frame.get(readout_stmt.result), atom.Unknown)
+
+    with pytest.raises(ValueError, match="executed more than once"):
+        interp.collect_measurement_positions(_partial_readout, frame)
+
+
+def test_readouts_attach_to_their_own_measurement_statement():
+    """A readout finds its snapshot through
+    ``GetFutureResult.measurement_future.owner``, so the association holds
+    however many times the analysis visited either statement and whatever
+    the interpreter's counters happen to read."""
+    interp = atom.AtomInterpreter(kernel, arch_spec=_ARCH)
+    positions = interp.get_measurement_positions(_both_zones_measured)
+
+    (snapshot,) = positions.measurements
+    (readout,) = snapshot.readout
+    # The kernel reads zone 1's word 1, and that is what comes back —
+    # attribution is structural, not positional.
+    assert readout.location_address == move.LocationAddress(1, 0, 1)
+    assert readout.measurement_id == 0
+
+
 # ── frame_index ──────────────────────────────────────────────────
 
 

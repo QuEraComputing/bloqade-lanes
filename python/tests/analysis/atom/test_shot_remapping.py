@@ -1,231 +1,341 @@
 """Unit tests for ``get_shot_remapping``.
 
-Hand-builds a small ``ArchSpec`` with a known Zone-0 location order and
-checks that the standalone shot-remapping function projects nested
-``IListResult[IListResult[MeasureResult]]`` values onto the expected
-flat list of indices into the architecture's Zone-0 bitstring,
-emitting structured diagnostics on the soft-fail paths.
+``mapping[k]`` must be the frame slot of measurement record ``k``, so
+that ``frame[:, mapping]`` yields the per-measurement array that
+post-processing indexes by ``measurement_id``.
+
+The old fixtures here gave every record ``measurement_id == 0`` and
+explicitly disclaimed the field, so the ordering contract was never
+exercised (issue #967). These build records with distinct, non-identity
+ids on purpose.
 """
 
 import pytest
+from kirin.dialects import ilist
 
+from bloqade import squin
+from bloqade.gemini import logical
 from bloqade.lanes.analysis.atom import (
-    Bottom,
-    IListResult,
-    MeasureResult,
+    AtomInterpreter,
+    AtomPosition,
+    MeasurementPositions,
+    MeasurementSnapshot,
     ShotRemappingDiagnostic,
     ShotRemappingErr,
     ShotRemappingOk,
-    Value,
 )
 from bloqade.lanes.analysis.atom._shot_remapping import get_shot_remapping
+from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode import word
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
-    LocationAddress as RustLocAddr,
     Mode as RustMode,
+    SiteBus,
+    WordBus,
     Zone as RustZone,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
-
-# Small toy architecture: one zone with one word containing four sites
-# at y-positions 0..3. ``yield_zone_locations(ZoneAddress(0))`` will
-# emit those four ``LocationAddress``es in order, giving a Zone-0
-# bitstring of length 4.
-_word = word.Word(sites=((0, 0), (0, 1), (0, 2), (0, 3)))
-_rust_grid = RustGrid.from_positions([0.0], [0.0, 1.0, 2.0, 3.0])
-_rust_zone = RustZone(
-    name="test",
-    grid=_rust_grid,
-    site_buses=[],
-    word_buses=[],
-    words_with_site_buses=[],
-    sites_with_word_buses=[],
-)
-_rust_mode = RustMode(
-    name="all",
-    zones=[0],
-    bitstring_order=[
-        RustLocAddr(0, 0, 0),
-        RustLocAddr(0, 0, 1),
-        RustLocAddr(0, 0, 2),
-        RustLocAddr(0, 0, 3),
-    ],
-)
-_ARCH = ArchSpec.from_components(
-    words=(_word,),
-    zones=(_rust_zone,),
-    modes=[_rust_mode],
-)
+from bloqade.lanes.bytecode.word import Word
+from bloqade.lanes.dialects import move
+from bloqade.lanes.prelude import kernel
+from bloqade.lanes.transform import LogicalPipeline
 
 
-def _ll(*items):
-    """Helper to wrap a sequence of lattice values as an ``IListResult``."""
-    return IListResult(tuple(items))
-
-
-def _mr(qubit_id: int, site_id: int) -> MeasureResult:
-    """Helper to build a ``MeasureResult`` at a Zone-0 ``site_id``.
-
-    ``get_shot_remapping`` projects on ``location_address`` and ignores
-    ``measurement_id``, so a placeholder ``0`` record index is fine here.
-    """
-    return MeasureResult(0, qubit_id, LocationAddress(0, site_id, 0))
-
-
-def test_zone0_location_order_matches_arch_iteration():
-    """Sanity: confirm the test fixture's Zone-0 bitstring layout
-    matches arch_spec.yield_zone_locations iteration."""
-    locs = list(_ARCH.yield_zone_locations(ZoneAddress(0)))
-    assert locs == [
-        LocationAddress(0, 0, 0),
-        LocationAddress(0, 1, 0),
-        LocationAddress(0, 2, 0),
-        LocationAddress(0, 3, 0),
-    ]
-
-
-def test_single_logical_qubit():
-    """One logical qubit at sites 0 and 1: remapping yields [0, 1]."""
-    return_value = _ll(_ll(_mr(0, 0), _mr(0, 1)))
-    result = get_shot_remapping(return_value, _ARCH)
-    assert isinstance(result, ShotRemappingOk)
-    assert result.mapping == [0, 1]
-
-
-def test_two_logical_qubits_skipping_a_site():
-    """Two logical qubits using sites 0/2 and 1/3: the result is the
-    flat row-major concatenation, and skipping a site in between
-    exercises that the table reports the *Zone-0* index, not a packed
-    enumeration."""
-    return_value = _ll(
-        _ll(_mr(0, 0), _mr(0, 2)),
-        _ll(_mr(1, 1), _mr(1, 3)),
+def _atom(measurement_id: int | None, frame_index: int | None, site: int = 0):
+    return AtomPosition(
+        qubit_id=site,
+        location_address=LocationAddress(0, site, 0),
+        position=(float(site), 0.0),
+        measurement_id=measurement_id,
+        frame_index=frame_index,
     )
-    result = get_shot_remapping(return_value, _ARCH)
+
+
+def _snapshot(readout, *, index: int = 0, frame_size: int = 8):
+    return MeasurementSnapshot(
+        index=index,
+        zone_addresses=(ZoneAddress(0),),
+        frame_size=frame_size,
+        readout=tuple(readout),
+        measured_zones=tuple(readout),
+        processor=tuple(readout),
+    )
+
+
+def _positions(*snapshots):
+    return MeasurementPositions(measurements=tuple(snapshots))
+
+
+# ── ordering: the contract issue #967 is about ───────────────────
+
+
+def test_mapping_is_indexed_by_measurement_id_not_traversal_order():
+    """Records arriving in a scrambled order must still land at their
+    own record index."""
+    result = get_shot_remapping(
+        _positions(
+            _snapshot(
+                [
+                    _atom(measurement_id=2, frame_index=50, site=2),
+                    _atom(measurement_id=0, frame_index=10, site=0),
+                    _atom(measurement_id=1, frame_index=30, site=1),
+                ]
+            )
+        )
+    )
     assert isinstance(result, ShotRemappingOk)
-    assert result.mapping == [0, 2, 1, 3]
+    assert result.mapping == [10, 30, 50]
 
 
-def test_outer_not_ilist_returns_diagnostic():
-    """A non-IListResult outer (e.g. ``Bottom``) means the analysis
-    didn't refine the SSA value past the bottom of the lattice; the
-    function gives up and returns ``ShotRemappingErr`` identifying
-    the bad outer value."""
-    bottom = Bottom()
-    result = get_shot_remapping(bottom, _ARCH)
+def test_mapping_covers_every_record():
+    readout = [_atom(measurement_id=i, frame_index=i * 7, site=i) for i in range(5)]
+    result = get_shot_remapping(_positions(_snapshot(readout)))
+    assert isinstance(result, ShotRemappingOk)
+    assert result.mapping == [0, 7, 14, 21, 28]
+
+
+def test_reports_frame_size_and_measurement_index():
+    result = get_shot_remapping(
+        _positions(_snapshot([_atom(0, 3)], index=4, frame_size=64))
+    )
+    assert isinstance(result, ShotRemappingOk)
+    assert result.frame_size == 64
+    assert result.measurement_index == 4
+
+
+def test_partial_records_from_a_failed_analysis_return_diagnostic():
+    """A crash mid-analysis leaves a *prefix* of the records. Its ids are
+    still contiguous from 0, so every other check here passes and the
+    result would be a silently short mapping — the exact IndexError this
+    module exists to prevent. Only the failure flag distinguishes it."""
+    readout = [_atom(measurement_id=i, frame_index=i * 7, site=i) for i in range(3)]
+    positions = MeasurementPositions(
+        measurements=(_snapshot(readout),), analysis_failed=True
+    )
+
+    # The records themselves look perfectly well-formed.
+    without_flag = get_shot_remapping(
+        MeasurementPositions(measurements=positions.measurements)
+    )
+    assert isinstance(without_flag, ShotRemappingOk)
+    assert without_flag.mapping == [0, 7, 14]
+
+    result = get_shot_remapping(positions)
+    assert isinstance(result, ShotRemappingErr)
+    assert "did not complete" in result.diagnostic.message
+
+
+def test_no_measurement_statement_returns_diagnostic():
+    result = get_shot_remapping(_positions())
     assert isinstance(result, ShotRemappingErr)
     assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
-    assert "outer" in result.diagnostic.message
-    assert result.diagnostic.offending_value is bottom
+    assert "no measurement statement" in result.diagnostic.message
 
 
-def test_inner_not_ilist_returns_diagnostic():
-    """Each logical entry must itself be an IListResult; otherwise the
-    diagnostic identifies which logical block went wrong."""
-    bad_logical = _mr(0, 0)
-    return_value = _ll(bad_logical)  # outer ilist of MeasureResult, no nesting
-    result = get_shot_remapping(return_value, _ARCH)
+def test_empty_readout_is_valid():
+    """A measurement whose results the kernel never reads yields an
+    empty mapping, not an error."""
+    result = get_shot_remapping(_positions(_snapshot([])))
+    assert isinstance(result, ShotRemappingOk)
+    assert result.mapping == []
+
+
+def test_non_contiguous_record_ids_return_diagnostic():
+    """Holes would leave uninitialised slots in ``mapping``, so they are
+    rejected rather than silently filled."""
+    result = get_shot_remapping(
+        _positions(_snapshot([_atom(0, 10), _atom(2, 30, site=2)]))
+    )
     assert isinstance(result, ShotRemappingErr)
-    assert "logical[0]" in result.diagnostic.message
-    assert result.diagnostic.offending_value is bad_logical
+    assert "contiguous" in result.diagnostic.message
 
 
-def test_innermost_not_measureresult_returns_diagnostic():
-    """Innermost element must be a ``MeasureResult``; the diagnostic
-    points at the offending physical index."""
-    bad_physical = Value(False)
-    return_value = _ll(_ll(_mr(0, 0), bad_physical))
-    result = get_shot_remapping(return_value, _ARCH)
+def test_record_without_a_frame_slot_returns_diagnostic():
+    result = get_shot_remapping(
+        _positions(_snapshot([_atom(measurement_id=0, frame_index=None)]))
+    )
     assert isinstance(result, ShotRemappingErr)
-    assert "logical[0].physical[1]" in result.diagnostic.message
-    assert result.diagnostic.offending_value is bad_physical
+    assert "no slot" in result.diagnostic.message
 
 
-def test_unknown_location_address_returns_diagnostic():
-    """A ``MeasureResult`` whose ``location_address`` isn't in the
-    architecture's Zone-0 iteration is a sign of analysis/arch
-    disagreement; return a diagnostic carrying the offending address."""
-    out_of_arch = LocationAddress(99, 0, 0)
-    return_value = _ll(_ll(MeasureResult(0, 0, out_of_arch)))
-    result = get_shot_remapping(return_value, _ARCH)
+# ── multiple frames ──────────────────────────────────────────────
+
+
+def test_uses_the_last_frame():
+    """The terminal readout is the frame the machine returns."""
+    result = get_shot_remapping(
+        _positions(
+            _snapshot([], index=0, frame_size=8),
+            _snapshot([_atom(0, 5)], index=1, frame_size=16),
+        )
+    )
+    assert isinstance(result, ShotRemappingOk)
+    assert result.mapping == [5]
+    assert result.measurement_index == 1
+    assert result.frame_size == 16
+
+
+def test_readouts_in_an_earlier_frame_return_diagnostic():
+    """One flat projection cannot span two separately-returned frames."""
+    result = get_shot_remapping(
+        _positions(
+            _snapshot([_atom(0, 5)], index=0),
+            _snapshot([_atom(1, 6)], index=1),
+        )
+    )
     assert isinstance(result, ShotRemappingErr)
-    assert "logical[0].physical[0]" in result.diagnostic.message
-    assert "Zone-0" in result.diagnostic.message
-    assert result.diagnostic.offending_value == out_of_arch
+    assert "multiple frames" in result.diagnostic.message
 
 
-def test_empty_logical_blocks():
-    """Empty inner lists (no physical qubits) are valid; an empty
-    outer list is also valid (no logical qubits). Both produce an
-    empty mapping."""
-    empty_inner = get_shot_remapping(_ll(_ll(), _ll()), _ARCH)
-    assert isinstance(empty_inner, ShotRemappingOk)
-    assert empty_inner.mapping == []
-    empty_outer = get_shot_remapping(_ll(), _ARCH)
-    assert isinstance(empty_outer, ShotRemappingOk)
-    assert empty_outer.mapping == []
+# ── Unresolvable locations ───────────────────────────────────────
 
 
-# ── Integration: end-to-end via LogicalPipeline ──────────────────
+@kernel
+def _fills_an_address_outside_the_arch():
+    """Word 7 doesn't exist in the two-word arch below."""
+    state0 = move.load()
+    state1 = move.fill(state0, location_addresses=(move.LocationAddress(7, 0, 0),))
+    future = move.end_measure(state1, zone_addresses=(move.ZoneAddress(0),))
+    return move.get_future_result(
+        future,
+        zone_address=move.ZoneAddress(0),
+        location_address=move.LocationAddress(7, 0, 0),
+    )
 
 
-@pytest.mark.slow
-def test_get_shot_remapping_end_to_end_via_logical_pipeline():
-    """End-to-end: compile a Steane logical kernel that returns its
-    ``terminal_measure`` value, then run ``AtomInterpreter.get_shot_remapping``
-    on the lowered move kernel and assert the flat index list matches
-    the analysis output's measurement-leaf count and has no overlapping
-    indices."""
-    from bloqade import qubit, squin
-    from bloqade.gemini import logical as gemini_logical
-    from bloqade.lanes.analysis.atom import AtomInterpreter
-    from bloqade.lanes.arch.gemini import physical
-    from bloqade.lanes.transform import LogicalPipeline
+def _tiny_arch():
+    zone = RustZone(
+        name="test",
+        grid=RustGrid.from_positions([0.0, 10.0], [0.0, 1.0]),
+        site_buses=[SiteBus(src=[0], dst=[1])],
+        word_buses=[WordBus(src=[0], dst=[1])],
+        words_with_site_buses=[0, 1],
+        sites_with_word_buses=[0],
+        entangling_pairs=[(0, 1)],
+    )
+    return ArchSpec.from_components(
+        words=(Word(sites=((0, 0), (1, 0))), Word(sites=((0, 1), (1, 1)))),
+        zones=(zone,),
+        modes=[RustMode(name="all", zones=[0], bitstring_order=[])],
+    )
 
-    num_logical = 2
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def main():
-        reg = qubit.qalloc(num_logical)
-        squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
-        return gemini_logical.terminal_measure(reg)
+def test_unresolvable_location_returns_diagnostic_not_an_exception():
+    """Resolving positions raises ``ValueError`` for an address the arch
+    spec doesn't know, but this method contracts for a diagnostic — the
+    likely cause is an arch spec that doesn't match the compiled
+    program, which callers handle rather than crash on."""
+    interp = AtomInterpreter(kernel, arch_spec=_tiny_arch())
+    result = interp.get_shot_remapping(_fills_an_address_outside_the_arch)
+    assert isinstance(result, ShotRemappingErr)
+    assert "cannot resolve" in result.diagnostic.message
 
+
+def test_unresolvable_location_still_raises_when_no_raise_is_false():
+    """``no_raise=False`` is the debugging escape hatch and must keep
+    letting the original exception through."""
+    interp = AtomInterpreter(kernel, arch_spec=_tiny_arch())
+    with pytest.raises(ValueError, match="Invalid location address"):
+        interp.get_shot_remapping(_fills_an_address_outside_the_arch, no_raise=False)
+
+
+# ── Integration: the reproductions from issue #967 ───────────────
+
+
+def _mapping_for(kernel_method):
     arch_spec = physical.get_arch_spec()
-    physical_move = LogicalPipeline(transversal_rewrite=True).emit(main)
-
+    physical_move = LogicalPipeline(transversal_rewrite=True).emit(kernel_method)
     interp = AtomInterpreter(physical_move.dialects, arch_spec=arch_spec)
     result = interp.get_shot_remapping(physical_move)
-
-    # The analysis must refine to a concrete remapping for this
-    # well-formed kernel; an Err here would indicate an analysis or
-    # pipeline regression rather than legitimate soft-fail behaviour.
     assert isinstance(
         result, ShotRemappingOk
     ), f"unexpected diagnostic: {getattr(result, 'diagnostic', None)}"
-    remapping = result.mapping
+    return result, interp, physical_move
 
-    # The remapping length should equal the number of MeasureResult
-    # leaves in the analysis output. Re-run the analysis here to
-    # derive the expected length from the output shape rather than
-    # hard-coding the code's block size, so the assertion stays
-    # honest if the encoder changes.
-    _, output = interp.run(physical_move)
-    assert isinstance(output, IListResult)
-    expected_len = sum(
-        len(logical.data) for logical in output.data if isinstance(logical, IListResult)
-    )
-    assert len(remapping) == expected_len
 
-    # No two physical qubits map to the same Zone-0 index.
-    assert len(set(remapping)) == len(
-        remapping
-    ), f"physical qubit indices overlap: {remapping}"
+@pytest.mark.slow
+def test_full_return_maps_every_record():
+    @logical.kernel(aggressive_unroll=True)
+    def main():
+        q = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(q[0])
+        return logical.terminal_measure(q)
 
-    # All indices fall inside the Zone-0 bitstring.
-    zone0_size = sum(1 for _ in arch_spec.yield_zone_locations(ZoneAddress(0)))
-    assert all(
-        0 <= idx < zone0_size for idx in remapping
-    ), f"index out of Zone-0 range [0, {zone0_size}): {remapping}"
+    result, _, _ = _mapping_for(main)
+    # 2 logical qubits x 7 physical.
+    assert len(result.mapping) == 14
+    assert len(set(result.mapping)) == 14
+    assert all(0 <= idx < result.frame_size for idx in result.mapping)
+
+
+@pytest.mark.slow
+def test_subset_return_still_maps_every_record():
+    """Returning one logical block used to yield a 7-entry mapping while
+    post-processing read indices 7..13, raising IndexError."""
+
+    @logical.kernel(aggressive_unroll=True)
+    def main():
+        q = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(q[0])
+        m = logical.terminal_measure(q)
+        return ilist.IList([m[1]])
+
+    subset, _, _ = _mapping_for(main)
+
+    @logical.kernel(aggressive_unroll=True)
+    def full():
+        q = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(q[0])
+        return logical.terminal_measure(q)
+
+    every, _, _ = _mapping_for(full)
+    assert len(subset.mapping) == 14
+    assert subset.mapping == every.mapping
+
+
+@pytest.mark.slow
+def test_permuted_return_does_not_permute_the_mapping():
+    """Returning the blocks swapped used to swap the mapping too, so
+    post-processing re-applied the permutation and silently returned the
+    logical blocks in the wrong order."""
+
+    @logical.kernel(aggressive_unroll=True)
+    def permuted():
+        q = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(q[0])
+        m = logical.terminal_measure(q)
+        return ilist.IList([m[1], m[0]])
+
+    @logical.kernel(aggressive_unroll=True)
+    def full():
+        q = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(q[0])
+        return logical.terminal_measure(q)
+
+    assert _mapping_for(permuted)[0].mapping == _mapping_for(full)[0].mapping
+
+
+@pytest.mark.slow
+def test_permuted_return_round_trips_through_post_processing():
+    """The end-to-end silent-corruption case: set only the second
+    logical block's frame bits and check the values come back attached
+    to the block that was actually measured."""
+
+    @logical.kernel(aggressive_unroll=True)
+    def permuted():
+        q = logical.qalloc_at(ilist.IList([4, 5]))
+        squin.h(q[0])
+        m = logical.terminal_measure(q)
+        return ilist.IList([m[1], m[0]])
+
+    result, interp, physical_move = _mapping_for(permuted)
+    post_processing = interp.get_post_processing(physical_move)
+
+    # mapping[7:] are the frame slots of the second logical block.
+    hot = set(result.mapping[7:])
+    frame = [[slot in hot for slot in range(result.frame_size)]]
+    projected = [[shot[slot] for slot in result.mapping] for shot in frame]
+
+    first, second = next(iter(post_processing.emit_return(projected)))
+    assert all(first), "m[1] was measured, so it must come back all True"
+    assert not any(second), "m[0] was not measured, so it must be all False"

@@ -10,6 +10,7 @@ from typing_extensions import Self
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.dialects import move
 from bloqade.lanes.utils import no_none_elements_tuple
 
 from . import _shot_remapping
@@ -19,7 +20,7 @@ from ._measurement_positions import (
     MeasurementSnapshot,
 )
 from ._post_processing import constructor_function
-from .lattice import AtomState, MoveExecution
+from .lattice import AtomState, MeasureFuture, MeasureResult, MoveExecution
 
 
 def _default_best_state_cost(state: AtomState) -> float:
@@ -38,30 +39,6 @@ def _default_best_state_cost(state: AtomState) -> float:
 
 
 RetType = TypeVar("RetType")
-
-
-@dataclass(frozen=True)
-class _MeasureSnapshotRecord:
-    """What a measurement statement observed, captured during interpretation.
-
-    Keyed by statement rather than appended to a list so a fixpoint that
-    revisits a statement overwrites rather than duplicates.
-    """
-
-    order: int
-    zone_addresses: tuple[ZoneAddress, ...]
-    measured_zones: dict[LocationAddress, int]
-    processor: dict[LocationAddress, int]
-
-
-@dataclass(frozen=True)
-class _ReadoutRecord:
-    """One resolved ``move.GetFutureResult``, keyed by its statement."""
-
-    measurement_id: int
-    qubit_id: int
-    location_address: LocationAddress
-    measurement_count: int
 
 
 @dataclass
@@ -88,12 +65,6 @@ class AtomInterpreter(Forward[MoveExecution]):
     _observables: list[MoveExecution] = field(init=False, default_factory=list)
     final_measurement_count: int = field(init=False, default=0)
     measurement_record_count: int = field(init=False, default=0)
-    _measure_snapshots: dict[ir.Statement, _MeasureSnapshotRecord] = field(
-        init=False, default_factory=dict
-    )
-    _readouts: dict[ir.Statement, _ReadoutRecord] = field(
-        init=False, default_factory=dict
-    )
     keys = ("atom",)
 
     def __post_init__(self):
@@ -105,8 +76,6 @@ class AtomInterpreter(Forward[MoveExecution]):
         self._observables.clear()
         self.final_measurement_count = 0
         self.measurement_record_count = 0
-        self._measure_snapshots.clear()
-        self._readouts.clear()
         return super().initialize()
 
     def method_self(self, method) -> MoveExecution:
@@ -118,90 +87,58 @@ class AtomInterpreter(Forward[MoveExecution]):
     def get_shot_remapping(
         self, method: ir.Method, *, no_raise: bool = True
     ) -> _shot_remapping.ShotRemappingOk | _shot_remapping.ShotRemappingErr:
-        """Run the analysis on ``method`` and return the flat Zone-0
-        bitstring index list (in row-major order over the nested
-        ``IListResult[IListResult[MeasureResult]]`` return shape) as a
-        ``ShotRemappingOk``. On failure, returns ``ShotRemappingErr``
-        carrying a ``ShotRemappingDiagnostic``.
+        """Run the analysis on ``method`` and return the index list that
+        projects a hardware frame onto the per-measurement array
+        post-processing consumes, as a ``ShotRemappingOk``. On failure,
+        returns ``ShotRemappingErr`` carrying a
+        ``ShotRemappingDiagnostic``.
 
-        Convenience wrapper around the standalone
+        ``mapping[k]`` is the frame slot of measurement record ``k``, so
+        a caller writes ``frame[:, mapping]``. Convenience wrapper
+        around the standalone
         ``bloqade.lanes.analysis.atom._shot_remapping.get_shot_remapping``;
-        see that function's docstring for the contract on the analysis
-        output shape, the meaning of the returned indices, and the
-        diagnostic emitted on failure.
+        see that function's docstring for the two-step post-processing
+        model and the diagnostics emitted on failure.
 
-        ``method``'s return value is expected to refine to
-        ``IListResult[IListResult[MeasureResult]]`` — the shape produced
-        by lowering a logical ``terminal_measure`` (or any kernel that
-        returns a nested ilist of measurement results) through the
-        atom-analysis chain. Callers (typically the compiler service)
-        are responsible for surfacing the diagnostic in the failure
-        case; a failure here is a compiler-pipeline regression, not a
-        user error.
+        The mapping is derived from the analysis's per-measurement
+        records, not from ``method``'s return value, so a kernel that
+        returns only some of its measurements — or returns them out of
+        order — still gets a complete, correctly-ordered mapping
+        (issue #967). Callers (typically the compiler service) are
+        responsible for surfacing the diagnostic in the failure case; a
+        failure here is a compiler-pipeline regression, not a user
+        error.
 
         Args:
             method: kirin method to analyse.
-            no_raise: when ``True`` (default), an analysis crash is
-                caught by ``Forward.run_no_raise`` and falls through
-                into the standard ``ShotRemappingErr`` path with the
-                ``Bottom`` lattice as the offending value, so callers
-                see a single failure shape. Flip to ``False`` when
-                debugging an analysis-side bug to let the original
-                exception propagate.
+            no_raise: when ``True`` (default), the failure is reported as
+                a ``ShotRemappingErr`` so callers see a single failure
+                shape. That covers both an analysis crash and an address
+                the arch spec cannot resolve, which
+                :meth:`get_measurement_positions` surfaces as a
+                ``ValueError``. Flip to ``False`` when debugging an
+                analysis-side bug to let the original exception
+                propagate.
         """
-        run_method = self.run_no_raise if no_raise else self.run
-        _, output = run_method(method)
-        return _shot_remapping.get_shot_remapping(output, self.arch_spec)
-
-    def record_measure_snapshot(
-        self,
-        stmt: ir.Statement,
-        zone_addresses: tuple[ZoneAddress, ...],
-        results: dict[ZoneAddress, dict[LocationAddress, int]],
-        state: AtomState,
-    ) -> None:
-        """Capture what a measurement statement observed.
-
-        Called from the ``move.Measure`` / ``move.EndMeasure`` impls,
-        which already have both the per-zone occupancy they hand to
-        ``MeasureFuture`` and the incoming ``AtomState``. Keyed by
-        statement, so a fixpoint that revisits the statement overwrites
-        rather than double-counting.
-        """
-        measured_zones: dict[LocationAddress, int] = {}
-        for occupancy in results.values():
-            measured_zones.update(occupancy)
-        self._measure_snapshots[stmt] = _MeasureSnapshotRecord(
-            order=len(self._measure_snapshots),
-            zone_addresses=zone_addresses,
-            measured_zones=measured_zones,
-            processor={
-                location: qubit_id
-                for qubit_id, location in state.data.qubit_to_locations.items()
-            },
-        )
-
-    def record_readout(
-        self,
-        stmt: ir.Statement,
-        *,
-        measurement_id: int,
-        qubit_id: int,
-        location_address: LocationAddress,
-        measurement_count: int,
-    ) -> None:
-        """Capture one resolved ``move.GetFutureResult``.
-
-        ``measurement_count`` is the owning ``MeasureFuture``'s 1-based
-        statement index, which is how the readout is attributed back to
-        its snapshot.
-        """
-        self._readouts[stmt] = _ReadoutRecord(
-            measurement_id=measurement_id,
-            qubit_id=qubit_id,
-            location_address=location_address,
-            measurement_count=measurement_count,
-        )
+        try:
+            positions = self.get_measurement_positions(method, no_raise=no_raise)
+        except ValueError as error:
+            # ``get_measurement_positions`` resolves every captured location
+            # through ``ArchSpec.get_position``, which raises on an address
+            # the spec doesn't know. Callers of this method contract for a
+            # diagnostic, not an exception — typically an arch spec that
+            # doesn't match the one the program was compiled against.
+            if not no_raise:
+                raise
+            return _shot_remapping.ShotRemappingErr(
+                diagnostic=_shot_remapping.ShotRemappingDiagnostic(
+                    message=(
+                        "the analysis captured a location the arch spec "
+                        f"cannot resolve: {error}"
+                    ),
+                ),
+            )
+        return _shot_remapping.get_shot_remapping(positions)
 
     def _atom_at(
         self,
@@ -241,6 +178,41 @@ class AtomInterpreter(Forward[MoveExecution]):
             for location in sorted(occupancy)
         )
 
+    def _check_records_cover_every_measurement(
+        self, snapshots: Sequence[MeasurementSnapshot]
+    ) -> None:
+        """Reject a result whose readouts don't cover ``0..n-1`` exactly.
+
+        One snapshot per measurement *statement* only models a program
+        where each statement executes once. Put a measurement in a loop
+        and the statement has several executions with several distinct
+        frames, which this shape cannot represent — the snapshots would
+        overlap.
+
+        That case is detectable here: the interpreter mints a fresh
+        ``measurement_id`` per visit, so a second visit to a
+        ``GetFutureResult`` yields an id its first visit didn't have. The
+        two ``MeasureResult`` values are incomparable, so the lattice
+        joins them to ``Unknown`` and the readout drops out of the walk
+        entirely; either way the surviving ids stop being a complete
+        ``0..n-1`` cover.
+        """
+        record_ids = sorted(
+            atom_position.measurement_id
+            for snapshot in snapshots
+            for atom_position in snapshot.readout
+            if atom_position.measurement_id is not None
+        )
+        expected = list(range(self.measurement_record_count))
+        if record_ids != expected:
+            raise ValueError(
+                "measurement records do not cover "
+                f"0..{self.measurement_record_count - 1} exactly (got "
+                f"{record_ids}); a measurement statement most likely "
+                "executed more than once, which one-snapshot-per-statement "
+                "cannot represent"
+            )
+
     def get_measurement_positions(
         self, method: ir.Method, *, no_raise: bool = False
     ) -> MeasurementPositions:
@@ -273,53 +245,115 @@ class AtomInterpreter(Forward[MoveExecution]):
                 ``arch_spec`` — the analysis and arch spec disagree
                 about hardware layout.
         """
-        run_method = self.run_no_raise if no_raise else self.run
-        run_method(method)
+        if not no_raise:
+            frame, _ = self.run(method)
+            return self.collect_measurement_positions(method, frame)
 
+        # Swallow the failure like ``run_no_raise`` does, but remember it: a
+        # frame from a crashed run is missing the entries for every statement
+        # the analysis never reached, and that is invisible downstream.
+        try:
+            frame, _ = self.run(method)
+        except Exception:  # noqa: BLE001 - matches Forward.run_no_raise
+            return MeasurementPositions(measurements=(), analysis_failed=True)
+        return self.collect_measurement_positions(method, frame)
+
+    def collect_measurement_positions(
+        self,
+        method: ir.Method,
+        frame: ForwardFrame[MoveExecution],
+        *,
+        analysis_failed: bool = False,
+    ) -> MeasurementPositions:
+        """Read the snapshots out of a *converged* analysis frame.
+
+        Deliberately a second pass rather than bookkeeping accumulated
+        during interpretation: abstract interpretation may visit a
+        statement any number of times before it reaches a fixpoint, so
+        anything recorded as a side effect of visiting has to be made
+        idempotent by hand. Walking the IR once afterwards reads only
+        what the fixpoint settled on, and statement order comes from the
+        IR itself rather than from a counter.
+
+        Readouts attach to their measurement through
+        ``GetFutureResult.measurement_future.owner`` — the statement that
+        produced the future — so nothing depends on two counters agreeing.
+        """
         # Every zone spans the same number of addresses: words are global
         # and a zone_id merely tags them, so each zone contributes
         # ``len(words) * sites_per_word`` slots to the frame.
         frame_stride = len(self.arch_spec.words) * self.arch_spec.sites_per_word
 
-        # ``MeasureFuture.measurement_count`` is the 1-based index of the
-        # measurement statement, which is how a readout finds its snapshot.
-        readouts_by_measurement: dict[int, list[_ReadoutRecord]] = {}
-        for record in self._readouts.values():
-            readouts_by_measurement.setdefault(record.measurement_count, []).append(
-                record
-            )
+        measure_stmts: list[move.EndMeasure | move.Measure] = []
+        readouts: dict[ir.Statement, list[MeasureResult]] = {}
+        for stmt in method.callable_region.walk():
+            if isinstance(stmt, (move.EndMeasure, move.Measure)):
+                measure_stmts.append(stmt)
+            elif isinstance(stmt, move.GetFutureResult):
+                result = frame.get(stmt.result)
+                # A GetFutureResult that didn't resolve emits no measurement
+                # and so has no place in any frame.
+                owner = stmt.measurement_future.owner
+                # A future that isn't a statement result (a block argument,
+                # say) belongs to no measurement statement in this walk.
+                if isinstance(result, MeasureResult) and isinstance(
+                    owner, ir.Statement
+                ):
+                    readouts.setdefault(owner, []).append(result)
 
         snapshots = []
-        for snapshot in sorted(self._measure_snapshots.values(), key=lambda s: s.order):
+        for index, stmt in enumerate(measure_stmts):
+            future = frame.get(
+                stmt.result if isinstance(stmt, move.EndMeasure) else stmt.future
+            )
+            state = frame.get(stmt.current_state)
+            if not isinstance(future, MeasureFuture) or not isinstance(
+                state, AtomState
+            ):
+                # The analysis never resolved this measurement; it has no
+                # occupancy to report, so there is no snapshot to build.
+                continue
+
+            zone_addresses = tuple(stmt.zone_addresses)
             zone_offsets = {
                 zone.zone_id: position * frame_stride
-                for position, zone in enumerate(snapshot.zone_addresses)
+                for position, zone in enumerate(zone_addresses)
+            }
+            measured_zones: dict[LocationAddress, int] = {}
+            for occupancy in future.results.values():
+                measured_zones.update(occupancy)
+            processor = {
+                location: qubit_id
+                for qubit_id, location in state.data.qubit_to_locations.items()
             }
             readout = sorted(
                 (
                     self._atom_at(
-                        record.location_address,
-                        record.qubit_id,
+                        result.location_address,
+                        result.qubit_id,
                         zone_offsets,
-                        record.measurement_id,
+                        result.measurement_id,
                     )
-                    for record in readouts_by_measurement.get(snapshot.order + 1, [])
+                    for result in readouts.get(stmt, [])
                 ),
                 key=lambda atom: atom.measurement_id or 0,
             )
             snapshots.append(
                 MeasurementSnapshot(
-                    index=snapshot.order,
-                    zone_addresses=snapshot.zone_addresses,
-                    frame_size=len(snapshot.zone_addresses) * frame_stride,
+                    index=index,
+                    zone_addresses=zone_addresses,
+                    frame_size=len(zone_addresses) * frame_stride,
                     readout=tuple(readout),
-                    measured_zones=self._atoms_by_address(
-                        snapshot.measured_zones, zone_offsets
-                    ),
-                    processor=self._atoms_by_address(snapshot.processor, zone_offsets),
+                    measured_zones=self._atoms_by_address(measured_zones, zone_offsets),
+                    processor=self._atoms_by_address(processor, zone_offsets),
                 )
             )
-        return MeasurementPositions(measurements=tuple(snapshots))
+
+        if not analysis_failed:
+            self._check_records_cover_every_measurement(snapshots)
+        return MeasurementPositions(
+            measurements=tuple(snapshots), analysis_failed=analysis_failed
+        )
 
     def get_post_processing(
         self, method: ir.Method[..., RetType]
