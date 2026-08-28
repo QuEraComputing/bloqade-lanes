@@ -27,20 +27,8 @@ class Word(RustWrapper[_RustWord]):
         """Number of sites in this word."""
         return len(self._inner.sites)
 
-    # NOTE: the underlying Rust ``_native.Word`` does not yet implement
-    # value-based ``__eq__``/``__hash__`` (it falls back to identity), so we
-    # cannot rely on ``RustWrapper``'s delegation here. Override with a
-    # ``sites``-based comparison to preserve the legacy semantic that
-    # ``ArchSpec.__eq__`` relies on (it does ``self.words == other.words``).
-    # Tracked in #476 — drop these overrides once Word/Mode/Zone get
-    # value-based dunders on the Rust side.
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Word):
-            return NotImplemented
-        return self.sites == other.sites
-
-    def __hash__(self) -> int:
-        return hash(self.sites)
+    # ``__eq__`` / ``__hash__`` come from ``RustWrapper``, which delegates to
+    # ``_native.Word``'s value-based dunders (#476).
 
     def __repr__(self) -> str:
         return f"Word(n_sites={self.n_sites})"

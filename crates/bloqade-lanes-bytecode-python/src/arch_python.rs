@@ -10,6 +10,18 @@ use bloqade_lanes_bytecode_core::version::Version;
 
 use crate::validation::{validate_field, validate_vec};
 
+/// Hash a wrapped core value for a `__hash__` binding.
+///
+/// Types whose identity is not already a packed integer (unlike the address
+/// types, which hash as their `encode()`) route through their Rust `Hash`
+/// impl so Python hashing stays consistent with Rust equality.
+fn hash_inner<T: std::hash::Hash>(value: &T) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
 // ── Direction enum ──
 
 #[pyclass(
@@ -363,6 +375,10 @@ impl PyGrid {
     ///
     /// The first element becomes the start value and consecutive differences
     /// become the spacing vector.
+    ///
+    /// Rejects non-finite coordinates for the same reason `new` does: `Grid`
+    /// asserts `Eq`, so a NaN would make a grid (and any `Zone` embedding it)
+    /// unequal to itself and unusable as a dict key.
     #[classmethod]
     fn from_positions(
         _cls: &Bound<'_, pyo3::types::PyType>,
@@ -378,6 +394,13 @@ impl PyGrid {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "y_positions must have at least one element",
             ));
+        }
+        for (field, values) in [("x_positions", &x_positions), ("y_positions", &y_positions)] {
+            if values.iter().any(|v| !v.is_finite()) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{field} contains non-finite value (NaN or Inf)"
+                )));
+            }
         }
         Ok(Self {
             inner: rs::Grid::from_positions(&x_positions, &y_positions),
@@ -438,10 +461,7 @@ impl PyGrid {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.hash(&mut hasher);
-        hasher.finish()
+        hash_inner(&self.inner)
     }
 }
 
@@ -471,6 +491,14 @@ impl PyWord {
 
     fn __repr__(&self) -> String {
         format!("Word(sites={})", self.inner.sites.len())
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_inner(&self.inner)
     }
 }
 
@@ -527,10 +555,7 @@ impl PySiteBus {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.hash(&mut hasher);
-        hasher.finish()
+        hash_inner(&self.inner)
     }
 }
 
@@ -587,10 +612,7 @@ impl PyWordBus {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.hash(&mut hasher);
-        hasher.finish()
+        hash_inner(&self.inner)
     }
 }
 
@@ -665,10 +687,7 @@ impl PyZoneBus {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.hash(&mut hasher);
-        hasher.finish()
+        hash_inner(&self.inner)
     }
 }
 
@@ -776,6 +795,14 @@ impl PyZone {
             self.inner.word_buses.len()
         )
     }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_inner(&self.inner)
+    }
 }
 
 // ── Mode ──
@@ -828,6 +855,14 @@ impl PyMode {
             "Mode(name='{}', zones={:?})",
             self.inner.name, self.inner.zones
         )
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_inner(&self.inner)
     }
 }
 
@@ -889,10 +924,7 @@ impl PyTransportPath {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.hash(&mut hasher);
-        hasher.finish()
+        hash_inner(&self.inner)
     }
 }
 
