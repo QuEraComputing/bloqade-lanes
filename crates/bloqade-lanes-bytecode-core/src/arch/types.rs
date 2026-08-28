@@ -46,7 +46,10 @@ pub struct Word {
 /// A logical zone grouping words with a shared coordinate grid and buses.
 ///
 /// Each zone owns its grid and the site/word buses that operate within it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// `Eq` / `Hash` come from [`Grid`]'s manual impls (see the `-0.0`
+/// normalization there); every other field is already totally comparable.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Zone {
     /// Human-readable zone name.
     #[serde(default)]
@@ -71,7 +74,7 @@ pub struct Zone {
 ///
 /// Modes define subsets of zones and the bitstring ordering used for
 /// measurement results.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Mode {
     /// Human-readable mode name.
     pub name: String,
