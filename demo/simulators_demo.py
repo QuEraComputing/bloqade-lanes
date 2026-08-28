@@ -22,6 +22,9 @@
 # To run this notebook with the appropriate dependencies, you can run
 #
 # `pip install "bloqade-lanes[sim, clifft]"`
+#
+# If you would like to run simulation with PPVM (which is still in development and has not been released), you can install PPVM with the following command:
+# `pip install "ppvm @ git+https://github.com/QuEraComputing/ppvm.git@ff6bbb558cc9593adcde9a0668edbe3c0fee1ab4#subdirectory=ppvm-python"`
 
 # %% [markdown]
 # ## Constructing Simulators
@@ -140,6 +143,9 @@ print(np.asarray(physical_result_clifft.measurements).shape)
 noise_model_atom_loss = generate_simple_noise_model(
     GeminiOneZoneNoiseModel(cz_gate_loss_prob=0.001)
 )
+
+# %%
+print(noise_model_atom_loss)
 
 # %%
 simulator_with_loss = GeminiPhysicalSimulator(
