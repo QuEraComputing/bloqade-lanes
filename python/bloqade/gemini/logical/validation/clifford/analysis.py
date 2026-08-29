@@ -9,6 +9,10 @@ from kirin.validation import ValidationPass
 
 from bloqade import squin
 
+# NOTE: safe at module level -- `bloqade.gemini.__init__` imports `common`
+# before `logical`, and `common` never imports back into `logical`.
+from bloqade.gemini.common.validation.static_call import NoStaticCallValidation
+
 
 @dataclass
 class _GeminiLogicalValidationAnalysis(Forward[EmptyLattice]):
@@ -56,7 +60,19 @@ class _GeminiLogicalValidationAnalysis(Forward[EmptyLattice]):
 
 @dataclass
 class GeminiLogicalValidation(ValidationPass):
-    """Validates a logical gemini program"""
+    """Validates a logical gemini program.
+
+    Unresolved calls are reported by delegating to ``NoStaticCallValidation``
+    rather than by an impl in ``impls.py``. A ``func.Invoke`` impl only sees the
+    statements this ``Forward`` analysis reaches, and the ``scf.For`` impl
+    returns bottom without descending into the loop body -- so a call nested in a
+    loop was never visited. The delegate is a syntactic ``walk()`` and sees all
+    of them.
+
+    Delegating rather than composing the two passes side by side in every suite
+    keeps this pass a drop-in for callers who assemble their own
+    ``ValidationSuite``, and stops a single unresolved call being counted twice.
+    """
 
     def name(self) -> str:
         return "Gemini Logical Validation"
@@ -68,6 +84,14 @@ class GeminiLogicalValidation(ValidationPass):
         analysis = _GeminiLogicalValidationAnalysis(
             method.dialects, addr_frame=addr_frame
         )
+
+        # Before the walk, so an unresolved call leads the report: the other
+        # violations are often a consequence of the program not being flat.
+        # `_validation_errors` is keyed by node and ordered by first insertion,
+        # so seeding it here puts these errors first.
+        _, call_errors = NoStaticCallValidation().run(method)
+        for error in call_errors:
+            analysis.add_validation_error(error.node, error)
 
         frame, _ = analysis.run(method)
 
