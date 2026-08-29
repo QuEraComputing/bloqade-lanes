@@ -25,6 +25,7 @@ fn hash_inner<T: std::hash::Hash>(value: &T) -> u64 {
 // ── Direction enum ──
 
 #[pyclass(
+    from_py_object,
     name = "Direction",
     eq,
     eq_int,
@@ -70,6 +71,7 @@ impl PyDirection {
 // ── MoveType enum ──
 
 #[pyclass(
+    skip_from_py_object,
     name = "MoveType",
     eq,
     eq_int,
@@ -121,6 +123,7 @@ impl PyMoveType {
 // ── LocationAddr ──
 
 #[pyclass(
+    from_py_object,
     name = "LocationAddress",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -191,6 +194,7 @@ impl PyLocationAddr {
 // ── LaneAddr ──
 
 #[pyclass(
+    from_py_object,
     name = "LaneAddress",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -297,6 +301,7 @@ impl PyLaneAddr {
 // ── ZoneAddr ──
 
 #[pyclass(
+    skip_from_py_object,
     name = "ZoneAddress",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -347,7 +352,12 @@ impl PyZoneAddr {
 
 // ── Grid ──
 
-#[pyclass(name = "Grid", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "Grid",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyGrid {
     pub(crate) inner: rs::Grid,
@@ -467,7 +477,12 @@ impl PyGrid {
 
 // ── Word ──
 
-#[pyclass(name = "Word", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "Word",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyWord {
     pub(crate) inner: rs::Word,
@@ -504,7 +519,12 @@ impl PyWord {
 
 // ── SiteBus ──
 
-#[pyclass(name = "SiteBus", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "SiteBus",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PySiteBus {
     pub(crate) inner: rs::Bus<rs_addr::SiteRef>,
@@ -561,7 +581,12 @@ impl PySiteBus {
 
 // ── WordBus ──
 
-#[pyclass(name = "WordBus", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "WordBus",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyWordBus {
     pub(crate) inner: rs::Bus<rs_addr::WordRef>,
@@ -618,7 +643,12 @@ impl PyWordBus {
 
 // ── ZoneBus (inter-zone) ──
 
-#[pyclass(name = "ZoneBus", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "ZoneBus",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyZoneBus {
     pub(crate) inner: rs::Bus<rs_addr::ZonedWordRef>,
@@ -693,7 +723,12 @@ impl PyZoneBus {
 
 // ── Zone ──
 
-#[pyclass(name = "Zone", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "Zone",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyZone {
     pub(crate) inner: rs::Zone,
@@ -807,7 +842,12 @@ impl PyZone {
 
 // ── Mode ──
 
-#[pyclass(name = "Mode", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "Mode",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyMode {
     pub(crate) inner: rs::Mode,
@@ -869,6 +909,7 @@ impl PyMode {
 // ── TransportPath ──
 
 #[pyclass(
+    skip_from_py_object,
     name = "TransportPath",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -930,7 +971,12 @@ impl PyTransportPath {
 
 // ── ArchSpec ──
 
-#[pyclass(name = "ArchSpec", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "ArchSpec",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyArchSpec {
     pub(crate) inner: rs::ArchSpec,
