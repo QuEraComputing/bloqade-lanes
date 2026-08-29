@@ -54,6 +54,7 @@ def kernel(self):
         ] = 7,
     ) -> None:
         # stop circular import problems
+        from ..common.validation.call_site import InlineOrigins
         from ..common.validation.recursion import check_call_graph
         from .rewrite.qubit_count import InsertQubitCount
 
@@ -61,6 +62,10 @@ def kernel(self):
         # `verify` -- see `check_call_graph` for why skipping it reintroduces a
         # hang rather than merely losing a diagnostic.
         check_call_graph(mt)
+
+        # NOTE: has to happen before the inliner splices the callees in and the
+        # invokes are lost; only the `verify` path consumes the result.
+        origins = InlineOrigins.collect(mt) if verify else InlineOrigins()
 
         if inline and not aggressive_unroll:
             InlinePass(mt.dialects, no_raise=no_raise).fixpoint(mt)
@@ -119,7 +124,8 @@ def kernel(self):
                     DuplicateAddressValidation,
                 ]
             )
-            validation_result = validator.validate(mt)
+            origins.snapshot(mt)
+            validation_result = origins.annotate(mt, validator.validate(mt))
             validation_result.raise_if_invalid()
             mt.verify()
 
