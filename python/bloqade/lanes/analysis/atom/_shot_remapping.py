@@ -121,10 +121,6 @@ def get_shot_remapping(
         ``ShotRemappingOk`` carrying the index list on success, or
         ``ShotRemappingErr`` on failure. Failure modes:
 
-        - the analysis crashed and the exception was swallowed, leaving
-          only the records captured before the failure. Their ids are
-          still a contiguous prefix, so the truncation is invisible to
-          every other check here and would yield a short mapping;
         - the program contains no measurement statement, so there is no
           frame to project;
         - a measurement statement before the last one also produced
@@ -140,17 +136,6 @@ def get_shot_remapping(
         failure here indicates a pipeline regression rather than a
         malformed kernel.
     """
-    if positions.analysis_failed:
-        return ShotRemappingErr(
-            diagnostic=ShotRemappingDiagnostic(
-                message=(
-                    "the atom analysis did not complete, so its measurement "
-                    "records are a prefix rather than the whole program; a "
-                    "mapping built from them would be silently short"
-                ),
-            ),
-        )
-
     if not positions.measurements:
         return ShotRemappingErr(
             diagnostic=ShotRemappingDiagnostic(

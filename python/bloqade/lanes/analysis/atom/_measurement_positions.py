@@ -131,17 +131,12 @@ class MeasurementPositions:
     but the shape generalises to mid-circuit measurement without a
     breaking change.
 
-    ``analysis_failed`` marks a result assembled from *partial* records:
-    the analysis raised and the caller asked for it to be swallowed, so
-    whatever was captured before the failure is all there is. The
-    records that survive are internally consistent — a truncated prefix
-    of measurement ids is still contiguous — so consumers cannot detect
-    the truncation by inspecting ``measurements`` and must check this
-    flag instead.
+    Only ever describes a run that converged: an analysis that fails
+    raises out of ``get_measurement_positions`` rather than returning a
+    partial result here.
     """
 
     measurements: tuple[MeasurementSnapshot, ...]
-    analysis_failed: bool = False
 
     @property
     def readout(self) -> tuple[AtomPosition, ...]:

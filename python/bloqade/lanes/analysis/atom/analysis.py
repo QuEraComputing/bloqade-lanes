@@ -111,30 +111,32 @@ class AtomInterpreter(Forward[MoveExecution]):
 
         Args:
             method: kirin method to analyse.
-            no_raise: when ``True`` (default), the failure is reported as
-                a ``ShotRemappingErr`` so callers see a single failure
-                shape. That covers both an analysis crash and an address
-                the arch spec cannot resolve, which
-                :meth:`get_measurement_positions` surfaces as a
-                ``ValueError``. Flip to ``False`` when debugging an
-                analysis-side bug to let the original exception
+            no_raise: when ``True`` (default), any failure reaching this
+                method is reported as a ``ShotRemappingErr`` so callers
+                see a single failure shape. That covers an analysis that
+                crashes, an address the arch spec cannot resolve, and a
+                measurement that executed more than once — all of which
+                :meth:`get_measurement_positions` raises. Flip to
+                ``False`` when debugging to let the original exception
                 propagate.
         """
+        if not no_raise:
+            return _shot_remapping.get_shot_remapping(
+                self.get_measurement_positions(method)
+            )
+
+        # This method contracts for a diagnostic rather than an exception:
+        # its callers (the compiler service) surface the message. A crashed
+        # analysis has no partial answer worth returning, so it becomes a
+        # diagnostic here rather than a truncated mapping downstream.
         try:
-            positions = self.get_measurement_positions(method, no_raise=no_raise)
-        except ValueError as error:
-            # ``get_measurement_positions`` resolves every captured location
-            # through ``ArchSpec.get_position``, which raises on an address
-            # the spec doesn't know. Callers of this method contract for a
-            # diagnostic, not an exception — typically an arch spec that
-            # doesn't match the one the program was compiled against.
-            if not no_raise:
-                raise
+            positions = self.get_measurement_positions(method)
+        except Exception as error:  # noqa: BLE001 - reported, not swallowed
             return _shot_remapping.ShotRemappingErr(
                 diagnostic=_shot_remapping.ShotRemappingDiagnostic(
                     message=(
-                        "the analysis captured a location the arch spec "
-                        f"cannot resolve: {error}"
+                        "the atom analysis did not produce measurement "
+                        f"positions: {type(error).__name__}: {error}"
                     ),
                 ),
             )
@@ -213,9 +215,7 @@ class AtomInterpreter(Forward[MoveExecution]):
                 "cannot represent"
             )
 
-    def get_measurement_positions(
-        self, method: ir.Method, *, no_raise: bool = False
-    ) -> MeasurementPositions:
+    def get_measurement_positions(self, method: ir.Method) -> MeasurementPositions:
         """Where every atom sat at each measurement in ``method``.
 
         Returns one :class:`MeasurementSnapshot` per measurement
@@ -231,51 +231,29 @@ class AtomInterpreter(Forward[MoveExecution]):
         ``result.readout[k].position`` is where the atom in column ``k``
         of the raw per-shot measurement array was sitting.
 
+        Snapshots describe a run that converged, so there is no
+        swallow-and-report mode: an analysis that fails raises, and a
+        caller that needs a diagnostic instead of an exception should use
+        :meth:`get_shot_remapping`, which converts one.
+
         Args:
             method: kirin method to analyse.
-            no_raise: when ``True``, an analysis crash is swallowed and
-                the result is an empty ``MeasurementPositions`` with
-                ``analysis_failed`` set. Defaults to ``False`` so
-                analysis bugs surface rather than being reported as an
-                empty program.
-
-                Partial positions are deliberately *not* returned. They
-                aren't available: the frame is built inside ``run`` and
-                is lost when it raises, and ``Forward.run_no_raise``
-                doesn't recover it either — its failure branch returns
-                ``initialize_frame(...)``, a fresh empty frame, so
-                collecting from it would yield the same empty result
-                after re-running a failing analysis. They also wouldn't
-                be safe to use: a truncated prefix of measurement
-                records is indistinguishable from a complete set by
-                inspection, which is what ``analysis_failed`` exists to
-                signal.
 
         Raises:
+            Exception: whatever the analysis raises. There is no partial
+                answer to return in its place — ``run`` only hands back a
+                frame on success.
             ValueError: if a captured location has no position under
                 ``arch_spec`` — the analysis and arch spec disagree
                 about hardware layout.
         """
-        if not no_raise:
-            frame, _ = self.run(method)
-            return self.collect_measurement_positions(method, frame)
-
-        # Swallow the failure like ``run_no_raise`` does, but record that it
-        # happened. There is no frame to salvage — ``run`` builds it
-        # internally and it goes with the exception — so the flag is the only
-        # thing distinguishing this from a program with no measurements.
-        try:
-            frame, _ = self.run(method)
-        except Exception:  # noqa: BLE001 - matches Forward.run_no_raise
-            return MeasurementPositions(measurements=(), analysis_failed=True)
+        frame, _ = self.run(method)
         return self.collect_measurement_positions(method, frame)
 
     def collect_measurement_positions(
         self,
         method: ir.Method,
         frame: ForwardFrame[MoveExecution],
-        *,
-        analysis_failed: bool = False,
     ) -> MeasurementPositions:
         """Read the snapshots out of a *converged* analysis frame.
 
@@ -302,7 +280,10 @@ class AtomInterpreter(Forward[MoveExecution]):
             if isinstance(stmt, (move.EndMeasure, move.Measure)):
                 measure_stmts.append(stmt)
             elif isinstance(stmt, move.GetFutureResult):
-                result = frame.get(stmt.result)
+                # ``entries.get`` rather than ``frame.get``: the latter raises
+                # for an SSA value the analysis never reached, which is normal
+                # when collecting from the partial frame of a crashed run.
+                result = frame.entries.get(stmt.result)
                 # A GetFutureResult that didn't resolve emits no measurement
                 # and so has no place in any frame.
                 owner = stmt.measurement_future.owner
@@ -315,10 +296,10 @@ class AtomInterpreter(Forward[MoveExecution]):
 
         snapshots = []
         for index, stmt in enumerate(measure_stmts):
-            future = frame.get(
+            future = frame.entries.get(
                 stmt.result if isinstance(stmt, move.EndMeasure) else stmt.future
             )
-            state = frame.get(stmt.current_state)
+            state = frame.entries.get(stmt.current_state)
             if not isinstance(future, MeasureFuture) or not isinstance(
                 state, AtomState
             ):
@@ -361,11 +342,8 @@ class AtomInterpreter(Forward[MoveExecution]):
                 )
             )
 
-        if not analysis_failed:
-            self._check_records_cover_every_measurement(snapshots)
-        return MeasurementPositions(
-            measurements=tuple(snapshots), analysis_failed=analysis_failed
-        )
+        self._check_records_cover_every_measurement(snapshots)
+        return MeasurementPositions(measurements=tuple(snapshots))
 
     def get_post_processing(
         self, method: ir.Method[..., RetType]

@@ -103,28 +103,6 @@ def test_reports_frame_size_and_measurement_index():
     assert result.measurement_index == 4
 
 
-def test_partial_records_from_a_failed_analysis_return_diagnostic():
-    """A crash mid-analysis leaves a *prefix* of the records. Its ids are
-    still contiguous from 0, so every other check here passes and the
-    result would be a silently short mapping — the exact IndexError this
-    module exists to prevent. Only the failure flag distinguishes it."""
-    readout = [_atom(measurement_id=i, frame_index=i * 7, site=i) for i in range(3)]
-    positions = MeasurementPositions(
-        measurements=(_snapshot(readout),), analysis_failed=True
-    )
-
-    # The records themselves look perfectly well-formed.
-    without_flag = get_shot_remapping(
-        MeasurementPositions(measurements=positions.measurements)
-    )
-    assert isinstance(without_flag, ShotRemappingOk)
-    assert without_flag.mapping == [0, 7, 14]
-
-    result = get_shot_remapping(positions)
-    assert isinstance(result, ShotRemappingErr)
-    assert "did not complete" in result.diagnostic.message
-
-
 def test_no_measurement_statement_returns_diagnostic():
     result = get_shot_remapping(_positions())
     assert isinstance(result, ShotRemappingErr)
@@ -220,6 +198,49 @@ def _tiny_arch():
     )
 
 
+@kernel
+def _reads_one_measurement():
+    state0 = move.load()
+    state1 = move.fill(state0, location_addresses=(move.LocationAddress(0, 0, 0),))
+    future = move.end_measure(state1, zone_addresses=(move.ZoneAddress(0),))
+    return move.get_future_result(
+        future,
+        zone_address=move.ZoneAddress(0),
+        location_address=move.LocationAddress(0, 0, 0),
+    )
+
+
+def test_a_crashed_analysis_becomes_a_diagnostic(monkeypatch):
+    """``get_measurement_positions`` raises when the analysis fails, and
+    this method contracts for a diagnostic, so it converts. Before #967
+    a crashed run yielded a silently short mapping instead."""
+    from bloqade.lanes.analysis.atom import lattice
+
+    def failing_init(self, measurement_id, qubit_id, location_address):
+        raise RuntimeError("simulated analysis crash")
+
+    monkeypatch.setattr(lattice.MeasureResult, "__init__", failing_init)
+
+    interp = AtomInterpreter(kernel, arch_spec=_tiny_arch())
+    result = interp.get_shot_remapping(_reads_one_measurement)
+    assert isinstance(result, ShotRemappingErr)
+    assert "did not produce measurement positions" in result.diagnostic.message
+
+
+def test_a_crashed_analysis_still_raises_when_no_raise_is_false(monkeypatch):
+    """``no_raise=False`` is the debugging escape hatch."""
+    from bloqade.lanes.analysis.atom import lattice
+
+    def failing_init(self, measurement_id, qubit_id, location_address):
+        raise RuntimeError("simulated analysis crash")
+
+    monkeypatch.setattr(lattice.MeasureResult, "__init__", failing_init)
+
+    interp = AtomInterpreter(kernel, arch_spec=_tiny_arch())
+    with pytest.raises(RuntimeError, match="simulated analysis crash"):
+        interp.get_shot_remapping(_reads_one_measurement, no_raise=False)
+
+
 def test_unresolvable_location_returns_diagnostic_not_an_exception():
     """Resolving positions raises ``ValueError`` for an address the arch
     spec doesn't know, but this method contracts for a diagnostic — the
@@ -228,7 +249,9 @@ def test_unresolvable_location_returns_diagnostic_not_an_exception():
     interp = AtomInterpreter(kernel, arch_spec=_tiny_arch())
     result = interp.get_shot_remapping(_fills_an_address_outside_the_arch)
     assert isinstance(result, ShotRemappingErr)
-    assert "cannot resolve" in result.diagnostic.message
+    # The underlying error is preserved in the message, so a compiler
+    # developer can still see which address failed to resolve.
+    assert "Invalid location address" in result.diagnostic.message
 
 
 def test_unresolvable_location_still_raises_when_no_raise_is_false():
