@@ -362,21 +362,28 @@ class AtomInterpreter(Forward[MoveExecution]):
         *lowered move* kernel.
 
         .. deprecated::
-            Use :func:`bloqade.gemini.post_processing.generate_post_processing`
-            instead. It abstract-interprets the **user's** kernel rather than
-            the lowered one, so it reconstructs whatever the kernel returns
-            without depending on the move IR's shape.
+            For user values, prefer
+            :func:`bloqade.gemini.post_processing.generate_post_processing`.
 
-            This method reads ``MeasureResult.measurement_id`` off the move
-            kernel, which only lines up with the rest of the pipeline while
-            lowering preserves the record ordering — an invariant that has to
-            be maintained by hand (see
+            The two are interchangeable for that purpose: ``emit_return``
+            and ``generate_post_processing`` produce identical output from
+            the same raw measurement array, down to the leaf type and the
+            reduce used for detectors, and
+            ``tests/analysis/atom/test_post_processing_parity.py`` pins that
+            equivalence.
+
+            Prefer the alternative because of *what it reads*, not what it
+            returns. It abstract-interprets the **user's** kernel, whereas
+            this method reads ``MeasureResult.measurement_id`` off the
+            lowered move kernel — a numbering that only lines up with the
+            rest of the pipeline while lowering preserves the record
+            ordering, an invariant maintained by hand (see
             ``tests/analysis/atom/test_measure_id_invariant.py``). Deriving
             user values from the user's own kernel removes that coupling.
 
         Callers that still need this, and what they are waiting on:
 
-        - ``emit_detectors`` / ``emit_observables`` have no replacement yet.
+        - ``emit_detectors`` / ``emit_observables`` have no replacement.
           They come from ``annotate.SetDetector`` / ``SetObservable``
           statements collected while walking the lowered kernel, and
           ``generate_post_processing`` only sees a detector that appears
