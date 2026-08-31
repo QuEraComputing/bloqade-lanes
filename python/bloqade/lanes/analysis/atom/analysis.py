@@ -233,12 +233,23 @@ class AtomInterpreter(Forward[MoveExecution]):
 
         Args:
             method: kirin method to analyse.
-            no_raise: when ``True``, an analysis crash is swallowed by
-                ``Forward.run_no_raise`` and the result is assembled
-                from whatever was captured before the failure — which
-                may be empty or partial. Defaults to ``False`` so
-                analysis bugs surface instead of yielding a silently
-                short list of positions.
+            no_raise: when ``True``, an analysis crash is swallowed and
+                the result is an empty ``MeasurementPositions`` with
+                ``analysis_failed`` set. Defaults to ``False`` so
+                analysis bugs surface rather than being reported as an
+                empty program.
+
+                Partial positions are deliberately *not* returned. They
+                aren't available: the frame is built inside ``run`` and
+                is lost when it raises, and ``Forward.run_no_raise``
+                doesn't recover it either — its failure branch returns
+                ``initialize_frame(...)``, a fresh empty frame, so
+                collecting from it would yield the same empty result
+                after re-running a failing analysis. They also wouldn't
+                be safe to use: a truncated prefix of measurement
+                records is indistinguishable from a complete set by
+                inspection, which is what ``analysis_failed`` exists to
+                signal.
 
         Raises:
             ValueError: if a captured location has no position under
@@ -249,9 +260,10 @@ class AtomInterpreter(Forward[MoveExecution]):
             frame, _ = self.run(method)
             return self.collect_measurement_positions(method, frame)
 
-        # Swallow the failure like ``run_no_raise`` does, but remember it: a
-        # frame from a crashed run is missing the entries for every statement
-        # the analysis never reached, and that is invisible downstream.
+        # Swallow the failure like ``run_no_raise`` does, but record that it
+        # happened. There is no frame to salvage — ``run`` builds it
+        # internally and it goes with the exception — so the flag is the only
+        # thing distinguishing this from a program with no measurements.
         try:
             frame, _ = self.run(method)
         except Exception:  # noqa: BLE001 - matches Forward.run_no_raise

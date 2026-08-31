@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ._measurement_positions import MeasurementPositions
+from ._measurement_positions import AtomPosition, MeasurementPositions
 
 
 @dataclass(frozen=True)
@@ -56,12 +56,21 @@ class ShotRemappingDiagnostic:
 
     Attributes:
         message: human-readable description of the failure.
-        offending_value: the value that triggered it, when there is a
-            single one to point at.
+        offending_value: the value that triggered the failure, when
+            there is a single one to point at — the first misattributed
+            record, the record with no frame slot, or the record id list
+            that failed to cover ``0..n-1``. ``None`` for failures with
+            no single culprit: an empty program, or an analysis that
+            crashed before producing anything.
+
+            This was ``MoveExecution | LocationAddress`` while the
+            mapping was derived by walking the return value's lattice
+            values. It now walks measurement records instead, so the
+            values that can appear here changed with it.
     """
 
     message: str
-    offending_value: object | None = None
+    offending_value: AtomPosition | list[int] | None = None
 
 
 @dataclass(frozen=True)
