@@ -58,7 +58,7 @@ def _snapshot(readout, *, index: int = 0, frame_size: int = 8):
         frame_size=frame_size,
         readout=tuple(readout),
         measured_zones=tuple(readout),
-        processor=tuple(readout),
+        qpu_state=tuple(readout),
     )
 
 

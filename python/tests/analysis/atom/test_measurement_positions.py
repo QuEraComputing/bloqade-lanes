@@ -123,17 +123,17 @@ def test_one_snapshot_per_measurement_statement():
 
 
 def test_three_scopes_are_genuinely_nested():
-    """readout ⊆ measured_zones ⊆ processor, with each strictly smaller."""
+    """readout ⊆ measured_zones ⊆ qpu_state, with each strictly smaller."""
     snapshot = _positions().measurements[0]
 
     assert len(snapshot.readout) == 1
     assert len(snapshot.measured_zones) == 2
-    assert len(snapshot.processor) == 4
+    assert len(snapshot.qpu_state) == 4
 
     readout_addrs = {a.location_address for a in snapshot.readout}
     zone_addrs = {a.location_address for a in snapshot.measured_zones}
-    processor_addrs = {a.location_address for a in snapshot.processor}
-    assert readout_addrs < zone_addrs < processor_addrs
+    qpu_addrs = {a.location_address for a in snapshot.qpu_state}
+    assert readout_addrs < zone_addrs < qpu_addrs
 
 
 def test_measured_zones_includes_unread_atoms():
@@ -151,9 +151,9 @@ def test_measured_zones_includes_unread_atoms():
     assert unread[0].measurement_id is None
 
 
-def test_processor_includes_atoms_outside_the_measured_zones():
+def test_qpu_state_includes_atoms_outside_the_measured_zones():
     snapshot = _positions().measurements[0]
-    other_zone = [a for a in snapshot.processor if a.location_address.zone_id == 1]
+    other_zone = [a for a in snapshot.qpu_state if a.location_address.zone_id == 1]
     assert len(other_zone) == 2
     assert all(a.measurement_id is None for a in other_zone)
 
@@ -161,17 +161,17 @@ def test_processor_includes_atoms_outside_the_measured_zones():
 def test_only_readout_atoms_carry_a_measurement_id():
     snapshot = _positions().measurements[0]
     assert [a.measurement_id for a in snapshot.readout] == [0]
-    assert all(a.measurement_id is None for a in snapshot.processor)
+    assert all(a.measurement_id is None for a in snapshot.qpu_state)
 
 
 def test_positions_resolve_through_the_arch_spec():
     snapshot = _positions().measurements[0]
-    for atom_position in snapshot.processor:
+    for atom_position in snapshot.qpu_state:
         assert atom_position.position == _ARCH.get_position(
             atom_position.location_address
         )
     # Zone 1's grid starts at x=100, so its atoms are far from zone 0's.
-    zone1 = [a for a in snapshot.processor if a.location_address.zone_id == 1]
+    zone1 = [a for a in snapshot.qpu_state if a.location_address.zone_id == 1]
     assert all(a.position[0] >= 100.0 for a in zone1)
 
 
@@ -189,7 +189,7 @@ def test_readout_is_stable_across_repeated_runs():
     second = interp.get_measurement_positions(_partial_readout)
     assert len(first.measurements) == len(second.measurements) == 1
     assert first.readout == second.readout
-    assert first.measurements[0].processor == second.measurements[0].processor
+    assert first.measurements[0].qpu_state == second.measurements[0].qpu_state
 
 
 def test_collection_is_a_pure_function_of_the_converged_frame():
@@ -283,14 +283,14 @@ def test_frame_index_matches_get_zone_index_for_a_single_zone_frame():
 def test_frame_index_is_always_populated_inside_the_frame():
     """``readout`` and ``measured_zones`` are built from the
     measurement's own zones, so a ``None`` there would be a bug, not a
-    legitimately absent value. Only ``processor`` may carry ``None``,
+    legitimately absent value. Only ``qpu_state`` may carry ``None``,
     and only for atoms outside the covered zones."""
     for result in (_positions(), _both_zone_positions()):
         for snapshot in result.measurements:
             covered = {z.zone_id for z in snapshot.zone_addresses}
             assert all(a.frame_index is not None for a in snapshot.readout)
             assert all(a.frame_index is not None for a in snapshot.measured_zones)
-            for atom_position in snapshot.processor:
+            for atom_position in snapshot.qpu_state:
                 in_frame = atom_position.location_address.zone_id in covered
                 assert (atom_position.frame_index is not None) is in_frame
 
@@ -308,11 +308,11 @@ def test_atom_position_requires_both_optional_fields():
 
 def test_frame_index_is_none_outside_the_measured_zones():
     """Zone 1 isn't measured here, so its atoms have no slot in the
-    frame even though they show up in ``processor``."""
+    frame even though they show up in ``qpu_state``."""
     snapshot = _positions().measurements[0]
-    outside = [a for a in snapshot.processor if a.location_address.zone_id == 1]
+    outside = [a for a in snapshot.qpu_state if a.location_address.zone_id == 1]
     assert outside and all(a.frame_index is None for a in outside)
-    inside = [a for a in snapshot.processor if a.location_address.zone_id == 0]
+    inside = [a for a in snapshot.qpu_state if a.location_address.zone_id == 0]
     assert inside and all(a.frame_index is not None for a in inside)
 
 
@@ -321,7 +321,7 @@ def test_frame_index_offsets_later_zones():
     snapshot = _both_zone_positions().measurements[0]
     # Each zone contributes 2 words x 2 sites = 4 slots.
     assert snapshot.frame_size == 8
-    assert _frame_of(snapshot.processor) == {
+    assert _frame_of(snapshot.qpu_state) == {
         (0, 0, 0): 0,  # zone 0 block: word*2 + site
         (1, 0, 0): 2,
         (0, 0, 1): 4,  # zone 1 block: 4 + word*2 + site
@@ -341,8 +341,8 @@ def test_frame_index_follows_zone_address_order_not_zone_id():
     assert _frame_of(single.measured_zones)[(0, 0, 0)] == 0
     assert _frame_of(both.measured_zones)[(0, 0, 0)] == 0
     # ...while zone 1 only gains a slot once it is actually measured.
-    assert _frame_of(single.processor)[(0, 0, 1)] is None
-    assert _frame_of(both.processor)[(0, 0, 1)] == 4
+    assert _frame_of(single.qpu_state)[(0, 0, 1)] is None
+    assert _frame_of(both.qpu_state)[(0, 0, 1)] == 4
 
 
 def test_frame_indices_are_within_frame_size_and_unique():
@@ -351,7 +351,7 @@ def test_frame_indices_are_within_frame_size_and_unique():
         _both_zone_positions().measurements[0],
     ):
         indices = [
-            a.frame_index for a in snapshot.processor if a.frame_index is not None
+            a.frame_index for a in snapshot.qpu_state if a.frame_index is not None
         ]
         assert len(set(indices)) == len(indices)
         assert all(0 <= i < snapshot.frame_size for i in indices)

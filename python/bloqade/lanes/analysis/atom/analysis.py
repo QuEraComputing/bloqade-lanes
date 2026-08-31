@@ -223,7 +223,7 @@ class AtomInterpreter(Forward[MoveExecution]):
         snapshot carries three widening scopes — ``readout`` (atoms the
         program actually reads, ordered by ``measurement_id``),
         ``measured_zones`` (every atom the hardware measures), and
-        ``processor`` (every atom on the device). See
+        ``qpu_state`` (every atom on the device). See
         ``_measurement_positions`` for the full contract.
 
         ``MeasurementPositions.readout`` flattens the per-snapshot
@@ -322,7 +322,7 @@ class AtomInterpreter(Forward[MoveExecution]):
             measured_zones: dict[LocationAddress, int] = {}
             for occupancy in future.results.values():
                 measured_zones.update(occupancy)
-            processor = {
+            qpu_state = {
                 location: qubit_id
                 for qubit_id, location in state.data.qubit_to_locations.items()
             }
@@ -345,7 +345,7 @@ class AtomInterpreter(Forward[MoveExecution]):
                     frame_size=len(zone_addresses) * frame_stride,
                     readout=tuple(readout),
                     measured_zones=self._atoms_by_address(measured_zones, zone_offsets),
-                    processor=self._atoms_by_address(processor, zone_offsets),
+                    qpu_state=self._atoms_by_address(qpu_state, zone_offsets),
                 )
             )
 

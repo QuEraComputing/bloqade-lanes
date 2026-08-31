@@ -18,12 +18,12 @@ where when this program measured?", at three widening scopes:
     hardware physically measures — a zone readout does not skip atoms
     just because the kernel ignores them.
 
-``processor``
+``qpu_state``
     Every atom on the device at that instant, including ones in zones
     the measurement doesn't touch. Useful for reconstructing the full
     machine state at measurement time.
 
-``measured_zones`` is a subset of ``processor``, and the addresses in
+``measured_zones`` is a subset of ``qpu_state``, and the addresses in
 ``readout`` are a subset of ``measured_zones``. The wider two carry no
 ``measurement_id`` for atoms that were never read out.
 
@@ -46,7 +46,7 @@ words are global and a ``zone_id`` merely tags them.
 
 Two things follow. The frame is scoped to *this* measurement — an atom
 in a zone the measurement doesn't cover has no slot and gets ``None``,
-which is why ``processor`` entries outside ``zone_addresses`` carry no
+which is why ``qpu_state`` entries outside ``zone_addresses`` carry no
 frame index. And ``frame_index`` is an *address* ordering, unrelated to
 ``measurement_id`` (IR readout order) and to any grid-geometry
 ordering; on Gemini a word is not a row, so walking addresses is not
@@ -75,7 +75,7 @@ class AtomPosition:
             ``None`` everywhere else — it is never invented for atoms
             the program didn't read.
         frame_index: the atom's slot in the measurement's frame (see the
-            module docstring). ``None`` *only* for a ``processor`` atom
+            module docstring). ``None`` *only* for a ``qpu_state`` atom
             sitting in a zone the measurement doesn't cover, which has
             no slot in that frame. Always populated on ``readout`` and
             ``measured_zones``, both of which are built from the
@@ -108,7 +108,7 @@ class MeasurementSnapshot:
             ``measurement_id``.
         measured_zones: every atom in ``zone_addresses``, ordered by
             location address.
-        processor: every atom on the device, ordered by location
+        qpu_state: every atom on the device, ordered by location
             address.
     """
 
@@ -117,7 +117,7 @@ class MeasurementSnapshot:
     frame_size: int
     readout: tuple[AtomPosition, ...]
     measured_zones: tuple[AtomPosition, ...]
-    processor: tuple[AtomPosition, ...]
+    qpu_state: tuple[AtomPosition, ...]
 
 
 @dataclass(frozen=True)
