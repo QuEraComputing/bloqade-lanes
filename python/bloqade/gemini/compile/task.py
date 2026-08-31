@@ -15,8 +15,8 @@ from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalVal
 from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
+from bloqade.gemini.post_processing import generate_post_processing
 from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.transform import LogicalPipeline
 
@@ -235,9 +235,7 @@ def compile_task(
     physical_move_kernel = LogicalPipeline(transversal_rewrite=True).emit(
         logical_squin_kernel
     )
-    post_processing = atom.AtomInterpreter(
-        physical_move_kernel.dialects, arch_spec=physical_arch_spec
-    ).get_post_processing(physical_move_kernel)
+    post_processing = generate_post_processing(logical_squin_kernel)
 
     return (
         logical_squin_kernel,

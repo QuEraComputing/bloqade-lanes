@@ -35,13 +35,13 @@ from bloqade.gemini.device.physical_simulator import (
     append_measurements_and_annotations_physical,
 )
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
+from bloqade.gemini.post_processing import generate_post_processing
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.bytecode.encoding import SiteLaneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.prelude import kernel as move_kernel
-from bloqade.lanes.transform import PhysicalPipeline
 
 _HAS_CLIFFT = importlib.util.find_spec("clifft") is not None
 """clifft is an optional dependency gated to Python >= 3.12 (see the
@@ -257,11 +257,9 @@ def test_task_base_does_not_expose_cached_samplers(attribute):
 
 def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     import bloqade.lanes.transform as pipeline_module
-    from bloqade.lanes.analysis import atom
 
     captured = {}
     move_kernel = MagicMock()
-    move_kernel.dialects = "dialects"
 
     class FakePhysicalPipeline:
         def __init__(self, **kwargs):
@@ -272,17 +270,7 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
             captured["no_raise"] = no_raise
             return move_kernel
 
-    class FakeAtomInterpreter:
-        def __init__(self, dialects, arch_spec):
-            captured["atom_dialects"] = dialects
-            captured["atom_arch_spec"] = arch_spec
-
-        def get_post_processing(self, kernel):
-            captured["post_processing_kernel"] = kernel
-            return "post_processing"
-
     monkeypatch.setattr(pipeline_module, "PhysicalPipeline", FakePhysicalPipeline)
-    monkeypatch.setattr(atom, "AtomInterpreter", FakeAtomInterpreter)
 
     @squin.kernel
     def kernel():
@@ -308,10 +296,8 @@ def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
     assert task.source_squin_kernel.print_str() == source_ir
     assert kernel.print_str() == source_ir
     assert captured["no_raise"] is False
-    assert captured["atom_dialects"] == "dialects"
-    assert captured["post_processing_kernel"] is move_kernel
     assert task.physical_move_kernel is move_kernel
-    assert task._post_processing == "post_processing"
+    assert task._post_processing is not None
     assert task._backend is backend
     assert not hasattr(task, "backend")
     assert not hasattr(task, "simulator_backend")
@@ -463,6 +449,22 @@ def test_physical_simulator_task_rejects_non_squin_before_pipeline(monkeypatch):
     physical_pipeline.assert_not_called()
 
 
+def test_physical_simulator_task_uses_source_kernel_post_processing(monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("post-processing must not use the lowered move kernel")
+
+    monkeypatch.setattr(
+        atom.AtomInterpreter,
+        "get_post_processing",
+        fail_if_called,
+        raising=False,
+    )
+
+    task = PhysicalSimulator().task(small_physical_kernel)
+
+    assert task._post_processing is not None
+
+
 def test_append_measurements_and_annotations_physical_preserves_kernel_return():
     @squin.kernel
     def kernel():
@@ -479,13 +481,7 @@ def test_append_measurements_and_annotations_physical_preserves_kernel_return():
     assert sum(isinstance(s, SetDetector) for s in kernel.callable_region.walk()) == 2
     assert sum(isinstance(s, SetObservable) for s in kernel.callable_region.walk()) == 2
 
-    arch_spec = get_arch_spec()
-    physical_move_kernel = PhysicalPipeline(arch_spec=arch_spec).emit(
-        kernel, no_raise=False
-    )
-    post_processing = atom.AtomInterpreter(
-        physical_move_kernel.dialects, arch_spec=arch_spec
-    ).get_post_processing(physical_move_kernel)
+    post_processing = generate_post_processing(kernel)
 
     raw_shots = [[True, False, False, True]]
 

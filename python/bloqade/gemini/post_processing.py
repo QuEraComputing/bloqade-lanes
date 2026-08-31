@@ -2,8 +2,10 @@ import typing
 
 import numpy as np
 from bloqade.analysis.measure_id import MeasurementIDAnalysis, lattice
-from kirin import ir
+from kirin import ir, types
 from kirin.passes import HintConst
+
+from bloqade.lanes.analysis.atom import PostProcessing
 
 T = typing.TypeVar("T")
 
@@ -18,7 +20,9 @@ def _post_processing_function(
     if isinstance(value, lattice.RawMeasureId):
 
         def _measure_func(measurements: typing.Sequence[bool]):
-            return bool(measurements[value.idx])
+            # Measurement IDs are one-based record identifiers; simulator
+            # result rows are ordinary zero-based Python sequences.
+            return bool(measurements[value.idx - 1])
 
         return _measure_func
     elif isinstance(value, (lattice.DetectorId, lattice.ObservableId)):
@@ -40,6 +44,12 @@ def _post_processing_function(
             return value.obj_type([f(measurements) for f in funcs])
 
         return _tuple_func
+    elif isinstance(value, lattice.ConstantCarrier):
+
+        def _constant_func(measurements: typing.Sequence[bool]):
+            return value.data
+
+        return _constant_func
     else:
         return None
 
@@ -50,52 +60,82 @@ ReturnType = typing.TypeVar("ReturnType")
 
 def generate_post_processing(
     mt: ir.Method[Params, ReturnType],
-) -> None | typing.Callable[[np.ndarray], typing.Iterator[ReturnType]]:
-    """Generate a post-processing function to extract user-level values from the raw measurement results.
-
+) -> PostProcessing[ReturnType]:
+    """Generate post-processing emitters for raw measurement results.
 
     Args:
-        mt (ir.Method[Params, ReturnType]): The entry point of the program
+        mt: The entry point of the program.
 
     Returns:
-        (typing.Callable[[ndarray], ReturnType] | None): A function that takes in a 2D numpy array
-        of raw measurement results and yields user-level results. The input array shape is
-        (n_shots, n_measurements), where each row corresponds to a measurement result and each
-        column corresponds to a shot. The output is an iterator over user-level results for
-        each shot. If the user-level results cannot be determined, returns None.
+        Emitters for user return values, detectors, and observables. Each
+        emitter accepts a two-dimensional array-like object with shape
+        ``(n_shots, n_measurements)`` and yields one value per shot.
 
+    Raises:
+        ValueError: If any required post-processing value cannot be inferred.
     """
 
-    # JSON serialization deliberately omits SSA hints. Rebuild constant hints
-    # before analysing measurement indexing so a decoded kernel can resolve
-    # expressions such as ``measurements[0]``.
-    #
-    # ``HintConst`` rather than ``Fold``: the analysis reads the ``const``
-    # hints directly, so attaching them is all it needs. ``Fold`` layers
-    # ConstantFold / InlineGetItem / Call2Invoke / DCE / CFGCompactify on
-    # top, which would restructure ``mt`` in place — and ``mt`` belongs to
-    # the caller.
-    HintConst(mt.dialects, no_raise=False)(mt)
+    # Work on an owned copy: physical SQuIN kernels may still contain generic
+    # helper calls whose concrete measurement-list lengths are only exposed by
+    # unrolling, while decoded kernels need their constant hints rebuilt.
+    # NOTE: physical squin kernels need to be AggressiveUnroll'd. Only works for logical kernels
+    analysis_kernel = mt.similar()
+    HintConst(analysis_kernel.dialects, no_raise=False)(analysis_kernel)
 
-    _, user_output = MeasurementIDAnalysis(mt.dialects).run(mt)
-    func = typing.cast(
-        typing.Callable[[np.ndarray], ReturnType],
-        _post_processing_function(user_output),
+    analysis = MeasurementIDAnalysis(analysis_kernel.dialects)
+    _, user_output = analysis.run(analysis_kernel)
+
+    return_func: typing.Callable[[typing.Sequence[bool]], ReturnType] | None
+    if isinstance(
+        user_output, lattice.NotMeasureId
+    ) and analysis_kernel.return_type.is_subseteq(types.NoneType):
+
+        def _return_none(measurements: typing.Sequence[bool]) -> ReturnType:
+            return typing.cast(ReturnType, None)
+
+        return_func = _return_none
+
+    else:
+        return_func = typing.cast(
+            typing.Callable[[typing.Sequence[bool]], ReturnType] | None,
+            _post_processing_function(user_output),
+        )
+    if return_func is None:
+        raise ValueError("Unable to infer return result value from method output")
+
+    detector_funcs = tuple(
+        typing.cast(
+            typing.Callable[[typing.Sequence[bool]], bool] | None,
+            _post_processing_function(value),
+        )
+        for value in analysis.detectors
     )
-    if func is None:
-        return None
+    if not _has_no_none(detector_funcs):
+        raise ValueError("Unable to infer detector measurement values")
 
-    def _generate_user_results(measurements: np.ndarray):
-        """A generator that yields user-level results from raw measurement results.
+    observable_funcs = tuple(
+        typing.cast(
+            typing.Callable[[typing.Sequence[bool]], bool] | None,
+            _post_processing_function(value),
+        )
+        for value in analysis.observables
+    )
+    if not _has_no_none(observable_funcs):
+        raise ValueError("Unable to infer observable measurement values")
 
-        Args:
-            measurements (np.ndarray): A 2D numpy array of raw measurement results with shape
-            (n_shots, n_measurements).
+    def emit_return(measurements: typing.Sequence[typing.Sequence[bool]]):
+        yield from map(return_func, measurements)
 
-        Yields:
-            User-level results for each shot.
+    def emit_detectors(measurements: typing.Sequence[typing.Sequence[bool]]):
+        yield from (
+            [func(measurement_shot) for func in detector_funcs]
+            for measurement_shot in measurements
+        )
 
-        """
-        yield from map(func, measurements[:])
+    def emit_observables(measurements: typing.Sequence[typing.Sequence[bool]]):
+        yield from (
+            [func(measurement_shot) for func in observable_funcs]
+            for measurement_shot in measurements
+        )
 
-    return _generate_user_results
+    return PostProcessing(emit_return, emit_detectors, emit_observables)

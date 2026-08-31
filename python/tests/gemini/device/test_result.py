@@ -30,10 +30,9 @@ CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
 # === real serialized kernels ===
 #
-# Tests that count calls to decode_json / generate_post_processing run them
-# for real (via mocker.spy) — that requires Program.content to be JSON the
-# real decoder accepts. Two distinct kernels so per-program assertions can
-# distinguish them.
+# Tests that count kernel decoding and SLM post-processing compilation run
+# them for real (via mocker.spy), so Program.content must be valid kernel JSON.
+# Two distinct kernels let per-program assertions distinguish them.
 
 
 @logical.kernel(aggressive_unroll=True)
@@ -588,7 +587,16 @@ def test_aligned_detected_and_sorted_shots_reject_missing_frame(storage):
         )
 
 
-def test_get_slm_mapping_postprocessing_maps_and_validates_frames():
+def test_get_slm_mapping_postprocessing_maps_and_validates_frames(monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("SLM post-processing must come from the source kernel")
+
+    monkeypatch.setattr(
+        utils_module.atom.AtomInterpreter,
+        "get_post_processing",
+        fail_if_called,
+        raising=False,
+    )
     map_shots, _ = utils_module.get_slm_mapping_postprocessing(_kernel_a)
 
     empty_slm_frame = np.zeros((1, 160), dtype=bool)
@@ -602,7 +610,7 @@ def test_get_slm_mapping_postprocessing_maps_and_validates_frames():
         map_shots(np.zeros((1, 159), dtype=bool), invert=False)
 
 
-def test_slm_postprocessing_functions_compile_once_independent_of_bit_convention(
+def test_postprocessing_functions_compile_once_independent_of_bit_convention(
     storage, monkeypatch, mocker
 ):
     add_task_definition(
@@ -631,8 +639,8 @@ def test_slm_postprocessing_functions_compile_once_independent_of_bit_convention
     decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
 
     result = GeminiLogicalResult(storage=storage)
-    mappings = result._slm_postprocessing_functions()
-    assert result._slm_postprocessing_functions() is mappings
+    mappings = result.postprocessing_functions()
+    assert result.postprocessing_functions() is mappings
 
     assert len(mapping_calls) == 1
     # The duplicate program index across task IDs is decoded once and served
@@ -791,36 +799,6 @@ def test_return_values_rejects_compact_frames(storage):
         _ = GeminiLogicalResult(storage=storage).return_values
 
 
-def test_logical_results_preserves_legacy_path_for_slm_width_shots(
-    storage, monkeypatch
-):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(
-            programs=[Program(content=KERNEL_A_JSON)],
-            subtasks=[Subtask(program_index=0, num_shots=1)],
-        ),
-    )
-    storage.add_shots(
-        [make_shot(shot_index=0, subtask_index=0, bitstring=(False,) * 160)]
-    )
-
-    def unexpected_slm_postprocessing(*args, **kwargs):
-        raise AssertionError("logical_results must not use SLM postprocessing")
-
-    monkeypatch.setattr(
-        GeminiLogicalResult,
-        "_slm_postprocessing_functions",
-        unexpected_slm_postprocessing,
-    )
-
-    legacy_results = GeminiLogicalResult(storage=storage).logical_results()
-
-    assert len(legacy_results) == 1
-    assert len(list(legacy_results[0])) == 1
-
-
 def test_shot_results_empty_when_no_subtasks(storage):
     res = GeminiLogicalResult(storage=storage)
     assert res.shot_results() == []
@@ -837,18 +815,18 @@ def test_postprocessing_functions_decodes_each_kernel(storage, mocker):
     )
 
     decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
-    gen_spy = mocker.spy(result_module, "generate_post_processing")
+    mapping_spy = mocker.spy(utils_module, "get_slm_mapping_postprocessing")
 
     res = GeminiLogicalResult(storage=storage)
     funcs = res.postprocessing_functions()
 
-    # Each program in storage gets decoded once and run through the generator.
+    # Each program in storage gets decoded and compiled into an SLM mapper once.
     assert decode_spy.call_count == 2
     assert [c.args[0] for c in decode_spy.call_args_list] == [
         KERNEL_A_JSON,
         KERNEL_B_JSON,
     ]
-    assert gen_spy.call_count == 2
+    assert mapping_spy.call_count == 2
     assert set(funcs.keys()) == {0, 1}
 
 
@@ -876,13 +854,7 @@ def test_postprocessing_functions_filters_by_shot_filter_task_ids(storage, mocke
     assert decode_spy.call_args.args[0] == KERNEL_A_JSON
 
 
-@pytest.mark.parametrize(
-    "method_name",
-    ["postprocessing_functions", "_slm_postprocessing_functions"],
-)
-def test_postprocessing_rejects_different_kernels_at_same_program_index(
-    storage, method_name
-):
+def test_postprocessing_rejects_different_kernels_at_same_program_index(storage):
     add_task_definition(
         storage,
         "task-a",
@@ -900,7 +872,7 @@ def test_postprocessing_rejects_different_kernels_at_same_program_index(
         ValueError,
         match="different kernels for program_index=0: 'task-a' and 'task-b'",
     ):
-        getattr(result, method_name)()
+        result.postprocessing_functions()
 
 
 def test_postprocessing_program_validation_respects_narrowed_task_scope(storage):
@@ -922,7 +894,7 @@ def test_postprocessing_program_validation_respects_narrowed_task_scope(storage)
     assert set(result.postprocessing_functions()) == {0}
 
 
-def test_postprocessing_functions_runs_each_call(storage, mocker):
+def test_postprocessing_functions_uses_cached_compilation(storage, mocker):
     add_task_definition(
         storage,
         "task-1",
@@ -930,17 +902,17 @@ def test_postprocessing_functions_runs_each_call(storage, mocker):
     )
 
     decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
-    gen_spy = mocker.spy(result_module, "generate_post_processing")
+    mapping_spy = mocker.spy(utils_module, "get_slm_mapping_postprocessing")
 
     res = GeminiLogicalResult(storage=storage)
     res.postprocessing_functions()
     res.postprocessing_functions()
 
-    assert decode_spy.call_count == 2
-    assert gen_spy.call_count == 2
+    assert decode_spy.call_count == 1
+    assert mapping_spy.call_count == 1
 
 
-def test_logical_results_rebuilds_const_hints_after_serialization(storage):
+def test_return_values_rebuilds_const_hints_after_serialization(storage):
     """Stored logical kernels retain their post-processing behavior.
 
     Kirin JSON does not preserve SSA ``const`` hints. The detector indexes its
@@ -957,97 +929,22 @@ def test_logical_results_rebuilds_const_hints_after_serialization(storage):
     )
     storage.add_shots(
         [
-            make_shot(shot_index=0, bitstring=(True, False)),
-            make_shot(shot_index=1, bitstring=(True, True)),
+            make_shot(shot_index=0, bitstring=(False,) * 160),
+            make_shot(shot_index=1, bitstring=(True,) * 160),
         ]
     )
 
-    result = GeminiLogicalResult(storage=storage).logical_results()
+    result = GeminiLogicalResult(storage=storage).return_values
 
-    assert list(result[0]) == [True, False]
-
-
-def test_logical_results_supports_legacy_postprocessor_override(storage):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=1)]),
-    )
-    storage.add_shots([make_shot(shot_index=0, bitstring=(True, False))])
-
-    result = GeminiLogicalResult(storage=storage).logical_results(
-        verify=True,
-        postprocessing_functions={
-            0: lambda shots: ("legacy", shots.shape, shots.tolist())
-        },
-    )
-
-    assert result == [("legacy", (1, 2), [[True, False]])]
+    assert result == [[False, False]]
 
 
-def test_logical_results_legacy_override_can_skip_merge_validation(storage):
+def test_return_values_applies_postprocessing_per_subtask(storage, monkeypatch):
     add_task_definition(
         storage,
         "task-1",
         make_task_definition(
-            subtasks=[Subtask(program_index=0, num_shots=1, arguments={"a": 1})]
-        ),
-    )
-    add_task_definition(
-        storage,
-        "task-2",
-        make_task_definition(
-            subtasks=[Subtask(program_index=0, num_shots=1, arguments={"a": 2})]
-        ),
-    )
-    storage.add_shots(
-        [
-            make_shot(task_id="task-1", shot_index=0, bitstring=(True, False)),
-            make_shot(task_id="task-2", shot_index=0, bitstring=(False, True)),
-        ]
-    )
-
-    result = GeminiLogicalResult(storage=storage).logical_results(
-        verify=False,
-        postprocessing_functions={0: lambda shots: shots.tolist()},
-    )
-
-    assert result == [[[True, False], [False, True]]]
-
-
-def test_logical_results_returns_raw_when_postprocessing_is_none(storage, monkeypatch):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(
-            programs=[Program(content="k")],
-            subtasks=[Subtask(program_index=0, num_shots=1)],
-        ),
-    )
-    storage.add_shots(
-        [make_shot(shot_index=0, subtask_index=0, bitstring=(True, False))]
-    )
-
-    # Substitute generate_post_processing with one that returns None so we
-    # exercise the production branch where logical_results returns the raw
-    # shot array. Real generators always return a callable for terminal_measure
-    # kernels, so substitution is the only way to hit this branch.
-    monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
-    monkeypatch.setattr(result_module, "generate_post_processing", lambda m: None)
-
-    res = GeminiLogicalResult(storage=storage)
-    out = res.logical_results()
-
-    assert len(out) == 1
-    np.testing.assert_array_equal(out[0], np.array([[True, False]]))
-
-
-def test_logical_results_applies_postprocessing_per_subtask(storage, monkeypatch):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(
-            programs=[Program(content="k")],
+            programs=[Program(content=KERNEL_A_JSON)],
             subtasks=[
                 Subtask(program_index=0, num_shots=1),
                 Subtask(program_index=0, num_shots=1),
@@ -1056,33 +953,37 @@ def test_logical_results_applies_postprocessing_per_subtask(storage, monkeypatch
     )
     storage.add_shots(
         [
-            make_shot(shot_index=0, subtask_index=0, bitstring=(True, False)),
-            make_shot(shot_index=1, subtask_index=1, bitstring=(False, True)),
+            make_shot(
+                shot_index=0,
+                subtask_index=0,
+                bitstring=(True, False) + (False,) * 158,
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_index=1,
+                bitstring=(False, True) + (False,) * 158,
+            ),
         ]
     )
 
-    # Substitute the postprocessor with a labeled tuple so we can verify
-    # which exact array reached which subtask. Real postprocessor outputs are
-    # shape-dependent on the kernel and would dominate the assertion logic.
-    def postprocessing(arr: np.ndarray):
-        return ("processed", arr.shape, arr.tolist())
-
-    monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
-    monkeypatch.setattr(
-        result_module, "generate_post_processing", lambda m: postprocessing
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (tuple(row) for row in rows),
+        emit_detectors=lambda rows: ([] for _ in rows),
+        emit_observables=lambda rows: ([] for _ in rows),
     )
 
+    def get_mapping(_kernel):
+        return lambda shots, *, invert: shots[:, :2].tolist(), post_processing
+
+    monkeypatch.setattr(utils_module, "get_slm_mapping_postprocessing", get_mapping)
+
     res = GeminiLogicalResult(storage=storage)
-    out = res.logical_results()
+    out = res.return_values
 
-    assert len(out) == 2
-    # Each entry should be the postprocessed result of *its own* subtask's shots
-    # (a 2D array of shape (1, 2)), not the full list of all subtasks' arrays.
-    assert out[0] == ("processed", (1, 2), [[True, False]])
-    assert out[1] == ("processed", (1, 2), [[False, True]])
+    assert out == [[(True, False)], [(False, True)]]
 
 
-def test_logical_results_merges_shots_across_task_ids(storage, monkeypatch):
+def test_return_values_merges_shots_across_task_ids(storage, monkeypatch):
     """Two task_ids with the same program/subtask structure should merge
     their shots into one bucket per subtask_index, and run postprocessing
     once on the combined array."""
@@ -1090,7 +991,7 @@ def test_logical_results_merges_shots_across_task_ids(storage, monkeypatch):
         storage,
         "task-A",
         make_task_definition(
-            programs=[Program(content="kernel")],
+            programs=[Program(content=KERNEL_A_JSON)],
             subtasks=[Subtask(program_index=0, num_shots=1)],
         ),
     )
@@ -1098,7 +999,7 @@ def test_logical_results_merges_shots_across_task_ids(storage, monkeypatch):
         storage,
         "task-B",
         make_task_definition(
-            programs=[Program(content="kernel")],
+            programs=[Program(content=KERNEL_A_JSON)],
             subtasks=[Subtask(program_index=0, num_shots=1)],
         ),
     )
@@ -1108,47 +1009,38 @@ def test_logical_results_merges_shots_across_task_ids(storage, monkeypatch):
                 task_id="task-A",
                 shot_index=0,
                 subtask_index=0,
-                bitstring=(True, False),
+                bitstring=(True, False) + (False,) * 158,
             ),
             make_shot(
                 task_id="task-B",
                 shot_index=0,
                 subtask_index=0,
-                bitstring=(False, True),
+                bitstring=(False, True) + (False,) * 158,
             ),
         ]
     )
 
-    # Substitute postprocessing so we can both count invocations and assert
-    # on the exact merged-array contents. Real postprocessor output is
-    # shape-dependent and would obscure the merge-and-call-once assertion.
-    pp_calls = []
-
-    def postprocessing(arr):
-        pp_calls.append(arr.tolist())
-        return ("processed", arr.tolist())
-
-    monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
-    monkeypatch.setattr(
-        result_module, "generate_post_processing", lambda m: postprocessing
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (tuple(row) for row in rows),
+        emit_detectors=lambda rows: ([] for _ in rows),
+        emit_observables=lambda rows: ([] for _ in rows),
     )
 
-    res = GeminiLogicalResult(storage=storage)
-    out = res.logical_results()
+    def get_mapping(_kernel):
+        return lambda shots, *, invert: shots[:, :2].tolist(), post_processing
 
-    # One merged bucket containing both task_ids' shots.
+    monkeypatch.setattr(utils_module, "get_slm_mapping_postprocessing", get_mapping)
+
+    res = GeminiLogicalResult(storage=storage)
+    out = res.return_values
+
     assert len(out) == 1
-    label, shots = out[0]
-    assert label == "processed"
-    assert sorted(shots) == sorted([[True, False], [False, True]])
-    # Postprocessing was invoked exactly once on the merged array.
-    assert len(pp_calls) == 1
+    assert sorted(out[0]) == sorted([(True, False), (False, True)])
 
 
 def test_postprocessing_functions_dedupes_across_task_ids(storage, mocker):
     """When multiple task_ids share an identical program at the same
-    program_index, decode_json + generate_post_processing should run once,
-    not once per task_id."""
+    program_index, decoding and SLM post-processing compilation run once."""
     add_task_definition(
         storage,
         "task-A",
@@ -1161,14 +1053,14 @@ def test_postprocessing_functions_dedupes_across_task_ids(storage, mocker):
     )
 
     decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
-    gen_spy = mocker.spy(result_module, "generate_post_processing")
+    mapping_spy = mocker.spy(utils_module, "get_slm_mapping_postprocessing")
 
     res = GeminiLogicalResult(storage=storage)
     funcs = res.postprocessing_functions()
 
     assert list(funcs.keys()) == [0]
     assert decode_spy.call_count == 1
-    assert gen_spy.call_count == 1
+    assert mapping_spy.call_count == 1
 
 
 def test_arguments_returns_one_entry_per_merged_subtask(storage):
@@ -1454,9 +1346,9 @@ def test_subtasks_skips_validation_with_verify_false(storage):
 
 @pytest.mark.parametrize(
     "method",
-    ["arguments", "shot_results", "logical_results"],
+    ["arguments", "shot_results"],
 )
-def test_merge_methods_skip_validation_with_verify_false(storage, monkeypatch, method):
+def test_merge_methods_skip_validation_with_verify_false(storage, method):
     add_task_definition(
         storage,
         "task-1",
@@ -1473,12 +1365,6 @@ def test_merge_methods_skip_validation_with_verify_false(storage, monkeypatch, m
             subtasks=[Subtask(program_index=0, num_shots=1, arguments={"a": 2})],
         ),
     )
-
-    # Substitute decode/generate so this test doesn't need real serialized
-    # kernels in storage (the methods being parametrized only need to reach
-    # their verify=False guard, not actually run postprocessing).
-    monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
-    monkeypatch.setattr(result_module, "generate_post_processing", lambda m: None)
 
     res = GeminiLogicalResult(storage=storage)
     # With verify=True default, each of these would raise.

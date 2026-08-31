@@ -15,6 +15,7 @@ from kirin import ir, passes
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
+from bloqade.gemini.post_processing import generate_post_processing
 
 from ._task_runtime import (
     DetectorResult as DetectorResult,
@@ -228,7 +229,6 @@ class GeminiPhysicalSimulator:
         if not isinstance(physical_kernel, ir.Method):
             raise TypeError("GeminiPhysicalSimulator.task() requires a Squin ir.Method")
 
-        from bloqade.lanes.analysis import atom
         from bloqade.lanes.passes import SequentialPlacePass
         from bloqade.lanes.transform import PhysicalPipeline
 
@@ -246,9 +246,7 @@ class GeminiPhysicalSimulator:
         physical_move_kernel = physical_pipeline.emit(
             source_squin_kernel, no_raise=False
         )
-        post_processing = atom.AtomInterpreter(
-            physical_move_kernel.dialects, arch_spec=self.arch_spec
-        ).get_post_processing(physical_move_kernel)
+        post_processing = generate_post_processing(source_squin_kernel)
 
         return PhysicalSimulatorTask(
             source_squin_kernel,
