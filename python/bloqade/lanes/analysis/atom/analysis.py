@@ -358,6 +358,38 @@ class AtomInterpreter(Forward[MoveExecution]):
     def get_post_processing(
         self, method: ir.Method[..., RetType]
     ) -> PostProcessing[RetType]:
+        """Reconstruct user values, detectors and observables from the
+        *lowered move* kernel.
+
+        .. deprecated::
+            Use :func:`bloqade.gemini.post_processing.generate_post_processing`
+            instead. It abstract-interprets the **user's** kernel rather than
+            the lowered one, so it reconstructs whatever the kernel returns
+            without depending on the move IR's shape.
+
+            This method reads ``MeasureResult.measurement_id`` off the move
+            kernel, which only lines up with the rest of the pipeline while
+            lowering preserves the record ordering — an invariant that has to
+            be maintained by hand (see
+            ``tests/analysis/atom/test_measure_id_invariant.py``). Deriving
+            user values from the user's own kernel removes that coupling.
+
+        Callers that still need this, and what they are waiting on:
+
+        - ``emit_detectors`` / ``emit_observables`` have no replacement yet.
+          They come from ``annotate.SetDetector`` / ``SetObservable``
+          statements collected while walking the lowered kernel, and
+          ``generate_post_processing`` only sees a detector that appears
+          inside the return value.
+        - The simulator paths (``gemini/compile/task.py``,
+          ``gemini/device/physical_simulator.py``) consume a per-measurement
+          array directly and never project a hardware frame, so nothing
+          about the frame-mapping split applies to them.
+
+        No runtime warning is raised for that reason: every in-tree caller
+        is on one of those two paths, so a warning would fire on correct
+        code with nowhere to migrate.
+        """
         _, output = self.run(method)
 
         func = cast(Callable[[Sequence[bool]], RetType], constructor_function(output))
