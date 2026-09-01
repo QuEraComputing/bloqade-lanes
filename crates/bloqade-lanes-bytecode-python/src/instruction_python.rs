@@ -10,6 +10,7 @@ use crate::arch_python::{PyDirection, PyLaneAddr, PyLocationAddr, PyMoveType, Py
 use crate::validation::validate_field;
 
 #[pyclass(
+    skip_from_py_object,
     name = "Instruction",
     frozen,
     module = "bloqade.lanes.bytecode._native"

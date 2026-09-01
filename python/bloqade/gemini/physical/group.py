@@ -61,6 +61,7 @@ def kernel(self):
         ] = None,
     ) -> None:
         # stop circular import problems
+        from bloqade.gemini.common.validation.call_site import InlineOrigins
         from bloqade.gemini.common.validation.recursion import check_call_graph
         from bloqade.gemini.logical.rewrite.qubit_count import InsertQubitCount
 
@@ -68,6 +69,10 @@ def kernel(self):
         # logical one, so it needs the guard independently too -- see
         # `check_call_graph` for why skipping it reintroduces a hang.
         check_call_graph(mt)
+
+        # NOTE: has to happen before the inliner splices the callees in and the
+        # invokes are lost; only the `verify` path consumes the result.
+        origins = InlineOrigins.collect(mt) if verify else InlineOrigins()
 
         if arch_spec is None:
             from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -129,7 +134,8 @@ def kernel(self):
                     DuplicateAddressValidation,
                 ]
             )
-            validator.validate(mt).raise_if_invalid()
+            origins.snapshot(mt)
+            origins.annotate(mt, validator.validate(mt)).raise_if_invalid()
 
             mt.verify()
 

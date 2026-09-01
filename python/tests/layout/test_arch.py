@@ -171,16 +171,21 @@ def test_get_lane_address_roundtrip():
 
 def test_arch_spec_value_equality_is_value_based():
     """Two independently constructed ArchSpecs from the same factory must
-    compare equal. ArchSpec.__eq__ delegates to ``self.words == other.words``,
-    which in turn relies on Word equality being value-based — a regression
-    happened during the #466 wrapper refactor when Word lost its explicit
-    ``__eq__``/``__hash__`` (the underlying Rust Word has no value-based
-    equality yet).
+    compare equal, and so must their Words.
+
+    These are two independent checks. ``ArchSpec.__eq__`` is
+    ``RustWrapper.__eq__``, which compares the Rust ``ArchSpec`` directly and
+    never calls ``Word.__eq__`` — so the ``a == b`` assertion does *not* cover
+    Word equality. The ``a.words == b.words`` assertion is the actual guard
+    for the #466 regression, when Word lost its explicit ``__eq__``/``__hash__``
+    during the wrapper refactor and silently fell back to identity. Do not
+    drop it as redundant. Since #476 the value semantics live on the Rust
+    ``_native.Word`` and the Python wrapper just delegates.
     """
     a = logical.get_arch_spec()
     b = logical.get_arch_spec()
     assert a == b
-    # Word value-equality is the underlying piece that broke.
+    # The #466 regression guard — see the docstring; not implied by ``a == b``.
     assert a.words == b.words
     assert all(wa == wb for wa, wb in zip(a.words, b.words))
 
