@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 from bloqade.core.device import Result
 
 from bloqade.gemini import logical
 from bloqade.gemini.post_processing import generate_post_processing
-from bloqade.lanes.analysis.atom.analysis import PostProcessing
+
+if TYPE_CHECKING:
+    from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
 RetType = TypeVar("RetType")
 
