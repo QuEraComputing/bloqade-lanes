@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import typing
 
 import numpy as np
@@ -5,7 +7,8 @@ from bloqade.analysis.measure_id import MeasurementIDAnalysis, lattice
 from kirin import ir, types
 from kirin.passes import HintConst
 
-from bloqade.lanes.analysis.atom import PostProcessing
+if typing.TYPE_CHECKING:
+    from bloqade.lanes.analysis.atom import PostProcessing
 
 T = typing.TypeVar("T")
 
@@ -137,5 +140,11 @@ def generate_post_processing(
             [func(measurement_shot) for func in observable_funcs]
             for measurement_shot in measurements
         )
+
+    # Imported here, not at module scope: ``bloqade.lanes.dialects.move``
+    # imports ``bloqade.gemini``, so an atom-first import reaches this module
+    # while ``bloqade.lanes.analysis.atom`` is still initialising. Same
+    # lazy-import treatment as #985.
+    from bloqade.lanes.analysis.atom import PostProcessing
 
     return PostProcessing(emit_return, emit_detectors, emit_observables)
