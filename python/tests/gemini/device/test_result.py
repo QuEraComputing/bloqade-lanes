@@ -8,6 +8,7 @@ from bloqade.core.device import (
     ShotResult,
 )
 from kirin.dialects import ilist
+from kirin.interp.exceptions import InterpreterError
 from kirin.serialization import JSONSerializer
 from qlam_core.plugins.tasks.api.tasks_models import (
     Program,
@@ -1049,7 +1050,7 @@ def test_logical_results_returns_raw_when_postprocessing_is_none(storage, monkey
     # raw shot array. Real generators always resolve for terminal_measure
     # kernels, so substitution is the only way to hit this branch.
     def _cannot_infer(mt):
-        raise ValueError("Unable to infer return result value from method output")
+        raise InterpreterError("Unable to infer return result value from method output")
 
     monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
     monkeypatch.setattr(result_module, "generate_post_processing", _cannot_infer)

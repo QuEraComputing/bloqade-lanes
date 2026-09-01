@@ -6,6 +6,7 @@ import numpy as np
 from bloqade.analysis.measure_id import MeasurementIDAnalysis, lattice
 from bloqade.rewrite.passes import AggressiveUnroll
 from kirin import ir, types
+from kirin.interp.exceptions import InterpreterError
 from kirin.passes import HintConst
 
 if typing.TYPE_CHECKING:
@@ -76,7 +77,10 @@ def generate_post_processing(
         ``(n_shots, n_measurements)`` and yields one value per shot.
 
     Raises:
-        ValueError: If any required post-processing value cannot be inferred.
+        InterpreterError: If any required post-processing value cannot be
+            inferred. That is an abstract-interpretation failure --
+            ``MeasurementIDAnalysis`` could not resolve a return value,
+            detector, or observable down to concrete measurement records.
     """
 
     # Work on an owned copy: both passes below rewrite in place, and ``mt``
@@ -115,7 +119,7 @@ def generate_post_processing(
             _post_processing_function(user_output),
         )
     if return_func is None:
-        raise ValueError("Unable to infer return result value from method output")
+        raise InterpreterError("Unable to infer return result value from method output")
 
     detector_funcs = tuple(
         typing.cast(
@@ -125,7 +129,7 @@ def generate_post_processing(
         for value in analysis.detectors
     )
     if not _has_no_none(detector_funcs):
-        raise ValueError("Unable to infer detector measurement values")
+        raise InterpreterError("Unable to infer detector measurement values")
 
     observable_funcs = tuple(
         typing.cast(
@@ -135,7 +139,7 @@ def generate_post_processing(
         for value in analysis.observables
     )
     if not _has_no_none(observable_funcs):
-        raise ValueError("Unable to infer observable measurement values")
+        raise InterpreterError("Unable to infer observable measurement values")
 
     def emit_return(measurements: typing.Sequence[typing.Sequence[bool]]):
         yield from map(return_func, measurements)

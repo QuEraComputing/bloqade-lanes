@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 from bloqade.core.device import Result
+from kirin.interp.exceptions import InterpreterError
 
 from bloqade.gemini import logical
 from bloqade.gemini.post_processing import generate_post_processing
@@ -113,12 +114,17 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             # ``generate_post_processing`` now returns all three emitters, and
             # raises where it used to return None. This legacy API is
             # return-values-only and publishes ``Callable | None``, so take
-            # that one emitter and map the error back onto None -- keeping
+            # that one emitter and map the failure back onto None -- keeping
             # ``logical_results``'s raw-passthrough branch reachable exactly
             # as before.
+            #
+            # Catch only ``InterpreterError``: that is the analysis reporting
+            # it could not infer a value, which is what None has always meant
+            # here. Anything else -- a malformed kernel, a bug in a pass --
+            # still propagates rather than degrading to raw shots.
             try:
                 emit_return = generate_post_processing(kernel_mt).emit_return
-            except ValueError:
+            except InterpreterError:
                 emit_return = None
             postprocessing_functions[idx] = emit_return
 
