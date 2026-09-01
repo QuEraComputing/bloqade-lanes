@@ -278,6 +278,24 @@ def test_plot_interactive_show_keeps_interactions_in_jupyter(
     assert '"scrollZoom": false' in html
 
 
+def test_plot_interactive_show_keeps_interactions_in_browser(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=None),
+        patch("plotly.io._base_renderers.open_html_in_browser") as open_browser,
+    ):
+        figure.show(renderer="browser", config={"scrollZoom": False})
+
+    html = open_browser.call_args.args[0]
+    assert "data-arch-visualizer-bus-selectors" in html
+    assert "data-arch-visualizer-site-lane" in html
+    assert '"scrollZoom": false' in html
+    assert open_browser.call_args.kwargs == {}
+
+
 def test_plot_interactive_html_preserves_caller_config(
     small_arch_spec: ArchSpec,
 ) -> None:

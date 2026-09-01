@@ -485,14 +485,14 @@ class _InteractiveArchFigureMixin:
         )
 
     def show(self, *args: Any, **kwargs: Any) -> Any:
-        """Preserve custom controls when displayed from a Jupyter kernel."""
+        """Preserve custom controls in notebooks and browser windows."""
         try:
             from IPython.core.getipython import get_ipython
-            from IPython.display import HTML, display
-        except ImportError:  # pragma: no cover - Plotly handles this fallback
-            return cast(Any, super()).show(*args, **kwargs)
+        except ImportError:  # pragma: no cover - IPython is an optional dependency
+            shell = None
+        else:
+            shell = get_ipython()
 
-        shell = get_ipython()
         renderer = kwargs.get("renderer")
         notebook_renderers = {
             None,
@@ -508,6 +508,8 @@ class _InteractiveArchFigureMixin:
             and renderer in notebook_renderers
             and set(kwargs) <= {"config", "renderer", "validate"}
         ):
+            from IPython.display import HTML, display
+
             display(
                 HTML(
                     self.to_html(
@@ -516,6 +518,28 @@ class _InteractiveArchFigureMixin:
                         config=kwargs.get("config"),
                         validate=kwargs.get("validate", True),
                     )
+                )
+            )
+            return None
+
+        if (
+            (shell is None or shell.__class__.__name__ != "ZMQInteractiveShell")
+            and not args
+            and renderer in {None, "browser"}
+            and set(kwargs) <= {"config", "renderer", "validate"}
+        ):
+            # Plotly's browser renderer serializes the figure dictionary
+            # directly, bypassing this class's ``to_html`` override and its
+            # architecture-specific post-script. Open that HTML explicitly so
+            # script usage retains the bus selectors and hover overlays.
+            from plotly.io._base_renderers import open_html_in_browser
+
+            open_html_in_browser(
+                self.to_html(
+                    full_html=True,
+                    include_plotlyjs=True,
+                    config=kwargs.get("config"),
+                    validate=kwargs.get("validate", True),
                 )
             )
             return None
