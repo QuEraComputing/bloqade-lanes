@@ -105,12 +105,20 @@ def append_measurements_and_annotations(
 
     The method is mutated in-place.
 
+    The annotations are Steane [[7,1,3]], so both matrices must have one row
+    per physical qubit: ``num_qubits * 7``. A row count that disagrees is a
+    ``ValueError`` rather than a silently mis-indexed annotation.
+
     Args:
         mt: A squin ``ir.Method`` whose body returns ``None``.
-        m2dets: Binary matrix of shape ``(num_total_meas, num_detectors)``.
+        m2dets: Binary matrix of shape ``(num_qubits * 7, num_detectors)``.
             Each column defines a detector by its non-zero row indices.
-        m2obs: Binary matrix of shape ``(num_total_meas, num_observables)``.
+        m2obs: Binary matrix of shape ``(num_qubits * 7, num_observables)``.
             Each column defines an observable by its non-zero row indices.
+
+    Raises:
+        ValueError: If neither matrix is given, if ``mt`` allocates no qubits,
+            or if either matrix has the wrong number of rows.
     """
 
     if m2dets is None and m2obs is None:
@@ -121,13 +129,20 @@ def append_measurements_and_annotations(
     if num_qubits == 0:
         raise ValueError("No qubit allocations found in the kernel")
 
-    m2 = m2dets if m2dets is not None else m2obs
-    assert m2 is not None
-    num_total_meas = len(m2)
-    meas_per_qubit = num_total_meas // num_qubits
-    assert (
-        meas_per_qubit * num_qubits == num_total_meas
-    ), "Incompatible shape of m2dets or m2obs"
+    # The annotations below address a measurement as ``divmod(row,
+    # STEANE7_PHYSICAL_QUBITS)``, and the terminal measurement is stamped with
+    # that same width. Deriving the stride from ``len(m2) // num_qubits``
+    # instead would make the matrices a second, unchecked source of the width:
+    # a matrix disagreeing with the stamp yields detectors that reference the
+    # wrong records, with no error. Validate against the one source instead.
+    expected_rows = num_qubits * STEANE7_PHYSICAL_QUBITS
+    for name, matrix in (("m2dets", m2dets), ("m2obs", m2obs)):
+        if matrix is not None and len(matrix) != expected_rows:
+            raise ValueError(
+                f"{name} has {len(matrix)} rows, expected {expected_rows}: "
+                f"{num_qubits} logical qubit(s) x {STEANE7_PHYSICAL_QUBITS} "
+                "physical qubits per Steane [[7,1,3]] qubit"
+            )
 
     return_stmt = _find_return_stmt(mt)
 
@@ -178,7 +193,7 @@ def append_measurements_and_annotations(
         for j in range(len(m2dets[0])):
             indices = [i for i, row in enumerate(m2dets) if row[j]]
             meas_ssas = [
-                _get_physical_measurement(*divmod(idx, meas_per_qubit))
+                _get_physical_measurement(*divmod(idx, STEANE7_PHYSICAL_QUBITS))
                 for idx in indices
             ]
             meas_list = _insert_before(ilist.New(meas_ssas), return_stmt)
@@ -196,7 +211,7 @@ def append_measurements_and_annotations(
         for j in range(len(m2obs[0])):
             indices = [i for i, row in enumerate(m2obs) if row[j]]
             meas_ssas = [
-                _get_physical_measurement(*divmod(idx, meas_per_qubit))
+                _get_physical_measurement(*divmod(idx, STEANE7_PHYSICAL_QUBITS))
                 for idx in indices
             ]
             meas_list = _insert_before(ilist.New(meas_ssas), return_stmt)

@@ -16,9 +16,14 @@ from bloqade.gemini.compile.task import (
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
+from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
 
-DETS = [[1, 0], [0, 1]]  # 2 measurements, 2 detectors
-OBS = [[1], [1]]  # 2 measurements, 1 observable
+# Every kernel annotated below allocates a single logical qubit, and
+# ``append_measurements_and_annotations`` inserts Steane [[7,1,3]] annotations,
+# so the matrices must have 7 rows. Build them from the shipped defaults rather
+# than by hand so the shape cannot drift from what the function expects.
+DETS = steane7_m2dets(1)  # 7 measurements, 3 detectors
+OBS = steane7_m2obs(1)  # 7 measurements, 1 observable
 
 
 def _make_kernel(num_qubits: int, *, with_measure: bool = False):
@@ -82,6 +87,23 @@ def test_raises_when_no_qubits():
 
 
 @pytest.mark.parametrize(
+    "dets, obs, offender",
+    [
+        ([[1, 0], [0, 1]], OBS, "m2dets"),
+        (DETS, [[1], [1]], "m2obs"),
+        (steane7_m2dets(2), steane7_m2obs(2), "m2dets"),
+    ],
+    ids=["short_dets", "short_obs", "wrong_qubit_count"],
+)
+def test_rejects_matrix_whose_rows_disagree_with_the_steane_width(dets, obs, offender):
+    """A row count other than ``num_qubits * 7`` used to be accepted, and the
+    stride was silently re-derived from it -- annotations then referenced
+    records that the terminal measurement never produced."""
+    with pytest.raises(ValueError, match=f"{offender} has .* rows, expected 7"):
+        append_measurements_and_annotations(_make_kernel(1), dets, obs)
+
+
+@pytest.mark.parametrize(
     "with_measure", [False, True], ids=["no_terminal", "has_terminal"]
 )
 def test_terminal_measurement_count(with_measure: bool):
@@ -93,8 +115,8 @@ def test_terminal_measurement_count(with_measure: bool):
 @pytest.mark.parametrize(
     "dets, obs, expected_dets, expected_obs",
     [
-        (DETS, OBS, 2, 1),
-        (DETS, None, 2, 0),
+        (DETS, OBS, 3, 1),
+        (DETS, None, 3, 0),
         (None, OBS, 0, 1),
     ],
     ids=["both", "dets_only", "obs_only"],
