@@ -1,4 +1,9 @@
 from . import impl as impl
+from ._measurement_positions import (
+    AtomPosition as AtomPosition,
+    MeasurementPositions as MeasurementPositions,
+    MeasurementSnapshot as MeasurementSnapshot,
+)
 from ._shot_remapping import (
     ShotRemappingDiagnostic as ShotRemappingDiagnostic,
     ShotRemappingErr as ShotRemappingErr,

@@ -173,8 +173,6 @@ class Move(interp.MethodTable):
         # lookup needed now that zones are an attribute tuple.
         zone_addresses = list(stmt.zone_addresses)
 
-        # Track site + count for the measure_lower rewrite downstream.
-        interp_.measure_sites.append({"stmt": stmt, "zones": tuple(zone_addresses)})
         interp_.final_measurement_count += 1
 
         if not isinstance(current_state, AtomState):

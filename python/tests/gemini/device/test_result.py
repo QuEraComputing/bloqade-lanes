@@ -417,7 +417,7 @@ def test_postproc_termmeasure_none():
         # return logical.terminal_measure(qubits)
 
     with pytest.raises(
-        ShotRemappingException, match="outer return value did not refine to IListResult"
+        ShotRemappingException, match="no measurement statement to project"
     ):
         _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
 
@@ -509,12 +509,12 @@ def test_postproc_termmeasure_all():
     assert ret_shots == [[True for _ in range(len(expected_indices))]]
 
 
-@pytest.mark.xfail(
-    raises=ShotRemappingException,
-    reason="Shot remapping does not yet support kernels returning post-processing tuples",
-    strict=True,
-)
 def test_default_postproc_remapping():
+    """A kernel returning a post-processing tuple rather than a nested
+    ilist of measurements. The mapping comes from the analysis's
+    measurement records, not the return-value shape, so the return type
+    no longer constrains it (issue #967)."""
+
     @logical.kernel(aggressive_unroll=True)
     def test_qalloc_4_5():
         qubits = logical.qalloc_at(ilist.IList([4, 5]))
