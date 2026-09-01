@@ -1,17 +1,16 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 from kirin import ir
 
-from bloqade.lanes.analysis import atom
-from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
-from bloqade.lanes.arch.gemini import physical
-from bloqade.lanes.bytecode.encoding import ZoneAddress
-from bloqade.lanes.transform import LogicalPipeline
-
 RetType = TypeVar("RetType")
+
+if TYPE_CHECKING:
+    from bloqade.lanes.analysis import atom
 
 
 class ShotRemappingException(Exception):
@@ -124,6 +123,12 @@ def get_slm_mapping_postprocessing(
         remote physical compilation artifact is not currently stored with the
         result.
     """
+
+    from bloqade.lanes.analysis import atom
+    from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
+    from bloqade.lanes.arch.gemini import physical
+    from bloqade.lanes.bytecode.encoding import ZoneAddress
+    from bloqade.lanes.transform import LogicalPipeline
 
     arch_spec = physical.get_arch_spec()
     physical_move_kernel = LogicalPipeline(transversal_rewrite=True).emit(sim_kernel)
