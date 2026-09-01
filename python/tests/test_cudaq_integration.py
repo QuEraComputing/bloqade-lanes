@@ -104,6 +104,37 @@ def test_rejects_matrix_whose_rows_disagree_with_the_steane_width(dets, obs, off
 
 
 @pytest.mark.parametrize(
+    "dets, obs, offender",
+    [
+        ([row[:-1] if i else row for i, row in enumerate(DETS)], OBS, "m2dets"),
+        (DETS, [row + [1] if i else row for i, row in enumerate(OBS)], "m2obs"),
+    ],
+    ids=["ragged_dets", "ragged_obs"],
+)
+def test_rejects_ragged_matrix(dets, obs, offender):
+    """Columns are read as ``row[j]`` over the first row's range, so a short
+    row raised IndexError from inside the annotation loop and a long row had
+    its extra columns silently dropped."""
+    with pytest.raises(ValueError, match=f"{offender} is ragged"):
+        append_measurements_and_annotations(_make_kernel(1), dets, obs)
+
+
+def test_rejects_terminal_measurement_with_non_steane_width():
+    """Annotations are indexed at a stride of 7 regardless, so a statement
+    declaring another width would have its records read at the wrong stride."""
+    mt = _make_kernel(1, with_measure=True)
+    terminal = next(
+        s
+        for s in mt.callable_region.walk()
+        if isinstance(s, TerminalLogicalMeasurement)
+    )
+    terminal.num_physical_qubits = 3
+
+    with pytest.raises(ValueError, match="num_physical_qubits=3"):
+        append_measurements_and_annotations(mt, DETS, OBS)
+
+
+@pytest.mark.parametrize(
     "with_measure", [False, True], ids=["no_terminal", "has_terminal"]
 )
 def test_terminal_measurement_count(with_measure: bool):

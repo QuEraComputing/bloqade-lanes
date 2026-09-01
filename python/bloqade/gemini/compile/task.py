@@ -105,9 +105,9 @@ def append_measurements_and_annotations(
 
     The method is mutated in-place.
 
-    The annotations are Steane [[7,1,3]], so both matrices must have one row
-    per physical qubit: ``num_qubits * 7``. A row count that disagrees is a
-    ``ValueError`` rather than a silently mis-indexed annotation.
+    The annotations are Steane [[7,1,3]], so both matrices must be rectangular
+    with one row per physical qubit: ``num_qubits * 7``. A shape that disagrees
+    is a ``ValueError`` rather than a silently mis-indexed annotation.
 
     Args:
         mt: A squin ``ir.Method`` whose body returns ``None``.
@@ -117,8 +117,10 @@ def append_measurements_and_annotations(
             Each column defines an observable by its non-zero row indices.
 
     Raises:
-        ValueError: If neither matrix is given, if ``mt`` allocates no qubits,
-            or if either matrix has the wrong number of rows.
+        ValueError: If neither matrix is given; if ``mt`` allocates no qubits;
+            if either matrix has the wrong number of rows or is ragged; or if
+            ``mt``'s terminal measurement already declares a width other than
+            Steane [[7,1,3]]'s seven.
     """
 
     if m2dets is None and m2obs is None:
@@ -129,6 +131,30 @@ def append_measurements_and_annotations(
     if num_qubits == 0:
         raise ValueError("No qubit allocations found in the kernel")
 
+    existing_terminal = next(
+        (
+            s
+            for s in mt.callable_region.walk()
+            if isinstance(s, TerminalLogicalMeasurement)
+        ),
+        None,
+    )
+    # Everything below addresses a measurement as ``divmod(row,
+    # STEANE7_PHYSICAL_QUBITS)``, so a statement that already declares some
+    # other width would have its records read at the wrong stride -- wrong
+    # detectors, or an out-of-range index into a narrower logical measurement.
+    # Nothing here honours a non-Steane width, so say so instead.
+    if (
+        existing_terminal is not None
+        and existing_terminal.num_physical_qubits is not None
+        and existing_terminal.num_physical_qubits != STEANE7_PHYSICAL_QUBITS
+    ):
+        raise ValueError(
+            "This function inserts Steane [[7,1,3]] annotations, but the "
+            "kernel's terminal measurement declares num_physical_qubits="
+            f"{existing_terminal.num_physical_qubits}"
+        )
+
     # The annotations below address a measurement as ``divmod(row,
     # STEANE7_PHYSICAL_QUBITS)``, and the terminal measurement is stamped with
     # that same width. Deriving the stride from ``len(m2) // num_qubits``
@@ -137,26 +163,29 @@ def append_measurements_and_annotations(
     # wrong records, with no error. Validate against the one source instead.
     expected_rows = num_qubits * STEANE7_PHYSICAL_QUBITS
     for name, matrix in (("m2dets", m2dets), ("m2obs", m2obs)):
-        if matrix is not None and len(matrix) != expected_rows:
+        if matrix is None:
+            continue
+        if len(matrix) != expected_rows:
             raise ValueError(
                 f"{name} has {len(matrix)} rows, expected {expected_rows}: "
                 f"{num_qubits} logical qubit(s) x {STEANE7_PHYSICAL_QUBITS} "
                 "physical qubits per Steane [[7,1,3]] qubit"
             )
+        # Columns are read as ``row[j]`` for every j in the first row's range,
+        # so a ragged matrix either raises IndexError from inside the
+        # annotation loop or silently ignores a longer row's extra columns.
+        column_counts = {len(row) for row in matrix}
+        if len(column_counts) > 1:
+            raise ValueError(
+                f"{name} is ragged: rows have {sorted(column_counts)} columns. "
+                "Every row must define the same number of annotations"
+            )
 
     return_stmt = _find_return_stmt(mt)
 
     # insert TerminalLogicalMeasurement if not present
-    terminal_measurement = next(
-        (
-            s
-            for s in mt.callable_region.walk()
-            if isinstance(s, TerminalLogicalMeasurement)
-        ),
-        None,
-    )
-    if terminal_measurement is not None:
-        term_meas = terminal_measurement
+    if existing_terminal is not None:
+        term_meas = existing_terminal
     else:
         qlist_stmt = _insert_before(ilist.New(qubit_ssas), return_stmt)
         term_meas = _insert_before(
