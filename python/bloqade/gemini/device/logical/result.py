@@ -105,8 +105,16 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         This method preserves the original ``GeminiLogicalResult`` API for
         result stores whose bitstrings are already in compact physical
-        measurement order. Raw 160-site SLM frames use
-        ``_slm_postprocessing_functions`` instead.
+        measurement order. It is not the canonical entry point: raw 160-site
+        SLM frames go through ``_slm_postprocessing_functions``, and
+        ``return_values`` / ``detectors`` / ``observables`` are what callers
+        should reach for.
+
+        Returns:
+            One entry per program index, mapping to that program's
+            return-value emitter, or to ``None`` when the analysis cannot
+            infer a return value -- in which case ``logical_results`` passes
+            the raw shot array through unchanged.
         """
         postprocessing_functions = {}
         for idx, kernel_json in self._program_contents_by_index().items():

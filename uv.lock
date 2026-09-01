@@ -414,7 +414,7 @@ doc = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bloqade-circuit", extras = ["cirq", "tsim"], marker = "extra == 'sim'", specifier = "~=0.15.0" },
+    { name = "bloqade-circuit", extras = ["cirq", "tsim"], marker = "extra == 'sim'", specifier = "~=0.15.1" },
     { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.1" },
     { name = "bloqade-core", specifier = "~=0.6.4" },
     { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
