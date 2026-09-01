@@ -2,9 +2,13 @@
 
 ## Purpose
 
-Machine-agnostic movement compilation: squin → place → move → squin/stim. Everything
-here should make sense for *any* neutral-atom architecture described by an `ArchSpec`,
-not just Gemini.
+Machine-agnostic movement compilation: squin → place → move → squin. Everything here
+should make sense for *any* neutral-atom architecture described by an `ArchSpec`, not
+just Gemini.
+
+This layer stops at squin. Stim emission is a Gemini-level concern
+(`bloqade.gemini.compile.stim`, via `bloqade.stim`); the only stim-adjacent code here is
+`rewrite/squin2stim.py`, which is a prep rewrite, not an emitter.
 
 ## Layering rule
 
@@ -26,7 +30,7 @@ not be used as precedent:
 | --- | --- |
 | `dialects/place.py`, `dialects/move.py` | `gemini.star.validate_steane_star_support` |
 | `rewrite/circuit2place.py` | `gemini.common.dialects.{arrange,qubit}`, `gemini.logical.dialects.operations.stmts` |
-| `transform/native_to_place.py` | `gemini.common.validation.*`, `gemini.logical.{rewrite,validation}.*` |
+| `transform/native_to_place.py` | `gemini.common.dialects.qubit`, `gemini.common.validation.*`, `gemini.logical.{rewrite,validation}.*` |
 
 Note the practical consequence: because those edges exist, `bloqade/lanes/__init__.py`
 deliberately has **no eager re-exports** — adding one can re-enter an in-progress

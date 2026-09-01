@@ -40,5 +40,6 @@ When you need different behaviour:
 ## Layering rule
 
 Same as `bloqade.lanes`: no new imports of `bloqade.gemini`. `native_to_place.py` has a
-tolerated legacy edge to `gemini.common.validation` / `gemini.logical.*`; do not copy it.
-Machine specifics arrive via `ArchSpec` and injected strategies.
+tolerated legacy edge to `gemini.common.dialects.qubit`, `gemini.common.validation.*`, and
+`gemini.logical.{rewrite,validation}.*`; do not copy it. Machine specifics arrive via
+`ArchSpec` and injected strategies.

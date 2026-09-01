@@ -6,10 +6,12 @@
 matches a statement (or small window) and rewrites it. Rules do not own a compilation
 stage and do not decide their own iteration order.
 
-Modules are named after the direction they rewrite (`circuit2place`, `place2move`,
-`clifford2native`, `move2squin/`, `stack_move2move`, `move2stack_move`) plus a few
-standalone cleanups (`fuse_gates`, `measure_lower`, `resolve_pinned`, `remove_debug`,
-`stackify`, `transversal`, `reorder_static_placement/`).
+Most modules are named after the direction they rewrite — `circuit2place`, `place2move`,
+`clifford2native`, `move2squin/`, `move2stack_move`, `stack_move2move`, `squin2stim`
+(prep only: `RemoveReturn`; the actual stim emission happens in
+`bloqade.gemini.compile.stim`). The rest are standalone rewrites over a single IR:
+`fuse_gates`, `measure_lower`, `resolve_pinned`, `remove_debug`, `stackify`, `state`
+(load/store and control-flow lowering), `transversal`, `reorder_static_placement/`.
 
 ## What goes here vs. next door
 
@@ -28,6 +30,6 @@ it as a constructor field and let the caller in `transform/` or `passes.py` supp
 ## Layering rule
 
 No new `bloqade.gemini` imports. `circuit2place.py` has a tolerated legacy edge to
-`gemini.common.dialects` / `gemini.logical.dialects.operations.stmts`; it is not
-precedent. A rule that only makes sense for Steane/Gemini logical encoding belongs in
+`gemini.common.dialects.{arrange,qubit}` / `gemini.logical.dialects.operations.stmts`; it
+is not precedent. A rule that only makes sense for Steane/Gemini logical encoding belongs in
 `bloqade.gemini.logical.rewrite`.
