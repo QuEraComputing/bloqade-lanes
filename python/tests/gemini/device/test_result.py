@@ -24,6 +24,7 @@ from bloqade.gemini.device.logical.utils import (
     aligned_detected_and_sorted_shots_for_subtasks,
     get_slm_mapping_postprocessing,
 )
+from bloqade.lanes.analysis import atom
 from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
 CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -591,8 +592,11 @@ def test_get_slm_mapping_postprocessing_maps_and_validates_frames(monkeypatch):
     def fail_if_called(*args, **kwargs):
         raise AssertionError("SLM post-processing must come from the source kernel")
 
+    # Patch the class itself, not ``utils_module.atom``: utils imports the
+    # atom package lazily inside the function (see #985's import-cycle fix), so
+    # it is not a module attribute there.
     monkeypatch.setattr(
-        utils_module.atom.AtomInterpreter,
+        atom.AtomInterpreter,
         "get_post_processing",
         fail_if_called,
         raising=False,
