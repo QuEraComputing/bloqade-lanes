@@ -4,6 +4,7 @@ import typing
 
 import numpy as np
 from bloqade.analysis.measure_id import MeasurementIDAnalysis, lattice
+from bloqade.rewrite.passes import AggressiveUnroll
 from kirin import ir, types
 from kirin.passes import HintConst
 
@@ -78,13 +79,23 @@ def generate_post_processing(
         ValueError: If any required post-processing value cannot be inferred.
     """
 
-    # Work on an owned copy: physical SQuIN kernels may still contain generic
-    # helper calls whose concrete measurement-list lengths are only exposed by
-    # unrolling, while decoded kernels need their constant hints rebuilt.
-    # NOTE: physical squin kernels need to be AggressiveUnroll'd. Only works for logical kernels
+    # Work on an owned copy: both passes below rewrite in place, and ``mt``
+    # belongs to the caller.
     analysis_kernel = mt.similar()
-    HintConst(analysis_kernel.dialects, no_raise=False)(analysis_kernel)
 
+    # ``MeasurementIDAnalysis`` reads measurement statements directly and has
+    # no impl for ``func.Invoke``, so a call it cannot see through degrades the
+    # whole return value to ``AnyMeasureId``. Logical kernels arrive unrolled
+    # (``@logical.kernel(aggressive_unroll=True)``), but a physical SQuIN
+    # kernel still holds the calls behind ``squin.qalloc`` /
+    # ``squin.broadcast.measure`` — so unroll here rather than requiring every
+    # caller to hand over an already-flattened kernel. Idempotent on a kernel
+    # that is already unrolled.
+    AggressiveUnroll(analysis_kernel.dialects, no_raise=False).fixpoint(analysis_kernel)
+
+    # JSON serialization deliberately omits SSA hints; rebuild them so a
+    # decoded kernel can still resolve expressions such as ``measurements[0]``.
+    HintConst(analysis_kernel.dialects, no_raise=False)(analysis_kernel)
     analysis = MeasurementIDAnalysis(analysis_kernel.dialects)
     _, user_output = analysis.run(analysis_kernel)
 

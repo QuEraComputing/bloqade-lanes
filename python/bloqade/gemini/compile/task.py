@@ -16,7 +16,11 @@ from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
 from bloqade.gemini.post_processing import generate_post_processing
-from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
+from bloqade.gemini.steane_defaults import (
+    STEANE7_PHYSICAL_QUBITS,
+    steane7_m2dets,
+    steane7_m2obs,
+)
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.transform import LogicalPipeline
 
@@ -143,6 +147,17 @@ def append_measurements_and_annotations(
         term_meas = _insert_before(
             TerminalLogicalMeasurement(qlist_stmt.result), return_stmt
         )
+
+    # ``InsertQubitCount`` stamps this attribute during ``@logical.kernel``
+    # decoration, but a statement inserted here is created afterwards and so is
+    # never walked -- it stays ``None``, and ``MeasurementIDAnalysis`` then
+    # cannot expand a logical measurement into per-physical-qubit records
+    # (every logical qubit degrades to ``AnyMeasureId``, taking the detectors
+    # with it). The annotations this function inserts are Steane [[7,1,3]], so
+    # the width is known here. A statement that already carries a count keeps
+    # it.
+    if term_meas.num_physical_qubits is None:
+        term_meas.num_physical_qubits = STEANE7_PHYSICAL_QUBITS
 
     @cache
     def _get_logical_measurement(q_idx: int) -> ir.SSAValue:
