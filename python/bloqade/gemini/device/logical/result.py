@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Generic, TypeVar
 
+import numpy as np
 from bloqade.core.device import Result
 
 from bloqade.gemini import logical
+from bloqade.gemini.post_processing import generate_post_processing
 
 if TYPE_CHECKING:
     from bloqade.lanes.analysis.atom.analysis import PostProcessing
@@ -97,9 +99,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         return postprocessing_functions
 
-    def postprocessing_functions(
-        self,
-    ) -> dict[int, tuple[Callable[..., list[list[bool]]], PostProcessing[RetType]]]:
+    def postprocessing_functions(self) -> dict[int, Callable | None]:
         """Build legacy compact-shot postprocessors from stored programs.
 
         This method preserves the original ``GeminiLogicalResult`` API for
@@ -107,7 +107,16 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         measurement order. Raw 160-site SLM frames use
         ``_slm_postprocessing_functions`` instead.
         """
-        return self._slm_postprocessing_functions_cache
+        postprocessing_functions = {}
+        for idx, kernel_json in self._program_contents_by_index().items():
+            kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
+            # ``generate_post_processing`` now returns all three emitters;
+            # this legacy API is return-values-only, so hand back that one.
+            postprocessing_functions[idx] = generate_post_processing(
+                kernel_mt
+            ).emit_return
+
+        return postprocessing_functions
 
     @property
     def measurements(self) -> Sequence[Sequence[Sequence[bool]]]:
@@ -125,6 +134,40 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         for shot_result, subtask in zip(shot_results, subtasks):
             func = postprocessing_functions[subtask["program_index"]][0]
             ret_vals.append(func(shot_result, invert=True))
+
+        return ret_vals
+
+    def logical_results(
+        self,
+        verify: bool = True,
+        postprocessing_functions: (
+            dict[int, Callable[[np.ndarray], RetType] | None] | None
+        ) = None,
+    ) -> list[RetType | np.ndarray]:
+        """Return legacy post-processed results grouped by merged subtask.
+
+        This method preserves the original compact-shot result API. Each
+        postprocessor receives the stored shot array directly; raw 160-site
+        SLM results should instead be accessed through ``return_values`` and
+        the other canonical result properties.
+
+        Args:
+            verify: Validate that selected task IDs can be merged.
+            postprocessing_functions: Optional mapping from program index to a
+                function accepting that subtask's stored shot array. When
+                omitted, legacy postprocessors are generated from the stored
+                logical kernels. A ``None`` entry passes the raw shot array
+                through unchanged.
+        """
+        ret_vals: list[RetType | np.ndarray] = []
+        subtasks = self.subtasks(verify=verify)
+        if postprocessing_functions is None:
+            postprocessing_functions = self.postprocessing_functions()
+        shot_results = self._shot_results_for_subtasks(subtasks)
+
+        for shot_result, subtask in zip(shot_results, subtasks):
+            func = postprocessing_functions[subtask["program_index"]]
+            ret_vals.append(shot_result if func is None else func(shot_result))
 
         return ret_vals
 
