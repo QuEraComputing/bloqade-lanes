@@ -3,7 +3,7 @@ import typing
 import numpy as np
 from bloqade.analysis.measure_id import MeasurementIDAnalysis, lattice
 from kirin import ir
-from kirin.passes import Fold
+from kirin.passes import HintConst
 
 T = typing.TypeVar("T")
 
@@ -69,7 +69,13 @@ def generate_post_processing(
     # JSON serialization deliberately omits SSA hints. Rebuild constant hints
     # before analysing measurement indexing so a decoded kernel can resolve
     # expressions such as ``measurements[0]``.
-    Fold(mt.dialects, no_raise=False)(mt)
+    #
+    # ``HintConst`` rather than ``Fold``: the analysis reads the ``const``
+    # hints directly, so attaching them is all it needs. ``Fold`` layers
+    # ConstantFold / InlineGetItem / Call2Invoke / DCE / CFGCompactify on
+    # top, which would restructure ``mt`` in place — and ``mt`` belongs to
+    # the caller.
+    HintConst(mt.dialects, no_raise=False)(mt)
 
     _, user_output = MeasurementIDAnalysis(mt.dialects).run(mt)
     func = typing.cast(
