@@ -1031,7 +1031,7 @@ def test_logical_results_legacy_override_can_skip_merge_validation(storage):
     assert result == [[[True, False], [False, True]]]
 
 
-def test_logical_results_returns_raw_when_postprocessing_is_none(storage):
+def test_logical_results_returns_raw_when_postprocessing_is_none(storage, monkeypatch):
     add_task_definition(
         storage,
         "task-1",
@@ -1044,12 +1044,18 @@ def test_logical_results_returns_raw_when_postprocessing_is_none(storage):
         [make_shot(shot_index=0, subtask_index=0, bitstring=(True, False))]
     )
 
-    # Reach the production branch where logical_results passes the raw shot
-    # array through. ``generate_post_processing`` no longer returns None -- it
-    # raises when it cannot infer a value -- so a caller-supplied None entry is
-    # now the only way into this branch.
+    # Substitute generate_post_processing with one that fails to infer a value
+    # so we exercise the production branch where logical_results returns the
+    # raw shot array. Real generators always resolve for terminal_measure
+    # kernels, so substitution is the only way to hit this branch.
+    def _cannot_infer(mt):
+        raise ValueError("Unable to infer return result value from method output")
+
+    monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
+    monkeypatch.setattr(result_module, "generate_post_processing", _cannot_infer)
+
     res = GeminiLogicalResult(storage=storage)
-    out = res.logical_results(postprocessing_functions={0: None})
+    out = res.logical_results()
 
     assert len(out) == 1
     np.testing.assert_array_equal(out[0], np.array([[True, False]]))

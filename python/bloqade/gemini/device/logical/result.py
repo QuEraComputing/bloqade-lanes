@@ -110,11 +110,17 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         postprocessing_functions = {}
         for idx, kernel_json in self._program_contents_by_index().items():
             kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
-            # ``generate_post_processing`` now returns all three emitters;
-            # this legacy API is return-values-only, so hand back that one.
-            postprocessing_functions[idx] = generate_post_processing(
-                kernel_mt
-            ).emit_return
+            # ``generate_post_processing`` now returns all three emitters, and
+            # raises where it used to return None. This legacy API is
+            # return-values-only and publishes ``Callable | None``, so take
+            # that one emitter and map the error back onto None -- keeping
+            # ``logical_results``'s raw-passthrough branch reachable exactly
+            # as before.
+            try:
+                emit_return = generate_post_processing(kernel_mt).emit_return
+            except ValueError:
+                emit_return = None
+            postprocessing_functions[idx] = emit_return
 
         return postprocessing_functions
 
