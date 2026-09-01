@@ -124,12 +124,14 @@ def test_plot_interactive_starts_with_bus_paths_hidden(
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
     figure_data = cast(Any, figure.data)
 
-    bus_traces = [trace for trace in figure_data if trace.showlegend]
+    bus_indices = figure.layout.meta["archVisualizerBusTraceIndices"]
+    bus_traces = [figure_data[index] for index in bus_indices]
     assert [trace.name for trace in bus_traces] == [
         "zone 0 · site bus 0",
         "zone 0 · word bus 0",
     ]
     assert all(trace.visible == "legendonly" for trace in bus_traces)
+    assert all(trace.showlegend is False for trace in bus_traces)
     assert figure.layout.dragmode == "zoom"
     assert figure.layout.legend.groupclick == "toggleitem"
     assert figure.layout.paper_bgcolor == "#ffffff"
@@ -166,9 +168,41 @@ def test_plot_interactive_bus_hover_identifies_endpoints(
         "zone 0 · site bus 0",
         "(0, 0, 0)",
         "(0, 0, 1)",
+        0,
     )
+    assert "bus ID: %{customdata[3]}" in site_bus_trace.hovertemplate
     assert "source: %{customdata[1]}" in site_bus_trace.hovertemplate
     assert "destination: %{customdata[2]}" in site_bus_trace.hovertemplate
+    assert "path point" not in site_bus_trace.hovertemplate
+
+
+def test_plot_interactive_site_hover_keeps_text_compact_and_stores_lane_paths(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    assert [trace.name for trace in cast(Any, figure.data)].count("sites") == 1
+    site_trace = next(
+        trace for trace in cast(Any, figure.data) if trace.name == "sites"
+    )
+    site_data = next(
+        value for value in site_trace.customdata if list(value[:3]) == [0, 0, 0]
+    )
+
+    assert list(site_data) == [0, 0, 0]
+    assert "Touching lanes" not in site_trace.hovertemplate
+    assert site_trace.hoverlabel.align == "left"
+
+    meta = figure.layout.meta
+    assert meta["archVisualizerSiteTraceIndex"] == 2
+    assert meta["archVisualizerSiteLanePathRefs"]["0,0,0"] == [
+        (0, False),
+        (1, False),
+    ]
+    assert meta["archVisualizerSiteLanePathRefs"]["0,0,1"] == [(0, True)]
+    first_path = meta["archVisualizerSiteLanePaths"][0]
+    assert first_path["x"] == [0.0, 0.5, 1.0]
+    assert first_path["y"] == [0.0, 0.75, 0.0]
+    assert first_path["color"].startswith("hsl(")
 
 
 def test_plot_interactive_html_highlights_hovered_bus(
@@ -179,11 +213,69 @@ def test_plot_interactive_html_highlights_hovered_bus(
 
     assert "plotly_hover" in html
     assert "plotly_unhover" in html
+    assert "else if (busPoint)" in html
     assert "data-arch-visualizer-bus-highlight" in html
+    assert "data-arch-visualizer-site-lane" in html
+    assert "function siteCustomdataAt(x, y)" in html
+    assert ".map((item) => siteCustomdataAt(item.x, item.y))" in html
+    assert "function siteCustomdataNearPointer(event)" in html
+    assert "plot.addEventListener('mousemove'" in html
+    assert "activateSiteLaneOverlays(siteCustomdataNearPointer(event))" in html
+    assert "element.isConnected" in html
+    assert "plot.on('plotly_unhover'" in html
+    assert "data-arch-visualizer-site-lane-arrow" not in html
+    assert "data-arch-visualizer-bus-selectors" in html
+    assert "data-arch-visualizer-bus-color" in html
+    assert "checkbox.type = 'checkbox'" in html
+    assert "text.textContent = `ID ${control.busId} · ${control.label}`" in html
+    assert "archVisualizerSiteLanePathRefs" in html
+    assert "stroke-opacity', '0.42'" in html
     assert "hoverLayer.insertBefore(path, hoverLayer.firstChild)" in html
     assert '"scrollZoom": true' in html
     assert '"responsive": true' in html
     assert list(figure.layout.meta["archVisualizerBusTraceIndices"]) == [0, 1]
+
+
+def test_plot_interactive_notebook_representation_keeps_interactions(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    mimebundle = figure._repr_mimebundle_()
+
+    assert set(mimebundle) == {"text/html"}
+    assert "data-arch-visualizer-bus-selectors" in mimebundle["text/html"]
+    assert "plotly_hover" in mimebundle["text/html"]
+
+
+def test_plot_interactive_ipython_display_keeps_interactions(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    with patch("IPython.display.display") as display:
+        figure._ipython_display_()
+
+    html = display.call_args.args[0].data
+    assert "data-arch-visualizer-bus-selectors" in html
+    assert "data-arch-visualizer-site-lane" in html
+
+
+def test_plot_interactive_show_keeps_interactions_in_jupyter(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    zmq_shell = type("ZMQInteractiveShell", (), {})()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=zmq_shell),
+        patch("IPython.display.display") as display,
+    ):
+        figure.show(config={"scrollZoom": False})
+
+    html = display.call_args.args[0].data
+    assert "data-arch-visualizer-bus-selectors" in html
+    assert "data-arch-visualizer-site-lane" in html
+    assert '"scrollZoom": false' in html
 
 
 def test_plot_interactive_html_preserves_caller_config(
@@ -219,9 +311,10 @@ def test_plot_interactive_site_identity_toggle(
         "bottom right",
         "bottom right",
     ]
+    assert label_trace.name == "sites"
     assert label_trace.mode == "markers+text"
-    assert label_trace.marker.size == 18
-    assert label_trace.marker.opacity == 0
+    assert label_trace.marker.size == 9
+    assert label_trace.marker.opacity is None
     assert label_trace.textfont.size == 9
     assert label_trace.cliponaxis is False
     assert figure.layout.updatemenus[0].active == 1
@@ -236,6 +329,45 @@ def test_plot_interactive_controls_can_show_and_hide_all_buses(
     assert hide_button.args[0]["visible"] == "legendonly"
     assert show_button.args[0]["visible"] is True
     assert list(hide_button.args[1]) == [0, 1]
+
+
+def test_plot_interactive_has_color_labelled_bus_multiselectors(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    controls = figure.layout.meta["archVisualizerBusControls"]
+
+    assert all(menu.type != "dropdown" for menu in figure.layout.updatemenus)
+    assert controls == [
+        {
+            "traceIndex": 0,
+            "kind": "site",
+            "busId": 0,
+            "label": "zone 0 · site bus 0",
+            "color": "hsl(0, 68%, 40%)",
+        },
+        {
+            "traceIndex": 1,
+            "kind": "word",
+            "busId": 0,
+            "label": "zone 0 · word bus 0",
+            "color": "hsl(138, 68%, 40%)",
+        },
+    ]
+
+
+def test_plot_interactive_can_restore_legacy_bus_legend(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive(show_bus_legend=True)
+    bus_traces = [
+        trace for trace in cast(Any, figure.data) if "bus" in (trace.name or "")
+    ]
+
+    assert all(trace.showlegend is True for trace in bus_traces)
+    assert figure.layout.legend.title.text == "Bus legend"
+    assert figure.layout.legend.y == 0.62
+    assert figure.layout.margin.r == 270
 
 
 def test_plot_interactive_cartoon_paths_curve_site_buses(
