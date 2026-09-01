@@ -1,8 +1,7 @@
 from collections.abc import Callable, Sequence
-from functools import reduce
-from operator import xor
 from typing import Any
 
+import numpy as np
 from kirin.dialects import ilist
 
 from ...utils import no_none_elements_tuple
@@ -26,7 +25,9 @@ def constructor_function(
 
         def _get_measurement(measurements: Sequence[bool]):
             measurement_index = elem.qubit_id if use_qubit_id else elem.measurement_id
-            return measurements[measurement_index]
+            # ``bool`` so a numpy row and a list of bools produce the same
+            # Python type, matching ``generate_post_processing``.
+            return bool(measurements[measurement_index])
 
         return _get_measurement
     elif isinstance(elem, (DetectorResult, ObservableResult)):
@@ -35,7 +36,11 @@ def constructor_function(
             return None
 
         def _get_detector(measurements: Sequence[bool]):
-            return reduce(xor, inner_func(measurements))
+            # ``np.logical_xor.reduce`` rather than ``functools.reduce`` to
+            # match ``generate_post_processing``: an annotation covering no
+            # measurements reduces to False here, where ``reduce`` with no
+            # initial value raises TypeError on the empty sequence.
+            return bool(np.logical_xor.reduce(inner_func(measurements), axis=0))
 
         return _get_detector
 
