@@ -12,7 +12,7 @@ authors = [
 ]
 dependencies = [
     "bloqade-circuit[qasm2]~=0.15.1",
-    "bloqade-core~=0.6.4",
+    "bloqade-core~=0.6.8",
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.14",
     "numpy>=2.2.6",
