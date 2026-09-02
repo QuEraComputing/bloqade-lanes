@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Generic, TypeVar
 
@@ -224,3 +224,31 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         # TOOD: can do validation later on sorted/detected frames
         return ret_vals
+
+    def postselect_on_fully_filled(self) -> GeminiLogicalResult[RetType]:
+        """Return a result view containing only fully filled shots.
+
+        The predicate reads the ``SORTED`` SLM frame and projects it through
+        the stored kernel's SLM-to-raw mapping. A shot is kept only when every
+        mapped physical-measurement bit is true. The returned result preserves
+        this result's output frame selection, which is normally ``DETECTED``.
+        """
+        program_index_by_subtask = {
+            (subtask["task_id"], subtask["subtask_index"]): subtask["program_index"]
+            for subtask in self.full_subtasks()
+        }
+        slm_postprocessing_functions = self._slm_postprocessing_functions()
+
+        def is_fully_filled(shot) -> bool:
+            program_index = program_index_by_subtask[(shot.task_id, shot.subtask_index)]
+            slm_to_raw = slm_postprocessing_functions[program_index][0]
+            raw_shot = slm_to_raw(
+                np.asarray([shot.bitstring], dtype=bool),
+                invert=False,
+            )
+            return bool(np.all(raw_shot))
+
+        return self.where_shots(
+            is_fully_filled,
+            predicate_filter=replace(self.shot_filter, frame_type="SORTED"),
+        )
