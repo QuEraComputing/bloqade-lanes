@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Generic, TypeVar
 
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
 RetType = TypeVar("RetType")
-ShotValue = TypeVar("ShotValue")
 
 
 @dataclass(kw_only=True)
@@ -226,51 +225,30 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         # TOOD: can do validation later on sorted/detected frames
         return ret_vals
 
-    def postselect_on_fully_filled(
-        self,
-        shots: Sequence[Sequence[ShotValue]],
-    ) -> list[list[ShotValue]]:
-        """Keep only shots whose mapped SORTED frame is fully filled.
+    def postselect_on_fully_filled(self) -> GeminiLogicalResult[RetType]:
+        """Return a result view containing only fully filled shots.
 
-        ``shots`` must follow the same subtask and per-shot ordering as the
-        corresponding result property (for example, ``measurements`` or
-        ``observables``). To aggregate selected shots, call
-        :meth:`group_shots_by_metadata` on this method's return value.
-
-        Args:
-            shots: Per-subtask shot values.
-
-        Returns:
-            A new per-subtask list with every shot whose ``filling_at_start``
-            row contains a false value removed.
-
-        Raises:
-            ValueError: If the supplied shot layout does not align with
-                ``filling_at_start``.
+        The predicate reads the ``SORTED`` SLM frame and projects it through
+        the stored kernel's SLM-to-raw mapping. A shot is kept only when every
+        mapped physical-measurement bit is true. The returned result preserves
+        this result's output frame selection, which is normally ``DETECTED``.
         """
-        fillings = self.filling_at_start
-        if len(shots) != len(fillings):
-            raise ValueError(
-                "shots must contain one sequence per filling_at_start subtask: "
-                f"got {len(shots)} sequences for {len(fillings)} subtasks."
-            )
+        program_index_by_subtask = {
+            (subtask["task_id"], subtask["subtask_index"]): subtask["program_index"]
+            for subtask in self.full_subtasks()
+        }
+        slm_postprocessing_functions = self._slm_postprocessing_functions()
 
-        selected_per_subtask: list[list[ShotValue]] = []
-        for subtask_shots, subtask_fillings in zip(shots, fillings, strict=True):
-            if len(subtask_shots) != len(subtask_fillings):
-                raise ValueError(
-                    "shots and filling_at_start disagree on the number of shots "
-                    f"for a subtask: {len(subtask_shots)} != "
-                    f"{len(subtask_fillings)}."
-                )
-            selected_per_subtask.append(
-                [
-                    shot
-                    for shot, filling in zip(
-                        subtask_shots, subtask_fillings, strict=True
-                    )
-                    if all(filling)
-                ]
+        def is_fully_filled(shot) -> bool:
+            program_index = program_index_by_subtask[(shot.task_id, shot.subtask_index)]
+            slm_to_raw = slm_postprocessing_functions[program_index][0]
+            raw_shot = slm_to_raw(
+                np.asarray([shot.bitstring], dtype=bool),
+                invert=False,
             )
+            return bool(np.all(raw_shot))
 
-        return selected_per_subtask
+        return self.where_shots(
+            is_fully_filled,
+            predicate_filter=replace(self.shot_filter, frame_type="SORTED"),
+        )

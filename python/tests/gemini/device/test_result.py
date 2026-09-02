@@ -760,46 +760,116 @@ def test_slm_result_views_return_empty_lists_after_shot_filter(storage):
     assert result.filling_at_start == [[]]
 
 
-def test_postselect_on_fully_filled_preserves_per_subtask_layout(storage, monkeypatch):
-    result = GeminiLogicalResult(storage=storage)
-    monkeypatch.setattr(
-        GeminiLogicalResult,
-        "filling_at_start",
-        property(
-            lambda _self: [
-                [[True, True], [True, False], [True, True]],
-                [[False], [True]],
-            ]
+def test_postselect_on_fully_filled_returns_result_filtered_by_raw_slm_bits(
+    storage, monkeypatch
+):
+    add_task_definition(
+        storage,
+        "task-1",
+        make_task_definition(
+            programs=[Program(content="program-0"), Program(content="program-1")],
+            subtasks=[
+                Subtask(program_index=0, num_shots=2),
+                Subtask(program_index=1, num_shots=2),
+            ],
         ),
     )
-
-    shots = [["a0", "a1", "a2"], ["b0", "b1"]]
-
-    assert result.postselect_on_fully_filled(shots) == [["a0", "a2"], ["b1"]]
-
-
-def test_postselect_on_fully_filled_rejects_misaligned_subtasks(storage, monkeypatch):
-    result = GeminiLogicalResult(storage=storage)
-    monkeypatch.setattr(
-        GeminiLogicalResult,
-        "filling_at_start",
-        property(lambda _self: [[[True]]]),
+    storage.add_shots(
+        [
+            make_shot(
+                shot_index=0,
+                subtask_index=0,
+                frame_type="SORTED",
+                bitstring=(True, True) + (False,) * 158,
+            ),
+            make_shot(
+                shot_index=0,
+                subtask_index=0,
+                frame_type="DETECTED",
+                bitstring=(False, True) + (False,) * 158,
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_shot_index=1,
+                subtask_index=0,
+                frame_type="SORTED",
+                bitstring=(True, False) + (False,) * 158,
+            ),
+            make_shot(
+                shot_index=1,
+                subtask_shot_index=1,
+                subtask_index=0,
+                frame_type="DETECTED",
+                bitstring=(True, True) + (False,) * 158,
+            ),
+            make_shot(
+                shot_index=2,
+                subtask_index=1,
+                frame_type="SORTED",
+                bitstring=(False, False, True, True) + (False,) * 156,
+            ),
+            make_shot(
+                shot_index=2,
+                subtask_index=1,
+                frame_type="DETECTED",
+                bitstring=(False, False, False, True) + (False,) * 156,
+            ),
+            make_shot(
+                shot_index=3,
+                subtask_shot_index=1,
+                subtask_index=1,
+                frame_type="SORTED",
+                bitstring=(True, True, True, False) + (False,) * 156,
+            ),
+            make_shot(
+                shot_index=3,
+                subtask_shot_index=1,
+                subtask_index=1,
+                frame_type="DETECTED",
+                bitstring=(True, True, True, True) + (False,) * 156,
+            ),
+        ]
     )
 
-    with pytest.raises(ValueError, match="one sequence per filling_at_start subtask"):
-        result.postselect_on_fully_filled([])
+    post_processing = PostProcessing(
+        emit_return=lambda rows: (list(row) for row in rows),
+        emit_detectors=lambda rows: (list(row) for row in rows),
+        emit_observables=lambda rows: (list(row) for row in rows),
+    )
+    mapper_calls = []
 
+    def mapper(indices):
+        def slm_to_raw(shots, *, invert):
+            mapper_calls.append((tuple(indices), invert, shots.copy()))
+            return shots[:, indices].tolist()
 
-def test_postselect_on_fully_filled_rejects_misaligned_shots(storage, monkeypatch):
-    result = GeminiLogicalResult(storage=storage)
+        return slm_to_raw
+
     monkeypatch.setattr(
         GeminiLogicalResult,
-        "filling_at_start",
-        property(lambda _self: [[[True], [True]]]),
+        "_slm_postprocessing_functions",
+        lambda _self: {
+            0: (mapper([0, 1]), post_processing),
+            1: (mapper([2, 3]), post_processing),
+        },
     )
 
-    with pytest.raises(ValueError, match="disagree on the number of shots"):
-        result.postselect_on_fully_filled([["only-shot"]])
+    result = GeminiLogicalResult(storage=storage).postselect_on_fully_filled()
+
+    assert isinstance(result, GeminiLogicalResult)
+    assert [(indices, invert) for indices, invert, _ in mapper_calls] == [
+        ((0, 1), False),
+        ((0, 1), False),
+        ((2, 3), False),
+        ((2, 3), False),
+    ]
+    selected_shots = result.shot_results()
+    np.testing.assert_array_equal(
+        selected_shots[0], np.array([[False, True] + [False] * 158])
+    )
+    np.testing.assert_array_equal(
+        selected_shots[1], np.array([[False, False, False, True] + [False] * 156])
+    )
 
 
 def test_return_values_rejects_compact_frames(storage):
