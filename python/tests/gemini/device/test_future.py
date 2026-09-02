@@ -733,12 +733,17 @@ def test_from_task_id_fetches_definition_and_stores_it(
     tasks_client, definitions_client
 ):
     group_id = uuid4()
+    # One ID threaded through the task's ``definition_id``, the ID the client is
+    # asked for, and the ID the response comes back with -- so a lookup keyed on
+    # the wrong one cannot pass. ``Task.definition_id`` is a str while
+    # ``TaskDefinitionResponse.id`` is a UUID, hence the str() on one side.
+    definition_id = uuid4()
     # ``DefinitionsClient.get`` returns a ``TaskDefinitionResponse``, not the
     # ``TaskDefinition`` that gets stored -- the response declares ``group``,
     # which ``from_task_id`` flattens to ``group_id`` as of bloqade-core 0.6.8.
     # Returning the stored type here would not carry ``group`` at all.
     fetched_def = TaskDefinitionResponse(
-        id=uuid4(),
+        id=definition_id,
         program_language="flair.v1",
         programs=[DefinitionProgram(content="kernel")],
         subtasks=[DefinitionSubtask(program_index=0, num_shots=5)],
@@ -746,7 +751,7 @@ def test_from_task_id_fetches_definition_and_stores_it(
         created_by=uuid4(),
         group=DefinitionGroupSummary(id=group_id),
     )
-    task = make_task(TaskStatus.COMPLETED, definition_id="def-id-1")
+    task = make_task(TaskStatus.COMPLETED, definition_id=str(definition_id))
     tasks_client.get.return_value = task
     definitions_client.get.return_value = fetched_def
 
@@ -756,7 +761,7 @@ def test_from_task_id_fetches_definition_and_stores_it(
     assert fut.task_id == "task-1"
     assert fut.storage is storage
     tasks_client.get.assert_called_once_with(id="task-1")
-    definitions_client.get.assert_called_once_with(id="def-id-1")
+    definitions_client.get.assert_called_once_with(id=str(definition_id))
     assert storage.task_ids() == {"task-1"}
     # What lands in storage is rebuilt, not the response object: the identifying
     # fields plus ``group_id`` flattened out of ``group``.
