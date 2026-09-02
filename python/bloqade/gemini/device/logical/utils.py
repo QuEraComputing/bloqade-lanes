@@ -1,17 +1,16 @@
-from collections.abc import Callable, Sequence
+from __future__ import annotations
+
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import replace
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 from kirin import ir
 
-from bloqade.lanes.analysis import atom
-from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
-from bloqade.lanes.arch.gemini import physical
-from bloqade.lanes.bytecode.encoding import ZoneAddress
-from bloqade.lanes.transform import LogicalPipeline
-
 RetType = TypeVar("RetType")
+
+if TYPE_CHECKING:
+    from bloqade.lanes.analysis import atom
 
 
 class ShotRemappingException(Exception):
@@ -116,6 +115,24 @@ def get_slm_mapping_postprocessing(
 ) -> tuple[Callable[..., Any], atom.PostProcessing[RetType]]:
     """Create a result postprocessor for full Zone-0 SLM shots.
 
+    Result post-processing is two steps, and this returns both::
+
+        physical_bitstring = [frame_data[i] for i in shot_remapping]
+        user_output = post_processing.emit_return([physical_bitstring])
+
+    The returned ``emit_return`` comes from
+    :func:`~bloqade.gemini.post_processing.generate_post_processing`, which
+    abstract-interprets the *user's* kernel — so it reconstructs whatever
+    the kernel returns (a subset of the measurements, a permutation, a
+    tuple) without the shot mapping needing to know the return shape.
+
+    ``emit_detectors`` / ``emit_observables`` still come from the atom
+    analysis: they are collected from ``annotate.SetDetector`` /
+    ``SetObservable`` statements as a side effect of walking the lowered
+    kernel, and ``generate_post_processing`` has no equivalent
+    side-channel — it only sees detectors that appear inside the return
+    value.
+
     Warning:
         This reconstructs the physical measurement mapping by compiling the
         stored logical kernel with the locally installed Bloqade Lanes compiler
@@ -124,6 +141,13 @@ def get_slm_mapping_postprocessing(
         remote physical compilation artifact is not currently stored with the
         result.
     """
+
+    from bloqade.gemini.post_processing import generate_post_processing
+    from bloqade.lanes.analysis import atom
+    from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
+    from bloqade.lanes.arch.gemini import physical
+    from bloqade.lanes.bytecode.encoding import ZoneAddress
+    from bloqade.lanes.transform import LogicalPipeline
 
     arch_spec = physical.get_arch_spec()
     physical_move_kernel = LogicalPipeline(transversal_rewrite=True).emit(sim_kernel)
@@ -143,7 +167,29 @@ def get_slm_mapping_postprocessing(
     # print(f"row-major SLM mapping: {mapping}")
     expected_zone0_sites = len(zone0_locations)
 
-    post_processing = interpreter.get_post_processing(physical_move_kernel)
+    # Step 2 of post-processing. User-value reconstruction runs against the
+    # *user's* kernel; detectors and observables have no equivalent there and
+    # stay on the atom analysis (see this function's docstring).
+    atom_post_processing = interpreter.get_post_processing(physical_move_kernel)
+    user_values = generate_post_processing(sim_kernel)
+
+    def _emit_user_values(
+        measurements: Sequence[Sequence[bool]],
+    ) -> Generator[RetType, None, None]:
+        assert user_values is not None
+        yield from user_values(np.asarray(measurements))
+
+    # When the measure-id analysis cannot resolve the kernel's return value
+    # it yields None; fall back to reconstructing it from the lowered kernel.
+    emit_return = (
+        atom_post_processing.emit_return if user_values is None else _emit_user_values
+    )
+
+    post_processing = atom.PostProcessing(
+        emit_return=emit_return,
+        emit_detectors=atom_post_processing.emit_detectors,
+        emit_observables=atom_post_processing.emit_observables,
+    )
 
     def postprocess(zone0_shots, *, invert: bool = False):
         zone0_shots = np.asarray(zone0_shots, dtype=bool)

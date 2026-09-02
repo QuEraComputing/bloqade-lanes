@@ -9,11 +9,18 @@ from kirin.analysis.forward import ForwardFrame
 from typing_extensions import Self
 
 from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.dialects import move
 from bloqade.lanes.utils import no_none_elements_tuple
 
 from . import _shot_remapping
+from ._measurement_positions import (
+    AtomPosition,
+    MeasurementPositions,
+    MeasurementSnapshot,
+)
 from ._post_processing import constructor_function
-from .lattice import AtomState, MoveExecution
+from .lattice import AtomState, MeasureFuture, MeasureResult, MoveExecution
 
 
 def _default_best_state_cost(state: AtomState) -> float:
@@ -56,7 +63,6 @@ class AtomInterpreter(Forward[MoveExecution]):
     )
     _detectors: list[MoveExecution] = field(init=False, default_factory=list)
     _observables: list[MoveExecution] = field(init=False, default_factory=list)
-    measure_sites: list[dict] = field(init=False, default_factory=list)
     final_measurement_count: int = field(init=False, default=0)
     measurement_record_count: int = field(init=False, default=0)
     keys = ("atom",)
@@ -68,7 +74,6 @@ class AtomInterpreter(Forward[MoveExecution]):
         self.current_state = AtomState()
         self._detectors.clear()
         self._observables.clear()
-        self.measure_sites.clear()
         self.final_measurement_count = 0
         self.measurement_record_count = 0
         return super().initialize()
@@ -82,44 +87,306 @@ class AtomInterpreter(Forward[MoveExecution]):
     def get_shot_remapping(
         self, method: ir.Method, *, no_raise: bool = True
     ) -> _shot_remapping.ShotRemappingOk | _shot_remapping.ShotRemappingErr:
-        """Run the analysis on ``method`` and return the flat Zone-0
-        bitstring index list (in row-major order over the nested
-        ``IListResult[IListResult[MeasureResult]]`` return shape) as a
-        ``ShotRemappingOk``. On failure, returns ``ShotRemappingErr``
-        carrying a ``ShotRemappingDiagnostic``.
+        """Run the analysis on ``method`` and return the index list that
+        projects a hardware frame onto the per-measurement array
+        post-processing consumes, as a ``ShotRemappingOk``. On failure,
+        returns ``ShotRemappingErr`` carrying a
+        ``ShotRemappingDiagnostic``.
 
-        Convenience wrapper around the standalone
+        ``mapping[k]`` is the frame slot of measurement record ``k``, so
+        a caller writes ``frame[:, mapping]``. Convenience wrapper
+        around the standalone
         ``bloqade.lanes.analysis.atom._shot_remapping.get_shot_remapping``;
-        see that function's docstring for the contract on the analysis
-        output shape, the meaning of the returned indices, and the
-        diagnostic emitted on failure.
+        see that function's docstring for the two-step post-processing
+        model and the diagnostics emitted on failure.
 
-        ``method``'s return value is expected to refine to
-        ``IListResult[IListResult[MeasureResult]]`` — the shape produced
-        by lowering a logical ``terminal_measure`` (or any kernel that
-        returns a nested ilist of measurement results) through the
-        atom-analysis chain. Callers (typically the compiler service)
-        are responsible for surfacing the diagnostic in the failure
-        case; a failure here is a compiler-pipeline regression, not a
-        user error.
+        The mapping is derived from the analysis's per-measurement
+        records, not from ``method``'s return value, so a kernel that
+        returns only some of its measurements — or returns them out of
+        order — still gets a complete, correctly-ordered mapping
+        (issue #967). Callers (typically the compiler service) are
+        responsible for surfacing the diagnostic in the failure case; a
+        failure here is a compiler-pipeline regression, not a user
+        error.
 
         Args:
             method: kirin method to analyse.
-            no_raise: when ``True`` (default), an analysis crash is
-                caught by ``Forward.run_no_raise`` and falls through
-                into the standard ``ShotRemappingErr`` path with the
-                ``Bottom`` lattice as the offending value, so callers
-                see a single failure shape. Flip to ``False`` when
-                debugging an analysis-side bug to let the original
-                exception propagate.
+            no_raise: when ``True`` (default), any failure reaching this
+                method is reported as a ``ShotRemappingErr`` so callers
+                see a single failure shape. That covers an analysis that
+                crashes, an address the arch spec cannot resolve, and a
+                measurement that executed more than once — all of which
+                :meth:`get_measurement_positions` raises. Flip to
+                ``False`` when debugging to let the original exception
+                propagate.
         """
-        run_method = self.run_no_raise if no_raise else self.run
-        _, output = run_method(method)
-        return _shot_remapping.get_shot_remapping(output, self.arch_spec)
+        if not no_raise:
+            return _shot_remapping.get_shot_remapping(
+                self.get_measurement_positions(method)
+            )
+
+        # This method contracts for a diagnostic rather than an exception:
+        # its callers (the compiler service) surface the message. A crashed
+        # analysis has no partial answer worth returning, so it becomes a
+        # diagnostic here rather than a truncated mapping downstream.
+        try:
+            positions = self.get_measurement_positions(method)
+        except Exception as error:  # noqa: BLE001 - reported, not swallowed
+            return _shot_remapping.ShotRemappingErr(
+                diagnostic=_shot_remapping.ShotRemappingDiagnostic(
+                    message=(
+                        "the atom analysis did not produce measurement "
+                        f"positions: {type(error).__name__}: {error}"
+                    ),
+                ),
+            )
+        return _shot_remapping.get_shot_remapping(positions)
+
+    def _atom_at(
+        self,
+        location: LocationAddress,
+        qubit_id: int,
+        zone_offsets: dict[int, int],
+        measurement_id: int | None = None,
+    ) -> AtomPosition:
+        """Build one :class:`AtomPosition`, resolving its frame index.
+
+        ``zone_offsets`` maps a zone id to where that zone starts in the
+        measurement's frame. A location in a zone the measurement
+        doesn't cover has no slot in the frame and gets ``None``.
+        """
+        frame_index = None
+        if (offset := zone_offsets.get(location.zone_id)) is not None:
+            within_zone = self.arch_spec.get_zone_index(
+                location, ZoneAddress(location.zone_id)
+            )
+            if within_zone is not None:
+                frame_index = offset + within_zone
+        return AtomPosition(
+            qubit_id=qubit_id,
+            location_address=location,
+            position=self.arch_spec.get_position(location),
+            measurement_id=measurement_id,
+            frame_index=frame_index,
+        )
+
+    def _atoms_by_address(
+        self,
+        occupancy: dict[LocationAddress, int],
+        zone_offsets: dict[int, int],
+    ) -> tuple[AtomPosition, ...]:
+        return tuple(
+            self._atom_at(location, occupancy[location], zone_offsets)
+            for location in sorted(occupancy)
+        )
+
+    def _check_records_cover_every_measurement(
+        self, snapshots: Sequence[MeasurementSnapshot]
+    ) -> None:
+        """Reject a result whose readouts don't cover ``0..n-1`` exactly.
+
+        One snapshot per measurement *statement* only models a program
+        where each statement executes once. Put a measurement in a loop
+        and the statement has several executions with several distinct
+        frames, which this shape cannot represent — the snapshots would
+        overlap.
+
+        That case is detectable here: the interpreter mints a fresh
+        ``measurement_id`` per visit, so a second visit to a
+        ``GetFutureResult`` yields an id its first visit didn't have. The
+        two ``MeasureResult`` values are incomparable, so the lattice
+        joins them to ``Unknown`` and the readout drops out of the walk
+        entirely; either way the surviving ids stop being a complete
+        ``0..n-1`` cover.
+        """
+        record_ids = sorted(
+            atom_position.measurement_id
+            for snapshot in snapshots
+            for atom_position in snapshot.readout
+            if atom_position.measurement_id is not None
+        )
+        expected = list(range(self.measurement_record_count))
+        if record_ids != expected:
+            raise ValueError(
+                "measurement records do not cover "
+                f"0..{self.measurement_record_count - 1} exactly (got "
+                f"{record_ids}); a measurement statement most likely "
+                "executed more than once, which one-snapshot-per-statement "
+                "cannot represent"
+            )
+
+    def get_measurement_positions(self, method: ir.Method) -> MeasurementPositions:
+        """Where every atom sat at each measurement in ``method``.
+
+        Returns one :class:`MeasurementSnapshot` per measurement
+        statement, in the order the statements appear in the IR. Each
+        snapshot carries three widening scopes — ``readout`` (atoms the
+        program actually reads, ordered by ``measurement_id``),
+        ``measured_zones`` (every atom the hardware measures), and
+        ``qpu_state`` (every atom on the device). See
+        ``_measurement_positions`` for the full contract.
+
+        ``MeasurementPositions.readout`` flattens the per-snapshot
+        readouts into one ``measurement_id``-ordered tuple, so
+        ``result.readout[k].position`` is where the atom in column ``k``
+        of the raw per-shot measurement array was sitting.
+
+        Snapshots describe a run that converged, so there is no
+        swallow-and-report mode: an analysis that fails raises, and a
+        caller that needs a diagnostic instead of an exception should use
+        :meth:`get_shot_remapping`, which converts one.
+
+        Args:
+            method: kirin method to analyse.
+
+        Raises:
+            Exception: whatever the analysis raises. There is no partial
+                answer to return in its place — ``run`` only hands back a
+                frame on success.
+            ValueError: if a captured location has no position under
+                ``arch_spec`` — the analysis and arch spec disagree
+                about hardware layout.
+        """
+        frame, _ = self.run(method)
+        return self.collect_measurement_positions(method, frame)
+
+    def collect_measurement_positions(
+        self,
+        method: ir.Method,
+        frame: ForwardFrame[MoveExecution],
+    ) -> MeasurementPositions:
+        """Read the snapshots out of a *converged* analysis frame.
+
+        Deliberately a second pass rather than bookkeeping accumulated
+        during interpretation: abstract interpretation may visit a
+        statement any number of times before it reaches a fixpoint, so
+        anything recorded as a side effect of visiting has to be made
+        idempotent by hand. Walking the IR once afterwards reads only
+        what the fixpoint settled on, and statement order comes from the
+        IR itself rather than from a counter.
+
+        Readouts attach to their measurement through
+        ``GetFutureResult.measurement_future.owner`` — the statement that
+        produced the future — so nothing depends on two counters agreeing.
+        """
+        # Every zone spans the same number of addresses: words are global
+        # and a zone_id merely tags them, so each zone contributes
+        # ``len(words) * sites_per_word`` slots to the frame.
+        frame_stride = len(self.arch_spec.words) * self.arch_spec.sites_per_word
+
+        measure_stmts: list[move.EndMeasure | move.Measure] = []
+        readouts: dict[ir.Statement, list[MeasureResult]] = {}
+        for stmt in method.callable_region.walk():
+            if isinstance(stmt, (move.EndMeasure, move.Measure)):
+                measure_stmts.append(stmt)
+            elif isinstance(stmt, move.GetFutureResult):
+                # ``entries.get`` rather than ``frame.get``: the latter raises
+                # for an SSA value the analysis never reached, which is normal
+                # when collecting from the partial frame of a crashed run.
+                result = frame.entries.get(stmt.result)
+                # A GetFutureResult that didn't resolve emits no measurement
+                # and so has no place in any frame.
+                owner = stmt.measurement_future.owner
+                # A future that isn't a statement result (a block argument,
+                # say) belongs to no measurement statement in this walk.
+                if isinstance(result, MeasureResult) and isinstance(
+                    owner, ir.Statement
+                ):
+                    readouts.setdefault(owner, []).append(result)
+
+        snapshots = []
+        for index, stmt in enumerate(measure_stmts):
+            future = frame.entries.get(
+                stmt.result if isinstance(stmt, move.EndMeasure) else stmt.future
+            )
+            state = frame.entries.get(stmt.current_state)
+            if not isinstance(future, MeasureFuture) or not isinstance(
+                state, AtomState
+            ):
+                # The analysis never resolved this measurement; it has no
+                # occupancy to report, so there is no snapshot to build.
+                continue
+
+            zone_addresses = tuple(stmt.zone_addresses)
+            zone_offsets = {
+                zone.zone_id: position * frame_stride
+                for position, zone in enumerate(zone_addresses)
+            }
+            measured_zones: dict[LocationAddress, int] = {}
+            for occupancy in future.results.values():
+                measured_zones.update(occupancy)
+            qpu_state = {
+                location: qubit_id
+                for qubit_id, location in state.data.qubit_to_locations.items()
+            }
+            readout = sorted(
+                (
+                    self._atom_at(
+                        result.location_address,
+                        result.qubit_id,
+                        zone_offsets,
+                        result.measurement_id,
+                    )
+                    for result in readouts.get(stmt, [])
+                ),
+                key=lambda atom: atom.measurement_id or 0,
+            )
+            snapshots.append(
+                MeasurementSnapshot(
+                    index=index,
+                    zone_addresses=zone_addresses,
+                    frame_size=len(zone_addresses) * frame_stride,
+                    readout=tuple(readout),
+                    measured_zones=self._atoms_by_address(measured_zones, zone_offsets),
+                    qpu_state=self._atoms_by_address(qpu_state, zone_offsets),
+                )
+            )
+
+        self._check_records_cover_every_measurement(snapshots)
+        return MeasurementPositions(measurements=tuple(snapshots))
 
     def get_post_processing(
         self, method: ir.Method[..., RetType]
     ) -> PostProcessing[RetType]:
+        """Reconstruct user values, detectors and observables from the
+        *lowered move* kernel.
+
+        .. deprecated::
+            For user values, prefer
+            :func:`bloqade.gemini.post_processing.generate_post_processing`.
+
+            The two are interchangeable for that purpose: ``emit_return``
+            and ``generate_post_processing`` produce identical output from
+            the same raw measurement array, down to the leaf type and the
+            reduce used for detectors, and
+            ``tests/analysis/atom/test_post_processing_parity.py`` pins that
+            equivalence.
+
+            Prefer the alternative because of *what it reads*, not what it
+            returns. It abstract-interprets the **user's** kernel, whereas
+            this method reads ``MeasureResult.measurement_id`` off the
+            lowered move kernel — a numbering that only lines up with the
+            rest of the pipeline while lowering preserves the record
+            ordering, an invariant maintained by hand (see
+            ``tests/analysis/atom/test_measure_id_invariant.py``). Deriving
+            user values from the user's own kernel removes that coupling.
+
+        Callers that still need this, and what they are waiting on:
+
+        - ``emit_detectors`` / ``emit_observables`` have no replacement.
+          They come from ``annotate.SetDetector`` / ``SetObservable``
+          statements collected while walking the lowered kernel, and
+          ``generate_post_processing`` only sees a detector that appears
+          inside the return value.
+        - The simulator paths (``gemini/compile/task.py``,
+          ``gemini/device/physical_simulator.py``) consume a per-measurement
+          array directly and never project a hardware frame, so nothing
+          about the frame-mapping split applies to them.
+
+        No runtime warning is raised for that reason: every in-tree caller
+        is on one of those two paths, so a warning would fire on correct
+        code with nowhere to migrate.
+        """
         _, output = self.run(method)
 
         func = cast(Callable[[Sequence[bool]], RetType], constructor_function(output))
