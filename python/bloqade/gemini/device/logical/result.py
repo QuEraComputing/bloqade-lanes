@@ -117,15 +117,16 @@ class GeminiLogicalResult(Result, Generic[RetType]):
     @property
     def measurements(self) -> Sequence[Sequence[Sequence[bool]]]:
         """True indicates a projective measurement of the |1> state or atom loss; False indicates a projective measurement of the |0> state."""
-        from .utils import shot_results_for_subtasks
 
         ret_vals: list[list[list[bool]]] = []
         # TODO: OK to set verify=True?
-        subtasks = self.subtasks(verify=True)
-        postprocessing_functions = self._slm_postprocessing_functions()
-        shot_results = shot_results_for_subtasks(
-            self.storage, self.shot_filter, subtasks, frame_type="DETECTED"
+        # TODO: Have a better way of setting the frame on the result?
+        detected_result = replace(
+            self, shot_filter=replace(self.shot_filter, frame_type="DETECTED")
         )
+        subtasks = detected_result.subtasks(verify=True)
+        postprocessing_functions = self._slm_postprocessing_functions()
+        shot_results = detected_result.shot_results()
 
         for shot_result, subtask in zip(shot_results, subtasks):
             func = postprocessing_functions[subtask["program_index"]][0]
@@ -155,10 +156,14 @@ class GeminiLogicalResult(Result, Generic[RetType]):
                 logical kernels.
         """
         ret_vals: list[RetType | np.ndarray] = []
-        subtasks = self.subtasks(verify=verify)
+        # TODO: maybe expose a better API for getting ShotResults for a different frame?
+        detected_result = replace(
+            self, shot_filter=replace(self.shot_filter, frame_type="DETECTED")
+        )
+        subtasks = detected_result.subtasks(verify=verify)
         if postprocessing_functions is None:
             postprocessing_functions = self.postprocessing_functions()
-        shot_results = self._shot_results_for_subtasks(subtasks)
+        shot_results = detected_result._shot_results_for_subtasks(subtasks)
 
         for shot_result, subtask in zip(shot_results, subtasks):
             func = postprocessing_functions[subtask["program_index"]]
@@ -207,17 +212,15 @@ class GeminiLogicalResult(Result, Generic[RetType]):
     @property
     def filling_at_start(self) -> Sequence[Sequence[Sequence[bool]]]:
         """True indicates that the atom was present during the sorted frame; False indicates that it was not."""
-        from .utils import aligned_detected_and_sorted_shots_for_subtasks
 
         ret_vals: list[list[list[bool]]] = []
-        subtasks = self.subtasks(verify=True)
-        postprocessing_functions = self._slm_postprocessing_functions()
-        _, shot_results = aligned_detected_and_sorted_shots_for_subtasks(
-            self.storage,
-            self.shot_filter,
-            subtasks,
+        # TODO: maybe expose a better API for getting ShotResults for a different frame?
+        sorted_result = replace(
+            self, shot_filter=replace(self.shot_filter, frame_type="SORTED")
         )
-
+        subtasks = sorted_result.subtasks(verify=True)
+        postprocessing_functions = self._slm_postprocessing_functions()
+        shot_results = sorted_result.shot_results()
         for shot_result, subtask in zip(shot_results, subtasks):
             func = postprocessing_functions[subtask["program_index"]][0]
             ret_vals.append(func(shot_result, invert=False))

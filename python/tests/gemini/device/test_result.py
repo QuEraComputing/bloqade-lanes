@@ -21,7 +21,6 @@ from bloqade.gemini import GeminiLogicalResult, logical
 from bloqade.gemini.device.logical import result as result_module, utils as utils_module
 from bloqade.gemini.device.logical.utils import (
     ShotRemappingException,
-    aligned_detected_and_sorted_shots_for_subtasks,
     get_slm_mapping_postprocessing,
 )
 from bloqade.lanes.analysis.atom.analysis import PostProcessing
@@ -523,69 +522,6 @@ def test_default_postproc_remapping():
         return logical.default_post_processing(qubits)
 
     _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
-
-
-def test_aligned_detected_and_sorted_shots_use_full_shot_identity(storage):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=2)]),
-    )
-    storage.add_shots(
-        [
-            make_shot(
-                shot_index=2,
-                subtask_shot_index=1,
-                frame_type="SORTED",
-                bitstring=(False, True),
-            ),
-            make_shot(
-                shot_index=1,
-                subtask_shot_index=0,
-                frame_type="DETECTED",
-                bitstring=(True, False),
-            ),
-            make_shot(
-                shot_index=2,
-                subtask_shot_index=1,
-                frame_type="DETECTED",
-                bitstring=(True, True),
-            ),
-            make_shot(
-                shot_index=1,
-                subtask_shot_index=0,
-                frame_type="SORTED",
-                bitstring=(False, False),
-            ),
-        ]
-    )
-
-    detected, sorted_ = aligned_detected_and_sorted_shots_for_subtasks(
-        storage,
-        ShotFilter(task_ids=("task-1",)),
-        GeminiLogicalResult(storage=storage).subtasks(),
-    )
-
-    np.testing.assert_array_equal(detected[0], np.array([[True, False], [True, True]]))
-    np.testing.assert_array_equal(sorted_[0], np.array([[False, False], [False, True]]))
-
-
-def test_aligned_detected_and_sorted_shots_reject_missing_frame(storage):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=1)]),
-    )
-    storage.add_shots(
-        [make_shot(shot_index=0, frame_type="DETECTED", bitstring=(True, False))]
-    )
-
-    with pytest.raises(ValueError, match="not aligned"):
-        aligned_detected_and_sorted_shots_for_subtasks(
-            storage,
-            ShotFilter(task_ids=("task-1",)),
-            GeminiLogicalResult(storage=storage).subtasks(),
-        )
 
 
 def test_get_slm_mapping_postprocessing_maps_and_validates_frames():
