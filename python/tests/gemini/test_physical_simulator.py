@@ -35,7 +35,7 @@ from bloqade.gemini.device.physical_simulator import (
     append_measurements_and_annotations_physical,
 )
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
-from bloqade.gemini.post_processing import generate_post_processing
+from bloqade.gemini.post_processing import build_post_processing
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
@@ -481,7 +481,7 @@ def test_append_measurements_and_annotations_physical_preserves_kernel_return():
     assert sum(isinstance(s, SetDetector) for s in kernel.callable_region.walk()) == 2
     assert sum(isinstance(s, SetObservable) for s in kernel.callable_region.walk()) == 2
 
-    post_processing = generate_post_processing(kernel)
+    post_processing = build_post_processing(kernel)
 
     raw_shots = [[True, False, False, True]]
 

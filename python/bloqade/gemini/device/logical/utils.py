@@ -121,7 +121,7 @@ def get_slm_mapping_postprocessing(
         user_output = post_processing.emit_return([physical_bitstring])
 
     The returned post-processing object comes from
-    :func:`~bloqade.gemini.post_processing.generate_post_processing`, which
+    :func:`~bloqade.gemini.post_processing.build_post_processing`, which
     abstract-interprets the *user's* kernel once to reconstruct its return
     value and every detector and observable annotation.
 
@@ -134,7 +134,7 @@ def get_slm_mapping_postprocessing(
         result.
     """
 
-    from bloqade.gemini.post_processing import generate_post_processing
+    from bloqade.gemini.post_processing import build_post_processing
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
     from bloqade.lanes.arch.gemini import physical
@@ -159,7 +159,7 @@ def get_slm_mapping_postprocessing(
     # print(f"row-major SLM mapping: {mapping}")
     expected_zone0_sites = len(zone0_locations)
 
-    post_processing = generate_post_processing(sim_kernel)
+    post_processing = build_post_processing(sim_kernel)
 
     def postprocess(zone0_shots, *, invert: bool = False):
         zone0_shots = np.asarray(zone0_shots, dtype=bool)

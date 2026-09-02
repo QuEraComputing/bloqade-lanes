@@ -15,7 +15,7 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import logical
-from bloqade.gemini.post_processing import generate_post_processing
+from bloqade.gemini.post_processing import build_post_processing
 from bloqade.lanes.analysis.atom import (
     AtomInterpreter,
     AtomPosition,
@@ -353,7 +353,7 @@ def test_permuted_return_round_trips_through_post_processing():
         return ilist.IList([m[1], m[0]])
 
     result, _, _ = _mapping_for(permuted)
-    post_processing = generate_post_processing(permuted)
+    post_processing = build_post_processing(permuted)
 
     # mapping[7:] are the frame slots of the second logical block.
     hot = set(result.mapping[7:])

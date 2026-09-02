@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 from bloqade.core.device import Result
-from kirin.interp.exceptions import InterpreterError
 
 from bloqade.gemini import logical
 from bloqade.gemini.post_processing import generate_post_processing
@@ -105,36 +104,13 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         This method preserves the original ``GeminiLogicalResult`` API for
         result stores whose bitstrings are already in compact physical
-        measurement order. It is not the canonical entry point: raw 160-site
-        SLM frames go through ``_slm_postprocessing_functions``, and
-        ``return_values`` / ``detectors`` / ``observables`` are what callers
-        should reach for.
-
-        Returns:
-            One entry per program index, mapping to that program's
-            return-value emitter, or to ``None`` when the analysis cannot
-            infer a return value -- in which case ``logical_results`` passes
-            the raw shot array through unchanged.
+        measurement order. Raw 160-site SLM frames use
+        ``_slm_postprocessing_functions`` instead.
         """
         postprocessing_functions = {}
         for idx, kernel_json in self._program_contents_by_index().items():
             kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
-            # ``generate_post_processing`` now returns all three emitters, and
-            # raises where it used to return None. This legacy API is
-            # return-values-only and publishes ``Callable | None``, so take
-            # that one emitter and map the failure back onto None -- keeping
-            # ``logical_results``'s raw-passthrough branch reachable exactly
-            # as before.
-            #
-            # Catch only ``InterpreterError``: that is the analysis reporting
-            # it could not infer a value, which is what None has always meant
-            # here. Anything else -- a malformed kernel, a bug in a pass --
-            # still propagates rather than degrading to raw shots.
-            try:
-                emit_return = generate_post_processing(kernel_mt).emit_return
-            except InterpreterError:
-                emit_return = None
-            postprocessing_functions[idx] = emit_return
+            postprocessing_functions[idx] = generate_post_processing(kernel_mt)
 
         return postprocessing_functions
 
@@ -176,8 +152,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             postprocessing_functions: Optional mapping from program index to a
                 function accepting that subtask's stored shot array. When
                 omitted, legacy postprocessors are generated from the stored
-                logical kernels. A ``None`` entry passes the raw shot array
-                through unchanged.
+                logical kernels.
         """
         ret_vals: list[RetType | np.ndarray] = []
         subtasks = self.subtasks(verify=verify)

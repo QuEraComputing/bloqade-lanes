@@ -15,7 +15,7 @@ from kirin import ir, passes
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
-from bloqade.gemini.post_processing import generate_post_processing
+from bloqade.gemini.post_processing import build_post_processing
 
 from ._task_runtime import (
     DetectorResult as DetectorResult,
@@ -246,7 +246,7 @@ class GeminiPhysicalSimulator:
         physical_move_kernel = physical_pipeline.emit(
             source_squin_kernel, no_raise=False
         )
-        post_processing = generate_post_processing(source_squin_kernel)
+        post_processing = build_post_processing(source_squin_kernel)
 
         return PhysicalSimulatorTask(
             source_squin_kernel,

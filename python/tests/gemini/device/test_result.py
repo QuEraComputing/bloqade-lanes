@@ -8,7 +8,6 @@ from bloqade.core.device import (
     ShotResult,
 )
 from kirin.dialects import ilist
-from kirin.interp.exceptions import InterpreterError
 from kirin.serialization import JSONSerializer
 from qlam_core.plugins.tasks.api.tasks_models import (
     Program,
@@ -64,22 +63,6 @@ KERNEL_B_JSON = _serializer.encode(_kernel_b.dialects.encode(_kernel_b))
 KERNEL_WITH_POSTPROCESSING_JSON = _serializer.encode(
     _kernel_with_postprocessing.dialects.encode(_kernel_with_postprocessing)
 )
-
-
-def _return_only(func):
-    """Wrap a bare return-value callable as a full ``PostProcessing``.
-
-    ``generate_post_processing`` returns all three emitters, so a test that
-    substitutes it has to hand back the same shape. These tests exercise only
-    the return-value path; the other two emitters must never be reached.
-    """
-
-    def _unused(rows):
-        raise AssertionError("this test should not emit detectors/observables")
-
-    return PostProcessing(
-        emit_return=func, emit_detectors=_unused, emit_observables=_unused
-    )
 
 
 def make_shot(
@@ -1045,15 +1028,12 @@ def test_logical_results_returns_raw_when_postprocessing_is_none(storage, monkey
         [make_shot(shot_index=0, subtask_index=0, bitstring=(True, False))]
     )
 
-    # Substitute generate_post_processing with one that fails to infer a value
-    # so we exercise the production branch where logical_results returns the
-    # raw shot array. Real generators always resolve for terminal_measure
+    # Substitute generate_post_processing with one that returns None so we
+    # exercise the production branch where logical_results returns the raw
+    # shot array. Real generators always return a callable for terminal_measure
     # kernels, so substitution is the only way to hit this branch.
-    def _cannot_infer(mt):
-        raise InterpreterError("Unable to infer return result value from method output")
-
     monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
-    monkeypatch.setattr(result_module, "generate_post_processing", _cannot_infer)
+    monkeypatch.setattr(result_module, "generate_post_processing", lambda m: None)
 
     res = GeminiLogicalResult(storage=storage)
     out = res.logical_results()
@@ -1089,9 +1069,7 @@ def test_logical_results_applies_postprocessing_per_subtask(storage, monkeypatch
 
     monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
     monkeypatch.setattr(
-        result_module,
-        "generate_post_processing",
-        lambda m: _return_only(postprocessing),
+        result_module, "generate_post_processing", lambda m: postprocessing
     )
 
     res = GeminiLogicalResult(storage=storage)
@@ -1152,9 +1130,7 @@ def test_logical_results_merges_shots_across_task_ids(storage, monkeypatch):
 
     monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
     monkeypatch.setattr(
-        result_module,
-        "generate_post_processing",
-        lambda m: _return_only(postprocessing),
+        result_module, "generate_post_processing", lambda m: postprocessing
     )
 
     res = GeminiLogicalResult(storage=storage)
@@ -1502,9 +1478,7 @@ def test_merge_methods_skip_validation_with_verify_false(storage, monkeypatch, m
     # kernels in storage (the methods being parametrized only need to reach
     # their verify=False guard, not actually run postprocessing).
     monkeypatch.setattr(result_module.logical.kernel, "decode_json", lambda s: s)
-    monkeypatch.setattr(
-        result_module, "generate_post_processing", lambda m: _return_only(lambda s: s)
-    )
+    monkeypatch.setattr(result_module, "generate_post_processing", lambda m: None)
 
     res = GeminiLogicalResult(storage=storage)
     # With verify=True default, each of these would raise.

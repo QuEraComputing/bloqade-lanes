@@ -1,6 +1,6 @@
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 import numpy as np
 from kirin import ir
@@ -11,6 +11,7 @@ from typing_extensions import Self
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move
+from bloqade.lanes.utils import no_none_elements_tuple
 
 from . import _shot_remapping
 from ._measurement_positions import (
@@ -18,6 +19,7 @@ from ._measurement_positions import (
     MeasurementPositions,
     MeasurementSnapshot,
 )
+from ._post_processing import constructor_function
 from .lattice import AtomState, MeasureFuture, MeasureResult, MoveExecution
 
 
@@ -59,6 +61,8 @@ class AtomInterpreter(Forward[MoveExecution]):
     best_state_cost: Callable[[AtomState], float] = field(
         kw_only=True, default=_default_best_state_cost
     )
+    _detectors: list[MoveExecution] = field(init=False, default_factory=list)
+    _observables: list[MoveExecution] = field(init=False, default_factory=list)
     final_measurement_count: int = field(init=False, default=0)
     measurement_record_count: int = field(init=False, default=0)
     keys = ("atom",)
@@ -68,6 +72,8 @@ class AtomInterpreter(Forward[MoveExecution]):
 
     def initialize(self) -> Self:
         self.current_state = AtomState()
+        self._detectors.clear()
+        self._observables.clear()
         self.final_measurement_count = 0
         self.measurement_record_count = 0
         return super().initialize()
@@ -338,3 +344,80 @@ class AtomInterpreter(Forward[MoveExecution]):
 
         self._check_records_cover_every_measurement(snapshots)
         return MeasurementPositions(measurements=tuple(snapshots))
+
+    def get_post_processing(
+        self, method: ir.Method[..., RetType]
+    ) -> PostProcessing[RetType]:
+        """Reconstruct user values, detectors and observables from the
+        *lowered move* kernel.
+
+        .. deprecated::
+            For user values, prefer
+            :func:`bloqade.gemini.post_processing.generate_post_processing`.
+
+            The two are interchangeable for that purpose: ``emit_return``
+            and ``generate_post_processing`` produce identical output from
+            the same raw measurement array, down to the leaf type and the
+            reduce used for detectors, and
+            ``tests/analysis/atom/test_post_processing_parity.py`` pins that
+            equivalence.
+
+            Prefer the alternative because of *what it reads*, not what it
+            returns. It abstract-interprets the **user's** kernel, whereas
+            this method reads ``MeasureResult.measurement_id`` off the
+            lowered move kernel — a numbering that only lines up with the
+            rest of the pipeline while lowering preserves the record
+            ordering, an invariant maintained by hand (see
+            ``tests/analysis/atom/test_measure_id_invariant.py``). Deriving
+            user values from the user's own kernel removes that coupling.
+
+        Callers that still need this, and what they are waiting on:
+
+        - ``emit_detectors`` / ``emit_observables`` have no replacement.
+          They come from ``annotate.SetDetector`` / ``SetObservable``
+          statements collected while walking the lowered kernel, and
+          ``generate_post_processing`` only sees a detector that appears
+          inside the return value.
+        - The simulator paths (``gemini/compile/task.py``,
+          ``gemini/device/physical_simulator.py``) consume a per-measurement
+          array directly and never project a hardware frame, so nothing
+          about the frame-mapping split applies to them.
+
+        No runtime warning is raised for that reason: every in-tree caller
+        is on one of those two paths, so a warning would fire on correct
+        code with nowhere to migrate.
+        """
+        _, output = self.run(method)
+
+        func = cast(Callable[[Sequence[bool]], RetType], constructor_function(output))
+        if func is None:
+            raise ValueError("Unable to infer return result value from method output")
+
+        def post_processing_return(measurement_results: Sequence[Sequence[bool]]):
+            yield from map(func, measurement_results)
+
+        detector_funcs: tuple[Callable[[Sequence[bool]], bool] | None, ...] = tuple(
+            map(constructor_function, self._detectors)
+        )
+        if not no_none_elements_tuple(detector_funcs):
+            raise ValueError("Unable to infer detector measurement values")
+
+        def detectors(measurement_results: Sequence[Sequence[bool]]):
+            yield from (
+                [func(measurement_shot) for func in detector_funcs]
+                for measurement_shot in measurement_results
+            )
+
+        observable_funcs: tuple[Callable[[Sequence[bool]], bool] | None, ...] = tuple(
+            map(constructor_function, self._observables)
+        )
+        if not no_none_elements_tuple(observable_funcs):
+            raise ValueError("Unable to infer observable measurement values")
+
+        def observables(measurement_results: Sequence[Sequence[bool]]):
+            yield from (
+                [func(measurement_shot) for func in observable_funcs]
+                for measurement_shot in measurement_results
+            )
+
+        return PostProcessing(post_processing_return, detectors, observables)
