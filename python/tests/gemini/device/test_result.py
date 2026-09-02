@@ -760,6 +760,24 @@ def test_slm_result_views_return_empty_lists_after_shot_filter(storage):
     assert result.filling_at_start == [[]]
 
 
+def test_postselect_on_fully_filled_preserves_per_subtask_layout(storage, monkeypatch):
+    result = GeminiLogicalResult(storage=storage)
+    monkeypatch.setattr(
+        GeminiLogicalResult,
+        "filling_at_start",
+        property(
+            lambda _self: [
+                [[True, True], [True, False], [True, True]],
+                [[False], [True]],
+            ]
+        ),
+    )
+
+    shots = [["a0", "a1", "a2"], ["b0", "b1"]]
+
+    assert result.postselect_on_fully_filled(shots) == [["a0", "a2"], ["b1"]]
+
+
 def test_return_values_rejects_compact_frames(storage):
     add_task_definition(
         storage,

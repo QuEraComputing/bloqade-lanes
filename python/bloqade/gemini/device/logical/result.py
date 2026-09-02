@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from bloqade.lanes.analysis.atom.analysis import PostProcessing
 
 RetType = TypeVar("RetType")
+ShotValue = TypeVar("ShotValue")
 
 
 @dataclass(kw_only=True)
@@ -224,3 +225,52 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         # TOOD: can do validation later on sorted/detected frames
         return ret_vals
+
+    def postselect_on_fully_filled(
+        self,
+        shots: Sequence[Sequence[ShotValue]],
+    ) -> list[list[ShotValue]]:
+        """Keep only shots whose mapped SORTED frame is fully filled.
+
+        ``shots`` must follow the same subtask and per-shot ordering as the
+        corresponding result property (for example, ``measurements`` or
+        ``observables``). To aggregate selected shots, call
+        :meth:`group_shots_by_metadata` on this method's return value.
+
+        Args:
+            shots: Per-subtask shot values.
+
+        Returns:
+            A new per-subtask list with every shot whose ``filling_at_start``
+            row contains a false value removed.
+
+        Raises:
+            ValueError: If the supplied shot layout does not align with
+                ``filling_at_start``.
+        """
+        fillings = self.filling_at_start
+        if len(shots) != len(fillings):
+            raise ValueError(
+                "shots must contain one sequence per filling_at_start subtask: "
+                f"got {len(shots)} sequences for {len(fillings)} subtasks."
+            )
+
+        selected_per_subtask: list[list[ShotValue]] = []
+        for subtask_shots, subtask_fillings in zip(shots, fillings, strict=True):
+            if len(subtask_shots) != len(subtask_fillings):
+                raise ValueError(
+                    "shots and filling_at_start disagree on the number of shots "
+                    f"for a subtask: {len(subtask_shots)} != "
+                    f"{len(subtask_fillings)}."
+                )
+            selected_per_subtask.append(
+                [
+                    shot
+                    for shot, filling in zip(
+                        subtask_shots, subtask_fillings, strict=True
+                    )
+                    if all(filling)
+                ]
+            )
+
+        return selected_per_subtask
