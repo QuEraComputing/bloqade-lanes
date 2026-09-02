@@ -10,7 +10,7 @@ Result post-processing is two steps analysed over two different IRs:
   ``MeasureResult.measurement_id``.
 
 ``get_shot_remapping`` produces a mapping keyed by the second, and
-``generate_post_processing`` converts the first to a zero-based array index.
+``build_post_processing`` converts the first to a zero-based array index.
 They compose only while those normalized positions agree, so preserving that
 correspondence through lowering is an obligation on bloqade-lanes, not a
 coincidence.
