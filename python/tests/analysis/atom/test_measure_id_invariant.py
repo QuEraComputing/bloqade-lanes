@@ -4,15 +4,16 @@ Result post-processing is two steps analysed over two different IRs:
 
 * ``MeasurementIDAnalysis`` (bloqade-circuit) walks the **user's** kernel
   and numbers positions in ``terminal_measure``'s flattened output as
-  ``RawMeasureId.idx``.
+  one-based ``RawMeasureId.idx`` record identifiers.
 * the atom analysis walks the **lowered physical move** kernel and
   numbers ``move.GetFutureResult`` emission order as
   ``MeasureResult.measurement_id``.
 
 ``get_shot_remapping`` produces a mapping keyed by the second, and
-``generate_post_processing`` consumes an array keyed by the first. They
-compose only while the two agree, so preserving that correspondence
-through lowering is an obligation on bloqade-lanes, not a coincidence.
+``generate_post_processing`` converts the first to a zero-based array index.
+They compose only while those normalized positions agree, so preserving that
+correspondence through lowering is an obligation on bloqade-lanes, not a
+coincidence.
 
 A failure here means a lowering change reordered ``GetFutureResult``
 emission relative to ``terminal_measure``'s structure. The symptom
@@ -93,14 +94,15 @@ def _three_qubits():
     ],
 )
 def test_lowering_preserves_measure_id_order(user_kernel):
-    """The two analyses must number the same measurements identically."""
+    """The two analyses must identify the same measurement positions."""
     step_one = _flat_measure_ids(user_kernel)
     step_two = _record_ids(user_kernel)
 
     assert step_one, "kernel produced no measurement records"
-    # Contiguous 0..n-1, and identical between the two analyses.
-    assert step_one == list(range(len(step_one)))
-    assert step_one == step_two
+    # RawMeasureId is a one-based record ID; AtomInterpreter exposes the
+    # corresponding zero-based slot in the compact measurement row.
+    assert step_one == list(range(1, len(step_one) + 1))
+    assert [record_id - 1 for record_id in step_one] == step_two
 
 
 @pytest.mark.slow
@@ -134,5 +136,7 @@ def test_return_shape_does_not_change_the_record_order():
     assert _record_ids(subset) == baseline
 
     # Step 1 reads a subset of the same numbering rather than renumbering.
-    assert set(_flat_measure_ids(subset)) <= set(baseline)
-    assert sorted(_flat_measure_ids(permuted)) == baseline
+    assert {record_id - 1 for record_id in _flat_measure_ids(subset)} <= set(baseline)
+    assert (
+        sorted(record_id - 1 for record_id in _flat_measure_ids(permuted)) == baseline
+    )

@@ -53,8 +53,8 @@ class LogicalQubit(interp.MethodTable):
                 raw_measure_ids = map(
                     RawMeasureId,
                     range(
-                        interp_.measure_count,
-                        interp_.measure_count + num_physical_qubits,
+                        interp_.measure_count + 1,
+                        interp_.measure_count + num_physical_qubits + 1,
                     ),
                 )
                 interp_.measure_count += num_physical_qubits
