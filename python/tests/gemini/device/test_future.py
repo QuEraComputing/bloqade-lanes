@@ -12,9 +12,16 @@ from bloqade.core.device import (
 from bloqade.core.device.future import ApiFetchOptions
 from qlam_core.plugins.compilations.api import CompilationsClient
 from qlam_core.plugins.definitions.api.client import DefinitionsClient
+from qlam_core.plugins.definitions.api.definitions_models import (
+    GroupSummary as DefinitionGroupSummary,
+    Program as DefinitionProgram,
+    Subtask as DefinitionSubtask,
+    TaskDefinitionResponse,
+)
 from qlam_core.plugins.results.api.client import ResultsClient
 from qlam_core.plugins.tasks.api.client import TasksClient
 from qlam_core.plugins.tasks.api.tasks_models import (
+    GroupSummary,
     Program,
     Subtask,
     Task,
@@ -33,6 +40,10 @@ def make_task(status, *, task_id="task-1", error_reasons=None, **extras):
         task_status=status,
         created_by=uuid4(),
         created_date=datetime.now(timezone.utc),
+        # ``group`` became a required field in qlam-core 0.6.0. Tests only
+        # ever parse Tasks the API hands back, so any resolvable group
+        # will do; nothing here reads it.
+        group=GroupSummary(id=uuid4()),
         error_reasons=error_reasons or [],
         **extras,
     )
@@ -721,14 +732,23 @@ def test_from_storage_uses_explicit_task_id():
 def test_from_task_id_fetches_definition_and_stores_it(
     tasks_client, definitions_client
 ):
-    task_def = TaskDefinition(
+    group_id = uuid4()
+    # ``DefinitionsClient.get`` returns a ``TaskDefinitionResponse``, not the
+    # ``TaskDefinition`` that gets stored -- the response declares ``group``,
+    # which ``from_task_id`` flattens to ``group_id`` as of bloqade-core 0.6.8.
+    # Returning the stored type here would not carry ``group`` at all.
+    fetched_def = TaskDefinitionResponse(
+        id=uuid4(),
         program_language="flair.v1",
-        programs=[Program(content="kernel")],
-        subtasks=[Subtask(program_index=0, num_shots=5)],
+        programs=[DefinitionProgram(content="kernel")],
+        subtasks=[DefinitionSubtask(program_index=0, num_shots=5)],
+        created_date=datetime.now(timezone.utc),
+        created_by=uuid4(),
+        group=DefinitionGroupSummary(id=group_id),
     )
     task = make_task(TaskStatus.COMPLETED, definition_id="def-id-1")
     tasks_client.get.return_value = task
-    definitions_client.get.return_value = task_def
+    definitions_client.get.return_value = fetched_def
 
     storage = DictStorage()
     fut = GeminiLogicalFuture.from_task_id(task_id="task-1", storage=storage)
@@ -738,5 +758,12 @@ def test_from_task_id_fetches_definition_and_stores_it(
     tasks_client.get.assert_called_once_with(id="task-1")
     definitions_client.get.assert_called_once_with(id="def-id-1")
     assert storage.task_ids() == {"task-1"}
-    assert storage.get_task_definition("task-1") == task_def
+    # What lands in storage is rebuilt, not the response object: the identifying
+    # fields plus ``group_id`` flattened out of ``group``.
+    assert storage.get_task_definition("task-1") == TaskDefinition(
+        program_language="flair.v1",
+        programs=[Program(content="kernel")],
+        subtasks=[Subtask(program_index=0, num_shots=5)],
+        group_id=group_id,
+    )
     assert storage.get_task_creation_time("task-1") == task.created_date
