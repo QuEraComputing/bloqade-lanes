@@ -778,6 +778,30 @@ def test_postselect_on_fully_filled_preserves_per_subtask_layout(storage, monkey
     assert result.postselect_on_fully_filled(shots) == [["a0", "a2"], ["b1"]]
 
 
+def test_postselect_on_fully_filled_rejects_misaligned_subtasks(storage, monkeypatch):
+    result = GeminiLogicalResult(storage=storage)
+    monkeypatch.setattr(
+        GeminiLogicalResult,
+        "filling_at_start",
+        property(lambda _self: [[[True]]]),
+    )
+
+    with pytest.raises(ValueError, match="one sequence per filling_at_start subtask"):
+        result.postselect_on_fully_filled([])
+
+
+def test_postselect_on_fully_filled_rejects_misaligned_shots(storage, monkeypatch):
+    result = GeminiLogicalResult(storage=storage)
+    monkeypatch.setattr(
+        GeminiLogicalResult,
+        "filling_at_start",
+        property(lambda _self: [[[True], [True]]]),
+    )
+
+    with pytest.raises(ValueError, match="disagree on the number of shots"):
+        result.postselect_on_fully_filled([["only-shot"]])
+
+
 def test_return_values_rejects_compact_frames(storage):
     add_task_definition(
         storage,
