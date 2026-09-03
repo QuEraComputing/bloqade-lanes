@@ -337,7 +337,7 @@ mle = [
 
 [[package]]
 name = "bloqade-lanes"
-version = "0.11.5"
+version = "0.11.6"
 source = { editable = "." }
 dependencies = [
     { name = "bloqade-circuit", extra = ["qasm2"] },
