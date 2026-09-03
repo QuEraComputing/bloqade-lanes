@@ -46,6 +46,7 @@ visualization = [
     "scipy>=1.15.3",
     "pyqt5>=5.15.11;  sys_platform == 'darwin'",
     "pyqt5>=5.15.11;  sys_platform == 'linux'",
+    "plotly>=5.24.0",
 ]
 msd-reprod = [
     # Decoder backends come from the shared `decoding` extra; this adds the
