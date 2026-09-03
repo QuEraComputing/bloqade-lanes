@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Generic, TypeVar
 
+import numpy as np
 from bloqade.core.device import Result
 
 from bloqade.gemini import logical
