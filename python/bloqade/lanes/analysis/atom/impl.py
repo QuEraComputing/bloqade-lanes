@@ -34,9 +34,7 @@ class Annotate(interp.MethodTable):
         frame: ForwardFrame[MoveExecution],
         stmt: annotate.stmts.SetDetector,
     ):
-        result = DetectorResult(frame.get(stmt.measurements))
-        interp_._detectors.append(result)
-        return (result,)
+        return (DetectorResult(frame.get(stmt.measurements)),)
 
     @interp.impl(annotate.stmts.SetObservable)
     def set_observable(
@@ -45,9 +43,7 @@ class Annotate(interp.MethodTable):
         frame: ForwardFrame[MoveExecution],
         stmt: annotate.stmts.SetObservable,
     ):
-        result = ObservableResult(frame.get(stmt.measurements))
-        interp_._observables.append(result)
-        return (result,)
+        return (ObservableResult(frame.get(stmt.measurements)),)
 
 
 @move.dialect.register(key="atom")

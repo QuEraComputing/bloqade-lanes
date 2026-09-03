@@ -3,7 +3,7 @@
     device.task / parameter_scan / batch_task
         → run_async(dry_run=False, storage=...)
         → future.result(timeout=...)
-        → result.shot_results() / .arguments() / .logical_results()
+        → result.shot_results() / .arguments() / .return_values
 
 The only things mocked are the four network boundaries: TasksClient,
 ResultsClient, AuthMixin.authenticate, and time.sleep. Everything else
@@ -156,10 +156,9 @@ def test_e2e_single_kernel_task(tasks_client, results_client):
     tasks_client.get.return_value = make_task_response("task-1")
     # One page is enough: with the default subtasks_per_fetch=10, a single-
     # subtask response signals "not full → done" without a follow-up call.
+    slm_shots = [(False,) * 160, (True,) * 160, (False,) * 160]
     results_client.get.return_value = make_results_page(
-        [
-            make_subtask(0, shots=[(False, False), (True, True), (False, False)]),
-        ]
+        [make_subtask(0, shots=slm_shots)]
     )
 
     device = GeminiLogicalDevice()
@@ -179,13 +178,14 @@ def test_e2e_single_kernel_task(tasks_client, results_client):
     assert len(shot_results) == 1  # one subtask
     np.testing.assert_array_equal(
         np.sort(shot_results[0], axis=0),
-        np.sort(np.array([[False, False], [False, False], [True, True]]), axis=0),
+        np.sort(np.asarray(slm_shots), axis=0),
     )
 
-    # logical_results runs the real post-processing pipeline against the
-    # stored kernel JSON; we only assert structure, not values.
-    logical_results = result.logical_results()
-    assert len(logical_results) == 1
+    # return_values runs the real SLM mapping and post-processing pipeline
+    # against the stored logical kernel JSON.
+    return_values = result.return_values
+    assert len(return_values) == 1
+    assert len(return_values[0]) == 3
 
 
 def test_e2e_parameter_scan(tasks_client, results_client):
