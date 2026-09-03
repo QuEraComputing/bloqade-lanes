@@ -24,7 +24,7 @@ from bloqade.core.device import (
 from bloqade.core.device.mixins import AuthMixin
 from qlam_core.plugins.results.api.client import ResultsClient
 from qlam_core.plugins.tasks.api.client import TasksClient
-from qlam_core.plugins.tasks.api.tasks_models import Task, TaskStatus
+from qlam_core.plugins.tasks.api.tasks_models import GroupSummary, Task, TaskStatus
 
 from bloqade import squin
 from bloqade.gemini import GeminiLogicalDevice, logical
@@ -38,6 +38,10 @@ def make_task_response(task_id, *, status=TaskStatus.COMPLETED, **extras):
         task_status=status,
         created_by=uuid4(),
         created_date=datetime.now(timezone.utc),
+        # ``group`` became a required field in qlam-core 0.6.0. Tests only
+        # ever parse Tasks the API hands back, so any resolvable group
+        # will do; nothing here reads it.
+        group=GroupSummary(id=uuid4()),
         error_reasons=[],
         **extras,
     )

@@ -295,16 +295,16 @@ tsim = [
 
 [[package]]
 name = "bloqade-core"
-version = "0.6.6"
+version = "0.6.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kirin-toolchain" },
     { name = "loguru" },
     { name = "qlam-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/ef/ddd09c71ccee7d10e667c1115865a8209aee2e1dbcd8534fa54fa50cb04f/bloqade_core-0.6.6.tar.gz", hash = "sha256:5257634635628eb1e7156f93a86c756734c3b89338b1852e6c0a7e19360d75e9", size = 215039, upload-time = "2026-07-15T10:45:57.79Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cc/54/448a4b44bd2d5c18a7a370d0094d178f6eab5e8f30d5c11cb7aac92a0e80/bloqade_core-0.6.8.tar.gz", hash = "sha256:a6edd45c655a79775296e9dfb6ddc12c3aabcd889d89da5decede118bc5aaeae", size = 255173, upload-time = "2026-08-25T17:37:55.507Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/17/882a241ac79b96f6dd76f28451d8778c1082f45c32063778357110679cd6/bloqade_core-0.6.6-py3-none-any.whl", hash = "sha256:bbd9fcaddba6c07309d1abf1214ca853d0cc56396ff98e1fa82250a1a5f0af66", size = 45576, upload-time = "2026-07-15T10:45:56.564Z" },
+    { url = "https://files.pythonhosted.org/packages/68/09/a19380ead9ef6b1847a6120caff9320f1e7465bfb8dd4c693ead1396b481/bloqade_core-0.6.8-py3-none-any.whl", hash = "sha256:58f4da9fef361223a5f58ba459d57546f45ce6c40261d78d9a2e442c4e6e793f", size = 52889, upload-time = "2026-08-25T17:37:53.945Z" },
 ]
 
 [[package]]
@@ -426,7 +426,7 @@ doc = [
 requires-dist = [
     { name = "bloqade-circuit", extras = ["cirq", "tsim"], marker = "extra == 'sim'", specifier = "~=0.15.1" },
     { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.1" },
-    { name = "bloqade-core", specifier = "~=0.6.4" },
+    { name = "bloqade-core", specifier = "~=0.6.8" },
     { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
     { name = "bloqade-lanes", extras = ["decoding"], marker = "extra == 'msd-reprod'" },
     { name = "bloqade-tsim", marker = "extra == 'sim'", specifier = "~=0.1.3" },
@@ -4885,7 +4885,7 @@ squin = [
 
 [[package]]
 name = "qlam-core"
-version = "0.4.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "email-validator" },
@@ -4895,7 +4895,7 @@ dependencies = [
     { name = "segno" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/59/d61132a997ee5d62468977d45b4d0177a9047dd8453935dd92d900c3841e/qlam_core-0.4.0-py3-none-any.whl", hash = "sha256:f3f3e47d17b1c40056349762f363600dc8da49b25f6159aec8851e9693930128", size = 148627, upload-time = "2026-06-30T20:33:16.444Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/f6/9db7682084d90cd00371d4fce981e83a0281e1b3571163c89e010adb0ed5/qlam_core-0.6.0-py3-none-any.whl", hash = "sha256:00ed021b8c6ebe6f0d7f874f5fc2530be0f8bef2d0f4a5d2347e89ba6f548561", size = 164230, upload-time = "2026-08-15T02:40:20.337Z" },
 ]
 
 [[package]]
