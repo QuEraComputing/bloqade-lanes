@@ -7,7 +7,7 @@
 
 ## Summary
 
-Add a third driver, `drivers::branch_and_bound::run_branch_and_bound`, beside
+Add a third driver, `drivers::branch_and_bound::BranchAndBound`, beside
 `frontier::run_search` and `entropy::entropy_search`. It is a textbook
 branch and bound over the crate's existing pieces: the `SearchGraph` arena as
 the state graph, `MoveGenerator` as the branching rule, `Objective` as `g`,
@@ -103,7 +103,7 @@ Properties, each of which the tests in §7 pin:
   This is the termination the entropy driver declined; here it is the point.
   The optimality claim is qualified because `generate_candidates` truncates
   (`max_movesets_per_group`, positive-score filter): the bound is admissible
-  for the true problem, but the search tree is a subgraph of it. §8 returns
+  for the true problem, but the search tree is a subgraph of it. §9 returns
   to this.
 - **Transposition handling.** `SearchGraph::insert` already rejects a
   re-discovery at `≥ g` and, on a cheaper re-discovery, mints a new `NodeId`
@@ -156,10 +156,12 @@ verify replay, and the Python result bindings. `SearchEvent::NodeExpanded`
 and `SearchEvent::GoalFound` are the only observer events the driver emits;
 `GoalFound` fires once per incumbent improvement.
 
-Lifted from `entropy.rs` (moved to a shared location, not duplicated):
-`Cut`, `bound_estimate`, `classify_cut`, `record_cut`. They depend only on
-`SearchGraph`, `NodeId`, and `CompletionBound`. The entropy driver keeps
-calling them from their new home; its behavior does not change.
+Lifted from `entropy.rs`: the logic of `Cut`, `bound_estimate`,
+`classify_cut`, and `record_cut`, which depends only on `SearchGraph`,
+`NodeId`, and `CompletionBound`. It is restructured as the `Pruner` type in
+§6 rather than copied as free functions. The entropy driver is left on its
+own copies for now so its behavior is untouched by this change; migrating
+it to `Pruner` is a follow-up.
 
 Changes to shared types, each small and behavior-preserving for existing
 callers:
@@ -175,7 +177,7 @@ callers:
    `Arc`, decided at implementation by whether the lifetime reaches
    `run_with_components` cleanly). Today it passes `None` and recomputes
    blended distances per call, a handicap the entropy driver does not have.
-   This is the one change without which the comparison in §7 is unfair.
+   This is the one change without which the comparison in §8 is unfair.
 3. **`Strategy::BranchAndBound { frontier: BnbFrontier }`** with
    `enum BnbFrontier { Dfs, Ids }` (LDS added when it exists).
 4. **`restarts.rs`** grows an arm that threads the objective and the
@@ -203,34 +205,101 @@ Not reused and not grown: `SearchState.entropy_map`. It exists so
 always the default. The driver's only per-node mutable state is the `h` memo
 and the `closed` bitmap.
 
-## Signature
+## API shape
+
+`run_search` and `entropy_search_with_tables` are free functions of eleven
+and twelve arguments, and the entropy driver's helpers inherit the problem
+(`record_cut` takes eight because the pruning state lives in loose locals).
+The new driver sorts its inputs by **lifetime** instead, which yields three
+scopes and one struct per scope.
+
+**Solve-scoped, immutable, `Sync`.** Built once per `solve()` and shared by
+reference across restarts. The objective/bound pairing assertion lives in
+the constructor, so it fires once per solve rather than once per run.
 
 ```rust
-pub fn run_branch_and_bound<G, O, B, Go, F, Ob>(
-    root: Config,
-    generator: &G,
-    objective: &O,
-    bound: &B,
-    goal: &Go,
-    frontier: &mut F,
-    ctx: &SearchContext,
-    state: &mut SearchState,
-    observer: &mut Ob,
+pub struct BranchAndBound<'a, O, B, Go> {
+    objective: &'a O,
+    bound: &'a B,
+    goal: &'a Go,
+    ctx: &'a SearchContext<'a>,
     max_expansions: Option<u32>,
-    seed_incumbent: Option<f64>,
-) -> SearchResult
+}
+
+impl<'a, O, B, Go> BranchAndBound<'a, O, B, Go>
 where
-    G: MoveGenerator,
     O: Objective,
     B: CompletionBound<Obj = O>,
     Go: Goal,
-    F: Frontier,
-    Ob: SearchObserver;
+{
+    /// Asserts `bound.objective_id() == objective.id()`.
+    pub fn new(objective: &'a O, bound: &'a B, goal: &'a Go,
+               ctx: &'a SearchContext<'a>, max_expansions: Option<u32>) -> Self;
+
+    pub fn run<G, F, Ob>(
+        &self,
+        root: Config,
+        generator: &G,
+        frontier: F,
+        observer: &mut Ob,
+        seed_incumbent: Option<f64>,
+    ) -> SearchResult
+    where
+        G: MoveGenerator,
+        F: Frontier,
+        Ob: SearchObserver;
+}
 ```
 
-Differences from `run_search`'s signature and why: the `CostFn` is an
+**Restart-scoped.** Varies per restart but is not mutated by the loop, so it
+is a `run` argument rather than a field: the generator (the restart dispatch
+constructs one per seed through `make_generator(seed, policy)`, so it cannot
+live in the solve-scoped struct) and the frontier. The frontier is taken
+**by value**: `Frontier` has no `is_empty`, so a `&mut F` cannot verify it
+starts empty, whereas consuming it makes "fresh per run" a type-level fact.
+The observer is `&mut` because callers (the trace collectors) own it across
+runs.
+
+**Run-scoped, mutable, private.** Everything the loop creates and discards:
+
+```rust
+struct Run<'a, B> {
+    graph: SearchGraph,
+    closed: Vec<bool>,
+    pruner: Pruner<'a, B>,
+    incumbent: Incumbent,
+    best: Option<NodeId>,
+    nodes_expanded: u32,
+    max_depth_seen: u32,
+    state: SearchState,          // required by MoveGenerator::generate; unused here
+}
+```
+
+Inner helpers take `&mut Run` and nothing else. Two of its fields are worth
+their own types:
+
+- `Pruner<'a, B>` owns `bound`, the `h` memo, the cut-dedup bitmap,
+  `BoundStats`, and `min_shot_cost`, and exposes
+  `fn cut(&mut self, graph: &SearchGraph, node: NodeId, cap: Option<f64>) -> Option<Cut>`
+  plus `fn into_stats(self) -> BoundStats`. This is where `Cut`,
+  `bound_estimate`, `classify_cut`, and `record_cut` land — as methods on the
+  thing that owns their state, which resolves open question 5. The entropy
+  driver can adopt `Pruner` later without behavior change; it is not
+  required to for this work.
+- `Incumbent` exposes `fn cost(&self) -> Option<f64>` and
+  `fn offer(&mut self, cost: f64) -> bool` (true if it improved). Backed by
+  a local `f64` now; the parallel step (change 5 in §5) swaps in an
+  `AtomicU64`-backed variant behind the same two methods, leaving the loop
+  untouched. Ties are rejected by `offer`, which is what makes the incumbent
+  sequence strictly decreasing.
+
+`SearchState` does not appear on the public surface at all: the driver
+creates a default one inside `run` because `MoveGenerator::generate` demands
+it, and never reads it.
+
+Differences from `run_search`'s inputs and why: the `CostFn` is an
 `Objective` so the pairing assertion has an `ObjectiveId` to check and
-`min_shot_cost` is available to `record_cut`; there is no `CandidateScorer`
+`min_shot_cost` is available to the pruner; there is no `CandidateScorer`
 because ordering is the generator's (change 1 above); there is no
 `max_depth` because a depth cap is not a cost cap under a non-uniform
 objective (the comment above `reaches_cost_cap` in `frontier.rs` already
@@ -317,11 +386,11 @@ constant factors even before pruning differences.
    is the right normalization is the objective-policy decision the August
    doc deferred, and this work should not settle it by default — the
    `Uniform` default stands until a separate decision.
-5. **Where `Cut`/`bound_estimate`/`classify_cut`/`record_cut` live.**
-   `bounds.rs` is the natural home (they are the bound's consumer-side
-   helpers), but they take a `SearchGraph`, which `bounds.rs` does not
-   currently depend on. A `drivers/prune.rs` keeps the dependency direction
-   as it is. Minor; decide at implementation.
+5. ~~Where `Cut`/`bound_estimate`/`classify_cut`/`record_cut` live.~~
+   Resolved by §6: they become methods on `Pruner`, in `drivers/prune.rs`
+   so `bounds.rs` does not grow a `SearchGraph` dependency. Whether the
+   entropy driver migrates to `Pruner` is a follow-up, not part of this
+   work.
 
 ## References
 
