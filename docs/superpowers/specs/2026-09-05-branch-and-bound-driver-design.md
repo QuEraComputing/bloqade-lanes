@@ -54,7 +54,7 @@ path time, deterministic tiebreaks)` and duration never enters pruning. The
 production path accumulates them. A driver whose incumbent comparison is the
 objective, full stop, is the missing consumer.
 
-`run_search` is the closer starting point — see §5 — but it returns on the
+`run_search` is the closer starting point — see *What is reused, what changes* — but it returns on the
 first goal and its `max_cost` is a static caller-supplied cap, so it is a
 one-shot bounded search, not a B&B. The cascade (`Strategy::Cascade`) uses
 exactly that: inner phase finds an incumbent, A\* refines under it. B&B folds
@@ -89,7 +89,7 @@ while let Some(n) = frontier.select_next():
 return SearchResult { goal: best, bound_stats, … }
 ```
 
-Properties, each of which the tests in §7 pin:
+Properties, each of which the tests in *Testing* pin:
 
 - **Soundness of pruning.** A node is dropped only when `g + h ≥ C` with `h`
   admissible for the objective `g` accumulates, or when `h = +∞`. The
@@ -103,8 +103,8 @@ Properties, each of which the tests in §7 pin:
   This is the termination the entropy driver declined; here it is the point.
   The optimality claim is qualified because `generate_candidates` truncates
   (`max_movesets_per_group`, positive-score filter): the bound is admissible
-  for the true problem, but the search tree is a subgraph of it. §9 returns
-  to this.
+  for the true problem, but the search tree is a subgraph of it.
+  *Completeness and widening* returns to this.
 - **Transposition handling.** `SearchGraph::insert` already rejects a
   re-discovery at `≥ g` and, on a cheaper re-discovery, mints a new `NodeId`
   and repoints the table (lazy deletion). The superseded-node skip at pop
@@ -145,6 +145,173 @@ allowed and is one of the configurations to measure, but the default ordering
 for DFS is the generator's own score order, which the driver preserves by
 pushing children in the order the generator returned them.
 
+## Completeness and widening
+
+With an unbounded budget, a DFS over a finite config space with a
+transposition table expands every node reachable *in the graph it is given*,
+so the loop itself cannot lose a path. But the loop never sees the true move
+graph; it sees the edges the generator emits at each node, and completeness
+of the search reduces to whether that emitted subgraph still connects the
+root to a goal. No shipped generator is complete:
+
+- `HeuristicGenerator` keeps only lanes with `d_now − d_after > 0` (step 3),
+  consulting its narrow non-improving fallback (`fallback_width`, 1 for
+  fixed-target) only when *no* atom anywhere improves. At a node where atom
+  A can progress, the detour atom B needs to step out of A's way is never
+  emitted. Solving a permutation with few empties routinely needs such
+  non-improving moves — this is pebble motion — so the improving-only
+  subgraph is disconnected for exactly the congested instances that matter.
+- The geometry gap (#910): a positive score is a distance claim made before
+  `build_aod_grids` decides executability. When every rectangle fails the
+  node emits nothing, and under `DeadlockPolicy::Skip` that is a dead end.
+- `top_c` and `max_movesets_per_group` drop legitimate children outright.
+- The escape hatches are single-lane moves to *free* destinations, so even
+  `DeadlockPolicy::AllMoves` cannot express a conveyor-chain shot into a
+  site the neighbour is vacating in the same shot — on a packed bus, the
+  only motion there is.
+
+`ExhaustiveGenerator` enumerates every executable rectangle per bus triplet
+and is the closest thing to a complete generator. Its single-triplet
+restriction does not cost reachability: a multi-triplet shot serializes into
+single-triplet shots except a simultaneous swap, which no single-bus shot
+can do either and which is a genuine infeasibility.
+
+**Widening is iterative broadening.** The remedy is Ginsberg & Harvey's
+*iterative broadening* (1990): search under a breadth cutoff, and rerun
+wider on failure. The entropy driver's per-node `entropy` counter is a local
+form of exactly this — `generate_candidates(config, entropy, ..)` yields a
+wider, reweighted candidate set as the counter grows — conflated with two
+other jobs that a B&B does not need: entropy as a *backtracking trigger*
+(`e >= e_max` forces a reversion), which plain exhaustion plus the bound
+replaces, and entropy as a *reordering signal* (the `w_d/e · d̂ + w_m·e · m̂`
+blend), which is an ordering heuristic and is kept out of the width
+mechanism on purpose. Three deliberate differences from the entropy version:
+
+1. **Levels are nested by construction:** `children(config, k) ⊆
+   children(config, k+1)`, obtained by *relaxing* (drop the positive filter,
+   then the group cap, then fall through to exhaustive) rather than
+   *reweighting*. The transposition table then discards what a narrower
+   level already produced, so no per-node `tried_moves` set is needed. The
+   entropy generator's sets are not nested — the perturbation is keyed on
+   `config ⊕ entropy` — which is why it carries one.
+2. **Widen on disconnection, not on pruning.** A subtree can close empty
+   because every leaf was cut by `g + h ≥ C` or because the generator ran
+   out of edges. Only the second is "stuck." The pruner already classifies
+   cuts, so the two are distinguishable; widening a pruned subtree is pure
+   waste and would recreate the run-to-budget behaviour this work is
+   leaving behind.
+3. **Global before local.** Local per-node widening needs a subtree-closed
+   event, which a frontier loop does not have — it would mean a per-node
+   open-child counter propagated upward, i.e. the entropy driver's
+   `n_children` bookkeeping returning. Global broadening needs none of it:
+   run level 0 to exhaustion; on no goal, run level 1 with the
+   `SearchGraph` kept and `closed` reset; stop at the first level with a
+   goal or when the terminal level exhausts. Re-expanding the previous
+   level's prefix is bounded by that level's node count, and completeness
+   is one sentence: the terminal level is exhaustive.
+
+**No trait change.** Global broadening runs each pass with one fixed
+generator, so the inner loop keeps taking a plain `MoveGenerator` and the
+levels are a *value*, not a type:
+
+```rust
+pub struct BroadeningSchedule<'a> {
+    /// Narrowest first. Each level's children must be a superset of the
+    /// previous level's on every config (property-tested, not trusted).
+    levels: Vec<&'a dyn MoveGenerator>,
+    /// Always last. This is what makes the schedule complete.
+    terminal: &'a ExhaustiveGenerator,
+}
+
+impl BranchAndBound<'_, O, B, Go> {
+    pub fn run_broadening<F, Ob>(&self, root: Config, schedule: &BroadeningSchedule<'_>,
+                                 make_frontier: impl Fn() -> F, observer: &mut Ob) -> SearchResult;
+}
+```
+
+A schedule such as `[Heuristic{top_c: 3}, Heuristic{top_c: None, AllMoves},
+Exhaustive]` is then something a benchmark varies without a code change; one
+virtual call per expansion is noise against candidate generation.
+`MoveGenerator` is deliberately **not** extended with a `level` argument
+defaulting to "ignore it": most generators cannot honour the nesting
+contract, and a default that silently drops its argument hides the one fact
+the driver needs. If local per-node widening is later shown to matter, that
+is the moment for a separate `WideningGenerator: MoveGenerator` trait with
+`max_level()` and `generate_at(level, ..)` carrying the nesting contract in
+its docs — a supertrait, so any widening generator still serves the plain
+drivers at level 0. It is a follow-up, not part of this work.
+
+**Generator purity stays.** `MoveGenerator::generate` never sees the
+`SearchGraph`; the transposition check runs *after* generation, at
+`graph.insert`, and the generator gets no feedback. That boundary is what
+makes the `h` memo exact, makes `ExhaustiveGenerator`'s reference optimum
+meaningful, and keeps restarts reproducible from a seed. Widening tells the
+generator "the driver wants more from this config," never "these configs
+are visited."
+
+**Disconnection becomes observable.** Frontier exhausted without a goal
+means "the emitted graph is disconnected." Push and Rotate is complete at
+two or more empties and already in the crate, so a PR-solvable instance
+that exhausts the terminal level without a goal is a mechanical detector of
+a generator (or schedule) that lost a path. *Testing* adds this as an
+assertion.
+
+### Not redoing work
+
+Candidate generation (scoring, chain closure, AOD-grid construction) is the
+dominant per-expansion cost, and there are two places the design above
+regenerates children for a config it has already expanded. Both are fixable
+without the generator ever seeing the visited set; both need the framework
+to leave one seam and one measurement in place from the start.
+
+**Within a pass — cheaper rediscovery.** `closed` guarantees each `NodeId`
+is expanded once, but `SearchGraph::insert` mints a *new* id for a config
+re-found at lower `g`, and that id is expanded again. `generate` is a pure
+function of the config (per level), so the children are bit-identical to
+the first expansion; only `g` differs. DFS hits this routinely — LIFO
+reaches a config deep first and finds it shallower later — where A\* with a
+consistent `h` never does. The remedy is a **children cache keyed by
+config**, not by `NodeId`: re-expansion re-inserts the cached
+`(MoveSet, score)` list under the new `g` and skips generation entirely.
+`SearchGraph::seen` already interns configs, so the slot hangs off the
+transposition entry. The `h` memo moves to the same slot for the same
+reason — today's `NodeId`-indexed memo recomputes `h` for a rediscovered
+config.
+
+**Across broadening levels — the re-expanded prefix.** Level `k+1` resets
+`closed` and regenerates at every node, including nodes where level `k`
+already emitted everything there was. The generator knows which case it is
+in: `HeuristicGenerator` knows whether the positive filter, `top_c`, or the
+group cap dropped anything; `ExhaustiveGenerator` never drops. So the
+addition is a **saturation bit** on the generator's output — "widening
+would add nothing at this config." A node saturated at level `k` keeps its
+`closed` flag into level `k+1`; only unsaturated nodes are re-expanded, and
+with the children cache those re-expansions regenerate only where something
+can change. Saturation is a fact about the generator's own output, not
+about traversal, so the purity boundary above is untouched.
+
+**Framework requirements, in this work:**
+
+- One expansion seam: `Run::expand(node)` is the only call site of
+  `generate`, so a cache can be inserted there without touching the loop.
+- Config-keyed per-node data: the `h` memo and (later) the children cache
+  are indexed by the transposition entry, not by `NodeId`.
+- Measurement before mechanism: `SearchResult` gains `reexpansions`
+  (`graph.len() − distinct configs`, free from the arena) and
+  `run_broadening` reports per-level expansion counts. The children cache
+  is built only if those numbers say so.
+- Room for the saturation bit: `MoveGenerator::generate` returns a small
+  `Generated { saturated: bool }` (default `false`, so every existing
+  generator is conservative and correct) rather than `()`. Mechanical
+  across the five production implementors (`Heuristic`, `Entropy`,
+  `Exhaustive`, `Greedy`, `LooseTarget`) and the test-only ones in
+  `frontier.rs`; the DSL kernel does not go through the trait.
+
+Not in scope: incremental generation across levels (emitting only
+`children(k+1) \ children(k)`). It would need the generator to know the
+previous level's output, which is where the purity argument bites. The
+saturation bit plus the cache recovers most of the saving without it.
+
 ## What is reused, what changes
 
 Reused unchanged: `SearchGraph`, `Config`, `MoveSet`, `LaneIndex`,
@@ -159,7 +326,7 @@ and `SearchEvent::GoalFound` are the only observer events the driver emits;
 Lifted from `entropy.rs`: the logic of `Cut`, `bound_estimate`,
 `classify_cut`, and `record_cut`, which depends only on `SearchGraph`,
 `NodeId`, and `CompletionBound`. It is restructured as the `Pruner` type in
-§6 rather than copied as free functions. The entropy driver is left on its
+*API shape* rather than copied as free functions. The entropy driver is left on its
 own copies for now so its behavior is untouched by this change; migrating
 it to `Pruner` is a follow-up.
 
@@ -177,7 +344,7 @@ callers:
    `Arc`, decided at implementation by whether the lifetime reaches
    `run_with_components` cleanly). Today it passes `None` and recomputes
    blended distances per call, a handicap the entropy driver does not have.
-   This is the one change without which the comparison in §8 is unfair.
+   This is the one change without which the comparison in *Evaluation* is unfair.
 3. **`Strategy::BranchAndBound { frontier: BnbFrontier }`** with
    `enum BnbFrontier { Dfs, Ids }` (LDS added when it exists).
 4. **`restarts.rs`** grows an arm that threads the objective and the
@@ -288,7 +455,7 @@ their own types:
   required to for this work.
 - `Incumbent` exposes `fn cost(&self) -> Option<f64>` and
   `fn offer(&mut self, cost: f64) -> bool` (true if it improved). Backed by
-  a local `f64` now; the parallel step (change 5 in §5) swaps in an
+  a local `f64` now; the parallel step (change 5 in *What is reused, what changes*) swaps in an
   `AtomicU64`-backed variant behind the same two methods, leaving the loop
   untouched. Ties are rejected by `offer`, which is what makes the incumbent
   sequence strictly decreasing.
@@ -333,6 +500,18 @@ Unit tests in `drivers/branch_and_bound.rs`, on the example arch:
   `BoundStats::frontier_exhausted: bool` (or a `SearchResult` field; decided
   at implementation) and pin it.
 
+- **Schedule nesting.** For a `BroadeningSchedule`, on random configs,
+  the child config set at level `k` is a subset of the set at level `k+1`,
+  and the terminal level's set equals `ExhaustiveGenerator`'s.
+- **Disconnection detector.** On random instances with ≥ 2 empties, if
+  `solve_push_rotate` succeeds then `run_broadening` must not exhaust its
+  terminal level without a goal. A failure here is a generator or schedule
+  that lost a path, not a search bug.
+- **Widening stops at the first productive level.** With a schedule whose
+  level 0 is disconnected for the instance and level 1 is not, the result
+  reports level 1 and the level-0 prefix was not re-expanded beyond its
+  own node count.
+
 Property test, same shape as `h0_never_exceeds_brute_force_optimum_on_randomized_instances`:
 randomized small instances, `ExhaustiveGenerator`, DFS and IDS frontiers,
 both objectives, cost equals brute force whenever the frontier exhausts.
@@ -364,30 +543,35 @@ constant factors even before pruning differences.
 
 ## Open questions
 
-1. **Generator truncation and the optimality claim.** `generate_candidates`
-   filters to positive-score entries and truncates per triplet group. Under
-   B&B that truncation is the difference between "optimal" and "optimal over
-   what we looked at." Options: accept and report it (the gap statistic is
-   still certified because `h(root)` is generator-independent); expose
-   `max_movesets_per_group` as the knob it is; or add a completeness mode
-   that widens the group cap when the frontier exhausts without proof. The
-   first is right for the initial measurement.
+1. ~~Generator truncation and the optimality claim.~~ Resolved by
+   *Completeness and widening*: a `BroadeningSchedule` whose terminal level
+   is `ExhaustiveGenerator` makes "frontier exhausted" a real optimality
+   proof over single-triplet shots, and the per-level result records which
+   level produced the plan. The initial measurement still reports the
+   single-generator gap (`h(root)` is generator-independent, so the gap
+   statistic is certified either way); the schedule is what turns the
+   residual gap into a proof or a counterexample.
 2. **Which generator is the default branching rule.** `HeuristicGenerator`
    (the frontier path's) and `generate_candidates` (the entropy driver's)
    both implement `MoveGenerator`. The reference uses the latter to isolate
    the loop; the evaluation should include the former, since it has the
    `DeadlockPolicy` machinery the frontier strategies depend on and the
    entropy generator's deadlock breaker is a different mechanism.
-3. **Deadlock policy under B&B.** The frontier strategies floor the policy at
-   `MoveBlockers` because they have no jump-back. DFS B&B has ordinary
-   backtracking, so `Skip` may be viable; IDS B&B has the same jump-back IDS
-   does. Measure rather than decide.
+3. **Deadlock policy under B&B.** Reframed by *Completeness and
+   widening*: `DeadlockPolicy` is a narrow, single-lane widening step, and
+   even `AllMoves` cannot express chain shots, so it is not the completeness
+   mechanism. It stays as a level-0 knob for the heuristic generator
+   (`MoveBlockers` is the expected default for DFS B&B, since the bound
+   prunes wide escape sets that IDS had to pay for), and completeness comes
+   from the schedule's terminal level instead. Whether a `Skip` level 0
+   followed by an `AllMoves` level 1 beats `MoveBlockers` alone is a
+   measurement.
 4. **`tau`.** The reference uses `fastest_lane_duration_us()`. Whether that
    is the right normalization is the objective-policy decision the August
    doc deferred, and this work should not settle it by default — the
    `Uniform` default stands until a separate decision.
 5. ~~Where `Cut`/`bound_estimate`/`classify_cut`/`record_cut` live.~~
-   Resolved by §6: they become methods on `Pruner`, in `drivers/prune.rs`
+   Resolved by *API shape*: they become methods on `Pruner`, in `drivers/prune.rs`
    so `bounds.rs` does not grow a `SearchGraph` dependency. Whether the
    entropy driver migrates to `Pruner` is a follow-up, not part of this
    work.
@@ -400,6 +584,8 @@ constant factors even before pruning differences.
 - `docs/superpowers/specs/2026-08-10-backwards-search-findings.md` — the
   entropy asymmetry; B&B orientation should follow the same
   `backwards_search` flag.
+- Ginsberg & Harvey, *Iterative Broadening*, AAAI 1990 / AIJ 55 (1992) —
+  the widening scheme in *Completeness and widening*.
 - Harvey & Ginsberg, *Limited Discrepancy Search*, IJCAI 1995. Korf,
   *Improved Limited Discrepancy Search*, AAAI 1996.
 - Dechter & Pearl, *Generalized best-first search strategies and the
