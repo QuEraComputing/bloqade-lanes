@@ -14,6 +14,9 @@ use crate::primitives::graph::{MoveSet, NodeId};
 use crate::primitives::lane_index::LaneIndex;
 use crate::traits::MoveGenerator;
 
+#[cfg(test)]
+mod oracle;
+
 /// Exhaustive AOD-rectangle move generator.
 ///
 /// For each `(move_type, bus_id, direction)` triplet, enumerates all valid
