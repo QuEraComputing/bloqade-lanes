@@ -9,6 +9,10 @@
 //!   resume buffer. Has its own driver function ([`entropy::entropy_search`])
 //!   because the revert-to-best-buffer mechanic doesn't fit the
 //!   pop-expand-push frontier abstraction.
+//! - [`branch_and_bound`] — branch and bound over a staged [`branch_and_bound::Schedule`]
+//!   of generators, generic over the [`frontier::Frontier`], with an
+//!   admissible completion bound ([`prune`]) and a termination verdict that
+//!   can be a proof.
 //!
 //! Both consume the same primitive types (`Config`, `SearchGraph`,
 //! `MoveSet`, `LaneIndex`, `DistanceTable`) and the same trait abstractions
@@ -19,10 +23,8 @@
 //! [`result`] holds the shared [`result::SearchResult`] type returned by
 //! both driver families.
 
+pub mod branch_and_bound;
 pub mod entropy;
 pub mod frontier;
-// Consumed by the branch-and-bound driver (Phase 3 of the B&B plan); until
-// then its only users are its tests.
-#[allow(dead_code)]
 pub(crate) mod prune;
 pub mod result;

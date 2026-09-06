@@ -178,6 +178,7 @@ impl<'a, B: CompletionBound> Pruner<'a, B> {
         self.stats.incumbent_cost = cost;
     }
 
+    #[cfg(test)]
     pub(crate) fn stats(&self) -> &BoundStats {
         &self.stats
     }
