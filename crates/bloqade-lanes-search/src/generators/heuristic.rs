@@ -1396,7 +1396,7 @@ mod tests {
 
     #[test]
     fn fewer_candidates_than_exhaustive() {
-        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
 
         let index = make_index();
         let targets = [(0, loc(0, 5)), (1, loc(0, 6))];
@@ -1414,7 +1414,7 @@ mod tests {
         generator.generate(&config, NodeId(0), &ctx, &mut state, &mut heuristic_out);
 
         // Exhaustive generator for comparison.
-        let exhaustive = ExhaustiveGenerator::new(None, None);
+        let exhaustive = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
         let mut exhaustive_out = Vec::new();
         exhaustive.generate(&config, NodeId(0), &ctx, &mut state, &mut exhaustive_out);
 

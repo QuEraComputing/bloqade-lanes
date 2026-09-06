@@ -48,7 +48,8 @@ pub use cost::{UniformCost, WeightedDuration};
 pub use drivers::result::SearchResult;
 pub use feasibility::{Feasibility, Obstruction, check as check_feasibility};
 pub use generators::{
-    DeadlockPolicy, ExhaustiveGenerator, GreedyGenerator, HeuristicGenerator, LooseTargetGenerator,
+    DeadlockPolicy, ExhaustiveGenerator, ExhaustivePrecondition, GreedyGenerator, GroupKey,
+    HeuristicGenerator, LooseTargetGenerator, SeedPolicy,
 };
 pub use goals::{AllAtTarget, EntanglingConstraintGoal, PartialPlacementGoal};
 pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};

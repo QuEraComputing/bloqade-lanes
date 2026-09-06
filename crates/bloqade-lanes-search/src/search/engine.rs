@@ -16,6 +16,7 @@ use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 
 use crate::drivers::entropy::BlendedColumnCache;
+use crate::generators::exhaustive::{ExhaustiveGenerator, ExhaustivePrecondition};
 use crate::ops::entangling::{self, WordPairDistances};
 use crate::primitives::distance::DistanceTable;
 use crate::primitives::lane_index::LaneIndex;
@@ -56,6 +57,9 @@ pub struct SearchEngine {
     /// Cross-solve cache of entropy blended-distance columns; see
     /// [`BlendedColumnCache`]. Remove alongside the entropy driver.
     blended_cache: OnceLock<BlendedColumnCache>,
+    /// Whether the exhaustive generator's architecture preconditions (P1,
+    /// P2) hold on this spec. A property of the arch alone, so checked once.
+    exhaustive_preconditions: OnceLock<Result<(), ExhaustivePrecondition>>,
 }
 
 impl std::fmt::Debug for SearchEngine {
@@ -121,6 +125,7 @@ impl SearchEngine {
             entangling_cache: OnceLock::new(),
             nohome_cache: OnceLock::new(),
             blended_cache: OnceLock::new(),
+            exhaustive_preconditions: OnceLock::new(),
         }
     }
 
@@ -133,6 +138,20 @@ impl SearchEngine {
     /// Access the underlying lane index.
     pub fn index(&self) -> &LaneIndex {
         &self.index
+    }
+
+    /// Whether [`ExhaustiveGenerator`](crate::generators::ExhaustiveGenerator)'s
+    /// model fits this architecture: P1 (distinct lane sources of a bus group
+    /// sit at distinct positions) and P2 (the group's source→destination
+    /// position map carries rectangles to rectangles).
+    ///
+    /// Computed on first use and cached; a strategy whose search space is the
+    /// exhaustive one consults this at its entry point and refuses the solve
+    /// with [`ConfigError::UnsupportedArchitecture`](crate::primitives::config::ConfigError)
+    /// rather than enumerate a model that does not fit the spec.
+    pub fn exhaustive_preconditions(&self) -> &Result<(), ExhaustivePrecondition> {
+        self.exhaustive_preconditions
+            .get_or_init(|| ExhaustiveGenerator::check_preconditions(&self.index))
     }
 
     /// Get or build the cached entangling precomputation.
