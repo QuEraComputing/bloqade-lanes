@@ -50,6 +50,7 @@ pub(crate) fn extract(
                 result.graph.config(result.graph.root()),
                 &move_layers,
                 ctx.index.arch_spec(),
+                ctx.blocked,
                 &goal_config,
             );
             let mut solved = SolveResult::solved(
