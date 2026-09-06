@@ -35,6 +35,7 @@
 //! | `xfer_us` | transport time: per operation the slowest lane, summed |
 //! | `lanes` | total single-atom moves — **informational only** |
 //! | `ms` | wall time of the solve |
+//! | `gap` | optimality gap of the bounded rows: `(cost − h(root)) / cost`, the share of the plan's cost the completion bound cannot see from the root (CSV: `h_root`, `cost`, `gap` per instance, in the run's objective units) |
 //!
 //! `lanes` is not a quality measure. One operation moves a whole rectangle, so
 //! packing more atoms per operation raises the lane count while lowering the
@@ -78,6 +79,11 @@ struct Outcome {
     proven: bool,
     stage_expansions: Vec<u32>,
     plan_stage: Option<u8>,
+    /// `h(root)` and the final incumbent's cost under the run's objective,
+    /// present only when the run had a completion bound and found a plan.
+    /// Their difference is the optimality gap: the part of the plan's cost
+    /// the bound could not see from the root.
+    bound: Option<(f64, f64)>,
 }
 
 /// One row of the comparison: a name and the search it runs.
@@ -220,6 +226,10 @@ fn run(engine: &Arc<SearchEngine>, instance: &Instance, search: &MoveSearch) -> 
             proven: r.proven,
             stage_expansions: r.stage_expansions,
             plan_stage: r.plan_stage,
+            bound: r
+                .bound_stats
+                .incumbent_cost
+                .map(|c| (r.bound_stats.root_lower_bound, c)),
         },
         Err(_) => Outcome {
             solved: false,
@@ -230,6 +240,7 @@ fn run(engine: &Arc<SearchEngine>, instance: &Instance, search: &MoveSearch) -> 
             proven: false,
             stage_expansions: Vec::new(),
             plan_stage: None,
+            bound: None,
         },
     }
 }
@@ -245,6 +256,10 @@ struct Totals {
     proven: usize,
     stage_expansions: Vec<u32>,
     plan_stage_max: Option<u8>,
+    /// Summed `h(root)` and summed incumbent cost over the bounded solves.
+    h_root_sum: f64,
+    cost_sum: f64,
+    bounded: usize,
 }
 
 impl Totals {
@@ -267,6 +282,24 @@ impl Totals {
         }
         if let Some(s) = o.plan_stage {
             self.plan_stage_max = Some(self.plan_stage_max.map_or(s, |m| m.max(s)));
+        }
+        if let Some((h, c)) = o.bound {
+            self.h_root_sum += h;
+            self.cost_sum += c;
+            self.bounded += 1;
+        }
+    }
+
+    /// Optimality gap as a share of the plan cost, `(cost - h(root)) / cost`,
+    /// over the bounded solves; `-` when the row runs unbounded.
+    fn gap(&self) -> String {
+        if self.bounded == 0 || self.cost_sum <= 0.0 {
+            "-".to_string()
+        } else {
+            format!(
+                "{:.0}%",
+                100.0 * (self.cost_sum - self.h_root_sum) / self.cost_sum
+            )
         }
     }
 
@@ -299,11 +332,11 @@ fn main() {
 
     if csv {
         println!(
-            "instance,arch,atoms,strategy,solved,ops,lanes,xfer_us,micros,proven,stages,plan_stage"
+            "instance,arch,atoms,strategy,solved,ops,lanes,xfer_us,micros,proven,stages,plan_stage,h_root,cost,gap"
         );
     } else {
         println!(
-            "\n{:<16} {:<18} {:>9} {:>7} {:>10} {:>8} {:>9} {:>6} {:>14} {:>5}",
+            "\n{:<16} {:<18} {:>9} {:>7} {:>10} {:>8} {:>9} {:>6} {:>14} {:>5} {:>5}",
             "group",
             "strategy",
             "solved",
@@ -313,9 +346,10 @@ fn main() {
             "ms",
             "proven",
             "stages",
-            "pstg"
+            "pstg",
+            "gap"
         );
-        println!("{}", "-".repeat(112));
+        println!("{}", "-".repeat(118));
     }
 
     for (arch_name, arch) in [("physical", PHYSICAL), ("logical", LOGICAL)] {
@@ -336,8 +370,16 @@ fn main() {
                             .map(|n| n.to_string())
                             .collect::<Vec<_>>()
                             .join("/");
+                        let (h_root, cost, gap) = match o.bound {
+                            Some((h, c)) => (
+                                format!("{h:.3}"),
+                                format!("{c:.3}"),
+                                format!("{:.3}", c - h),
+                            ),
+                            None => (String::new(), String::new(), String::new()),
+                        };
                         println!(
-                            "{id},{arch_name},{k},{},{},{},{},{:.1},{},{},{},{}",
+                            "{id},{arch_name},{k},{},{},{},{},{:.1},{},{},{},{},{h_root},{cost},{gap}",
                             row.name,
                             o.solved,
                             o.ops,
@@ -356,7 +398,7 @@ fn main() {
                 for (si, row) in rows.iter().enumerate() {
                     let t = &totals[si];
                     println!(
-                        "{:<16} {:<18} {:>4}/{:<4} {:>7} {:>10.0} {:>8} {:>9.1} {:>6} {:>14} {:>5}",
+                        "{:<16} {:<18} {:>4}/{:<4} {:>7} {:>10.0} {:>8} {:>9.1} {:>6} {:>14} {:>5} {:>5}",
                         format!("{arch_name}/k{k}"),
                         row.name,
                         t.solved,
@@ -367,7 +409,8 @@ fn main() {
                         t.micros as f64 / 1000.0,
                         t.proven,
                         t.stages(),
-                        t.plan_stage_max.map_or("-".to_string(), |s| s.to_string())
+                        t.plan_stage_max.map_or("-".to_string(), |s| s.to_string()),
+                        t.gap()
                     );
                 }
                 println!();
