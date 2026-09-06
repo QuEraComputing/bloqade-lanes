@@ -103,6 +103,9 @@ def test_cz_placements_rust_raises_on_failure(monkeypatch):
         status = "unsolvable"
         nodes_expanded = 0
         bound_stats: ClassVar[dict[str, float]] = {}
+        proven = False
+        stage_expansions: ClassVar[list[int]] = []
+        plan_stage = None
 
     class _FakeSolver:
         def solve(self, *_args):
@@ -185,6 +188,9 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
         status = "solved"
         nodes_expanded = 1
         bound_stats: ClassVar[dict[str, float]] = {}
+        proven = False
+        stage_expansions: ClassVar[list[int]] = []
+        plan_stage = None
         # move_layers: list[list[LaneAddress]] — MoveType.ZONE variant
         move_layers: ClassVar = [
             [NativeLane(MoveType.ZONE, 0, 0, 0, 0, BytecodeDirection.FORWARD)]
@@ -228,6 +234,9 @@ def test_cz_placements_counts_entropy_fallback_trace(monkeypatch):
         status = "solved"
         nodes_expanded = 1
         bound_stats: ClassVar[dict[str, float]] = {}
+        proven = False
+        stage_expansions: ClassVar[list[int]] = []
+        plan_stage = None
         move_layers: ClassVar = []
         goal_config: ClassVar = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
         entropy_trace = _FakeTrace()
@@ -281,6 +290,9 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
             self.status = "unsolvable"
             self.nodes_expanded = consumed
             self.bound_stats: dict[str, float] = {}
+            self.proven = False
+            self.stage_expansions: list[int] = []
+            self.plan_stage: int | None = None
 
     class _FakeSolver:
         def solve(self, _initial, _target, _blocked, max_expansions):
