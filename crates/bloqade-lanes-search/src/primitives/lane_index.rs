@@ -38,6 +38,10 @@ pub struct LaneIndex {
     lane_durations: HashMap<u64, f64>,
     /// Fastest lane duration across all lanes with paths. `None` if no paths.
     fastest_lane_duration: Option<f64>,
+    /// Whether every lane with a duration has a reverse lane (direction
+    /// flipped, other fields equal) with a bit-equal duration. Decides whether
+    /// a plan and its mirror image cost the same under a duration objective.
+    durations_direction_symmetric: bool,
     /// Precomputed AOD-grid lookup maps per [`GroupKey`]
     /// (`move_type, bus_id, direction`) bus group, spanning all zones.
     /// Occupancy-independent, so they are built once here and borrowed by every
@@ -241,6 +245,23 @@ impl LaneIndex {
             }
         }
 
+        // Durations are registered per lane *including direction*, and the
+        // format does not require a lane and its reverse to have equal paths.
+        // Record once whether they do, for the mirrored-solve cost carry-over.
+        let durations_direction_symmetric = lane_durations.iter().all(|(&enc, &d)| {
+            let lane = LaneAddr::decode_u64(enc);
+            let reverse = LaneAddr {
+                direction: match lane.direction {
+                    Direction::Forward => Direction::Backward,
+                    Direction::Backward => Direction::Forward,
+                },
+                ..lane
+            };
+            lane_durations
+                .get(&reverse.encode_u64())
+                .is_some_and(|r| r.to_bits() == d.to_bits())
+        });
+
         // Sort each outgoing-lane Vec by encoded lane address for deterministic
         // iteration order in score_moveset / mobility computation.
         for v in outgoing_by_src.values_mut() {
@@ -256,6 +277,7 @@ impl LaneIndex {
             positions,
             lane_durations,
             fastest_lane_duration: fastest,
+            durations_direction_symmetric,
             bus_grid_maps: HashMap::new(),
         };
         index.build_bus_grid_cache();
@@ -379,6 +401,14 @@ impl LaneIndex {
     /// Returns `None` if no lanes have path data.
     pub fn fastest_lane_duration_us(&self) -> Option<f64> {
         self.fastest_lane_duration
+    }
+
+    /// Whether every lane with a duration has a reverse lane of bit-equal
+    /// duration, so that a plan and its inverse cost the same under a
+    /// duration-weighted objective. Vacuously true on a spec without
+    /// transport paths.
+    pub fn durations_direction_symmetric(&self) -> bool {
+        self.durations_direction_symmetric
     }
 
     /// Borrow the precomputed AOD-grid maps for a bus group.

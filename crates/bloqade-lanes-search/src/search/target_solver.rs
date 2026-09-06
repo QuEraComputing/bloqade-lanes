@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
+use crate::cost::SolveObjective;
 use crate::generators::HeuristicGenerator;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::goals::AllAtTarget;
@@ -21,13 +22,16 @@ use crate::primitives::config::{
 };
 use crate::primitives::context::SearchContext;
 use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
+use crate::primitives::graph::MoveSet;
+use crate::primitives::lane_index::LaneIndex;
 use crate::push_rotate::{DEFAULT_MOVE_BUDGET, solve_push_rotate};
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::{BnbOptions, EntropyOptions, SolveOptions, Strategy};
+use crate::search::options::{BnbOptions, EntropyOptions, ObjectiveKind, SolveOptions, Strategy};
 use crate::search::restarts::run_with_components;
 use crate::search::result::SolveResult;
 use crate::search::result::SolveStatus;
+use crate::traits::Objective;
 
 /// Single-target move-synthesis solver.
 ///
@@ -89,6 +93,33 @@ impl TargetSolver {
             max_expansions,
         )
     }
+}
+
+/// Price a plan from `root` under `objective`, replaying the configurations
+/// layer by layer so a configuration-dependent objective sees the states it
+/// would have seen during the search.
+fn plan_cost<O: Objective>(
+    objective: &O,
+    index: &LaneIndex,
+    root: &Config,
+    layers: &[MoveSet],
+) -> f64 {
+    let mut config = root.clone();
+    let mut cost = 0.0;
+    for layer in layers {
+        let moves: Vec<(u32, LocationAddr)> = layer
+            .decode()
+            .iter()
+            .filter_map(|lane| {
+                let (src, dst) = index.endpoints(lane)?;
+                config.qubit_at(src).map(|q| (q, dst))
+            })
+            .collect();
+        let next = config.with_moves(&moves);
+        cost += objective.edge_cost(layer, &config, &next);
+        config = next;
+    }
+    cost
 }
 
 /// A strategy that runs the exhaustive generator needs its architecture
@@ -268,12 +299,27 @@ pub(crate) fn solve_with_engine(
             &blocked_encoded,
             &goal_config,
         );
-        // `nodes_expanded`, `deadlocks` and `cost` describe the search that
-        // actually ran; inversion preserves the layer count that `cost`
-        // measures, so they carry over unchanged.
+        // `nodes_expanded` and `deadlocks` describe the search that actually
+        // ran and carry over. `cost` does not in general: durations are
+        // registered per lane *including direction*, so under a duration
+        // objective the inverted plan is priced afresh, and optimality
+        // transfers only when the objective is direction-symmetric —
+        // `Uniform` always, `WeightedDuration` only when every lane's duration
+        // equals its reverse's.
+        let objective_kind = entropy_opts.map_or(ObjectiveKind::Uniform, |e| e.objective);
+        let objective = SolveObjective::from_kind(objective_kind, engine.index());
+        let cost = plan_cost(&objective, engine.index(), &root, &layers);
+        let symmetric = match objective_kind {
+            ObjectiveKind::Uniform => true,
+            ObjectiveKind::WeightedDuration { .. } => {
+                engine.index().durations_direction_symmetric()
+            }
+        };
         return Ok(SolveResult {
             move_layers: layers,
             goal_config,
+            cost,
+            proven: mirrored.proven && symmetric,
             ..mirrored
         });
     }
@@ -492,6 +538,89 @@ mod tests {
             backwards_search: true,
             ..SolveOptions::default()
         }
+    }
+
+    /// Durations are per lane and direction; symmetry is a property of the
+    /// spec the mirrored-solve cost carry-over has to check, not assume.
+    #[test]
+    fn duration_symmetry_is_read_off_the_spec() {
+        assert!(
+            make_engine().index().durations_direction_symmetric(),
+            "no paths: vacuous"
+        );
+        let asym =
+            SearchEngine::from_json(&crate::test_utils::asymmetric_duration_arch_json()).unwrap();
+        assert!(!asym.index().durations_direction_symmetric());
+    }
+
+    /// Under a duration objective on a spec whose reverse lanes are slower,
+    /// the mirrored solve's cost is the *backward* plan's; the returned
+    /// forward plan is priced afresh and optimality does not transfer. Under
+    /// unit cost both carry over.
+    #[test]
+    fn backwards_search_reprices_the_plan_under_an_asymmetric_objective() {
+        use crate::drivers::branch_and_bound::Widening;
+        use crate::search::options::{BnbOptions, BoundKind, EntropyOptions, ObjectiveKind};
+
+        let engine =
+            SearchEngine::from_json(&crate::test_utils::asymmetric_duration_arch_json()).unwrap();
+        let bnb = BnbOptions {
+            widening: Widening::UNLIMITED,
+            ..BnbOptions::default()
+        };
+        let initial = [(0, loc(0, 0))];
+        let target = [(0, loc(0, 5))];
+        let solve = |backwards: bool,
+                     kind: ObjectiveKind,
+                     from: [(u32, LocationAddr); 1],
+                     to: [(u32, LocationAddr); 1]| {
+            let opts = SolveOptions {
+                strategy: Strategy::BranchAndBound,
+                backwards_search: backwards,
+                ..SolveOptions::default()
+            };
+            let eopts = EntropyOptions {
+                completion_bound: Some(BoundKind::WeightedDistance),
+                objective: kind,
+                ..EntropyOptions::default()
+            };
+            solve_with_engine(
+                &engine,
+                &opts,
+                Some(&eopts),
+                &bnb,
+                from,
+                to,
+                std::iter::empty(),
+                None,
+            )
+            .unwrap()
+        };
+
+        let weighted = ObjectiveKind::WeightedDuration { tau: Some(1.0) };
+        let forward = solve(false, weighted, initial, target);
+        let mirror = solve(false, weighted, target, initial);
+        let via_mirror = solve(true, weighted, initial, target);
+        assert!(
+            forward.proven && mirror.proven,
+            "both direct solves are proven"
+        );
+        assert_ne!(forward.cost, mirror.cost, "the reverse lane is slower");
+        assert_eq!(via_mirror.move_layers, forward.move_layers);
+        assert_eq!(
+            via_mirror.cost, forward.cost,
+            "repriced from the inverted layers"
+        );
+        assert!(
+            !via_mirror.proven,
+            "optimality does not transfer across asymmetric durations"
+        );
+
+        let uniform = ObjectiveKind::Uniform;
+        let forward_u = solve(false, uniform, initial, target);
+        let via_mirror_u = solve(true, uniform, initial, target);
+        assert_eq!(via_mirror_u.cost, forward_u.cost);
+        assert!(via_mirror_u.proven, "unit cost is direction-symmetric");
     }
 
     #[test]
