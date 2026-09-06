@@ -7,6 +7,7 @@
 
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::ops::entangling::OCCUPANCY_PENALTY_DEFAULT;
+use crate::primitives::context::AodCapacity;
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +164,16 @@ pub struct SolveOptions {
     /// found. That is deliberate: a request to solve backwards returns the
     /// backwards solve's answer rather than silently searching twice.
     pub backwards_search: bool,
+    /// The AOD tone limit per axis for every shot in the plan; `None` is
+    /// unlimited.
+    ///
+    /// Copied onto the solve's `SearchContext`, where every shot assembler
+    /// reads it. This is a property of the hardware and will move to the
+    /// architecture spec once that carries one; it is a solve option in the
+    /// meantime so that a caller who knows the value can already route within
+    /// it. The default reproduces the uncapped behaviour of every existing
+    /// path.
+    pub aod_capacity: Option<AodCapacity>,
 }
 
 impl Default for SolveOptions {
@@ -176,6 +187,7 @@ impl Default for SolveOptions {
             top_c: None,
             fallback_push_rotate: false,
             backwards_search: false,
+            aod_capacity: None,
         }
     }
 }
@@ -335,6 +347,11 @@ impl EntanglingOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aod_capacity_is_unlimited_by_default() {
+        assert!(SolveOptions::default().aod_capacity.is_none());
+    }
 
     #[test]
     fn backwards_search_is_off_by_default() {

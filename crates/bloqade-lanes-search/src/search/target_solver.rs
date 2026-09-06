@@ -293,6 +293,7 @@ pub(crate) fn solve_with_engine(
         blocked: &blocked_encoded,
         targets: &target_encoded,
         cz_pairs: None,
+        capacity: opts.aod_capacity,
     };
 
     let lookahead = opts.lookahead;

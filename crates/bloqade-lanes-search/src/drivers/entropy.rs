@@ -3045,6 +3045,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         entropy_search(
             root,
@@ -3080,6 +3081,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         entropy_search(
             root,
@@ -3545,6 +3547,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams::default();
 
@@ -3576,6 +3579,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams {
             w_d: 0.0,
@@ -3617,6 +3621,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
 
         for lookahead in [false, true] {
@@ -3688,6 +3693,7 @@ mod tests {
                 blocked: &blocked,
                 targets,
                 cz_pairs: None,
+                capacity: None,
             };
 
             let uncached = HeuristicTables::build(&ctx, params.w_t, params.lookahead);
@@ -3725,6 +3731,7 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs: None,
+            capacity: None,
         };
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
 
@@ -3781,6 +3788,7 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs: None,
+            capacity: None,
         };
         let w_t = EntropyParams::default().w_t;
 
@@ -3815,6 +3823,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 0,
@@ -3838,6 +3847,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 4,
@@ -3907,6 +3917,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 8,
@@ -3949,6 +3960,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams {
             w_m: 0.0,
@@ -4015,6 +4027,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let goal = crate::goals::AllAtTarget::new(&target_encoded);
         let params = EntropyParams {
@@ -4118,6 +4131,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams::default();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
@@ -4179,6 +4193,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let objective = WeightedDuration::new(&index, 10.0);
@@ -4242,6 +4257,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams::default();
         let root = Config::new(initial).unwrap();
@@ -4477,6 +4493,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
 
         let accumulating = WeightedDuration::new(&index, 1.0);
@@ -4530,6 +4547,7 @@ mod chain_assembly {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 16,

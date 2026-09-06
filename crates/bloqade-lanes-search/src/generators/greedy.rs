@@ -151,6 +151,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
+            capacity: None,
         };
         let mut state = SearchState::default();
 
@@ -192,6 +193,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
+            capacity: None,
         };
         let mut state = SearchState::default();
 

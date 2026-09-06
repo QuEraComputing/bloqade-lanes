@@ -1071,6 +1071,7 @@ mod tests {
             blocked,
             targets,
             cz_pairs: None,
+            capacity: None,
         }
     }
 
@@ -1088,6 +1089,7 @@ mod tests {
             blocked,
             targets,
             cz_pairs: Some(cz_pairs),
+            capacity: None,
         }
     }
 
