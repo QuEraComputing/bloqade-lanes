@@ -367,7 +367,8 @@ fn subsets_up_to<T: Copy>(items: &[T], k: usize) -> Vec<Vec<T>> {
 
 // ── Generator side ──
 
-/// Run the generator on one configuration at `SeedPolicy::Any` and `cap`.
+/// Run the generator on one configuration at `SeedPolicy::Any` and `cap`,
+/// with no targets (so every atom is unresolved).
 pub(super) fn generator_output(
     index: &LaneIndex,
     config: &Config,
@@ -383,17 +384,45 @@ pub(super) fn generator_output(
         cz_pairs: None,
         capacity: None,
     };
-    let generator =
-        ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, cap).expect("preconditions hold");
+    exhaustive_in(&ctx, SeedPolicy::Any, cap, config)
+}
+
+/// Run the exhaustive generator in a given context.
+pub(super) fn exhaustive_in(
+    ctx: &SearchContext<'_>,
+    seed: SeedPolicy,
+    cap: Option<AodCapacity>,
+    config: &Config,
+) -> Vec<MoveCandidate> {
+    let generator = ExhaustiveGenerator::for_solve(ctx, seed, cap).expect("preconditions hold");
     let mut out = Vec::new();
     generator.generate(
         config,
         NodeId(0),
-        &ctx,
+        ctx,
         &mut SearchState::default(),
         &mut out,
     );
     out
+}
+
+/// One emitted shot in comparable form: its group, its lanes and its child.
+pub(super) type ShotRecord = (Group, Shot, Vec<(u32, u64)>);
+
+/// A generator's output reduced to `(group, tight shot, child)` triples, the
+/// form every cross-generator comparison works in.
+pub(super) fn shots_of(cands: &[MoveCandidate]) -> BTreeSet<ShotRecord> {
+    cands
+        .iter()
+        .filter(|c| !c.move_set.is_empty())
+        .map(|c| {
+            (
+                Group::of(&LaneAddr::decode_u64(c.move_set.encoded_lanes()[0])),
+                c.move_set.encoded_lanes().to_vec(),
+                c.new_config.as_entries().to_vec(),
+            )
+        })
+        .collect()
 }
 
 /// Where the generator and the oracle disagree, counted by kind, with a few
@@ -625,6 +654,63 @@ pub(super) fn sweep(
     summary
 }
 
+// ── Random instances with targets, for generators that read them ──
+
+/// One random instance: atoms on distinct endpoints, each with a distinct
+/// target endpoint (possibly its own site, so some atoms are resolved), a
+/// few blocked endpoints, and the atoms paired up for the loose-goal
+/// generators.
+pub(super) struct Instance {
+    pub(super) config: Config,
+    pub(super) targets: Vec<(u32, u64)>,
+    pub(super) blocked: HashSet<u64>,
+    pub(super) cz_pairs: Vec<(u32, u32)>,
+}
+
+pub(super) fn random_instance(rng: &mut SmallRng, endpoints: &[LocationAddr]) -> Instance {
+    let n_atoms = rng.random_range(1..=4usize.min(endpoints.len() - 1));
+    let n_blocked = rng.random_range(0..=2usize.min(endpoints.len() - n_atoms));
+    let picked: Vec<LocationAddr> = endpoints
+        .choose_multiple(rng, n_atoms + n_blocked)
+        .copied()
+        .collect();
+    let config = Config::new(
+        picked[..n_atoms]
+            .iter()
+            .enumerate()
+            .map(|(q, &l)| (q as u32, l)),
+    )
+    .expect("distinct locations");
+    let blocked: HashSet<u64> = picked[n_atoms..].iter().map(|l| l.encode()).collect();
+    // Targets: distinct unblocked endpoints; each atom stays put with
+    // probability 1/4 so resolved atoms occur.
+    let free: Vec<LocationAddr> = endpoints
+        .iter()
+        .copied()
+        .filter(|l| !blocked.contains(&l.encode()))
+        .collect();
+    let mut target_locs: Vec<LocationAddr> = free.choose_multiple(rng, n_atoms).copied().collect();
+    for (q, loc) in config.iter() {
+        if rng.random_range(0..4) == 0 && !target_locs.contains(&loc) {
+            target_locs[q as usize] = loc;
+        }
+    }
+    let targets: Vec<(u32, u64)> = target_locs
+        .iter()
+        .enumerate()
+        .map(|(q, l)| (q as u32, l.encode()))
+        .collect();
+    let cz_pairs: Vec<(u32, u32)> = (0..n_atoms as u32 / 2)
+        .map(|i| (2 * i, 2 * i + 1))
+        .collect();
+    Instance {
+        config,
+        targets,
+        blocked,
+        cz_pairs,
+    }
+}
+
 // ── Fixtures ──
 
 pub(super) fn physical_spec_json() -> &'static str {
@@ -814,6 +900,360 @@ mod tests {
             matches!(err, ExhaustivePrecondition::PositionCollision { .. }),
             "{err}"
         );
+    }
+
+    // ── Every other generator emits a subset of the exhaustive space ──
+
+    /// The generators under test, each run in the same context.
+    fn other_generators(
+        ctx: &SearchContext<'_>,
+        inst: &Instance,
+        arch: &std::sync::Arc<ArchSpec>,
+        index: &std::sync::Arc<LaneIndex>,
+        dist_table: &std::sync::Arc<DistanceTable>,
+    ) -> Vec<(&'static str, Vec<MoveCandidate>)> {
+        use crate::drivers::entropy::{EntropyParams, generate_candidates};
+        use crate::dsl::pipeline::{ScoredLane, group_by_triplet, pack_aod_rectangles};
+        use crate::generators::{
+            DeadlockPolicy, GreedyGenerator, HeuristicGenerator, LooseTargetGenerator,
+        };
+
+        let run = |g: &dyn MoveGenerator| {
+            let mut out = Vec::new();
+            g.generate(
+                &inst.config,
+                NodeId(0),
+                ctx,
+                &mut SearchState::default(),
+                &mut out,
+            );
+            out
+        };
+        let mut all: Vec<(&'static str, Vec<MoveCandidate>)> = Vec::new();
+        for policy in [
+            DeadlockPolicy::Skip,
+            DeadlockPolicy::MoveBlockers,
+            DeadlockPolicy::AllMoves,
+        ] {
+            for top_c in [None, Some(1)] {
+                let g = HeuristicGenerator::configured(7, policy, false, top_c);
+                all.push(("heuristic", run(&g)));
+                let g = HeuristicGenerator::configured(7, policy, true, top_c);
+                all.push(("heuristic+lookahead", run(&g)));
+            }
+        }
+        all.push(("greedy", run(&GreedyGenerator)));
+
+        let params = EntropyParams::default();
+        for entropy in [1, params.e_max] {
+            let cands = generate_candidates(&inst.config, entropy, &params, ctx, 3, None);
+            all.push((
+                "entropy",
+                cands
+                    .into_iter()
+                    .map(|c| MoveCandidate {
+                        move_set: c.move_set,
+                        new_config: c.new_config,
+                    })
+                    .collect(),
+            ));
+        }
+
+        if !inst.cz_pairs.is_empty() {
+            let inner =
+                HeuristicGenerator::configured(7, DeadlockPolicy::MoveBlockers, false, None);
+            let g = LooseTargetGenerator::from_targets(
+                inner,
+                inst.targets.clone(),
+                inst.cz_pairs.clone(),
+                arch.clone(),
+                index.clone(),
+                dist_table.clone(),
+            );
+            all.push(("loose-target", run(&g)));
+        }
+
+        // The DSL packer: every outgoing lane of every atom, unit scores.
+        let scored: Vec<ScoredLane> = inst
+            .config
+            .iter()
+            .flat_map(|(qid, loc)| {
+                index
+                    .outgoing_lanes(loc)
+                    .iter()
+                    .map(move |&lane| ScoredLane {
+                        qid,
+                        lane,
+                        score: 1.0,
+                    })
+            })
+            .collect();
+        let packed = pack_aod_rectangles(
+            group_by_triplet(scored),
+            &inst.config,
+            index,
+            &inst.blocked,
+            ctx.capacity,
+        );
+        all.push((
+            "pack_aod_rectangles",
+            packed
+                .into_iter()
+                .map(|c| MoveCandidate {
+                    move_set: c.move_set,
+                    new_config: c.new_config,
+                })
+                .collect(),
+        ));
+        all
+    }
+
+    /// One instance's context, owned so the generators can borrow it.
+    struct Owned {
+        arch: std::sync::Arc<ArchSpec>,
+        index: std::sync::Arc<LaneIndex>,
+        dist_table: std::sync::Arc<DistanceTable>,
+        inst: Instance,
+    }
+
+    impl Owned {
+        fn ctx(&self, capacity: Option<AodCapacity>) -> SearchContext<'_> {
+            SearchContext {
+                index: &self.index,
+                dist_table: &self.dist_table,
+                blocked: &self.inst.blocked,
+                targets: &self.inst.targets,
+                cz_pairs: Some(&self.inst.cz_pairs),
+                capacity,
+            }
+        }
+    }
+
+    fn owned_instance(json: &str, rng: &mut SmallRng, oracle: &Oracle) -> Owned {
+        let spec: ArchSpec = serde_json::from_str(json).expect("spec json parses");
+        let arch = std::sync::Arc::new(spec.clone());
+        let index = std::sync::Arc::new(LaneIndex::new(spec));
+        let inst = random_instance(rng, &oracle.endpoints());
+        let target_locs: Vec<u64> = inst.targets.iter().map(|&(_, l)| l).collect();
+        let dist_table = std::sync::Arc::new(DistanceTable::new(&target_locs, &index));
+        Owned {
+            arch,
+            index,
+            dist_table,
+            inst,
+        }
+    }
+
+    fn all_specs() -> Vec<(&'static str, String)> {
+        let mut specs = small_fixtures();
+        specs.push(("physical", physical_spec_json().to_string()));
+        specs.push(("logical", logical_spec_json().to_string()));
+        specs
+    }
+
+    /// Every other generator's shots are validator-accepted, and their tight
+    /// representatives are in the exhaustive output at the same capacity.
+    fn assert_subset_of_exhaustive(cap: Option<AodCapacity>, configs: usize) {
+        let mut report = String::new();
+        for (name, json) in all_specs() {
+            let (oracle, _) = load(&json);
+            let mut rng = SmallRng::seed_from_u64(SEED ^ 0x5B5E7);
+            let mut violations: BTreeMap<&str, usize> = BTreeMap::new();
+            let mut examples: Vec<String> = Vec::new();
+            for _ in 0..configs {
+                let owned = owned_instance(&json, &mut rng, &oracle);
+                let ctx = owned.ctx(cap);
+                let exhaustive = shots_of(&exhaustive_in(
+                    &ctx,
+                    SeedPolicy::Any,
+                    None,
+                    &owned.inst.config,
+                ));
+                let exhaustive_keys: HashSet<(Group, Shot)> =
+                    exhaustive.iter().map(|(g, s, _)| (*g, s.clone())).collect();
+                for (gen_name, cands) in other_generators(
+                    &ctx,
+                    &owned.inst,
+                    &owned.arch,
+                    &owned.index,
+                    &owned.dist_table,
+                ) {
+                    for cand in &cands {
+                        if cand.move_set.is_empty() {
+                            continue;
+                        }
+                        let lanes: Vec<OracleLane> = cand
+                            .move_set
+                            .decode()
+                            .iter()
+                            .map(|l| oracle_lane(&oracle, *l))
+                            .collect();
+                        let tag = match oracle.accept(
+                            &lanes,
+                            &owned.inst.config,
+                            &owned.inst.blocked,
+                            cap,
+                        ) {
+                            Err(why) => Some(why),
+                            Ok(child) => {
+                                if child != cand.new_config {
+                                    Some("misreported child")
+                                } else {
+                                    let rep = oracle.tight(&lanes, &owned.inst.config);
+                                    let mut shot: Shot =
+                                        rep.iter().map(|l| l.lane.encode_u64()).collect();
+                                    shot.sort_unstable();
+                                    let group = Group::of(&rep[0].lane);
+                                    if exhaustive_keys.contains(&(group, shot)) {
+                                        None
+                                    } else {
+                                        Some("tight representative not in the exhaustive output")
+                                    }
+                                }
+                            }
+                        };
+                        if let Some(tag) = tag {
+                            *violations.entry(gen_name).or_default() += 1;
+                            if examples.len() < 8 {
+                                examples.push(format!(
+                                    "{gen_name}: {:#x?} — {tag}",
+                                    cand.move_set.encoded_lanes()
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            if !violations.is_empty() {
+                report.push_str(&format!("\n[{name}] cap {cap:?}: {violations:?}"));
+                for e in &examples {
+                    report.push_str(&format!("\n    e.g. {e}"));
+                }
+            }
+        }
+        assert!(
+            report.is_empty(),
+            "a generator left the exhaustive space:{report}"
+        );
+    }
+
+    #[test]
+    fn every_generator_emits_a_subset_of_the_exhaustive_space() {
+        assert_subset_of_exhaustive(None, 40);
+    }
+
+    /// With a capacity on the context, no generator emits a rectangle over
+    /// it, and every shot is still inside the exhaustive output at that cap.
+    #[test]
+    fn capacity_binds_every_generator() {
+        assert_subset_of_exhaustive(Some(AodCapacity { x: 1, y: 2 }), 40);
+    }
+
+    // ── Levels nest ──
+
+    /// `Unresolved ⊆ Any`, equal when no atom is resolved; caps nest
+    /// componentwise; the tightest cap admitting every group's full grid
+    /// equals `None`; a cap on the context composes like the generator's own.
+    #[test]
+    fn levels_nest() {
+        for (name, json) in all_specs() {
+            let (oracle, index) = load(&json);
+            let mut rng = SmallRng::seed_from_u64(SEED ^ 0x1E5);
+            let src_pos = |l: &LaneAddr| index.position(index.endpoints(l).unwrap().0).unwrap();
+            // The cap that admits every group's full grid on this spec.
+            let full = index
+                .bus_groups()
+                .map(|(mt, b, z, d)| {
+                    let lanes = index.lanes_for(mt, b, z, d);
+                    let xs: BTreeSet<u64> = lanes.iter().map(|l| src_pos(l).0.to_bits()).collect();
+                    let ys: BTreeSet<u64> = lanes.iter().map(|l| src_pos(l).1.to_bits()).collect();
+                    (xs.len(), ys.len())
+                })
+                .fold(AodCapacity { x: 0, y: 0 }, |acc, (x, y)| AodCapacity {
+                    x: acc.x.max(x),
+                    y: acc.y.max(y),
+                });
+            for _ in 0..40 {
+                let inst = random_instance(&mut rng, &oracle.endpoints());
+                let target_locs: Vec<u64> = inst.targets.iter().map(|&(_, l)| l).collect();
+                let dist_table = DistanceTable::new(&target_locs, &index);
+                let ctx = SearchContext {
+                    index: &index,
+                    dist_table: &dist_table,
+                    blocked: &inst.blocked,
+                    targets: &inst.targets,
+                    cz_pairs: None,
+                    capacity: None,
+                };
+                let any = shots_of(&exhaustive_in(&ctx, SeedPolicy::Any, None, &inst.config));
+                let unresolved = shots_of(&exhaustive_in(
+                    &ctx,
+                    SeedPolicy::Unresolved,
+                    None,
+                    &inst.config,
+                ));
+                assert!(unresolved.is_subset(&any), "{name}: Unresolved ⊄ Any");
+                let none_resolved = inst
+                    .targets
+                    .iter()
+                    .all(|&(q, t)| inst.config.location_of(q).unwrap().encode() != t);
+                if none_resolved {
+                    assert_eq!(
+                        unresolved, any,
+                        "{name}: no atom resolved, levels must agree"
+                    );
+                }
+
+                let caps = [
+                    AodCapacity { x: 1, y: 1 },
+                    AodCapacity { x: 2, y: 2 },
+                    AodCapacity { x: 3, y: 3 },
+                    full,
+                ];
+                let mut previous: Option<BTreeSet<_>> = None;
+                for cap in caps {
+                    let at_cap = shots_of(&exhaustive_in(
+                        &ctx,
+                        SeedPolicy::Any,
+                        Some(cap),
+                        &inst.config,
+                    ));
+                    if let Some(prev) = &previous {
+                        assert!(prev.is_subset(&at_cap), "{name}: cap {cap:?} lost a shot");
+                    }
+                    previous = Some(at_cap);
+                }
+                assert_eq!(
+                    previous.unwrap(),
+                    any,
+                    "{name}: the full-grid cap must equal None"
+                );
+                let capped_ctx = SearchContext {
+                    index: &index,
+                    dist_table: &dist_table,
+                    blocked: &inst.blocked,
+                    targets: &inst.targets,
+                    cz_pairs: None,
+                    capacity: Some(AodCapacity { x: 2, y: 2 }),
+                };
+                let via_ctx = shots_of(&exhaustive_in(
+                    &capped_ctx,
+                    SeedPolicy::Any,
+                    None,
+                    &inst.config,
+                ));
+                let via_gen = shots_of(&exhaustive_in(
+                    &ctx,
+                    SeedPolicy::Any,
+                    Some(AodCapacity { x: 2, y: 2 }),
+                    &inst.config,
+                ));
+                assert_eq!(
+                    via_ctx, via_gen,
+                    "{name}: ctx and generator caps must agree"
+                );
+            }
+        }
     }
 
     /// The subset enumerator is what the oracle's completeness rests on.

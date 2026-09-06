@@ -487,7 +487,7 @@ impl MoveGenerator for HeuristicGenerator {
                     );
                 }
 
-                let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
+                let triplet_key = TripletKey::of(&lane);
                 all_scores.push((
                     triplet_key,
                     ScoredTriple {
@@ -508,7 +508,7 @@ impl MoveGenerator for HeuristicGenerator {
         for &(qid, loc_enc) in &accidental_cz_qubits {
             let loc = LocationAddr::decode(loc_enc);
             for (lane, dst) in escape_targets(loc, &occupied, ctx.index) {
-                let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
+                let triplet_key = TripletKey::of(&lane);
                 spectator_escapes.push((
                     triplet_key,
                     ScoredTriple {
@@ -579,7 +579,7 @@ impl MoveGenerator for HeuristicGenerator {
                 let (qid, loc_enc) = accidental_cz_qubits[0];
                 let loc = LocationAddr::decode(loc_enc);
                 if let Some((lane, dst)) = escape_targets(loc, &occupied, ctx.index).next() {
-                    let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
+                    let triplet_key = TripletKey::of(&lane);
                     selected.push((
                         triplet_key,
                         ScoredTriple {
@@ -620,17 +620,18 @@ impl MoveGenerator for HeuristicGenerator {
             TripletKey {
                 move_type: mt,
                 bus_id,
+                zone_id,
                 direction: dir,
             },
             qubits,
         ) in groups
         {
-            // Build grid context from ALL lanes on this bus group (cross-zone).
+            // Build grid context from all lanes of this bus group (one zone).
             let grid_ctx = crate::ops::aod_grid::BusGridContext::new(
                 ctx.index,
                 mt,
                 bus_id,
-                None,
+                zone_id,
                 dir,
                 &occupied,
                 ctx.capacity,
@@ -1886,8 +1887,8 @@ mod tests {
 
     #[test]
     fn scored_triple_tie_break_is_deterministic() {
-        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, Direction::Backward);
-        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, Direction::Backward);
+        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, 0, Direction::Backward);
+        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, 0, Direction::Backward);
         let mut entries = [
             (
                 key_bus2,
