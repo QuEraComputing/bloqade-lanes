@@ -385,7 +385,7 @@ fn slack(magnitude: f64) -> f64 {
     magnitude.abs().max(1.0) * 1e-12
 }
 
-/// Assert the [`Objective`] contract (C2, C3, C4) for every lane and a
+/// Assert the [`Objective`] contract (C2, C3, C4, C5) for every lane and a
 /// selection of multi-lane shots on `index`.
 ///
 /// These are the properties a weighted-distance bound's admissibility rests on,
@@ -433,12 +433,33 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
                 cost >= min_shot - slack(min_shot),
                 "C4: shot cost {cost} is below min_shot_cost {min_shot} for {shot:?}"
             );
-            for lane in shot.decode() {
+            let decoded = shot.decode();
+            for &lane in &decoded {
                 let w = objective.lane_weight(lane);
                 assert!(
                     cost >= w - slack(w),
                     "C3: shot cost {cost} is below lane weight {w} for {lane:?}"
                 );
+            }
+            // C5: dropping any one lane from a multi-lane shot must not raise
+            // its cost. The configuration is empty, so every lane here is a
+            // filler and "same movers" holds trivially for both shots.
+            if decoded.len() > 1 {
+                for (i, dropped) in decoded.iter().enumerate() {
+                    let without = MoveSet::new(
+                        decoded
+                            .iter()
+                            .enumerate()
+                            .filter(|&(j, _)| j != i)
+                            .map(|(_, &l)| l),
+                    );
+                    let cost_without = objective.edge_cost(&without, &config, &config);
+                    assert!(
+                        cost_without <= cost + slack(cost),
+                        "C5: dropping filler lane {dropped:?} from {shot:?} raised the shot cost \
+                         from {cost} to {cost_without}; adding a lane must never make a shot cheaper"
+                    );
+                }
             }
             checked += 1;
         }
@@ -453,8 +474,10 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
 mod tests {
     use super::*;
     use crate::cost::{UniformCost, WeightedDuration};
+    use crate::primitives::graph::MoveSet;
     use crate::test_utils::{example_arch_json, loc};
-    use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+    use crate::traits::CostFn;
+    use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     /// A no-solution `BoundStats` must equal itself.
@@ -511,6 +534,53 @@ mod tests {
         for tau in [0.5, 1.0, 10.0, 1000.0] {
             assert_objective_contract(&WeightedDuration::new(&index, tau), &index);
         }
+    }
+
+    /// An objective that rebates a shot for the lanes it carries: a shot costs
+    /// `1 + 0.5 / len`, so *adding* a filler lane makes it cheaper. C2, C3 and
+    /// C4 all hold (every shot costs at least `1.0`, which is both the lane
+    /// weight and the shot floor), so the only constraint it breaks is C5.
+    struct FillerDiscount;
+
+    impl CostFn for FillerDiscount {
+        fn edge_cost(&self, move_set: &MoveSet, _from: &Config, _to: &Config) -> f64 {
+            1.0 + 0.5 / move_set.len().max(1) as f64
+        }
+    }
+
+    impl Objective for FillerDiscount {
+        fn lane_weight(&self, _lane: LaneAddr) -> f64 {
+            1.0
+        }
+        fn min_shot_cost(&self) -> f64 {
+            1.0
+        }
+        fn id(&self) -> ObjectiveId {
+            ObjectiveId {
+                kind: "test-filler-discount",
+                params: 0,
+            }
+        }
+    }
+
+    /// The contract check must catch a lane-set *non*-monotone objective and
+    /// name C5, so that a reviewer reading the panic knows which of the five
+    /// constraints failed rather than which lane happened to trip it.
+    #[test]
+    fn a_filler_discounting_objective_fails_c5_by_name() {
+        let index = make_index();
+        let outcome =
+            std::panic::catch_unwind(|| assert_objective_contract(&FillerDiscount, &index));
+        let payload = outcome.expect_err("FillerDiscount must violate the contract");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("panic payload is a message");
+        assert!(
+            message.starts_with("C5:"),
+            "expected the C5 assertion to fire first, got: {message}"
+        );
     }
 
     // ── h0 ──
