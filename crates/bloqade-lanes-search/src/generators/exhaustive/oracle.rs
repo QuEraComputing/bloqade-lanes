@@ -27,7 +27,7 @@ use rand::rngs::SmallRng;
 use rand::seq::IndexedRandom;
 use rand::{Rng, SeedableRng};
 
-use super::ExhaustiveGenerator;
+use super::{ExhaustiveGenerator, ExhaustivePrecondition, SeedPolicy};
 use crate::primitives::config::Config;
 use crate::primitives::context::{AodCapacity, MoveCandidate, SearchContext, SearchState};
 use crate::primitives::distance::DistanceTable;
@@ -367,10 +367,7 @@ fn subsets_up_to<T: Copy>(items: &[T], k: usize) -> Vec<Vec<T>> {
 
 // ── Generator side ──
 
-/// Run the generator on one configuration.
-///
-/// This is the one place the oracle module touches the generator's
-/// constructor; Task 1.3 replaces the constructor and updates it here.
+/// Run the generator on one configuration at `SeedPolicy::Any` and `cap`.
 pub(super) fn generator_output(
     index: &LaneIndex,
     config: &Config,
@@ -386,7 +383,8 @@ pub(super) fn generator_output(
         cz_pairs: None,
         capacity: None,
     };
-    let generator = ExhaustiveGenerator::new(cap.map(|c| c.x), cap.map(|c| c.y));
+    let generator =
+        ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, cap).expect("preconditions hold");
     let mut out = Vec::new();
     generator.generate(
         config,
@@ -795,16 +793,29 @@ mod tests {
         assert_sound_on_shipped_specs(None, 6);
     }
 
-    /// `full.json` violates P1 (coincident words). The precondition check of
-    /// Task 1.3 must reject it before any enumeration runs.
-    ///
-    /// TODO(Task 1.3): un-ignore once `ExhaustiveGenerator::for_solve` exists
-    /// and assert `Err(ExhaustivePrecondition::PositionCollision { .. })`.
+    /// `full.json` violates P1 (coincident words): a legal spec on which the
+    /// enumeration model is not well defined. The precondition check rejects
+    /// it before any enumeration runs, so the oracle never has to compare
+    /// against output produced on it.
     #[test]
-    #[ignore = "waits for the P1/P2 precondition check (plan Task 1.3)"]
     fn full_json_is_rejected_by_the_precondition() {
-        let (_oracle, _index) = load(crate::test_utils::full_arch_json());
-        unimplemented!("Task 1.3");
+        let (_oracle, index) = load(crate::test_utils::full_arch_json());
+        let dist_table = DistanceTable::new(&[], &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &[],
+            cz_pairs: None,
+            capacity: None,
+        };
+        let err = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None)
+            .expect_err("full.json must be rejected");
+        assert!(
+            matches!(err, ExhaustivePrecondition::PositionCollision { .. }),
+            "{err}"
+        );
     }
 
     /// The subset enumerator is what the oracle's completeness rests on.

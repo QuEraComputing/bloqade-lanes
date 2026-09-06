@@ -811,7 +811,7 @@ mod tests {
         budget: u32,
     ) -> Option<f64> {
         use crate::drivers::frontier::{self, BfsFrontier};
-        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
         use crate::goals::AllAtTarget;
         use crate::observer::NoOpObserver;
         use crate::primitives::context::{SearchContext, SearchState};
@@ -832,7 +832,7 @@ mod tests {
         let mut frontier = BfsFrontier::new();
         let result = frontier::run_search(
             Config::new(initial.iter().copied()).unwrap(),
-            &ExhaustiveGenerator::new(None, None),
+            &ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap(),
             &DistanceScorer,
             &UniformCost,
             &goal,
