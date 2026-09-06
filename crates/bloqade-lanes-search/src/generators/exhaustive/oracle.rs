@@ -783,14 +783,12 @@ mod tests {
         assert_sound_on_shipped_specs(Some(AodCapacity { x: 2, y: 2 }), 30);
     }
 
-    /// Uncapped, the current generator enumerates every subset of a group's
-    /// unique columns and rows, so this sweep is slow in debug (~1 min);
-    /// run by hand with
-    /// `cargo test -p bloqade-lanes-search --release -- --ignored oracle`.
+    /// Uncapped: the tight enumeration is anchored on the atoms, so even with
+    /// no capacity the sweep is cheap (the previous geometry-anchored
+    /// enumeration took about a minute here in debug).
     #[test]
-    #[ignore = "slow in debug until the tight enumeration lands (plan Task 1.4)"]
     fn generator_is_sound_on_shipped_specs_uncapped() {
-        assert_sound_on_shipped_specs(None, 6);
+        assert_sound_on_shipped_specs(None, 30);
     }
 
     /// `full.json` violates P1 (coincident words): a legal spec on which the
