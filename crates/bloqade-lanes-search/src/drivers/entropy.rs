@@ -442,6 +442,7 @@ fn build_deadlock_breaker_candidate(
         TripletKey {
             move_type: mt,
             bus_id,
+            zone_id,
             direction: dir,
         },
         mut qubits,
@@ -449,7 +450,7 @@ fn build_deadlock_breaker_candidate(
     {
         qubits.sort_by(cmp_group_entries);
         let grid_ctx =
-            BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied, ctx.capacity);
+            BusGridContext::new(ctx.index, mt, bus_id, zone_id, dir, occupied, ctx.capacity);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -1613,7 +1614,7 @@ pub(crate) fn generate_candidates(
             let delta_d = d_now - effective_d_after;
             let delta_m = m_after - m_now;
 
-            let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
+            let triplet_key = TripletKey::of(&lane);
             raw_deltas.push((
                 triplet_key,
                 qid,
@@ -1693,6 +1694,7 @@ pub(crate) fn generate_candidates(
         TripletKey {
             move_type: mt,
             bus_id,
+            zone_id,
             direction: dir,
         },
         mut qubits,
@@ -1701,7 +1703,7 @@ pub(crate) fn generate_candidates(
         qubits.sort_by(cmp_group_entries);
 
         let grid_ctx =
-            BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied, ctx.capacity);
+            BusGridContext::new(ctx.index, mt, bus_id, zone_id, dir, &occupied, ctx.capacity);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -3368,8 +3370,8 @@ mod tests {
 
     #[test]
     fn scored_entry_tie_break_is_deterministic() {
-        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, Direction::Backward);
-        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, Direction::Backward);
+        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, 0, Direction::Backward);
+        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, 0, Direction::Backward);
         let mut entries = [
             (
                 key_bus2,
@@ -3874,7 +3876,7 @@ mod tests {
                 &index,
                 first.move_type,
                 first.bus_id,
-                None,
+                first.zone_id,
                 first.direction,
                 &occupied,
                 None,

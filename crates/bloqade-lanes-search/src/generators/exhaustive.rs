@@ -27,7 +27,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
 use crate::primitives::config::Config;
 use crate::primitives::context::{AodCapacity, MoveCandidate, SearchContext, SearchState};
@@ -53,39 +53,7 @@ pub enum SeedPolicy {
     Any,
 }
 
-/// A bus group: the four fields every lane of one shot must share (S3).
-///
-/// Ordered by field in this order, which is the emission order of the
-/// generator's groups.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GroupKey {
-    pub move_type: MoveType,
-    pub bus_id: u32,
-    pub zone_id: u32,
-    pub direction: Direction,
-}
-
-impl GroupKey {
-    /// The group a lane belongs to.
-    pub fn of(lane: &LaneAddr) -> Self {
-        Self {
-            move_type: lane.move_type,
-            bus_id: lane.bus_id,
-            zone_id: lane.zone_id,
-            direction: lane.direction,
-        }
-    }
-}
-
-impl fmt::Display for GroupKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:?} bus {} zone {} {:?}",
-            self.move_type, self.bus_id, self.zone_id, self.direction
-        )
-    }
-}
+pub use crate::primitives::ordering::GroupKey;
 
 /// Why the exhaustive model does not fit an architecture.
 ///
@@ -825,6 +793,7 @@ fn next_combination(indices: &mut [usize], n: usize) -> bool {
 mod tests {
     use std::collections::HashSet;
 
+    use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     use super::*;
@@ -1186,6 +1155,96 @@ mod tests {
             assert!(any.contains(shot), "{shot:#x?} not in the Any output");
         }
         assert!(unresolved.len() < any.len());
+    }
+
+    // ── Inter-zone moves survive per-zone grouping ──
+
+    /// On the two-zone fixture the only lanes are one zone bus, whose
+    /// forward lane moves `(zone 1, word 1)` to `(zone 0, word 0)`. Grouping
+    /// on the full key keeps that shot in one group (a zone-bus lane carries
+    /// its forward source zone), so cross-zone routing stays expressible under
+    /// every seed policy and at unit capacity.
+    #[test]
+    fn exhaustive_emits_the_zone_bus_lane_across_zones() {
+        let spec: ArchSpec =
+            serde_json::from_str(crate::test_utils::two_zone_bus_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let memory = LocationAddr {
+            zone_id: 1,
+            word_id: 1,
+            site_id: 0,
+        };
+        let gate = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+        let config = Config::new([(0, memory)]).unwrap();
+        let targets = vec![(0u32, gate.encode())];
+        let dist_table = DistanceTable::new(&[gate.encode()], &index);
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets, &blocked);
+        for seed in [SeedPolicy::Unresolved, SeedPolicy::Any] {
+            let generator =
+                ExhaustiveGenerator::for_solve(&ctx, seed, Some(AodCapacity { x: 1, y: 1 }))
+                    .unwrap();
+            let mut out = Vec::new();
+            generator.generate(
+                &config,
+                NodeId(0),
+                &ctx,
+                &mut SearchState::default(),
+                &mut out,
+            );
+            let crosses = out.iter().any(|c| {
+                c.new_config.location_of(0) == Some(gate)
+                    && c.move_set.decode()[0].move_type == MoveType::ZoneBus
+            });
+            assert!(
+                crosses,
+                "{seed:?}: the zone-bus shot into zone 0 must be emitted"
+            );
+        }
+    }
+
+    /// The same inter-zone shot through the heuristic generator, which now
+    /// groups per zone too: a zone bus is one group, so nothing about the
+    /// per-zone change can split the move it needs.
+    #[test]
+    fn heuristic_emits_the_zone_bus_lane_across_zones() {
+        use crate::generators::{DeadlockPolicy, HeuristicGenerator};
+        let spec: ArchSpec =
+            serde_json::from_str(crate::test_utils::two_zone_bus_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let memory = LocationAddr {
+            zone_id: 1,
+            word_id: 1,
+            site_id: 0,
+        };
+        let gate = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+        let config = Config::new([(0, memory)]).unwrap();
+        let targets = vec![(0u32, gate.encode())];
+        let dist_table = DistanceTable::new(&[gate.encode()], &index);
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets, &blocked);
+        let generator = HeuristicGenerator::configured(0, DeadlockPolicy::Skip, false, None);
+        let mut out = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx,
+            &mut SearchState::default(),
+            &mut out,
+        );
+        assert!(
+            out.iter()
+                .any(|c| c.new_config.location_of(0) == Some(gate)),
+            "the heuristic generator must still route across the zone bus"
+        );
     }
 
     #[test]

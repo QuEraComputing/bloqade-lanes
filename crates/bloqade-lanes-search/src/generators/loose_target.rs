@@ -233,7 +233,7 @@ impl MoveGenerator for LooseTargetGenerator {
             blocked: ctx.blocked,
             targets: &targets,
             cz_pairs: ctx.cz_pairs,
-            capacity: None,
+            capacity: ctx.capacity,
         };
         self.inner.generate(config, node_id, &loose_ctx, state, out);
     }

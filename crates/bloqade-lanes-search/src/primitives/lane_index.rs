@@ -262,21 +262,22 @@ impl LaneIndex {
         index
     }
 
-    /// Precompute the occupancy-independent AOD-grid maps for every bus group.
+    /// Precompute the occupancy-independent AOD-grid maps for every bus group
+    /// `(move_type, bus_id, zone_id, direction)`.
     ///
     /// Runs once at construction after all lane/endpoint/position indexes are
-    /// populated. Each `BusGridContext` for the all-zones case then borrows
-    /// the cached maps instead of rebuilding them (the entropy driver's hot
-    /// path builds one context per bus-triplet group, many times per solve).
+    /// populated. Each `BusGridContext` then borrows the cached maps instead
+    /// of rebuilding them (the entropy driver's hot path builds one context
+    /// per bus group, many times per solve).
     fn build_bus_grid_cache(&mut self) {
-        let groups: Vec<(MoveType, u32, Direction)> = self.bus_groups_no_zone().collect();
+        let groups: Vec<(MoveType, u32, u32, Direction)> = self.bus_groups().collect();
         let mut cache = HashMap::with_capacity(groups.len());
-        for (mt, bus_id, dir) in groups {
-            // `from_lanes` consumes the iterator directly — both borrows of
-            // `self` are shared, so no intermediate `Vec` is needed.
-            let maps =
-                BusGridMaps::from_lanes(self, self.lanes_for_all_zones(mt, bus_id, dir).copied());
-            cache.insert(TripletKey::new(mt, bus_id, dir), maps);
+        for (mt, bus_id, zone_id, dir) in groups {
+            let maps = BusGridMaps::from_lanes(
+                self,
+                self.lanes_for(mt, bus_id, zone_id, dir).iter().copied(),
+            );
+            cache.insert(TripletKey::new(mt, bus_id, zone_id, dir), maps);
         }
         self.bus_grid_maps = cache;
     }
@@ -374,20 +375,6 @@ impl LaneIndex {
             .flat_map(|(_, lanes)| lanes.iter())
     }
 
-    /// Iterate distinct `(move_type, bus_id, direction)` bus groups (ignoring zone).
-    pub fn bus_groups_no_zone(&self) -> impl Iterator<Item = (MoveType, u32, Direction)> + '_ {
-        let mut seen = std::collections::HashSet::new();
-        self.lanes_by_triplet
-            .keys()
-            .filter_map(move |&(mt, bus_id, _zone_id, dir)| {
-                if seen.insert((mt, bus_id, dir)) {
-                    Some((mt, bus_id, dir))
-                } else {
-                    None
-                }
-            })
-    }
-
     /// Get cached lane duration in microseconds. Returns `None` if the lane
     /// has no transport path data.
     pub fn lane_duration_us(&self, lane: &LaneAddr) -> Option<f64> {
@@ -400,7 +387,7 @@ impl LaneIndex {
         self.fastest_lane_duration
     }
 
-    /// Borrow the precomputed all-zones AOD-grid maps for a bus group.
+    /// Borrow the precomputed AOD-grid maps for a bus group.
     ///
     /// Returns `None` if the group has no lanes. Used by
     /// [`BusGridContext::new`](crate::ops::aod_grid) to avoid rebuilding the
@@ -409,9 +396,11 @@ impl LaneIndex {
         &self,
         mt: MoveType,
         bus_id: u32,
+        zone_id: u32,
         dir: Direction,
     ) -> Option<&BusGridMaps> {
-        self.bus_grid_maps.get(&TripletKey::new(mt, bus_id, dir))
+        self.bus_grid_maps
+            .get(&TripletKey::new(mt, bus_id, zone_id, dir))
     }
 }
 

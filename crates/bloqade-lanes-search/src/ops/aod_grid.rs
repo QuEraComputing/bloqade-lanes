@@ -235,11 +235,10 @@ pub(crate) fn close_chain_entries(
 /// non-mover sources may still fill out the complete AOD rectangle.
 ///
 /// The arch-derived lookup maps are borrowed from [`LaneIndex`]'s precomputed
-/// cache when possible (the common all-zones case); only occupancy is
-/// per-call state.
+/// per-group cache; only occupancy is per-call state.
 pub(crate) struct BusGridContext<'a> {
     /// Occupancy-independent bus lookups, borrowed from the `LaneIndex`
-    /// cache in the all-zones case, or freshly built for a single zone.
+    /// cache (tests fabricate their own).
     maps: Cow<'a, BusGridMaps>,
     /// Locations occupied by atoms or blocked locations in the current config.
     /// Borrowed in production (one context per bus group per node — cloning
@@ -257,12 +256,15 @@ pub(crate) struct BusGridContext<'a> {
 }
 
 impl<'a> BusGridContext<'a> {
-    /// Build a grid context from all lanes on a bus group.
+    /// Build a grid context from all lanes of one bus group
+    /// `(move_type, bus_id, zone_id, direction)`.
     ///
     /// `occupied` is the set of encoded locations currently occupied by atoms.
-    /// When `zone_id` is `None`, lanes from all zones are included and the
-    /// arch maps are borrowed from the `LaneIndex` cache (zero rebuild). When
-    /// `zone_id` is `Some`, the maps are built for that zone only.
+    /// The arch maps are borrowed from the `LaneIndex` cache (one entry per
+    /// group, zero rebuild); a group the index has no lanes for gets empty
+    /// maps. Grouping is per zone because a rectangle is one AOD operation on
+    /// one zone's grid: a product spanning two zones is never a valid shot,
+    /// however well its positions align.
     ///
     /// `capacity` caps every rectangle this context builds at that many
     /// distinct source columns and rows; pass the solve's
@@ -271,20 +273,14 @@ impl<'a> BusGridContext<'a> {
         index: &'a LaneIndex,
         mt: MoveType,
         bus_id: u32,
-        zone_id: Option<u32>,
+        zone_id: u32,
         dir: Direction,
         occupied: &'a HashSet<u64>,
         capacity: Option<AodCapacity>,
     ) -> Self {
-        let maps = match zone_id {
-            None => match index.bus_grid_maps(mt, bus_id, dir) {
-                Some(cached) => Cow::Borrowed(cached),
-                None => Cow::Owned(BusGridMaps::default()),
-            },
-            Some(z) => Cow::Owned(BusGridMaps::from_lanes(
-                index,
-                index.lanes_for(mt, bus_id, z, dir).iter().copied(),
-            )),
+        let maps = match index.bus_grid_maps(mt, bus_id, zone_id, dir) {
+            Some(cached) => Cow::Borrowed(cached),
+            None => Cow::Owned(BusGridMaps::default()),
         };
 
         Self {

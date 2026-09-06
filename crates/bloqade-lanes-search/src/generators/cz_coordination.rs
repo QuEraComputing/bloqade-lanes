@@ -118,10 +118,10 @@ mod tests {
     // Two distinct bus triplets for boost tests; the specific variants are
     // irrelevant — only triplet equality/inequality matters.
     fn key_a() -> TripletKey {
-        TripletKey::new(MoveType::WordBus, 1, Direction::Backward)
+        TripletKey::new(MoveType::WordBus, 1, 0, Direction::Backward)
     }
     fn key_b() -> TripletKey {
-        TripletKey::new(MoveType::ZoneBus, 2, Direction::Backward)
+        TripletKey::new(MoveType::ZoneBus, 2, 0, Direction::Backward)
     }
 
     fn triple(qubit_id: u32, score: i32) -> ScoredTriple {

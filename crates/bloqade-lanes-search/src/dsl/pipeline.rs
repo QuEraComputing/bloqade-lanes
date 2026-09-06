@@ -55,17 +55,13 @@ pub(crate) struct PackedCandidate {
     pub score_sum: f64,
 }
 
-/// Stage 3: group entries by `(move_type, bus_id, direction)`, sorted by
-/// triplet key ascending. Within each group, entries preserve the
+/// Stage 3: group entries by `(move_type, bus_id, zone_id, direction)`,
+/// sorted by group key ascending. Within each group, entries preserve the
 /// policy-provided input order.
 pub(crate) fn group_by_triplet(scored: Vec<ScoredLane>) -> Vec<TripletGroup> {
     let mut groups: BTreeMap<TripletKey, Vec<ScoredLane>> = BTreeMap::new();
     for entry in scored {
-        let key = TripletKey::new(
-            entry.lane.move_type,
-            entry.lane.bus_id,
-            entry.lane.direction,
-        );
+        let key = TripletKey::of(&entry.lane);
         groups.entry(key).or_default().push(entry);
     }
     groups
@@ -105,11 +101,11 @@ pub(crate) fn pack_aod_rectangles(
         let TripletKey {
             move_type: mt,
             bus_id,
+            zone_id,
             direction: dir,
         } = key;
 
-        // Build the grid context across all zones for the bus.
-        let grid_ctx = BusGridContext::new(index, mt, bus_id, None, dir, &occupied, capacity);
+        let grid_ctx = BusGridContext::new(index, mt, bus_id, zone_id, dir, &occupied, capacity);
 
         // Build src→lane entries and lane→entry lookup for score lifting
         // and destination derivation.
