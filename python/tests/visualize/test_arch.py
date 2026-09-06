@@ -23,6 +23,7 @@ from bloqade.lanes.bytecode._native import (
 )
 from bloqade.lanes.bytecode.encoding import Direction, SiteLaneAddress
 from bloqade.lanes.bytecode.word import Word
+from bloqade.lanes.visualize import arch as arch_visualization
 from bloqade.lanes.visualize.arch import ArchVisualizer
 
 # ── Hand-built minimal ArchSpec fixture ──
@@ -67,6 +68,14 @@ def small_arch_spec() -> ArchSpec:
 
 
 # ── ArchVisualizer class ──
+
+
+def test_interactive_javascript_is_loaded_from_packaged_asset() -> None:
+    script = arch_visualization._arch_interactive_script()
+
+    assert script.startswith("(function () {")
+    assert "{plot_id}" in script
+    assert "data-arch-visualizer-bus-selectors" in script
 
 
 def test_x_bounds(small_arch_spec: ArchSpec) -> None:
@@ -169,7 +178,9 @@ def test_plot_interactive_bus_hover_identifies_endpoints(
         "(0, 0, 0)",
         "(0, 0, 1)",
         0,
+        "site",
     )
+    assert "move type: %{customdata[4]}" in site_bus_trace.hovertemplate
     assert "bus ID: %{customdata[3]}" in site_bus_trace.hovertemplate
     assert "source: %{customdata[1]}" in site_bus_trace.hovertemplate
     assert "destination: %{customdata[2]}" in site_bus_trace.hovertemplate
@@ -188,7 +199,11 @@ def test_plot_interactive_site_hover_keeps_text_compact_and_stores_lane_paths(
         value for value in site_trace.customdata if list(value[:3]) == [0, 0, 0]
     )
 
-    assert list(site_data) == [0, 0, 0]
+    assert list(site_data) == [0, 0, 0, 0, 0]
+    assert "grid (x, y): (%{customdata[3]}, %{customdata[4]})" in (
+        site_trace.hovertemplate
+    )
+    assert "position (x, y): (%{x:.3f}, %{y:.3f}) µm" in (site_trace.hovertemplate)
     assert "Touching lanes" not in site_trace.hovertemplate
     assert site_trace.hoverlabel.align == "left"
 
@@ -200,9 +215,76 @@ def test_plot_interactive_site_hover_keeps_text_compact_and_stores_lane_paths(
     ]
     assert meta["archVisualizerSiteLanePathRefs"]["0,0,1"] == [(0, True)]
     first_path = meta["archVisualizerSiteLanePaths"][0]
-    assert first_path["x"] == [0.0, 0.5, 1.0]
-    assert first_path["y"] == [0.0, 0.75, 0.0]
+    assert first_path["exactX"] == [0.0, 0.5, 1.0]
+    assert first_path["exactY"] == [0.0, 0.75, 0.0]
+    assert len(first_path["cartoonX"]) == 21
+    assert len(first_path["cartoonY"]) == 21
     assert first_path["color"].startswith("hsl(")
+    assert first_path["dash"] == "dot"
+    assert first_path["busName"] == "zone 0 · site bus 0"
+    assert first_path["previewLabel"] == "Zone ID 0, Site bus 0"
+    assert first_path["busId"] == 0
+    assert first_path["moveType"] == "site"
+    assert first_path["source"] == "(0, 0, 0)"
+    assert first_path["destination"] == "(0, 0, 1)"
+
+
+def test_plot_interactive_supports_click_previews_and_dashed_buses(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive(
+        site_lane_preview="click",
+        bus_line_style="dashed",
+    )
+    bus_indices = figure.layout.meta["archVisualizerBusTraceIndices"]
+
+    assert figure.layout.meta["archVisualizerSiteLanePreviewMode"] == "click"
+    assert all(
+        cast(Any, figure.data[index]).line.dash == "dash" for index in bus_indices
+    )
+    assert all(
+        path["dash"] == "dash"
+        for path in figure.layout.meta["archVisualizerSiteLanePaths"]
+    )
+    html = figure.to_html(full_html=False, include_plotlyjs=False)
+    assert "plot.addEventListener('click', function (event)" in html
+    assert "const selectedSites = new Map()" in html
+    assert "toggleSelectedSite(siteCustomdata)" in html
+    assert "drawnPathIndices.has(pathIndex)" in html
+    assert "data-arch-visualizer-lane-path-index" in html
+    assert "plot.on('plotly_animated'" in html
+    assert "Undo bus or lane visibility change" in html
+    assert "Redo bus or lane visibility change" in html
+    assert "restorePreviewState(previewHistoryIndex - 1)" in html
+    assert "restorePreviewState(previewHistoryIndex + 1)" in html
+    assert "schedulePreviewHistoryRecord" not in html
+    assert "previewStateMutationInProgress" not in html
+    assert "commitPreviewState();" in html
+    assert "plot.on('plotly_afterplot'" in html
+    assert "data-arch-visualizer-lane-tooltip" in html
+    assert "${lanePath.previewLabel}" in html
+    assert "move type: ${lanePath.moveType}" not in html
+    assert "bus ID: ${lanePath.busId}" not in html
+    assert "currentPathStyle === 'cartoon'" in html
+    assert "siteCustomdataFromPlotlyEvent(event)" in html
+    assert "trace.meta.bloqadeTraceKind === 'atom'" in html
+    assert "siteCustomdataNearPointer(pointerEvent)" in html
+    assert "data-arch-visualizer-site-lane-hit-target" in html
+    assert "insetPathEndpoints(pixels, 12)" in html
+    assert "hitPath.setAttribute('pointer-events', 'stroke')" in html
+    assert "data-bloqade-move-path-hover-target" in html
+    assert "showMovePathTooltip(segment)" in html
+    assert "data-arch-visualizer-lane-tooltip-connector" in html
+    assert "`Atom ${segment.atomId} move path" in html
+    assert "hitPath.style.cursor = 'help'" not in html
+    assert "window.setTimeout(drawMovePathHoverOverlays, 0)" in html
+    assert "atomHoverTargetForSite(directSitePoint.customdata)" in html
+    assert "plotlyHoverLayer.style.display = 'none'" in html
+    assert "showAtomTooltip(" in html
+    assert "atomTarget.customdata" in html
+    assert "directAtomPoint.customdata" in html
+    assert "if (directAtomPoint)" in html
+    assert "drawMovePathHoverOverlays();" in html
 
 
 def test_plot_interactive_html_highlights_hovered_bus(
@@ -230,7 +312,9 @@ def test_plot_interactive_html_highlights_hovered_bus(
     assert "text.textContent = `ID ${control.busId} · ${control.label}`" in html
     assert "archVisualizerSiteLanePathRefs" in html
     assert "stroke-opacity', '0.42'" in html
-    assert "hoverLayer.insertBefore(path, hoverLayer.firstChild)" in html
+    assert "data-arch-visualizer-path-overlays" in html
+    assert "overlayLayer.appendChild(path)" in html
+    assert "const hoverLayer = plot.querySelector('.hoverlayer')" not in html
     assert '"scrollZoom": true' in html
     assert '"responsive": true' in html
     assert list(figure.layout.meta["archVisualizerBusTraceIndices"]) == [0, 1]
@@ -296,6 +380,43 @@ def test_plot_interactive_show_keeps_interactions_in_browser(
     assert open_browser.call_args.kwargs == {}
 
 
+def test_plot_interactive_explicit_browser_keeps_interactions_in_jupyter(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    zmq_shell = type("ZMQInteractiveShell", (), {})()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=zmq_shell),
+        patch("plotly.io._base_renderers.open_html_in_browser") as open_browser,
+    ):
+        figure.show(renderer="browser")
+
+    html = open_browser.call_args.args[0]
+    assert "data-arch-visualizer-bus-selectors" in html
+    assert "data-arch-visualizer-site-lane" in html
+
+
+def test_plot_interactive_browser_preserves_animation_options(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=None),
+        patch("plotly.io._base_renderers.open_html_in_browser") as open_browser,
+    ):
+        figure.show(
+            renderer="browser",
+            auto_play=False,
+            animation_opts={"frame": {"duration": 25}},
+        )
+
+    html = open_browser.call_args.args[0]
+    assert "data-arch-visualizer-bus-selectors" in html
+    assert "plotly_click" in html
+
+
 def test_plot_interactive_html_preserves_caller_config(
     small_arch_spec: ArchSpec,
 ) -> None:
@@ -335,18 +456,49 @@ def test_plot_interactive_site_identity_toggle(
     assert label_trace.marker.opacity is None
     assert label_trace.textfont.size == 9
     assert label_trace.cliponaxis is False
-    assert figure.layout.updatemenus[0].active == 1
+    assert figure.layout.updatemenus[0].showactive is False
+    assert [button.method for button in figure.layout.updatemenus[0].buttons] == [
+        "restyle",
+        "restyle",
+    ]
+    assert figure.layout.meta["archVisualizerSiteLabels"] == list(label_trace.text)
 
 
-def test_plot_interactive_controls_can_show_and_hide_all_buses(
+def test_plot_interactive_controls_can_show_and_clear_all_bus_previews(
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
-    hide_button, show_button = figure.layout.updatemenus[1].buttons
+    clear_button, show_button = figure.layout.updatemenus[1].buttons
+    html = figure.to_html(full_html=False, include_plotlyjs=False)
 
-    assert hide_button.args[0]["visible"] == "legendonly"
-    assert show_button.args[0]["visible"] is True
-    assert list(hide_button.args[1]) == [0, 1]
+    assert clear_button.label == "Clear all buses"
+    assert clear_button.method == "restyle"
+    assert show_button.label == "Show all buses"
+    assert show_button.method == "restyle"
+    assert "setAllBusPreviews(false, true)" in html
+    assert "setAllBusPreviews(true, true)" in html
+    assert "target.closest('g.updatemenu-button')" in html
+    assert "plot.on('plotly_buttonclicked'" not in html
+    assert "syncBusCheckboxes()" in html
+    assert "selectedSites.clear()" in html
+    assert "clearSiteLaneOverlays()" in html
+    assert "const busVisibility = busControls.map" in html
+    assert "buses: [...busVisibility]" in html
+    assert "checkbox.checked = busVisibility[index]" in html
+    assert "busVisibility.fill(visible)" in html
+    assert "{visible: visibility}" in html
+    assert "let previewMutationVersion = 0" in html
+    assert "const mutationVersion = ++previewMutationVersion" in html
+    assert "mutationVersion !== previewMutationVersion" in html
+
+
+def test_plot_interactive_controls_are_below_title(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    assert all(menu.y == pytest.approx(1.09) for menu in figure.layout.updatemenus)
+    assert figure.layout.margin.t == 165
 
 
 def test_plot_interactive_has_color_labelled_bus_multiselectors(
@@ -414,6 +566,8 @@ def test_plot_interactive_path_toggle_preserves_bus_selection(
     assert exact_button.method == "update"
     assert cartoon_button.method == "update"
     assert "visible" not in cartoon_button.args[0]
+    assert exact_button.args[1]["meta.archVisualizerPathStyle"] == "exact"
+    assert cartoon_button.args[1]["meta.archVisualizerPathStyle"] == "cartoon"
     assert list(cartoon_button.args[2]) == [0, 1]
 
 

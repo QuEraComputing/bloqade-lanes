@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from kirin import ir
 
-from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, Value
+from bloqade.lanes.analysis.atom import AtomState
 from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.dialects import move
 from bloqade.lanes.visualize.arch import ArchVisualizer
+from bloqade.lanes.visualize.artist import DebugStep, collect_debug_steps
 
 if TYPE_CHECKING:
     from plotly.graph_objects import Figure  # type: ignore[reportMissingImports]
@@ -34,65 +36,50 @@ _ATOM_SYMBOLS = {
     "h": "hexagon",
 }
 
-_OPEN_ATOM_SYMBOLS = {
-    "o": "circle-open",
-    ".": "circle-open",
-    "s": "square-open",
-    "+": "cross-open",
-    "x": "x-open",
-    "^": "triangle-up-open",
-    "v": "triangle-down-open",
-    "d": "diamond-open",
-    "D": "diamond-open",
-    "*": "star-open",
-    "p": "pentagon-open",
-    "h": "hexagon-open",
-}
-
 
 @dataclass(frozen=True)
-class DebugStep:
-    statement: ir.Statement
-    state: AtomState
-    title: str
+class _MovePathSegment:
+    """Plotly data for one segment of an atom's latest move."""
 
-
-@dataclass(frozen=True)
-class RouteSegment:
+    qubit_id: int
+    source: LocationAddress
+    destination: LocationAddress
     start: tuple[float, float]
     end: tuple[float, float]
-    color: str
-    hover_data: tuple[object, object, object]
+    color_value: float
+    bus_label: str
 
 
-def collect_debug_steps(mt: ir.Method, arch_spec: ArchSpec) -> list[DebugStep]:
-    """Interpret ``mt`` and retain every statement that produces atom state."""
-    frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
-    constants: dict[ir.SSAValue, float | int] = {}
-    statements_and_states: list[tuple[ir.Statement, AtomState]] = []
+def _lane_bus_label(lane: LaneAddress) -> str:
+    kind = lane.move_type.name.capitalize()
+    if lane.move_type == MoveType.ZONE:
+        return f"Zone bus {lane.bus_id}"
+    return f"Zone ID {lane.zone_id}, {kind} bus {lane.bus_id}"
 
-    for statement in mt.callable_region.walk():
-        results = frame.get_values(statement.results)
-        match results:
-            case (AtomState() as state,):
-                statements_and_states.append((statement, state))
-            case (Value(value),) if isinstance(value, (float, int)):
-                constants[statement.results[0]] = value
 
-    def statement_text(statement: ir.Statement) -> str:
-        values = [constants[arg] for arg in statement.args if arg in constants]
-        arguments = ", ".join(str(value) for value in values)
-        return f"{type(statement).__name__}({arguments})"
-
-    num_steps = len(statements_and_states)
-    return [
-        DebugStep(
-            statement=statement,
-            state=state,
-            title=f"Step {index + 1} / {num_steps}: {statement_text(statement)}",
+def _move_path_segments(
+    state: AtomState, arch_spec: ArchSpec
+) -> list[_MovePathSegment]:
+    """Translate atom-analysis lanes into Plotly path segments."""
+    segments: list[_MovePathSegment] = []
+    for qubit_id, lane in sorted(state.data.prev_lanes.items()):
+        source, destination = arch_spec.get_endpoints(lane)
+        path = arch_spec.get_path(lane)
+        path_segments = list(itertools.pairwise(path))
+        denominator = max(1, len(path_segments) - 1)
+        segments.extend(
+            _MovePathSegment(
+                qubit_id=qubit_id,
+                source=source,
+                destination=destination,
+                start=start,
+                end=end,
+                color_value=index / denominator,
+                bus_label=_lane_bus_label(lane),
+            )
+            for index, (start, end) in enumerate(path_segments)
         )
-        for index, (statement, state) in enumerate(statements_and_states)
-    ]
+    return segments
 
 
 def _plotly() -> Any:
@@ -118,6 +105,7 @@ def _theme_colors(theme: Theme) -> dict[str, str]:
             "local_r": "#2563eb",
             "local_rz": "#16a34a",
             "cz": "#dc2626",
+            "measure": "#d97706",
         }
     if theme == "dark":
         return {
@@ -131,61 +119,9 @@ def _theme_colors(theme: Theme) -> dict[str, str]:
             "local_r": "#60a5fa",
             "local_rz": "#4ade80",
             "cz": "#f87171",
+            "measure": "#fbbf24",
         }
     raise ValueError("theme must be 'light' or 'dark'")
-
-
-def _view_bounds(arch_spec: ArchSpec) -> tuple[float, float, float, float]:
-    x_min, x_max, y_min, y_max = ArchVisualizer(arch_spec).path_bounds()
-    x_width = x_max - x_min
-    y_width = y_max - y_min
-    x_padding = 0.08 * x_width if x_width else 1.0
-    y_padding = 0.08 * y_width if y_width else 1.0
-    return (
-        x_min - x_padding,
-        x_max + x_padding,
-        y_min - y_padding,
-        y_max + y_padding,
-    )
-
-
-def _slm_marker_size(arch_spec: ArchSpec) -> float:
-    """Approximate the site-marker scaling used by ``PlotParameters``."""
-    num_sites = sum(len(word.site_indices) for word in arch_spec.words)
-    if num_sites == 0:
-        return 12.0
-    scale = 2.0 * math.sqrt(44.0 / num_sites)
-    # Matplotlib's scatter size is an area in points squared. Convert its
-    # diameter to pixels at the 100 dpi assumed by the existing debugger.
-    return math.sqrt(scale * 80.0) * 100.0 / 72.0
-
-
-def _site_trace(arch_spec: ArchSpec, colors: dict[str, str], atom_marker: str) -> Any:
-    go = _plotly()
-    locations = list(ArchVisualizer(arch_spec)._iter_locations())
-    return go.Scatter(
-        x=[position[0] for _, position in locations],
-        y=[position[1] for _, position in locations],
-        customdata=[
-            [location.zone_id, location.word_id, location.site_id]
-            for location, _ in locations
-        ],
-        mode="markers",
-        marker={
-            # Plotly's open symbols use ``color`` for the outline. This mirrors
-            # the hollow, black-edged SLM sites drawn by ``StateArtist``.
-            "color": colors["site_edge"],
-            "line": {"color": colors["site_edge"], "width": 1},
-            "size": _slm_marker_size(arch_spec),
-            "symbol": _OPEN_ATOM_SYMBOLS.get(atom_marker, atom_marker),
-        },
-        name="SLM sites",
-        showlegend=False,
-        hovertemplate=(
-            "zone %{customdata[0]}<br>word %{customdata[1]}<br>"
-            "site %{customdata[2]}<br>(%{x:.3f}, %{y:.3f}) µm<extra></extra>"
-        ),
-    )
 
 
 def _empty_trace(name: str) -> Any:
@@ -194,22 +130,37 @@ def _empty_trace(name: str) -> Any:
 
 
 def _atom_trace(
-    state: AtomState,
+    step: DebugStep,
     arch_spec: ArchSpec,
     colors: dict[str, str],
     atom_marker: str,
 ) -> Any:
     go = _plotly()
-    positions = {
-        qubit_id: arch_spec.get_position(location)
-        for qubit_id, location in state.data.qubit_to_locations.items()
-    }
-    qubit_ids = sorted(positions)
+    state = step.state
+    atoms = [
+        (qubit_id, location, arch_spec.get_position(location))
+        for qubit_id, location in sorted(state.data.qubit_to_locations.items())
+    ]
+    atom_customdata = [
+        [
+            qubit_id,
+            location.zone_id,
+            location.word_id,
+            location.site_id,
+            *arch_spec.words[location.word_id].sites[location.site_id],
+            (
+                f"<br><b>gate:</b> {_gate_description(step)}"
+                if _gate_applies_to_location(step.statement, location)
+                else ""
+            ),
+        ]
+        for qubit_id, location, _ in atoms
+    ]
     return go.Scatter(
-        x=[positions[qubit_id][0] for qubit_id in qubit_ids],
-        y=[positions[qubit_id][1] for qubit_id in qubit_ids],
-        customdata=[[qubit_id] for qubit_id in qubit_ids],
-        text=[str(qubit_id) for qubit_id in qubit_ids],
+        x=[position[0] for _, _, position in atoms],
+        y=[position[1] for _, _, position in atoms],
+        customdata=atom_customdata,
+        text=[str(qubit_id) for qubit_id, _, _ in atoms],
         mode="markers+text",
         textposition="middle center",
         textfont={"color": "white", "size": 10},
@@ -219,61 +170,78 @@ def _atom_trace(
             "symbol": _ATOM_SYMBOLS.get(atom_marker, atom_marker),
             "line": {"color": colors["paper"], "width": 1},
         },
+        meta={"bloqadeTraceKind": "atom"},
         name="Atoms",
         showlegend=False,
         hovertemplate=(
-            "atom %{customdata[0]}<br>(%{x:.3f}, %{y:.3f}) µm<extra></extra>"
+            "<b>atom %{customdata[0]}</b><br>"
+            "(zone, word, site): (%{customdata[1]}, %{customdata[2]}, "
+            "%{customdata[3]})<br>"
+            "grid (x, y): (%{customdata[4]}, %{customdata[5]})<br>"
+            "position (x, y): (%{x:.3f}, %{y:.3f}) µm"
+            "%{customdata[6]}<extra></extra>"
         ),
     )
 
 
-def _viridis_colors(num_colors: int) -> list[str]:
-    if num_colors == 0:
-        return []
+def _gate_parameter_names(statement: ir.Statement) -> tuple[str, ...]:
+    if isinstance(statement, (move.LocalR, move.GlobalR)):
+        return ("axis_angle", "rotation_angle")
+    if isinstance(statement, (move.LocalRz, move.StarRz, move.GlobalRz)):
+        return ("rotation_angle",)
+    return ()
+
+
+def _gate_description(step: DebugStep) -> str:
+    """Format an interpreted gate with named, evaluated parameters."""
+    if isinstance(step.statement, move.EndMeasure):
+        zones = tuple(address.zone_id for address in step.statement.zone_addresses)
+        return f"EndMeasure(zones={zones})"
+
+    parameters = ", ".join(
+        f"{name}={value!r}"
+        for name, value in zip(
+            _gate_parameter_names(step.statement),
+            step.parameter_values,
+            strict=False,
+        )
+    )
+    return f"{type(step.statement).__name__}({parameters})"
+
+
+def _gate_applies_to_location(
+    statement: ir.Statement, location: LocationAddress
+) -> bool:
+    if isinstance(statement, (move.LocalR, move.LocalRz, move.StarRz)):
+        return location in statement.location_addresses
+    if isinstance(statement, (move.GlobalR, move.GlobalRz)):
+        return True
+    if isinstance(statement, move.CZ):
+        return location.zone_id == statement.zone_address.zone_id
+    if isinstance(statement, move.EndMeasure):
+        return any(
+            location.zone_id == address.zone_id for address in statement.zone_addresses
+        )
+    return False
+
+
+def _viridis_color(color_value: float) -> str:
     from plotly.colors import sample_colorscale
 
-    samples = (
-        [0.0]
-        if num_colors == 1
-        else [index / (num_colors - 1) for index in range(num_colors)]
-    )
-    return cast(list[str], list(sample_colorscale("Viridis", samples)))
-
-
-def _route_segments(state: AtomState, arch_spec: ArchSpec) -> list[RouteSegment]:
-    """Split atom routes into the colored segments used by ``debugger``."""
-    route_segments: list[RouteSegment] = []
-    for qubit_id, lane in sorted(state.data.prev_lanes.items()):
-        src, dst = arch_spec.get_endpoints(lane)
-        hover_data: tuple[object, object, object] = (
-            qubit_id,
-            f"({src.zone_id}, {src.word_id}, {src.site_id})",
-            f"({dst.zone_id}, {dst.word_id}, {dst.site_id})",
-        )
-        segments = list(itertools.pairwise(arch_spec.get_path(lane)))
-        for color, (start, end) in zip(_viridis_colors(len(segments)), segments):
-            route_segments.append(
-                RouteSegment(
-                    start=start,
-                    end=end,
-                    color=color,
-                    hover_data=hover_data,
-                )
-            )
-    return route_segments
+    return cast(str, sample_colorscale("Viridis", [color_value])[0])
 
 
 def _group_route_segments(
-    route_segments: Sequence[RouteSegment],
-) -> list[list[RouteSegment]]:
+    route_segments: Sequence[_MovePathSegment],
+) -> list[list[_MovePathSegment]]:
     """Group equally colored segments so simultaneous moves share traces."""
-    segments_by_color: dict[str, list[RouteSegment]] = {}
+    segments_by_color: dict[float, list[_MovePathSegment]] = {}
     for segment in route_segments:
-        segments_by_color.setdefault(segment.color, []).append(segment)
+        segments_by_color.setdefault(segment.color_value, []).append(segment)
     return list(segments_by_color.values())
 
 
-def _route_trace(segments: Sequence[RouteSegment] | None) -> Any:
+def _route_trace(segments: Sequence[_MovePathSegment] | None) -> Any:
     """Render equally colored route segments with visible arrowheads."""
     go = _plotly()
     if not segments:
@@ -285,11 +253,11 @@ def _route_trace(segments: Sequence[RouteSegment] | None) -> Any:
             showlegend=False,
             visible=False,
             hoverinfo="skip",
+            meta={"bloqadeTraceKind": "movePath", "segments": []},
         )
 
     x_values: list[float | None] = []
     y_values: list[float | None] = []
-    hover_data: list[tuple[object, object, object] | None] = []
     marker_sizes: list[int] = []
     marker_symbols: list[str] = []
     marker_angles: list[float] = []
@@ -301,44 +269,104 @@ def _route_trace(segments: Sequence[RouteSegment] | None) -> Any:
         arrow_angle = math.degrees(math.atan2(delta_x, delta_y))
         x_values.extend([segment.start[0], segment.end[0], None])
         y_values.extend([segment.start[1], segment.end[1], None])
-        hover_data.extend([segment.hover_data, segment.hover_data, None])
-        marker_sizes.extend([0, 11, 0])
+        marker_sizes.extend([0, 16, 0])
         marker_symbols.extend(["circle", "arrow", "circle"])
         marker_angles.extend([0, arrow_angle, 0])
 
-    color = segments[0].color
+    color = _viridis_color(segments[0].color_value)
+    segment_metadata = [
+        {
+            "atomId": segment.qubit_id,
+            "busLabel": segment.bus_label,
+            "source": (
+                f"({segment.source.zone_id}, {segment.source.word_id}, "
+                f"{segment.source.site_id})"
+            ),
+            "destination": (
+                f"({segment.destination.zone_id}, {segment.destination.word_id}, "
+                f"{segment.destination.site_id})"
+            ),
+            "color": color,
+            "start": list(segment.start),
+            "end": list(segment.end),
+        }
+        for segment in segments
+    ]
     return go.Scatter(
         x=x_values,
         y=y_values,
-        customdata=hover_data,
         mode="lines+markers",
-        line={"color": color, "width": 2.25},
+        line={"color": color, "width": 4},
         marker={
             "color": color,
             "size": marker_sizes,
             "symbol": marker_symbols,
             "angle": marker_angles,
             "angleref": "up",
-            "line": {"width": 0},
+            "line": {"color": color, "width": 1.5},
         },
         name="Move path",
+        meta={
+            "bloqadeTraceKind": "movePath",
+            "segments": segment_metadata,
+        },
         showlegend=False,
         visible=True,
         cliponaxis=False,
-        hovertemplate=(
-            "atom %{customdata[0]}<br>source: %{customdata[1]}<br>"
-            "destination: %{customdata[2]}<extra></extra>"
-        ),
+        # A custom SVG hit target spans the entire segment and anchors its
+        # single tooltip at the segment center. Native marker hover would add
+        # a second tooltip specifically at each arrowhead.
+        hoverinfo="skip",
+    )
+
+
+def _global_gate_bounds(arch_spec: ArchSpec) -> tuple[float, float, float, float]:
+    visualizer = ArchVisualizer(arch_spec)
+    x_min, x_max = visualizer.x_bounds
+    y_min, y_max = visualizer.y_bounds
+    x_span = x_max - x_min
+    y_span = y_max - y_min
+    x_padding = 0.5 * x_span if x_span else 1.0
+    y_padding = 0.5 * y_span if y_span else 1.0
+    return (
+        x_min - x_padding,
+        x_max + x_padding,
+        y_min - y_padding,
+        y_max + y_padding,
+    )
+
+
+def _zone_gate_bounds(
+    zone_ids: set[int], arch_spec: ArchSpec
+) -> tuple[float, float, float, float] | None:
+    zone_positions = [
+        position
+        for location, position in ArchVisualizer(arch_spec)._iter_locations()
+        if location.zone_id in zone_ids
+    ]
+    if not zone_positions:
+        return None
+
+    x_values = [position[0] for position in zone_positions]
+    y_values = [position[1] for position in zone_positions]
+    y_span = max(y_values) - min(y_values)
+    y_padding = 0.1 * y_span if y_span else 1.0
+    return (
+        min(x_values) - 10.0,
+        max(x_values) + 10.0,
+        min(y_values) - y_padding,
+        max(y_values) + y_padding,
     )
 
 
 def _gate_trace(
-    statement: ir.Statement,
+    step: DebugStep,
     arch_spec: ArchSpec,
-    bounds: tuple[float, float, float, float],
     colors: dict[str, str],
 ) -> Any:
     go = _plotly()
+    statement = step.statement
+    gate_description = _gate_description(step)
     local_gate_types = (move.LocalR, move.LocalRz, move.StarRz)
     if isinstance(statement, local_gate_types):
         positions = [
@@ -358,36 +386,27 @@ def _gate_trace(
             name=type(statement).__name__,
             showlegend=False,
             visible=True,
-            hovertemplate=f"{type(statement).__name__}<extra></extra>",
+            hovertemplate=f"{gate_description}<extra></extra>",
         )
 
     region: tuple[float, float, float, float] | None = None
     color = colors["local_r"]
     if isinstance(statement, (move.GlobalR, move.GlobalRz)):
-        region = bounds
+        region = _global_gate_bounds(arch_spec)
         color = (
             colors["local_r"]
             if isinstance(statement, move.GlobalR)
             else colors["local_rz"]
         )
     elif isinstance(statement, move.CZ):
-        zone_positions = [
-            position
-            for location, position in ArchVisualizer(arch_spec)._iter_locations()
-            if location.zone_id == statement.zone_address.zone_id
-        ]
-        if zone_positions:
-            x_values = [position[0] for position in zone_positions]
-            y_values = [position[1] for position in zone_positions]
-            y_span = max(y_values) - min(y_values)
-            y_padding = 0.1 * y_span if y_span else 1.0
-            region = (
-                min(x_values) - 10.0,
-                max(x_values) + 10.0,
-                min(y_values) - y_padding,
-                max(y_values) + y_padding,
-            )
-            color = colors["cz"]
+        region = _zone_gate_bounds({statement.zone_address.zone_id}, arch_spec)
+        color = colors["cz"]
+    elif isinstance(statement, move.EndMeasure):
+        region = _zone_gate_bounds(
+            {address.zone_id for address in statement.zone_addresses},
+            arch_spec,
+        )
+        color = colors["measure"]
 
     if region is None:
         return _empty_trace("Gate highlight")
@@ -399,31 +418,32 @@ def _gate_trace(
         mode="lines",
         line={"width": 0},
         fill="toself",
+        hoveron="fills",
         fillcolor=color,
         opacity=0.25,
         name=type(statement).__name__,
         showlegend=False,
         visible=True,
-        hovertemplate=f"{type(statement).__name__}<extra></extra>",
+        hovertemplate=f"{gate_description}<extra></extra>",
+        zorder=-10,
     )
 
 
 def _dynamic_traces(
     step: DebugStep,
-    route_groups: Sequence[Sequence[RouteSegment]],
+    route_groups: Sequence[Sequence[_MovePathSegment]],
     route_trace_count: int,
     arch_spec: ArchSpec,
     colors: dict[str, str],
     atom_marker: str,
-    bounds: tuple[float, float, float, float],
 ) -> list[Any]:
     return [
         *(
             _route_trace(route_groups[index] if index < len(route_groups) else None)
             for index in range(route_trace_count)
         ),
-        _gate_trace(step.statement, arch_spec, bounds, colors),
-        _atom_trace(step.state, arch_spec, colors, atom_marker),
+        _gate_trace(step, arch_spec, colors),
+        _atom_trace(step, arch_spec, colors, atom_marker),
     ]
 
 
@@ -458,16 +478,36 @@ def build_plotly_debugger_figure(
     go = _plotly()
     steps = collect_debug_steps(mt, arch_spec)
     colors = _theme_colors(theme)
-    bounds = _view_bounds(arch_spec)
-    frames: list[Any] = []
     route_groups_by_step = [
-        _group_route_segments(_route_segments(step.state, arch_spec)) for step in steps
+        _group_route_segments(_move_path_segments(step.state, arch_spec))
+        for step in steps
     ]
     route_trace_count = max(
         1,
         max((len(groups) for groups in route_groups_by_step), default=0),
     )
-    dynamic_trace_indices = list(range(1, route_trace_count + 3))
+
+    # Start with the complete interactive architecture rather than rebuilding
+    # its sites and buses here. This preserves one source of truth for site
+    # metadata, bus selectors, hover highlighting, and transport paths.
+    figure = ArchVisualizer(arch_spec).plot_interactive(
+        show_site_ids=False,
+        show_all_buses=False,
+        show_bus_legend=False,
+        path_style="exact",
+        site_lane_preview="click",
+        bus_line_style="dashed",
+        theme=theme,
+        height=height,
+    )
+    architecture_trace_count = len(cast(Any, figure.data))
+    dynamic_trace_indices = list(
+        range(
+            architecture_trace_count,
+            architecture_trace_count + route_trace_count + 2,
+        )
+    )
+    frames: list[Any] = []
 
     for step_index, step in enumerate(steps):
         frames.append(
@@ -480,7 +520,6 @@ def build_plotly_debugger_figure(
                     arch_spec,
                     colors,
                     atom_marker,
-                    bounds,
                 ),
                 traces=dynamic_trace_indices,
                 layout={"title": {"text": step.title}},
@@ -495,7 +534,6 @@ def build_plotly_debugger_figure(
             arch_spec,
             colors,
             atom_marker,
-            bounds,
         )
         if steps
         else [
@@ -505,13 +543,11 @@ def build_plotly_debugger_figure(
         ]
     )
     title = steps[0].title if steps else "Plotly move debugger: no atom-state steps"
-    figure = go.Figure(
-        data=[_site_trace(arch_spec, colors, atom_marker), *initial_data]
-    )
+    figure.add_traces(initial_data)
     figure.frames = frames
 
     sliders = []
-    update_menus = []
+    debugger_update_menus = []
     if interactive and frames:
         sliders = [
             {
@@ -525,12 +561,16 @@ def build_plotly_debugger_figure(
             }
         ]
         if len(frames) > 1:
-            update_menus = [
+            debugger_update_menus = [
                 {
                     "type": "buttons",
                     "direction": "left",
                     "x": 0.0,
-                    "y": 1.10,
+                    "xanchor": "left",
+                    # Keep playback on the same row as the architecture
+                    # controls in the upper margin.
+                    "y": 1.09,
+                    "yanchor": "top",
                     "showactive": False,
                     "buttons": [
                         {
@@ -565,41 +605,35 @@ def build_plotly_debugger_figure(
                 }
             ]
 
-    x_min, x_max, y_min, y_max = bounds
+    architecture_meta = dict(cast(Any, figure.layout.meta) or {})
+    architecture_update_menus = list(figure.layout.updatemenus or ())
+    # Make room for playback at the left, then center the complete four-group
+    # control row over the plot. ``plot_interactive`` only has the latter
+    # three groups, so this debugger-specific alignment belongs here.
+    for menu, x_position in zip(
+        architecture_update_menus,
+        (0.18, 0.47, 0.75),
+    ):
+        menu.x = x_position
+        menu.y = 1.09
+    figure.layout.annotations = ()
     figure.update_layout(
-        template="plotly_white" if theme == "light" else "plotly_dark",
         title={"text": title, "x": 0.01, "xanchor": "left"},
         height=height,
-        margin={"l": 55, "r": 25, "t": 95, "b": 65},
-        paper_bgcolor=colors["paper"],
-        plot_bgcolor=colors["plot"],
-        font={"color": colors["text"]},
-        hovermode="closest",
-        dragmode="pan",
+        margin={"l": 70, "r": 270, "t": 165, "b": 65},
         showlegend=False,
         uirevision="bloqade-plotly-debugger",
-        xaxis={
-            "title": "x (µm)",
-            "range": [x_min, x_max],
-            "showgrid": False,
-            "zeroline": False,
-            "scaleanchor": "y",
-            "scaleratio": 1,
-        },
-        yaxis={
-            "title": "y (µm)",
-            "range": [y_min, y_max],
-            "showgrid": False,
-            "zeroline": False,
-        },
         sliders=sliders,
-        updatemenus=update_menus,
+        updatemenus=[*architecture_update_menus, *debugger_update_menus],
         meta={
+            **architecture_meta,
             "bloqadePlotlyDebugger": {
                 "stepCount": len(steps),
                 "frameCount": len(frames),
+                "frameNames": [frame.name for frame in frames],
                 "routeTraceCount": route_trace_count,
-            }
+                "architectureTraceCount": architecture_trace_count,
+            },
         },
     )
     return figure
