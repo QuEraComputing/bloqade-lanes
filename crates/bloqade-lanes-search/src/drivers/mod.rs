@@ -21,4 +21,8 @@
 
 pub mod entropy;
 pub mod frontier;
+// Consumed by the branch-and-bound driver (Phase 3 of the B&B plan); until
+// then its only users are its tests.
+#[allow(dead_code)]
+pub(crate) mod prune;
 pub mod result;
