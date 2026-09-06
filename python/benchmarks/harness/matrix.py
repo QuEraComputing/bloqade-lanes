@@ -57,9 +57,10 @@ def default_strategy_configs(
     selectable by name without joining the default physical matrix.
 
     `include_branch_and_bound` adds the branch-and-bound rows
-    (`rust_bnb_lifo_entropy`, `rust_bnb_lifo_complete`, `rust_bnb_ids_complete`),
-    each at the `rust_entropy_5_bounded` budget so plan cost is compared at
-    equal budget. Off by default on both suites and gated exactly like the
+    (`rust_bnb_lifo_entropy`, `rust_bnb_lifo_complete`, `rust_bnb_ids_complete`,
+    and `rust_bnb_lifo_proof` with widening never withheld, so its exhaustion
+    is a proof), each at the `rust_entropy_5_bounded` budget so plan cost is
+    compared at equal budget. Off by default on both suites and gated exactly like the
     bounded row: the committed baselines do not change, and the CLI turns it on
     when `--strategies` names one of them. Their proof and staging counters go
     to `BenchmarkRow.extra` (console only), not to the CSV columns.
@@ -255,7 +256,7 @@ def default_strategy_configs(
                     backend="rust",
                     generator_id="rust_solver",
                     build_placement_strategy=(
-                        lambda schedule=schedule, frontier=frontier: (
+                        lambda schedule=schedule, frontier=frontier, widen=widen: (
                             PalindromePlacementStrategy(
                                 inner=PhysicalPlacementStrategy(
                                     arch_spec=factory(),
@@ -265,6 +266,7 @@ def default_strategy_configs(
                                         completion_bound="weighted_distance",
                                         bnb_frontier=frontier,
                                         bnb_schedule=schedule,
+                                        bnb_widen_after_incumbent=widen,
                                     ),
                                 )
                             )
@@ -273,11 +275,12 @@ def default_strategy_configs(
                     arch_spec_id=arch_spec_id,
                     notes=notes,
                 )
-                for strategy_id, frontier, schedule, notes in (
+                for strategy_id, frontier, schedule, widen, notes in (
                     (
                         "rust_bnb_lifo_entropy",
                         "lifo",
                         "entropy_only",
+                        0,
                         (
                             "branch and bound, generator-order DFS over the "
                             "entropy generator alone: the isolate-the-loop reference"
@@ -287,6 +290,7 @@ def default_strategy_configs(
                         "rust_bnb_lifo_complete",
                         "lifo",
                         "entropy_then_exhaustive",
+                        0,
                         (
                             "branch and bound, generator-order DFS, entropy then the "
                             "exhaustive ladder (widening off after the first plan)"
@@ -296,9 +300,21 @@ def default_strategy_configs(
                         "rust_bnb_ids_complete",
                         "ids",
                         "entropy_then_exhaustive",
+                        0,
                         (
                             "branch and bound, best-first diving on h_sum, entropy "
                             "then the exhaustive ladder (widening off after the first plan)"
+                        ),
+                    ),
+                    (
+                        "rust_bnb_lifo_proof",
+                        "lifo",
+                        "entropy_then_exhaustive",
+                        255,
+                        (
+                            "branch and bound, generator-order DFS, entropy then the "
+                            "exhaustive ladder with widening never withheld: exhaustion "
+                            "within the budget is a proof of optimality"
                         ),
                     ),
                 )

@@ -485,7 +485,10 @@ def test_main_arch_spec_expands_matrix_across_archspecs(
     captured_strategies: list[tuple[StrategyConfig, ...]] = []
 
     def fake_default_strategy_configs(
-        arch_spec=None, *, include_completion_bound=False
+        arch_spec=None,
+        *,
+        include_completion_bound=False,
+        include_branch_and_bound=False,
     ):
         arch_spec_id = "builtin" if arch_spec is None else arch_spec[0]
         strategy = StrategyConfig(
@@ -559,7 +562,10 @@ def test_main_without_arch_spec_uses_builtin_id(monkeypatch, tmp_path: Path):
     case = BenchmarkCase(case_id="ghz_4", kernel=cast(ir.Method, object()))
 
     def fake_default_strategy_configs(
-        arch_spec=None, *, include_completion_bound=False
+        arch_spec=None,
+        *,
+        include_completion_bound=False,
+        include_branch_and_bound=False,
     ):
         arch_spec_id = "builtin" if arch_spec is None else arch_spec[0]
         return (

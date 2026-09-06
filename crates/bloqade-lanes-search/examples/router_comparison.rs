@@ -10,9 +10,11 @@
 //! *Evaluation* section — frontier `{lifo, dfs, ids}` × ordering `{h_sum, h0}`
 //! × objective `{uniform, weighted_duration}` × schedule `{entropy_only,
 //! entropy_then_exhaustive}` — plus `entropy_bounded`, the bounded entropy
-//! driver they are measured against. Those rows also report how many solves
-//! were proofs, the per-stage expansion sums and the widest stage a plan
-//! needed.
+//! driver they are measured against, `bnb_lifo_{u,w}_p`, the complete
+//! schedule with widening unlimited, whose exhaustion is a proof, and
+//! `bnb_lifo_{u,w}_hx`, the heuristic generator as stage 0. Those rows
+//! also report how many solves were proofs, the per-stage expansion sums and
+//! the widest stage a plan needed.
 //!
 //! Complements the Python benchmark harness, which measures whole-kernel
 //! compilation. This isolates the *router*: same instance, same budget, one
@@ -46,6 +48,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
+use bloqade_lanes_search::drivers::branch_and_bound::Widening;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::push_rotate::instances::{Instance, generate};
 use bloqade_lanes_search::search::engine::SearchEngine;
@@ -138,6 +141,41 @@ fn branch_and_bound_rows() -> Vec<Row> {
                 });
             }
         }
+    }
+    // What proving costs: the complete schedule with widening never withheld,
+    // so exhaustion within the budget is a proof of optimality.
+    for (oname, objective) in objectives {
+        rows.push(Row {
+            name: format!("bnb_lifo_{oname}_p"),
+            search: MoveSearch::branch_and_bound()
+                .with_entropy_options(EntropyOptions {
+                    completion_bound: Some(BoundKind::WeightedDistance),
+                    objective,
+                    ..EntropyOptions::default()
+                })
+                .with_bnb_options(BnbOptions {
+                    widening: Widening::UNLIMITED,
+                    ..BnbOptions::default()
+                }),
+        });
+    }
+    // The other stage-0 branching rule: the frontier path's heuristic
+    // generator (with the solve's deadlock policy) ahead of the exhaustive
+    // ladder — spec open question 2.
+    for (oname, objective) in objectives {
+        rows.push(Row {
+            name: format!("bnb_lifo_{oname}_hx"),
+            search: MoveSearch::branch_and_bound()
+                .with_entropy_options(EntropyOptions {
+                    completion_bound: Some(BoundKind::WeightedDistance),
+                    objective,
+                    ..EntropyOptions::default()
+                })
+                .with_bnb_options(BnbOptions {
+                    schedule: ScheduleKind::HeuristicThenExhaustive,
+                    ..BnbOptions::default()
+                }),
+        });
     }
     rows
 }
@@ -347,7 +385,9 @@ fn main() {
              stage any plan needed. Rows named bnb_<frontier>_<u|w>_<e|ex> are the\n\
              evaluation product: objective u = uniform, w = weighted duration; schedule\n\
              e = entropy only, ex = entropy then exhaustive (widening off after the\n\
-             first plan)."
+             first plan), p = entropy then exhaustive with widening unlimited (lifo\n\
+             only): exhaustion within the budget proves optimality, hx = the\n\
+             heuristic generator then exhaustive (lifo only)."
         );
     }
 }
