@@ -135,6 +135,10 @@ fn scenarios() -> Vec<Scenario> {
             ],
             max_expansions: Some(4000),
         },
+        // Five atoms in word 0 lift in one shot (a 5x1 rectangle), two of them
+        // continue across the word bus, and three word-1 atoms walk back down
+        // their columns together with the arriving two: three shots, with a
+        // complete schedule needed once the improving-only stage 0 dead-ends.
         Scenario {
             name: "route8_dense",
             initial: vec![
@@ -143,19 +147,19 @@ fn scenarios() -> Vec<Scenario> {
                 (2, loc(0, 2)),
                 (3, loc(0, 3)),
                 (4, loc(0, 4)),
-                (5, loc(1, 0)),
-                (6, loc(1, 1)),
-                (7, loc(1, 2)),
-            ],
-            target: vec![
-                (0, loc(1, 0)),
-                (1, loc(1, 1)),
-                (2, loc(1, 2)),
-                (3, loc(0, 8)),
-                (4, loc(0, 9)),
                 (5, loc(1, 5)),
                 (6, loc(1, 6)),
                 (7, loc(1, 7)),
+            ],
+            target: vec![
+                (0, loc(0, 5)),
+                (1, loc(0, 6)),
+                (2, loc(0, 7)),
+                (3, loc(1, 3)),
+                (4, loc(1, 4)),
+                (5, loc(1, 0)),
+                (6, loc(1, 1)),
+                (7, loc(1, 2)),
             ],
             max_expansions: Some(6000),
         },
