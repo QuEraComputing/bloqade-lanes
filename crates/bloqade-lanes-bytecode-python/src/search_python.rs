@@ -996,6 +996,8 @@ impl PyEntropyOptions {
                 collect_entropy_trace,
                 seed,
                 completion_bound,
+                // Exposed to Python in Task 3.4 of the B&B plan.
+                ..EntropyOptions::default()
             },
         })
     }

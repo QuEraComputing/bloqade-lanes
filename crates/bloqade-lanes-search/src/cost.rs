@@ -7,7 +7,80 @@ use bloqade_lanes_bytecode_core::arch::addr::LaneAddr;
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 use crate::primitives::lane_index::LaneIndex;
+use crate::search::options::ObjectiveKind;
 use crate::traits::{CostFn, Objective, ObjectiveId};
+
+/// The objective a solve was asked for, as one type the dispatch can hold and
+/// hand to a driver that is generic over [`Objective`].
+///
+/// Delegates every method to the wrapped objective, `id()` included, so the
+/// pairing assertion between an objective and its completion bound sees the
+/// wrapped instance's identity. `Uniform` is therefore indistinguishable from
+/// a bare [`UniformCost`] to every consumer.
+pub enum SolveObjective {
+    Uniform(UniformCost),
+    WeightedDuration(WeightedDuration),
+}
+
+impl SolveObjective {
+    /// Resolve an [`ObjectiveKind`] against the architecture. For
+    /// `WeightedDuration { tau: None }` the normalizer is the fastest lane
+    /// duration the index knows, or `1.0` when the spec carries no transport
+    /// paths ([`WeightedDuration::new`] requires a positive finite `tau`).
+    pub fn from_kind(kind: ObjectiveKind, index: &LaneIndex) -> Self {
+        match kind {
+            ObjectiveKind::Uniform => Self::Uniform(UniformCost),
+            ObjectiveKind::WeightedDuration { tau } => {
+                let tau = tau
+                    .or_else(|| index.fastest_lane_duration_us())
+                    .unwrap_or(1.0);
+                Self::WeightedDuration(WeightedDuration::new(index, tau))
+            }
+        }
+    }
+
+    /// The kind this objective resolved to, with `tau` filled in.
+    pub fn kind(&self) -> ObjectiveKind {
+        match self {
+            Self::Uniform(_) => ObjectiveKind::Uniform,
+            Self::WeightedDuration(w) => ObjectiveKind::WeightedDuration { tau: Some(w.tau()) },
+        }
+    }
+}
+
+impl CostFn for SolveObjective {
+    #[inline]
+    fn edge_cost(&self, move_set: &MoveSet, from: &Config, to: &Config) -> f64 {
+        match self {
+            Self::Uniform(o) => o.edge_cost(move_set, from, to),
+            Self::WeightedDuration(o) => o.edge_cost(move_set, from, to),
+        }
+    }
+}
+
+impl Objective for SolveObjective {
+    #[inline]
+    fn lane_weight(&self, lane: LaneAddr) -> f64 {
+        match self {
+            Self::Uniform(o) => o.lane_weight(lane),
+            Self::WeightedDuration(o) => o.lane_weight(lane),
+        }
+    }
+
+    fn min_shot_cost(&self) -> f64 {
+        match self {
+            Self::Uniform(o) => o.min_shot_cost(),
+            Self::WeightedDuration(o) => o.min_shot_cost(),
+        }
+    }
+
+    fn id(&self) -> ObjectiveId {
+        match self {
+            Self::Uniform(o) => o.id(),
+            Self::WeightedDuration(o) => o.id(),
+        }
+    }
+}
 
 /// Uniform edge cost: every move step costs 1.0.
 ///
@@ -227,6 +300,66 @@ mod tests {
                 objective.min_shot_cost()
             );
         }
+    }
+
+    fn physical_index() -> crate::primitives::lane_index::LaneIndex {
+        use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+        let spec: ArchSpec = serde_json::from_str(include_str!(
+            "../../../python/bloqade/lanes/arch/gemini/physical/_physical_spec.json"
+        ))
+        .unwrap();
+        crate::primitives::lane_index::LaneIndex::new(spec)
+    }
+
+    /// Both kinds satisfy the objective contract through the delegating
+    /// wrapper, and `Uniform` carries `UniformCost`'s identity.
+    #[test]
+    fn solve_objective_delegates_and_satisfies_the_contract() {
+        use crate::bounds::assert_objective_contract;
+        use crate::primitives::lane_index::LaneIndex;
+        use crate::test_utils::example_arch_json;
+        use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let uniform = SolveObjective::from_kind(ObjectiveKind::Uniform, &index);
+        assert_objective_contract(&uniform, &index);
+        assert_eq!(uniform.id(), UniformCost.id());
+        assert_eq!(uniform.kind(), ObjectiveKind::Uniform);
+
+        let weighted =
+            SolveObjective::from_kind(ObjectiveKind::WeightedDuration { tau: Some(2.0) }, &index);
+        assert_objective_contract(&weighted, &index);
+        assert_eq!(weighted.id(), WeightedDuration::new(&index, 2.0).id());
+        assert_eq!(
+            weighted.kind(),
+            ObjectiveKind::WeightedDuration { tau: Some(2.0) }
+        );
+    }
+
+    /// `tau: None` resolves to the fastest lane on a spec with paths and to
+    /// `1.0` on one without.
+    #[test]
+    fn weighted_duration_tau_defaults_to_the_fastest_lane() {
+        use crate::primitives::lane_index::LaneIndex;
+        use crate::test_utils::example_arch_json;
+        use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        let no_paths = LaneIndex::new(spec);
+        assert_eq!(no_paths.fastest_lane_duration_us(), None);
+        let o = SolveObjective::from_kind(ObjectiveKind::WeightedDuration { tau: None }, &no_paths);
+        assert_eq!(o.kind(), ObjectiveKind::WeightedDuration { tau: Some(1.0) });
+
+        let physical = physical_index();
+        let fastest = physical
+            .fastest_lane_duration_us()
+            .expect("the physical spec carries transport paths");
+        let o = SolveObjective::from_kind(ObjectiveKind::WeightedDuration { tau: None }, &physical);
+        assert_eq!(
+            o.kind(),
+            ObjectiveKind::WeightedDuration { tau: Some(fastest) }
+        );
     }
 
     #[test]

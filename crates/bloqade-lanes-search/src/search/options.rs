@@ -242,6 +242,31 @@ pub struct EntropyOptions {
     /// or entropy reweighting. With `None` the search is bit-identical to
     /// having no bounding code at all.
     pub completion_bound: Option<BoundKind>,
+    /// The quantity the solve minimizes — what `g` accumulates and what the
+    /// completion bound is admissible for.
+    ///
+    /// Consulted by the drivers that take an objective: the entropy strategy
+    /// (alone or as a cascade's inner phase) and, once it lands, branch and
+    /// bound. The plain frontier strategies (A*, BFS, greedy, IDS, DFS) run
+    /// unit cost through `run_frontier` regardless. `Uniform` is the default
+    /// and is bit-identical to every existing path.
+    pub objective: ObjectiveKind,
+}
+
+/// The quantity a solve minimizes. Resolved to a
+/// [`SolveObjective`](crate::cost::SolveObjective) per solve.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ObjectiveKind {
+    /// One unit per shot: minimize the number of move layers.
+    #[default]
+    Uniform,
+    /// `1 + duration / tau` per shot, the duration being the slowest lane in
+    /// the shot. `tau` normalizes a duration into moveset-equivalents and
+    /// sets the trade between plan length and plan time; `None` resolves to
+    /// the architecture's fastest lane duration, or `1.0` on a spec without
+    /// transport paths (where every duration falls back to the same unit
+    /// value anyway).
+    WeightedDuration { tau: Option<f64> },
 }
 
 /// Which admissible completion bound to prune with.
@@ -268,6 +293,7 @@ impl Default for EntropyOptions {
             collect_entropy_trace: false,
             seed: 0,
             completion_bound: None,
+            objective: ObjectiveKind::Uniform,
         }
     }
 }

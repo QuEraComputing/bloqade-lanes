@@ -13,7 +13,7 @@
 use rayon::prelude::*;
 
 use crate::bounds::{NoBound, WeightedDistanceBound};
-use crate::cost::UniformCost;
+use crate::cost::{SolveObjective, UniformCost};
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
 use crate::drivers::result::{SearchResult, Termination};
@@ -212,8 +212,10 @@ where
     let w_t = entropy.w_t;
     let base_seed = entropy.seed;
     // The objective this solve accumulates `g` with, named once, so the driver
-    // and the bound it is paired with cannot disagree about it.
-    let objective = UniformCost;
+    // and the bound it is paired with cannot disagree about it. Resolved from
+    // the options against the arch; `Uniform` delegates to `UniformCost` and
+    // is bit-identical to what every path ran before the knob existed.
+    let objective = SolveObjective::from_kind(entropy.objective, ctx.index);
 
     // Build the entropy heuristic tables once per solve, shared across
     // restarts, exactly when the dispatch below will run the entropy driver.
