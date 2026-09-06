@@ -5,6 +5,7 @@
 
 use crate::bounds::BoundStats;
 use crate::drivers::entropy::EntropyTrace;
+use crate::drivers::result::Termination;
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 
@@ -30,7 +31,10 @@ pub enum SolveStatus {
     /// solves. Callers that branch on this status (fallback logic, feasibility
     /// conclusions, optimality baselines) should treat it as "this search found
     /// nothing" rather than "nothing exists"; for a genuine verdict use the
-    /// feasibility oracle or Push and Rotate.
+    /// feasibility oracle or Push and Rotate. The branch-and-bound driver with
+    /// a complete schedule is the other proof-bearing case: it sets
+    /// [`SolveResult::proven`], which is the flag to read rather than the
+    /// status.
     Unsolvable,
     /// The expansion budget was exhausted before finding a solution or
     /// exhausting the space.
@@ -88,6 +92,19 @@ pub struct SolveResult {
     /// populated either way. The Python surface reports an unbounded run as an
     /// *empty* dict rather than zeros.
     pub bound_stats: BoundStats,
+    /// Whether the verdict is a proof over the exhaustive search space: when
+    /// `Solved`, the plan is optimal; when `Unsolvable`, no plan exists. Set
+    /// only by a driver whose search drained a complete schedule
+    /// (`Termination::Exhausted { proof: true }`); `false` on every other
+    /// path and for every other status.
+    pub proven: bool,
+    /// How the search that produced this result ended.
+    pub termination: Termination,
+    /// Expansions per generator stage of a staged driver; empty otherwise.
+    pub stage_expansions: Vec<u32>,
+    /// The stage that produced the plan (the widest stage on its path), for a
+    /// staged driver that solved; `None` otherwise.
+    pub plan_stage: Option<u8>,
 }
 
 impl SolveResult {
@@ -108,6 +125,10 @@ impl SolveResult {
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
+            proven: false,
+            termination: Termination::Stopped,
+            stage_expansions: Vec::new(),
+            plan_stage: None,
         }
     }
 
@@ -133,6 +154,13 @@ impl SolveResult {
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
+            proven: false,
+            termination: match status {
+                SolveStatus::BudgetExceeded => Termination::Budget,
+                _ => Termination::Exhausted { proof: false },
+            },
+            stage_expansions: Vec::new(),
+            plan_stage: None,
         }
     }
 

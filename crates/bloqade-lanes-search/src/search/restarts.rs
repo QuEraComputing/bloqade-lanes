@@ -16,7 +16,7 @@ use crate::bounds::{NoBound, WeightedDistanceBound};
 use crate::cost::UniformCost;
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
-use crate::drivers::result::SearchResult;
+use crate::drivers::result::{SearchResult, Termination};
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::observer::NoOpObserver;
 use crate::primitives::config::Config;
@@ -35,12 +35,16 @@ use crate::traits::{Goal, Heuristic, MoveGenerator};
 /// performs no occupancy validation, so this is where a generator that emits
 /// an inexecutable move set gets caught, rather than downstream in the IR.
 pub(crate) fn extract(
-    result: SearchResult,
+    mut result: SearchResult,
     deadlocks: u32,
     max_exp: Option<u32>,
     ctx: &SearchContext,
 ) -> SolveResult {
     let bound_stats = result.bound_stats;
+    let termination = result.termination;
+    let proven = matches!(termination, Termination::Exhausted { proof: true });
+    let stage_expansions = std::mem::take(&mut result.stage_expansions);
+    let plan_stage = result.plan_stage();
     match result.goal {
         Some(goal_id) => {
             let move_layers = result.solution_path().unwrap_or_default();
@@ -61,18 +65,38 @@ pub(crate) fn extract(
                 deadlocks,
             );
             solved.bound_stats = bound_stats;
+            solved.proven = proven;
+            solved.termination = termination;
+            solved.stage_expansions = stage_expansions;
+            solved.plan_stage = plan_stage;
             solved
         }
         None => {
             let root_config = result.graph.config(result.graph.root()).clone();
-            let status = if max_exp.is_some_and(|max| result.nodes_expanded >= max) {
-                SolveStatus::BudgetExceeded
-            } else {
-                SolveStatus::Unsolvable
+            // The status is the driver's own account of how it ended. The
+            // frontier and entropy drivers report `Budget` exactly when the
+            // inference this replaces — expansions reached `max_expansions` —
+            // would have, so results are unchanged; a driver that can drain
+            // its space says so directly.
+            let status = match termination {
+                Termination::Budget => SolveStatus::BudgetExceeded,
+                Termination::Exhausted { .. } => SolveStatus::Unsolvable,
+                Termination::Stopped => {
+                    debug_assert!(false, "a driver stopped by its own rule must report a goal");
+                    SolveStatus::Unsolvable
+                }
             };
+            debug_assert_eq!(
+                status == SolveStatus::BudgetExceeded,
+                max_exp.is_some_and(|max| result.nodes_expanded >= max)
+                    || matches!(termination, Termination::Budget),
+            );
             let mut unsolved =
                 SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks);
             unsolved.bound_stats = bound_stats;
+            unsolved.proven = proven;
+            unsolved.termination = termination;
+            unsolved.stage_expansions = stage_expansions;
             unsolved
         }
     }

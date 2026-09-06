@@ -43,6 +43,9 @@ pub enum SearchEvent<'a> {
         num_candidates: usize,
         node_id: NodeId,
         config: &'a Config,
+        /// The generator stage of a staged driver; `0` for single-stage
+        /// drivers. Lets an observer count expansions per `(node, stage)`.
+        stage: u8,
     },
 
     // ── Entropy driver ─────────────────────────────────────────────
@@ -223,6 +226,7 @@ mod tests {
             num_candidates: 3,
             node_id: NodeId(7),
             config: &config,
+            stage: 0,
         });
         assert_eq!(obs.labels, vec!["GoalFound", "NodeExpanded"]);
     }

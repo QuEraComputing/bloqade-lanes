@@ -873,6 +873,10 @@ pub fn solve_entangling_rh_single(
                 deadlocks: 0,
                 entropy_trace: None,
                 bound_stats: crate::bounds::BoundStats::default(),
+                proven: false,
+                termination: crate::drivers::result::Termination::Budget,
+                stage_expansions: Vec::new(),
+                plan_stage: None,
             };
         }
         stage_iter = stage_iter.saturating_add(1);
@@ -1018,6 +1022,10 @@ pub fn solve_entangling_rh_single(
         deadlocks: 0,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
+        proven: false,
+        termination: crate::drivers::result::Termination::Stopped,
+        stage_expansions: Vec::new(),
+        plan_stage: None,
     }
 }
 
@@ -1100,6 +1108,10 @@ fn merge_fallback(
             deadlocks: fallback.deadlocks,
             entropy_trace: None,
             bound_stats: crate::bounds::BoundStats::default(),
+            proven: false,
+            termination: fallback.termination,
+            stage_expansions: Vec::new(),
+            plan_stage: None,
         };
     }
     let mut merged = committed_layers;
@@ -1114,6 +1126,10 @@ fn merge_fallback(
         deadlocks: fallback.deadlocks,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
+        proven: false,
+        termination: crate::drivers::result::Termination::Stopped,
+        stage_expansions: Vec::new(),
+        plan_stage: None,
     }
 }
 
