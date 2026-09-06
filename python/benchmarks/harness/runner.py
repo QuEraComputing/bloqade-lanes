@@ -6,6 +6,7 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
@@ -80,6 +81,10 @@ class _RunArtifacts:
     max_depth_reached: int | None
     bound_stats: dict[str, float] = field(default_factory=dict)
     notes: str = ""
+    extra: dict[str, Any] = field(default_factory=dict)
+    """Branch-and-bound proof and staging counters (``proven_solves``,
+    ``stage_expansions``, ``plan_stage_max``); empty for every other strategy.
+    Console-only: adding CSV columns would change the committed baselines."""
 
 
 @dataclass
@@ -111,6 +116,7 @@ class BenchmarkRunner:
         nodes_explored = None
         max_depth_reached = None
         bound_stats: dict[str, float] = {}
+        extra: dict[str, Any] = {}
         notes = [job.strategy.notes] if job.strategy.notes else []
 
         try:
@@ -127,6 +133,7 @@ class BenchmarkRunner:
                     nodes_explored = artifacts.nodes_explored
                     max_depth_reached = artifacts.max_depth_reached
                     bound_stats = artifacts.bound_stats
+                    extra = dict(artifacts.extra)
                     if artifacts.notes:
                         notes.append(artifacts.notes)
 
@@ -162,6 +169,7 @@ class BenchmarkRunner:
                 max_optimality_gap=bound_stats.get("max_optimality_gap"),
                 arch_spec_id=job.strategy.arch_spec_id,
                 notes="; ".join([n for n in notes if n]),
+                extra=extra,
             )
         except Exception as exc:  # noqa: BLE001  # pragma: no cover
             return BenchmarkRow(
@@ -196,12 +204,21 @@ class BenchmarkRunner:
 
         nodes: int | None = None
         bound_stats: dict[str, float] = {}
+        extra: dict[str, Any] = {}
         inner = getattr(placement_strategy, "inner", placement_strategy)
         if isinstance(inner, PhysicalPlacementStrategy) and isinstance(
             inner.traversal, RustPlacementTraversal
         ):
             nodes = inner.rust_nodes_expanded_total
             bound_stats = inner.rust_bound_stats_total
+            if inner.traversal.strategy == "branch-and-bound":
+                extra = {
+                    "proven_solves": inner.rust_proven_total,
+                    "stage_expansions": "/".join(
+                        str(n) for n in inner.rust_stage_expansions_total
+                    ),
+                    "plan_stage_max": inner.rust_plan_stage_max,
+                }
         elif isinstance(inner, NoReturnStrategyBase):
             # The no-return family (NoHome / NoReturn / RecedingHorizon) mirrors
             # PhysicalPlacementStrategy's expansion counter, so search effort is
@@ -216,6 +233,7 @@ class BenchmarkRunner:
             nodes_explored=nodes,
             max_depth_reached=None,
             bound_stats=bound_stats,
+            extra=extra,
         )
 
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:

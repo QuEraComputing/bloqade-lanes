@@ -46,6 +46,12 @@ def main() -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
+    # The branch-and-bound rows are opt-in on both suites, selectable by name,
+    # so the committed baselines never carry them (same mechanism as the
+    # physical bounded row below).
+    branch_and_bound = bool(strategy_filter) and any(
+        "bnb" in name for name in strategy_filter
+    )
     if args.architecture == "logical":
         strategies = tuple(
             default_strategy_configs(
@@ -53,6 +59,7 @@ def main() -> int:
                 # Bound-on coverage is tracked on the logical suite only; see
                 # `default_strategy_configs` for why not on physical.
                 include_completion_bound=True,
+                include_branch_and_bound=branch_and_bound,
             )
         )
     else:
@@ -71,6 +78,7 @@ def main() -> int:
             for cfg in default_strategy_configs(
                 arch_spec=(arch_id, (lambda arch=arch: arch)),
                 include_completion_bound=physical_bound,
+                include_branch_and_bound=branch_and_bound,
             )
         )
     jobs = expand_benchmark_jobs(

@@ -74,8 +74,14 @@ def write_csv(rows: list[BenchmarkRow], output_path: Path) -> None:
 
 
 def render_console_table(rows: list[BenchmarkRow]) -> str:
-    """Render a compact plain-text comparison table."""
+    """Render a compact plain-text comparison table.
+
+    Rows carrying branch-and-bound counters in ``extra`` add three columns
+    (``proven``, ``stages``, ``plan_stage``); a run without such rows renders
+    exactly as before.
+    """
     sorted_rows = sort_rows(rows)
+    with_extra = any(row.extra for row in sorted_rows)
     headers = (
         "case_id",
         "strategy_id",
@@ -85,7 +91,7 @@ def render_console_table(rows: list[BenchmarkRow]) -> str:
         "move_lanes",
         "fidelity",
         "nodes_explored",
-    )
+    ) + (("proven", "stages", "plan_stage") if with_extra else ())
     table_rows = [
         (
             row.case_id,
@@ -96,6 +102,15 @@ def render_console_table(rows: list[BenchmarkRow]) -> str:
             _fmt_int(row.move_count_lanes),
             _fmt_fidelity(row.estimated_fidelity),
             _fmt_int(row.nodes_explored),
+        )
+        + (
+            (
+                _fmt_extra(row.extra.get("proven_solves")),
+                _fmt_extra(row.extra.get("stage_expansions")),
+                _fmt_extra(row.extra.get("plan_stage_max")),
+            )
+            if with_extra
+            else ()
         )
         for row in sorted_rows
     ]
@@ -126,5 +141,11 @@ def _fmt_fidelity(value: float | None) -> str:
 
 def _fmt_int(value: int | None) -> str:
     if value is None:
+        return ""
+    return str(value)
+
+
+def _fmt_extra(value: object) -> str:
+    if value is None or value == "":
         return ""
     return str(value)

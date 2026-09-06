@@ -33,6 +33,7 @@ def default_strategy_configs(
     arch_spec: tuple[str, Callable[[], ArchSpec]] | None = None,
     *,
     include_completion_bound: bool = False,
+    include_branch_and_bound: bool = False,
 ) -> tuple[StrategyConfig, ...]:
     """Return the default strategy matrix for V1 benchmarks.
 
@@ -54,6 +55,14 @@ def default_strategy_configs(
     `--architecture physical --strategies rust_entropy_5_bounded`: the CLI turns
     this flag on when `--strategies` names a bounded config, so the strategy is
     selectable by name without joining the default physical matrix.
+
+    `include_branch_and_bound` adds the branch-and-bound rows
+    (`rust_bnb_lifo_entropy`, `rust_bnb_lifo_complete`, `rust_bnb_ids_complete`),
+    each at the `rust_entropy_5_bounded` budget so plan cost is compared at
+    equal budget. Off by default on both suites and gated exactly like the
+    bounded row: the committed baselines do not change, and the CLI turns it on
+    when `--strategies` names one of them. Their proof and staging counters go
+    to `BenchmarkRow.extra` (console only), not to the CSV columns.
     """
     if arch_spec is None:
         arch_spec_id = BUILTIN_ARCH_SPEC_ID
@@ -61,154 +70,45 @@ def default_strategy_configs(
     else:
         arch_spec_id, factory = arch_spec
     return (
-        StrategyConfig(
-            strategy_id="pipeline_default",
-            backend="rust",
-            generator_id="rust_solver",
-            # Deliberately unpinned: this row tracks whatever
-            # `make_physical_placement_strategy` resolves to, which is what
-            # `PhysicalPipeline` gives a user who passes no strategy. Pinning
-            # the knobs here would reproduce the blind spot one level down --
-            # the point is that a change to the placement family,
-            # `backwards_search`, `block_spectators`, or the `search_budget` /
-            # `move_solutions_per_layer` defaults shows up as a baseline diff.
-            # The factory already wraps its result in
-            # PalindromePlacementStrategy when return_moves is on, so this must
-            # not be wrapped again.
-            build_placement_strategy=lambda: make_physical_placement_strategy(
-                arch_spec=factory()
-            ),
-            arch_spec_id=arch_spec_id,
-            notes="shipped PhysicalPipeline default; knobs intentionally unpinned",
-        ),
-        StrategyConfig(
-            strategy_id="rust_entropy_1",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(
-                        strategy="entropy", max_goal_candidates=1, max_expansions=2000
-                    ),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_entropy_5",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(
-                        strategy="entropy", max_goal_candidates=5, max_expansions=2000
-                    ),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_entropy_10",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(
-                        strategy="entropy", max_goal_candidates=10, max_expansions=2000
-                    ),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_entropy_20",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(
-                        strategy="entropy", max_goal_candidates=20, max_expansions=2000
-                    ),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_astar",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(strategy="astar"),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_ids",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(strategy="ids"),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_dfs",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(strategy="dfs"),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_bfs",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(strategy="bfs"),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-        ),
-        StrategyConfig(
-            strategy_id="rust_greedy",
-            backend="rust",
-            generator_id="rust_solver",
-            build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
-                    arch_spec=factory(),
-                    traversal=RustPlacementTraversal(
-                        strategy="greedy",
-                        max_movesets_per_group=50,
-                        max_expansions=1000,
-                    ),
-                )
-            ),
-            arch_spec_id=arch_spec_id,
-            notes=(
-                "first-solution Rust solve (non-optimal); "
-                "Rust solver nodes_explored captured from solver output"
-            ),
-        ),
-    ) + (
         (
             StrategyConfig(
-                strategy_id="rust_entropy_5_bounded",
+                strategy_id="pipeline_default",
+                backend="rust",
+                generator_id="rust_solver",
+                # Deliberately unpinned: this row tracks whatever
+                # `make_physical_placement_strategy` resolves to, which is what
+                # `PhysicalPipeline` gives a user who passes no strategy. Pinning
+                # the knobs here would reproduce the blind spot one level down --
+                # the point is that a change to the placement family,
+                # `backwards_search`, `block_spectators`, or the `search_budget` /
+                # `move_solutions_per_layer` defaults shows up as a baseline diff.
+                # The factory already wraps its result in
+                # PalindromePlacementStrategy when return_moves is on, so this must
+                # not be wrapped again.
+                build_placement_strategy=lambda: make_physical_placement_strategy(
+                    arch_spec=factory()
+                ),
+                arch_spec_id=arch_spec_id,
+                notes="shipped PhysicalPipeline default; knobs intentionally unpinned",
+            ),
+            StrategyConfig(
+                strategy_id="rust_entropy_1",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(
+                            strategy="entropy",
+                            max_goal_candidates=1,
+                            max_expansions=2000,
+                        ),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+            ),
+            StrategyConfig(
+                strategy_id="rust_entropy_5",
                 backend="rust",
                 generator_id="rust_solver",
                 build_placement_strategy=lambda: PalindromePlacementStrategy(
@@ -218,16 +118,194 @@ def default_strategy_configs(
                             strategy="entropy",
                             max_goal_candidates=5,
                             max_expansions=2000,
-                            completion_bound="weighted_distance",
                         ),
                     )
                 ),
                 arch_spec_id=arch_spec_id,
-                notes="branch-and-bound pruning with the h0 weighted-distance bound",
+            ),
+            StrategyConfig(
+                strategy_id="rust_entropy_10",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(
+                            strategy="entropy",
+                            max_goal_candidates=10,
+                            max_expansions=2000,
+                        ),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+            ),
+            StrategyConfig(
+                strategy_id="rust_entropy_20",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(
+                            strategy="entropy",
+                            max_goal_candidates=20,
+                            max_expansions=2000,
+                        ),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+            ),
+            StrategyConfig(
+                strategy_id="rust_astar",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(strategy="astar"),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+            ),
+            StrategyConfig(
+                strategy_id="rust_ids",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(strategy="ids"),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+            ),
+            StrategyConfig(
+                strategy_id="rust_dfs",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(strategy="dfs"),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+            ),
+            StrategyConfig(
+                strategy_id="rust_bfs",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(strategy="bfs"),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+            ),
+            StrategyConfig(
+                strategy_id="rust_greedy",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: PalindromePlacementStrategy(
+                    inner=PhysicalPlacementStrategy(
+                        arch_spec=factory(),
+                        traversal=RustPlacementTraversal(
+                            strategy="greedy",
+                            max_movesets_per_group=50,
+                            max_expansions=1000,
+                        ),
+                    )
+                ),
+                arch_spec_id=arch_spec_id,
+                notes=(
+                    "first-solution Rust solve (non-optimal); "
+                    "Rust solver nodes_explored captured from solver output"
+                ),
             ),
         )
-        if include_completion_bound
-        else ()
+        + (
+            (
+                StrategyConfig(
+                    strategy_id="rust_entropy_5_bounded",
+                    backend="rust",
+                    generator_id="rust_solver",
+                    build_placement_strategy=lambda: PalindromePlacementStrategy(
+                        inner=PhysicalPlacementStrategy(
+                            arch_spec=factory(),
+                            traversal=RustPlacementTraversal(
+                                strategy="entropy",
+                                max_goal_candidates=5,
+                                max_expansions=2000,
+                                completion_bound="weighted_distance",
+                            ),
+                        )
+                    ),
+                    arch_spec_id=arch_spec_id,
+                    notes="branch-and-bound pruning with the h0 weighted-distance bound",
+                ),
+            )
+            if include_completion_bound
+            else ()
+        )
+        + (
+            tuple(
+                StrategyConfig(
+                    strategy_id=strategy_id,
+                    backend="rust",
+                    generator_id="rust_solver",
+                    build_placement_strategy=(
+                        lambda schedule=schedule, frontier=frontier: (
+                            PalindromePlacementStrategy(
+                                inner=PhysicalPlacementStrategy(
+                                    arch_spec=factory(),
+                                    traversal=RustPlacementTraversal(
+                                        strategy="branch-and-bound",
+                                        max_expansions=2000,
+                                        completion_bound="weighted_distance",
+                                        bnb_frontier=frontier,
+                                        bnb_schedule=schedule,
+                                    ),
+                                )
+                            )
+                        )
+                    ),
+                    arch_spec_id=arch_spec_id,
+                    notes=notes,
+                )
+                for strategy_id, frontier, schedule, notes in (
+                    (
+                        "rust_bnb_lifo_entropy",
+                        "lifo",
+                        "entropy_only",
+                        (
+                            "branch and bound, generator-order DFS over the "
+                            "entropy generator alone: the isolate-the-loop reference"
+                        ),
+                    ),
+                    (
+                        "rust_bnb_lifo_complete",
+                        "lifo",
+                        "entropy_then_exhaustive",
+                        (
+                            "branch and bound, generator-order DFS, entropy then the "
+                            "exhaustive ladder (widening off after the first plan)"
+                        ),
+                    ),
+                    (
+                        "rust_bnb_ids_complete",
+                        "ids",
+                        "entropy_then_exhaustive",
+                        (
+                            "branch and bound, best-first diving on h_sum, entropy "
+                            "then the exhaustive ladder (widening off after the first plan)"
+                        ),
+                    ),
+                )
+            )
+            if include_branch_and_bound
+            else ()
+        )
     )
 
 
