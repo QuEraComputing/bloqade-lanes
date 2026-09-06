@@ -83,8 +83,34 @@ class _RunArtifacts:
     notes: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
     """Branch-and-bound proof and staging counters (``proven_solves``,
-    ``stage_expansions``, ``plan_stage_max``); empty for every other strategy.
-    Console-only: adding CSV columns would change the committed baselines."""
+    ``stage_expansions``, ``plan_stage_max``), plus the root-bound summary
+    every *bounded* row carries (``h_root_sum``, ``cost_sum``, ``gap_pct``,
+    ``certificates``). Empty for unbounded strategies. Console-only: adding
+    CSV columns would change the committed baselines."""
+
+
+def _root_bound_extra(bound_stats: dict[str, float]) -> dict[str, Any]:
+    """Summarise `h(root)` against the plans actually found.
+
+    ``certificates`` counts solves where the two are equal, which proves the
+    plan optimal over every legal plan -- not just the ones the generator
+    proposed, since `h(root)` does not depend on what was generated. Both
+    sums range over the same solves, so their ratio is a meaningful gap.
+    """
+    solves = int(bound_stats.get("measured_solves", 0))
+    if solves == 0:
+        return {}
+    h_sum = float(bound_stats.get("root_lower_bound_sum", 0.0))
+    cost_sum = float(bound_stats.get("incumbent_cost_sum", 0.0))
+    certificates = int(bound_stats.get("certificates", 0))
+    return {
+        "h_root_sum": f"{h_sum:.3f}",
+        "cost_sum": f"{cost_sum:.3f}",
+        "gap_pct": (
+            f"{100.0 * (cost_sum - h_sum) / cost_sum:.0f}%" if cost_sum > 0 else ""
+        ),
+        "certificates": f"{certificates}/{solves}",
+    }
 
 
 @dataclass
@@ -211,6 +237,7 @@ class BenchmarkRunner:
         ):
             nodes = inner.rust_nodes_expanded_total
             bound_stats = inner.rust_bound_stats_total
+            extra.update(_root_bound_extra(bound_stats))
             if inner.traversal.strategy == "branch-and-bound":
                 extra = {
                     "proven_solves": inner.rust_proven_total,

@@ -361,6 +361,31 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         gap = stats.get("optimality_gap")
         if gap is not None:
             gap = float(gap)
+            # `optimality_gap` is `(incumbent - h(root)) / incumbent`, and Rust
+            # only reports it when both are finite and the solve produced a
+            # plan. That is exactly the set over which a root bound is
+            # comparable to a cost, so all four of these accumulate together
+            # and stay consistent with one another.
+            root = stats.get("root_lower_bound")
+            cost = stats.get("incumbent_cost")
+            if root is not None and cost is not None:
+                self._bound_stats_total["measured_solves"] = (
+                    self._bound_stats_total.get("measured_solves", 0) + 1
+                )
+                self._bound_stats_total["root_lower_bound_sum"] = (
+                    self._bound_stats_total.get("root_lower_bound_sum", 0.0)
+                    + float(root)
+                )
+                self._bound_stats_total["incumbent_cost_sum"] = (
+                    self._bound_stats_total.get("incumbent_cost_sum", 0.0) + float(cost)
+                )
+                # A zero gap is the root optimality certificate: the plan's cost
+                # has reached a bound valid for *every* legal plan, so it is
+                # optimal regardless of what the generator ever proposed.
+                if abs(gap) <= 1e-9:
+                    self._bound_stats_total["certificates"] = (
+                        self._bound_stats_total.get("certificates", 0) + 1
+                    )
             prev = self._bound_stats_total.get("max_optimality_gap")
             # A negative gap means h(root) > incumbent: the bound overestimated
             # the true remaining cost, so it is inadmissible and pruning may have
