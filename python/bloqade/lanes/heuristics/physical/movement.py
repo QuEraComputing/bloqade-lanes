@@ -43,6 +43,7 @@ SearchStrategyName = Literal[
     "cascade-entropy",
     "entropy",
     "push-rotate",
+    "branch-and-bound",
 ]
 
 
@@ -103,6 +104,20 @@ class RustPlacementTraversal:
     (sometimes increase) move counts (e.g. DFS may relocate a spectator to
     shorten a participant's path); the search-effort reduction is not always
     move-count-free."""
+    aod_capacity: tuple[int, int] | None = None
+    """The AOD tone limit per axis for every shot, ``(x, y)``; ``None`` is
+    unlimited (today's behaviour). A hardware parameter that will move to the
+    architecture spec once its value is known."""
+    bnb_frontier: str = "lifo"
+    """Stage-0 frontier of the ``"branch-and-bound"`` strategy: ``"lifo"``
+    (generator order), ``"dfs"`` or ``"ids"``."""
+    bnb_schedule: str = "entropy_then_exhaustive"
+    """Generator schedule of ``"branch-and-bound"``: ``"entropy_only"``,
+    ``"entropy_then_exhaustive"`` or ``"heuristic_then_exhaustive"``."""
+    bnb_widen_after_incumbent: int = 0
+    """Highest schedule stage still processed once a plan is in hand; ``255``
+    is unlimited, which is what makes a ``"branch-and-bound"`` solve's
+    exhaustion a proof of optimality (``SolveResult.proven``)."""
 
 
 def _move_search_from_traversal(
@@ -119,14 +134,30 @@ def _move_search_from_traversal(
         strategy=_STRATEGY_MAP[traversal.strategy],
         restarts=traversal.restarts,
         lookahead=traversal.lookahead,
+        aod_capacity=traversal.aod_capacity,
     )
+    branch_and_bound = traversal.strategy == "branch-and-bound"
+    # Branch and bound is bounded out of the box (the Rust
+    # ``MoveSearch::branch_and_bound`` default); a traversal that leaves
+    # ``completion_bound`` unset gets the weighted-distance bound here rather
+    # than an unbounded run. Use ``MoveSearch`` directly for the control run.
+    completion_bound = traversal.completion_bound
+    if branch_and_bound and completion_bound is None:
+        completion_bound = "weighted_distance"
     entropy_opts = _native.EntropyOptions(
         max_movesets_per_group=traversal.max_movesets_per_group,
         max_goal_candidates=traversal.max_goal_candidates,
         collect_entropy_trace=collect_entropy_trace,
         seed=traversal.seed,
-        completion_bound=traversal.completion_bound,
+        completion_bound=completion_bound,
     )
+    if branch_and_bound:
+        bnb_opts = _native.BnbOptions(
+            frontier=traversal.bnb_frontier,
+            schedule=traversal.bnb_schedule,
+            widen_after_incumbent=traversal.bnb_widen_after_incumbent,
+        )
+        return _native.MoveSearch.branch_and_bound(solve_opts, entropy_opts, bnb_opts)
     return (
         _native.MoveSearch.entropy()
         .with_options(solve_opts)
@@ -152,6 +183,11 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     _bound_stats_total: dict[str, float] = field(
         default_factory=dict, init=False, repr=False
     )
+    _rust_proven_total: int = field(default=0, init=False, repr=False)
+    _rust_stage_expansions_total: list[int] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _rust_plan_stage_max: int | None = field(default=None, init=False, repr=False)
     _traced_rust_entropy_trace: EntropyTrace | None = field(
         default=None, init=False, repr=False
     )
@@ -270,6 +306,43 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         rather than expecting the keys to exist.
         """
         return dict(self._bound_stats_total)
+
+    @property
+    def rust_proven_total(self) -> int:
+        """Number of Rust solves whose verdict was a proof (``SolveResult.proven``):
+        an optimal plan, or a proven infeasibility. Only branch and bound with
+        a complete schedule produces them."""
+        return self._rust_proven_total
+
+    @property
+    def rust_stage_expansions_total(self) -> tuple[int, ...]:
+        """Per-stage expansion counts summed over every branch-and-bound solve;
+        empty when no solve was staged."""
+        return tuple(self._rust_stage_expansions_total)
+
+    @property
+    def rust_plan_stage_max(self) -> int | None:
+        """The widest schedule stage any solved plan needed, or ``None``."""
+        return self._rust_plan_stage_max
+
+    def _accumulate_staging(self, result: _native.SolveResult) -> None:
+        """Fold one solve's proof and staging counters into the running totals."""
+        if result.proven:
+            self._rust_proven_total += 1
+        stages = result.stage_expansions
+        if stages:
+            if len(self._rust_stage_expansions_total) < len(stages):
+                self._rust_stage_expansions_total.extend(
+                    [0] * (len(stages) - len(self._rust_stage_expansions_total))
+                )
+            for i, n in enumerate(stages):
+                self._rust_stage_expansions_total[i] += int(n)
+        plan_stage = result.plan_stage
+        if plan_stage is not None:
+            prev = self._rust_plan_stage_max
+            self._rust_plan_stage_max = (
+                plan_stage if prev is None else max(prev, plan_stage)
+            )
 
     def _accumulate_bound_stats(self, stats: dict[str, float | None]) -> None:
         """Fold one solve's bound statistics into the running totals."""
@@ -394,6 +467,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             self._accumulate_bound_stats(result.bound_stats)
+            self._accumulate_staging(result)
             if remaining is not None:
                 # The search strategies expand ≥ 1 node per call (even when
                 # unsolvable), but PUSH_ROTATE is not a search and always

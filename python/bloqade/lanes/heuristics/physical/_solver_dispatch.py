@@ -32,4 +32,8 @@ _STRATEGY_MAP: dict[str, _native.SearchStrategy] = {
     # they do not. See `SolveOptions.fallback_push_rotate` to use it as a
     # reliability net rather than a primary.
     "push-rotate": _native.SearchStrategy.PUSH_ROTATE,
+    # Branch and bound over a staged schedule ending in the exhaustive
+    # generator; the only search strategy whose verdicts can be proofs
+    # (`SolveResult.proven`).
+    "branch-and-bound": _native.SearchStrategy.BRANCH_AND_BOUND,
 }

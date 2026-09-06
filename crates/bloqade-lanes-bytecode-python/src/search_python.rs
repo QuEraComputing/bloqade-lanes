@@ -16,9 +16,11 @@ pub(crate) type PyObject = Py<PyAny>;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
+use bloqade_lanes_search::drivers::branch_and_bound::{WidenOrder, Widening};
 use bloqade_lanes_search::drivers::entropy::{
     EntropyParams, EntropyTrace, EntropyTraceStep, MovesetMetrics, compute_moveset_metrics,
 };
+use bloqade_lanes_search::drivers::result::Termination;
 use bloqade_lanes_search::placement::cz_placement::CzPlacement;
 use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
 use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
@@ -28,13 +30,15 @@ use bloqade_lanes_search::placement::receding_horizon::{
 use bloqade_lanes_search::placement::single_heuristic::SingleHeuristicCzPlacement;
 use bloqade_lanes_search::placement::target_generator::DefaultTargetGenerator;
 use bloqade_lanes_search::primitives::config::Config;
+use bloqade_lanes_search::primitives::context::AodCapacity;
 use bloqade_lanes_search::primitives::context::SearchContext;
 use bloqade_lanes_search::primitives::distance::DistanceTable;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::search::engine::SearchEngine;
 use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::options::{
-    BoundKind, EntanglingOptions, EntropyOptions, InnerStrategy, Refinement, SolveOptions, Strategy,
+    BnbFrontier, BnbOptions, BnbOrdering, BoundKind, EntanglingOptions, EntropyOptions,
+    InnerStrategy, ObjectiveKind, Refinement, ScheduleKind, SolveOptions, Strategy,
 };
 use bloqade_lanes_search::search::result::{MultiSolveResult, SolveResult};
 use bloqade_lanes_search::search::target_solver::TargetSolver;
@@ -220,8 +224,9 @@ pub struct PySolveResult {
 impl PySolveResult {
     /// Status of the solve: "solved", "unsolvable", or "budget_exceeded".
     ///
-    /// ``"unsolvable"`` is a *proof* only from the ``push_rotate`` strategy. From
-    /// a search strategy it means the search exhausted the moves its generator
+    /// ``"unsolvable"`` is a *proof* from the ``push_rotate`` strategy, and
+    /// from branch and bound when ``proven`` is ``True``. From any other
+    /// search strategy it means the search exhausted the moves its generator
     /// offered, which is less than the architecture allows — see
     /// ``SolveStatus::Unsolvable`` in the Rust docs for why (issue #910).
     #[getter]
@@ -318,6 +323,43 @@ impl PySolveResult {
         Ok(dict)
     }
 
+    /// Whether the verdict is a proof over the exhaustive search space: when
+    /// solved, the plan is optimal; when unsolvable, no plan exists. Set only
+    /// by the branch-and-bound strategy when a complete schedule drained with
+    /// no stage withheld; ``False`` on every other path.
+    #[getter]
+    fn proven(&self) -> bool {
+        self.inner.proven
+    }
+
+    /// How the search ended: ``"budget"`` (the expansion budget ran out),
+    /// ``"exhausted"`` (frontier drained, no proof), ``"exhausted_proof"``
+    /// (drained and a proof) or ``"stopped"`` (the driver's own rule: first
+    /// goal, or goal quota).
+    #[getter]
+    fn termination(&self) -> &'static str {
+        match self.inner.termination {
+            Termination::Budget => "budget",
+            Termination::Exhausted { proof: false } => "exhausted",
+            Termination::Exhausted { proof: true } => "exhausted_proof",
+            Termination::Stopped => "stopped",
+        }
+    }
+
+    /// Expansions per generator stage of a staged (branch-and-bound) solve;
+    /// empty otherwise. Sums to ``nodes_expanded`` when non-empty.
+    #[getter]
+    fn stage_expansions(&self) -> Vec<u32> {
+        self.inner.stage_expansions.clone()
+    }
+
+    /// The widest stage on the plan's path for a staged solve that solved;
+    /// ``None`` otherwise.
+    #[getter]
+    fn plan_stage(&self) -> Option<u8> {
+        self.inner.plan_stage
+    }
+
     /// Optional entropy trace (present when `collect_entropy_trace=True`).
     #[getter]
     fn entropy_trace(&self) -> Option<PyEntropyTrace> {
@@ -331,12 +373,13 @@ impl PySolveResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={})",
+            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={}, proven={})",
             self.inner.status.as_label(),
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
             self.inner.deadlocks,
+            self.inner.proven,
         )
     }
 }
@@ -848,7 +891,7 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false, aod_capacity=None, cascade_refine="astar"))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,
@@ -859,6 +902,8 @@ impl PySolveOptions {
         top_c: Option<usize>,
         fallback_push_rotate: bool,
         backwards_search: bool,
+        aod_capacity: Option<(usize, usize)>,
+        cascade_refine: &str,
     ) -> PyResult<Self> {
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
@@ -870,9 +915,29 @@ impl PySolveOptions {
                 "top_c must be None or an integer >= 1",
             ));
         }
+        if let Some((x, y)) = aod_capacity
+            && (x == 0 || y == 0)
+        {
+            return Err(PyValueError::new_err(
+                "aod_capacity components must be integers >= 1",
+            ));
+        }
+        let refine = match cascade_refine {
+            "astar" => Refinement::AStar,
+            "branch_and_bound" => Refinement::BranchAndBound,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown cascade_refine '{other}'; expected 'astar' or 'branch_and_bound'"
+                )));
+            }
+        };
+        let strategy = match strategy.to_rs() {
+            Strategy::Cascade { inner, .. } => Strategy::Cascade { inner, refine },
+            other => other,
+        };
         Ok(Self {
             inner: SolveOptions {
-                strategy: strategy.to_rs(),
+                strategy,
                 weight,
                 restarts,
                 deadlock_policy: deadlock_policy.to_rs(),
@@ -880,8 +945,7 @@ impl PySolveOptions {
                 top_c,
                 fallback_push_rotate,
                 backwards_search,
-                // Not exposed to Python yet (Task 3.4 of the B&B plan).
-                aod_capacity: None,
+                aod_capacity: aod_capacity.map(|(x, y)| AodCapacity { x, y }),
             },
         })
     }
@@ -926,6 +990,26 @@ impl PySolveOptions {
         self.inner.backwards_search
     }
 
+    /// The AOD tone limit per axis for every shot, `(x, y)`, or `None` for
+    /// unlimited.
+    #[getter]
+    fn aod_capacity(&self) -> Option<(usize, usize)> {
+        self.inner.aod_capacity.map(|c| (c.x, c.y))
+    }
+
+    /// The refinement phase a cascade strategy runs: `"astar"` or
+    /// `"branch_and_bound"`. Reports `"astar"` for non-cascade strategies.
+    #[getter]
+    fn cascade_refine(&self) -> &'static str {
+        match self.inner.strategy {
+            Strategy::Cascade {
+                refine: Refinement::BranchAndBound,
+                ..
+            } => "branch_and_bound",
+            _ => "astar",
+        }
+    }
+
     /// Every constructor field, in constructor order.
     ///
     /// Keep this exhaustive: a `SolveOptions` that prints fewer options than
@@ -933,7 +1017,7 @@ impl PySolveOptions {
     /// someone is printing the options to find one.
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?}, fallback_push_rotate={}, backwards_search={})",
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?}, fallback_push_rotate={}, backwards_search={}, aod_capacity={:?}, cascade_refine='{}')",
             self.strategy().name(),
             self.inner.weight,
             self.inner.restarts,
@@ -942,6 +1026,8 @@ impl PySolveOptions {
             self.inner.top_c,
             self.inner.fallback_push_rotate,
             self.inner.backwards_search,
+            self.aod_capacity(),
+            self.cascade_refine(),
         )
     }
 }
@@ -966,7 +1052,8 @@ pub struct PyEntropyOptions {
 #[pymethods]
 impl PyEntropyOptions {
     #[new]
-    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None))]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None, objective="uniform", tau=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         max_movesets_per_group: usize,
         max_goal_candidates: usize,
@@ -974,6 +1061,8 @@ impl PyEntropyOptions {
         collect_entropy_trace: bool,
         seed: u64,
         completion_bound: Option<&str>,
+        objective: &str,
+        tau: Option<f64>,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -999,6 +1088,22 @@ impl PyEntropyOptions {
                 )));
             }
         };
+        if let Some(t) = tau
+            && !(t.is_finite() && t > 0.0)
+        {
+            return Err(PyValueError::new_err(
+                "tau must be None or a finite float greater than 0.0",
+            ));
+        }
+        let objective = match objective {
+            "uniform" => ObjectiveKind::Uniform,
+            "weighted_duration" => ObjectiveKind::WeightedDuration { tau },
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown objective '{other}'; expected 'uniform' or 'weighted_duration'"
+                )));
+            }
+        };
         Ok(Self {
             inner: EntropyOptions {
                 max_movesets_per_group,
@@ -1007,8 +1112,7 @@ impl PyEntropyOptions {
                 collect_entropy_trace,
                 seed,
                 completion_bound,
-                // Exposed to Python in Task 3.4 of the B&B plan.
-                ..EntropyOptions::default()
+                objective,
             },
         })
     }
@@ -1019,6 +1123,26 @@ impl PyEntropyOptions {
         match self.inner.completion_bound {
             None => None,
             Some(BoundKind::WeightedDistance) => Some("weighted_distance"),
+        }
+    }
+
+    /// The quantity the solve minimizes: `"uniform"` (shots) or
+    /// `"weighted_duration"` (`1 + duration / tau` per shot).
+    #[getter]
+    fn objective(&self) -> &'static str {
+        match self.inner.objective {
+            ObjectiveKind::Uniform => "uniform",
+            ObjectiveKind::WeightedDuration { .. } => "weighted_duration",
+        }
+    }
+
+    /// The duration normalizer of `"weighted_duration"`, or `None` when it is
+    /// resolved per solve to the architecture's fastest lane.
+    #[getter]
+    fn tau(&self) -> Option<f64> {
+        match self.inner.objective {
+            ObjectiveKind::WeightedDuration { tau } => tau,
+            ObjectiveKind::Uniform => None,
         }
     }
 
@@ -1049,12 +1173,151 @@ impl PyEntropyOptions {
 
     fn __repr__(&self) -> String {
         format!(
-            "EntropyOptions(max_movesets_per_group={}, max_goal_candidates={}, w_t={}, collect_entropy_trace={}, seed={})",
+            "EntropyOptions(max_movesets_per_group={}, max_goal_candidates={}, w_t={}, collect_entropy_trace={}, seed={}, completion_bound={:?}, objective='{}', tau={:?})",
             self.inner.max_movesets_per_group,
             self.inner.max_goal_candidates,
             self.inner.w_t,
             self.inner.collect_entropy_trace,
             self.inner.seed,
+            self.completion_bound(),
+            self.objective(),
+            self.tau(),
+        )
+    }
+}
+
+// ── Branch-and-bound options ──
+
+/// Knobs of the branch-and-bound strategy (and of a cascade refined by it).
+///
+/// The completion bound and the objective come from ``EntropyOptions``, the
+/// AOD capacity from ``SolveOptions``.
+#[pyclass(
+    skip_from_py_object,
+    name = "BnbOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyBnbOptions {
+    inner: BnbOptions,
+}
+
+#[pymethods]
+impl PyBnbOptions {
+    #[new]
+    #[pyo3(signature = (frontier="lifo", ordering="hop_sum", schedule="entropy_then_exhaustive", widen_order="stage_then_depth", widen_after_incumbent=0))]
+    fn new(
+        frontier: &str,
+        ordering: &str,
+        schedule: &str,
+        widen_order: &str,
+        widen_after_incumbent: u32,
+    ) -> PyResult<Self> {
+        let frontier = match frontier {
+            "lifo" => BnbFrontier::Lifo,
+            "dfs" => BnbFrontier::Dfs,
+            "ids" => BnbFrontier::Ids,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown frontier '{other}'; expected 'lifo', 'dfs' or 'ids'"
+                )));
+            }
+        };
+        let ordering = match ordering {
+            "hop_sum" => BnbOrdering::HopSum,
+            "bound" => BnbOrdering::Bound,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown ordering '{other}'; expected 'hop_sum' or 'bound'"
+                )));
+            }
+        };
+        let schedule = match schedule {
+            "entropy_only" => ScheduleKind::EntropyOnly,
+            "entropy_then_exhaustive" => ScheduleKind::EntropyThenExhaustive,
+            "heuristic_then_exhaustive" => ScheduleKind::HeuristicThenExhaustive,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown schedule '{other}'; expected 'entropy_only', \
+                     'entropy_then_exhaustive' or 'heuristic_then_exhaustive'"
+                )));
+            }
+        };
+        let order = match widen_order {
+            "stage_then_depth" => WidenOrder::StageThenDepth,
+            "best_bound" => WidenOrder::BestBound,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown widen_order '{other}'; expected 'stage_then_depth' or 'best_bound'"
+                )));
+            }
+        };
+        let after_incumbent = u8::try_from(widen_after_incumbent).map_err(|_| {
+            PyValueError::new_err("widen_after_incumbent must be an integer in 0..=255")
+        })?;
+        Ok(Self {
+            inner: BnbOptions {
+                frontier,
+                ordering,
+                schedule,
+                widening: Widening {
+                    order,
+                    after_incumbent,
+                },
+            },
+        })
+    }
+
+    #[getter]
+    fn frontier(&self) -> &'static str {
+        match self.inner.frontier {
+            BnbFrontier::Lifo => "lifo",
+            BnbFrontier::Dfs => "dfs",
+            BnbFrontier::Ids => "ids",
+        }
+    }
+
+    #[getter]
+    fn ordering(&self) -> &'static str {
+        match self.inner.ordering {
+            BnbOrdering::HopSum => "hop_sum",
+            BnbOrdering::Bound => "bound",
+        }
+    }
+
+    #[getter]
+    fn schedule(&self) -> &'static str {
+        match self.inner.schedule {
+            ScheduleKind::EntropyOnly => "entropy_only",
+            ScheduleKind::EntropyThenExhaustive => "entropy_then_exhaustive",
+            ScheduleKind::HeuristicThenExhaustive => "heuristic_then_exhaustive",
+        }
+    }
+
+    #[getter]
+    fn widen_order(&self) -> &'static str {
+        match self.inner.widening.order {
+            WidenOrder::StageThenDepth => "stage_then_depth",
+            WidenOrder::BestBound => "best_bound",
+        }
+    }
+
+    /// Highest stage still processed once an incumbent exists; `255` is
+    /// unlimited, which is what makes exhaustion a proof of optimality.
+    #[getter]
+    fn widen_after_incumbent(&self) -> u32 {
+        u32::from(self.inner.widening.after_incumbent)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BnbOptions(frontier='{}', ordering='{}', schedule='{}', widen_order='{}', widen_after_incumbent={})",
+            self.frontier(),
+            self.ordering(),
+            self.schedule(),
+            self.widen_order(),
+            self.widen_after_incumbent(),
         )
     }
 }
@@ -1615,6 +1878,47 @@ impl PyMoveSearch {
                 .inner
                 .clone()
                 .with_entropy_options(entropy_options.inner.clone()),
+        }
+    }
+
+    /// Branch and bound. Without ``entropy_options`` the weighted-distance
+    /// completion bound is on, so the strategy is bounded out of the box;
+    /// pass ``EntropyOptions(completion_bound=None)`` for the unbounded
+    /// control run. The strategy is always forced to branch and bound.
+    #[staticmethod]
+    #[pyo3(signature = (options = None, entropy_options = None, bnb_options = None))]
+    fn branch_and_bound(
+        options: Option<&PySolveOptions>,
+        entropy_options: Option<&PyEntropyOptions>,
+        bnb_options: Option<&PyBnbOptions>,
+    ) -> Self {
+        let mut ms = MoveSearch::branch_and_bound();
+        if let Some(opts) = options {
+            let mut solve_opts = opts.inner.clone();
+            solve_opts.strategy = Strategy::BranchAndBound;
+            ms = ms.with_options(solve_opts);
+        }
+        if let Some(eopts) = entropy_options {
+            ms = ms.with_entropy_options(eopts.inner.clone());
+        }
+        if let Some(bopts) = bnb_options {
+            ms = ms.with_bnb_options(bopts.inner);
+        }
+        Self { inner: ms }
+    }
+
+    /// Return a copy with replaced ``BnbOptions``.
+    fn with_bnb_options(&self, bnb_options: &PyBnbOptions) -> Self {
+        Self {
+            inner: self.inner.clone().with_bnb_options(bnb_options.inner),
+        }
+    }
+
+    /// The branch-and-bound knobs this search carries.
+    #[getter]
+    fn bnb_options(&self) -> PyBnbOptions {
+        PyBnbOptions {
+            inner: self.inner.bnb_options,
         }
     }
 

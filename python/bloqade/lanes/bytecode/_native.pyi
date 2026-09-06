@@ -1016,6 +1016,7 @@ class SearchStrategy:
     CASCADE_ENTROPY: SearchStrategy
     ENTROPY: SearchStrategy
     PUSH_ROTATE: SearchStrategy
+    BRANCH_AND_BOUND: SearchStrategy
 
     @property
     def name(self) -> str: ...
@@ -1051,6 +1052,8 @@ class SolveOptions:
         top_c: int | None = None,
         fallback_push_rotate: bool = False,
         backwards_search: bool = False,
+        aod_capacity: tuple[int, int] | None = None,
+        cascade_refine: str = "astar",
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
@@ -1068,6 +1071,15 @@ class SolveOptions:
     def fallback_push_rotate(self) -> bool: ...
     @property
     def backwards_search(self) -> bool: ...
+    @property
+    def aod_capacity(self) -> tuple[int, int] | None:
+        """The AOD tone limit per axis for every shot, or ``None`` for unlimited."""
+
+    @property
+    def cascade_refine(self) -> str:
+        """The refinement a cascade strategy runs: ``"astar"`` or
+        ``"branch_and_bound"``."""
+
     def __repr__(self) -> str: ...
 
 @final
@@ -1086,15 +1098,28 @@ class EntropyOptions:
         collect_entropy_trace: bool = False,
         seed: int = 0,
         completion_bound: str | None = None,
+        objective: str = "uniform",
+        tau: float | None = None,
     ) -> None: ...
     @property
     def completion_bound(self) -> str | None:
         """Admissible completion bound for branch-and-bound pruning.
 
         ``"weighted_distance"`` or ``None`` (no bound). Affects which subtrees
-        the entropy search explores, never candidate generation, and never
-        yields a worse plan.
+        the entropy and branch-and-bound searches explore, never candidate
+        generation, and never yields a worse plan.
         """
+
+    @property
+    def objective(self) -> str:
+        """The quantity the solve minimizes: ``"uniform"`` (number of shots) or
+        ``"weighted_duration"`` (``1 + duration / tau`` per shot). Consulted
+        by the entropy and branch-and-bound strategies."""
+
+    @property
+    def tau(self) -> float | None:
+        """The duration normalizer of ``"weighted_duration"``; ``None`` resolves
+        per solve to the architecture's fastest lane duration."""
 
     @property
     def max_movesets_per_group(self) -> int: ...
@@ -1106,6 +1131,48 @@ class EntropyOptions:
     def collect_entropy_trace(self) -> bool: ...
     @property
     def seed(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+@final
+class BnbOptions:
+    """Knobs of the branch-and-bound strategy (and of a cascade refined by it).
+
+    The completion bound and the objective come from ``EntropyOptions``, the
+    AOD capacity from ``SolveOptions.aod_capacity``.
+    """
+
+    def __init__(
+        self,
+        frontier: str = "lifo",
+        ordering: str = "hop_sum",
+        schedule: str = "entropy_then_exhaustive",
+        widen_order: str = "stage_then_depth",
+        widen_after_incumbent: int = 0,
+    ) -> None: ...
+    @property
+    def frontier(self) -> str:
+        """Stage-0 frontier: ``"lifo"`` (generator order), ``"dfs"`` or ``"ids"``."""
+
+    @property
+    def ordering(self) -> str:
+        """Heuristic the ``dfs``/``ids`` frontiers order by: ``"hop_sum"`` or
+        ``"bound"``."""
+
+    @property
+    def schedule(self) -> str:
+        """``"entropy_only"``, ``"entropy_then_exhaustive"`` or
+        ``"heuristic_then_exhaustive"``. Only the schedules ending in the
+        exhaustive generator can prove a verdict."""
+
+    @property
+    def widen_order(self) -> str:
+        """``"stage_then_depth"`` or ``"best_bound"``."""
+
+    @property
+    def widen_after_incumbent(self) -> int:
+        """Highest stage still processed once an incumbent exists; ``255`` is
+        unlimited, which is what makes exhaustion a proof of optimality."""
+
     def __repr__(self) -> str: ...
 
 @final
@@ -1210,11 +1277,43 @@ class SolveResult:
     def status(self) -> str:
         """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
 
-        ``"unsolvable"`` is a proof only from the ``push_rotate`` strategy. From
-        a search strategy it means the search exhausted the moves its generator
-        offered — which is deliberately less than the architecture allows — not
-        that no solution exists.
+        ``"unsolvable"`` is a proof from the ``push_rotate`` strategy, and from
+        branch and bound when ``proven`` is ``True``. From any other search
+        strategy it means the search exhausted the moves its generator offered
+        — which is deliberately less than the architecture allows — not that no
+        solution exists.
         """
+        ...
+
+    @property
+    def proven(self) -> bool:
+        """Whether the verdict is a proof over the exhaustive search space.
+
+        When ``status == "solved"`` the plan is optimal; when
+        ``status == "unsolvable"`` no plan exists. Set only by the
+        branch-and-bound strategy when a complete schedule drained with no
+        stage withheld (``BnbOptions.widen_after_incumbent == 255``, or an
+        instance the bound settles before any widening); ``False`` on every
+        other path.
+        """
+        ...
+
+    @property
+    def termination(self) -> str:
+        """How the search ended: ``"budget"``, ``"exhausted"``,
+        ``"exhausted_proof"`` or ``"stopped"``."""
+        ...
+
+    @property
+    def stage_expansions(self) -> list[int]:
+        """Expansions per generator stage of a branch-and-bound solve; empty
+        for the other strategies. Sums to ``nodes_expanded`` when non-empty."""
+        ...
+
+    @property
+    def plan_stage(self) -> int | None:
+        """The widest stage on the plan's path for a branch-and-bound solve
+        that solved; ``None`` otherwise."""
         ...
 
     @property
@@ -1567,6 +1666,27 @@ class MoveSearch:
 
     def with_entropy_options(self, entropy_options: EntropyOptions) -> MoveSearch:
         """Return a copy with replaced ``EntropyOptions``."""
+        ...
+
+    @staticmethod
+    def branch_and_bound(
+        options: Optional[SolveOptions] = None,
+        entropy_options: Optional[EntropyOptions] = None,
+        bnb_options: Optional[BnbOptions] = None,
+    ) -> MoveSearch:
+        """Branch and bound. Without ``entropy_options`` the weighted-distance
+        completion bound is on; pass ``EntropyOptions(completion_bound=None)``
+        for the unbounded control run. The strategy is always forced to
+        ``BRANCH_AND_BOUND``."""
+        ...
+
+    def with_bnb_options(self, bnb_options: BnbOptions) -> MoveSearch:
+        """Return a copy with replaced ``BnbOptions``."""
+        ...
+
+    @property
+    def bnb_options(self) -> BnbOptions:
+        """The branch-and-bound knobs this search carries."""
         ...
 
     @property
