@@ -1,6 +1,6 @@
 //! Entropy-weighted move generator wrapping [`entropy::generate_candidates()`].
 
-use crate::drivers::entropy::EntropyParams;
+use crate::drivers::entropy::{EntropyParams, HeuristicTables};
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::graph::NodeId;
@@ -11,18 +11,50 @@ use crate::traits::MoveGenerator;
 /// Reads per-node entropy from [`SearchState::entropy_map`] and delegates
 /// to [`entropy::generate_candidates()`](crate::drivers::entropy::generate_candidates)
 /// for the actual scoring logic.
-pub struct EntropyGenerator {
+///
+/// Optionally borrows the solve's [`HeuristicTables`], the per-solve memo of
+/// the occupancy-independent heuristic terms the entropy driver builds once
+/// and reads at every expansion. Without them every call recomputes the
+/// blended distances — bit-identical results, just slower — which is a
+/// handicap the entropy driver does not have and a comparison against it
+/// should not carry.
+pub struct EntropyGenerator<'t> {
     params: EntropyParams,
     seed: u64,
+    tables: Option<&'t HeuristicTables>,
 }
 
-impl EntropyGenerator {
+impl<'t> EntropyGenerator<'t> {
+    /// A generator that computes its heuristic terms directly.
     pub fn new(params: EntropyParams, seed: u64) -> Self {
-        Self { params, seed }
+        Self {
+            params,
+            seed,
+            tables: None,
+        }
+    }
+
+    /// A generator reading the solve's prebuilt tables. The tables must have
+    /// been built with `params.w_t` (debug-asserted at the read sites).
+    ///
+    /// Consumed by the branch-and-bound dispatch (Phase 3 of the B&B plan),
+    /// which is also where `run_with_components` extends its table-building
+    /// condition to the strategies that reach this generator.
+    #[allow(dead_code)]
+    pub(crate) fn with_tables(
+        params: EntropyParams,
+        seed: u64,
+        tables: &'t HeuristicTables,
+    ) -> Self {
+        Self {
+            params,
+            seed,
+            tables: Some(tables),
+        }
     }
 }
 
-impl MoveGenerator for EntropyGenerator {
+impl MoveGenerator for EntropyGenerator<'_> {
     fn generate(
         &self,
         config: &Config,
@@ -34,16 +66,13 @@ impl MoveGenerator for EntropyGenerator {
         // Read entropy for this node (default 1 if not yet in map).
         let entropy = state.entropy_map.get(&node_id).map_or(1, |s| s.entropy);
 
-        // `None`: this trait path has no per-solve table cache; candidates
-        // are computed directly (bit-identical, just slower). The production
-        // entropy driver builds `HeuristicTables` once per solve instead.
         let raw = crate::drivers::entropy::generate_candidates(
             config,
             entropy,
             &self.params,
             ctx,
             self.seed,
-            None,
+            self.tables,
         );
 
         for entry in raw {
@@ -89,5 +118,57 @@ mod tests {
         let mut out = Vec::new();
         generator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
         assert!(!out.is_empty(), "should produce at least one candidate");
+    }
+
+    /// Prebuilt tables change nothing but the work: the two constructors
+    /// emit identical candidate sequences.
+    #[test]
+    fn with_tables_matches_direct_computation() {
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+        let targets = [(0u32, loc(1, 5)), (1, loc(1, 6)), (2, loc(0, 7))];
+        let target_enc: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let locs: Vec<u64> = target_enc.iter().map(|&(_, l)| l).collect();
+        let table = DistanceTable::new(&locs, &index).with_time_distances(&index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &table,
+            blocked: &blocked,
+            targets: &target_enc,
+            cz_pairs: None,
+            capacity: None,
+        };
+        let params = EntropyParams::default();
+        let tables = HeuristicTables::build(&ctx, params.w_t, params.lookahead);
+        let config = crate::primitives::config::Config::new([
+            (0, loc(0, 0)),
+            (1, loc(0, 1)),
+            (2, loc(1, 2)),
+        ])
+        .unwrap();
+
+        let run = |g: &EntropyGenerator<'_>| {
+            let mut out = Vec::new();
+            g.generate(
+                &config,
+                NodeId(0),
+                &ctx,
+                &mut SearchState::default(),
+                &mut out,
+            );
+            out.into_iter()
+                .map(|c| {
+                    (
+                        c.move_set.encoded_lanes().to_vec(),
+                        c.new_config.as_entries().to_vec(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let direct = run(&EntropyGenerator::new(params.clone(), 3));
+        let memoized = run(&EntropyGenerator::with_tables(params, 3, &tables));
+        assert!(!direct.is_empty());
+        assert_eq!(direct, memoized);
     }
 }
