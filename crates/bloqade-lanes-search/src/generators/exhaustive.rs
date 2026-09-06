@@ -144,7 +144,6 @@ type CellIdx = u32;
 
 /// A lane of a bus group laid out on the group's source grid.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // read by the closure enumeration, which lands in the next commit
 struct Cell {
     /// Index into `GroupTables::cols` of the source column.
     col: u32,
@@ -162,7 +161,6 @@ struct Cell {
 
 /// One bus group's geometry and the cells `blocked` kills, built once per
 /// solve. Sizes come from the spec: `cols × rows` cells, however many that is.
-#[allow(dead_code)] // read by the closure enumeration, which lands in the next commit
 struct GroupTables {
     key: GroupKey,
     /// Distinct source x positions (bit patterns), sorted.
@@ -265,7 +263,6 @@ pub struct ExhaustiveGenerator {
     /// `AodCapacity::tighten(self.cap, ctx.capacity)`.
     cap: Option<AodCapacity>,
     /// One entry per bus group with lanes, sorted by [`GroupKey`].
-    #[allow(dead_code)] // read by the closure enumeration, which lands in the next commit
     groups: Vec<GroupTables>,
 }
 
@@ -373,15 +370,6 @@ impl ExhaustiveGenerator {
     pub fn group_keys(&self) -> impl Iterator<Item = GroupKey> + '_ {
         self.groups.iter().map(|g| g.key)
     }
-
-    /// Build the set of all occupied encoded locations (config qubits + blocked).
-    fn occupied_set(config: &Config, blocked: &HashSet<u64>) -> HashSet<u64> {
-        let mut occupied = blocked.clone();
-        for (_, loc) in config.iter() {
-            occupied.insert(loc.encode());
-        }
-        occupied
-    }
 }
 
 /// Every bus group of the index with its lanes, sorted by key. `LaneIndex`
@@ -413,165 +401,403 @@ impl MoveGenerator for ExhaustiveGenerator {
         out: &mut Vec<MoveCandidate>,
     ) {
         let cap = AodCapacity::tighten(self.cap, ctx.capacity);
-        let expand_ctx = ExpandContext {
-            occupied: Self::occupied_set(config, ctx.blocked),
-            loc_to_qubit: config.location_to_qubit_map(),
-            config,
-            index: ctx.index,
-            max_x_capacity: cap.map(|c| c.x),
-            max_y_capacity: cap.map(|c| c.y),
-        };
+        let cap = (
+            cap.map_or(usize::MAX, |c| c.x),
+            cap.map_or(usize::MAX, |c| c.y),
+        );
+        if cap.0 == 0 || cap.1 == 0 {
+            return;
+        }
+        // Resolved atoms sit where `ctx.targets` puts them; everything else,
+        // including an atom the targets do not mention, is unresolved.
+        let resolved: HashSet<u32> = ctx
+            .targets
+            .iter()
+            .filter(|&&(q, target)| config.location_of(q).is_some_and(|l| l.encode() == target))
+            .map(|&(q, _)| q)
+            .collect();
+        let atoms: Vec<(u32, u64)> = config.iter().map(|(q, l)| (q, l.encode())).collect();
 
-        for (mt, bus_id, dir) in ctx.index.bus_groups_no_zone() {
-            let lanes: Vec<LaneAddr> = ctx
-                .index
-                .lanes_for_all_zones(mt, bus_id, dir)
-                .copied()
-                .collect();
-            if lanes.is_empty() {
+        for tables in &self.groups {
+            let Some(node) = NodeGroup::classify(tables, &atoms, &resolved) else {
                 continue;
-            }
-
-            rectangles_to_move_sets(&lanes, &expand_ctx, out);
+            };
+            node.enumerate(self.seed, cap, config, out);
         }
     }
 }
 
-/// Shared context for rectangle enumeration, built once per `generate()` call.
-struct ExpandContext<'a> {
-    occupied: HashSet<u64>,
-    loc_to_qubit: HashMap<u64, u32>,
-    config: &'a Config,
-    index: &'a LaneIndex,
-    max_x_capacity: Option<usize>,
-    max_y_capacity: Option<usize>,
+/// A fixed-width bitset over one group's rows, sized at classification time.
+/// The width is a property of the spec, not a constant of the generator.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Bits {
+    words: Vec<u64>,
 }
 
-/// Per-triplet data built during rectangle enumeration.
-struct TripletData {
-    pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)>,
-}
-
-/// Enumerate all valid AOD rectangles for a set of lanes and push results.
-///
-/// Direct port of Python's `_rectangles_to_move_sets` + `_enumerate_xy_combinations`.
-fn rectangles_to_move_sets(
-    lanes: &[LaneAddr],
-    ctx: &ExpandContext<'_>,
-    out: &mut Vec<MoveCandidate>,
-) {
-    let mut pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)> = HashMap::new();
-    let mut unique_x: BTreeSet<u64> = BTreeSet::new();
-    let mut unique_y: BTreeSet<u64> = BTreeSet::new();
-
-    for &lane in lanes {
-        let Some((src, _dst)) = ctx.index.endpoints(&lane) else {
-            continue;
-        };
-        let Some((x, y)) = ctx.index.position(src) else {
-            continue;
-        };
-        let xb = x.to_bits();
-        let yb = y.to_bits();
-        pos_to_info.insert((xb, yb), (src, lane));
-        unique_x.insert(xb);
-        unique_y.insert(yb);
+impl Bits {
+    fn new(width: usize) -> Self {
+        Self {
+            words: vec![0; width.div_ceil(64).max(1)],
+        }
     }
 
-    let sorted_xs: Vec<u64> = unique_x.into_iter().collect();
-    let sorted_ys: Vec<u64> = unique_y.into_iter().collect();
+    fn set(&mut self, i: usize) {
+        self.words[i / 64] |= 1 << (i % 64);
+    }
 
-    let max_nx = ctx
-        .max_x_capacity
-        .unwrap_or(sorted_xs.len())
-        .min(sorted_xs.len());
-    let max_ny = ctx
-        .max_y_capacity
-        .unwrap_or(sorted_ys.len())
-        .min(sorted_ys.len());
+    fn contains(&self, i: usize) -> bool {
+        (self.words[i / 64] >> (i % 64)) & 1 == 1
+    }
 
-    let td = TripletData { pos_to_info };
+    fn intersects(&self, other: &Self) -> bool {
+        self.words.iter().zip(&other.words).any(|(a, b)| a & b != 0)
+    }
 
-    for nx in 1..=max_nx {
-        let mut x_indices = vec![0usize; nx];
+    fn and(&self, other: &Self) -> Self {
+        Self {
+            words: self
+                .words
+                .iter()
+                .zip(&other.words)
+                .map(|(a, b)| a & b)
+                .collect(),
+        }
+    }
+
+    fn or_assign(&mut self, other: &Self) {
+        for (a, b) in self.words.iter_mut().zip(&other.words) {
+            *a |= b;
+        }
+    }
+
+    /// Set bits in ascending order.
+    fn ones(&self) -> impl Iterator<Item = usize> + '_ {
+        self.words.iter().enumerate().flat_map(|(wi, &w)| {
+            let mut w = w;
+            std::iter::from_fn(move || {
+                if w == 0 {
+                    None
+                } else {
+                    let b = w.trailing_zeros() as usize;
+                    w &= w - 1;
+                    Some(wi * 64 + b)
+                }
+            })
+        })
+    }
+}
+
+/// One bus group classified at one configuration: which cells hold a mover,
+/// which are dead, which conveyor dependencies are active — and the per-column
+/// row bitsets the enumeration runs on.
+struct NodeGroup<'g> {
+    tables: &'g GroupTables,
+    /// The qubit at each cell's source, if any.
+    mover: Vec<Option<u32>>,
+    /// A cell's `dep` is active when the atom at its destination has a lane in
+    /// this group; the cell then forces its `dep`.
+    active_dep: Vec<bool>,
+    /// Rows of each column whose cell exists and can fire.
+    live_rows: Vec<Bits>,
+    /// Rows of each column whose cell is a live mover cell.
+    mover_rows: Vec<Bits>,
+    /// Rows of each column whose cell is a live *unresolved* mover cell.
+    unresolved_rows: Vec<Bits>,
+    /// Columns with at least one live mover cell, ascending.
+    mover_cols: Vec<usize>,
+}
+
+impl<'g> NodeGroup<'g> {
+    /// Classify the cells the atoms touch, `O(atoms)` lookups per group, and
+    /// propagate deadness through active dependencies. `None` when no atom
+    /// sits at a source of this group — the group cannot move anything.
+    fn classify(
+        tables: &'g GroupTables,
+        atoms: &[(u32, u64)],
+        resolved: &HashSet<u32>,
+    ) -> Option<Self> {
+        let n_cells = tables.cells.len();
+        let mut mover: Vec<Option<u32>> = vec![None; n_cells];
+        let mut unresolved = vec![false; n_cells];
+        let mut dead = tables.dead_static.clone();
+        let mut active_dep = vec![false; n_cells];
+        let mut any_mover = false;
+
+        for &(qubit, enc) in atoms {
+            if let Some(&c) = tables.src_to_cell.get(&enc) {
+                mover[c as usize] = Some(qubit);
+                unresolved[c as usize] = !resolved.contains(&qubit);
+                any_mover = true;
+            }
+            if let Some(&d) = tables.dst_to_cell.get(&enc) {
+                // The atom holds cell `d`'s destination. If it has a lane in
+                // this group, `d` may fire only together with that lane (the
+                // conveyor rule); otherwise `d` can never fire here.
+                if tables.src_to_cell.contains_key(&enc) {
+                    debug_assert!(tables.cells[d as usize].dep.is_some());
+                    active_dep[d as usize] = true;
+                } else {
+                    dead[d as usize] = true;
+                }
+            }
+        }
+        if !any_mover {
+            return None;
+        }
+
+        // A cell whose active dependency is dead is dead. Chains are acyclic
+        // (bus validation), so this converges in at most chain-length passes.
         loop {
-            let x_subset: Vec<u64> = x_indices.iter().map(|&i| sorted_xs[i]).collect();
-
-            for ny in 1..=max_ny {
-                let mut y_indices = vec![0usize; ny];
-                loop {
-                    let y_subset: Vec<u64> = y_indices.iter().map(|&i| sorted_ys[i]).collect();
-
-                    try_rectangle(&x_subset, &y_subset, &td, ctx, out);
-
-                    if !next_combination(&mut y_indices, sorted_ys.len()) {
-                        break;
+            let mut changed = false;
+            for (i, cell) in tables.cells.iter().enumerate() {
+                if !dead[i] && active_dep[i] {
+                    let dep = cell.dep.expect("an active dep names a cell") as usize;
+                    if dead[dep] {
+                        dead[i] = true;
+                        changed = true;
                     }
                 }
             }
-
-            if !next_combination(&mut x_indices, sorted_xs.len()) {
+            if !changed {
                 break;
             }
         }
+
+        let n_rows = tables.rows.len();
+        let n_cols = tables.cols.len();
+        let mut live_rows = vec![Bits::new(n_rows); n_cols];
+        let mut mover_rows = vec![Bits::new(n_rows); n_cols];
+        let mut unresolved_rows = vec![Bits::new(n_rows); n_cols];
+        for (i, cell) in tables.cells.iter().enumerate() {
+            if dead[i] {
+                continue;
+            }
+            let (col, row) = (cell.col as usize, cell.row as usize);
+            live_rows[col].set(row);
+            if mover[i].is_some() {
+                mover_rows[col].set(row);
+                if unresolved[i] {
+                    unresolved_rows[col].set(row);
+                }
+            }
+        }
+        let mover_cols: Vec<usize> = (0..n_cols)
+            .filter(|&c| mover_rows[c].ones().next().is_some())
+            .collect();
+        if mover_cols.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            tables,
+            mover,
+            active_dep,
+            live_rows,
+            mover_rows,
+            unresolved_rows,
+            mover_cols,
+        })
     }
-}
 
-/// Try a single X×Y rectangle and push to `out` if valid.
-fn try_rectangle(
-    x_subset: &[u64],
-    y_subset: &[u64],
-    td: &TripletData,
-    ctx: &ExpandContext<'_>,
-    out: &mut Vec<MoveCandidate>,
-) {
-    let mut lane_addrs: Vec<LaneAddr> = Vec::new();
-    let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
-    // Every cell's (src, dst) plus the sources this rectangle actually moves
-    // an atom out of — the group's mover set, needed to judge destinations.
-    let mut cells: Vec<(u64, u64)> = Vec::with_capacity(x_subset.len() * y_subset.len());
-    let mut mover_srcs: HashSet<u64> = HashSet::new();
+    fn cell(&self, col: usize, row: usize) -> Option<CellIdx> {
+        self.tables.cell_at[col * self.tables.rows.len() + row]
+    }
 
-    for &xb in x_subset {
-        for &yb in y_subset {
-            let Some(&(src, lane)) = td.pos_to_info.get(&(xb, yb)) else {
+    /// Emit every tight, closed rectangle within `cap` that the seed policy
+    /// admits, in the order (columns in DFS order, rows in combination order).
+    fn enumerate(
+        &self,
+        seed: SeedPolicy,
+        cap: (usize, usize),
+        config: &Config,
+        out: &mut Vec<MoveCandidate>,
+    ) {
+        let all_rows = {
+            let mut b = Bits::new(self.tables.rows.len());
+            for r in 0..self.tables.rows.len() {
+                b.set(r);
+            }
+            b
+        };
+        let mut x: Vec<usize> = Vec::new();
+        self.dfs_columns(&mut x, 0, &all_rows, seed, cap, config, out);
+    }
+
+    /// DFS over `X ⊆ mover_cols` in column order. `y_ok` is the intersection
+    /// of the live rows of the columns chosen so far.
+    #[allow(clippy::too_many_arguments)]
+    fn dfs_columns(
+        &self,
+        x: &mut Vec<usize>,
+        start: usize,
+        y_ok: &Bits,
+        seed: SeedPolicy,
+        cap: (usize, usize),
+        config: &Config,
+        out: &mut Vec<MoveCandidate>,
+    ) {
+        if !x.is_empty() {
+            // Tightness needs every chosen column to keep a mover row inside
+            // `y_ok`. Adding columns only shrinks `y_ok`, so if some column
+            // has lost all of its mover rows no superset of `X` is tight
+            // either: prune the whole subtree.
+            if x.iter().any(|&c| !self.mover_rows[c].intersects(y_ok)) {
                 return;
-            };
-            let Some((_, dst)) = ctx.index.endpoints(&lane) else {
-                return;
-            };
-            let src_enc = src.encode();
-            lane_addrs.push(lane);
-            cells.push((src_enc, dst.encode()));
+            }
+            self.emit_rows(x, y_ok, seed, cap, config, out);
+        }
+        if x.len() == cap.0 {
+            return;
+        }
+        for (i, &col) in self.mover_cols.iter().enumerate().skip(start) {
+            let narrowed = y_ok.and(&self.live_rows[col]);
+            x.push(col);
+            self.dfs_columns(x, i + 1, &narrowed, seed, cap, config, out);
+            x.pop();
+        }
+    }
 
-            if let Some(&qid) = ctx.loc_to_qubit.get(&src_enc) {
-                mover_srcs.insert(src_enc);
-                moves.push((qid, dst));
+    /// For a fixed `X`, every `Y ⊆ y_ok` that is tight (`Y` is covered by the
+    /// mover rows of `X`, and every column of `X` has a mover row in `Y`),
+    /// within `cap.1`, and closed under the active dependencies.
+    fn emit_rows(
+        &self,
+        x: &[usize],
+        y_ok: &Bits,
+        seed: SeedPolicy,
+        cap: (usize, usize),
+        config: &Config,
+        out: &mut Vec<MoveCandidate>,
+    ) {
+        // Rows that hold a mover in some chosen column, restricted to y_ok:
+        // the only rows a tight Y may use.
+        let mut covered = Bits::new(self.tables.rows.len());
+        for &c in x {
+            covered.or_assign(&self.mover_rows[c]);
+        }
+        let candidates: Vec<usize> = covered.and(y_ok).ones().collect();
+        let k_max = cap.1.min(candidates.len());
+
+        // Combinations of `candidates` of every size 1..=k_max, in
+        // lexicographic order.
+        let mut idx: Vec<usize> = Vec::new();
+        for k in 1..=k_max {
+            idx.clear();
+            idx.extend(0..k);
+            loop {
+                let y: Vec<usize> = idx.iter().map(|&i| candidates[i]).collect();
+                self.try_emit(x, &y, seed, config, out);
+                if !next_combination(&mut idx, candidates.len()) {
+                    break;
+                }
             }
         }
     }
 
-    if moves.is_empty() {
-        return;
-    }
-
-    // Uniform destination rule (#866): every cell's destination — mover and
-    // empty-source filler alike — must be free or vacated by this same
-    // rectangle. Judged against the pre-move occupancy once the whole mover
-    // set is known, which is why it cannot be a per-lane prefilter: a
-    // conveyor chain is only legal *because* the atom ahead moves too.
-    for &(_, dst_enc) in &cells {
-        if !crate::ops::aod_grid::destination_is_available(dst_enc, &ctx.occupied, &mover_srcs) {
+    /// Emit `X×Y` if it is tight in `Y`, closed under active dependencies,
+    /// and admitted by the seed policy.
+    fn try_emit(
+        &self,
+        x: &[usize],
+        y: &[usize],
+        seed: SeedPolicy,
+        config: &Config,
+        out: &mut Vec<MoveCandidate>,
+    ) {
+        let n_rows = self.tables.rows.len();
+        let mut y_bits = Bits::new(n_rows);
+        for &r in y {
+            y_bits.set(r);
+        }
+        // Every column of X must hold a mover in Y (rows of Y are covered by
+        // construction of the candidate list).
+        if x.iter().any(|&c| !self.mover_rows[c].intersects(&y_bits)) {
             return;
         }
+
+        let in_x = |c: usize| x.binary_search(&c).is_ok();
+        let mut lanes: Vec<u64> = Vec::with_capacity(x.len() * y.len());
+        let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
+        for &c in x {
+            for &r in y {
+                let idx = self
+                    .cell(c, r)
+                    .expect("Y ⊆ live rows of every column of X, so the cell exists")
+                    as usize;
+                let cell = &self.tables.cells[idx];
+                if self.active_dep[idx] {
+                    let dep = &self.tables.cells[cell.dep.expect("active dep") as usize];
+                    if !(in_x(dep.col as usize) && y_bits.contains(dep.row as usize)) {
+                        // Not closed: this rectangle's closure is a different,
+                        // larger rectangle, emitted under its own (X, Y).
+                        return;
+                    }
+                }
+                lanes.push(cell.lane_enc);
+                if let Some(q) = self.mover[idx] {
+                    moves.push((q, LocationAddr::decode(cell.dst_enc)));
+                }
+            }
+        }
+        debug_assert_eq!(lanes.len(), x.len() * y.len(), "a complete product");
+        debug_assert!(!moves.is_empty(), "tight rectangles hold a mover (B2)");
+
+        if seed == SeedPolicy::Unresolved && !self.seeded_by_unresolved(x, &y_bits) {
+            return;
+        }
+
+        out.push(MoveCandidate {
+            move_set: MoveSet::from_encoded(lanes),
+            new_config: config.with_moves(&moves),
+        });
     }
 
-    let move_set = MoveSet::new(lane_addrs);
-    let new_config = ctx.config.with_moves(&moves);
-    out.push(MoveCandidate {
-        move_set,
-        new_config,
-    });
+    /// Whether the closure of `X×Y`'s unresolved movers — under the product
+    /// rule and the active dependencies — is all of `X×Y`. Resolved atoms may
+    /// ride along only when the geometry or a chain forces them.
+    fn seeded_by_unresolved(&self, x: &[usize], y: &Bits) -> bool {
+        let n_rows = self.tables.rows.len();
+        let mut cols = Bits::new(self.tables.cols.len());
+        let mut rows = Bits::new(n_rows);
+        for &c in x {
+            let seeds = self.unresolved_rows[c].and(y);
+            if seeds.ones().next().is_some() {
+                cols.set(c);
+                rows.or_assign(&seeds);
+            }
+        }
+        if rows.ones().next().is_none() {
+            return false;
+        }
+        // Grow: the product of the current cols × rows, plus every active
+        // dependency it forces, until nothing new appears.
+        loop {
+            let mut grew = false;
+            for c in cols.ones().collect::<Vec<_>>() {
+                for r in rows.ones().collect::<Vec<_>>() {
+                    let Some(idx) = self.cell(c, r) else { continue };
+                    let idx = idx as usize;
+                    if self.active_dep[idx] {
+                        let dep = &self.tables.cells
+                            [self.tables.cells[idx].dep.expect("active dep") as usize];
+                        let (dc, dr) = (dep.col as usize, dep.row as usize);
+                        if !cols.contains(dc) {
+                            cols.set(dc);
+                            grew = true;
+                        }
+                        if !rows.contains(dr) {
+                            rows.set(dr);
+                            grew = true;
+                        }
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        x.iter().all(|&c| cols.contains(c)) && cols.ones().count() == x.len() && rows == *y
+    }
 }
 
 /// Advance a combination of `k` indices chosen from `0..n` to the next
@@ -581,13 +807,11 @@ fn next_combination(indices: &mut [usize], n: usize) -> bool {
     if k == 0 {
         return false;
     }
-    // Find the rightmost index that can be incremented.
     let mut i = k;
     while i > 0 {
         i -= 1;
         if indices[i] < n - k + i {
             indices[i] += 1;
-            // Reset all indices to the right.
             for j in (i + 1)..k {
                 indices[j] = indices[j - 1] + 1;
             }
@@ -606,7 +830,7 @@ mod tests {
     use super::*;
     use crate::observer::NoOpObserver;
     use crate::primitives::distance::DistanceTable;
-    use crate::test_utils::{example_arch_json, loc};
+    use crate::test_utils::{example_arch_json, lane, loc};
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
@@ -822,6 +1046,146 @@ mod tests {
         ));
         let good = SearchEngine::from_json(example_arch_json()).unwrap();
         assert_eq!(good.exhaustive_preconditions(), &Ok(()));
+    }
+
+    /// B1 on the source side: a blocked site may not be a filler. With qubit
+    /// 0 at site 0 and site 1 blocked, no emitted shot may contain site 1's
+    /// lane — the 2×1 rectangle over sites 0 and 1 would drag the blocked
+    /// atom along.
+    #[test]
+    fn generate_rejects_blocked_source_filler() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+        let out = run_generator_blocked(&config, &index, &[loc(0, 1)]);
+        assert!(!out.is_empty());
+        let site1 = loc(0, 1).encode();
+        for cand in &out {
+            for lane in cand.move_set.decode() {
+                let (src, _) = index.endpoints(&lane).unwrap();
+                assert_ne!(
+                    src.encode(),
+                    site1,
+                    "blocked site used as a source: {lane:?}"
+                );
+            }
+        }
+    }
+
+    /// Only mover-tight rectangles are emitted: with one atom every shot is a
+    /// single lane, and each child configuration appears once per group.
+    #[test]
+    fn generate_emits_one_tight_shot_per_child() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+        let out = run_generator(&config, &index);
+        assert!(!out.is_empty());
+        assert!(
+            out.iter().all(|c| c.move_set.len() == 1),
+            "one atom, one lane"
+        );
+        let mut seen: HashSet<(GroupKey, Vec<(u32, u64)>)> = HashSet::new();
+        for cand in &out {
+            let key = GroupKey::of(&cand.move_set.decode()[0]);
+            assert!(
+                seen.insert((key, cand.new_config.as_entries().to_vec())),
+                "child emitted twice in one group"
+            );
+        }
+    }
+
+    /// Two fresh generators over the same inputs emit identical sequences:
+    /// groups are sorted, columns run in DFS order, rows in combination order.
+    #[test]
+    fn emission_order_is_deterministic() {
+        let spec: ArchSpec =
+            serde_json::from_str(oracle::physical_spec_json()).expect("physical spec parses");
+        let index = LaneIndex::new(spec);
+        let dist_table = DistanceTable::new(&[], &index);
+        let blocked = HashSet::new();
+        let ctx = ctx_for(&index, &dist_table, &blocked);
+        // A handful of atoms on lane sources of the physical spec.
+        let sources: Vec<LocationAddr> = {
+            let mut v: Vec<LocationAddr> = index
+                .bus_groups()
+                .flat_map(|(mt, b, z, d)| index.lanes_for(mt, b, z, d).iter().copied())
+                .filter_map(|l| index.endpoints(&l).map(|(s, _)| s))
+                .collect();
+            v.sort_by_key(|l| l.encode());
+            v.dedup();
+            v.into_iter().step_by(7).take(6).collect()
+        };
+        let config = Config::new(sources.iter().enumerate().map(|(q, &l)| (q as u32, l))).unwrap();
+        let run = || {
+            let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
+            let mut out = Vec::new();
+            generator.generate(
+                &config,
+                NodeId(0),
+                &ctx,
+                &mut SearchState::default(),
+                &mut out,
+            );
+            out.into_iter()
+                .map(|c| {
+                    (
+                        c.move_set.encoded_lanes().to_vec(),
+                        c.new_config.as_entries().to_vec(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let first = run();
+        assert!(first.len() > 6, "several atoms yield several shots");
+        assert_eq!(first, run());
+    }
+
+    /// Under `SeedPolicy::Unresolved` a rectangle needs an unresolved mover in
+    /// every column and row it spans, unless a chain forces the rest. Qubit 1
+    /// sits at its target, so the 2×1 shot moving both atoms is admitted only
+    /// under `Any`; qubit 0's own 1×1 shot is admitted under both.
+    #[test]
+    fn unresolved_seed_excludes_rectangles_anchored_on_resolved_atoms() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        // Qubit 0 is unresolved (target site 5); qubit 1 is resolved (at site 1).
+        let targets: Vec<(u32, u64)> = vec![(0, loc(0, 5).encode()), (1, loc(0, 1).encode())];
+        let dist_table = DistanceTable::new(&[], &index);
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &targets, &blocked);
+
+        let shots = |seed: SeedPolicy| -> Vec<Vec<u64>> {
+            let generator = ExhaustiveGenerator::for_solve(&ctx, seed, None).unwrap();
+            let mut out = Vec::new();
+            generator.generate(
+                &config,
+                NodeId(0),
+                &ctx,
+                &mut SearchState::default(),
+                &mut out,
+            );
+            out.into_iter()
+                .map(|c| c.move_set.encoded_lanes().to_vec())
+                .collect()
+        };
+        let any = shots(SeedPolicy::Any);
+        let unresolved = shots(SeedPolicy::Unresolved);
+
+        let both = vec![lane(0, 0, 0).encode_u64(), lane(0, 1, 0).encode_u64()];
+        let alone = vec![lane(0, 0, 0).encode_u64()];
+        assert!(
+            any.contains(&both),
+            "Any admits the 2×1 rectangle over both atoms"
+        );
+        assert!(
+            !unresolved.contains(&both),
+            "Unresolved refuses a rectangle anchored on qubit 1"
+        );
+        assert!(unresolved.contains(&alone));
+        // Nesting: every Unresolved shot is an Any shot, and only qubit 0 moves.
+        for shot in &unresolved {
+            assert!(any.contains(shot), "{shot:#x?} not in the Any output");
+        }
+        assert!(unresolved.len() < any.len());
     }
 
     #[test]

@@ -263,11 +263,11 @@ impl HeuristicGenerator {
 /// deliberately stricter than the architecture for zone buses.
 ///
 /// This is the selection-time half of the uniform destination rule (#866).
-/// [`crate::ops::aod_grid::destination_is_available`] states the rule against a
-/// known mover set; at scoring time that set does not exist yet, so this
-/// admits a conveyor chain as a *candidate*, [`close_chain_entries`] co-selects
-/// the atoms that make it executable, and `BusGridContext::is_valid_rect`
-/// adjudicates once the rectangle's actual movers are known.
+/// `BusGridContext::rect_outcome` states the rule against a known mover set;
+/// at scoring time that set does not exist yet, so this admits a conveyor
+/// chain as a *candidate*, [`close_chain_entries`] co-selects the atoms that
+/// make it executable, and `BusGridContext::is_valid_rect` adjudicates once
+/// the rectangle's actual movers are known.
 ///
 /// Necessarily `false` on endpoint-disjoint buses — a destination there is
 /// never a source of the same bus — so the shipped Gemini specs produce
