@@ -147,6 +147,7 @@ pub fn solve_push_rotate_with(
         &root,
         &move_layers,
         index.arch_spec(),
+        &blocked_set,
         &goal_config,
     );
 

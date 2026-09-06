@@ -99,9 +99,11 @@ impl TargetSolver {
 /// asymmetric: as a target it is unreachable, as a root it is merely a
 /// starting point the atoms move off. Mirroring across such an endpoint would
 /// "solve" an instance that is genuinely unsolvable (target on a blocked
-/// location) by producing a plan that parks an atom on top of an external one
-/// — which the replay verifier cannot catch, since blocked atoms are not in
-/// the configuration. Skip the mirror instead.
+/// location) by producing a plan that parks an atom on top of an external one.
+/// The replay verifier now holds blocked sites as immovable phantom atoms, so
+/// such a plan would fail at packaging as a generator bug — but it is not one,
+/// it is an unsolvable request, and the right verdict is the forward search's
+/// own. Skip the mirror instead.
 fn mirroring_breaks_blocked(
     blocked: &[LocationAddr],
     initial_pairs: &[(u32, LocationAddr)],
@@ -142,6 +144,7 @@ pub(crate) fn solve_with_engine(
     // feasibility pass — rather than letting it surface as a verdict.
     validate_target_assignment(&target_pairs)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+    let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
     let initial_pairs: Vec<(u32, LocationAddr)> = root.iter().collect();
 
     // Mirroring: solve `target -> initial` and turn the plan around.
@@ -238,6 +241,7 @@ pub(crate) fn solve_with_engine(
             &root,
             &layers,
             engine.index().arch_spec(),
+            &blocked_encoded,
             &goal_config,
         );
         // `nodes_expanded`, `deadlocks` and `cost` describe the search that
@@ -286,7 +290,6 @@ pub(crate) fn solve_with_engine(
     let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
 
     let goal_obj = AllAtTarget::new(&target_encoded);
-    let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
     let ctx = SearchContext {
         index: engine.index(),
         dist_table: &dist_table,
@@ -654,8 +657,9 @@ mod tests {
         // The target location holds an external atom, so the instance is
         // unsolvable. The mirror would start *on* that location and happily
         // move away, "solving" it with a plan that parks qubit 0 on top of the
-        // blocker — and the replay verifier cannot see blocked atoms. The
-        // option must decline to mirror here.
+        // blocker — which the replay verifier would now reject as a generator
+        // bug (panic) rather than as the unsolvable request it is. The option
+        // must decline to mirror here.
         let engine = make_engine();
         let result = solve_with_engine(
             &engine,
