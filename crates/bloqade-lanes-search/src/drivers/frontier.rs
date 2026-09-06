@@ -5,7 +5,8 @@
 //! while [`run_search`] provides the shared search loop.
 //!
 //! Concrete frontiers: [`PriorityFrontier`] (A* / greedy best-first),
-//! [`BfsFrontier`], and [`DfsFrontier`] (heuristic depth-first).
+//! [`BfsFrontier`], [`DfsFrontier`] (heuristic depth-first), [`IdsFrontier`]
+//! (best-first diving) and [`LifoFrontier`] (generator-order depth-first).
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
@@ -47,6 +48,16 @@ pub trait Frontier {
 
     /// Receive newly created child nodes after expansion.
     /// Use `graph` to look up configs and g-scores for ordering.
+    ///
+    /// **Ordering contract.** The driver hands the children over in its
+    /// preferred order, best first — the generator's or scorer's ranking of
+    /// the siblings. What a frontier does with that order is its own,
+    /// documented, decision: [`PriorityFrontier`] and [`IdsFrontier`] order
+    /// globally by their heuristic and consult insertion order only on ties;
+    /// [`DfsFrontier`] re-sorts the siblings by its own heuristic, so with a
+    /// constant heuristic the *last* child pops first; [`BfsFrontier`] is
+    /// FIFO and preserves the order without consulting it; [`LifoFrontier`]
+    /// trusts it, popping the first child first.
     fn receive_children(&mut self, children: &[NodeId], graph: &SearchGraph);
 
     /// Check goal when a node is popped (before expansion)?
@@ -103,6 +114,9 @@ impl PartialOrd for PriorityEntry {
 ///
 /// - A*: `f = g + h`, goal checked on pop (optimal).
 /// - Greedy: `f = h`, goal checked on generate (fast, not optimal).
+///
+/// Orders globally by `f`; the order children arrive in is consulted only
+/// through the deterministic `node_id` tiebreak (earlier child, lower id).
 pub struct PriorityFrontier<H> {
     heap: BinaryHeap<PriorityEntry>,
     heuristic: H,
@@ -176,6 +190,8 @@ impl<H: crate::traits::Heuristic> Frontier for PriorityFrontier<H> {
 // ── BfsFrontier ─────────────────────────────────────────────────────
 
 /// FIFO frontier for breadth-first search.
+///
+/// Preserves the order children arrive in, without consulting it.
 pub struct BfsFrontier {
     queue: VecDeque<NodeId>,
 }
@@ -211,6 +227,11 @@ impl Frontier for BfsFrontier {
 /// Sorts children by heuristic (best last on stack = popped first).
 /// Commits to the best candidate and backtracks when stuck.
 /// Memory: O(depth × branching factor at backtrack points).
+///
+/// Re-sorts siblings by its own heuristic and ignores the order they arrive
+/// in: the sort is stable, so with a constant heuristic the input order is
+/// kept and the LIFO pop reverses it — the *last* child pops first. A driver
+/// that wants the first child first uses [`LifoFrontier`].
 pub struct DfsFrontier<H> {
     stack: Vec<NodeId>,
     heuristic: H,
@@ -244,6 +265,46 @@ impl<H: crate::traits::Heuristic> Frontier for DfsFrontier<H> {
         for (_, id) in scored {
             self.stack.push(id);
         }
+    }
+
+    fn check_goal_on_pop(&self) -> bool {
+        false
+    }
+
+    fn check_goal_on_generate(&self) -> bool {
+        true
+    }
+}
+
+// ── LifoFrontier ────────────────────────────────────────────────────
+
+/// Plain LIFO frontier that trusts the order children arrive in.
+///
+/// No heuristic: children are pushed in reverse so the *first* child the
+/// driver handed over pops first, and its subtree is fully explored before
+/// its siblings. This is the frontier for generator-order depth-first
+/// search — a generator's per-sibling ranking is relative to the parent and
+/// not comparable across the tree, so only a frontier that consumes the
+/// order as given can use it. Goal checked on generate.
+/// Memory: O(depth × branching factor).
+#[derive(Default)]
+pub struct LifoFrontier {
+    stack: Vec<NodeId>,
+}
+
+impl LifoFrontier {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Frontier for LifoFrontier {
+    fn select_next(&mut self) -> Option<NodeId> {
+        self.stack.pop()
+    }
+
+    fn receive_children(&mut self, children: &[NodeId], _graph: &SearchGraph) {
+        self.stack.extend(children.iter().rev());
     }
 
     fn check_goal_on_pop(&self) -> bool {
@@ -322,6 +383,10 @@ impl PartialOrd for IdsEntry {
 ///
 /// Inspired by Iterative Diving Search (arxiv:2512.13790); the
 /// h-primary ordering matches the algorithm in that paper.
+///
+/// Orders globally by `h` then depth; the order children arrive in is
+/// consulted only as a tiebreak (`insertion_order`), preserving the
+/// expander's ranking among equals.
 pub struct IdsFrontier<H> {
     heap: BinaryHeap<IdsEntry>,
     heuristic: H,
@@ -465,7 +530,7 @@ fn count_reversals(
 /// Do **not** call this from hot production paths outside the search loop
 /// — `ArchSpec::check_lanes` is linear in the group size and allocates.
 #[inline]
-fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchContext<'_>) {
+pub(crate) fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchContext<'_>) {
     #[cfg(debug_assertions)]
     {
         let arch = ctx.index.arch_spec();
@@ -946,6 +1011,98 @@ mod tests {
             max_depth,
             max_cost,
         )
+    }
+
+    // ── LIFO and the ordering contract ──
+
+    /// Three children handed over in order pop in that order: the first
+    /// child's subtree is explored first.
+    #[test]
+    fn lifo_pops_generator_order_first() {
+        let mut graph = SearchGraph::new(Config::new([(0, loc(0, 0))]).unwrap());
+        let ids: Vec<NodeId> = (1..=3)
+            .map(|site| {
+                graph
+                    .insert(
+                        graph.root(),
+                        MoveSet::from_encoded(vec![]),
+                        Config::new([(0, loc(0, site))]).unwrap(),
+                        1.0,
+                    )
+                    .0
+            })
+            .collect();
+        let mut lifo = LifoFrontier::new();
+        lifo.receive_children(&ids, &graph);
+        assert_eq!(lifo.select_next(), Some(ids[0]));
+        assert_eq!(lifo.select_next(), Some(ids[1]));
+        assert_eq!(lifo.select_next(), Some(ids[2]));
+        assert_eq!(lifo.select_next(), None);
+        assert!(!lifo.check_goal_on_pop());
+        assert!(lifo.check_goal_on_generate());
+    }
+
+    /// The contract the trait states rather than leaves to a comment: with a
+    /// constant heuristic `DfsFrontier` keeps the input order through its
+    /// stable sort and the LIFO pop reverses it, so the *last* child pops
+    /// first. Generator-order DFS therefore needs `LifoFrontier`.
+    #[test]
+    fn dfs_with_constant_heuristic_pops_last_child_first() {
+        let mut graph = SearchGraph::new(Config::new([(0, loc(0, 0))]).unwrap());
+        let ids: Vec<NodeId> = (1..=3)
+            .map(|site| {
+                graph
+                    .insert(
+                        graph.root(),
+                        MoveSet::from_encoded(vec![]),
+                        Config::new([(0, loc(0, site))]).unwrap(),
+                        1.0,
+                    )
+                    .0
+            })
+            .collect();
+        let mut dfs = DfsFrontier::new(|_: &Config| 0.0);
+        dfs.receive_children(&ids, &graph);
+        assert_eq!(dfs.select_next(), Some(ids[2]));
+        assert_eq!(dfs.select_next(), Some(ids[1]));
+        assert_eq!(dfs.select_next(), Some(ids[0]));
+    }
+
+    /// `run_search` under `LifoFrontier` solves the single-atom example with
+    /// the exhaustive generator: one site-bus shot from site 0 to site 5.
+    #[test]
+    fn lifo_run_search_solves_the_single_atom_example() {
+        use crate::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
+        use crate::goals::AllAtTarget;
+        use crate::scorers::DistanceScorer;
+
+        let fx = Fixture::new();
+        let ctx = fx.ctx();
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+        let targets = [(0u32, loc(0, 5).encode())];
+        let ctx = SearchContext {
+            targets: &targets,
+            ..ctx
+        };
+        let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
+        let goal = AllAtTarget::new(&targets);
+        let mut frontier = LifoFrontier::new();
+        let result = run_search(
+            root,
+            &generator,
+            &DistanceScorer,
+            &UniformCost,
+            &goal,
+            &mut frontier,
+            &ctx,
+            &mut SearchState::default(),
+            &mut crate::observer::NoOpObserver,
+            Some(1000),
+            None,
+            None,
+        );
+        assert!(result.goal.is_some());
+        assert_eq!(result.solution_path().unwrap().len(), 1);
     }
 
     // ── BFS ──
