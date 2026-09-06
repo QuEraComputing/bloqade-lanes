@@ -346,7 +346,7 @@ use crate::placement::cz_placement::CzPlacement;
 use crate::primitives::config::ConfigError;
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::SolveOptions;
+use crate::search::options::{BnbOptions, SolveOptions};
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::search::target_solver::solve_with_engine;
 use std::sync::Arc;
@@ -413,6 +413,7 @@ impl NoHomeCzPlacement {
             &self.engine,
             &self.search.options,
             &self.nohome_options,
+            &self.search.bnb_options,
             initial,
             cz_pairs,
             blocked,
@@ -457,6 +458,7 @@ pub(crate) fn solve_nohome(
     engine: &SearchEngine,
     opts: &SolveOptions,
     nohome_opts: &NoHomeOptions,
+    bnb_opts: &BnbOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
     cz_pairs: &[(u32, u32)],
     blocked: impl IntoIterator<Item = LocationAddr>,
@@ -520,6 +522,7 @@ pub(crate) fn solve_nohome(
             engine,
             opts,
             None,
+            bnb_opts,
             root.iter(),
             cz_targets,
             blocked_locs.iter().copied(),
@@ -557,6 +560,7 @@ pub(crate) fn solve_nohome(
             engine,
             opts,
             None,
+            bnb_opts,
             root.iter(),
             return_target,
             blocked_locs.iter().copied(),
@@ -594,6 +598,7 @@ pub(crate) fn solve_nohome(
         engine,
         opts,
         None,
+        bnb_opts,
         return_result.goal_config.iter(),
         cz_targets,
         blocked_locs.iter().copied(),

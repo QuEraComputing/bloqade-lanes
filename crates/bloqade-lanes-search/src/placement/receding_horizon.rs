@@ -37,7 +37,7 @@ use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
-use crate::search::options::{EntanglingOptions, SolveOptions};
+use crate::search::options::{BnbOptions, EntanglingOptions, SolveOptions};
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
@@ -1211,6 +1211,7 @@ impl RecedingHorizonCzPlacement {
             &self.search.options,
             &self.entangling_options,
             &self.rh_options,
+            &self.search.bnb_options,
             initial,
             cz_pairs,
             blocked,
@@ -1256,6 +1257,7 @@ pub(crate) fn solve_receding_horizon(
     opts: &SolveOptions,
     ent_opts: &EntanglingOptions,
     rh_opts: &RecedingHorizonOptions,
+    bnb_opts: &BnbOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
     cz_pairs: &[(u32, u32)],
     blocked: impl IntoIterator<Item = LocationAddr>,
@@ -1300,6 +1302,7 @@ pub(crate) fn solve_receding_horizon(
             engine,
             &single_opts,
             ent_opts,
+            bnb_opts,
             initial,
             cz_pairs,
             blocked_locs.iter().copied(),
@@ -1639,6 +1642,7 @@ mod tests {
             },
             &EntanglingOptions::default(),
             &RecedingHorizonOptions::default(),
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
             std::iter::empty(),
@@ -1669,6 +1673,7 @@ mod tests {
                 commit_depth: 1,
                 ..RecedingHorizonOptions::default()
             },
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 5))],
             &[(0, 1)],
             std::iter::empty(),
@@ -1698,6 +1703,7 @@ mod tests {
                 branch_parallel: false, // give cores to restart parallelism
                 ..RecedingHorizonOptions::default()
             },
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 5))],
             &[(0, 1)],
             std::iter::empty(),

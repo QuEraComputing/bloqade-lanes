@@ -34,7 +34,7 @@ use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::search::engine::SearchEngine;
 use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::options::{
-    BoundKind, EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
+    BoundKind, EntanglingOptions, EntropyOptions, InnerStrategy, Refinement, SolveOptions, Strategy,
 };
 use bloqade_lanes_search::search::result::{MultiSolveResult, SolveResult};
 use bloqade_lanes_search::search::target_solver::TargetSolver;
@@ -75,6 +75,8 @@ pub enum PySearchStrategy {
     Entropy = 8,
     #[pyo3(name = "PUSH_ROTATE")]
     PushRotate = 9,
+    #[pyo3(name = "BRANCH_AND_BOUND")]
+    BranchAndBound = 10,
 }
 
 #[pymethods]
@@ -92,6 +94,7 @@ impl PySearchStrategy {
             Self::CascadeEntropy => "CASCADE_ENTROPY",
             Self::Entropy => "ENTROPY",
             Self::PushRotate => "PUSH_ROTATE",
+            Self::BranchAndBound => "BRANCH_AND_BOUND",
         }
     }
 }
@@ -106,15 +109,19 @@ impl PySearchStrategy {
             Strategy::Ids => Self::Ids,
             Strategy::Cascade {
                 inner: InnerStrategy::Ids,
+                ..
             } => Self::CascadeIds,
             Strategy::Cascade {
                 inner: InnerStrategy::Dfs,
+                ..
             } => Self::CascadeDfs,
             Strategy::Cascade {
                 inner: InnerStrategy::Entropy,
+                ..
             } => Self::CascadeEntropy,
             Strategy::Entropy => Self::Entropy,
             Strategy::PushRotate => Self::PushRotate,
+            Strategy::BranchAndBound => Self::BranchAndBound,
         }
     }
 
@@ -127,15 +134,19 @@ impl PySearchStrategy {
             Self::Ids => Strategy::Ids,
             Self::CascadeIds => Strategy::Cascade {
                 inner: InnerStrategy::Ids,
+                refine: Refinement::AStar,
             },
             Self::CascadeDfs => Strategy::Cascade {
                 inner: InnerStrategy::Dfs,
+                refine: Refinement::AStar,
             },
             Self::CascadeEntropy => Strategy::Cascade {
                 inner: InnerStrategy::Entropy,
+                refine: Refinement::AStar,
             },
             Self::Entropy => Strategy::Entropy,
             Self::PushRotate => Strategy::PushRotate,
+            Self::BranchAndBound => Strategy::BranchAndBound,
         }
     }
 }
@@ -1543,6 +1554,7 @@ impl PyMoveSearch {
             let mut solve_opts = opts.inner.clone();
             solve_opts.strategy = Strategy::Cascade {
                 inner: InnerStrategy::Ids,
+                refine: Refinement::AStar,
             };
             ms = ms.with_options(solve_opts);
         }
@@ -1559,6 +1571,7 @@ impl PyMoveSearch {
             let mut solve_opts = opts.inner.clone();
             solve_opts.strategy = Strategy::Cascade {
                 inner: InnerStrategy::Dfs,
+                refine: Refinement::AStar,
             };
             ms = ms.with_options(solve_opts);
         }
@@ -1578,6 +1591,7 @@ impl PyMoveSearch {
             let mut solve_opts = opts.inner.clone();
             solve_opts.strategy = Strategy::Cascade {
                 inner: InnerStrategy::Entropy,
+                refine: Refinement::AStar,
             };
             ms = ms.with_options(solve_opts);
         }

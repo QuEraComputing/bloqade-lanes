@@ -36,11 +36,6 @@ impl<'t> EntropyGenerator<'t> {
 
     /// A generator reading the solve's prebuilt tables. The tables must have
     /// been built with `params.w_t` (debug-asserted at the read sites).
-    ///
-    /// Consumed by the branch-and-bound dispatch (Phase 3 of the B&B plan),
-    /// which is also where `run_with_components` extends its table-building
-    /// condition to the strategies that reach this generator.
-    #[allow(dead_code)]
     pub(crate) fn with_tables(
         params: EntropyParams,
         seed: u64,

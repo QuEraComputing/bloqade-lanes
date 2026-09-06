@@ -18,7 +18,7 @@ use crate::placement::cz_placement::CzPlacement;
 use crate::placement::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::primitives::config::{Config, ConfigError};
 use crate::search::engine::SearchEngine;
-use crate::search::options::{EntropyOptions, SolveOptions};
+use crate::search::options::{BnbOptions, EntropyOptions, SolveOptions};
 use crate::search::result::{CandidateAttempt, MultiSolveResult, SolveResult, SolveStatus};
 use crate::search::target_solver::{TargetSolver, solve_with_engine};
 
@@ -76,6 +76,7 @@ impl SingleHeuristicCzPlacement {
             self.target_solver.engine(),
             &search.options,
             Some(&search.entropy_options),
+            &search.bnb_options,
             self.target_generator.as_ref(),
             initial,
             controls,
@@ -118,6 +119,7 @@ pub(crate) fn solve_single_heuristic(
     engine: &SearchEngine,
     opts: &SolveOptions,
     entropy_opts: Option<&EntropyOptions>,
+    bnb_opts: &BnbOptions,
     target_generator: &dyn TargetGenerator,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
     controls: &[u32],
@@ -162,6 +164,7 @@ pub(crate) fn solve_single_heuristic(
             engine,
             opts,
             entropy_opts,
+            bnb_opts,
             initial_pairs.iter().copied(),
             candidate.iter().copied(),
             blocked_locs.iter().copied(),

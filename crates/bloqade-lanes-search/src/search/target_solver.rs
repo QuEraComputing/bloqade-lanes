@@ -24,7 +24,7 @@ use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
 use crate::push_rotate::{DEFAULT_MOVE_BUDGET, solve_push_rotate};
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::{EntropyOptions, SolveOptions, Strategy};
+use crate::search::options::{BnbOptions, EntropyOptions, SolveOptions, Strategy};
 use crate::search::restarts::run_with_components;
 use crate::search::result::SolveResult;
 use crate::search::result::SolveStatus;
@@ -82,12 +82,33 @@ impl TargetSolver {
             &self.engine,
             &self.search.options,
             Some(&self.search.entropy_options),
+            &self.search.bnb_options,
             initial,
             target,
             blocked,
             max_expansions,
         )
     }
+}
+
+/// A strategy that runs the exhaustive generator needs its architecture
+/// preconditions (P1/P2) to hold; the engine checked them once. Refuse the
+/// solve with a named error rather than enumerate a model that does not fit
+/// the spec.
+pub(crate) fn reject_unsupported_architecture(
+    engine: &SearchEngine,
+    opts: &SolveOptions,
+    bnb_opts: &BnbOptions,
+) -> Result<(), ConfigError> {
+    if bnb_opts.needs_exhaustive(opts.strategy)
+        && let Err(e) = engine.exhaustive_preconditions()
+    {
+        return Err(ConfigError::UnsupportedArchitecture {
+            strategy: "branch_and_bound",
+            reason: e.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Whether swapping `initial` and `target` would change the instance's
@@ -130,6 +151,7 @@ pub(crate) fn solve_with_engine(
     engine: &SearchEngine,
     opts: &SolveOptions,
     entropy_opts: Option<&EntropyOptions>,
+    bnb_opts: &BnbOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
     target: impl IntoIterator<Item = (u32, LocationAddr)>,
     blocked: impl IntoIterator<Item = LocationAddr>,
@@ -137,6 +159,7 @@ pub(crate) fn solve_with_engine(
 ) -> Result<SolveResult, ConfigError> {
     let root = Config::new(initial)?;
     validate_initial_placement(&root)?;
+    reject_unsupported_architecture(engine, opts, bnb_opts)?;
     let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
     // A non-injective target assignment (two qubits on one location, or one
     // qubit given two locations) is a malformed request. Reject it here —
@@ -179,6 +202,7 @@ pub(crate) fn solve_with_engine(
             engine,
             &mirrored_opts,
             entropy_opts,
+            bnb_opts,
             target_pairs.iter().copied(),
             initial_pairs.iter().copied(),
             blocked_locs.iter().copied(),
@@ -319,6 +343,7 @@ pub(crate) fn solve_with_engine(
         max_expansions,
         opts,
         entropy_opts,
+        bnb_opts,
         Some(engine.blended_cache()),
     );
 
@@ -476,6 +501,7 @@ mod tests {
             &engine,
             &backwards_options(Strategy::AStar),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(0, 1))],
             [(0, loc(1, 5)), (1, loc(1, 6))],
             std::iter::empty(),
@@ -502,6 +528,7 @@ mod tests {
                 ..SolveOptions::default()
             },
             None,
+            &BnbOptions::default(),
             initial,
             target,
             std::iter::empty(),
@@ -512,6 +539,7 @@ mod tests {
             &engine,
             &backwards_options(Strategy::Entropy),
             None,
+            &BnbOptions::default(),
             initial,
             target,
             std::iter::empty(),
@@ -544,6 +572,7 @@ mod tests {
             &engine,
             &SolveOptions::default(),
             None,
+            &BnbOptions::default(),
             target,
             initial,
             std::iter::empty(),
@@ -554,6 +583,7 @@ mod tests {
             &engine,
             &backwards_options(Strategy::AStar),
             None,
+            &BnbOptions::default(),
             initial,
             target,
             std::iter::empty(),
@@ -580,6 +610,7 @@ mod tests {
             &engine,
             &SolveOptions::default(),
             None,
+            &BnbOptions::default(),
             initial,
             target,
             std::iter::empty(),
@@ -605,6 +636,7 @@ mod tests {
             &engine,
             &backwards_options(Strategy::AStar),
             None,
+            &BnbOptions::default(),
             initial,
             target,
             std::iter::empty(),
@@ -615,6 +647,7 @@ mod tests {
             &engine,
             &SolveOptions::default(),
             None,
+            &BnbOptions::default(),
             initial,
             target,
             std::iter::empty(),
@@ -640,6 +673,7 @@ mod tests {
             &engine,
             &backwards_options(Strategy::AStar),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(0, 6))],
             std::iter::empty(),
@@ -665,6 +699,7 @@ mod tests {
             &engine,
             &backwards_options(Strategy::AStar),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(0, 5))],
             [loc(0, 5)],
@@ -689,6 +724,7 @@ mod tests {
             &engine,
             &SolveOptions::default(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(0, 1))],
             [(0, loc(1, 5)), (1, loc(1, 6))],
             std::iter::empty(),

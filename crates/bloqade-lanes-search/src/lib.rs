@@ -75,7 +75,10 @@ pub use push_rotate::{solve_push_rotate, solve_push_rotate_with};
 pub use scorers::{DistanceScorer, EntropyScorer};
 pub use search::engine::SearchEngine;
 pub use search::move_search::MoveSearch;
-pub use search::options::{InnerStrategy, SolveOptions, Strategy};
+pub use search::options::{
+    BnbFrontier, BnbOptions, BnbOrdering, InnerStrategy, ObjectiveKind, Refinement, ScheduleKind,
+    SolveOptions, Strategy,
+};
 pub use search::result::{CandidateAttempt, MultiSolveResult};
 pub use search::target_solver::TargetSolver;
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator, Objective, ObjectiveId};

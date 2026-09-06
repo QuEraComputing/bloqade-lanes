@@ -211,7 +211,8 @@ mod tests {
     use crate::placement::target_generator::DefaultTargetGenerator;
     use crate::search::engine::SearchEngine;
     use crate::search::options::{
-        EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
+        BnbOptions, EntanglingOptions, EntropyOptions, InnerStrategy, Refinement, SolveOptions,
+        Strategy,
     };
     use crate::search::target_solver::solve_with_engine;
     use crate::test_utils::{example_arch_json, loc};
@@ -231,6 +232,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(0, 5))],
             std::iter::empty(),
@@ -251,6 +253,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 5))],
             [(0, loc(0, 5))],
             std::iter::empty(),
@@ -272,6 +275,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 5))],
             [(0, loc(1, 5))],
             std::iter::empty(),
@@ -293,6 +297,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(1, 5))],
             std::iter::empty(),
@@ -313,6 +318,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(99, 99))],
             std::iter::empty(),
@@ -333,6 +339,7 @@ mod tests {
             &engine,
             &opts,
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(0, 5))],
             std::iter::empty(),
@@ -344,6 +351,7 @@ mod tests {
             &engine,
             &opts,
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 5))],
             [(0, loc(0, 0))],
             std::iter::empty(),
@@ -364,6 +372,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(0, 5))],
             [loc(0, 5)],
@@ -384,6 +393,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(0, 1))],
             [(0, loc(0, 5)), (1, loc(0, 6))],
             std::iter::empty(),
@@ -409,6 +419,7 @@ mod tests {
                 ..SolveOptions::default()
             },
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(1, 5))],
             std::iter::empty(),
@@ -421,10 +432,12 @@ mod tests {
             &SolveOptions {
                 strategy: Strategy::Cascade {
                     inner: InnerStrategy::Ids,
+                    refine: Refinement::AStar,
                 },
                 ..SolveOptions::default()
             },
             None,
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(1, 5))],
             std::iter::empty(),
@@ -452,6 +465,7 @@ mod tests {
                 ..SolveOptions::default()
             },
             Some(&entropy_opts),
+            &BnbOptions::default(),
             [(0, loc(0, 0))],
             [(0, loc(0, 5))],
             std::iter::empty(),
@@ -480,6 +494,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             &DefaultTargetGenerator,
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[0],
@@ -503,6 +518,7 @@ mod tests {
             &engine,
             &default_opts(),
             None,
+            &BnbOptions::default(),
             &DefaultTargetGenerator,
             [(0, loc(0, 0))],
             &[0],
@@ -527,6 +543,7 @@ mod tests {
             &engine,
             &default_opts(),
             &EntanglingOptions::default(),
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
             std::iter::empty(),
@@ -556,6 +573,7 @@ mod tests {
             &engine,
             &default_opts(),
             &EntanglingOptions::default(),
+            &BnbOptions::default(),
             [(0, loc(0, 5)), (1, loc(1, 5))],
             &[(0, 1)],
             std::iter::empty(),
@@ -576,6 +594,7 @@ mod tests {
             &engine,
             &default_opts(),
             &EntanglingOptions::default(),
+            &BnbOptions::default(),
             [
                 (0, loc(0, 0)),
                 (1, loc(1, 0)),
@@ -612,6 +631,7 @@ mod tests {
             &engine,
             &default_opts(),
             &EntanglingOptions::default(),
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 3))],
             &[(0, 1)],
             std::iter::empty(),
@@ -635,6 +655,7 @@ mod tests {
                 ..SolveOptions::default()
             },
             &EntanglingOptions::default(),
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
             std::iter::empty(),
@@ -654,10 +675,12 @@ mod tests {
             &SolveOptions {
                 strategy: Strategy::Cascade {
                     inner: InnerStrategy::Ids,
+                    refine: Refinement::AStar,
                 },
                 ..SolveOptions::default()
             },
             &EntanglingOptions::default(),
+            &BnbOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
             std::iter::empty(),

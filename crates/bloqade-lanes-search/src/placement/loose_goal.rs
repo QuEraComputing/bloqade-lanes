@@ -35,7 +35,7 @@ use crate::primitives::distance::PairDistanceHeuristic;
 use crate::primitives::lane_index::LaneIndex;
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::{EntanglingOptions, SolveOptions};
+use crate::search::options::{BnbOptions, EntanglingOptions, SolveOptions};
 use crate::search::restarts::run_with_components;
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::search::target_solver::solve_with_engine;
@@ -103,6 +103,7 @@ impl LooseGoalCzPlacement {
             &self.engine,
             &self.search.options,
             &self.entangling_options,
+            &self.search.bnb_options,
             initial,
             cz_pairs,
             blocked,
@@ -161,6 +162,7 @@ pub(crate) fn solve_loose_goal(
     engine: &SearchEngine,
     opts: &SolveOptions,
     ent_opts: &EntanglingOptions,
+    bnb_opts: &BnbOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
     cz_pairs: &[(u32, u32)],
     blocked: impl IntoIterator<Item = LocationAddr>,
@@ -168,6 +170,7 @@ pub(crate) fn solve_loose_goal(
     future_cz_layers: &[Vec<(u32, u32)>],
 ) -> Result<SolveResult, ConfigError> {
     let root = Config::new(initial)?;
+    crate::search::target_solver::reject_unsupported_architecture(engine, opts, bnb_opts)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
     let arch = engine.index().arch_spec();
 
@@ -272,6 +275,7 @@ pub(crate) fn solve_loose_goal(
             max_expansions,
             opts,
             None,
+            bnb_opts,
             Some(engine.blended_cache()),
         )
     };
@@ -311,6 +315,7 @@ pub(crate) fn solve_loose_goal(
                 engine,
                 opts,
                 None,
+                bnb_opts,
                 result.goal_config.iter(),
                 cleanup_targets,
                 blocked_locs.iter().copied(),

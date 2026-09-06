@@ -5,6 +5,7 @@
 //! - [`EntropyOptions`] — entropy-strategy-specific knobs.
 //! - [`EntanglingOptions`] — loose-goal Hungarian-assignment knobs.
 
+use crate::drivers::branch_and_bound::Widening;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::ops::entangling::OCCUPANCY_PENALTY_DEFAULT;
 use crate::primitives::context::AodCapacity;
@@ -34,11 +35,23 @@ pub enum Strategy {
     GreedyBestFirst,
     /// Iterative Diving Search: depth-first with heuristic jump-back.
     Ids,
-    /// Cascade: fast inner strategy first, then weighted A* bounded by inner cost.
-    /// Restarts apply to the inner phase only; A* runs once with the tightest bound.
-    Cascade { inner: InnerStrategy },
+    /// Cascade: fast inner strategy first, then a refinement bounded by the
+    /// inner cost — weighted A* ([`Refinement::AStar`], the default) or the
+    /// branch-and-bound driver seeded with the inner cost
+    /// ([`Refinement::BranchAndBound`]). Restarts apply to the inner phase
+    /// only; the refinement runs once with the tightest bound.
+    Cascade {
+        inner: InnerStrategy,
+        refine: Refinement,
+    },
     /// Entropy-guided search: single-path DFS with entropy-based backtracking.
     Entropy,
+    /// Branch and bound over a staged schedule of generators with an
+    /// admissible completion bound; see
+    /// [`BnbOptions`] for the frontier, schedule and widening knobs, and
+    /// [`SolveResult::proven`](crate::search::result::SolveResult::proven)
+    /// for the verdict a complete schedule can give.
+    BranchAndBound,
     /// Push and Rotate: a complete rule-based router, not a search.
     ///
     /// Finds a solution whenever one exists (at two or more empty locations),
@@ -58,6 +71,96 @@ pub enum Strategy {
     /// node expansions, and the planner is rule-based with its own runaway
     /// guard on emitted moves.
     PushRotate,
+}
+
+/// The second phase of a [`Strategy::Cascade`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Refinement {
+    /// Weighted A* bounded by the inner phase's cost (the historical cascade).
+    #[default]
+    AStar,
+    /// The branch-and-bound driver seeded with the inner phase's cost: it
+    /// reports a strictly cheaper plan if it finds one, and otherwise says
+    /// whether the inner plan is proven optimal.
+    BranchAndBound,
+}
+
+/// The stage-0 frontier of the branch-and-bound driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BnbFrontier {
+    /// Generator order, depth first (`LifoFrontier`).
+    #[default]
+    Lifo,
+    /// Siblings re-sorted by the ordering heuristic (`DfsFrontier`).
+    Dfs,
+    /// Best-first diving on the ordering heuristic (`IdsFrontier`).
+    Ids,
+}
+
+/// The heuristic the `Dfs` and `Ids` frontiers order by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BnbOrdering {
+    /// The sum of per-atom hop distances, as today's `HeuristicDfs`/`Ids`.
+    #[default]
+    HopSum,
+    /// The completion bound itself, through `CompletionBound::as_heuristic`.
+    Bound,
+}
+
+/// Which generators the branch-and-bound schedule is built from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScheduleKind {
+    /// The entropy generator alone: the isolate-the-loop reference against
+    /// the entropy driver. Exhaustion is never a proof.
+    EntropyOnly,
+    /// The entropy generator, then the exhaustive generator's capacity
+    /// ladder up to the solve's capacity: complete.
+    #[default]
+    EntropyThenExhaustive,
+    /// The heuristic generator (with the solve's deadlock policy), then the
+    /// exhaustive ladder: complete.
+    HeuristicThenExhaustive,
+}
+
+impl ScheduleKind {
+    /// Whether the schedule ends in the exhaustive generator.
+    pub fn has_exhaustive(self) -> bool {
+        !matches!(self, Self::EntropyOnly)
+    }
+
+    /// Whether stage 0 is the entropy generator (so the solve's heuristic
+    /// tables are worth building).
+    pub fn stage0_is_entropy(self) -> bool {
+        matches!(self, Self::EntropyOnly | Self::EntropyThenExhaustive)
+    }
+}
+
+/// Knobs of [`Strategy::BranchAndBound`] and of a cascade refined by it.
+/// Lives on [`MoveSearch`](crate::search::move_search::MoveSearch) beside
+/// [`EntropyOptions`]; the completion bound and the objective come from
+/// [`EntropyOptions::completion_bound`] and [`EntropyOptions::objective`],
+/// the AOD capacity from [`SolveOptions::aod_capacity`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BnbOptions {
+    pub frontier: BnbFrontier,
+    pub ordering: BnbOrdering,
+    pub schedule: ScheduleKind,
+    pub widening: Widening,
+}
+
+impl BnbOptions {
+    /// Whether `strategy` under these options runs the exhaustive
+    /// generator, and so needs its architecture preconditions to hold.
+    pub fn needs_exhaustive(&self, strategy: Strategy) -> bool {
+        matches!(
+            strategy,
+            Strategy::BranchAndBound
+                | Strategy::Cascade {
+                    refine: Refinement::BranchAndBound,
+                    ..
+                }
+        ) && self.schedule.has_exhaustive()
+    }
 }
 
 /// Core search-tuning parameters shared by every solver entry point.

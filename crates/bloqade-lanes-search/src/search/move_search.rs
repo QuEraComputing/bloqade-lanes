@@ -6,7 +6,9 @@
 //! (single fixed-target solve) or any of the
 //! `placement::*CzPlacement` peers (CZ-stage placement strategies).
 
-use crate::search::options::{EntropyOptions, InnerStrategy, SolveOptions, Strategy};
+use crate::search::options::{
+    BnbOptions, BoundKind, EntropyOptions, InnerStrategy, Refinement, SolveOptions, Strategy,
+};
 
 /// Composable search configuration: which algorithm + tuning knobs.
 ///
@@ -22,8 +24,12 @@ pub struct MoveSearch {
     pub options: SolveOptions,
     /// Entropy-specific knobs — only consulted when the chosen
     /// strategy is [`Strategy::Entropy`] or a [`Strategy::Cascade`]
-    /// whose inner phase is entropy.
+    /// whose inner phase is entropy, plus the objective and completion
+    /// bound the branch-and-bound driver shares with the entropy driver.
     pub entropy_options: EntropyOptions,
+    /// Branch-and-bound knobs — only consulted under
+    /// [`Strategy::BranchAndBound`] or a cascade refined by it.
+    pub bnb_options: BnbOptions,
 }
 
 impl MoveSearch {
@@ -32,6 +38,7 @@ impl MoveSearch {
         Self {
             options,
             entropy_options,
+            bnb_options: BnbOptions::default(),
         }
     }
 
@@ -45,6 +52,7 @@ impl MoveSearch {
                 ..SolveOptions::default()
             },
             entropy_options: EntropyOptions::default(),
+            bnb_options: BnbOptions::default(),
         }
     }
 
@@ -56,6 +64,7 @@ impl MoveSearch {
                 ..SolveOptions::default()
             },
             entropy_options: EntropyOptions::default(),
+            bnb_options: BnbOptions::default(),
         }
     }
 
@@ -67,18 +76,43 @@ impl MoveSearch {
                 ..SolveOptions::default()
             },
             entropy_options: EntropyOptions::default(),
+            bnb_options: BnbOptions::default(),
         }
     }
 
     /// Convenience: cascade (fast inner strategy then bounded A*
     /// refinement).
     pub fn cascade(inner: InnerStrategy) -> Self {
+        Self::cascade_with(inner, Refinement::AStar)
+    }
+
+    /// Cascade with an explicit refinement phase.
+    pub fn cascade_with(inner: InnerStrategy, refine: Refinement) -> Self {
         Self {
             options: SolveOptions {
-                strategy: Strategy::Cascade { inner },
+                strategy: Strategy::Cascade { inner, refine },
                 ..SolveOptions::default()
             },
             entropy_options: EntropyOptions::default(),
+            bnb_options: BnbOptions::default(),
+        }
+    }
+
+    /// Convenience: branch and bound with the weighted-distance completion
+    /// bound on, so the strategy is bounded out of the box; pass
+    /// `EntropyOptions { completion_bound: None, .. }` for the unbounded
+    /// control run.
+    pub fn branch_and_bound() -> Self {
+        Self {
+            options: SolveOptions {
+                strategy: Strategy::BranchAndBound,
+                ..SolveOptions::default()
+            },
+            entropy_options: EntropyOptions {
+                completion_bound: Some(BoundKind::WeightedDistance),
+                ..EntropyOptions::default()
+            },
+            bnb_options: BnbOptions::default(),
         }
     }
 
@@ -91,6 +125,12 @@ impl MoveSearch {
     /// Set the [`EntropyOptions`] bundle.
     pub fn with_entropy_options(mut self, entropy_options: EntropyOptions) -> Self {
         self.entropy_options = entropy_options;
+        self
+    }
+
+    /// Set the [`BnbOptions`] bundle.
+    pub fn with_bnb_options(mut self, bnb_options: BnbOptions) -> Self {
+        self.bnb_options = bnb_options;
         self
     }
 }
