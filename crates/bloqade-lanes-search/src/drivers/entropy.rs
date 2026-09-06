@@ -448,7 +448,8 @@ fn build_deadlock_breaker_candidate(
     ) in groups
     {
         qubits.sort_by(cmp_group_entries);
-        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied);
+        let grid_ctx =
+            BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied, ctx.capacity);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -1699,7 +1700,8 @@ pub(crate) fn generate_candidates(
     {
         qubits.sort_by(cmp_group_entries);
 
-        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
+        let grid_ctx =
+            BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied, ctx.capacity);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -3875,6 +3877,7 @@ mod tests {
                 None,
                 first.direction,
                 &occupied,
+                None,
             );
 
             let mut entries: HashMap<u64, u64> = HashMap::new();
