@@ -627,7 +627,13 @@ impl MoveGenerator for HeuristicGenerator {
         {
             // Build grid context from ALL lanes on this bus group (cross-zone).
             let grid_ctx = crate::ops::aod_grid::BusGridContext::new(
-                ctx.index, mt, bus_id, None, dir, &occupied,
+                ctx.index,
+                mt,
+                bus_id,
+                None,
+                dir,
+                &occupied,
+                ctx.capacity,
             );
 
             // Build entries (src_encoded -> lane_encoded) and the seed order for

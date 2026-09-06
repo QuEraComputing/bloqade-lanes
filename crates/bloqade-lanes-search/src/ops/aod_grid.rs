@@ -17,6 +17,7 @@ use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr,
 
 use crate::primitives::bus_grid_maps::BusGridMaps;
 use crate::primitives::config::Config;
+use crate::primitives::context::AodCapacity;
 use crate::primitives::lane_index::LaneIndex;
 
 /// A cluster represented by its X and Y coordinate sets.
@@ -273,6 +274,10 @@ pub(crate) struct BusGridContext<'a> {
     /// the rectangle's `(src, dst)` cells and its sorted source encodings.
     cells_scratch: RefCell<Vec<(u64, u64)>>,
     srcs_scratch: RefCell<Vec<u64>>,
+    /// The solve's AOD tone limit per axis (`SearchContext::capacity`);
+    /// `None` is unlimited. A rectangle spanning more source columns or rows
+    /// than this is invalid, and growth stops there.
+    capacity: Option<AodCapacity>,
 }
 
 impl<'a> BusGridContext<'a> {
@@ -282,6 +287,10 @@ impl<'a> BusGridContext<'a> {
     /// When `zone_id` is `None`, lanes from all zones are included and the
     /// arch maps are borrowed from the `LaneIndex` cache (zero rebuild). When
     /// `zone_id` is `Some`, the maps are built for that zone only.
+    ///
+    /// `capacity` caps every rectangle this context builds at that many
+    /// distinct source columns and rows; pass the solve's
+    /// `SearchContext::capacity`, or `None` for the uncapped behaviour.
     pub(crate) fn new(
         index: &'a LaneIndex,
         mt: MoveType,
@@ -289,6 +298,7 @@ impl<'a> BusGridContext<'a> {
         zone_id: Option<u32>,
         dir: Direction,
         occupied: &'a HashSet<u64>,
+        capacity: Option<AodCapacity>,
     ) -> Self {
         let maps = match zone_id {
             None => match index.bus_grid_maps(mt, bus_id, dir) {
@@ -306,6 +316,7 @@ impl<'a> BusGridContext<'a> {
             occupied_locs: Cow::Borrowed(occupied),
             cells_scratch: RefCell::new(Vec::new()),
             srcs_scratch: RefCell::new(Vec::new()),
+            capacity,
         }
     }
 
@@ -339,6 +350,12 @@ impl<'a> BusGridContext<'a> {
     /// positions [`Self::try_add_point`] pulls in. Passing `None` keeps the hot
     /// path allocation-free and early-exiting, which is what
     /// [`Self::is_valid_rect`] does.
+    ///
+    /// A rectangle over the context's [`AodCapacity`] is `Invalid`, never
+    /// `Repairable`: growth only adds coordinates, so nothing the repair loop
+    /// could pull in would bring it back under the cap, and classifying it as
+    /// repairable would keep that loop pulling cells into a rectangle the
+    /// hardware cannot drive.
     fn rect_outcome(
         &self,
         xs: &BTreeSet<u64>,
@@ -346,6 +363,12 @@ impl<'a> BusGridContext<'a> {
         movers: &HashSet<u64>,
         mut repairs: Option<&mut Vec<u64>>,
     ) -> RectOutcome {
+        if let Some(cap) = self.capacity
+            && !cap.admits(xs.len(), ys.len())
+        {
+            return RectOutcome::Invalid;
+        }
+
         // Resolve every cell's (src, dst) once into a reused scratch buffer.
         let mut cells = self.cells_scratch.borrow_mut();
         cells.clear();
@@ -1334,7 +1357,112 @@ mod tests {
             occupied_locs: Cow::Owned(occupied_locs),
             cells_scratch: RefCell::new(Vec::new()),
             srcs_scratch: RefCell::new(Vec::new()),
+            capacity: None,
         }
+    }
+
+    /// The same context with the solve's AOD capacity set.
+    fn capped(mut ctx: BusGridContext<'static>, x: usize, y: usize) -> BusGridContext<'static> {
+        ctx.capacity = Some(AodCapacity { x, y });
+        ctx
+    }
+
+    // ── AOD capacity ──
+
+    /// A 2-column × 3-row block of movers with free destinations. Uncapped it
+    /// is one 6-lane rectangle; the pinned output below is what every caller
+    /// passing `None` keeps getting.
+    fn two_by_three_block() -> (BusGridContext<'static>, HashMap<u64, u64>) {
+        let positions = [
+            ((0, 0), 10),
+            ((1, 0), 11),
+            ((0, 1), 12),
+            ((1, 1), 13),
+            ((0, 2), 14),
+            ((1, 2), 15),
+        ];
+        let lanes = [
+            (10, 100),
+            (11, 101),
+            (12, 102),
+            (13, 103),
+            (14, 104),
+            (15, 105),
+        ];
+        let ctx = make_context(&positions, &lanes, &[]);
+        (ctx, lanes.into_iter().collect())
+    }
+
+    #[test]
+    fn uncapped_block_is_one_rectangle() {
+        let (ctx, entries) = two_by_three_block();
+        let grids = sorted_grids(&ctx.build_aod_grids(&entries));
+        assert_eq!(grids, vec![vec![100, 101, 102, 103, 104, 105]]);
+    }
+
+    #[test]
+    fn capacity_splits_the_block_and_still_covers_every_mover() {
+        let (ctx, entries) = two_by_three_block();
+        let ctx = capped(ctx, 2, 2);
+        let grids = ctx.build_aod_grids(&entries);
+
+        // Positions of each lane's source, to measure a rectangle's span.
+        let lane_to_pos: HashMap<u64, (u64, u64)> = entries
+            .iter()
+            .map(|(&src, &lane)| (lane, ctx.maps.src_to_pos[&src]))
+            .collect();
+
+        let mut covered: BTreeSet<u64> = BTreeSet::new();
+        for grid in &grids {
+            let xs: BTreeSet<u64> = grid.iter().map(|l| lane_to_pos[l].0).collect();
+            let ys: BTreeSet<u64> = grid.iter().map(|l| lane_to_pos[l].1).collect();
+            assert!(
+                xs.len() <= 2 && ys.len() <= 2,
+                "rectangle {grid:?} exceeds the 2×2 cap"
+            );
+            // Still a complete product.
+            assert_eq!(
+                grid.len(),
+                xs.len() * ys.len(),
+                "rectangle {grid:?} is not a product"
+            );
+            covered.extend(grid.iter().copied());
+        }
+        assert_eq!(
+            covered.into_iter().collect::<Vec<_>>(),
+            vec![100, 101, 102, 103, 104, 105]
+        );
+        // Two alternatives: the first 2×2 and the leftover 2×1 row, which the
+        // merge pass may not join because the union would be 2×3.
+        assert_eq!(
+            sorted_grids(&grids),
+            vec![vec![100, 101, 102, 103], vec![104, 105]]
+        );
+    }
+
+    /// Over-cap is `Invalid`, not `Repairable`: the chain's leader cell alone
+    /// is repairable (pull in the follower), but under a 1×1 cap the repaired
+    /// 2×1 rectangle is over the cap, so the repair loop stops and rolls back
+    /// rather than pulling in cells the hardware cannot drive. Only the
+    /// follower, whose destination is free, moves.
+    #[test]
+    fn capacity_stops_the_repair_loop() {
+        let ctx = capped(chain_context(), 1, 1);
+        let movers: HashSet<u64> = [10, 20].into_iter().collect();
+        let xs: BTreeSet<u64> = [0, 1].into_iter().collect();
+        let ys: BTreeSet<u64> = [0].into_iter().collect();
+        let mut repairs = Vec::new();
+        assert!(matches!(
+            ctx.rect_outcome(&xs, &ys, &movers, Some(&mut repairs)),
+            RectOutcome::Invalid
+        ));
+        assert!(repairs.is_empty());
+
+        let entries: HashMap<u64, u64> = [(10, 101), (20, 102)].into_iter().collect();
+        assert_eq!(
+            sorted_grids(&ctx.build_aod_grids(&entries)),
+            vec![vec![102]]
+        );
     }
 
     #[test]

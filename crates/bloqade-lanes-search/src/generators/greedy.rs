@@ -90,7 +90,8 @@ impl MoveGenerator for GreedyGenerator {
 
         // 4. For each group, build AOD grids and emit candidates.
         for ((mt, bus_id, dir), entries) in &groups {
-            let grid_ctx = BusGridContext::new(index, *mt, *bus_id, None, *dir, &occupied);
+            let grid_ctx =
+                BusGridContext::new(index, *mt, *bus_id, None, *dir, &occupied, ctx.capacity);
             let grids = grid_ctx.build_aod_grids(entries);
 
             for grid in grids {
