@@ -36,11 +36,7 @@ impl<'t> EntropyGenerator<'t> {
 
     /// A generator reading the solve's prebuilt tables. The tables must have
     /// been built with `params.w_t` (debug-asserted at the read sites).
-    pub(crate) fn with_tables(
-        params: EntropyParams,
-        seed: u64,
-        tables: &'t HeuristicTables,
-    ) -> Self {
+    pub fn with_tables(params: EntropyParams, seed: u64, tables: &'t HeuristicTables) -> Self {
         Self {
             params,
             seed,

@@ -979,7 +979,7 @@ impl BlendedColumnCache {
 /// the physical Gemini spec); build cost is comparable to a single node
 /// expansion, and [`Self::build_cached`] amortizes the distance columns
 /// across solves via [`BlendedColumnCache`].
-pub(crate) struct HeuristicTables {
+pub struct HeuristicTables {
     loc_idx: Arc<HashMap<u64, u32>>,
     /// Per-solve overlay rows for targets absent from the endpoint interner:
     /// `DistanceTable` interns isolated targets (no incident lanes) so
@@ -1003,7 +1003,7 @@ pub(crate) struct HeuristicTables {
 
 impl HeuristicTables {
     /// Build without a cross-solve cache (tests, bench, trait paths).
-    pub(crate) fn build(ctx: &SearchContext, w_t: f64, lookahead: bool) -> Self {
+    pub fn build(ctx: &SearchContext, w_t: f64, lookahead: bool) -> Self {
         Self::build_inner(ctx, w_t, lookahead, None)
     }
 

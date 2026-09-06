@@ -40,3 +40,7 @@ tempfile = "3"
 [[bench]]
 name = "entropy"
 harness = false
+
+[[bench]]
+name = "branch_and_bound"
+harness = false
