@@ -29,13 +29,20 @@ struct NodeData {
     parent_move: Option<MoveSet>,
     g_score: f64,
     depth: u32,
+    /// The configuration's slot: one per distinct configuration, shared by
+    /// every node that holds it (a cheaper rediscovery mints a new node on
+    /// the same slot).
+    slot: u32,
 }
 
 /// Arena-based search graph with transposition table.
 ///
 /// Nodes are stored in a flat `Vec` and referenced by [`NodeId`].
-/// The transposition table maps each unique configuration to the
-/// [`NodeId`] with the lowest known g-score.
+/// The transposition table maps each unique configuration to a **slot**, and
+/// each slot to the [`NodeId`] with the lowest known g-score for that
+/// configuration. Slots are dense indices assigned in discovery order, so a
+/// per-configuration memo (a bound estimate, a children cache) is a `Vec`
+/// indexed by [`Self::slot`] rather than a map keyed by `Config`.
 ///
 /// Unlike the Python `ConfigurationTree`:
 /// - Uses g-score (cost) for the transposition table, not depth.
@@ -43,14 +50,17 @@ struct NodeData {
 /// - Arena allocation avoids reference cycles and per-node heap allocation.
 pub struct SearchGraph {
     nodes: Vec<NodeData>,
-    seen: HashMap<Config, NodeId>,
+    /// Configuration → slot.
+    seen: HashMap<Config, u32>,
+    /// Slot → the current best node for that configuration.
+    slots: Vec<NodeId>,
 }
 
 impl std::fmt::Debug for SearchGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SearchGraph")
             .field("num_nodes", &self.nodes.len())
-            .field("num_seen", &self.seen.len())
+            .field("num_configs", &self.slots.len())
             .finish()
     }
 }
@@ -64,12 +74,14 @@ impl SearchGraph {
             parent_move: None,
             g_score: 0.0,
             depth: 0,
+            slot: 0,
         };
         let mut seen = HashMap::new();
-        seen.insert(root, NodeId(0));
+        seen.insert(root, 0);
         Self {
             nodes: vec![root_node],
             seen,
+            slots: vec![NodeId(0)],
         }
     }
 
@@ -103,6 +115,28 @@ impl SearchGraph {
         self.nodes.len()
     }
 
+    /// Number of distinct configurations seen (always >= 1 due to root).
+    ///
+    /// `len() - num_configs()` is the number of superseded nodes: ids minted
+    /// by a cheaper rediscovery that left an older node for the same
+    /// configuration in place.
+    pub fn num_configs(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// The slot of a node's configuration: a dense index shared by every node
+    /// holding that configuration, suitable for indexing a per-configuration
+    /// memo.
+    pub fn slot(&self, id: NodeId) -> u32 {
+        self.nodes[id.0 as usize].slot
+    }
+
+    /// Whether `id` is the best-known node for its configuration, i.e. no
+    /// cheaper rediscovery has superseded it. No hashing: a slot lookup.
+    pub fn is_current(&self, id: NodeId) -> bool {
+        self.slots[self.nodes[id.0 as usize].slot as usize] == id
+    }
+
     /// Always returns `false` — the graph always contains at least the root.
     ///
     /// Provided to satisfy the `len`/`is_empty` convention.
@@ -112,7 +146,7 @@ impl SearchGraph {
 
     /// Look up the best-known [`NodeId`] for a configuration.
     pub fn seen_id(&self, config: &Config) -> Option<NodeId> {
-        self.seen.get(config).copied()
+        self.seen.get(config).map(|&slot| self.slots[slot as usize])
     }
 
     /// Try to insert a successor node.
@@ -133,26 +167,42 @@ impl SearchGraph {
         new_config: Config,
         new_g: f64,
     ) -> (NodeId, bool) {
-        if let Some(&existing_id) = self.seen.get(&new_config) {
+        let existing_slot = self.seen.get(&new_config).copied();
+        if let Some(slot) = existing_slot {
+            let existing_id = self.slots[slot as usize];
             let existing_g = self.nodes[existing_id.0 as usize].g_score;
             if existing_g <= new_g {
                 // Already seen at equal-or-lower cost.
                 return (existing_id, false);
             }
-            // Re-discovered at lower cost: create new node, update table.
+            // Re-discovered at lower cost: create new node on the same slot,
+            // repoint the slot.
         }
 
         let parent_depth = self.nodes[parent.0 as usize].depth;
         let new_id =
             NodeId(u32::try_from(self.nodes.len()).expect("search graph exceeded 2^32 nodes"));
+        let slot = match existing_slot {
+            Some(slot) => {
+                self.slots[slot as usize] = new_id;
+                slot
+            }
+            None => {
+                let slot =
+                    u32::try_from(self.slots.len()).expect("search graph exceeded 2^32 configs");
+                self.slots.push(new_id);
+                self.seen.insert(new_config.clone(), slot);
+                slot
+            }
+        };
         self.nodes.push(NodeData {
-            config: new_config.clone(),
+            config: new_config,
             parent: Some(parent),
             parent_move: Some(move_set),
             g_score: new_g,
             depth: parent_depth + 1,
+            slot,
         });
-        self.seen.insert(new_config, new_id);
         (new_id, true)
     }
 
@@ -248,6 +298,45 @@ mod tests {
         // Old node still accessible.
         assert_eq!(graph.g_score(first_id), 5.0);
         assert_eq!(graph.len(), 3);
+    }
+
+    /// A cheaper rediscovery mints a new node on the *same* slot and makes
+    /// the old node non-current; the slot count stays below the node count.
+    #[test]
+    fn rediscovery_shares_a_slot_and_supersedes_the_old_node() {
+        let mut graph = SearchGraph::new(cfg(0));
+        assert_eq!(graph.slot(graph.root()), 0);
+        assert!(graph.is_current(graph.root()));
+        assert_eq!(graph.num_configs(), 1);
+
+        let (a, _) = graph.insert(graph.root(), MoveSet::new([lane(0, 0, 0)]), cfg(1), 5.0);
+        assert_eq!(graph.slot(a), 1);
+        assert!(graph.is_current(a));
+        assert_eq!(graph.num_configs(), 2);
+
+        let (b, is_new) = graph.insert(graph.root(), MoveSet::new([lane(0, 0, 1)]), cfg(1), 2.0);
+        assert!(is_new);
+        assert_ne!(a, b);
+        assert_eq!(
+            graph.slot(b),
+            graph.slot(a),
+            "same configuration, same slot"
+        );
+        assert!(graph.is_current(b));
+        assert!(
+            !graph.is_current(a),
+            "the superseded node is no longer current"
+        );
+        assert_eq!(graph.seen_id(&cfg(1)), Some(b));
+        assert_eq!(graph.num_configs(), 2);
+        assert_eq!(graph.len(), 3);
+        assert_eq!(graph.len() - graph.num_configs(), 1, "one superseded id");
+
+        // A costlier rediscovery changes nothing.
+        let (c, is_new) = graph.insert(graph.root(), MoveSet::new([lane(0, 0, 0)]), cfg(1), 9.0);
+        assert!(!is_new);
+        assert_eq!(c, b);
+        assert_eq!(graph.num_configs(), 2);
     }
 
     #[test]
