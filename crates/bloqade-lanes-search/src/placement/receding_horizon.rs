@@ -32,7 +32,7 @@ use crate::goals::EntanglingConstraintGoal;
 use crate::observer::NoOpObserver;
 use crate::ops::entangling;
 use crate::primitives::config::Config;
-use crate::primitives::context::{SearchContext, SearchState};
+use crate::primitives::context::{AodCapacity, SearchContext, SearchState};
 use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
@@ -384,6 +384,7 @@ fn beam_rollout<G: Goal>(
     goal: &G,
     max_depth: u32,
     beam_width: usize,
+    capacity: Option<AodCapacity>,
 ) -> RolloutOutcome {
     let beam_width = beam_width.max(1);
     let mut graph = SearchGraph::new(root);
@@ -398,6 +399,7 @@ fn beam_rollout<G: Goal>(
         blocked,
         targets,
         cz_pairs: Some(cz_pairs),
+        capacity,
     };
 
     // Root goal check.
@@ -504,6 +506,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     restart_seed: u64,
     greedy_first: bool,
     inner_beam_width: u32,
+    capacity: Option<AodCapacity>,
 ) -> RolloutOutcome {
     let inner =
         HeuristicGenerator::configured(restart_seed, deadlock_policy, inner_lookahead, Some(top_c));
@@ -540,6 +543,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
             goal,
             max_depth,
             inner_beam_width.max(1) as usize,
+            capacity,
         );
         if greedy_outcome.goal_node.is_some() {
             // Tier-0 (goal reached) is always best — accept immediately.
@@ -580,6 +584,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
             blocked,
             targets: &targets_for_ctx,
             cz_pairs: Some(&cz_pairs_for_ctx),
+            capacity,
         };
         frontier::run_search(
             root,
@@ -923,6 +928,7 @@ pub fn solve_entangling_rh_single(
                 stage_seed,
                 rh_opts.greedy_first,
                 rh_opts.inner_beam_width,
+                opts.aod_capacity,
             );
             classify_into_tier(outcome, x, heuristic)
         };

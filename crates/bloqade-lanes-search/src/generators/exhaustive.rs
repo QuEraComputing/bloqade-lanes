@@ -267,6 +267,7 @@ mod tests {
             blocked,
             targets,
             cz_pairs: None,
+            capacity: None,
         }
     }
 

@@ -575,6 +575,7 @@ fn optimal_distances_from(index: &LaneIndex, start: &Config) -> HashMap<ConfigKe
         blocked: &blocked,
         targets: &no_targets,
         cz_pairs: None,
+        capacity: None,
     };
     let generator = ExhaustiveGenerator::new(None, None);
     // `NodeId` has no public constructor and the exhaustive generator ignores

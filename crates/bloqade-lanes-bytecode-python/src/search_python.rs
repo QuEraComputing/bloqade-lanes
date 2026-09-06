@@ -689,6 +689,7 @@ impl PyEntropyScorer {
             blocked: &self.blocked,
             targets: &self.targets,
             cz_pairs: None,
+            capacity: None,
         };
         let inner =
             compute_moveset_metrics(&old_config, &new_config, &occupied, &ctx, &self.params);
@@ -868,6 +869,8 @@ impl PySolveOptions {
                 top_c,
                 fallback_push_rotate,
                 backwards_search,
+                // Not exposed to Python yet (Task 3.4 of the B&B plan).
+                aod_capacity: None,
             },
         })
     }

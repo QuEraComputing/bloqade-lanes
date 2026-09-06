@@ -64,7 +64,7 @@ pub use placement::target_generator::{
     CandidateError, DefaultTargetGenerator, TargetContext, TargetGenerator,
 };
 pub use primitives::config::{Config, ConfigError};
-pub use primitives::context::{MoveCandidate, SearchContext, SearchState};
+pub use primitives::context::{AodCapacity, MoveCandidate, SearchContext, SearchState};
 pub use primitives::distance::PairDistanceHeuristic;
 pub use primitives::graph::{MoveSet, NodeId, SearchGraph};
 pub use primitives::lane_index::LaneIndex;
