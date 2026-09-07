@@ -643,13 +643,16 @@ pub(crate) fn capacity_ladder(cap: Option<AodCapacity>) -> Vec<(SeedPolicy, Opti
     let mut k = 1usize;
     loop {
         let below = match cap {
-            Some(c) => k < c.x && k < c.y,
+            Some(c) => k < c.x() && k < c.y(),
             None => k <= 2,
         };
         if !below {
             break;
         }
-        ladder.push((SeedPolicy::Unresolved, Some(AodCapacity { x: k, y: k })));
+        ladder.push((
+            SeedPolicy::Unresolved,
+            Some(AodCapacity::new(k, k).unwrap()),
+        ));
         k += 1;
     }
     ladder.push((SeedPolicy::Unresolved, cap));
@@ -819,7 +822,7 @@ mod tests {
 
     #[test]
     fn capacity_ladder_is_nested_and_ends_at_the_solve_cap() {
-        let cap = |x, y| Some(AodCapacity { x, y });
+        let cap = |x, y| AodCapacity::new(x, y);
         assert_eq!(
             capacity_ladder(cap(3, 4)),
             vec![
@@ -850,7 +853,7 @@ mod tests {
             let ladder = capacity_ladder(cap);
             let leq = |a: Option<AodCapacity>, b: Option<AodCapacity>| match (a, b) {
                 (_, None) => true,
-                (Some(a), Some(b)) => a.x <= b.x && a.y <= b.y,
+                (Some(a), Some(b)) => a.x() <= b.x() && a.y() <= b.y(),
                 (None, Some(_)) => false,
             };
             assert!(

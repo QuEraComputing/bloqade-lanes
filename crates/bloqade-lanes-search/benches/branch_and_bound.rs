@@ -232,8 +232,14 @@ fn prepare<'a>(index: &'a LaneIndex, s: &Scenario, b: Borrowed<'a>) -> Prepared<
     let params = EntropyParams::default();
     let tables = HeuristicTables::build(&ctx, params.w_t, params.lookahead);
     let levels: Vec<ExhaustiveGenerator> = [
-        (SeedPolicy::Unresolved, Some(AodCapacity { x: 1, y: 1 })),
-        (SeedPolicy::Unresolved, Some(AodCapacity { x: 2, y: 2 })),
+        (
+            SeedPolicy::Unresolved,
+            Some(AodCapacity::new(1, 1).unwrap()),
+        ),
+        (
+            SeedPolicy::Unresolved,
+            Some(AodCapacity::new(2, 2).unwrap()),
+        ),
         (SeedPolicy::Unresolved, None),
         (SeedPolicy::Any, None),
     ]

@@ -915,13 +915,14 @@ impl PySolveOptions {
                 "top_c must be None or an integer >= 1",
             ));
         }
-        if let Some((x, y)) = aod_capacity
-            && (x == 0 || y == 0)
-        {
-            return Err(PyValueError::new_err(
-                "aod_capacity components must be integers >= 1",
-            ));
-        }
+        // `AodCapacity::new` is the single place a zero axis is refused, so
+        // this maps its `None` rather than repeating the test.
+        let aod_capacity = match aod_capacity {
+            None => None,
+            Some((x, y)) => Some(AodCapacity::new(x, y).ok_or_else(|| {
+                PyValueError::new_err("aod_capacity components must be integers >= 1")
+            })?),
+        };
         let refine = match cascade_refine {
             "astar" => Refinement::AStar,
             "branch_and_bound" => Refinement::BranchAndBound,
@@ -945,7 +946,7 @@ impl PySolveOptions {
                 top_c,
                 fallback_push_rotate,
                 backwards_search,
-                aod_capacity: aod_capacity.map(|(x, y)| AodCapacity { x, y }),
+                aod_capacity,
             },
         })
     }
@@ -994,7 +995,7 @@ impl PySolveOptions {
     /// unlimited.
     #[getter]
     fn aod_capacity(&self) -> Option<(usize, usize)> {
-        self.inner.aod_capacity.map(|c| (c.x, c.y))
+        self.inner.aod_capacity.map(|c| (c.x(), c.y()))
     }
 
     /// The refinement phase a cascade strategy runs: `"astar"` or

@@ -82,7 +82,7 @@ impl<'a> Schedule<'a> {
         match (terminal.capacity(), solve_cap) {
             (None, _) => {}
             (Some(own), Some(solve)) => assert!(
-                own.x >= solve.x && own.y >= solve.y,
+                own.x() >= solve.x() && own.y() >= solve.y(),
                 "the terminal stage's capacity {own:?} is below the solve's {solve:?}"
             ),
             (Some(own), None) => panic!(
