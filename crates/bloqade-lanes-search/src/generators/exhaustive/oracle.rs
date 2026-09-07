@@ -822,7 +822,7 @@ mod tests {
     /// may go missing.
     #[test]
     fn generator_equals_the_oracle_at_capacity_two() {
-        assert_clean_on_small_fixtures(Some(AodCapacity { x: 2, y: 2 }), 200);
+        assert_clean_on_small_fixtures(Some(AodCapacity::new(2, 2).unwrap()), 200);
     }
 
     /// On the shipped specs the power set is out of reach, but at unit
@@ -830,7 +830,7 @@ mod tests {
     /// single-lane subset is checked.
     #[test]
     fn generator_equals_the_oracle_on_shipped_specs_at_unit_capacity() {
-        let cap = Some(AodCapacity { x: 1, y: 1 });
+        let cap = Some(AodCapacity::new(1, 1).unwrap());
         let mut report = String::new();
         for (name, json) in [
             ("physical", physical_spec_json()),
@@ -872,7 +872,7 @@ mod tests {
 
     #[test]
     fn generator_is_sound_on_shipped_specs_at_capacity_two() {
-        assert_sound_on_shipped_specs(Some(AodCapacity { x: 2, y: 2 }), 30);
+        assert_sound_on_shipped_specs(Some(AodCapacity::new(2, 2).unwrap()), 30);
     }
 
     /// Uncapped: the tight enumeration is anchored on the atoms, so even with
@@ -1152,7 +1152,7 @@ mod tests {
     /// it, and every shot is still inside the exhaustive output at that cap.
     #[test]
     fn capacity_binds_every_generator() {
-        assert_subset_of_exhaustive(Some(AodCapacity { x: 1, y: 2 }), 40);
+        assert_subset_of_exhaustive(Some(AodCapacity::new(1, 2).unwrap()), 40);
     }
 
     // ── Levels nest ──
@@ -1175,10 +1175,9 @@ mod tests {
                     let ys: BTreeSet<u64> = lanes.iter().map(|l| src_pos(l).1.to_bits()).collect();
                     (xs.len(), ys.len())
                 })
-                .fold(AodCapacity { x: 0, y: 0 }, |acc, (x, y)| AodCapacity {
-                    x: acc.x.max(x),
-                    y: acc.y.max(y),
-                });
+                .fold((0usize, 0usize), |(ax, ay), (x, y)| (ax.max(x), ay.max(y)));
+            let full = AodCapacity::new(full.0, full.1)
+                .expect("a spec with lanes has at least one column and row");
             for _ in 0..40 {
                 let inst = random_instance(&mut rng, &oracle.endpoints());
                 let target_locs: Vec<u64> = inst.targets.iter().map(|&(_, l)| l).collect();
@@ -1211,9 +1210,9 @@ mod tests {
                 }
 
                 let caps = [
-                    AodCapacity { x: 1, y: 1 },
-                    AodCapacity { x: 2, y: 2 },
-                    AodCapacity { x: 3, y: 3 },
+                    AodCapacity::new(1, 1).unwrap(),
+                    AodCapacity::new(2, 2).unwrap(),
+                    AodCapacity::new(3, 3).unwrap(),
                     full,
                 ];
                 let mut previous: Option<BTreeSet<_>> = None;
@@ -1240,7 +1239,7 @@ mod tests {
                     blocked: &inst.blocked,
                     targets: &inst.targets,
                     cz_pairs: None,
-                    capacity: Some(AodCapacity { x: 2, y: 2 }),
+                    capacity: Some(AodCapacity::new(2, 2).unwrap()),
                 };
                 let via_ctx = shots_of(&exhaustive_in(
                     &capped_ctx,
@@ -1251,7 +1250,7 @@ mod tests {
                 let via_gen = shots_of(&exhaustive_in(
                     &ctx,
                     SeedPolicy::Any,
-                    Some(AodCapacity { x: 2, y: 2 }),
+                    Some(AodCapacity::new(2, 2).unwrap()),
                     &inst.config,
                 ));
                 assert_eq!(

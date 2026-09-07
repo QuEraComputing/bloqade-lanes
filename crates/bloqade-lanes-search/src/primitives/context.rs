@@ -26,15 +26,41 @@ pub struct MoveCandidate {
 /// [`AodCapacity::tighten`]; the shot space at a smaller cap is always a
 /// subset of the shot space at a larger one, so tightening never admits a
 /// shot the looser cap would have refused.
+/// Both axes are at least one, and the fields are private so that stays true.
+/// A zero on either axis would admit no rectangle at all, not even a single
+/// atom, so every shot any generator could propose would violate it — while
+/// the paths that emit a lone single-lane shot without consulting the cap (the
+/// deadlock escapes, and both entropy fallbacks) would keep emitting it. There
+/// is no useful behaviour to define for such a cap, so it is refused at
+/// construction rather than defended against at every use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AodCapacity {
-    /// Maximum number of distinct source columns (x tones) in one shot.
-    pub x: usize,
-    /// Maximum number of distinct source rows (y tones) in one shot.
-    pub y: usize,
+    x: usize,
+    y: usize,
 }
 
 impl AodCapacity {
+    /// A capacity of `x` source columns by `y` source rows, or `None` when
+    /// either axis is zero. See the type's docs for why zero is refused.
+    pub const fn new(x: usize, y: usize) -> Option<Self> {
+        if x == 0 || y == 0 {
+            return None;
+        }
+        Some(Self { x, y })
+    }
+
+    /// Maximum number of distinct source columns (x tones) in one shot.
+    #[inline]
+    pub fn x(self) -> usize {
+        self.x
+    }
+
+    /// Maximum number of distinct source rows (y tones) in one shot.
+    #[inline]
+    pub fn y(self) -> usize {
+        self.y
+    }
+
     /// Whether a rectangle spanning `nx` source columns and `ny` source rows
     /// fits within this capacity.
     #[inline]
@@ -45,6 +71,9 @@ impl AodCapacity {
     /// Componentwise minimum of two optional caps, where `None` is
     /// "unlimited" on either side: the result admits a rectangle exactly
     /// when both inputs do.
+    ///
+    /// Total: both inputs are already non-zero on both axes, so their
+    /// componentwise minimum is too.
     pub fn tighten(a: Option<Self>, b: Option<Self>) -> Option<Self> {
         match (a, b) {
             (None, other) | (other, None) => other,
@@ -93,40 +122,55 @@ pub struct SearchState {
 mod tests {
     use super::AodCapacity;
 
-    const A: AodCapacity = AodCapacity { x: 2, y: 5 };
-    const B: AodCapacity = AodCapacity { x: 3, y: 4 };
+    fn cap(x: usize, y: usize) -> AodCapacity {
+        AodCapacity::new(x, y).expect("non-zero")
+    }
+
+    /// A zero on either axis admits nothing at all, so it is not a capacity.
+    #[test]
+    fn a_zero_axis_is_refused() {
+        assert!(AodCapacity::new(0, 1).is_none());
+        assert!(AodCapacity::new(1, 0).is_none());
+        assert!(AodCapacity::new(0, 0).is_none());
+        let one = AodCapacity::new(1, 1).expect("one by one is a capacity");
+        assert!(one.admits(1, 1));
+        assert_eq!((one.x(), one.y()), (1, 1));
+    }
 
     #[test]
     fn tighten_truth_table() {
         assert_eq!(AodCapacity::tighten(None, None), None);
-        assert_eq!(AodCapacity::tighten(Some(A), None), Some(A));
-        assert_eq!(AodCapacity::tighten(None, Some(A)), Some(A));
+        assert_eq!(AodCapacity::tighten(Some(cap(2, 5)), None), Some(cap(2, 5)));
+        assert_eq!(AodCapacity::tighten(None, Some(cap(2, 5))), Some(cap(2, 5)));
         assert_eq!(
-            AodCapacity::tighten(Some(A), Some(B)),
-            Some(AodCapacity { x: 2, y: 4 })
+            AodCapacity::tighten(Some(cap(2, 5)), Some(cap(3, 4))),
+            Some(cap(2, 4))
         );
         // Symmetric.
         assert_eq!(
-            AodCapacity::tighten(Some(A), Some(B)),
-            AodCapacity::tighten(Some(B), Some(A))
+            AodCapacity::tighten(Some(cap(2, 5)), Some(cap(3, 4))),
+            AodCapacity::tighten(Some(cap(3, 4)), Some(cap(2, 5)))
         );
     }
 
     #[test]
     fn admits_is_componentwise_and_inclusive() {
-        assert!(A.admits(2, 5));
-        assert!(A.admits(0, 0));
-        assert!(!A.admits(3, 1));
-        assert!(!A.admits(1, 6));
+        assert!(cap(2, 5).admits(2, 5));
+        assert!(cap(2, 5).admits(0, 0));
+        assert!(!cap(2, 5).admits(3, 1));
+        assert!(!cap(2, 5).admits(1, 6));
     }
 
     /// The tightened cap admits a rectangle exactly when both inputs do.
     #[test]
     fn tighten_admits_the_intersection() {
-        let t = AodCapacity::tighten(Some(A), Some(B)).unwrap();
+        let t = AodCapacity::tighten(Some(cap(2, 5)), Some(cap(3, 4))).unwrap();
         for nx in 0..5 {
             for ny in 0..7 {
-                assert_eq!(t.admits(nx, ny), A.admits(nx, ny) && B.admits(nx, ny));
+                assert_eq!(
+                    t.admits(nx, ny),
+                    cap(2, 5).admits(nx, ny) && cap(3, 4).admits(nx, ny)
+                );
             }
         }
     }
