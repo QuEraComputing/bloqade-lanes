@@ -78,8 +78,8 @@ def test_movement_kernel_requires_inlining_for_terminal_measure_validation():
             return squin.broadcast.measure(q)
 
 
-def test_movement_kernel_accepts_physical_squin_measurement():
-    """Physical kernels use SQuIN's measurement instead of logical results."""
+def test_movement_kernel_accepts_terminal_measurement_of_all_qubits():
+    """A physical kernel accepts one terminal measurement of every qubit."""
 
     @movement_kernel
     def k():
@@ -109,13 +109,21 @@ def test_movement_kernel_rejects_more_than_80_allocated_qubits():
             return squin.broadcast.measure(q)
 
 
-@pytest.mark.parametrize("pass_options", [{}, {"aggressive_unroll": True}])
-def test_movement_kernel_always_validates_terminal_measure(pass_options):
+def test_movement_kernel_rejects_missing_terminal_measurement():
     with pytest.raises(ValidationErrorGroup, match="terminal measure"):
 
-        @movement_kernel(**pass_options)
+        @movement_kernel
         def k():
             q = squin.qalloc(1)  # noqa: F841
+
+
+def test_movement_kernel_rejects_partial_terminal_measurement():
+    with pytest.raises(ValidationErrorGroup, match="all qubits must be measured"):
+
+        @movement_kernel
+        def k():
+            q = squin.qalloc(2)
+            return squin.broadcast.measure(ilist.IList([q[0]]))
 
 
 def test_movement_kernel_rejects_duplicate_new_at_addresses():
