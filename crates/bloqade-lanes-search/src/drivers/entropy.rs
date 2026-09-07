@@ -2584,8 +2584,8 @@ where
             // …but at the root, past `e_max`, with nothing buffered and no
             // perturbation, bumping cannot change anything ever again.
             //
-            // `generate_candidates` is a pure function of `(config, e_eff,
-            // params, ctx, seed)`, and `e_eff = min(entropy, e_max)` is
+            // With `seed == 0` the candidate list is a function of `(config,
+            // e_eff, params, ctx)` alone, and `e_eff = min(entropy, e_max)` is
             // already pinned, so every future regeneration returns this same
             // list — whose every entry is already tried or failed. The root is
             // the last node standing (the buffer is empty, and descending from
@@ -2593,8 +2593,10 @@ where
             // child again. The loop would otherwise turn here until the
             // iteration cap.
             //
-            // The `seed == 0` guard is load-bearing: a non-zero seed
-            // perturbs candidate scores by `entropy`, so there a bump really
+            // That guard is load-bearing, and it is why the raw `entropy` is
+            // excluded above rather than the pinned `e_eff`: a non-zero seed
+            // mixes `entropy` into the RNG and perturbs candidate scores by
+            // it, so past `e_max` a bump still reorders the blend and really
             // can surface moves the previous pass ranked out.
             if current == root_id
                 && seed == 0
