@@ -370,8 +370,8 @@ impl MoveGenerator for ExhaustiveGenerator {
     ) {
         let cap = AodCapacity::tighten(self.cap, ctx.capacity);
         let cap = (
-            cap.map_or(usize::MAX, |c| c.x),
-            cap.map_or(usize::MAX, |c| c.y),
+            cap.map_or(usize::MAX, |c| c.x()),
+            cap.map_or(usize::MAX, |c| c.y()),
         );
         if cap.0 == 0 || cap.1 == 0 {
             return;
@@ -1186,7 +1186,7 @@ mod tests {
         let ctx = make_ctx(&index, &dist_table, &targets, &blocked);
         for seed in [SeedPolicy::Unresolved, SeedPolicy::Any] {
             let generator =
-                ExhaustiveGenerator::for_solve(&ctx, seed, Some(AodCapacity { x: 1, y: 1 }))
+                ExhaustiveGenerator::for_solve(&ctx, seed, Some(AodCapacity::new(1, 1).unwrap()))
                     .unwrap();
             let mut out = Vec::new();
             generator.generate(

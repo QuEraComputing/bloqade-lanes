@@ -1340,7 +1340,7 @@ mod tests {
 
     /// The same context with the solve's AOD capacity set.
     fn capped(mut ctx: BusGridContext<'static>, x: usize, y: usize) -> BusGridContext<'static> {
-        ctx.capacity = Some(AodCapacity { x, y });
+        ctx.capacity = AodCapacity::new(x, y);
         ctx
     }
 
