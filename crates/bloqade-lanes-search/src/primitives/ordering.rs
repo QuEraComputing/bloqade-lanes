@@ -36,9 +36,13 @@ impl GroupKey {
         }
     }
 
-    /// The group a lane belongs to. A lane address carries its forward source
-    /// zone, so a zone-bus lane and its backward twin share a group even
-    /// though the backward lane's source lies in the destination zone.
+    /// The group a lane belongs to.
+    ///
+    /// A lane address carries its *forward* source zone, so a zone-bus lane
+    /// and its backward twin report the same `zone_id` even though the
+    /// backward lane's source physically lies in the destination zone. They
+    /// are still different groups: `direction` is part of the key, because one
+    /// shot drives one direction.
     pub fn of(lane: &LaneAddr) -> Self {
         Self::new(lane.move_type, lane.bus_id, lane.zone_id, lane.direction)
     }
@@ -54,17 +58,14 @@ impl fmt::Display for GroupKey {
     }
 }
 
-/// The name the scoring and grouping code has used for the bus-group key.
-pub(crate) type TripletKey = GroupKey;
-
 /// Shared deterministic tie-breaker for triplet-scored entries.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cmp_triplet_entry_tiebreak(
-    a_key: &TripletKey,
+    a_key: &GroupKey,
     a_qubit: u32,
     a_lane: u64,
     a_dst: u64,
-    b_key: &TripletKey,
+    b_key: &GroupKey,
     b_qubit: u32,
     b_lane: u64,
     b_dst: u64,

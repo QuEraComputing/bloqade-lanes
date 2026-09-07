@@ -13,12 +13,13 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
 use crate::primitives::bus_grid_maps::BusGridMaps;
 use crate::primitives::config::Config;
 use crate::primitives::context::AodCapacity;
 use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::ordering::GroupKey;
 
 /// A cluster represented by its X and Y coordinate sets.
 /// The rectangle covers the Cartesian product X × Y.
@@ -256,8 +257,7 @@ pub(crate) struct BusGridContext<'a> {
 }
 
 impl<'a> BusGridContext<'a> {
-    /// Build a grid context from all lanes of one bus group
-    /// `(move_type, bus_id, zone_id, direction)`.
+    /// Build a grid context from all lanes of one bus [`GroupKey`].
     ///
     /// `occupied` is the set of encoded locations currently occupied by atoms.
     /// The arch maps are borrowed from the `LaneIndex` cache (one entry per
@@ -271,14 +271,11 @@ impl<'a> BusGridContext<'a> {
     /// `SearchContext::capacity`, or `None` for the uncapped behaviour.
     pub(crate) fn new(
         index: &'a LaneIndex,
-        mt: MoveType,
-        bus_id: u32,
-        zone_id: u32,
-        dir: Direction,
+        group: GroupKey,
         occupied: &'a HashSet<u64>,
         capacity: Option<AodCapacity>,
     ) -> Self {
-        let maps = match index.bus_grid_maps(mt, bus_id, zone_id, dir) {
+        let maps = match index.bus_grid_maps(group) {
             Some(cached) => Cow::Borrowed(cached),
             None => Cow::Owned(BusGridMaps::default()),
         };
@@ -700,6 +697,7 @@ impl<'a> BusGridContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bloqade_lanes_bytecode_core::arch::addr::Direction;
 
     /// A conveyor chain `a→b, b→c` where the atoms sit on `a` and `b`.
     ///

@@ -25,7 +25,7 @@ use crate::primitives::distance::DistanceTable;
 use crate::primitives::graph::{MoveSet, NodeId};
 use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::ordering::{
-    TripletKey, cmp_moveset_config_tiebreak, cmp_triplet_entry_tiebreak,
+    GroupKey, cmp_moveset_config_tiebreak, cmp_triplet_entry_tiebreak,
 };
 use crate::traits::MoveGenerator;
 
@@ -52,7 +52,7 @@ pub(crate) struct ScoredTriple {
     pub(crate) dst_encoded: u64,
 }
 
-fn cmp_scored_triples(a: &(TripletKey, ScoredTriple), b: &(TripletKey, ScoredTriple)) -> Ordering {
+fn cmp_scored_triples(a: &(GroupKey, ScoredTriple), b: &(GroupKey, ScoredTriple)) -> Ordering {
     b.1.score.cmp(&a.1.score).then_with(|| {
         cmp_triplet_entry_tiebreak(
             &a.0,
@@ -430,7 +430,7 @@ impl MoveGenerator for HeuristicGenerator {
         let contested: HashSet<u64> = unresolved.iter().map(|&(_, _, t)| t).collect();
 
         // Step 2: score (qubit, bus triplet) pairs.
-        let mut all_scores: Vec<(TripletKey, ScoredTriple)> = Vec::new();
+        let mut all_scores: Vec<(GroupKey, ScoredTriple)> = Vec::new();
 
         for &(qid, loc_enc, target_enc) in &unresolved {
             let d_now = ctx.dist_table.distance(loc_enc, target_enc);
@@ -487,7 +487,7 @@ impl MoveGenerator for HeuristicGenerator {
                     );
                 }
 
-                let triplet_key = TripletKey::of(&lane);
+                let triplet_key = GroupKey::of(&lane);
                 all_scores.push((
                     triplet_key,
                     ScoredTriple {
@@ -504,11 +504,11 @@ impl MoveGenerator for HeuristicGenerator {
         // These are kept out of the main filtering so they don't
         // steal candidate slots from CZ routing moves. They'll be merged
         // back after filtering, piggybacking on existing bus triplet groups.
-        let mut spectator_escapes: Vec<(TripletKey, ScoredTriple)> = Vec::new();
+        let mut spectator_escapes: Vec<(GroupKey, ScoredTriple)> = Vec::new();
         for &(qid, loc_enc) in &accidental_cz_qubits {
             let loc = LocationAddr::decode(loc_enc);
             for (lane, dst) in escape_targets(loc, &occupied, ctx.index) {
-                let triplet_key = TripletKey::of(&lane);
+                let triplet_key = GroupKey::of(&lane);
                 spectator_escapes.push((
                     triplet_key,
                     ScoredTriple {
@@ -522,12 +522,12 @@ impl MoveGenerator for HeuristicGenerator {
         }
 
         // Step 3: retain all scored triples.
-        let mut per_qubit: BTreeMap<u32, Vec<(TripletKey, ScoredTriple)>> = BTreeMap::new();
+        let mut per_qubit: BTreeMap<u32, Vec<(GroupKey, ScoredTriple)>> = BTreeMap::new();
         for entry in all_scores {
             per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
         }
 
-        let mut selected: Vec<(TripletKey, ScoredTriple)> = Vec::new();
+        let mut selected: Vec<(GroupKey, ScoredTriple)> = Vec::new();
         let mut has_positive = false;
 
         for entries in per_qubit.values_mut() {
@@ -562,7 +562,7 @@ impl MoveGenerator for HeuristicGenerator {
         // selected CZ routing moves, so they can share an AOD grid without
         // stealing candidate slots.
         if !spectator_escapes.is_empty() {
-            let selected_keys: HashSet<TripletKey> = selected.iter().map(|e| e.0).collect();
+            let selected_keys: HashSet<GroupKey> = selected.iter().map(|e| e.0).collect();
             let mut added_any = false;
             for entry in spectator_escapes {
                 if selected_keys.contains(&entry.0) {
@@ -579,7 +579,7 @@ impl MoveGenerator for HeuristicGenerator {
                 let (qid, loc_enc) = accidental_cz_qubits[0];
                 let loc = LocationAddr::decode(loc_enc);
                 if let Some((lane, dst)) = escape_targets(loc, &occupied, ctx.index).next() {
-                    let triplet_key = TripletKey::of(&lane);
+                    let triplet_key = GroupKey::of(&lane);
                     selected.push((
                         triplet_key,
                         ScoredTriple {
@@ -601,7 +601,7 @@ impl MoveGenerator for HeuristicGenerator {
         coordination.boost_coordinated_pairs(&mut selected);
 
         // Step 4: group by bus triplet.
-        let mut groups: BTreeMap<TripletKey, Vec<ScoredTriple>> = BTreeMap::new();
+        let mut groups: BTreeMap<GroupKey, Vec<ScoredTriple>> = BTreeMap::new();
         for (key, triple) in selected {
             groups.entry(key).or_default().push(triple);
         }
@@ -616,26 +616,10 @@ impl MoveGenerator for HeuristicGenerator {
         // form — pay nothing for it.
         let mut target_by_qubit: Option<HashMap<u32, u64>> = None;
 
-        for (
-            TripletKey {
-                move_type: mt,
-                bus_id,
-                zone_id,
-                direction: dir,
-            },
-            qubits,
-        ) in groups
-        {
+        for (key, qubits) in groups {
             // Build grid context from all lanes of this bus group (one zone).
-            let grid_ctx = crate::ops::aod_grid::BusGridContext::new(
-                ctx.index,
-                mt,
-                bus_id,
-                zone_id,
-                dir,
-                &occupied,
-                ctx.capacity,
-            );
+            let grid_ctx =
+                crate::ops::aod_grid::BusGridContext::new(ctx.index, key, &occupied, ctx.capacity);
 
             // Build entries (src_encoded -> lane_encoded) and the seed order for
             // the chain closure. Each source location has at most one atom, so
@@ -1887,8 +1871,8 @@ mod tests {
 
     #[test]
     fn scored_triple_tie_break_is_deterministic() {
-        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, 0, Direction::Backward);
-        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, 0, Direction::Backward);
+        let key_bus1 = GroupKey::new(MoveType::WordBus, 1, 0, Direction::Backward);
+        let key_bus2 = GroupKey::new(MoveType::WordBus, 2, 0, Direction::Backward);
         let mut entries = [
             (
                 key_bus2,

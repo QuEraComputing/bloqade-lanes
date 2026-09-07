@@ -11,7 +11,7 @@ use bloqade_lanes_bytecode_core::arch::metrics::MotionModel;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::primitives::bus_grid_maps::BusGridMaps;
-use crate::primitives::ordering::TripletKey;
+use crate::primitives::ordering::GroupKey;
 
 /// Precomputed lane lookups for an architecture.
 ///
@@ -38,11 +38,11 @@ pub struct LaneIndex {
     lane_durations: HashMap<u64, f64>,
     /// Fastest lane duration across all lanes with paths. `None` if no paths.
     fastest_lane_duration: Option<f64>,
-    /// Precomputed AOD-grid lookup maps per [`TripletKey`]
+    /// Precomputed AOD-grid lookup maps per [`GroupKey`]
     /// (`move_type, bus_id, direction`) bus group, spanning all zones.
     /// Occupancy-independent, so they are built once here and borrowed by every
     /// `BusGridContext` for that group (see [`BusGridMaps`]).
-    bus_grid_maps: HashMap<TripletKey, BusGridMaps>,
+    bus_grid_maps: HashMap<GroupKey, BusGridMaps>,
 }
 
 impl LaneIndex {
@@ -277,7 +277,7 @@ impl LaneIndex {
                 self,
                 self.lanes_for(mt, bus_id, zone_id, dir).iter().copied(),
             );
-            cache.insert(TripletKey::new(mt, bus_id, zone_id, dir), maps);
+            cache.insert(GroupKey::new(mt, bus_id, zone_id, dir), maps);
         }
         self.bus_grid_maps = cache;
     }
@@ -356,12 +356,6 @@ impl LaneIndex {
         self.lanes_by_triplet.keys().copied()
     }
 
-    /// Iterate all bus groups that have lanes.
-    #[deprecated(note = "renamed to bus_groups() — triplets is misleading for 4-tuples")]
-    pub fn triplets(&self) -> impl Iterator<Item = (MoveType, u32, u32, Direction)> + '_ {
-        self.bus_groups()
-    }
-
     /// Get all lanes for a bus across all zones.
     pub fn lanes_for_all_zones(
         &self,
@@ -392,15 +386,8 @@ impl LaneIndex {
     /// Returns `None` if the group has no lanes. Used by
     /// [`BusGridContext::new`](crate::ops::aod_grid) to avoid rebuilding the
     /// occupancy-independent lookup maps on every call.
-    pub(crate) fn bus_grid_maps(
-        &self,
-        mt: MoveType,
-        bus_id: u32,
-        zone_id: u32,
-        dir: Direction,
-    ) -> Option<&BusGridMaps> {
-        self.bus_grid_maps
-            .get(&TripletKey::new(mt, bus_id, zone_id, dir))
+    pub(crate) fn bus_grid_maps(&self, group: GroupKey) -> Option<&BusGridMaps> {
+        self.bus_grid_maps.get(&group)
     }
 }
 
