@@ -49,7 +49,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
-use bloqade_lanes_search::drivers::branch_and_bound::Widening;
+use bloqade_lanes_search::drivers::branch_and_bound::{WidenTrigger, Widening};
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::push_rotate::instances::{Instance, generate};
 use bloqade_lanes_search::search::engine::SearchEngine;
@@ -164,6 +164,95 @@ fn branch_and_bound_rows() -> Vec<Row> {
                     ..BnbOptions::default()
                 }),
         });
+    }
+    // Widening strategies. `_e`/`_ex`/`_p` above vary *what* the later stages
+    // are; these vary *when* they run and how cheap the first rung is.
+    //
+    // `w0` is today's default for reference: the ladder behind an incumbent
+    // gate that never opens. `wl` adds the entropy ladder but leaves the
+    // trigger alone, so the queue is still only read once the frontier
+    // drains. `wi` interleaves the queue into the budget without a ladder.
+    // `wli` is both, which is the configuration the findings predicted would
+    // be needed: a cheap rung *and* a reason to reach it.
+    for (oname, objective) in objectives {
+        for (wname, schedule, widening) in [
+            (
+                "w0",
+                ScheduleKind::EntropyThenExhaustive,
+                Widening::default(),
+            ),
+            (
+                "wl",
+                ScheduleKind::EntropyLadderThenExhaustive,
+                Widening {
+                    after_incumbent: u8::MAX,
+                    ..Widening::default()
+                },
+            ),
+            (
+                "wi",
+                ScheduleKind::EntropyThenExhaustive,
+                Widening {
+                    after_incumbent: u8::MAX,
+                    trigger: WidenTrigger::Interleave { every: 32 },
+                    ..Widening::default()
+                },
+            ),
+            (
+                "wli",
+                ScheduleKind::EntropyLadderThenExhaustive,
+                Widening {
+                    after_incumbent: u8::MAX,
+                    trigger: WidenTrigger::Interleave { every: 32 },
+                    ..Widening::default()
+                },
+            ),
+            (
+                "wli8",
+                ScheduleKind::EntropyLadderThenExhaustive,
+                Widening {
+                    after_incumbent: u8::MAX,
+                    trigger: WidenTrigger::Interleave { every: 8 },
+                    ..Widening::default()
+                },
+            ),
+            // Same budget share as `wli`, but only while the incumbent is not
+            // improving: the fixed rate spends budget at sizes where stage 0
+            // was doing fine on its own.
+            (
+                "wls",
+                ScheduleKind::EntropyLadderThenExhaustive,
+                Widening {
+                    after_incumbent: u8::MAX,
+                    trigger: WidenTrigger::OnStall { expansions: 32 },
+                    ..Widening::default()
+                },
+            ),
+            (
+                "wls128",
+                ScheduleKind::EntropyLadderThenExhaustive,
+                Widening {
+                    after_incumbent: u8::MAX,
+                    trigger: WidenTrigger::OnStall { expansions: 128 },
+                    ..Widening::default()
+                },
+            ),
+        ] {
+            rows.push(Row {
+                name: format!("bnb_{wname}_{oname}"),
+                search: MoveSearch::branch_and_bound()
+                    .with_entropy_options(EntropyOptions {
+                        completion_bound: Some(BoundKind::WeightedDistance),
+                        objective,
+                        ..EntropyOptions::default()
+                    })
+                    .with_bnb_options(BnbOptions {
+                        schedule,
+                        widening,
+                        ..BnbOptions::default()
+                    }),
+            });
+        }
     }
     // The other stage-0 branching rule: the frontier path's heuristic
     // generator (with the solve's deadlock policy) ahead of the exhaustive

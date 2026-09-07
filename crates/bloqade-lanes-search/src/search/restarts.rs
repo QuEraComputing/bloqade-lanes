@@ -320,14 +320,29 @@ where
                    seed_incumbent: Option<f64>|
      -> (SearchResult, u32) {
         let entropy_stage;
+        let entropy_ladder: Vec<EntropyGenerator>;
         let heuristic_stage;
         let mut stages: Vec<&dyn MoveGenerator> = Vec::new();
-        let heuristic_ref: Option<&Gen> = if bnb_opts.schedule.stage0_is_entropy() {
-            entropy_stage = match entropy_tables {
+        let entropy_at = |e: Option<u32>| {
+            let g = match entropy_tables {
                 Some(tables) => EntropyGenerator::with_tables(entropy_params.clone(), seed, tables),
                 None => EntropyGenerator::new(entropy_params.clone(), seed),
             };
+            match e {
+                Some(e) => g.with_entropy(e),
+                None => g,
+            }
+        };
+        let heuristic_ref: Option<&Gen> = if bnb_opts.schedule.stage0_is_entropy() {
+            entropy_stage = entropy_at(None);
             stages.push(&entropy_stage);
+            if bnb_opts.schedule.has_entropy_ladder() {
+                // Rung 1 would repeat stage 0's default entropy, so start at 2.
+                entropy_ladder = (2..=entropy_params.e_max)
+                    .map(|e| entropy_at(Some(e)))
+                    .collect();
+                stages.extend(entropy_ladder.iter().map(|g| g as &dyn MoveGenerator));
+            }
             None
         } else {
             heuristic_stage = make_generator(seed, deadlock_policy);

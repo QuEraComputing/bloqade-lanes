@@ -127,10 +127,39 @@ pub enum WidenOrder {
     BestBound,
 }
 
+/// When the widening queue is allowed to compete with the frontier.
+///
+/// `FrontierDrained` is the original rule and the reason widening was inert
+/// at any instance size that matters: the queue is consulted only after
+/// `Frontier::select_next` returns `None`, and a stage-0 tree over more than
+/// a few atoms never empties inside a realistic expansion budget. Every node
+/// it expanded is sitting in the queue at stage + 1, unread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WidenTrigger {
+    /// Only once the frontier has nothing left.
+    #[default]
+    FrontierDrained,
+    /// Take one widening entry every `every` loop turns, frontier otherwise.
+    ///
+    /// Turns widening from an escape hatch into a running fraction of the
+    /// budget. `every` of 1 would starve the frontier; the useful range is
+    /// tens.
+    Interleave { every: u32 },
+    /// Take one widening entry once the incumbent has not improved for
+    /// `expansions` turns, then go back to the frontier.
+    ///
+    /// The same budget share as `Interleave` while the search is stuck, and
+    /// none while it is making progress — which is where a fixed rate spends
+    /// budget it did not need to.
+    OnStall { expansions: u32 },
+}
+
 /// When and in what order a node's later stages are revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Widening {
     pub order: WidenOrder,
+    /// When the widening queue competes with the frontier.
+    pub trigger: WidenTrigger,
     /// Highest stage still processed once an incumbent exists. `0` is "stop
     /// at the first productive level"; `u8::MAX` is unlimited, which is what
     /// makes exhaustion a proof of optimality.
@@ -141,6 +170,7 @@ impl Default for Widening {
     fn default() -> Self {
         Self {
             order: WidenOrder::StageThenDepth,
+            trigger: WidenTrigger::FrontierDrained,
             after_incumbent: 0,
         }
     }
@@ -151,6 +181,7 @@ impl Widening {
     /// optimality.
     pub const UNLIMITED: Widening = Widening {
         order: WidenOrder::StageThenDepth,
+        trigger: WidenTrigger::FrontierDrained,
         after_incumbent: u8::MAX,
     };
 }
@@ -257,14 +288,46 @@ where
 
         let mut children: Vec<NodeId> = Vec::new();
         let mut budget_hit = false;
+        // Loop turns since the last widening pop, and since the incumbent
+        // last improved. Both reset on a widening pop, so either trigger
+        // spends at most one turn in the queue per interval.
+        let mut since_widen: u32 = 0;
+        let mut since_improvement: u32 = 0;
+        let mut last_incumbent = run.incumbent.cost();
         loop {
-            let (node, stage) = match frontier.select_next() {
-                Some(n) => (n, 0u8),
-                None => match run.widen.pop() {
-                    Some(entry) => (entry.node, entry.stage),
-                    None => break,
-                },
+            if run.incumbent.cost() != last_incumbent {
+                last_incumbent = run.incumbent.cost();
+                since_improvement = 0;
+            }
+            // Either source may be empty, so both orders fall back to the
+            // other and the loop still ends exactly when both are exhausted.
+            let prefer_widen = match self.widening.trigger {
+                WidenTrigger::FrontierDrained => false,
+                WidenTrigger::Interleave { every } => every > 0 && since_widen >= every,
+                WidenTrigger::OnStall { expansions } => since_improvement >= expansions,
             };
+            let picked = if prefer_widen {
+                run.widen
+                    .pop()
+                    .map(|e| (e.node, e.stage))
+                    .or_else(|| frontier.select_next().map(|n| (n, 0u8)))
+            } else {
+                frontier
+                    .select_next()
+                    .map(|n| (n, 0u8))
+                    .or_else(|| run.widen.pop().map(|e| (e.node, e.stage)))
+            };
+            let (node, stage) = match picked {
+                Some(p) => p,
+                None => break,
+            };
+            if stage == 0 {
+                since_widen = since_widen.saturating_add(1);
+                since_improvement = since_improvement.saturating_add(1);
+            } else {
+                since_widen = 0;
+                since_improvement = 0;
+            }
             if self
                 .max_expansions
                 .is_some_and(|m| run.nodes_expanded() >= m)
@@ -1239,6 +1302,63 @@ mod tests {
             .filter(|e| e.1 == 0)
             .count();
         assert_eq!(stage0_before, first_stage1_pos);
+    }
+
+    /// `Interleave` reads the widening queue while the frontier still has
+    /// work, which `FrontierDrained` never does.
+    ///
+    /// This is the whole point of the trigger: every expanded node is already
+    /// queued at stage + 1, but a stage-0 tree over more than a few atoms does
+    /// not empty inside a realistic budget, so under the original rule those
+    /// entries are never read. Asserted as "a stage-1 expansion happened
+    /// before the last stage-0 expansion", which is only possible if the two
+    /// sources were competing.
+    #[test]
+    fn interleaving_reaches_a_later_stage_before_the_frontier_drains() {
+        let fx = two_atom();
+        let ctx = fx.ctx();
+        let goal = fx.goal();
+        let objective = SolveObjective::from_kind(ObjectiveKind::Uniform, &fx.index);
+        let bound = WeightedDistanceBound::new(&objective, &fx.targets, &fx.index, &fx.blocked);
+        let ex = exhaustive(&ctx);
+        let heuristic = HeuristicGenerator::configured(0, DeadlockPolicy::Skip, false, None);
+        let schedule = Schedule::complete(vec![&heuristic], &ex, None);
+
+        let run = |widening: Widening| {
+            let mut rec = Recorder::default();
+            BranchAndBound::new(&objective, &bound, &goal, &ctx, None, widening).run(
+                cfg(&TWO_ATOM_ROOT),
+                &schedule,
+                LifoFrontier::new(),
+                &mut rec,
+                None,
+            );
+            rec.expanded.iter().map(|e| e.1).collect::<Vec<u8>>()
+        };
+        let interleaved_early = |stages: &[u8]| {
+            let last_stage0 = stages.iter().rposition(|&s| s == 0);
+            match last_stage0 {
+                Some(i) => stages[..i].iter().any(|&s| s > 0),
+                None => false,
+            }
+        };
+
+        let drained = run(Widening::UNLIMITED);
+        assert!(
+            !interleaved_early(&drained),
+            "FrontierDrained must finish the frontier first, got {drained:?}"
+        );
+
+        let interleaved = run(Widening {
+            after_incumbent: u8::MAX,
+            trigger: WidenTrigger::Interleave { every: 1 },
+            ..Widening::default()
+        });
+        assert!(
+            interleaved_early(&interleaved),
+            "Interleave must reach a later stage while the frontier still has work, \
+             got {interleaved:?}"
+        );
     }
 
     #[test]

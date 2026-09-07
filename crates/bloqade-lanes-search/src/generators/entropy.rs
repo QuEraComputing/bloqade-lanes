@@ -22,6 +22,7 @@ pub struct EntropyGenerator<'t> {
     params: EntropyParams,
     seed: u64,
     tables: Option<&'t HeuristicTables>,
+    pinned_entropy: Option<u32>,
 }
 
 impl<'t> EntropyGenerator<'t> {
@@ -31,6 +32,7 @@ impl<'t> EntropyGenerator<'t> {
             params,
             seed,
             tables: None,
+            pinned_entropy: None,
         }
     }
 
@@ -41,7 +43,22 @@ impl<'t> EntropyGenerator<'t> {
             params,
             seed,
             tables: Some(tables),
+            pinned_entropy: None,
         }
+    }
+
+    /// Score every node at a fixed entropy instead of reading the per-node
+    /// map.
+    ///
+    /// The entropy sets the blend between distance-to-target and mobility, so
+    /// a schedule of these at rising entropy is a *local* widening: revisit a
+    /// node under a more mobility-weighted blend, which is the escalation the
+    /// entropy driver performs on a dead end and the branch-and-bound
+    /// schedule otherwise has no cheap counterpart for. `generate_candidates`
+    /// clamps at `params.e_max`, so pinning above it changes nothing.
+    pub fn with_entropy(mut self, entropy: u32) -> Self {
+        self.pinned_entropy = Some(entropy);
+        self
     }
 }
 
@@ -54,8 +71,11 @@ impl MoveGenerator for EntropyGenerator<'_> {
         state: &mut SearchState,
         out: &mut Vec<MoveCandidate>,
     ) {
-        // Read entropy for this node (default 1 if not yet in map).
-        let entropy = state.entropy_map.get(&node_id).map_or(1, |s| s.entropy);
+        // A pinned entropy makes this generator one rung of a widening
+        // ladder; otherwise read the node's own (default 1 if unseen).
+        let entropy = self
+            .pinned_entropy
+            .unwrap_or_else(|| state.entropy_map.get(&node_id).map_or(1, |s| s.entropy));
 
         let raw = crate::drivers::entropy::generate_candidates(
             config,

@@ -45,7 +45,7 @@ pub use bounds::{CompletionBound, MaxBound, NoBound, WeightedDistanceBound};
 // test-only assertion helper, reachable as `bounds::assert_objective_contract`
 // under `cfg(test)` or the `test-util` feature.
 pub use cost::{UniformCost, WeightedDuration};
-pub use drivers::branch_and_bound::{BranchAndBound, Schedule, WidenOrder, Widening};
+pub use drivers::branch_and_bound::{BranchAndBound, Schedule, WidenOrder, WidenTrigger, Widening};
 pub use drivers::frontier::LifoFrontier;
 pub use drivers::result::{SearchResult, Termination};
 pub use feasibility::{Feasibility, Obstruction, check as check_feasibility};

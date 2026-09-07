@@ -120,6 +120,16 @@ pub enum ScheduleKind {
     /// The heuristic generator (with the solve's deadlock policy), then the
     /// exhaustive ladder: complete.
     HeuristicThenExhaustive,
+    /// The entropy generator at rising pinned entropy, one stage per rung up
+    /// to `e_max`, then the exhaustive ladder: complete.
+    ///
+    /// The rungs are a *cheap* widening. Entropy sets the blend between
+    /// distance-to-target and mobility, so a higher rung proposes the
+    /// clearing moves a distance-focused set omits — which is the escalation
+    /// the entropy driver performs on a dead end, and the reason it beats a
+    /// single-rung schedule on congested instances. Reaching the exhaustive
+    /// ladder is then a last resort rather than the only widening available.
+    EntropyLadderThenExhaustive,
 }
 
 impl ScheduleKind {
@@ -131,7 +141,15 @@ impl ScheduleKind {
     /// Whether stage 0 is the entropy generator (so the solve's heuristic
     /// tables are worth building).
     pub fn stage0_is_entropy(self) -> bool {
-        matches!(self, Self::EntropyOnly | Self::EntropyThenExhaustive)
+        matches!(
+            self,
+            Self::EntropyOnly | Self::EntropyThenExhaustive | Self::EntropyLadderThenExhaustive
+        )
+    }
+
+    /// Whether stage 0 is followed by entropy rungs at rising pinned entropy.
+    pub fn has_entropy_ladder(self) -> bool {
+        matches!(self, Self::EntropyLadderThenExhaustive)
     }
 }
 
