@@ -30,7 +30,7 @@ use crate::primitives::config::Config;
 use crate::primitives::context::AodCapacity;
 use crate::primitives::graph::MoveSet;
 use crate::primitives::lane_index::LaneIndex;
-use crate::primitives::ordering::{TripletKey, cmp_moveset_config_tiebreak};
+use crate::primitives::ordering::{GroupKey, cmp_moveset_config_tiebreak};
 
 /// One scored `(qubit, lane)` pair produced by Stage 1 of the pipeline.
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ pub(crate) struct ScoredLane {
 /// Group of [`ScoredLane`]s sharing the same triplet key.
 #[derive(Debug, Clone)]
 pub(crate) struct TripletGroup {
-    pub key: TripletKey,
+    pub key: GroupKey,
     pub entries: Vec<ScoredLane>,
 }
 
@@ -59,9 +59,9 @@ pub(crate) struct PackedCandidate {
 /// sorted by group key ascending. Within each group, entries preserve the
 /// policy-provided input order.
 pub(crate) fn group_by_triplet(scored: Vec<ScoredLane>) -> Vec<TripletGroup> {
-    let mut groups: BTreeMap<TripletKey, Vec<ScoredLane>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<ScoredLane>> = BTreeMap::new();
     for entry in scored {
-        let key = TripletKey::of(&entry.lane);
+        let key = GroupKey::of(&entry.lane);
         groups.entry(key).or_default().push(entry);
     }
     groups
@@ -98,14 +98,19 @@ pub(crate) fn pack_aod_rectangles(
         if entries.is_empty() {
             continue;
         }
-        let TripletKey {
+        let GroupKey {
             move_type: mt,
             bus_id,
             zone_id,
             direction: dir,
         } = key;
 
-        let grid_ctx = BusGridContext::new(index, mt, bus_id, zone_id, dir, &occupied, capacity);
+        let grid_ctx = BusGridContext::new(
+            index,
+            GroupKey::new(mt, bus_id, zone_id, dir),
+            &occupied,
+            capacity,
+        );
 
         // Build src→lane entries and lane→entry lookup for score lifting
         // and destination derivation.

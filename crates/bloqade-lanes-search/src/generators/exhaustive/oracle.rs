@@ -37,6 +37,12 @@ use crate::traits::MoveGenerator;
 
 /// A bus group as the oracle names it: the four fields every lane of a shot
 /// must share (S3). Ordered by field, so reports are stable.
+///
+/// Deliberately *not* [`GroupKey`](crate::primitives::ordering::GroupKey),
+/// which is the same four fields. The oracle's whole value is that it shares
+/// no code with the generator it checks, so importing the generator's own
+/// notion of a group would let one bug satisfy both sides. The duplication is
+/// the test's independence, not an oversight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct Group {
     pub(super) move_type: MoveType,

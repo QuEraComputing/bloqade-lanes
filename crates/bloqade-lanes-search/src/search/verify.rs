@@ -59,8 +59,10 @@ pub(crate) fn replay_move_layers(
 ) -> Result<HashMap<u32, LocationAddr>, String> {
     let mut atoms: Vec<(u32, LocationAddr)> = root.iter().collect();
 
-    // Phantoms occupy the reserved id range `[first_phantom, u32::MAX]`;
-    // with no blocked sites the range is empty and every id is a real qubit.
+    // Phantoms occupy the reserved id range `(first_phantom, u32::MAX]` —
+    // exclusive at the bottom, matching `is_phantom` below. With no blocked
+    // sites `first_phantom` is `u32::MAX`, the range is empty, and every id is
+    // a real qubit.
     let occupied_at_root: HashSet<u64> = atoms.iter().map(|(_, loc)| loc.encode()).collect();
     let mut phantom_sites: Vec<u64> = blocked
         .iter()

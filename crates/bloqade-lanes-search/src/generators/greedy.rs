@@ -15,6 +15,7 @@ use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::graph::{MoveSet, NodeId};
+use crate::primitives::ordering::GroupKey;
 use crate::primitives::path::find_path_occupied;
 use crate::traits::MoveGenerator;
 
@@ -91,8 +92,12 @@ impl MoveGenerator for GreedyGenerator {
 
         // 4. For each group, build AOD grids and emit candidates.
         for ((mt, bus_id, zone_id, dir), entries) in &groups {
-            let grid_ctx =
-                BusGridContext::new(index, *mt, *bus_id, *zone_id, *dir, &occupied, ctx.capacity);
+            let grid_ctx = BusGridContext::new(
+                index,
+                GroupKey::new(*mt, *bus_id, *zone_id, *dir),
+                &occupied,
+                ctx.capacity,
+            );
             let grids = grid_ctx.build_aod_grids(entries);
 
             for grid in grids {

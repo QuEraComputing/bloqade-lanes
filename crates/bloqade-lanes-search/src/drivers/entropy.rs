@@ -30,8 +30,7 @@ use crate::primitives::distance::DistanceTable;
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::ordering::{
-    TripletKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak,
-    cmp_triplet_entry_tiebreak,
+    GroupKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak, cmp_triplet_entry_tiebreak,
 };
 use crate::primitives::path::find_path_occupied;
 use crate::push_rotate::{DEFAULT_MOVE_BUDGET, plan as push_rotate_plan};
@@ -366,7 +365,7 @@ pub(crate) struct CandidateEntry {
     pub(crate) score: f64,
 }
 
-fn cmp_scored_entries(a: &(TripletKey, ScoredEntry), b: &(TripletKey, ScoredEntry)) -> Ordering {
+fn cmp_scored_entries(a: &(GroupKey, ScoredEntry), b: &(GroupKey, ScoredEntry)) -> Ordering {
     b.1.score.total_cmp(&a.1.score).then_with(|| {
         cmp_triplet_entry_tiebreak(
             &a.0,
@@ -416,7 +415,7 @@ fn chain_scored_entries(links: &[ChainLink]) -> impl Iterator<Item = ScoredEntry
 fn build_deadlock_breaker_candidate(
     config: &Config,
     occupied: &HashSet<u64>,
-    all_scores: &[(TripletKey, ScoredEntry)],
+    all_scores: &[(GroupKey, ScoredEntry)],
     ctx: &SearchContext,
 ) -> Option<(f64, MoveSet, Config)> {
     let unresolved: HashSet<u32> = ctx
@@ -432,25 +431,15 @@ fn build_deadlock_breaker_candidate(
     }
     let target_movers = unresolved.len().div_ceil(2).max(1);
 
-    let mut groups: BTreeMap<TripletKey, Vec<ScoredEntry>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<ScoredEntry>> = BTreeMap::new();
     for &(key, entry) in all_scores {
         groups.entry(key).or_default().push(entry);
     }
 
     let mut best: Option<(usize, f64, MoveSet, Config)> = None;
-    for (
-        TripletKey {
-            move_type: mt,
-            bus_id,
-            zone_id,
-            direction: dir,
-        },
-        mut qubits,
-    ) in groups
-    {
+    for (key, mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
-        let grid_ctx =
-            BusGridContext::new(ctx.index, mt, bus_id, zone_id, dir, occupied, ctx.capacity);
+        let grid_ctx = BusGridContext::new(ctx.index, key, occupied, ctx.capacity);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -1555,7 +1544,7 @@ pub(crate) fn generate_candidates(
         return Vec::new();
     }
 
-    let mut raw_deltas: Vec<(TripletKey, u32, f64, f64, u64, u64)> = Vec::new();
+    let mut raw_deltas: Vec<(GroupKey, u32, f64, f64, u64, u64)> = Vec::new();
     // Collect (triplet, qid, delta_d, delta_m, lane_enc, dst_enc).
     //
     // The per-(location, target) quantities below — blended distance, static
@@ -1614,7 +1603,7 @@ pub(crate) fn generate_candidates(
             let delta_d = d_now - effective_d_after;
             let delta_m = m_after - m_now;
 
-            let triplet_key = TripletKey::of(&lane);
+            let triplet_key = GroupKey::of(&lane);
             raw_deltas.push((
                 triplet_key,
                 qid,
@@ -1644,7 +1633,7 @@ pub(crate) fn generate_candidates(
     debug_assert!(m_ref >= 1.0, "m_ref must be >= 1.0 (fold seed)");
 
     // Apply entropy-weighted formula and build scored entries.
-    let all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
+    let all_scores: Vec<(GroupKey, ScoredEntry)> = raw_deltas
         .into_iter()
         .map(|(key, qid, delta_d, delta_m, lane_enc, dst_enc)| {
             let d_hat = delta_d / d_ref;
@@ -1666,7 +1655,7 @@ pub(crate) fn generate_candidates(
     // Step 3: keep all positive-scoring entries (Python parity).
     // If none are positive, keep only the single best entry as fallback.
     let has_positive = all_scores.iter().any(|e| e.1.score > 0.0);
-    let selected: Vec<(TripletKey, ScoredEntry)> = if has_positive {
+    let selected: Vec<(GroupKey, ScoredEntry)> = if has_positive {
         all_scores
             .iter()
             .copied()
@@ -1682,7 +1671,7 @@ pub(crate) fn generate_candidates(
     };
 
     // Step 4: group by bus triplet.
-    let mut groups: BTreeMap<TripletKey, Vec<ScoredEntry>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<ScoredEntry>> = BTreeMap::new();
     for (key, entry) in selected {
         groups.entry(key).or_default().push(entry);
     }
@@ -1690,20 +1679,10 @@ pub(crate) fn generate_candidates(
     // Step 5: per group, build AOD-compatible rectangular grids.
     let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
 
-    for (
-        TripletKey {
-            move_type: mt,
-            bus_id,
-            zone_id,
-            direction: dir,
-        },
-        mut qubits,
-    ) in groups
-    {
+    for (key, mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
 
-        let grid_ctx =
-            BusGridContext::new(ctx.index, mt, bus_id, zone_id, dir, &occupied, ctx.capacity);
+        let grid_ctx = BusGridContext::new(ctx.index, key, &occupied, ctx.capacity);
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -3400,8 +3379,8 @@ mod tests {
 
     #[test]
     fn scored_entry_tie_break_is_deterministic() {
-        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, 0, Direction::Backward);
-        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, 0, Direction::Backward);
+        let key_bus1 = GroupKey::new(MoveType::WordBus, 1, 0, Direction::Backward);
+        let key_bus2 = GroupKey::new(MoveType::WordBus, 2, 0, Direction::Backward);
         let mut entries = [
             (
                 key_bus2,
@@ -3902,15 +3881,7 @@ mod tests {
                 continue;
             }
             let first = lanes[0];
-            let grid_ctx = BusGridContext::new(
-                &index,
-                first.move_type,
-                first.bus_id,
-                first.zone_id,
-                first.direction,
-                &occupied,
-                None,
-            );
+            let grid_ctx = BusGridContext::new(&index, GroupKey::of(&first), &occupied, None);
 
             let mut entries: HashMap<u64, u64> = HashMap::new();
             for lane in &lanes {
