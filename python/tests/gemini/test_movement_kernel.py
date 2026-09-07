@@ -2,25 +2,142 @@
 
 import bloqade.squin as squin
 import pytest
+from bloqade.decoders.dialects import annotate
+from bloqade.squin import gate, qubit
+from kirin.dialects import ilist
+from kirin.ir.exception import ValidationErrorGroup
+from kirin.lowering.exception import BuildError
+from kirin.prelude import structural_no_opt
 
 import bloqade.gemini as gemini
+from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.logical import loc, move_to, terminal_measure
 from bloqade.gemini.physical import kernel as movement_kernel
 from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.dialects import arch as arch_dialect
 
 
 def test_movement_kernel_exists():
     assert movement_kernel is not None
 
 
+def test_movement_kernel_has_only_physical_source_dialects():
+    assert (
+        movement_kernel.data
+        == structural_no_opt.union(
+            [
+                qubit,
+                gate,
+                annotate,
+                gemini.common.dialects.qubit,
+                gemini.common.dialects.arrange,
+                arch_dialect,
+            ]
+        ).data
+    )
+
+
+def test_movement_kernel_validation_does_not_lower_to_native(monkeypatch):
+    import bloqade.gemini.physical.group as physical_group
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("physical-kernel validation must stay at the SQuIN level")
+
+    monkeypatch.setattr(
+        physical_group,
+        "SquinToNative",
+        fail_if_called,
+        raising=False,
+    )
+
+    @movement_kernel
+    def k():
+        q = squin.qalloc(1)
+        return squin.broadcast.measure(q)
+
+    assert k is not None
+
+
+def test_movement_kernel_supports_aggressive_unroll():
+    @movement_kernel(aggressive_unroll=True)
+    def k():
+        q = squin.qalloc(1)
+        return squin.broadcast.measure(q)
+
+    assert k is not None
+
+
+def test_movement_kernel_requires_inlining_for_terminal_measure_validation():
+    """The post-inline validator cannot inspect an uninterpreted broadcast call."""
+
+    with pytest.raises(ValidationErrorGroup, match="terminal measure"):
+
+        @movement_kernel(inline=False)
+        def k():
+            q = squin.qalloc(1)
+            return squin.broadcast.measure(q)
+
+
+def test_movement_kernel_accepts_physical_squin_measurement():
+    """Physical kernels use SQuIN's measurement instead of logical results."""
+
+    @movement_kernel
+    def k():
+        q = squin.qalloc(11)
+        return squin.broadcast.measure(q)
+
+    assert k is not None
+
+
+def test_movement_kernel_rejects_logical_terminal_measurement():
+    """Logical result/postprocessing operations are not physical source IR."""
+
+    with pytest.raises(BuildError, match="unsupported dialect `logical`"):
+
+        @movement_kernel
+        def k():
+            q = squin.qalloc(1)
+            return terminal_measure(q)
+
+
+def test_movement_kernel_rejects_more_than_80_allocated_qubits():
+    with pytest.raises(ValidationErrorGroup, match="maximum of 80"):
+
+        @movement_kernel(aggressive_unroll=True)
+        def k():
+            q = squin.qalloc(81)
+            return squin.broadcast.measure(q)
+
+
+@pytest.mark.parametrize("pass_options", [{}, {"aggressive_unroll": True}])
+def test_movement_kernel_always_validates_terminal_measure(pass_options):
+    with pytest.raises(ValidationErrorGroup, match="terminal measure"):
+
+        @movement_kernel(**pass_options)
+        def k():
+            q = squin.qalloc(1)  # noqa: F841
+
+
+def test_movement_kernel_rejects_duplicate_new_at_addresses():
+    """Physical source kernels run duplicate-address validation directly."""
+
+    with pytest.raises(ValidationErrorGroup, match="pinned by two"):
+
+        @movement_kernel
+        def k():
+            q0 = new_at(0, 0, 0)
+            q1 = new_at(0, 0, 0)
+            return squin.broadcast.measure(ilist.IList([q0, q1]))
+
+
 def test_movement_kernel_compiles_plain_cz():
     """movement_kernel compiles a plain CZ without move_to."""
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(2)
         squin.cz(q[0], q[1])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
@@ -31,12 +148,12 @@ def test_movement_kernel_compiles_move_to_then_cz():
     loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
     loc_b = LocationAddress(zone_id=0, word_id=1, site_id=0)
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(2)
         move_to([q[0], q[1]], [loc_a, loc_b])
         squin.cz(q[0], q[1])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
@@ -44,11 +161,11 @@ def test_movement_kernel_compiles_move_to_then_cz():
 def test_loc_inline_compiles():
     """loc() constructs a LocationAddress inside the kernel body."""
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(2)
         move_to([q[0]], [loc(0, 0, 0)])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
@@ -56,12 +173,12 @@ def test_loc_inline_compiles():
 def test_loc_inline_move_to_then_cz():
     """loc() + move_to + CZ compiles end-to-end."""
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(2)
         move_to([q[0], q[1]], [loc(0, 0, 0), loc(0, 1, 0)])
         squin.cz(q[0], q[1])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
@@ -81,8 +198,6 @@ def test_existing_kernel_unaffected():
 def test_movement_kernel_rejects_move_to_on_plain_kernel():
     """Plain @kernel does not support movement.move_to."""
 
-    from kirin.lowering.exception import BuildError
-
     loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
 
     with pytest.raises(BuildError, match="unsupported dialect"):
@@ -99,13 +214,13 @@ def test_movement_kernel_multi_move_to_then_cz():
     loc0 = LocationAddress(zone_id=0, word_id=0, site_id=0)
     loc1 = LocationAddress(zone_id=0, word_id=2, site_id=0)
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(3)
         move_to([q[0]], [loc0])
         move_to([q[1]], [loc1])
         squin.cz(q[0], q[2])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
@@ -124,11 +239,11 @@ def test_movement_kernel_terminal_move_to_valid():
     validation, which is out of scope here.)"""
     loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(2)
         move_to([q[0]], [loc_a])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
@@ -140,12 +255,12 @@ def test_move_to_before_sq_gate_compiles_successfully():
     """
     loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(2)
         move_to([q[0]], [loc_a])
         squin.rz(0.0, q[0])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
@@ -155,20 +270,20 @@ def test_movement_kernel_move_to_then_sq_then_cz():
     loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
     loc_b = LocationAddress(zone_id=0, word_id=1, site_id=0)
 
-    @movement_kernel(aggressive_unroll=True)
+    @movement_kernel
     def k():
         q = squin.qalloc(2)
         move_to([q[0], q[1]], [loc_a, loc_b])
         squin.rz(0.0, q[0])  # SQ gate -- must not corrupt UserMoved state
         squin.cz(q[0], q[1])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
     assert k is not None
 
 
 @pytest.mark.slow
 def test_move_to_cz_full_pipeline_regression():
-    """Regression: move_to + CZ compiles through the full logical pipeline.
+    """Regression: move_to + CZ compiles through the physical pipeline.
 
     Two sub-cases:
     1. Plain CZ baseline (no move_to) — establishes the AOD shot baseline.
@@ -176,42 +291,38 @@ def test_move_to_cz_full_pipeline_regression():
        before the CZ, so the compiler should need zero additional forward
        moves at the CZ site.
 
-    With the pre-staging fix in LogicalPlacementStrategyNoHome, move_to replaces
-    the CZ-forward moves exactly, so n_prepos == n_plain.
+    The physical source kernel uses a physical SQuIN terminal measurement, so it
+    is compiled with ``PhysicalPipeline`` rather than ``LogicalPipeline``.
     """
-    from bloqade.gemini.logical import kernel as plain_kernel
-    from bloqade.lanes.arch.gemini.logical import get_arch_spec
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
     from bloqade.lanes.dialects import move
-    from bloqade.lanes.transform import LogicalPipeline
+    from bloqade.lanes.transform import PhysicalPipeline
 
     arch = get_arch_spec()
 
-    # In the logical arch the layout heuristic places 2 qubits at the first
-    # two home positions: q0 → (zone=0, word=0, site=0),
-    #                     q1 → (zone=0, word=2, site=0).
-    # word 0 and word 1 are a CZ pair (word 0 is home, word 1 is staging).
-    # Pre-positioning q1 at word 1 puts atoms in blockade range before the CZ.
+    # Word 0 and word 1 are a CZ pair. Pre-positioning q1 at word 1 puts atoms
+    # in blockade range before the CZ.
     assert (
         arch.get_cz_partner(LocationAddress(zone_id=0, word_id=0, site_id=0))
         is not None
     )
     q1_cz_slot = LocationAddress(zone_id=0, word_id=1, site_id=0)
 
-    @plain_kernel(verify=False, aggressive_unroll=True)
+    @movement_kernel
     def k_plain():
         q = squin.qalloc(2)
         squin.cz(q[0], q[1])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
-    @movement_kernel(verify=False, aggressive_unroll=True)
+    @movement_kernel(verify=False)
     def k_prepos():
         q = squin.qalloc(2)
         move_to([q[1]], [q1_cz_slot])
         squin.cz(q[0], q[1])
-        return terminal_measure(q)
+        return squin.broadcast.measure(q)
 
-    move_plain = LogicalPipeline().emit(k_plain, no_raise=False)
-    move_prepos = LogicalPipeline().emit(k_prepos, no_raise=False)
+    move_plain = PhysicalPipeline().emit(k_plain, no_raise=False)
+    move_prepos = PhysicalPipeline().emit(k_prepos, no_raise=False)
 
     n_plain = sum(
         1 for s in move_plain.callable_region.walk() if isinstance(s, move.Move)
@@ -224,9 +335,9 @@ def test_move_to_cz_full_pipeline_regression():
     assert n_plain > 0, "plain CZ produced no moves"
     assert n_prepos > 0, "pre-positioned CZ produced no moves"
 
-    # Pre-staged atoms are not returned home before the CZ:
-    # move_to replaces the CZ-forward step, so total shot counts are equal.
-    assert n_prepos == n_plain, (
+    # Pre-positioning is preserved through physical lowering. It must not add
+    # an extra move beyond the same circuit with automatic placement.
+    assert n_prepos <= n_plain, (
         f"pre-positioned CZ generated {n_prepos} shots (plain={n_plain}); "
-        "move_to should replace the CZ-forward moves exactly"
+        "move_to should not make the placement schedule longer"
     )

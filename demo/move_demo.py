@@ -273,7 +273,7 @@ def measure_logical_block(blocks: ilist.IList[LogicalBlock, Any]):
 # ---------------------------------------------------------------------------
 # Compose: eight blocks, a logical SWAP, two layers of transversal CX
 # ---------------------------------------------------------------------------
-@physical.kernel(aggressive_unroll=True, verify=False)
+@physical.kernel(verify=False)
 def main():
     blocks = qalloc(ilist.IList([0, 1, 2, 3, 4, 5, 6, 7]))
 
