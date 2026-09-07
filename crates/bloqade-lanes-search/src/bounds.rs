@@ -442,8 +442,19 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
                 );
             }
             // C5: dropping any one lane from a multi-lane shot must not raise
-            // its cost. The configuration is empty, so every lane here is a
-            // filler and "same movers" holds trivially for both shots.
+            // its cost, at equal movers.
+            //
+            // Checked twice, because `edge_cost` is handed both configurations
+            // and may inspect them. With the empty configuration every lane is
+            // a filler and "same movers" holds trivially — but an objective
+            // that discounts added lanes *only when a real atom moves* would
+            // satisfy that and still violate C5 on every shot the generators
+            // actually produce, which would silently make the exhaustive
+            // generator's mover-tight deduplication lossy. So the second pass
+            // puts an atom on the first lane's source and drops only the
+            // others, whose sources stay empty: the mover set is identical
+            // across both shots, which is exactly the condition C5 is stated
+            // under.
             if decoded.len() > 1 {
                 for (i, dropped) in decoded.iter().enumerate() {
                     let without = MoveSet::new(
@@ -459,6 +470,31 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
                         "C5: dropping filler lane {dropped:?} from {shot:?} raised the shot cost \
                          from {cost} to {cost_without}; adding a lane must never make a shot cheaper"
                     );
+                }
+
+                // Sources within a bus group are unique, so only lane 0's
+                // source is occupied and every other lane is still a filler.
+                if let Some((src, dst)) = index.endpoints(&decoded[0]) {
+                    let from = Config::new([(0u32, src)]).expect("one atom is a valid config");
+                    let to = Config::new([(0u32, dst)]).expect("one atom is a valid config");
+                    let moved = objective.edge_cost(shot, &from, &to);
+                    for (i, dropped) in decoded.iter().enumerate().skip(1) {
+                        let without = MoveSet::new(
+                            decoded
+                                .iter()
+                                .enumerate()
+                                .filter(|&(j, _)| j != i)
+                                .map(|(_, &l)| l),
+                        );
+                        let cost_without = objective.edge_cost(&without, &from, &to);
+                        assert!(
+                            cost_without <= moved + slack(moved),
+                            "C5: with an atom moving on {:?}, dropping filler lane {dropped:?} \
+                             from {shot:?} raised the shot cost from {moved} to {cost_without}; \
+                             adding a lane must never make a shot cheaper",
+                            decoded[0]
+                        );
+                    }
                 }
             }
             checked += 1;
@@ -580,6 +616,61 @@ mod tests {
         assert!(
             message.starts_with("C5:"),
             "expected the C5 assertion to fire first, got: {message}"
+        );
+    }
+
+    /// An objective that is lane-set monotone on an *empty* configuration and
+    /// non-monotone as soon as an atom really moves.
+    ///
+    /// This is the hole the review found: `edge_cost` is handed both
+    /// configurations and may inspect them, so a check that only ever passes
+    /// the empty one certifies nothing about the shots the generators actually
+    /// produce. C5 is what makes the exhaustive generator's mover-tight
+    /// deduplication sound, so a violation it cannot see would quietly make
+    /// that deduplication lossy.
+    struct MoverOnlyDiscount;
+
+    impl CostFn for MoverOnlyDiscount {
+        fn edge_cost(&self, move_set: &MoveSet, from: &Config, to: &Config) -> f64 {
+            // Indistinguishable from `UniformCost` while nothing moves.
+            if from == to {
+                return 1.0;
+            }
+            1.0 + 0.5 / move_set.len().max(1) as f64
+        }
+    }
+
+    impl Objective for MoverOnlyDiscount {
+        fn lane_weight(&self, _lane: LaneAddr) -> f64 {
+            1.0
+        }
+        fn min_shot_cost(&self) -> f64 {
+            1.0
+        }
+        fn id(&self) -> ObjectiveId {
+            ObjectiveId {
+                kind: "test-mover-only-discount",
+                params: 0,
+            }
+        }
+    }
+
+    /// The contract check must exercise a real mover, not just the empty
+    /// configuration, or an objective like this one passes it.
+    #[test]
+    fn a_discount_that_needs_a_mover_still_fails_c5() {
+        let index = make_index();
+        let outcome =
+            std::panic::catch_unwind(|| assert_objective_contract(&MoverOnlyDiscount, &index));
+        let payload = outcome.expect_err("MoverOnlyDiscount must violate the contract");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("panic payload is a message");
+        assert!(
+            message.starts_with("C5:") && message.contains("with an atom moving on"),
+            "expected the mover-configuration C5 assertion, got: {message}"
         );
     }
 
