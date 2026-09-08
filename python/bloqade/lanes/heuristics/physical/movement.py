@@ -77,6 +77,18 @@ class RustPlacementTraversal:
     lookahead: bool = False
     collect_entropy_trace: bool = False
     seed: int = 0
+    bound_terminates: bool = True
+    """Let the completion bound end the search once the plan is proven optimal.
+
+    On by default. The proof is the root certificate -- the plan's cost has
+    reached ``h(root)``, which lower-bounds every legal plan -- so it holds
+    without a complete generator, and the solve reports ``proven``.
+
+    Stopping skips no expansion: a cut root cannot be expanded from, so what
+    it ends is a spin over already-cut nodes. ``False`` restores that spin and
+    is useful only for A/B measurement. Requires ``completion_bound``; inert
+    without one.
+    """
     completion_bound: str | None = None
     """Admissible completion bound for branch-and-bound pruning.
 
@@ -126,6 +138,7 @@ def _move_search_from_traversal(
         collect_entropy_trace=collect_entropy_trace,
         seed=traversal.seed,
         completion_bound=traversal.completion_bound,
+        bound_terminates=traversal.bound_terminates,
     )
     return (
         _native.MoveSearch.entropy()
