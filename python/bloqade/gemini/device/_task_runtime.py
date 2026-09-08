@@ -334,7 +334,9 @@ class _SimulatorTaskBase(Generic[RetType]):
         """Return ``(loss_replace, loss)`` for backend sample conversion."""
         return (None, None)
 
-    def visualize(self, animated: bool = False, interactive: bool = True, plotly=False):
+    def visualize(
+        self, animated: bool = False, interactive: bool = True, arch_vis=False
+    ):
         """Visualize the physical move kernel using the built-in debugger.
 
         Args:
@@ -351,7 +353,7 @@ class _SimulatorTaskBase(Generic[RetType]):
                 interactive=interactive,
             )
         else:
-            if plotly:
+            if arch_vis:
                 plotly_debugger(
                     self.physical_move_kernel,
                     self.physical_arch_spec,
