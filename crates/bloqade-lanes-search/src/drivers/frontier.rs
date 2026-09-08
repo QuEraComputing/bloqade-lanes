@@ -10,7 +10,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
-use crate::drivers::result::SearchResult;
+use crate::drivers::result::{SearchResult, Termination};
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
@@ -549,6 +549,7 @@ where
             graph: SearchGraph::new(root),
             // The frontier drivers do not prune against an incumbent.
             bound_stats: crate::bounds::BoundStats::default(),
+            termination: Termination::Stopped,
         };
     }
 
@@ -600,6 +601,7 @@ where
                 max_depth_reached: max_depth_seen,
                 graph,
                 bound_stats: crate::bounds::BoundStats::default(),
+                termination: Termination::Stopped,
             };
         }
 
@@ -676,6 +678,7 @@ where
                         max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
                         graph,
                         bound_stats: crate::bounds::BoundStats::default(),
+                        termination: Termination::Stopped,
                     };
                 }
                 new_children.push(child_id);
@@ -693,6 +696,7 @@ where
         max_depth_reached: max_depth_seen,
         graph,
         bound_stats: crate::bounds::BoundStats::default(),
+        termination: SearchResult::loop_exit_termination(nodes_expanded, max_expansions),
     }
 }
 
@@ -1150,6 +1154,75 @@ mod tests {
             None,
         );
         assert!(result.goal.is_none());
+    }
+
+    /// Termination is reported, not inferred: a drained frontier is
+    /// `Exhausted { proof: false }`, a spent budget is `Budget`, a goal is
+    /// `Stopped`.
+    #[test]
+    fn termination_names_how_the_loop_ended() {
+        let fx = Fixture::new();
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+
+        let mut f = PriorityFrontier::astar(manhattan(5), 1.0);
+        let drained = run(
+            &fx,
+            root.clone(),
+            &LineGen { max_site: 0 },
+            &UniformCost,
+            5,
+            &mut f,
+            None,
+            None,
+            None,
+        );
+        assert!(drained.goal.is_none());
+        assert_eq!(drained.termination, Termination::Exhausted { proof: false });
+
+        let mut f = PriorityFrontier::astar(manhattan(5), 1.0);
+        let budget = run(
+            &fx,
+            root.clone(),
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
+            &mut f,
+            Some(1),
+            None,
+            None,
+        );
+        assert!(budget.goal.is_none());
+        assert_eq!(budget.termination, Termination::Budget);
+
+        let mut f = PriorityFrontier::astar(manhattan(5), 1.0);
+        let solved = run(
+            &fx,
+            root.clone(),
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
+            &mut f,
+            None,
+            None,
+            None,
+        );
+        assert!(solved.goal.is_some());
+        assert_eq!(solved.termination, Termination::Stopped);
+
+        let mut f = PriorityFrontier::astar(manhattan(0), 1.0);
+        let at_root = run(
+            &fx,
+            root,
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            0,
+            &mut f,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(at_root.goal, Some(NodeId(0)));
+        assert_eq!(at_root.termination, Termination::Stopped);
     }
 
     // ── Greedy ──

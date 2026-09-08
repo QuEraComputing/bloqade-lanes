@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use crate::bounds::{BoundStats, CompletionBound, NoBound};
 use crate::cost::UniformCost;
-use crate::drivers::result::SearchResult;
+use crate::drivers::result::{SearchResult, Termination};
 use crate::feasibility::graph::LaneGraph;
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::ops::aod_grid::{BusGridContext, ChainLink, close_chain_entries};
@@ -2376,6 +2376,7 @@ where
             nodes_expanded: 0,
             max_depth_reached: 0,
             graph,
+            termination: Termination::Stopped,
             // The root satisfies the goal: nothing was searched, and the
             // optimum is trivially 0. `bound_enabled` still reflects whether a
             // bound was supplied, so a bounded solve that starts at the goal is
@@ -2422,6 +2423,9 @@ where
     // buffer is empty. The budget-exhaustion fallback still gets its turn when
     // no goal was found.
     let mut generator_exhausted = false;
+    // Set when the loop ends by its own rule (the goal quota) rather than by
+    // the budget or a stalled generator.
+    let mut goal_quota_reached = false;
 
     // Nodes whose cut has already been folded into `bound_stats`, so a node
     // tested at both gates or re-tested on resume is counted once. Left empty
@@ -2681,6 +2685,7 @@ where
                     });
                 }
                 if found_goals.len() >= params.max_goal_candidates {
+                    goal_quota_reached = true;
                     break;
                 }
                 current = resume_buffer_pop_best::<B>(
@@ -2828,6 +2833,7 @@ where
                 });
             }
             if found_goals.len() >= params.max_goal_candidates {
+                goal_quota_reached = true;
                 break;
             }
             current = resume_buffer_pop_best::<B>(
@@ -2881,12 +2887,26 @@ where
     // 3) lexicographic path key (deterministic), 4) node id (deterministic).
     let best = select_best_goal_with_tiebreak(&found_goals, &graph, ctx.index);
     bound_stats.incumbent_cost = best.map(|id| graph.g_score(id));
+    // `Stopped` for the goal quota. A stalled generator is exhaustion without
+    // a proof, and is reported as such even if the fallback's expansions push
+    // the count up to the budget — the loop ended on the generator, not on the
+    // budget. Otherwise the shared loop-exit rule on the final expansion count
+    // (the fallback's expansions included, which is what the status inference
+    // this replaces looked at).
+    let termination = if goal_quota_reached {
+        Termination::Stopped
+    } else if generator_exhausted {
+        Termination::Exhausted { proof: false }
+    } else {
+        SearchResult::loop_exit_termination(nodes_expanded, max_expansions)
+    };
     SearchResult {
         goal: best,
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
         bound_stats,
+        termination,
     }
 }
 
@@ -3116,6 +3136,61 @@ mod tests {
             r.graph.config(r.goal.unwrap()).location_of(0),
             Some(loc(0, 5))
         );
+    }
+
+    /// Termination is reported, not inferred. The goal quota is the driver's
+    /// own exit (`Stopped`); with the default quota of three a single-goal
+    /// instance never reaches it, so the driver spins to its iteration cap
+    /// after the first goal and ends `Exhausted` with a goal in hand — the
+    /// pre-existing behaviour, now visible in the result; and a budget spent
+    /// without reaching the quota is `Budget`.
+    #[test]
+    fn termination_names_the_quota_the_spin_and_the_budget() {
+        let index = make_index();
+        let run = |params: &EntropyParams, target: LocationAddr, max_expansions: Option<u32>| {
+            let root = Config::new([(0, loc(0, 0))]).unwrap();
+            let target_encoded: Vec<(u32, u64)> = vec![(0, target.encode())];
+            let dist_table = DistanceTable::new(&[target.encode()], &index);
+            let blocked = HashSet::new();
+            let goal = crate::goals::AllAtTarget::new(&target_encoded);
+            let ctx = SearchContext {
+                index: &index,
+                dist_table: &dist_table,
+                blocked: &blocked,
+                targets: &target_encoded,
+                cz_pairs: None,
+                capacity: None,
+            };
+            let r = entropy_search(
+                root,
+                &goal,
+                params,
+                &ctx,
+                max_expansions,
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+            );
+            (r.goal.is_some(), r.termination, r.nodes_expanded)
+        };
+
+        let one_goal = EntropyParams {
+            max_goal_candidates: 1,
+            ..EntropyParams::default()
+        };
+        let (solved, termination, _) = run(&one_goal, loc(0, 5), Some(1000));
+        assert!(solved);
+        assert_eq!(termination, Termination::Stopped);
+
+        let (solved, termination, expanded) = run(&EntropyParams::default(), loc(0, 5), Some(1000));
+        assert!(solved);
+        assert!(expanded < 1000);
+        assert_eq!(termination, Termination::Exhausted { proof: false });
+
+        // Two shots away (word 1, site 5) with a budget of one expansion.
+        let (_, termination, expanded) = run(&EntropyParams::default(), loc(1, 5), Some(1));
+        assert!(expanded >= 1);
+        assert_eq!(termination, Termination::Budget);
     }
 
     #[test]
@@ -4336,6 +4411,7 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs: None,
+            capacity: None,
         };
         let params = EntropyParams::default();
         let mut trace = EntropyTrace::for_params(&params);
