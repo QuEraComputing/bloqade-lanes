@@ -301,6 +301,27 @@ pub struct EntropyParams {
     pub lookahead: bool,
     /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
     pub w_t: f64,
+    /// Let the completion bound decide when the search is *over*, not merely
+    /// which branches are worth exploring. **On by default.**
+    ///
+    /// A dominated root with an empty resume buffer ends the search, and the
+    /// plan is reported as proven. It is a genuine proof, and it needs no
+    /// complete generator: the root being cut means `h(root)` has reached the
+    /// incumbent, and `h(root)` lower-bounds *every* legal plan because it
+    /// depends only on the configuration and never on which candidates a
+    /// generator happened to propose. So no plan is cheaper, including plans
+    /// this generator would never emit. With no incumbent at all the only cut
+    /// that can fire is `h = +∞`, which is a proof that no plan exists.
+    ///
+    /// Nothing is skipped by stopping: once the root is cut the driver cannot
+    /// expand again, so what follows is a spin over already-cut nodes up to
+    /// the iteration cap. Turning this off restores that spin, which is the
+    /// behaviour bounding originally shipped with, and is useful only for A/B
+    /// measurement.
+    ///
+    /// Inert without a completion bound: `NoBound` reports `h ≡ 0`, which
+    /// only dominates a zero-cost incumbent.
+    pub bound_terminates: bool,
 }
 
 impl Default for EntropyParams {
@@ -319,6 +340,7 @@ impl Default for EntropyParams {
             max_movesets_per_group: 3,
             lookahead: false,
             w_t: 0.95,
+            bound_terminates: true,
         }
     }
 }
@@ -686,6 +708,54 @@ fn resume_buffer_pop_best<B: CompletionBound>(
         }
         return Some(best.node_id);
     }
+}
+
+/// Pick the next node to resume from, or report that the search is finished.
+///
+/// `None` means the bound has proven the incumbent optimal *and*
+/// `bound_terminates` allows the driver to say so — the resume buffer is empty
+/// and the root itself is dominated, so `h(root)` has reached the incumbent
+/// and no legal plan is cheaper. Otherwise this is [`resume_buffer_pop_best`]
+/// with the historical fallback to the root, which keeps re-widening there
+/// until the budget runs out.
+///
+/// The root's cut is accounted here before returning `None`. It is the bound's
+/// strongest single cut — the certificate itself — and recording it keeps
+/// [`BoundStats`] independent of whether the loop happened to go around one
+/// more time before noticing. [`record_cut`] dedupes by node id, so a caller
+/// that already recorded the root does not double-count it.
+#[allow(clippy::too_many_arguments)]
+fn resume_or_finish<B: CompletionBound>(
+    buffer: &mut Vec<ScoredResumeState>,
+    best_cost: Option<f64>,
+    stats: &mut BoundStats,
+    counted: &mut Vec<bool>,
+    min_shot_cost: f64,
+    graph: &SearchGraph,
+    root_id: NodeId,
+    bound: &B,
+    h_cache: &mut Vec<Option<f64>>,
+    bound_terminates: bool,
+) -> Option<NodeId> {
+    if let Some(node) =
+        resume_buffer_pop_best::<B>(buffer, best_cost, stats, counted, min_shot_cost)
+    {
+        return Some(node);
+    }
+    if bound_terminates && let Some(cut) = classify_cut(graph, root_id, best_cost, bound, h_cache) {
+        record_cut::<B>(
+            stats,
+            counted,
+            root_id,
+            cut,
+            graph.depth(root_id),
+            graph.g_score(root_id),
+            best_cost,
+            min_shot_cost,
+        );
+        return None;
+    }
+    Some(root_id)
 }
 
 fn trace_buffer_node_ids(buffer: &[ScoredResumeState]) -> Vec<u32> {
@@ -2423,8 +2493,12 @@ where
     // buffer is empty. The budget-exhaustion fallback still gets its turn when
     // no goal was found.
     let mut generator_exhausted = false;
+    // Set when the bound proved the incumbent optimal and `bound_terminates`
+    // let the loop act on it. Unlike the budget exit this one carries a proof;
+    // see `resume_or_finish`.
+    let mut certified = false;
     // Set when the loop ends by its own rule (the goal quota) rather than by
-    // the budget or a stalled generator.
+    // the budget, a stalled generator or a proof.
     let mut goal_quota_reached = false;
 
     // Nodes whose cut has already been folded into `bound_stats`, so a node
@@ -2479,14 +2553,24 @@ where
                 best_cost,
                 objective.min_shot_cost(),
             );
-            current = resume_buffer_pop_best::<B>(
+            match resume_or_finish::<B>(
                 &mut resume_buffer,
                 best_cost,
                 &mut bound_stats,
                 &mut cut_counted,
                 objective.min_shot_cost(),
-            )
-            .unwrap_or(root_id);
+                &graph,
+                root_id,
+                bound,
+                &mut h_cache,
+                params.bound_terminates,
+            ) {
+                Some(node) => current = node,
+                None => {
+                    certified = true;
+                    break;
+                }
+            }
             continue;
         }
 
@@ -2688,14 +2772,24 @@ where
                     goal_quota_reached = true;
                     break;
                 }
-                current = resume_buffer_pop_best::<B>(
+                match resume_or_finish::<B>(
                     &mut resume_buffer,
                     best_cost,
                     &mut bound_stats,
                     &mut cut_counted,
                     objective.min_shot_cost(),
-                )
-                .unwrap_or(root_id);
+                    &graph,
+                    root_id,
+                    bound,
+                    &mut h_cache,
+                    params.bound_terminates,
+                ) {
+                    Some(node) => current = node,
+                    None => {
+                        certified = true;
+                        break;
+                    }
+                }
                 continue;
             }
             // Transposition: config seen at equal or better cost.
@@ -2836,14 +2930,24 @@ where
                 goal_quota_reached = true;
                 break;
             }
-            current = resume_buffer_pop_best::<B>(
+            match resume_or_finish::<B>(
                 &mut resume_buffer,
                 best_cost,
                 &mut bound_stats,
                 &mut cut_counted,
                 objective.min_shot_cost(),
-            )
-            .unwrap_or(root_id);
+                &graph,
+                root_id,
+                bound,
+                &mut h_cache,
+                params.bound_terminates,
+            ) {
+                Some(node) => current = node,
+                None => {
+                    certified = true;
+                    break;
+                }
+            }
             continue;
         }
 
@@ -2859,14 +2963,24 @@ where
                 objective.min_shot_cost(),
             );
             resume_buffer_discard(&mut resume_buffer, child_id);
-            current = resume_buffer_pop_best::<B>(
+            match resume_or_finish::<B>(
                 &mut resume_buffer,
                 best_cost,
                 &mut bound_stats,
                 &mut cut_counted,
                 objective.min_shot_cost(),
-            )
-            .unwrap_or(root_id);
+                &graph,
+                root_id,
+                bound,
+                &mut h_cache,
+                params.bound_terminates,
+            ) {
+                Some(node) => current = node,
+                None => {
+                    certified = true;
+                    break;
+                }
+            }
             continue;
         }
         current = child_id; // descend
@@ -2887,13 +3001,17 @@ where
     // 3) lexicographic path key (deterministic), 4) node id (deterministic).
     let best = select_best_goal_with_tiebreak(&found_goals, &graph, ctx.index);
     bound_stats.incumbent_cost = best.map(|id| graph.g_score(id));
-    // `Stopped` for the goal quota. A stalled generator is exhaustion without
-    // a proof, and is reported as such even if the fallback's expansions push
-    // the count up to the budget — the loop ended on the generator, not on the
-    // budget. Otherwise the shared loop-exit rule on the final expansion count
-    // (the fallback's expansions included, which is what the status inference
-    // this replaces looked at).
-    let termination = if goal_quota_reached {
+    // A certificate is the one exit that proves something: `h(root)` reached
+    // the incumbent, so no legal plan is cheaper. Then `Stopped` for the goal
+    // quota. A stalled generator is exhaustion without a proof, and is
+    // reported as such even if the fallback's expansions push the count up to
+    // the budget — the loop ended on the generator, not on the budget.
+    // Otherwise the shared loop-exit rule on the final expansion count (the
+    // fallback's expansions included, which is what the status inference this
+    // replaces looked at).
+    let termination = if certified {
+        Termination::Exhausted { proof: true }
+    } else if goal_quota_reached {
         Termination::Stopped
     } else if generator_exhausted {
         Termination::Exhausted { proof: false }
@@ -4437,6 +4555,124 @@ mod tests {
             "the root kept grinding: {} trace steps",
             trace.steps.len()
         );
+    }
+
+    /// Run one instance under the weighted-distance bound, with and without
+    /// letting that bound decide when the search is over.
+    fn run_certificate_pair(
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        target: LocationAddr,
+    ) -> (SearchResult, SearchResult) {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> = vec![(0, target.encode())];
+        let dist_table = DistanceTable::new(&[target.encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+            capacity: None,
+        };
+        let bound = crate::bounds::WeightedDistanceBound::new(
+            &UniformCost,
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+        let root = Config::new(initial).unwrap();
+        let run = |bound_terminates: bool| {
+            entropy_search_with_bound(
+                root.clone(),
+                &goal,
+                &EntropyParams {
+                    bound_terminates,
+                    ..EntropyParams::default()
+                },
+                &ctx,
+                Some(1000),
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &bound,
+            )
+        };
+        (run(false), run(true))
+    }
+
+    /// The root certificate: `h(root)` reaches the incumbent, so no legal plan
+    /// is cheaper and the search is over.
+    ///
+    /// What the knob saves is **loop turns, not expansions**, and the equality
+    /// asserted below is the point rather than a weakness of the test. Once
+    /// the root is cut the driver can never expand again: it falls back to the
+    /// root, the cut fires immediately, the empty buffer sends it back to the
+    /// root, and it does that until the iteration cap. Every one of those
+    /// turns is pure overhead. The plan is identical either way, because the
+    /// search only stops when nothing reachable could improve on it.
+    #[test]
+    fn bound_terminates_stops_on_the_root_certificate() {
+        let (spun, stopped) = run_certificate_pair([(0, loc(0, 0))], loc(0, 5));
+
+        assert_eq!(stopped.termination, Termination::Exhausted { proof: true });
+        assert_ne!(spun.termination, Termination::Exhausted { proof: true });
+        assert_eq!(
+            stopped.nodes_expanded, spun.nodes_expanded,
+            "the certificate ends a spin over already-cut nodes, so no \
+             expansion is skipped and no plan can be lost"
+        );
+
+        // Same plan, and it really is at the bound.
+        let cost = |r: &SearchResult| r.graph.g_score(r.goal.expect("solved"));
+        assert_eq!(cost(&stopped).to_bits(), cost(&spun).to_bits());
+        assert_eq!(
+            stopped.bound_stats.root_lower_bound.to_bits(),
+            cost(&stopped).to_bits()
+        );
+    }
+
+    /// Without a completion bound there is nothing to certify: `NoBound`
+    /// reports `h ≡ 0`, which never dominates a positive incumbent, so the
+    /// knob cannot change a single expansion.
+    #[test]
+    fn bound_terminates_is_inert_without_a_bound() {
+        let index = make_index();
+        let target = loc(0, 5);
+        let target_encoded: Vec<(u32, u64)> = vec![(0, target.encode())];
+        let dist_table = DistanceTable::new(&[target.encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+            capacity: None,
+        };
+        let run = |bound_terminates: bool| {
+            entropy_search_with_bound(
+                Config::new([(0, loc(0, 0))]).unwrap(),
+                &goal,
+                &EntropyParams {
+                    bound_terminates,
+                    ..EntropyParams::default()
+                },
+                &ctx,
+                Some(200),
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &NoBound::for_objective(&UniformCost),
+            )
+        };
+        let (off, on) = (run(false), run(true));
+        assert_eq!(off.nodes_expanded, on.nodes_expanded);
+        assert_eq!(off.termination, on.termination);
     }
 
     /// An unreachable target makes `h0 = +∞` — an infeasibility proof

@@ -205,6 +205,7 @@ where
     let max_goal_candidates = entropy.max_goal_candidates;
     let collect_entropy_trace = entropy.collect_entropy_trace;
     let w_t = entropy.w_t;
+    let bound_terminates = entropy.bound_terminates;
     let base_seed = entropy.seed;
     // The objective this solve accumulates `g` with, named once, so the driver
     // and the bound it is paired with cannot disagree about it.
@@ -274,6 +275,7 @@ where
                     max_goal_candidates,
                     lookahead: opts.lookahead,
                     w_t,
+                    bound_terminates,
                     ..crate::drivers::entropy::EntropyParams::default()
                 };
                 let mut entropy_trace = if collect_entropy_trace {
