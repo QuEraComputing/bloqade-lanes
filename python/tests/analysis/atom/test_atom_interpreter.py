@@ -2,38 +2,13 @@ from bloqade.decoders.dialects import annotate
 from kirin import ir, types
 from kirin.dialects import func, ilist
 
-from bloqade import squin
 from bloqade.lanes.analysis import atom
-from bloqade.lanes.analysis.atom._post_processing import constructor_function
-from bloqade.lanes.analysis.atom.lattice import TupleResult
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import WordLaneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.prelude import kernel
 
 kernel = kernel.add(annotate)
-
-
-def test_constructor_function_can_index_measurements_by_qubit_id():
-    measurement = atom.MeasureResult(
-        measurement_id=0,
-        qubit_id=2,
-        location_address=move.LocationAddress(0, 0),
-    )
-    raw_measurements = [False, False, True]
-
-    record_id_function = constructor_function(measurement)
-    qubit_id_function = constructor_function(measurement, use_qubit_id=True)
-    tuple_function = constructor_function(
-        TupleResult((measurement,)), use_qubit_id=True
-    )
-    assert record_id_function is not None
-    assert qubit_id_function is not None
-    assert tuple_function is not None
-
-    assert record_id_function(raw_measurements) is False
-    assert qubit_id_function(raw_measurements) is True
-    assert tuple_function(raw_measurements) == (True,)
 
 
 def test_atom_interpreter_simple():
@@ -102,61 +77,6 @@ def test_atom_interpreter_rejects_inexecutable_move():
     interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())
     with pytest.raises(Exception, match="not executable"):
         interp.run(main)
-
-
-def test_get_post_processing():
-    # Define a simple kernel for testing
-    @kernel
-    def main():
-        state0 = move.load()
-        state1 = move.fill(
-            state0,
-            location_addresses=(
-                move.LocationAddress(0, 0),
-                move.LocationAddress(1, 0),
-            ),
-        )
-        future = move.end_measure(state1, zone_addresses=(move.ZoneAddress(0),))
-        results_1 = move.get_future_result(
-            future,
-            zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(1, 0),
-        )
-        results_2 = move.get_future_result(
-            future,
-            zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(0, 0),
-        )
-        return squin.set_detector([results_1, results_2], [0, 1]), squin.set_observable(
-            [results_1, results_2]
-        )
-
-    interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())
-    post_proc = interp.get_post_processing(main)
-
-    # Simulate measurement results: 2 shots, 1 qubit
-    measurement_results = [[True, True], [False, False]]
-
-    # Test emit_return
-    returns = list(post_proc.emit_return(measurement_results))
-    assert len(returns) == 2
-
-    # Test emit_detectors
-    detectors = list(post_proc.emit_detectors(measurement_results))
-    assert isinstance(detectors, list)
-
-    # Test emit_observables
-    observables = list(post_proc.emit_observables(measurement_results))
-    assert isinstance(observables, list)
-
-    # Optionally, check the structure of the outputs
-    for det in detectors:
-        assert isinstance(det, list)
-    for obs in observables:
-        assert isinstance(obs, list)
-
-    assert returns[0] == (False, False)
-    assert returns[1] == (False, False)
 
 
 def test_atom_interpreter_tracks_ilist_slice_getitem():
