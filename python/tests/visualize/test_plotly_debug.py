@@ -95,7 +95,8 @@ def test_build_debugger_figure_has_clickable_step_slider(
         height=600,
     )
 
-    assert len(cast(Any, figure.data)) == 5
+    # 2 architecture + 3 static circuit + 1 route + circuit highlight + gate + atoms
+    assert len(cast(Any, figure.data)) == 9
     assert len(figure.frames) == 1
     assert len(figure.layout.sliders) == 1
     assert figure.layout.sliders[0].steps[0].method == "animate"
@@ -105,6 +106,9 @@ def test_build_debugger_figure_has_clickable_step_slider(
         "frameNames": ["step-0"],
         "routeTraceCount": 1,
         "architectureTraceCount": 2,
+        "circuitTraceIndices": [2, 3, 4],
+        "circuitColumnCount": 0,
+        "circuitStepColumns": [],
     }
     html = figure.to_html(full_html=False, include_plotlyjs=False)
     assert "plotly_animatingframe" in html
@@ -287,13 +291,14 @@ def test_move_path_hover_shows_source_and_destination(
         height=600,
     )
 
-    dynamic_start = figure.layout.meta["bloqadePlotlyDebugger"][
-        "architectureTraceCount"
-    ]
+    debugger_meta = figure.layout.meta["bloqadePlotlyDebugger"]
+    dynamic_start = debugger_meta["architectureTraceCount"] + len(
+        debugger_meta["circuitTraceIndices"]
+    )
     route_traces = cast(Any, figure.data[dynamic_start : dynamic_start + 2])
     route_trace = route_traces[0]
     atom_trace = cast(Any, figure.data[-1])
-    assert len(cast(Any, figure.data)) == 6
+    assert len(cast(Any, figure.data)) == 10
     assert figure.layout.meta["bloqadePlotlyDebugger"]["routeTraceCount"] == 2
     assert route_trace.visible is True
     assert route_trace.hoverinfo == "skip"
@@ -318,7 +323,7 @@ def test_move_path_hover_shows_source_and_destination(
     assert route_trace.line.color != route_traces[1].line.color
     assert list(route_trace.x[:2]) == pytest.approx([0.0, 0.5])
     assert list(route_traces[1].x[:2]) == pytest.approx([0.5, 1.0])
-    assert len(cast(Any, figure.frames[0].data)) == 4
+    assert len(cast(Any, figure.frames[0].data)) == 5
     bus_trace = cast(Any, figure.data[0])
     assert bus_trace.line.dash == "dash"
     assert atom_trace.marker.symbol == "square"

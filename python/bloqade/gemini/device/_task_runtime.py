@@ -334,7 +334,7 @@ class _SimulatorTaskBase(Generic[RetType]):
         """Return ``(loss_replace, loss)`` for backend sample conversion."""
         return (None, None)
 
-    def visualize(self, animated: bool = False, interactive: bool = True):
+    def visualize(self, animated: bool = False, interactive: bool = True, plotly=False):
         """Visualize the physical move kernel using the built-in debugger.
 
         Args:
@@ -342,7 +342,7 @@ class _SimulatorTaskBase(Generic[RetType]):
             interactive (bool): Whether to enable interactive mode. Defaults to True.
 
         """
-        from bloqade.lanes.visualize import animated_debugger, debugger
+        from bloqade.lanes.visualize import animated_debugger, debugger, plotly_debugger
 
         if animated:
             animated_debugger(
@@ -351,11 +351,18 @@ class _SimulatorTaskBase(Generic[RetType]):
                 interactive=interactive,
             )
         else:
-            debugger(
-                self.physical_move_kernel,
-                self.physical_arch_spec,
-                interactive=interactive,
-            )
+            if plotly:
+                plotly_debugger(
+                    self.physical_move_kernel,
+                    self.physical_arch_spec,
+                    interactive=interactive,
+                )
+            else:
+                debugger(
+                    self.physical_move_kernel,
+                    self.physical_arch_spec,
+                    interactive=interactive,
+                )
 
     def fidelity_bounds(self) -> tuple[float, float]:
         """Compute the fidelity bounds for the physical squin kernel.

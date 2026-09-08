@@ -18,6 +18,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from functools import cache, cached_property
 from importlib.resources import files
+from itertools import pairwise
 from math import hypot
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -48,6 +49,11 @@ _BusTraceData = tuple[
     list[float | None],
     list[tuple[str, str, str, int, str] | None],
 ]
+
+
+# Slack added to the column-pair spacing when deciding whether a lane stays
+# within its column pair for straight versus curved schematic paths.
+_COLUMN_TOLERANCE_UM = 1e-6
 
 
 @cache
@@ -373,25 +379,51 @@ class ArchVisualizer:
             buses[(lane.move_type, zone_id, lane.bus_id)].append(lane)
         return dict(buses)
 
+    @cached_property
+    def _column_pair_spacing(self) -> float:
+        """Horizontal extent of one column pair, in µm.
+
+        Column pairs are the closely spaced site columns that sit within the
+        blockade radius of each other. When the architecture defines
+        entangling pairs, the spacing is the widest x separation between CZ
+        partners. Otherwise, or when partners share an x position, it falls
+        back to the smallest nonzero x spacing between site columns, which
+        treats adjacent columns as one pair.
+        """
+        arch = self.arch_spec
+        partner_spacings = [
+            abs(arch.get_position(partner)[0] - position[0])
+            for location, position in self._iter_locations()
+            if (partner := arch.get_cz_partner(location)) is not None
+        ]
+        partner_spacing = max(partner_spacings, default=0.0)
+        if partner_spacing > 0.0:
+            return partner_spacing
+
+        # No usable entangling pairs (none defined, or partners share an x
+        # position): treat adjacent site columns as one pair.
+        x_positions = sorted({position[0] for _, position in self._iter_locations()})
+        gaps = [b - a for a, b in pairwise(x_positions) if b - a > 0]
+        return min(gaps, default=0.0)
+
     def _cartoon_path(self, lane: LaneAddress) -> tuple[tuple[float, float], ...]:
         """Return a schematic path that emphasizes bus connectivity.
 
-        Word buses preserve ``site_id`` and therefore represent motion within
-        one site column; they are shown as direct lines. Site buses connect
-        different site columns, so they use a curved arch like the diagrams in
-        ``demo/physical_arch_customization.py``. Zone buses are also arched to
-        distinguish inter-zone motion from within-column motion.
+        A lane that stays within one column pair (its x change is no wider
+        than the pair spacing) is shown as a direct line. Any lane that
+        crosses column pairs, whatever its bus type, uses a curved arch like
+        the diagrams in ``demo/physical_arch_customization.py`` so that
+        collinear hops of different lengths do not collapse onto each other.
+        Zone buses are always arched to distinguish inter-zone motion.
         """
         src, dst = self.arch_spec.get_endpoints(lane)
         start = self.arch_spec.get_position(src)
         end = self.arch_spec.get_position(dst)
-        if lane.move_type == MoveType.WORD:
-            return (start, end)
-
         dx = end[0] - start[0]
         dy = end[1] - start[1]
         distance = hypot(dx, dy)
-        if distance == 0.0:
+        stays_in_pair = abs(dx) <= self._column_pair_spacing + _COLUMN_TOLERANCE_UM
+        if distance == 0.0 or (stays_in_pair and lane.move_type != MoveType.ZONE):
             return (start, end)
 
         # A quadratic Bézier approximation of matplotlib's ``arc3`` path.
@@ -498,8 +530,10 @@ class ArchVisualizer:
         show all displays every bus, clears click-pinned site previews, and
         synchronizes every selector checkbox. Exact/cartoon and label controls
         are view-only and are therefore not part of preview undo/redo history.
-        Schematic word-bus paths are straight because they preserve a site
-        column; site- and zone-bus paths are curved to expose crossings.
+        Schematic paths are straight only for lanes that stay within one
+        column pair; lanes that cross column pairs, and all zone-bus lanes,
+        are curved to expose crossings and keep overlapping hops
+        distinguishable.
 
         Args:
             show_site_ids: Show site identity labels initially. Site identity

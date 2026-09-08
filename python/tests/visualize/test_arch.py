@@ -21,7 +21,11 @@ from bloqade.lanes.bytecode._native import (
     WordBus,
     Zone as RustZone,
 )
-from bloqade.lanes.bytecode.encoding import Direction, SiteLaneAddress
+from bloqade.lanes.bytecode.encoding import (
+    Direction,
+    SiteLaneAddress,
+    WordLaneAddress,
+)
 from bloqade.lanes.bytecode.word import Word
 from bloqade.lanes.visualize import arch as arch_visualization
 from bloqade.lanes.visualize.arch import ArchVisualizer
@@ -217,8 +221,9 @@ def test_plot_interactive_site_hover_keeps_text_compact_and_stores_lane_paths(
     first_path = meta["archVisualizerSiteLanePaths"][0]
     assert first_path["exactX"] == [0.0, 0.5, 1.0]
     assert first_path["exactY"] == [0.0, 0.75, 0.0]
-    assert len(first_path["cartoonX"]) == 21
-    assert len(first_path["cartoonY"]) == 21
+    # The site bus stays within its column pair, so its cartoon is a line.
+    assert first_path["cartoonX"] == [0.0, 1.0]
+    assert first_path["cartoonY"] == [0.0, 0.0]
     assert first_path["color"].startswith("hsl(")
     assert first_path["dash"] == "dot"
     assert first_path["busName"] == "zone 0 · site bus 0"
@@ -540,7 +545,7 @@ def test_plot_interactive_can_restore_legacy_bus_legend(
     assert figure.layout.margin.r == 270
 
 
-def test_plot_interactive_cartoon_paths_curve_site_buses(
+def test_plot_interactive_cartoon_paths_keep_column_pair_hops_straight(
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive(
@@ -552,8 +557,10 @@ def test_plot_interactive_cartoon_paths_curve_site_buses(
     )
     site_path = [(x, y) for x, y in zip(site_trace.x, site_trace.y) if x is not None]
 
-    assert len(site_path) == 21
-    assert min(y for _, y in site_path) < 0.0
+    # Sites 0 and 1 are CZ partners, so the hop between them is one column
+    # pair and stays a direct line in the schematic view.
+    assert ArchVisualizer(small_arch_spec)._column_pair_spacing == 1.0
+    assert site_path == [(0.0, 0.0), (1.0, 0.0)]
     assert figure.layout.updatemenus[2].active == 1
 
 
@@ -612,3 +619,61 @@ def test_archvisualizer_plot_called_directly(
         assert mock_plot.call_args.args == (mock_ax,)
         assert mock_plot.call_args.kwargs["show_words"] == [0]
         assert result is mock_ax
+
+
+def _column_pair_arch_spec() -> ArchSpec:
+    """Four one-site words: (0, 0), (2, 0), (10, 0), and (0, 10).
+
+    Columns 0 and 2 form a column pair; column 10 is the next pair. Word bus
+    0 hops within the pair, word bus 1 crosses to the next pair, and word bus
+    2 moves vertically within the first column. No entangling pairs are
+    defined, so the pair spacing falls back to the smallest column gap.
+    """
+    rust_grid = RustGrid.from_positions([0.0, 2.0, 10.0], [0.0, 10.0])
+    rust_zone = RustZone(
+        name="test",
+        grid=rust_grid,
+        site_buses=[],
+        word_buses=[
+            WordBus(src=[0], dst=[1]),
+            WordBus(src=[0], dst=[2]),
+            WordBus(src=[0], dst=[3]),
+        ],
+        words_with_site_buses=[],
+        sites_with_word_buses=[0],
+        entangling_pairs=[],
+    )
+    rust_mode = RustMode(
+        name="all",
+        zones=[0],
+        bitstring_order=[RustLocAddr(0, word_id, 0) for word_id in range(4)],
+    )
+    return ArchSpec.from_components(
+        words=(
+            Word(sites=((0, 0),)),
+            Word(sites=((1, 0),)),
+            Word(sites=((2, 0),)),
+            Word(sites=((0, 1),)),
+        ),
+        zones=(rust_zone,),
+        modes=[rust_mode],
+    )
+
+
+def test_cartoon_path_curves_lanes_that_cross_column_pairs() -> None:
+    viz = ArchVisualizer(_column_pair_arch_spec())
+    within_pair = WordLaneAddress(word_id=0, site_id=0, bus_id=0)
+    across_pairs = WordLaneAddress(word_id=0, site_id=0, bus_id=1)
+    vertical = WordLaneAddress(word_id=0, site_id=0, bus_id=2)
+
+    assert viz._column_pair_spacing == 2.0
+    # Hops within one column pair, horizontal or vertical, are direct lines.
+    assert viz._cartoon_path(within_pair) == ((0.0, 0.0), (2.0, 0.0))
+    assert viz._cartoon_path(vertical) == ((0.0, 0.0), (0.0, 10.0))
+    # A word bus that crosses to another column pair is arched, so collinear
+    # hops of different lengths stay distinguishable.
+    across_path = viz._cartoon_path(across_pairs)
+    assert len(across_path) == 21
+    assert across_path[0] == (0.0, 0.0)
+    assert across_path[-1] == (10.0, 0.0)
+    assert max(abs(y) for _, y in across_path) > 1.0

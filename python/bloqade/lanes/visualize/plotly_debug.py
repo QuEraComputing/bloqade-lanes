@@ -14,6 +14,20 @@ from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, MoveTy
 from bloqade.lanes.dialects import move
 from bloqade.lanes.visualize.arch import ArchVisualizer
 from bloqade.lanes.visualize.artist import DebugStep, collect_debug_steps
+from bloqade.lanes.visualize.plotly_circuit import (
+    CIRCUIT_X_AXIS,
+    CIRCUIT_Y_AXIS,
+    CircuitColumn,
+    circuit_columns,
+    circuit_cursor,
+    circuit_highlight_trace,
+    circuit_qubit_ids,
+    circuit_row_y,
+    circuit_static_traces,
+    circuit_window_range,
+    circuit_y_range,
+    gate_description,
+)
 
 if TYPE_CHECKING:
     from plotly.graph_objects import Figure  # type: ignore[reportMissingImports]
@@ -149,7 +163,7 @@ def _atom_trace(
             location.site_id,
             *arch_spec.words[location.word_id].sites[location.site_id],
             (
-                f"<br><b>gate:</b> {_gate_description(step)}"
+                f"<br><b>gate:</b> {gate_description(step)}"
                 if _gate_applies_to_location(step.statement, location)
                 else ""
             ),
@@ -182,31 +196,6 @@ def _atom_trace(
             "%{customdata[6]}<extra></extra>"
         ),
     )
-
-
-def _gate_parameter_names(statement: ir.Statement) -> tuple[str, ...]:
-    if isinstance(statement, (move.LocalR, move.GlobalR)):
-        return ("axis_angle", "rotation_angle")
-    if isinstance(statement, (move.LocalRz, move.StarRz, move.GlobalRz)):
-        return ("rotation_angle",)
-    return ()
-
-
-def _gate_description(step: DebugStep) -> str:
-    """Format an interpreted gate with named, evaluated parameters."""
-    if isinstance(step.statement, move.EndMeasure):
-        zones = tuple(address.zone_id for address in step.statement.zone_addresses)
-        return f"EndMeasure(zones={zones})"
-
-    parameters = ", ".join(
-        f"{name}={value!r}"
-        for name, value in zip(
-            _gate_parameter_names(step.statement),
-            step.parameter_values,
-            strict=False,
-        )
-    )
-    return f"{type(step.statement).__name__}({parameters})"
 
 
 def _gate_applies_to_location(
@@ -359,6 +348,31 @@ def _zone_gate_bounds(
     )
 
 
+def _gate_trace_base(name: str, colors: dict[str, str]) -> dict[str, Any]:
+    """Attribute set shared by every gate-highlight variant.
+
+    Plotly animation merges frame trace attributes into the live trace rather
+    than replacing them. Every variant therefore sets the same keys, otherwise
+    a CZ frame's ``fill="toself"`` would persist into a later LocalR frame and
+    fill the polygon spanned by that gate's marker positions.
+    """
+    return {
+        "mode": "lines",
+        "marker": {"color": colors["local_r"], "size": 0, "opacity": 0.0},
+        "line": {"width": 0, "color": colors["local_r"]},
+        "fill": "none",
+        "fillcolor": "rgba(0,0,0,0)",
+        "hoveron": "points",
+        "opacity": 1.0,
+        "hovertemplate": None,
+        "hoverinfo": "skip",
+        "name": name,
+        "showlegend": False,
+        "visible": True,
+        "zorder": -10,
+    }
+
+
 def _gate_trace(
     step: DebugStep,
     arch_spec: ArchSpec,
@@ -366,7 +380,7 @@ def _gate_trace(
 ) -> Any:
     go = _plotly()
     statement = step.statement
-    gate_description = _gate_description(step)
+    description = gate_description(step)
     local_gate_types = (move.LocalR, move.LocalRz, move.StarRz)
     if isinstance(statement, local_gate_types):
         positions = [
@@ -381,12 +395,13 @@ def _gate_trace(
         return go.Scatter(
             x=[position[0] for position in positions],
             y=[position[1] for position in positions],
-            mode="markers",
-            marker={"color": color, "size": 34, "opacity": 0.3},
-            name=type(statement).__name__,
-            showlegend=False,
-            visible=True,
-            hovertemplate=f"{gate_description}<extra></extra>",
+            **{
+                **_gate_trace_base(type(statement).__name__, colors),
+                "mode": "markers",
+                "marker": {"color": color, "size": 34, "opacity": 0.3},
+                "hoverinfo": None,
+                "hovertemplate": f"{description}<extra></extra>",
+            },
         )
 
     region: tuple[float, float, float, float] | None = None
@@ -409,42 +424,141 @@ def _gate_trace(
         color = colors["measure"]
 
     if region is None:
-        return _empty_trace("Gate highlight")
+        # No gate at this step: an empty trace with the shared attribute set
+        # so it never inherits a previous frame's fill or markers.
+        return go.Scatter(x=[], y=[], **_gate_trace_base("Gate highlight", colors))
 
     x_min, x_max, y_min, y_max = region
     return go.Scatter(
         x=[x_min, x_max, x_max, x_min, x_min],
         y=[y_min, y_min, y_max, y_max, y_min],
-        mode="lines",
-        line={"width": 0},
-        fill="toself",
-        hoveron="fills",
-        fillcolor=color,
-        opacity=0.25,
-        name=type(statement).__name__,
-        showlegend=False,
-        visible=True,
-        hovertemplate=f"{gate_description}<extra></extra>",
-        zorder=-10,
+        **{
+            **_gate_trace_base(type(statement).__name__, colors),
+            "line": {"width": 0, "color": color},
+            "fill": "toself",
+            "fillcolor": color,
+            "hoveron": "fills",
+            "opacity": 0.25,
+            "hoverinfo": None,
+            "hovertemplate": f"{description}<extra></extra>",
+        },
     )
+
+
+@dataclass(frozen=True)
+class _CircuitPanel:
+    """Executed-circuit data shared by the static traces and every frame."""
+
+    columns: tuple[CircuitColumn, ...]
+    qubit_ids: tuple[int, ...]
+    window: int
+
+    @property
+    def column_count(self) -> int:
+        return len(self.columns)
+
+    def x_range(self, step_index: int) -> tuple[float, float]:
+        return circuit_window_range(
+            circuit_cursor(self.columns, step_index), self.column_count, self.window
+        )
 
 
 def _dynamic_traces(
     step: DebugStep,
+    step_index: int,
     route_groups: Sequence[Sequence[_MovePathSegment]],
     route_trace_count: int,
     arch_spec: ArchSpec,
     colors: dict[str, str],
     atom_marker: str,
+    circuit: _CircuitPanel | None,
 ) -> list[Any]:
+    # The circuit highlight sits before the gate and atom traces so the last
+    # two dynamic traces stay the architecture gate and atom traces.
+    circuit_traces = (
+        [
+            circuit_highlight_trace(
+                circuit.columns, step_index, len(circuit.qubit_ids), colors
+            )
+        ]
+        if circuit is not None
+        else []
+    )
     return [
         *(
             _route_trace(route_groups[index] if index < len(route_groups) else None)
             for index in range(route_trace_count)
         ),
+        *circuit_traces,
         _gate_trace(step, arch_spec, colors),
         _atom_trace(step, arch_spec, colors, atom_marker),
     ]
+
+
+def _frame_layout(
+    step: DebugStep, step_index: int, circuit: _CircuitPanel | None
+) -> dict[str, Any]:
+    layout: dict[str, Any] = {"title": {"text": step.title}}
+    if circuit is not None:
+        layout[f"xaxis{CIRCUIT_X_AXIS[1:]}"] = {
+            "range": list(circuit.x_range(step_index))
+        }
+    return layout
+
+
+# Pixel budget for the executed-circuit panel above the architecture.
+_CIRCUIT_ROW_PX = 24
+_CIRCUIT_MIN_PX = 130
+_CIRCUIT_MAX_PX = 380
+_CIRCUIT_GAP_PX = 50
+_DEBUGGER_MARGIN = {"l": 70, "r": 270, "t": 165, "b": 65}
+
+
+def _circuit_panel_layout(
+    circuit: _CircuitPanel, height: int, colors: dict[str, str]
+) -> tuple[int, dict[str, Any]]:
+    """Return the total figure height and axis layout hosting the circuit."""
+    qubit_count = len(circuit.qubit_ids)
+    circuit_px = min(
+        max(_CIRCUIT_ROW_PX * qubit_count + 70, _CIRCUIT_MIN_PX), _CIRCUIT_MAX_PX
+    )
+    total_height = height + circuit_px + _CIRCUIT_GAP_PX
+    plot_area = total_height - _DEBUGGER_MARGIN["t"] - _DEBUGGER_MARGIN["b"]
+    circuit_fraction = circuit_px / plot_area
+    gap_fraction = _CIRCUIT_GAP_PX / plot_area
+    x_key = f"xaxis{CIRCUIT_X_AXIS[1:]}"
+    y_key = f"yaxis{CIRCUIT_Y_AXIS[1:]}"
+    # The circuit occupies the top of the plot area, directly under the
+    # control row; the gap below it holds the circuit's axis title.
+    layout = {
+        "yaxis": {"domain": [0.0, 1.0 - circuit_fraction - gap_fraction]},
+        x_key: {
+            "anchor": CIRCUIT_Y_AXIS,
+            "domain": [0.0, 1.0],
+            "range": list(circuit.x_range(0)),
+            "showgrid": False,
+            "zeroline": False,
+            "showticklabels": False,
+            "title": {
+                "text": (
+                    "Executed circuit (synced to the step slider; "
+                    "click a gate to jump to its step)"
+                ),
+                "font": {"size": 12},
+            },
+        },
+        y_key: {
+            "anchor": CIRCUIT_X_AXIS,
+            "domain": [1.0 - circuit_fraction, 1.0],
+            "range": list(circuit_y_range(qubit_count)),
+            "tickvals": [circuit_row_y(index) for index in range(qubit_count)],
+            "ticktext": [f"q{qubit_id}" for qubit_id in circuit.qubit_ids],
+            "showgrid": False,
+            "zeroline": False,
+            "tickfont": {"size": 11, "color": colors["text"]},
+        },
+    }
+    return total_height, layout
 
 
 def _slider_step(frame_names: Sequence[str], label: str) -> dict[str, object]:
@@ -471,13 +585,26 @@ def build_plotly_debugger_figure(
     atom_marker: str,
     theme: Theme,
     height: int,
+    show_circuit: bool = True,
+    circuit_window: int = 24,
 ) -> Figure:
     """Build the Plotly figure without displaying it."""
     if pause_time < 0:
         raise ValueError("pause_time must be non-negative")
+    if circuit_window < 1:
+        raise ValueError("circuit_window must be at least 1")
     go = _plotly()
     steps = collect_debug_steps(mt, arch_spec)
     colors = _theme_colors(theme)
+    circuit = (
+        _CircuitPanel(
+            columns=tuple(circuit_columns(steps, arch_spec)),
+            qubit_ids=tuple(circuit_qubit_ids(steps)),
+            window=circuit_window,
+        )
+        if show_circuit
+        else None
+    )
     route_groups_by_step = [
         _group_route_segments(_move_path_segments(step.state, arch_spec))
         for step in steps
@@ -501,11 +628,18 @@ def build_plotly_debugger_figure(
         height=height,
     )
     architecture_trace_count = len(cast(Any, figure.data))
-    dynamic_trace_indices = list(
-        range(
-            architecture_trace_count,
-            architecture_trace_count + route_trace_count + 2,
+    circuit_trace_indices: list[int] = []
+    if circuit is not None:
+        circuit_trace_indices = list(
+            range(architecture_trace_count, architecture_trace_count + 3)
         )
+        figure.add_traces(
+            circuit_static_traces(circuit.columns, circuit.qubit_ids, colors)
+        )
+    dynamic_trace_start = len(cast(Any, figure.data))
+    dynamic_trace_count = route_trace_count + (1 if circuit is not None else 0) + 2
+    dynamic_trace_indices = list(
+        range(dynamic_trace_start, dynamic_trace_start + dynamic_trace_count)
     )
     frames: list[Any] = []
 
@@ -515,29 +649,34 @@ def build_plotly_debugger_figure(
                 name=f"step-{step_index}",
                 data=_dynamic_traces(
                     step,
+                    step_index,
                     route_groups_by_step[step_index],
                     route_trace_count,
                     arch_spec,
                     colors,
                     atom_marker,
+                    circuit,
                 ),
                 traces=dynamic_trace_indices,
-                layout={"title": {"text": step.title}},
+                layout=_frame_layout(step, step_index, circuit),
             )
         )
 
     initial_data = (
         _dynamic_traces(
             steps[0],
+            0,
             route_groups_by_step[0],
             route_trace_count,
             arch_spec,
             colors,
             atom_marker,
+            circuit,
         )
         if steps
         else [
             *(_route_trace(None) for _ in range(route_trace_count)),
+            *([_empty_trace("Circuit highlight")] if circuit is not None else []),
             _empty_trace("Gate highlight"),
             _empty_trace("Atoms"),
         ]
@@ -617,10 +756,14 @@ def build_plotly_debugger_figure(
         menu.x = x_position
         menu.y = 1.09
     figure.layout.annotations = ()
+    total_height = height
+    circuit_layout: dict[str, Any] = {}
+    if circuit is not None:
+        total_height, circuit_layout = _circuit_panel_layout(circuit, height, colors)
     figure.update_layout(
         title={"text": title, "x": 0.01, "xanchor": "left"},
-        height=height,
-        margin={"l": 70, "r": 270, "t": 165, "b": 65},
+        height=total_height,
+        margin=dict(_DEBUGGER_MARGIN),
         showlegend=False,
         uirevision="bloqade-plotly-debugger",
         sliders=sliders,
@@ -633,8 +776,14 @@ def build_plotly_debugger_figure(
                 "frameNames": [frame.name for frame in frames],
                 "routeTraceCount": route_trace_count,
                 "architectureTraceCount": architecture_trace_count,
+                "circuitTraceIndices": circuit_trace_indices,
+                "circuitColumnCount": circuit.column_count if circuit else 0,
+                "circuitStepColumns": (
+                    [column.step_index for column in circuit.columns] if circuit else []
+                ),
             },
         },
+        **circuit_layout,
     )
     return figure
 
@@ -682,6 +831,8 @@ def plotly_debugger(
     renderer: str | None = None,
     theme: Theme = "light",
     height: int = 720,
+    show_circuit: bool = True,
+    circuit_window: int = 24,
 ) -> Figure | None:
     """Display a browser-native, discrete-step move-program debugger.
 
@@ -702,7 +853,13 @@ def plotly_debugger(
         renderer: Explicit Plotly renderer. The default embeds in Jupyter and
             uses ``"browser"`` in a regular Python process.
         theme: Initial light or dark theme.
-        height: Figure height in pixels.
+        height: Height of the architecture panel in pixels. The executed
+            circuit panel, when shown, is added above it.
+        show_circuit: Render the executed circuit above the architecture, one
+            column per gate step. The active step's column is highlighted and
+            kept in view; clicking a gate jumps the debugger to its step.
+        circuit_window: Maximum number of circuit columns visible at once.
+            Longer circuits scroll horizontally to follow the active step.
 
     Returns:
         The constructed Plotly figure when ``show=False``; otherwise ``None``.
@@ -715,6 +872,8 @@ def plotly_debugger(
         atom_marker=atom_marker,
         theme=theme,
         height=height,
+        show_circuit=show_circuit,
+        circuit_window=circuit_window,
     )
     if show:
         _show_plotly_debugger(

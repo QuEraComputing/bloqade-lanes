@@ -532,8 +532,29 @@
     }
 
     return points
+      .filter((item) => !isCircuitPoint(item))
       .map((item) => siteCustomdataAt(item.x, item.y))
       .find((customdata) => customdata !== null);
+  }
+
+  // Executed-circuit traces live on their own axis pair above the
+  // architecture. Their integer column/row coordinates can coincide with
+  // site positions, so never resolve them as architecture sites.
+  function isCircuitPoint(point) {
+    const trace = plot.data[point.curveNumber];
+    return Boolean(trace && trace.xaxis && trace.xaxis !== 'x');
+  }
+
+  function jumpToDebuggerStep(stepIndex) {
+    const frameName = debuggerFrameNames[stepIndex];
+    if (frameName === undefined) return;
+    // Plotly rejects the previous animation's promise when a new immediate
+    // animation interrupts it; that is expected when clicking quickly.
+    window.Plotly.animate(plot, [frameName], {
+      mode: 'immediate',
+      frame: {duration: 0, redraw: true},
+      transition: {duration: 0}
+    }).catch(function () {});
   }
 
   function atomHoverTargetForSite(siteCustomdata) {
@@ -885,6 +906,16 @@
       if (frameIndex >= 0) {
         setDebuggerSlider(frameIndex);
       }
+    });
+    // Clicking a gate in the executed-circuit panel jumps the debugger to
+    // the step that applies it; the frame hook above then syncs the slider.
+    plot.on('plotly_click', function (event) {
+      const gatePoint = (event.points || []).find((item) => {
+        const trace = plot.data[item.curveNumber];
+        return trace && trace.meta && trace.meta.bloqadeTraceKind === 'circuitGate';
+      });
+      if (!gatePoint || !gatePoint.customdata) return;
+      jumpToDebuggerStep(gatePoint.customdata[0]);
     });
   }
 
