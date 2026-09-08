@@ -2434,6 +2434,11 @@ where
     // replaces.
     let mut best_cost: Option<f64> = None;
     let mut budget_exhausted = false;
+    // Set when the generator can no longer produce anything, anywhere: the
+    // root has no untried candidate at an entropy past `e_max`, and the resume
+    // buffer is empty. The budget-exhaustion fallback still gets its turn when
+    // no goal was found.
+    let mut generator_exhausted = false;
 
     // Nodes whose cut has already been folded into `bound_stats`, so a node
     // tested at both gates or re-tested on resume is counted once. Left empty
@@ -2576,6 +2581,31 @@ where
                 current_es.entropy += 1;
                 current_es.entropy
             };
+            // …but at the root, past `e_max`, with nothing buffered and no
+            // perturbation, bumping cannot change anything ever again.
+            //
+            // With `seed == 0` the candidate list is a function of `(config,
+            // e_eff, params, ctx)` alone, and `e_eff = min(entropy, e_max)` is
+            // already pinned, so every future regeneration returns this same
+            // list — whose every entry is already tried or failed. The root is
+            // the last node standing (the buffer is empty, and descending from
+            // the root is what just failed), so no node can ever produce a
+            // child again. The loop would otherwise turn here until the
+            // iteration cap.
+            //
+            // That guard is load-bearing, and it is why the raw `entropy` is
+            // excluded above rather than the pinned `e_eff`: a non-zero seed
+            // mixes `entropy` into the RNG and perturbs candidate scores by
+            // it, so past `e_max` a bump still reorders the blend and really
+            // can surface moves the previous pass ranked out.
+            if current == root_id
+                && seed == 0
+                && new_entropy > params.e_max
+                && resume_buffer.is_empty()
+            {
+                generator_exhausted = true;
+                break;
+            }
             if observer.wants_events() {
                 let no_valid_qid =
                     first_unresolved_qubit_without_valid_move(graph.config(current), ctx);
@@ -2853,7 +2883,7 @@ where
         current = child_id; // descend
     }
 
-    if found_goals.is_empty() && budget_exhausted {
+    if found_goals.is_empty() && (budget_exhausted || generator_exhausted) {
         fire_fallback_start_event(observer, &graph, root_id, ctx, &resume_buffer);
         let (goal_id, fb_expanded) =
             budget_exhaustion_fallback(&mut graph, root_id, ctx, goal, objective);
@@ -4277,6 +4307,68 @@ mod tests {
             &bound,
         );
         (unbounded, bounded)
+    }
+
+    /// The root runs out of moves and the driver stops, instead of grinding to
+    /// the iteration cap.
+    ///
+    /// Past `e_max` the effective entropy is pinned, so with no perturbation
+    /// (`seed == 0`) every regeneration at the root returns the identical
+    /// already-tried candidate list. With the resume buffer empty and nothing
+    /// left to descend into, no node can ever produce a child again.
+    ///
+    /// This is measured in trace steps rather than expansions, because there
+    /// is nothing left to expand — that is exactly the point. Left to itself
+    /// the loop turns `2 × max_expansions` times, each turn emitting a
+    /// `no-valid-moves` bump, so a regression shows up as a step count in the
+    /// thousands.
+    #[test]
+    fn the_root_stops_when_it_can_no_longer_generate() {
+        let index = make_index();
+        // Three atoms on one column path, asked to reverse their order. The
+        // order along a path is invariant, so no plan exists — but every atom
+        // can still reach its own target site, so the bound reports a finite
+        // `h` and cannot refuse the instance outright.
+        let targets: Vec<(u32, u64)> = vec![
+            (0, loc(1, 0).encode()),
+            (1, loc(0, 0).encode()),
+            (2, loc(0, 5).encode()),
+        ];
+        let dist_table =
+            DistanceTable::new(&targets.iter().map(|&(_, t)| t).collect::<Vec<_>>(), &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&targets);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &targets,
+            cz_pairs: None,
+        };
+        let params = EntropyParams::default();
+        let mut trace = EntropyTrace::for_params(&params);
+        let result = entropy_search_with_bound(
+            Config::new([(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 5))]).unwrap(),
+            &goal,
+            &params,
+            &ctx,
+            Some(500),
+            None,
+            0,
+            &mut trace,
+            &UniformCost,
+            &crate::bounds::WeightedDistanceBound::new(&UniformCost, &targets, &index, &blocked),
+        );
+
+        assert!(
+            result.nodes_expanded < 500,
+            "the instance should die of its own accord, not on the budget"
+        );
+        assert!(
+            trace.steps.len() < 200,
+            "the root kept grinding: {} trace steps",
+            trace.steps.len()
+        );
     }
 
     /// An unreachable target makes `h0 = +∞` — an infeasibility proof
