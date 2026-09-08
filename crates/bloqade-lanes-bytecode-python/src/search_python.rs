@@ -45,6 +45,7 @@ use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
 
 /// Search strategy for the move solver.
 #[pyclass(
+    from_py_object,
     name = "SearchStrategy",
     eq,
     eq_int,
@@ -141,6 +142,7 @@ impl PySearchStrategy {
 
 /// Deadlock handling policy for the move solver.
 #[pyclass(
+    from_py_object,
     name = "DeadlockPolicy",
     eq,
     eq_int,
@@ -735,6 +737,7 @@ impl PyEntropyScorer {
 /// Controls how displaced qubits are assigned to available home sites
 /// between CZ layers.
 #[pyclass(
+    skip_from_py_object,
     name = "NoHomeOptions",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -820,6 +823,7 @@ impl PyNoHomeOptions {
 
 /// Core search-tuning parameters shared by every solver entry point.
 #[pyclass(
+    skip_from_py_object,
     name = "SolveOptions",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -935,6 +939,7 @@ impl PySolveOptions {
 /// Only consumed when the chosen strategy is entropy (or a Cascade variant
 /// whose inner is entropy). Pass via `MoveSearch.with_entropy_options`.
 #[pyclass(
+    skip_from_py_object,
     name = "EntropyOptions",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -1043,6 +1048,7 @@ impl PyEntropyOptions {
 /// Loose-goal entangling-search parameters consumed by
 /// `LooseGoalCzPlacement`.
 #[pyclass(
+    skip_from_py_object,
     name = "EntanglingOptions",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -1113,6 +1119,7 @@ impl PyEntanglingOptions {
 /// how far each rollout searches forward, how many layers of the winning
 /// branch get committed before re-planning, and other tuning knobs.
 #[pyclass(
+    skip_from_py_object,
     name = "RecedingHorizonOptions",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -1452,7 +1459,12 @@ impl PySearchEngine {
 /// Combine a strategy (entropy, A*, IDS, …) with its tuning options.
 /// Build via the factory class methods, then pass to ``TargetSolver`` or
 /// the ``CzPlacement`` constructors.
-#[pyclass(name = "MoveSearch", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "MoveSearch",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyMoveSearch {
     pub(crate) inner: MoveSearch,

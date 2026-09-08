@@ -44,7 +44,13 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
             ]
         )
     )
-    dialect_group: ir.DialectGroup = field(default_factory=lambda: logical_kernel)
+    # Annotated ``| None`` to match ``Device.dialect_group`` as of
+    # bloqade-core 0.6.8, which widened it. The default_factory keeps this
+    # concrete in practice; the union is here only so the override stays
+    # type-compatible with the base.
+    dialect_group: ir.DialectGroup | None = field(
+        default_factory=lambda: logical_kernel
+    )
 
     future_cls: type[GeminiLogicalFuture] = GeminiLogicalFuture
     single_kernel_task_cls: type[SingleKernelTask[GeminiLogicalFuture]] = field(

@@ -19,6 +19,7 @@ use crate::validation::{validate_i64_key_map, validate_i64_kv_map, validate_i64_
 /// `AtomStateData.apply_validated` on the same state it was validated
 /// against.
 #[pyclass(
+    skip_from_py_object,
     name = "ValidatedMoves",
     frozen,
     module = "bloqade.lanes.bytecode._native"
@@ -62,6 +63,7 @@ impl PyValidatedMoves {
 /// Rust implementation for performance. Used by the IR analysis pipeline to
 /// simulate atom movement, detect collisions, and identify CZ gate pairings.
 #[pyclass(
+    skip_from_py_object,
     name = "AtomStateData",
     frozen,
     module = "bloqade.lanes.bytecode._native"

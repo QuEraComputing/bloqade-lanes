@@ -15,6 +15,7 @@ use bloqade_lanes_bytecode_core::arch::metrics as rs;
 /// motion profile. The pick/drop ramp and per-segment jerk math are computed
 /// in Rust and shared with the move-search solver.
 #[pyclass(
+    skip_from_py_object,
     name = "MotionModel",
     frozen,
     module = "bloqade.lanes.bytecode._native"

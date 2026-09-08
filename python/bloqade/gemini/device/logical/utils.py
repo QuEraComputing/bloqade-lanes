@@ -1,17 +1,16 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 from kirin import ir
 
-from bloqade.lanes.analysis import atom
-from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
-from bloqade.lanes.arch.gemini import physical
-from bloqade.lanes.bytecode.encoding import ZoneAddress
-from bloqade.lanes.transform import LogicalPipeline
-
 RetType = TypeVar("RetType")
+
+if TYPE_CHECKING:
+    from bloqade.lanes.analysis import atom
 
 
 class ShotRemappingException(Exception):
@@ -116,6 +115,16 @@ def get_slm_mapping_postprocessing(
 ) -> tuple[Callable[..., Any], atom.PostProcessing[RetType]]:
     """Create a result postprocessor for full Zone-0 SLM shots.
 
+    Result post-processing is two steps, and this returns both::
+
+        physical_bitstring = [frame_data[i] for i in shot_remapping]
+        user_output = post_processing.emit_return([physical_bitstring])
+
+    The returned post-processing object comes from
+    :func:`~bloqade.gemini.post_processing.build_post_processing`, which
+    abstract-interprets the *user's* kernel once to reconstruct its return
+    value and every detector and observable annotation.
+
     Warning:
         This reconstructs the physical measurement mapping by compiling the
         stored logical kernel with the locally installed Bloqade Lanes compiler
@@ -124,6 +133,13 @@ def get_slm_mapping_postprocessing(
         remote physical compilation artifact is not currently stored with the
         result.
     """
+
+    from bloqade.gemini.post_processing import build_post_processing
+    from bloqade.lanes.analysis import atom
+    from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
+    from bloqade.lanes.arch.gemini import physical
+    from bloqade.lanes.bytecode.encoding import ZoneAddress
+    from bloqade.lanes.transform import LogicalPipeline
 
     arch_spec = physical.get_arch_spec()
     physical_move_kernel = LogicalPipeline(transversal_rewrite=True).emit(sim_kernel)
@@ -143,7 +159,7 @@ def get_slm_mapping_postprocessing(
     # print(f"row-major SLM mapping: {mapping}")
     expected_zone0_sites = len(zone0_locations)
 
-    post_processing = interpreter.get_post_processing(physical_move_kernel)
+    post_processing = build_post_processing(sim_kernel)
 
     def postprocess(zone0_shots, *, invert: bool = False):
         zone0_shots = np.asarray(zone0_shots, dtype=bool)

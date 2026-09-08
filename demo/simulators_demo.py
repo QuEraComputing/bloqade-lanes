@@ -138,10 +138,19 @@ print(np.asarray(physical_result_clifft.measurements).shape)
 
 # %% [markdown]
 # You can also use our PPVM Simulation backend with a noise model that has atom loss, as shown below.
+# > Note: the below values for loss are placeholders and may not reflect the loss parameters from the Gemini machine. You can customize these loss parameters to what you like.
 
 # %%
 noise_model_atom_loss = generate_simple_noise_model(
-    GeminiOneZoneNoiseModel(cz_gate_loss_prob=0.001)
+    GeminiOneZoneNoiseModel(
+        local_loss_prob=0.001,
+        local_unaddressed_loss_prob=0.001,
+        global_loss_prob=0.001,
+        cz_gate_loss_prob=0.001,
+        cz_unpaired_loss_prob=0.001,
+        move_loss_prob=0.0001,
+        sit_loss_prob=0.0001,
+    )
 )
 
 # %%

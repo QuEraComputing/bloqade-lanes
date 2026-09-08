@@ -9,7 +9,12 @@ use bloqade_lanes_bytecode_core::version::Version;
 use crate::arch_python::PyArchSpec;
 use crate::instruction_python::PyInstruction;
 
-#[pyclass(name = "Program", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(
+    skip_from_py_object,
+    name = "Program",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyProgram {
     pub(crate) inner: rs_prog::Program,

@@ -25,7 +25,19 @@ class LogicalQubit(interp.MethodTable):
         if qubits_type.is_structurally_equal(kirin_types.Bottom):
             return (AnyMeasureId(),)
 
-        assert isinstance(qubits_type, kirin_types.Generic)
+        # NOTE: an unresolved register type is a *reason to give up*, not a bug,
+        # and every other unknowable case below says so by returning
+        # `AnyMeasureId`. An `assert` here instead turned an ordinary untyped
+        # parameter -- `def sub(reg): return terminal_measure(reg)` -- into an
+        # `AssertionError` that `ValidationSuite` caught and re-reported as
+        # "Validation pass '...' failed:" plus a traceback. The arity check
+        # guards `vars[1]` below, which would raise `IndexError` on a `Generic`
+        # that is not an `IList[T, Len]`.
+        if (
+            not isinstance(qubits_type, kirin_types.Generic)
+            or len(qubits_type.vars) < 2
+        ):
+            return (AnyMeasureId(),)
 
         if not isinstance(len_var := qubits_type.vars[1], kirin_types.Literal):
             return (AnyMeasureId(),)
@@ -41,8 +53,8 @@ class LogicalQubit(interp.MethodTable):
                 raw_measure_ids = map(
                     RawMeasureId,
                     range(
-                        interp_.measure_count,
-                        interp_.measure_count + num_physical_qubits,
+                        interp_.measure_count + 1,
+                        interp_.measure_count + num_physical_qubits + 1,
                     ),
                 )
                 interp_.measure_count += num_physical_qubits

@@ -23,6 +23,10 @@ STEANE7_DETECTOR_MATRIX: NDArray[np.int_] = np.array(
 # Steane [[7,1,3]] logical X observable (1 observable per logical qubit)
 STEANE7_OBSERVABLE_MATRIX: NDArray[np.int_] = np.array([[1, 1, 0, 0, 0, 1, 0]])
 
+# Physical qubits per logical qubit. Read off the parity-check matrix rather
+# than written as a literal so it cannot drift from the matrices above.
+STEANE7_PHYSICAL_QUBITS: int = STEANE7_DETECTOR_MATRIX.shape[1]
+
 
 def steane7_m2dets(num_qubits: int) -> list[list[int]]:
     """Build the measurement-to-detector matrix for ``num_qubits`` Steane-encoded qubits.

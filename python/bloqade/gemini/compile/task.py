@@ -15,8 +15,12 @@ from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalVal
 from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
-from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.analysis import atom
+from bloqade.gemini.post_processing import build_post_processing
+from bloqade.gemini.steane_defaults import (
+    STEANE7_PHYSICAL_QUBITS,
+    steane7_m2dets,
+    steane7_m2obs,
+)
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.transform import LogicalPipeline
 
@@ -101,12 +105,22 @@ def append_measurements_and_annotations(
 
     The method is mutated in-place.
 
+    The annotations are Steane [[7,1,3]], so both matrices must be rectangular
+    with one row per physical qubit: ``num_qubits * 7``. A shape that disagrees
+    is a ``ValueError`` rather than a silently mis-indexed annotation.
+
     Args:
         mt: A squin ``ir.Method`` whose body returns ``None``.
-        m2dets: Binary matrix of shape ``(num_total_meas, num_detectors)``.
+        m2dets: Binary matrix of shape ``(num_qubits * 7, num_detectors)``.
             Each column defines a detector by its non-zero row indices.
-        m2obs: Binary matrix of shape ``(num_total_meas, num_observables)``.
+        m2obs: Binary matrix of shape ``(num_qubits * 7, num_observables)``.
             Each column defines an observable by its non-zero row indices.
+
+    Raises:
+        ValueError: If neither matrix is given; if ``mt`` allocates no qubits;
+            if either matrix has the wrong number of rows or is ragged; or if
+            ``mt``'s terminal measurement already declares a width other than
+            Steane [[7,1,3]]'s seven.
     """
 
     if m2dets is None and m2obs is None:
@@ -117,18 +131,7 @@ def append_measurements_and_annotations(
     if num_qubits == 0:
         raise ValueError("No qubit allocations found in the kernel")
 
-    m2 = m2dets if m2dets is not None else m2obs
-    assert m2 is not None
-    num_total_meas = len(m2)
-    meas_per_qubit = num_total_meas // num_qubits
-    assert (
-        meas_per_qubit * num_qubits == num_total_meas
-    ), "Incompatible shape of m2dets or m2obs"
-
-    return_stmt = _find_return_stmt(mt)
-
-    # insert TerminalLogicalMeasurement if not present
-    terminal_measurement = next(
+    existing_terminal = next(
         (
             s
             for s in mt.callable_region.walk()
@@ -136,13 +139,69 @@ def append_measurements_and_annotations(
         ),
         None,
     )
-    if terminal_measurement is not None:
-        term_meas = terminal_measurement
+    # Everything below addresses a measurement as ``divmod(row,
+    # STEANE7_PHYSICAL_QUBITS)``, so a statement that already declares some
+    # other width would have its records read at the wrong stride -- wrong
+    # detectors, or an out-of-range index into a narrower logical measurement.
+    # Nothing here honours a non-Steane width, so say so instead.
+    if (
+        existing_terminal is not None
+        and existing_terminal.num_physical_qubits is not None
+        and existing_terminal.num_physical_qubits != STEANE7_PHYSICAL_QUBITS
+    ):
+        raise ValueError(
+            "This function inserts Steane [[7,1,3]] annotations, but the "
+            "kernel's terminal measurement declares num_physical_qubits="
+            f"{existing_terminal.num_physical_qubits}"
+        )
+
+    # The annotations below address a measurement as ``divmod(row,
+    # STEANE7_PHYSICAL_QUBITS)``, and the terminal measurement is stamped with
+    # that same width. Deriving the stride from ``len(m2) // num_qubits``
+    # instead would make the matrices a second, unchecked source of the width:
+    # a matrix disagreeing with the stamp yields detectors that reference the
+    # wrong records, with no error. Validate against the one source instead.
+    expected_rows = num_qubits * STEANE7_PHYSICAL_QUBITS
+    for name, matrix in (("m2dets", m2dets), ("m2obs", m2obs)):
+        if matrix is None:
+            continue
+        if len(matrix) != expected_rows:
+            raise ValueError(
+                f"{name} has {len(matrix)} rows, expected {expected_rows}: "
+                f"{num_qubits} logical qubit(s) x {STEANE7_PHYSICAL_QUBITS} "
+                "physical qubits per Steane [[7,1,3]] qubit"
+            )
+        # Columns are read as ``row[j]`` for every j in the first row's range,
+        # so a ragged matrix either raises IndexError from inside the
+        # annotation loop or silently ignores a longer row's extra columns.
+        column_counts = {len(row) for row in matrix}
+        if len(column_counts) > 1:
+            raise ValueError(
+                f"{name} is ragged: rows have {sorted(column_counts)} columns. "
+                "Every row must define the same number of annotations"
+            )
+
+    return_stmt = _find_return_stmt(mt)
+
+    # insert TerminalLogicalMeasurement if not present
+    if existing_terminal is not None:
+        term_meas = existing_terminal
     else:
         qlist_stmt = _insert_before(ilist.New(qubit_ssas), return_stmt)
         term_meas = _insert_before(
             TerminalLogicalMeasurement(qlist_stmt.result), return_stmt
         )
+
+    # ``InsertQubitCount`` stamps this attribute during ``@logical.kernel``
+    # decoration, but a statement inserted here is created afterwards and so is
+    # never walked -- it stays ``None``, and ``MeasurementIDAnalysis`` then
+    # cannot expand a logical measurement into per-physical-qubit records
+    # (every logical qubit degrades to ``AnyMeasureId``, taking the detectors
+    # with it). The annotations this function inserts are Steane [[7,1,3]], so
+    # the width is known here. A statement that already carries a count keeps
+    # it.
+    if term_meas.num_physical_qubits is None:
+        term_meas.num_physical_qubits = STEANE7_PHYSICAL_QUBITS
 
     @cache
     def _get_logical_measurement(q_idx: int) -> ir.SSAValue:
@@ -163,7 +222,7 @@ def append_measurements_and_annotations(
         for j in range(len(m2dets[0])):
             indices = [i for i, row in enumerate(m2dets) if row[j]]
             meas_ssas = [
-                _get_physical_measurement(*divmod(idx, meas_per_qubit))
+                _get_physical_measurement(*divmod(idx, STEANE7_PHYSICAL_QUBITS))
                 for idx in indices
             ]
             meas_list = _insert_before(ilist.New(meas_ssas), return_stmt)
@@ -181,7 +240,7 @@ def append_measurements_and_annotations(
         for j in range(len(m2obs[0])):
             indices = [i for i, row in enumerate(m2obs) if row[j]]
             meas_ssas = [
-                _get_physical_measurement(*divmod(idx, meas_per_qubit))
+                _get_physical_measurement(*divmod(idx, STEANE7_PHYSICAL_QUBITS))
                 for idx in indices
             ]
             meas_list = _insert_before(ilist.New(meas_ssas), return_stmt)
@@ -235,9 +294,7 @@ def compile_task(
     physical_move_kernel = LogicalPipeline(transversal_rewrite=True).emit(
         logical_squin_kernel
     )
-    post_processing = atom.AtomInterpreter(
-        physical_move_kernel.dialects, arch_spec=physical_arch_spec
-    ).get_post_processing(physical_move_kernel)
+    post_processing = build_post_processing(logical_squin_kernel)
 
     return (
         logical_squin_kernel,

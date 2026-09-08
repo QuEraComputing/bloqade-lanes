@@ -2,7 +2,7 @@ from bloqade.analysis import address
 from bloqade.squin import gate
 from kirin import interp as _interp, ir
 from kirin.analysis import ForwardFrame, const
-from kirin.dialects import func, scf
+from kirin.dialects import scf
 
 from bloqade import qubit
 from bloqade.gemini.logical.dialects import operations
@@ -46,25 +46,11 @@ class __ScfGeminiLogicalValidation(_interp.MethodTable):
         return (interp.lattice.bottom(),)
 
 
-@func.dialect.register(key="gemini.validate.logical")
-class __FuncGeminiLogicalValidation(_interp.MethodTable):
-    @_interp.impl(func.Invoke)
-    def invoke(
-        self,
-        interp: _GeminiLogicalValidationAnalysis,
-        frame: ForwardFrame,
-        stmt: func.Invoke,
-    ):
-        interp.add_validation_error(
-            stmt,
-            ir.ValidationError(
-                stmt,
-                "Function invocations not supported in logical Gemini program!",
-                help="Make sure to decorate your function with `@logical(inline = True)` or `@logical(aggressive_unroll = True)` to inline function calls",
-            ),
-        )
-
-        return tuple(interp.lattice.bottom() for _ in stmt.results)
+# NOTE: `func.Invoke` used to be reported by an impl here. `GeminiLogicalValidation`
+# still reports it, but delegates to `common.validation.static_call` instead --
+# an impl only sees what this `Forward` analysis reaches, and the `scf.For` impl
+# above returns bottom without descending into the loop body, so an invoke nested
+# in a loop was never visited. A syntactic `walk()` sees all of them.
 
 
 @gate.dialect.register(key="gemini.validate.logical")
