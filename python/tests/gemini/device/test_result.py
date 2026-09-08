@@ -21,7 +21,6 @@ from bloqade.gemini import GeminiLogicalResult, logical
 from bloqade.gemini.device.logical import result as result_module, utils as utils_module
 from bloqade.gemini.device.logical.utils import (
     ShotRemappingException,
-    aligned_detected_and_sorted_shots_for_subtasks,
     get_slm_mapping_postprocessing,
 )
 from bloqade.lanes.analysis import atom
