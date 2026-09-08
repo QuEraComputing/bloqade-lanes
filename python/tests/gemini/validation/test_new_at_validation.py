@@ -32,7 +32,7 @@ def test_const_foldability_failure():
     """new_at(z, 0, 0) where z is a function argument is not const-foldable.
 
     The validator should surface a 'is not a compile-time constant' error for
-    the zone_id argument.
+    the zone argument.
     """
 
     @gemini.logical.kernel(verify=False)
@@ -67,10 +67,28 @@ def test_range_failure():
     assert any("Invalid location address" in str(e) for e in errors)
 
 
+@pytest.mark.parametrize(("row", "col"), [(99, 0), (0, 99)])
+def test_invalid_grid_coordinate_failure(row: int, col: int):
+    """Grid coordinates with no physical location produce a useful diagnostic."""
+
+    @gemini.logical.kernel(verify=False)
+    def kernel():
+        q = new_at(0, row, col)  # noqa: F841
+
+    result = _make_validator().validate(kernel)
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+        result.raise_if_invalid()
+
+    assert any(
+        f"no location at (zone=0, row={row}, col={col})" in str(error)
+        for error in exc_info.value.errors
+    )
+
+
 def test_valid_new_at_no_diagnostics():
     """new_at(0, 0, 0) for a valid arch produces no validation errors.
 
-    (zone=0, word=0, site=0) is a home site in the physical layout arch spec.
+    (zone=0, row=0, col=0) is a home site in the physical layout arch spec.
     """
 
     @gemini.logical.kernel(verify=False)
@@ -88,7 +106,7 @@ def test_valid_new_at_no_diagnostics():
 
 
 def test_duplicate_addresses_reported():
-    """Two new_at calls pinning the same (zone, word, site) produce an error."""
+    """Two new_at calls pinning the same (zone, row, col) produce an error."""
 
     @gemini.logical.kernel(verify=False)
     def kernel():
@@ -102,13 +120,13 @@ def test_duplicate_addresses_reported():
 
 
 def test_duplicate_via_constant_folded_args():
-    """new_at(0, 1+0, 2) and new_at(0, 1, 2) resolve to the same address after
+    """new_at(0, 1+0, 2) and new_at(0, 1, 2) resolve to the same coordinate after
     const-fold and should be flagged as duplicates.
     """
 
     @gemini.logical.kernel(verify=False)
     def kernel():
-        q0 = new_at(0, 1 + 0, 2)  # folds to (zone=0, word=1, site=2)  # noqa: F841
+        q0 = new_at(0, 1 + 0, 2)  # folds to (zone=0, row=1, col=2)  # noqa: F841
         q1 = new_at(0, 1, 2)  # same resolved address  # noqa: F841
 
     dup_pass = DuplicateAddressValidation()
@@ -118,12 +136,12 @@ def test_duplicate_via_constant_folded_args():
 
 
 def test_distinct_addresses_no_error():
-    """Two new_at calls with distinct (zone, word, site) should produce no errors."""
+    """Two new_at calls with distinct grid coordinates produce no errors."""
 
     @gemini.logical.kernel(verify=False)
     def kernel():
         q0 = new_at(0, 0, 0)  # noqa: F841
-        q1 = new_at(0, 0, 1)  # different site_id  # noqa: F841
+        q1 = new_at(0, 0, 1)  # different column  # noqa: F841
 
     dup_pass = DuplicateAddressValidation()
     _, errors = dup_pass.run(kernel)

@@ -5,10 +5,12 @@ from .stmts import NewAt
 
 
 @lowering.wraps(NewAt)
-def new_at(zone_id: int, word_id: int, site_id: int) -> Qubit:
-    """Allocate a qubit pinned to (zone_id, word_id, site_id).
+def new_at(zone: int, row: int, col: int) -> Qubit:
+    """Allocate a qubit at a ``(zone, row, col)`` grid coordinate.
 
-    All three arguments must be compile-time constants. Use of non-constant
-    values raises a validation error before lowering.
+    ``col`` is the grid x-index and ``row`` the grid y-index within ``zone``.
+    Compilation resolves the coordinate to the architecture's internal
+    ``(word_id, site_id)`` address. All three arguments must be compile-time
+    constants.
     """
     ...

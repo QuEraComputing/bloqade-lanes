@@ -38,7 +38,7 @@ def _compile(kernel):
 
 
 def test_pipeline_catches_non_const_arg():
-    """A new_at whose zone_id is a function argument (not compile-time const)
+    """A new_at whose zone is a function argument (not compile-time const)
     should cause squin_to_move to raise with a 'compile-time constant' message.
     """
 

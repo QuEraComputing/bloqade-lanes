@@ -2,8 +2,7 @@
 
 Registered against the lanes validation interpreter key (``move.address.validation``).
 The impl checks (1) const-foldability of the three SSA int args and (2) that the
-resulting LocationAddress is valid for the architecture (via the existing
-ArchSpec.check_location_group called by ``_ValidationAnalysis.report_location_errors``).
+grid coordinate resolves to a valid location in the active architecture.
 """
 
 from __future__ import annotations
@@ -29,20 +28,25 @@ class _NewAtValidation(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: qubit.stmts.NewAt,
     ):
-        # Lazy import to avoid circular initialisation:
-        # any bloqade.lanes.* import triggers bloqade.lanes.__init__, which
-        # imports bloqade.gemini.device → … → bloqade.gemini (partially
-        # initialised at registration time).
-        from bloqade.lanes.bytecode.encoding import LocationAddress
+        z = _expect_const_int(node.zone, "zone", node, _interp)
+        r = _expect_const_int(node.row, "row", node, _interp)
+        c = _expect_const_int(node.col, "col", node, _interp)
 
-        z = _expect_const_int(node.zone_id, "zone_id", node, _interp)
-        w = _expect_const_int(node.word_id, "word_id", node, _interp)
-        s = _expect_const_int(node.site_id, "site_id", node, _interp)
-
-        if z is None or w is None or s is None:
+        if z is None or r is None or c is None:
             return (EmptyLattice.bottom(),)
 
-        candidate = LocationAddress(word_id=w, site_id=s, zone_id=z)
+        candidate = _interp.arch_spec.location_at(z, r, c)
+        if candidate is None:
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    "Invalid location address: no location at "
+                    f"(zone={z}, row={r}, col={c})",
+                ),
+            )
+            return (EmptyLattice.bottom(),)
+
         _interp.report_location_errors(node, (candidate,))
 
         return (EmptyLattice.bottom(),)
@@ -65,7 +69,7 @@ def _expect_const_int(
             ir.ValidationError(
                 node,
                 f"address argument '{arg_name}' is not a compile-time constant; "
-                "explicit allocation requires constant zone/word/site",
+                "explicit allocation requires constant zone/row/col",
             ),
         )
     return data

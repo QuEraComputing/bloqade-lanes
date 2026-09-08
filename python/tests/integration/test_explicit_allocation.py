@@ -50,7 +50,7 @@ def test_e2e_mixed_pinning():
     @gemini.logical.kernel(aggressive_unroll=True)
     def kernel():
         a = new_at(0, 0, 0)
-        b = new_at(0, 4, 0)
+        b = new_at(0, 1, 0)
         reg = squin.qalloc(2)
         squin.broadcast.cz(ilist.IList([a]), ilist.IList([reg[0]]))
         squin.broadcast.cz(ilist.IList([b]), ilist.IList([reg[1]]))
@@ -159,17 +159,17 @@ def test_e2e_overconstraining_pins_fail():
 
     @gemini.logical.kernel(verify=False)
     def kernel():
-        # 10 pinned qubits at every home site.
+        # 10 pinned qubits at every home grid cell.
         p0 = new_at(0, 0, 0)  # noqa: F841
-        p1 = new_at(0, 2, 0)  # noqa: F841
-        p2 = new_at(0, 4, 0)  # noqa: F841
-        p3 = new_at(0, 6, 0)  # noqa: F841
-        p4 = new_at(0, 8, 0)  # noqa: F841
-        p5 = new_at(0, 10, 0)  # noqa: F841
-        p6 = new_at(0, 12, 0)  # noqa: F841
-        p7 = new_at(0, 14, 0)  # noqa: F841
-        p8 = new_at(0, 16, 0)  # noqa: F841
-        p9 = new_at(0, 18, 0)  # noqa: F841
+        p1 = new_at(0, 0, 2)  # noqa: F841
+        p2 = new_at(0, 1, 0)  # noqa: F841
+        p3 = new_at(0, 1, 2)  # noqa: F841
+        p4 = new_at(0, 2, 0)  # noqa: F841
+        p5 = new_at(0, 2, 2)  # noqa: F841
+        p6 = new_at(0, 3, 0)  # noqa: F841
+        p7 = new_at(0, 3, 2)  # noqa: F841
+        p8 = new_at(0, 4, 0)  # noqa: F841
+        p9 = new_at(0, 4, 2)  # noqa: F841
         # One more qubit with no slot left.
         extra = squin.qalloc(1)  # noqa: F841
 
@@ -181,14 +181,13 @@ def test_e2e_overconstraining_pins_fail():
 
 
 def test_e2e_pin_to_non_home_site_fails():
-    """Pinning a qubit to an address that exists in the arch but is not a home
-    site (e.g. word_id=1 — only even word_ids are home sites) should fail at
+    """Pinning a qubit to a grid cell that is not a home site should fail at
     layout time before the move IR is produced.
     """
 
     @gemini.logical.kernel(verify=False)
     def kernel():
-        q = new_at(0, 1, 0)  # word=1 is not a home site  # noqa: F841
+        q = new_at(0, 0, 1)  # odd columns are CZ-partner sites  # noqa: F841
 
     with pytest.raises(
         (ValueError, ValidationErrorGroup),

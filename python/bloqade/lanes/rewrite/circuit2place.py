@@ -12,6 +12,7 @@ from bloqade import qubit
 from bloqade.gemini.common.dialects import arrange as arrange_dialect
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
 from bloqade.lanes.types import StateType
@@ -38,6 +39,7 @@ class RewriteInitializeToLogicalInitialize(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+@dataclass
 class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
     """Rewrite qubit references in place.LogicalInitialize statements to
     place.NewLogicalQubit allocations.
@@ -46,6 +48,8 @@ class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
     gemini.operations.NewAt (pinned, with location_address built from
     constant-folded args).
     """
+
+    arch_spec: ArchSpec | None = None
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not isinstance(node, place.LogicalInitialize):
@@ -61,7 +65,7 @@ class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
         any_replaced = False
         for alloc_stmt in alloc_stmts:
             if isinstance(alloc_stmt, gemini_common_stmts.NewAt):
-                addr = _resolve_location_from_new_at(alloc_stmt)
+                addr = _resolve_location_from_new_at(alloc_stmt, self.arch_spec)
                 if addr is None:
                     continue  # give up on this NewAt; const-prop didn't run / non-constant args
                 replacement = place.NewLogicalQubit(
@@ -77,18 +81,22 @@ class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
 
 def _resolve_location_from_new_at(
     node: gemini_common_stmts.NewAt,
+    arch_spec: ArchSpec | None,
 ) -> LocationAddress | None:
-    """Read const-prop hints to build a LocationAddress from a NewAt's args.
+    """Resolve a NewAt's constant grid coordinate against ``arch_spec``.
 
-    Returns None if any of the three args isn't const-foldable (defensive;
-    Phase E's eager validator should have caught this before the rewrite ran).
+    Returns None if the architecture is unavailable, an argument is not
+    const-foldable, or the coordinate has no location. The eager validator
+    reports the latter two cases before this rewrite runs in normal pipelines.
     """
-    z = _get_const_int(node.zone_id)
-    w = _get_const_int(node.word_id)
-    s = _get_const_int(node.site_id)
-    if z is None or w is None or s is None:
+    if arch_spec is None:
         return None
-    return LocationAddress(word_id=w, site_id=s, zone_id=z)
+    z = _get_const_int(node.zone)
+    r = _get_const_int(node.row)
+    c = _get_const_int(node.col)
+    if z is None or r is None or c is None:
+        return None
+    return arch_spec.location_at(z, r, c)
 
 
 def _get_const_int(value: ir.SSAValue) -> int | None:
@@ -116,11 +124,14 @@ class CleanUpLogicalInitialize(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+@dataclass
 class InitializeNewQubits(abc.RewriteRule):
     """Rewrite bare allocation statements (qubit.stmts.New or
     gemini.operations.NewAt) to place.NewLogicalQubit with default
     initialization angles (theta=phi=lam=0).
     """
+
+    arch_spec: ArchSpec | None = None
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if isinstance(node, qubit.stmts.New):
@@ -135,7 +146,7 @@ class InitializeNewQubits(abc.RewriteRule):
             return abc.RewriteResult(has_done_something=True)
 
         if isinstance(node, gemini_common_stmts.NewAt):
-            addr = _resolve_location_from_new_at(node)
+            addr = _resolve_location_from_new_at(node, self.arch_spec)
             if addr is None:
                 return abc.RewriteResult()  # give up; non-constant args
             (zero := py.Constant(0.0)).insert_before(node)
@@ -152,6 +163,7 @@ class InitializeNewQubits(abc.RewriteRule):
         return abc.RewriteResult()
 
 
+@dataclass
 class RewriteQubitsToPinnedQubits(abc.RewriteRule):
     """Lower all bare qubit allocations to place.NewPinnedQubit.
 
@@ -162,13 +174,15 @@ class RewriteQubitsToPinnedQubits(abc.RewriteRule):
     InitializeNewQubits instead.
     """
 
+    arch_spec: ArchSpec | None = None
+
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if isinstance(node, qubit.stmts.New):
             node.replace_by(place.NewPinnedQubit())
             return abc.RewriteResult(has_done_something=True)
 
         if isinstance(node, gemini_common_stmts.NewAt):
-            addr = _resolve_location_from_new_at(node)
+            addr = _resolve_location_from_new_at(node, self.arch_spec)
             if addr is None:
                 return abc.RewriteResult()
             node.replace_by(place.NewPinnedQubit(location_address=addr))

@@ -544,7 +544,7 @@ def test_append_measurements_and_annotations_physical_accepts_new_at_allocations
     @kernel(typeinfer=True)
     def pinned_kernel():
         q0 = gemini_qubit.new_at(0, 0, 0)
-        q1 = gemini_qubit.new_at(0, 1, 0)
+        q1 = gemini_qubit.new_at(0, 0, 1)
         squin.broadcast.measure(ilist.IList([q0, q1]))
 
     append_measurements_and_annotations_physical(

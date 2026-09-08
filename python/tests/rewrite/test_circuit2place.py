@@ -10,6 +10,7 @@ from bloqade import qubit
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
+from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
 from bloqade.lanes.rewrite.circuit2place import MergeStaticPlacement  # new
@@ -334,16 +335,19 @@ def test_merge_regions():
     assert_nodes(test_block, expected_block)
 
 
-def _make_const_new_at(zone: int, word: int, site: int) -> gemini_common_stmts.NewAt:
+_ARCH_SPEC = get_arch_spec()
+
+
+def _make_const_new_at(zone: int, row: int, col: int) -> gemini_common_stmts.NewAt:
     """Helper: build a NewAt whose three args carry const-prop hints."""
     c_zone = py.Constant(zone)
-    c_word = py.Constant(word)
-    c_site = py.Constant(site)
+    c_row = py.Constant(row)
+    c_col = py.Constant(col)
     c_zone.result.hints["const"] = const.Value(zone)
-    c_word.result.hints["const"] = const.Value(word)
-    c_site.result.hints["const"] = const.Value(site)
+    c_row.result.hints["const"] = const.Value(row)
+    c_col.result.hints["const"] = const.Value(col)
     new_at = gemini_common_stmts.NewAt(
-        zone_id=c_zone.result, word_id=c_word.result, site_id=c_site.result
+        zone=c_zone.result, row=c_row.result, col=c_col.result
     )
     return new_at
 
@@ -352,9 +356,9 @@ def test_new_at_with_const_args_produces_pinned_new_logical_qubit():
     """NewAt with const args → place.NewLogicalQubit with location_address."""
     block = ir.Block()
 
-    new_at = _make_const_new_at(zone=1, word=2, site=3)
+    new_at = _make_const_new_at(zone=0, row=0, col=4)
     # insert the py.Constant owners into the block first
-    for arg in (new_at.zone_id, new_at.word_id, new_at.site_id):
+    for arg in (new_at.zone, new_at.row, new_at.col):
         block.stmts.append(arg.owner)  # type: ignore[arg-type]
     block.stmts.append(new_at)
 
@@ -366,7 +370,7 @@ def test_new_at_with_const_args_produces_pinned_new_logical_qubit():
     )
     block.stmts.append(init)
 
-    rewrite.Walk(RewriteLogicalInitializeToNewLogical()).rewrite(block)
+    rewrite.Walk(RewriteLogicalInitializeToNewLogical(_ARCH_SPEC)).rewrite(block)
 
     # After the rewrite, new_at should be replaced by a NewLogicalQubit
     stmts = list(block.stmts)
@@ -376,7 +380,7 @@ def test_new_at_with_const_args_produces_pinned_new_logical_qubit():
     ), f"Expected 1 NewLogicalQubit, got {len(new_logical_qubits)}"
 
     nq = new_logical_qubits[0]
-    expected_addr = LocationAddress(word_id=2, site_id=3, zone_id=1)
+    expected_addr = LocationAddress(word_id=0, site_id=1, zone_id=0)
     assert (
         nq.location_address == expected_addr
     ), f"Expected location_address={expected_addr!r}, got {nq.location_address!r}"
@@ -391,8 +395,8 @@ def test_mixed_kernel_new_and_new_at():
     block.stmts.append(plain_new)
 
     # pinned qubit via NewAt
-    new_at = _make_const_new_at(zone=0, word=5, site=7)
-    for arg in (new_at.zone_id, new_at.word_id, new_at.site_id):
+    new_at = _make_const_new_at(zone=0, row=1, col=5)
+    for arg in (new_at.zone, new_at.row, new_at.col):
         block.stmts.append(arg.owner)  # type: ignore[arg-type]
     block.stmts.append(new_at)
 
@@ -404,7 +408,7 @@ def test_mixed_kernel_new_and_new_at():
     )
     block.stmts.append(init)
 
-    rewrite.Walk(RewriteLogicalInitializeToNewLogical()).rewrite(block)
+    rewrite.Walk(RewriteLogicalInitializeToNewLogical(_ARCH_SPEC)).rewrite(block)
 
     stmts = list(block.stmts)
     new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
@@ -417,7 +421,7 @@ def test_mixed_kernel_new_and_new_at():
     assert len(unpinned) == 1, "Expected exactly 1 un-pinned NewLogicalQubit"
     assert len(pinned) == 1, "Expected exactly 1 pinned NewLogicalQubit"
 
-    expected_addr = LocationAddress(word_id=5, site_id=7, zone_id=0)
+    expected_addr = LocationAddress(word_id=5, site_id=1, zone_id=0)
     assert pinned[0].location_address == expected_addr
 
 
@@ -448,17 +452,17 @@ def test_new_at_with_non_const_args_is_noop():
     """NewAt with a non-constant arg is left in place (no crash, no replacement)."""
     block = ir.Block()
 
-    # zone_id is a plain TestValue (no const hint) — simulates a function argument
+    # zone is a plain TestValue (no const hint) — simulates a function argument
     non_const_zone = ir.TestValue()
-    c_word = py.Constant(0)
-    c_site = py.Constant(0)
-    c_word.result.hints["const"] = const.Value(0)
-    c_site.result.hints["const"] = const.Value(0)
-    block.stmts.append(c_word)
-    block.stmts.append(c_site)
+    c_row = py.Constant(0)
+    c_col = py.Constant(0)
+    c_row.result.hints["const"] = const.Value(0)
+    c_col.result.hints["const"] = const.Value(0)
+    block.stmts.append(c_row)
+    block.stmts.append(c_col)
 
     new_at = gemini_common_stmts.NewAt(
-        zone_id=non_const_zone, word_id=c_word.result, site_id=c_site.result
+        zone=non_const_zone, row=c_row.result, col=c_col.result
     )
     block.stmts.append(new_at)
 
@@ -471,7 +475,7 @@ def test_new_at_with_non_const_args_is_noop():
     block.stmts.append(init)
 
     # Should not raise; should not replace the NewAt
-    rewrite.Walk(RewriteLogicalInitializeToNewLogical()).rewrite(block)
+    rewrite.Walk(RewriteLogicalInitializeToNewLogical(_ARCH_SPEC)).rewrite(block)
 
     stmts = list(block.stmts)
     # The NewAt should still be present (not replaced)
@@ -490,12 +494,12 @@ def test_initialize_new_qubits_bare_new_at_with_const_args():
     """Bare NewAt (no enclosing Initialize) with const args → pinned NewLogicalQubit."""
     block = ir.Block()
 
-    new_at = _make_const_new_at(zone=2, word=4, site=6)
-    for arg in (new_at.zone_id, new_at.word_id, new_at.site_id):
+    new_at = _make_const_new_at(zone=0, row=1, col=24)
+    for arg in (new_at.zone, new_at.row, new_at.col):
         block.stmts.append(arg.owner)  # type: ignore[arg-type]
     block.stmts.append(new_at)
 
-    rewrite.Walk(InitializeNewQubits()).rewrite(block)
+    rewrite.Walk(InitializeNewQubits(_ARCH_SPEC)).rewrite(block)
 
     stmts = list(block.stmts)
     new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
@@ -504,7 +508,7 @@ def test_initialize_new_qubits_bare_new_at_with_const_args():
     ), f"Expected 1 NewLogicalQubit, got {len(new_logical_qubits)}"
 
     nq = new_logical_qubits[0]
-    expected_addr = LocationAddress(word_id=4, site_id=6, zone_id=2)
+    expected_addr = LocationAddress(word_id=4, site_id=6, zone_id=0)
     assert (
         nq.location_address == expected_addr
     ), f"Expected location_address={expected_addr!r}, got {nq.location_address!r}"
@@ -536,20 +540,20 @@ def test_initialize_new_qubits_bare_new_at_non_const_is_noop():
     block = ir.Block()
 
     non_const_zone = ir.TestValue()
-    c_word = py.Constant(0)
-    c_site = py.Constant(0)
-    c_word.result.hints["const"] = const.Value(0)
-    c_site.result.hints["const"] = const.Value(0)
-    block.stmts.append(c_word)
-    block.stmts.append(c_site)
+    c_row = py.Constant(0)
+    c_col = py.Constant(0)
+    c_row.result.hints["const"] = const.Value(0)
+    c_col.result.hints["const"] = const.Value(0)
+    block.stmts.append(c_row)
+    block.stmts.append(c_col)
 
     new_at = gemini_common_stmts.NewAt(
-        zone_id=non_const_zone, word_id=c_word.result, site_id=c_site.result
+        zone=non_const_zone, row=c_row.result, col=c_col.result
     )
     block.stmts.append(new_at)
 
     # Should not raise; should not replace the NewAt
-    rewrite.Walk(InitializeNewQubits()).rewrite(block)
+    rewrite.Walk(InitializeNewQubits(_ARCH_SPEC)).rewrite(block)
 
     stmts = list(block.stmts)
     new_ats = [s for s in stmts if isinstance(s, gemini_common_stmts.NewAt)]

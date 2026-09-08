@@ -109,7 +109,7 @@ def test_original_user_report_is_rejected_quickly():
         @gemini.logical.kernel(aggressive_unroll=True, verify=True)
         def main():
             a = new_at(0, 0, 0)
-            b = new_at(0, 8, 0)
+            b = new_at(0, 2, 0)
             main()
             squin.h(a)
             squin.cx(a, b)

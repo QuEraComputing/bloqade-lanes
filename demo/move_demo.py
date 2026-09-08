@@ -34,7 +34,7 @@ labelled by the integer n = 4*x + 2*y + z:
 
 Gadgets implemented
 -------------------
-  * allocator + |000>_L init      : arch.loc-addressed qubit.new_at (each block
+  * allocator + |000>_L init      : grid-addressed qubit.new_at (each block
                                     on a 2x4 grid rectangle) + GHZ preparation.
   * transversal CX (two blocks)   : CX^{(x)8} == logical CX-bar on all 3 logical
                                     pairs (CSS transversality).
@@ -60,7 +60,6 @@ from kirin.dialects import ilist
 from bloqade import squin
 from bloqade.gemini import physical
 from bloqade.gemini.common.dialects import arrange, qubit
-from bloqade.lanes.dialects.arch import loc
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.passes import ASAPPlacePass
 from bloqade.lanes.transform import PhysicalPipeline
@@ -131,8 +130,7 @@ def init_logical_zero(reg: LogicalBlock):
 def eight_three_two_allocator():
     """Build (qalloc, qalloc_slot) for [[8,3,2]] blocks.
 
-    Each canonical slot occupies a 2x4 rectangle of zone-0 grid cells, resolved
-    via ``arch.loc(zone, row, col)`` rather than a single word. Cube vertex
+    Each canonical slot occupies a 2x4 rectangle of zone-0 grid cells. Cube vertex
     n = 4x+2y+z is placed at grid ``(row = base_row + n // 4, col = base_col +
     2 * (n % 4))`` — i.e. the x-bit selects the row and (y, z) the column,
     embedding the cube on a 2-row x 4-col patch. The column stride is 2 because
@@ -141,9 +139,8 @@ def eight_three_two_allocator():
     placement engine room for parallelism; the concrete origin choice is a
     layout convenience, not a correctness concern.
 
-    ``loc`` returns a ``LocationAddress`` whose ``.zone_id`` / ``.word_id`` /
-    ``.site_id`` attribute reads fold to the constants ``qubit.new_at`` needs —
-    exercising the ``loc`` + location-attribute API end to end.
+    ``qubit.new_at`` resolves each grid coordinate against the active
+    architecture during compilation.
     """
     # 2x4-rectangle origins: rows {0,1} for slots 0-3, rows {3,4} for slots 4-7.
     # base_col is spaced by 8 home columns so each block's patch (4 even columns,
@@ -159,8 +156,7 @@ def eight_three_two_allocator():
         def _alloc_vertex(n: int):
             # vertex n -> grid (base_row + n // 4, base_col + 2 * (n % 4)) in
             # zone 0; the column stride of 2 lands on home positions only.
-            addr = loc(0, base_row + n // 4, base_col + 2 * (n % 4))
-            return qubit.new_at(addr.zone_id, addr.word_id, addr.site_id)
+            return qubit.new_at(0, base_row + n // 4, base_col + 2 * (n % 4))
 
         reg = ilist.map(_alloc_vertex, ilist.range(8))
         init_logical_zero(reg)

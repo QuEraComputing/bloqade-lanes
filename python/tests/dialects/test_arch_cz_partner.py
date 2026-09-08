@@ -86,8 +86,7 @@ def test_bind_arch_spec_leaves_already_bound_statement_alone():
 # M") — the same interprocedural ilist.map gap tracked in QuEraComputing/kirin#679
 # and QuEraComputing/bloqade-circuit#830. This is unrelated to cz_partner (a plain
 # capturing-closure ``ilist.map`` kernel trips it too), so verify stays off until
-# that limitation is fixed. ``alloc`` uses a non-capturing closure and verifies
-# cleanly, so it keeps the default ``verify=True``.
+# that limitation is fixed.
 def _build_kernel():
     krn = physical.kernel
 
@@ -98,19 +97,22 @@ def _build_kernel():
 
         return ilist.map(_inner, ilist.range(len(rows)))
 
-    @krn()
-    def alloc(addresses: ilist.IList[LocationAddress, N]):
-        def _inner(addr: LocationAddress):
-            return qubit.new_at(0, addr.word_id, addr.site_id)
+    @krn(verify=False)
+    def alloc(rows: ilist.IList[int, N], cols: ilist.IList[int, N]):
+        def _inner(i: int):
+            return qubit.new_at(0, rows[i], cols[i])
 
-        return ilist.map(_inner, addresses)
+        return ilist.map(_inner, ilist.range(len(rows)))
 
     @krn(aggressive_unroll=True, verify=False)
     def main():
-        static_addrs = locs(ilist.IList([0, 1]), ilist.IList([0, 0]))
-        mobile_addrs = locs(ilist.IList([0, 1]), ilist.IList([2, 2]))
-        static = alloc(static_addrs)
-        mobile = alloc(mobile_addrs)
+        rows = ilist.IList([0, 1])
+        static_cols = ilist.IList([0, 0])
+        mobile_cols = ilist.IList([2, 2])
+        static_addrs = locs(rows, static_cols)
+        mobile_addrs = locs(rows, mobile_cols)
+        static = alloc(rows, static_cols)
+        mobile = alloc(rows, mobile_cols)
 
         # Stage mobile onto static's CZ partner sites via cz_partner — no
         # hardcoded partner words. Already-paired short-circuit then makes the
@@ -151,19 +153,21 @@ def test_cz_partner_matches_hardcoded_partner_words():
 
         return ilist.map(_inner, ilist.range(len(rows)))
 
-    @krn()
-    def alloc(addresses: ilist.IList[LocationAddress, N]):
-        def _inner(addr: LocationAddress):
-            return qubit.new_at(0, addr.word_id, addr.site_id)
+    @krn(verify=False)
+    def alloc(rows: ilist.IList[int, N], cols: ilist.IList[int, N]):
+        def _inner(i: int):
+            return qubit.new_at(0, rows[i], cols[i])
 
-        return ilist.map(_inner, addresses)
+        return ilist.map(_inner, ilist.range(len(rows)))
 
     @krn(aggressive_unroll=True, verify=False)
     def with_partner():
-        static_addrs = locs(ilist.IList([0, 1]), ilist.IList([0, 0]))
-        mobile_addrs = locs(ilist.IList([0, 1]), ilist.IList([2, 2]))
-        static = alloc(static_addrs)
-        mobile = alloc(mobile_addrs)
+        rows = ilist.IList([0, 1])
+        static_cols = ilist.IList([0, 0])
+        mobile_cols = ilist.IList([2, 2])
+        static_addrs = locs(rows, static_cols)
+        static = alloc(rows, static_cols)
+        mobile = alloc(rows, mobile_cols)
 
         def _partner(i: int):
             return arch.cz_partner(static_addrs[i])
@@ -173,11 +177,12 @@ def test_cz_partner_matches_hardcoded_partner_words():
 
     @krn(aggressive_unroll=True, verify=False)
     def hardcoded():
-        static_addrs = locs(ilist.IList([0, 1]), ilist.IList([0, 0]))
-        mobile_addrs = locs(ilist.IList([0, 1]), ilist.IList([2, 2]))
-        partner_addrs = locs(ilist.IList([0, 1]), ilist.IList([1, 1]))
-        static = alloc(static_addrs)
-        mobile = alloc(mobile_addrs)
+        rows = ilist.IList([0, 1])
+        static_cols = ilist.IList([0, 0])
+        mobile_cols = ilist.IList([2, 2])
+        partner_addrs = locs(rows, ilist.IList([1, 1]))
+        static = alloc(rows, static_cols)
+        mobile = alloc(rows, mobile_cols)
         arrange.move_to(mobile, partner_addrs)
         squin.broadcast.cx(mobile, static)
 

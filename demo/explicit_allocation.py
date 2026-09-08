@@ -1,6 +1,6 @@
 """Demo: explicit qubit allocation.
 
-Pin two logical qubits to known physical addresses with
+Pin two logical qubits to known physical grid coordinates with
 ``gemini.common.new_at`` and let the layout heuristic place the rest. The
 compiled move IR's ``move.Fill`` carries the requested addresses for the
 pinned qubits and heuristic-chosen addresses for the un-pinned qubits.
@@ -20,9 +20,9 @@ from bloqade.lanes.transform import LogicalNativeToPlace, PlaceToMove
 
 @gemini_logical.kernel(aggressive_unroll=True)
 def main():
-    # Pinned qubits at explicit physical addresses.
+    # Pinned qubits at explicit (zone, row, col) grid coordinates.
     a = new_at(0, 0, 0)
-    b = new_at(0, 4, 0)
+    b = new_at(0, 1, 0)
     # Un-pinned qubits — the layout heuristic chooses their home sites.
     reg = squin.qalloc(2)
     # CZ between pinned and un-pinned qubits.

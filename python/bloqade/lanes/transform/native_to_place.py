@@ -162,7 +162,9 @@ class NativeToPlace(NativeToPlaceBase):
     """
 
     def _lower_qubits(self, out: Method) -> None:
-        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
+        rewrite.Walk(circuit2place.InitializeNewQubits(self.arch_spec)).rewrite(
+            out.code
+        )
 
 
 @dataclass
@@ -174,7 +176,9 @@ class PhysicalNativeToPlace(NativeToPlaceBase):
         suite.validate(out).raise_if_invalid()
 
     def _lower_qubits(self, out: Method) -> None:
-        rewrite.Walk(circuit2place.RewriteQubitsToPinnedQubits()).rewrite(out.code)
+        rewrite.Walk(circuit2place.RewriteQubitsToPinnedQubits(self.arch_spec)).rewrite(
+            out.code
+        )
         rewrite.Walk(circuit2place.RewritePhysicalMeasure()).rewrite(out.code)
 
 
@@ -219,8 +223,10 @@ class LogicalNativeToPlace(NativeToPlaceBase):
         rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
             out.code
         )
-        rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
+        rewrite.Walk(
+            circuit2place.RewriteLogicalInitializeToNewLogical(self.arch_spec)
+        ).rewrite(out.code)
+        rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+        rewrite.Walk(circuit2place.InitializeNewQubits(self.arch_spec)).rewrite(
             out.code
         )
-        rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
-        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)

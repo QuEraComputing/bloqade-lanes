@@ -21,8 +21,9 @@ def qalloc_at(
 ) -> ilist.IList[Qubit, N]:
     """Allocate logical qubits at optional linear logical positions.
 
-    An integer ``position`` pins the qubit to zone 0 at word ``2 * position``;
-    ``None`` allocates an unpinned qubit for the layout heuristic to place.
+    An integer ``position`` pins the qubit to the corresponding home grid cell
+    in zone 0 (two home columns per row); ``None`` allocates an unpinned qubit
+    for the layout heuristic to place.
     The input must be statically known, and the calling kernel must set
     ``aggressive_unroll=True``, so the map can lower into individual
     allocations.
@@ -34,7 +35,7 @@ def qalloc_at(
         if position is None:
             q = qubit.new()
         else:
-            q = new_at(0, position * 2, 0)
+            q = new_at(0, position // 2, 2 * (position % 2))
         return q
 
     return ilist.map(position_to_new_at, positions)

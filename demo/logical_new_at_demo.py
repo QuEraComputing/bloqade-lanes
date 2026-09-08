@@ -224,11 +224,11 @@ default_alloc_task = GeminiLogicalSimulator().task(default_allocation)
 # %%
 @gemini_logical.kernel(aggressive_unroll=True)
 def explicit_allocation():
-    # Pinned qubits at explicit physical addresses.
+    # Pinned qubits at explicit (zone, row, col) grid coordinates.
     a = new_at(0, 0, 0)
-    b = new_at(0, 8, 0)
-    c = new_at(0, 4, 0)
-    d = new_at(0, 12, 0)
+    b = new_at(0, 2, 0)
+    c = new_at(0, 1, 0)
+    d = new_at(0, 3, 0)
     squin.broadcast.h(ilist.IList([a, b]))
     squin.broadcast.cx(ilist.IList([a, b]), ilist.IList([c, d]))
     gemini_logical.terminal_measure(ilist.IList([a, b, c, d]))

@@ -1,9 +1,9 @@
 """Cross-statement validation: each ``NewAt``'s address must be unique.
 
 Implemented as a Forward dataflow analysis with a method-table impl for
-``stmts.NewAt``. The impl pulls each address arg via ``expect_const``, builds a
-``LocationAddress``, and accumulates a seen-map on the interpreter. A second
-NewAt pinning the same address records a ``ValidationError``.
+``stmts.NewAt``. The impl pulls each coordinate via ``expect_const`` and
+accumulates a seen-map on the interpreter. A second NewAt pinning the same
+coordinate records a ``ValidationError``.
 
 Per-statement validation (const-foldability + range) is the precondition;
 when an arg is non-const, ``expect_const`` raises ``InterpreterError``. The
@@ -36,23 +36,21 @@ class _NewAtDuplicateMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: qubit.stmts.NewAt,
     ):
-        from bloqade.lanes.bytecode.encoding import LocationAddress
+        z = _interp.expect_const(node.zone, int)
+        r = _interp.expect_const(node.row, int)
+        c = _interp.expect_const(node.col, int)
 
-        z = _interp.expect_const(node.zone_id, int)
-        w = _interp.expect_const(node.word_id, int)
-        s = _interp.expect_const(node.site_id, int)
-
-        addr = LocationAddress(word_id=w, site_id=s, zone_id=z)
-        if addr in _interp.seen:
+        coordinate = (z, r, c)
+        if coordinate in _interp.seen:
             _interp.add_validation_error(
                 node,
                 ir.ValidationError(
                     node,
-                    f"address (zone={z}, word={w}, site={s}) is pinned by two "
+                    f"coordinate (zone={z}, row={r}, col={c}) is pinned by two "
                     f"operations.new_at calls",
                 ),
             )
         else:
-            _interp.seen[addr] = node
+            _interp.seen[coordinate] = node
 
         return (EmptyLattice.bottom(),)

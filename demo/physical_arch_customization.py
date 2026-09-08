@@ -428,11 +428,13 @@ def steane_slot_allocator():
     # Word ID's 2, 6, 10, 14, 18 are on the "right side".
     slot_words = ilist.IList([0, 4, 8, 12, 16, 2, 6, 10, 14, 18])
 
-    # Creates "slots" to allocate logical qubits. Logical qubits are all allocated within one word
-    # for this particular gadget.
+    # Creates grid-coordinate "slots" for logical qubits. Each logical qubit
+    # occupies seven sites that belong to one internal word.
     slots = IList(
         [
-            IList([(0, word_id, site_id) for site_id in range(7)])
+            IList(
+                [(0, word_id // 4, word_id % 4 + 4 * site_id) for site_id in range(7)]
+            )
             for word_id in slot_words
         ]
     )
