@@ -73,9 +73,23 @@ def write_csv(rows: list[BenchmarkRow], output_path: Path) -> None:
             )
 
 
+EXTRA_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("h_root", "h_root_sum"),
+    ("cost", "cost_sum"),
+    ("gap", "gap_pct"),
+    ("certs", "certificates"),
+    ("proven", "proven_solves"),
+)
+
+
 def render_console_table(rows: list[BenchmarkRow]) -> str:
-    """Render a compact plain-text comparison table."""
+    """Render a compact plain-text comparison table.
+
+    Rows carrying a root-bound summary in ``extra`` add the
+    ``EXTRA_COLUMNS`` block; a run without any renders exactly as before.
+    """
     sorted_rows = sort_rows(rows)
+    with_extra = any(row.extra for row in sorted_rows)
     headers = (
         "case_id",
         "strategy_id",
@@ -85,7 +99,7 @@ def render_console_table(rows: list[BenchmarkRow]) -> str:
         "move_lanes",
         "fidelity",
         "nodes_explored",
-    )
+    ) + (tuple(header for header, _ in EXTRA_COLUMNS) if with_extra else ())
     table_rows = [
         (
             row.case_id,
@@ -96,6 +110,11 @@ def render_console_table(rows: list[BenchmarkRow]) -> str:
             _fmt_int(row.move_count_lanes),
             _fmt_fidelity(row.estimated_fidelity),
             _fmt_int(row.nodes_explored),
+        )
+        + (
+            tuple(_fmt_extra(row.extra.get(key)) for _, key in EXTRA_COLUMNS)
+            if with_extra
+            else ()
         )
         for row in sorted_rows
     ]
@@ -110,6 +129,12 @@ def render_console_table(rows: list[BenchmarkRow]) -> str:
     lines = [fmt_row(headers), "-+-".join("-" * width for width in widths)]
     lines.extend(fmt_row(row) for row in table_rows)
     return "\n".join(lines)
+
+
+def _fmt_extra(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    return str(value)
 
 
 def _fmt_float(value: float | None) -> str:
