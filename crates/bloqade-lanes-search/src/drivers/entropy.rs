@@ -3003,18 +3003,22 @@ where
     bound_stats.incumbent_cost = best.map(|id| graph.g_score(id));
     // A certificate is the one exit that proves something: `h(root)` reached
     // the incumbent, so no legal plan is cheaper. Then `Stopped` for the goal
-    // quota. A stalled generator is exhaustion without a proof, and is
-    // reported as such even if the fallback's expansions push the count up to
-    // the budget — the loop ended on the generator, not on the budget.
-    // Otherwise the shared loop-exit rule on the final expansion count (the
-    // fallback's expansions included, which is what the status inference this
-    // replaces looked at).
+    // quota. Otherwise the shared loop-exit rule on the final expansion count
+    // (the fallback's expansions included, which is what the status inference
+    // this replaces looked at).
+    //
+    // A stalled generator needs no arm of its own. `generator_exhausted` can
+    // only be set on an iteration where the budget check at the top of the
+    // loop did *not* fire, so `nodes_expanded < max_expansions` there, and the
+    // shared rule reports `Exhausted { proof: false }` — which is exactly
+    // right, since a sampled generator running dry proves nothing. Only the
+    // fallback could push the count over the budget afterwards, and it runs
+    // just when no goal was found, which is when it has no plan to add
+    // expansions for.
     let termination = if certified {
         Termination::Exhausted { proof: true }
     } else if goal_quota_reached {
         Termination::Stopped
-    } else if generator_exhausted {
-        Termination::Exhausted { proof: false }
     } else {
         SearchResult::loop_exit_termination(nodes_expanded, max_expansions)
     };
@@ -4555,6 +4559,11 @@ mod tests {
             "the root kept grinding: {} trace steps",
             trace.steps.len()
         );
+        // A generator running dry proves nothing — it is the sampled candidate
+        // list that ran out, not the search space. So this exit reports
+        // exhaustion *without* a proof, and must not be confused with the
+        // budget exit it replaces or with the root certificate.
+        assert_eq!(result.termination, Termination::Exhausted { proof: false });
     }
 
     /// Run one instance under the weighted-distance bound, with and without

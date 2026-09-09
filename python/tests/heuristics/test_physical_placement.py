@@ -658,3 +658,110 @@ def test_bound_stats_records_zero_counters():
     strategy = _strategy()
     strategy._accumulate_bound_stats({"cuts_by_g": 0, "cuts_by_h": 4})
     assert strategy.rust_bound_stats_total == {"cuts_by_g": 0, "cuts_by_h": 4}
+
+
+def _bounded_strategy() -> PhysicalPlacementStrategy:
+    return PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+
+
+def test_accumulate_bound_stats_sums_root_bound_against_cost():
+    """The four root-bound totals accumulate over the same set of solves.
+
+    `optimality_gap` is reported only when `h(root)` and the incumbent are both
+    finite and a plan was found, which is exactly when a bound is comparable to
+    a cost. So `measured_solves` must move in lockstep with the two sums, or
+    their ratio stops being a gap.
+    """
+    strategy = _bounded_strategy()
+    strategy._accumulate_bound_stats(
+        {"optimality_gap": 0.2, "root_lower_bound": 8.0, "incumbent_cost": 10.0}
+    )
+    strategy._accumulate_bound_stats(
+        {"optimality_gap": 0.0, "root_lower_bound": 5.0, "incumbent_cost": 5.0}
+    )
+    totals = strategy._bound_stats_total
+    assert totals["measured_solves"] == 2
+    assert totals["root_lower_bound_sum"] == pytest.approx(13.0)
+    assert totals["incumbent_cost_sum"] == pytest.approx(15.0)
+    # Only the second solve reached its bound.
+    assert totals["certificates"] == 1
+
+
+def test_accumulate_bound_stats_counts_only_a_vanishing_gap_as_a_certificate():
+    """A certificate is exact equality, not "close".
+
+    A gap of 1e-6 means the plan costs more than the proven floor, so the
+    search cannot claim optimality; only the floating-point tolerance is
+    forgiven.
+    """
+    strategy = _bounded_strategy()
+    for gap in (1e-6, 0.5, -1e-6):
+        strategy._accumulate_bound_stats(
+            {"optimality_gap": gap, "root_lower_bound": 1.0, "incumbent_cost": 2.0}
+        )
+    assert strategy._bound_stats_total["measured_solves"] == 3
+    assert strategy._bound_stats_total.get("certificates", 0) == 0
+
+    strategy._accumulate_bound_stats(
+        {"optimality_gap": -1e-12, "root_lower_bound": 2.0, "incumbent_cost": 2.0}
+    )
+    assert strategy._bound_stats_total["certificates"] == 1
+
+
+def test_accumulate_bound_stats_skips_the_sums_without_a_gap():
+    """An unbounded solve reports no gap, and must not be counted as a solve
+    the bound measured -- otherwise the denominator of `certs` grows for rows
+    that never had a bound at all."""
+    strategy = _bounded_strategy()
+    strategy._accumulate_bound_stats({"cuts_by_g": 3})
+    assert "measured_solves" not in strategy._bound_stats_total
+    assert strategy._bound_stats_total["cuts_by_g"] == 3
+
+
+def test_rust_proven_total_starts_at_zero_and_is_exposed():
+    """The counter is what the harness reports as `proven`, so it needs a
+    reader as well as a writer."""
+    strategy = _bounded_strategy()
+    assert strategy.rust_proven_total == 0
+    strategy._rust_proven_total += 2
+    assert strategy.rust_proven_total == 2
+
+
+def test_bound_terminates_is_forwarded_to_the_native_entropy_options(monkeypatch):
+    """`RustPlacementTraversal.bound_terminates` must reach the native options.
+
+    `MoveSearch` does not read its entropy options back out, and the
+    `cz_placements` path solves CZ pairs against a loose goal where the bound
+    is inert by design -- so there is no behavioural handle on this flag from
+    Python. Recording the constructor call is what is left, and it is the link
+    worth pinning: the flag defaults to the opposite of the interesting value,
+    so a dropped pass-through silently disables the A/B knob.
+    """
+    from bloqade.lanes.heuristics.physical import movement
+
+    seen: list[bool] = []
+    real = movement._native.EntropyOptions
+
+    def _recording(*args, **kwargs):
+        seen.append(kwargs["bound_terminates"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(movement._native, "EntropyOptions", _recording)
+
+    for flag in (False, True):
+        movement._move_search_from_traversal(
+            RustPlacementTraversal(bound_terminates=flag),
+            collect_entropy_trace=False,
+        )
+    assert seen == [False, True]
+
+
+def test_native_entropy_options_round_trip_bound_terminates():
+    """The native default is on, and an explicit `False` survives the
+    constructor -- the half of the thread that lives in Rust."""
+    from bloqade.lanes.bytecode import _native
+
+    assert _native.EntropyOptions().bound_terminates is True
+    assert _native.EntropyOptions(bound_terminates=False).bound_terminates is False
