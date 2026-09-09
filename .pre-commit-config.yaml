@@ -21,6 +21,12 @@ repos:
       - id: ruff
   - repo: local
     hooks:
+      - id: arch-interactive-js-check
+        name: arch-interactive-js-check
+        entry: node --check python/bloqade/lanes/visualize/_arch_interactive.js
+        language: system
+        files: ^python/bloqade/lanes/visualize/_arch_interactive\.js$
+        pass_filenames: false
       - id: pyright-check
         name: pyright-check
         entry: uv run --locked pyright python

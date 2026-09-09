@@ -66,8 +66,48 @@ def _arch_interactive_script() -> str:
     )
 
 
+def _is_jupyter_kernel(shell: Any) -> bool:
+    """Return whether ``shell`` is a ZMQ-backed IPython kernel.
+
+    Prefer the real class check when ipykernel is installed.  The MRO-name
+    fallback keeps this helper usable with lightweight test doubles and with
+    compatible hosted kernels that do not expose ipykernel as an importable
+    dependency.
+    """
+    if shell is None:
+        return False
+
+    try:
+        from ipykernel.zmqshell import ZMQInteractiveShell
+    except ImportError:  # pragma: no cover - depends on optional notebook stack
+        pass
+    else:
+        if isinstance(shell, ZMQInteractiveShell):
+            return True
+
+    return any(cls.__name__ == "ZMQInteractiveShell" for cls in type(shell).__mro__)
+
+
 class _InteractiveArchFigureMixin:
     """Install architecture interactions in every HTML display route."""
+
+    @staticmethod
+    def _interactive_post_scripts(
+        post_script: str | Sequence[str] | None,
+    ) -> list[str]:
+        scripts = [_arch_interactive_script()]
+        if isinstance(post_script, str):
+            scripts.append(post_script)
+        elif post_script is not None:
+            scripts.extend(post_script)
+        return scripts
+
+    @staticmethod
+    def _interactive_config(config: dict[str, Any] | None) -> dict[str, Any]:
+        merged = dict(config or {})
+        merged.setdefault("scrollZoom", True)
+        merged.setdefault("responsive", True)
+        return merged
 
     def to_html(
         self,
@@ -75,14 +115,8 @@ class _InteractiveArchFigureMixin:
         post_script: str | Sequence[str] | None = None,
         **kwargs: Any,
     ) -> str:
-        scripts = [_arch_interactive_script()]
-        if isinstance(post_script, str):
-            scripts.append(post_script)
-        elif post_script is not None:
-            scripts.extend(post_script)
-        config = dict(kwargs.pop("config", None) or {})
-        config.setdefault("scrollZoom", True)
-        config.setdefault("responsive", True)
+        scripts = self._interactive_post_scripts(post_script)
+        config = self._interactive_config(kwargs.pop("config", None))
         return cast(
             str,
             cast(Any, super()).to_html(
@@ -91,6 +125,29 @@ class _InteractiveArchFigureMixin:
                 config=config,
                 **kwargs,
             ),
+        )
+
+    def write_html(
+        self,
+        *args: Any,
+        post_script: str | Sequence[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Write a self-contained interactive HTML document.
+
+        Plotly's base ``Figure.write_html`` delegates directly to
+        :func:`plotly.io.write_html` and therefore bypasses ``to_html``.
+        Forward the architecture controller explicitly so saved figures retain
+        the same selectors and hover behavior as notebook displays.
+        """
+        from plotly.io import write_html
+
+        write_html(
+            self,
+            *args,
+            post_script=self._interactive_post_scripts(post_script),
+            config=self._interactive_config(kwargs.pop("config", None)),
+            **kwargs,
         )
 
     def _repr_mimebundle_(
@@ -112,7 +169,7 @@ class _InteractiveArchFigureMixin:
         return {
             "text/html": self.to_html(
                 full_html=False,
-                include_plotlyjs="cdn",
+                include_plotlyjs=True,
                 validate=validate,
             )
         }
@@ -129,7 +186,7 @@ class _InteractiveArchFigureMixin:
             HTML(
                 self.to_html(
                     full_html=False,
-                    include_plotlyjs="cdn",
+                    include_plotlyjs=True,
                 )
             )
         )
@@ -143,40 +200,57 @@ class _InteractiveArchFigureMixin:
         else:
             shell = get_ipython()
 
-        renderer = kwargs.get("renderer")
+        if len(args) > 1 or (args and "renderer" in kwargs):
+            raise TypeError("show() accepts at most one renderer argument")
+
+        renderer = args[0] if args else kwargs.get("renderer")
         html_option_names = {
             "animation_opts",
             "auto_play",
             "config",
+            "height",
             "renderer",
             "validate",
+            "width",
         }
         html_options = {
             name: kwargs[name]
             for name in ("animation_opts", "auto_play")
             if name in kwargs
         }
-        notebook_renderers = {
-            None,
-            "jupyterlab",
-            "notebook",
-            "notebook_connected",
-            "plotly_mimetype",
-        }
-        if (
-            shell is not None
-            and shell.__class__.__name__ == "ZMQInteractiveShell"
-            and not args
-            and renderer in notebook_renderers
-            and set(kwargs) <= html_option_names
-        ):
+        if "width" in kwargs:
+            html_options["default_width"] = kwargs["width"]
+        if "height" in kwargs:
+            html_options["default_height"] = kwargs["height"]
+
+        static_renderers = {"png", "jpeg", "jpg", "webp", "svg", "pdf", "json"}
+        is_jupyter_kernel = _is_jupyter_kernel(shell)
+        notebook_requested = is_jupyter_kernel and renderer not in (
+            "browser",
+            *static_renderers,
+        )
+        browser_requested = renderer == "browser"
+        browser_is_default = renderer is None and not is_jupyter_kernel
+        custom_html_requested = (
+            notebook_requested or browser_requested or browser_is_default
+        )
+        unsupported_options = set(kwargs) - html_option_names
+        if custom_html_requested and unsupported_options:
+            unsupported = ", ".join(sorted(unsupported_options))
+            raise TypeError(
+                "Interactive architecture controls cannot be preserved for "
+                f"show() option(s): {unsupported}. Use figure.to_html() or "
+                "figure.write_html() with the corresponding HTML option."
+            )
+
+        if notebook_requested:
             from IPython.display import HTML, display
 
             display(
                 HTML(
                     self.to_html(
                         full_html=False,
-                        include_plotlyjs="cdn",
+                        include_plotlyjs=True,
                         config=kwargs.get("config"),
                         validate=kwargs.get("validate", True),
                         **html_options,
@@ -185,15 +259,7 @@ class _InteractiveArchFigureMixin:
             )
             return None
 
-        browser_requested = renderer == "browser"
-        browser_is_default = renderer is None and (
-            shell is None or shell.__class__.__name__ != "ZMQInteractiveShell"
-        )
-        if (
-            not args
-            and (browser_requested or browser_is_default)
-            and set(kwargs) <= html_option_names
-        ):
+        if browser_requested or browser_is_default:
             # Plotly's browser renderer serializes the figure dictionary
             # directly, bypassing this class's ``to_html`` override and its
             # architecture-specific post-script. Open that HTML explicitly so
@@ -565,7 +631,12 @@ class ArchVisualizer:
         Returns:
             A ``plotly.graph_objects.Figure``. In a notebook, return it from a
             cell or call ``figure.show(config={"scrollZoom": True})`` to also
-            enable scroll-wheel zoom.
+            enable scroll-wheel zoom. Export interactive figures with the
+            returned figure's ``to_html`` or ``write_html`` methods. Calling
+            the module-level ``plotly.io.to_html(figure)`` or
+            ``plotly.io.write_html(figure, ...)`` bypasses the custom figure
+            methods and therefore cannot install the architecture interaction
+            controller.
 
         Raises:
             ImportError: If the ``visualization`` optional dependency group is
@@ -925,8 +996,8 @@ class ArchVisualizer:
                     "text": (
                         "Use the bus multiselectors at right to show or hide "
                         f"individual paths; {site_lane_preview} a site to "
-                        "preview every "
-                        "available lane."
+                        "preview every available lane. Export with the "
+                        "figure's write_html() method to retain these controls."
                     ),
                     "showarrow": False,
                     "xref": "paper",

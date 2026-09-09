@@ -7,6 +7,7 @@ Covers the :class:`ArchVisualizer` class and verifies that the legacy
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -334,6 +335,7 @@ def test_plot_interactive_notebook_representation_keeps_interactions(
     assert set(mimebundle) == {"text/html"}
     assert "data-arch-visualizer-bus-selectors" in mimebundle["text/html"]
     assert "plotly_hover" in mimebundle["text/html"]
+    assert 'src="https://cdn.plot.ly' not in mimebundle["text/html"]
 
 
 def test_plot_interactive_ipython_display_keeps_interactions(
@@ -365,6 +367,35 @@ def test_plot_interactive_show_keeps_interactions_in_jupyter(
     assert "data-arch-visualizer-bus-selectors" in html
     assert "data-arch-visualizer-site-lane" in html
     assert '"scrollZoom": false' in html
+
+
+def test_plot_interactive_show_recognizes_derived_jupyter_shell(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    zmq_base = type("ZMQInteractiveShell", (), {})
+    hosted_shell = type("HostedKernelShell", (zmq_base,), {})()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=hosted_shell),
+        patch("IPython.display.display") as display,
+    ):
+        figure.show()
+
+    html = display.call_args.args[0].data
+    assert "data-arch-visualizer-bus-selectors" in html
+
+
+def test_plot_interactive_show_rejects_unsupported_html_options(
+    small_arch_spec: ArchSpec,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=None),
+        pytest.raises(TypeError, match="cannot be preserved.*unsupported_option"),
+    ):
+        figure.show(renderer="browser", unsupported_option=True)
 
 
 def test_plot_interactive_show_keeps_interactions_in_browser(
@@ -435,6 +466,26 @@ def test_plot_interactive_html_preserves_caller_config(
     assert '"scrollZoom": false' in html
     assert '"responsive": true' in html
     assert '"displayModeBar": false' in html
+
+
+def test_plot_interactive_write_html_keeps_interactions(
+    small_arch_spec: ArchSpec,
+    tmp_path: Path,
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    output = tmp_path / "architecture.html"
+
+    figure.write_html(
+        output,
+        include_plotlyjs=True,
+        config={"scrollZoom": False},
+    )
+
+    html = output.read_text(encoding="utf-8")
+    assert "data-arch-visualizer-bus-selectors" in html
+    assert "data-arch-visualizer-site-lane" in html
+    assert '"scrollZoom": false' in html
+    assert 'src="https://cdn.plot.ly' not in html
 
 
 def test_plot_interactive_site_identity_toggle(
