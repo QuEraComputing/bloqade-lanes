@@ -17,7 +17,6 @@ use std::collections::HashSet;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
-use crate::drivers::result::Termination;
 use crate::feasibility::graph::{LaneGraph, VertexId};
 use crate::primitives::config::{
     Config, ConfigError, validate_initial_placement, validate_target_assignment,
@@ -86,10 +85,10 @@ pub fn solve_push_rotate_with(
     // that cannot be expressed, so report it as unsolvable rather than
     // erroring.
     let Some(initial_v) = to_vertices(&graph, initial) else {
-        return Ok(SolveResult::unsolvable(root));
+        return Ok(SolveResult::proven_unsolvable(root));
     };
     let Some(target_v) = to_vertices(&graph, target) else {
-        return Ok(SolveResult::unsolvable(root));
+        return Ok(SolveResult::proven_unsolvable(root));
     };
 
     let plan = match plan_with(index, &graph, &initial_v, &target_v, budget, heuristics) {
@@ -113,19 +112,12 @@ pub fn solve_push_rotate_with(
                 | PlanError::Stuck { .. }
                 | PlanError::BudgetExceeded { .. } => SolveStatus::BudgetExceeded,
             };
-            let mut result = SolveResult::unsolved(status, root, 0, 0);
-            // `SolveResult::unsolved` infers `Exhausted { proof: false }` from
-            // the status, which is right for a search driver whose frontier
-            // merely drained. Here `Unsolvable` is the planner's Theorem 1
-            // verdict, so it carries a proof and must say so — otherwise
-            // `proven` reads `false` for the one verdict in this crate that is
-            // documented as a proof, and the fallback promotion above loses the
-            // very property it selects on.
-            if status == SolveStatus::Unsolvable {
-                result.termination = Termination::Exhausted { proof: true };
-                result.proven = true;
-            }
-            return Ok(result);
+            // `Unsolvable` here is the planner's Theorem 1 verdict, so it
+            // carries a proof; `BudgetExceeded` is a give-up and does not.
+            return Ok(match status {
+                SolveStatus::Unsolvable => SolveResult::proven_unsolvable(root),
+                _ => SolveResult::unsolved(status, root, 0, 0),
+            });
         }
     };
 

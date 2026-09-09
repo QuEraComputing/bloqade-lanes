@@ -3054,6 +3054,14 @@ where
         Termination::Exhausted { proof: true }
     } else if goal_quota_reached {
         Termination::Stopped
+    } else if budget_exhausted {
+        // The internal cap counts as a budget, not as exhaustion. It fires on
+        // `iterations >= hard_limit * 2` as well as on the expansion count, and
+        // `hard_limit` falls back to a function of the arch when the caller
+        // passes no `max_expansions` at all — so the shared rule below, which
+        // sees only the *external* limit, would call a safety-cap give-up an
+        // exhausted space. Nothing was drained in either case.
+        Termination::Budget
     } else {
         SearchResult::loop_exit_termination(nodes_expanded, max_expansions)
     };
@@ -4675,6 +4683,60 @@ mod tests {
         assert_eq!(
             stopped.bound_stats.root_lower_bound.to_bits(),
             cost(&stopped).to_bits()
+        );
+    }
+
+    /// The internal safety cap is a give-up, not an exhausted space.
+    ///
+    /// `hard_limit` fires on `iterations >= hard_limit * 2` as well as on the
+    /// expansion count, and falls back to a function of the arch when the
+    /// caller passes no `max_expansions` — so the shared loop-exit rule, which
+    /// sees only the external limit, reported a capped run as `Exhausted`.
+    /// Nothing was drained: the instance below has no plan at all (three atoms
+    /// on one path asked to reverse, and order along a path is invariant), so
+    /// the run can only ever end on a limit.
+    #[test]
+    fn the_internal_iteration_cap_reports_a_budget() {
+        let index = make_index();
+        let targets: Vec<(u32, u64)> = vec![
+            (0, loc(1, 0).encode()),
+            (1, loc(0, 0).encode()),
+            (2, loc(0, 5).encode()),
+        ];
+        let dist_table =
+            DistanceTable::new(&targets.iter().map(|&(_, t)| t).collect::<Vec<_>>(), &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&targets);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &targets,
+            cz_pairs: None,
+            capacity: None,
+        };
+        let params = EntropyParams::default();
+        let mut trace = EntropyTrace::for_params(&params);
+        let result = entropy_search_with_bound(
+            Config::new([(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 5))]).unwrap(),
+            &goal,
+            &params,
+            &ctx,
+            // Small enough that the iteration cap (2x this) bites before the
+            // entropy ramp lets the generator declare itself stuck.
+            Some(2),
+            None,
+            0,
+            &mut trace,
+            &UniformCost,
+            &crate::bounds::WeightedDistanceBound::new(&UniformCost, &targets, &index, &blocked),
+        );
+
+        assert!(result.goal.is_none(), "the fixture must have no plan");
+        assert_eq!(
+            result.termination,
+            Termination::Budget,
+            "a run stopped by a limit must not claim it drained the space"
         );
     }
 

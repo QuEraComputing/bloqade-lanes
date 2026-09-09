@@ -174,6 +174,23 @@ impl SolveResult {
     pub fn unsolvable(root_config: Config) -> Self {
         Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
     }
+
+    /// [`SolveStatus::Unsolvable`] as a **proof**: no plan exists, and the
+    /// producer knows it rather than having merely run out of frontier.
+    ///
+    /// [`Self::unsolved`] infers `Exhausted { proof: false }` from the status,
+    /// which is what a search driver wants — its `Unsolvable` says the
+    /// heuristic gave up. A complete method needs the opposite, and every one
+    /// of its proof-bearing exits must agree, or `proven` becomes a property
+    /// of which internal path happened to fire. Hence one constructor rather
+    /// than a flag set at each site.
+    pub fn proven_unsolvable(root_config: Config) -> Self {
+        Self {
+            proven: true,
+            termination: Termination::Exhausted { proof: true },
+            ..Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
+        }
+    }
 }
 
 // ── Multi-candidate solve ──
@@ -221,6 +238,28 @@ mod tests {
     use crate::search::target_solver::solve_with_engine;
     use crate::test_utils::{example_arch_json, loc};
 
+    /// `proven` is documented as exactly `Exhausted { proof: true }`, and the
+    /// two unsolvable constructors sit on opposite sides of that line: a
+    /// search driver's drained frontier proves nothing, a complete method's
+    /// verdict proves everything.
+    #[test]
+    fn the_two_unsolvable_constructors_differ_only_in_the_proof() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let drained = SolveResult::unsolvable(root.clone());
+        let proved = SolveResult::proven_unsolvable(root);
+
+        assert_eq!(drained.status, proved.status);
+        assert!(!drained.proven);
+        assert_eq!(drained.termination, Termination::Exhausted { proof: false });
+        assert!(proved.proven);
+        assert_eq!(proved.termination, Termination::Exhausted { proof: true });
+        for result in [&drained, &proved] {
+            assert_eq!(
+                result.proven,
+                matches!(result.termination, Termination::Exhausted { proof: true })
+            );
+        }
+    }
     /// Default test options: A*.
     fn default_opts() -> SolveOptions {
         SolveOptions::default()

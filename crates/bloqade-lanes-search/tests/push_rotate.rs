@@ -400,6 +400,39 @@ fn phantom_target_is_unsolvable_not_a_fabricated_success() {
     assert_eq!(result.termination, Termination::Exhausted { proof: true });
 }
 
+/// A target on a blocked location is off the carved graph entirely, so no
+/// plan can place an atom there — a proof, reported through the same
+/// constructor as the planner's own Theorem 1 verdicts.
+///
+/// This exit runs before the planner does, in `to_vertices`. It is a separate
+/// path from the `PlanError` arms, and the fallback promotion in the target
+/// solver treats every proof-bearing Push and Rotate verdict alike, so the two
+/// paths must agree about carrying a proof.
+#[test]
+fn a_target_off_the_carved_graph_is_a_proven_verdict() {
+    let fx = fixture(LOGICAL);
+    let loc_of = |v: VertexId| LocationAddr::decode(fx.graph.location_of(v));
+    // Block the destination, then ask for it: the vertex is not in the graph
+    // the planner sees, so the request cannot be expressed at all.
+    let blocked = [loc_of(5)];
+
+    let result = solve_push_rotate(
+        &fx.index,
+        &[(0, loc_of(0))],
+        &[(0, loc_of(5))],
+        &blocked,
+        10_000,
+    )
+    .expect("valid config");
+
+    assert_eq!(result.status, SolveStatus::Unsolvable);
+    assert!(
+        result.proven,
+        "an inexpressible request is a proof, not a give-up"
+    );
+    assert_eq!(result.termination, Termination::Exhausted { proof: true });
+}
+
 /// A request assigning two qubits to one target location is malformed —
 /// rejected as an error at the entry point, before any planning runs,
 /// rather than surfacing as a verdict about a nonsensical instance.

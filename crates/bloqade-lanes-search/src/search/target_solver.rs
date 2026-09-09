@@ -338,8 +338,11 @@ pub(crate) fn solve_with_engine(
         }
         // Both failed. Prefer the planner's verdict when it is a *proof* of
         // unsolvability; the search's `Unsolvable` only means its frontier
-        // drained, which says nothing.
-        if fallback.status == SolveStatus::Unsolvable {
+        // drained, which says nothing. Selecting on `proven` rather than on
+        // the status names the property this promotion actually depends on, so
+        // a planner path that ever reports `Unsolvable` without a proof stops
+        // being promoted instead of silently borrowing the proof's authority.
+        if fallback.proven {
             return Ok(fallback);
         }
     }

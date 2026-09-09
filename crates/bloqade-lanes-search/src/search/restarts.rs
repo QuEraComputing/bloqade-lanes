@@ -98,12 +98,22 @@ pub(crate) fn extract(
 }
 
 /// Pick the best result from multiple restarts (prefer solved, then lowest
-/// cost). Returns `None` only when `results` is empty.
+/// cost, then a proof over none). Returns `None` only when `results` is empty.
+///
+/// The proof tie-break matters because a root certificate is a statement about
+/// the *instance*, not about one seed's walk: `h(root)` is the same for every
+/// restart, so when two restarts tie on cost and one of them certified, that
+/// cost is optimal. Ranking by `(solved, cost)` alone left which result
+/// surfaced to restart order, so the public answer could drop a valid proof
+/// while keeping an identically-priced plan.
 pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
     results.into_iter().min_by(|a, b| {
         let a_solved = a.status == SolveStatus::Solved;
         let b_solved = b.status == SolveStatus::Solved;
-        b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
+        b_solved
+            .cmp(&a_solved)
+            .then(a.cost.total_cmp(&b.cost))
+            .then(b.proven.cmp(&a.proven))
     })
 }
 
@@ -529,6 +539,50 @@ mod tests {
     use crate::primitives::distance::DistanceTable;
     use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
+
+    /// Equal cost, one restart certified: the proof must survive the pick.
+    ///
+    /// `h(root)` is a property of the instance, not of a seed's walk, so a
+    /// certificate at cost `C` means `C` is optimal for every restart. Ranking
+    /// on `(solved, cost)` alone left which result surfaced to input order, so
+    /// the public answer could drop the proof and keep an identically-priced
+    /// plan. Both orders are checked, since the bug was order-dependent.
+    #[test]
+    fn pick_best_prefers_a_proven_result_at_equal_cost() {
+        let root = || Config::new([(0, loc(0, 0))]).expect("config");
+        let solved = |proven: bool| {
+            let mut r = SolveResult::solved(root(), Vec::new(), 5.0, 1, 0);
+            r.proven = proven;
+            if proven {
+                r.termination = Termination::Exhausted { proof: true };
+            }
+            r
+        };
+
+        for results in [
+            vec![solved(false), solved(true)],
+            vec![solved(true), solved(false)],
+        ] {
+            let best = pick_best(results).expect("non-empty");
+            assert!(best.proven, "the proof was dropped by restart order");
+            assert_eq!(best.cost, 5.0);
+        }
+    }
+
+    /// The tie-break is last: a cheaper unproven plan still wins, because a
+    /// proof about a worse plan is not a reason to return the worse plan.
+    #[test]
+    fn pick_best_does_not_let_a_proof_outrank_cost() {
+        let root = || Config::new([(0, loc(0, 0))]).expect("config");
+        let mut proven_expensive = SolveResult::solved(root(), Vec::new(), 9.0, 1, 0);
+        proven_expensive.proven = true;
+        proven_expensive.termination = Termination::Exhausted { proof: true };
+        let cheap = SolveResult::solved(root(), Vec::new(), 4.0, 1, 0);
+
+        let best = pick_best(vec![proven_expensive, cheap]).expect("non-empty");
+        assert_eq!(best.cost, 4.0);
+        assert!(!best.proven);
+    }
 
     /// Drive one solve through the real dispatch. Every argument the wiring
     /// tests need to vary is a parameter; everything else (arch, root, goal,
