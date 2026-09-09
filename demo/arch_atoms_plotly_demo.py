@@ -1,15 +1,16 @@
-from bloqade import gemini, squin
+from bloqade import squin
+from bloqade.gemini import device, logical
 
 
-@gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
+@logical.kernel(aggressive_unroll=True, no_raise=False)
 def invalid():
     q = squin.qalloc(2)
     squin.swap(q[0], q[1])
     # squin.u3(0.1, 0.2, 0.3, q[1])
-    return gemini.logical.terminal_measure(q)
+    return logical.terminal_measure(q)
 
 
-sim_device = gemini.device.GeminiLogicalSimulator()
+sim_device = device.GeminiLogicalSimulator()
 
 invalid_task = sim_device.task(invalid)
 
