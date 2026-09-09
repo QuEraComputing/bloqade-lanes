@@ -709,6 +709,25 @@ fn resume_buffer_pop_best<B: CompletionBound>(
         return Some(best.node_id);
     }
 }
+/// Whether the root's own bound already proves the incumbent optimal.
+///
+/// The same test [`resume_or_finish`] makes before it stops, minus the
+/// recording. On the goal-quota path the quota is what ends the search, so
+/// charging a cut to `bound_stats` would report a prune that drove no
+/// decision; the proof itself is independent of *why* the loop stopped,
+/// because `h(root)` depends only on the configuration and not on how much of
+/// the space was searched. So a quota exit can still carry a certificate, and
+/// must not throw one away.
+fn root_certifies<B: CompletionBound>(
+    graph: &SearchGraph,
+    root_id: NodeId,
+    best_cost: Option<f64>,
+    bound: &B,
+    h_cache: &mut Vec<Option<f64>>,
+    bound_terminates: bool,
+) -> bool {
+    bound_terminates && classify_cut(graph, root_id, best_cost, bound, h_cache).is_some()
+}
 
 /// Pick the next node to resume from, or report that the search is finished.
 ///
@@ -2770,6 +2789,14 @@ where
                 }
                 if found_goals.len() >= params.max_goal_candidates {
                     goal_quota_reached = true;
+                    certified = root_certifies(
+                        &graph,
+                        root_id,
+                        best_cost,
+                        bound,
+                        &mut h_cache,
+                        params.bound_terminates,
+                    );
                     break;
                 }
                 match resume_or_finish::<B>(
@@ -2928,6 +2955,14 @@ where
             }
             if found_goals.len() >= params.max_goal_candidates {
                 goal_quota_reached = true;
+                certified = root_certifies(
+                    &graph,
+                    root_id,
+                    best_cost,
+                    bound,
+                    &mut h_cache,
+                    params.bound_terminates,
+                );
                 break;
             }
             match resume_or_finish::<B>(
@@ -4641,6 +4676,119 @@ mod tests {
             stopped.bound_stats.root_lower_bound.to_bits(),
             cost(&stopped).to_bits()
         );
+    }
+
+    /// A goal quota of one must not throw away an available proof.
+    ///
+    /// The quota exit is checked before `resume_or_finish`, so the first plan
+    /// used to end the search as `Stopped` with `proven` false even when its
+    /// cost had already reached `h(root)`. The certificate does not depend on
+    /// how much of the space was searched -- `h(root)` is a function of the
+    /// configuration alone -- so stopping early is no reason to discard it.
+    ///
+    /// The `max_goal_candidates = 3` default reaches the same instance through
+    /// `resume_or_finish` instead, which is why the regression hid: both paths
+    /// have to check.
+    #[test]
+    fn the_goal_quota_does_not_discard_a_certificate() {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> = vec![(0, loc(0, 5).encode())];
+        let dist_table = DistanceTable::new(&[loc(0, 5).encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+            capacity: None,
+        };
+        let bound = crate::bounds::WeightedDistanceBound::new(
+            &UniformCost,
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+        let run = |max_goal_candidates: usize| {
+            entropy_search_with_bound(
+                Config::new([(0, loc(0, 0))]).unwrap(),
+                &goal,
+                &EntropyParams {
+                    max_goal_candidates,
+                    ..EntropyParams::default()
+                },
+                &ctx,
+                Some(1000),
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &bound,
+            )
+        };
+
+        for quota in [1usize, 3] {
+            let result = run(quota);
+            let cost = result.graph.g_score(result.goal.expect("solved"));
+            assert_eq!(
+                result.bound_stats.root_lower_bound.to_bits(),
+                cost.to_bits(),
+                "quota {quota}: the fixture must actually reach its bound"
+            );
+            assert_eq!(
+                result.termination,
+                Termination::Exhausted { proof: true },
+                "quota {quota}: a plan at h(root) is proven optimal"
+            );
+        }
+    }
+
+    /// The probe on the quota path must not charge a cut it did not act on.
+    ///
+    /// `bound_stats` counts prunes that *drove* a decision. On the quota path
+    /// the quota is what ends the search, so observing that the root would be
+    /// cut must leave the counters alone -- otherwise the same solve reports a
+    /// different cut count depending on which exit it happened to take, and
+    /// `cuts_by_h` stops meaning anything.
+    #[test]
+    fn the_quota_certificate_probe_records_no_cut() {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> = vec![(0, loc(0, 5).encode())];
+        let dist_table = DistanceTable::new(&[loc(0, 5).encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+            capacity: None,
+        };
+        let result = entropy_search_with_bound(
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &goal,
+            &EntropyParams {
+                max_goal_candidates: 1,
+                ..EntropyParams::default()
+            },
+            &ctx,
+            Some(1000),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &crate::bounds::WeightedDistanceBound::new(
+                &UniformCost,
+                &target_encoded,
+                &index,
+                &blocked,
+            ),
+        );
+        assert_eq!(result.termination, Termination::Exhausted { proof: true });
+        assert_eq!(result.bound_stats.cuts_by_h, 0);
+        assert_eq!(result.bound_stats.cut_depth_g_only_sum, 0);
     }
 
     /// Without a completion bound there is nothing to certify: `NoBound`

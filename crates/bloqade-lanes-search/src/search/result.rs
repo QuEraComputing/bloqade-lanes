@@ -92,11 +92,25 @@ pub struct SolveResult {
     /// populated either way. The Python surface reports an unbounded run as an
     /// *empty* dict rather than zeros.
     pub bound_stats: BoundStats,
-    /// Whether the verdict is a proof over the exhaustive search space: when
-    /// `Solved`, the plan is optimal; when `Unsolvable`, no plan exists. Set
-    /// only by a driver whose search drained a complete schedule
-    /// (`Termination::Exhausted { proof: true }`); `false` on every other
-    /// path and for every other status.
+    /// Whether the verdict is a proof: when `Solved`, the plan is optimal;
+    /// when `Unsolvable`, no plan exists.
+    ///
+    /// Exactly `matches!(termination, Termination::Exhausted { proof: true })`,
+    /// and `false` on every other path. Two things set it, neither of which
+    /// needs an exhaustive walk of the space:
+    ///
+    /// * the **root certificate** — the incumbent's cost has reached
+    ///   `h(root)`, which lower-bounds every legal plan because it depends
+    ///   only on the configuration and not on which candidates a generator
+    ///   proposed, so no plan is cheaper;
+    /// * **Push and Rotate's** `Unsolvable`, which is its completeness
+    ///   theorem rather than a drained frontier — see [`solve_push_rotate`].
+    ///
+    /// A search driver that merely runs out of frontier reports `Unsolvable`
+    /// with `proven` false: that says the heuristic gave up, not that the
+    /// hardware cannot do it.
+    ///
+    /// [`solve_push_rotate`]: crate::push_rotate::solver::solve_push_rotate
     pub proven: bool,
     /// How the search that produced this result ended.
     pub termination: Termination,

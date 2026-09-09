@@ -38,10 +38,11 @@ pub struct LaneIndex {
     lane_durations: HashMap<u64, f64>,
     /// Fastest lane duration across all lanes with paths. `None` if no paths.
     fastest_lane_duration: Option<f64>,
-    /// Precomputed AOD-grid lookup maps per [`GroupKey`]
-    /// (`move_type, bus_id, direction`) bus group, spanning all zones.
-    /// Occupancy-independent, so they are built once here and borrowed by every
-    /// `BusGridContext` for that group (see [`BusGridMaps`]).
+    /// Precomputed AOD-grid lookup maps per [`GroupKey`] bus group —
+    /// `(move_type, bus_id, zone_id, direction)`, so one entry covers a single
+    /// zone rather than spanning all of them. Occupancy-independent, so they
+    /// are built once here and borrowed by every `BusGridContext` for that
+    /// group (see [`BusGridMaps`]).
     bus_grid_maps: HashMap<GroupKey, BusGridMaps>,
 }
 
