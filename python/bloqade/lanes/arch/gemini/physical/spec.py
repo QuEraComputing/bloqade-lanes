@@ -1,17 +1,27 @@
+"""Gemini physical architecture, loaded from ``_physical_spec.json``.
+
+Physical arch spec: 20 words x 8 sites, 1 zone, 32x5 grid.
+
+Same word/row structure as logical (4 words per row, 5 rows).
+Each word has 8 sites interleaved with its CZ partner along x.
+Grid: x=[0,2,10,12,20,22,...] (alternating 2/8 spacing), y=[0,10,20,30,40]
+
+Site buses: 3D hypercube on 8 sites (3 buses)
+Word buses: 9 merged column-pair shifts + 1 cross-gap (10 buses)
+Entangling pairs: [[0,1],[2,3],...,[18,19]]
+
+**Provenance of ``paths``.**  The transport paths in ``_physical_spec.json``
+are machine-specified calibration data for the Gemini hardware, not output
+of the ``ZoneBuilder`` path search.  Do not regenerate them.  To extend this
+spec, restore it with ``ArchBuilder.from_spec(get_arch_spec(), ...)``: the
+recorded paths are preserved verbatim and only newly added buses are
+routed.
+"""
+
 import importlib.resources
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
-
-# Physical arch spec: 20 words x 8 sites, 1 zone, 32x5 grid.
-#
-# Same word/row structure as logical (4 words per row, 5 rows).
-# Each word has 8 sites interleaved with its CZ partner along x.
-# Grid: x=[0,2,10,12,20,22,...] (alternating 2/8 spacing), y=[0,10,20,30,40]
-#
-# Site buses: 3D hypercube on 8 sites (3 buses)
-# Word buses: 9 merged column-pair shifts + 1 cross-gap (10 buses)
-# Entangling pairs: [[0,1],[2,3],...,[18,19]]
 
 
 def _load_spec_json() -> str:
