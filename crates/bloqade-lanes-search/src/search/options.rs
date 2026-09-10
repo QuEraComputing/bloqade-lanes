@@ -7,6 +7,7 @@
 
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::ops::entangling::OCCUPANCY_PENALTY_DEFAULT;
+use crate::primitives::context::AodCapacity;
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +164,25 @@ pub struct SolveOptions {
     /// found. That is deliberate: a request to solve backwards returns the
     /// backwards solve's answer rather than silently searching twice.
     pub backwards_search: bool,
+    /// The AOD tone limit per axis for every shot in the plan; `None` is
+    /// unlimited.
+    ///
+    /// Copied onto the solve's `SearchContext`, where every shot assembler
+    /// reads it. This is a property of the hardware and will move to the
+    /// architecture spec once that carries one; it is a solve option in the
+    /// meantime so that a caller who knows the value can already route within
+    /// it. The default reproduces the uncapped behaviour of every existing
+    /// path.
+    ///
+    /// **Not honoured by Push and Rotate.** The planner's scheduler batches
+    /// rectangles without consulting a capacity, so [`Strategy::PushRotate`]
+    /// and the `fallback_push_rotate` path can return a shot wider than the
+    /// cap. The planner does not *grow* rectangles the way the shot
+    /// assemblers do — it packages the moves a plan already needs — so it is
+    /// not expected to exceed a real hardware limit in practice, and
+    /// threading the cap through its scheduler is deliberately left as
+    /// follow-up. Treat the cap as binding on the search strategies only.
+    pub aod_capacity: Option<AodCapacity>,
 }
 
 impl Default for SolveOptions {
@@ -176,6 +196,7 @@ impl Default for SolveOptions {
             top_c: None,
             fallback_push_rotate: false,
             backwards_search: false,
+            aod_capacity: None,
         }
     }
 }
@@ -222,6 +243,21 @@ pub struct EntropyOptions {
     /// A non-zero base seed starts the per-restart sequence at that value
     /// so every run is reproducible.
     pub seed: u64,
+    /// Let the completion bound end the search once it has proven the plan
+    /// optimal, instead of running on to the expansion budget. **On by
+    /// default.**
+    ///
+    /// The proof is the root certificate: when the resume buffer is empty and
+    /// the root is itself cut, `h(root)` has reached the incumbent's cost, and
+    /// `h(root)` lower-bounds every legal plan because it depends only on the
+    /// configuration and not on which candidates were generated. The solve is
+    /// then reported with `proven` set.
+    ///
+    /// Stopping there costs nothing: a cut root cannot be expanded from, so
+    /// the plan is identical either way. Setting this `false` restores the
+    /// spin to the iteration cap that bounding originally shipped with, for
+    /// A/B measurement. Requires `completion_bound`; inert without one.
+    pub bound_terminates: bool,
     /// Admissible completion bound used to prune branches that cannot beat
     /// the incumbent. `None` (the default) means `h ≡ 0`: a branch is only cut
     /// once its accumulated cost alone reaches the incumbent's.
@@ -255,6 +291,7 @@ impl Default for EntropyOptions {
             w_t: 0.05,
             collect_entropy_trace: false,
             seed: 0,
+            bound_terminates: true,
             completion_bound: None,
         }
     }
@@ -335,6 +372,11 @@ impl EntanglingOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aod_capacity_is_unlimited_by_default() {
+        assert!(SolveOptions::default().aod_capacity.is_none());
+    }
 
     #[test]
     fn backwards_search_is_off_by_default() {

@@ -167,6 +167,7 @@ fn run_driver(index: &LaneIndex, p: &Prepared) -> SearchResult {
         blocked: &p.blocked,
         targets: &p.target_encoded,
         cz_pairs: None,
+        capacity: None,
     };
     entropy_search(
         p.root.clone(),
