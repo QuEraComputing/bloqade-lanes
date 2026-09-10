@@ -24,6 +24,12 @@ coverage-open: coverage-html
 
 coverage: coverage-run coverage-xml coverage-report
 
+# Parse-check the packaged Plotly interaction controller. The ``{plot_id}``
+# token is inside a JavaScript string literal, so it is valid before Plotly
+# substitutes the concrete div ID during HTML generation.
+check-visualization-js:
+    node --check python/bloqade/lanes/visualize/_arch_interactive.js
+
 # ── Rust Coverage ───────────────────────────────────────────────────
 
 # Run Rust tests with coverage and generate Cobertura XML

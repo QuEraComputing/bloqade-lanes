@@ -17,6 +17,7 @@ class StaticDebuggerController(DebuggerController):
     num_steps: int
     draw: Callable[[int], None]
     step_index: int = field(default=0, init=False)
+    # TODO: for concurrency reasons, this would probably be safer with locks
     running: bool = field(default=True, init=False)
     waiting: bool = field(default=True, init=False)
     updated: bool = field(default=False, init=False)
@@ -54,15 +55,6 @@ class StaticDebuggerController(DebuggerController):
         self.step_index = new_index
         self.updated = True
         self.waiting = False
-
-    def on_key(self, event):
-        match event.key:
-            case "left":
-                self.on_prev(event)
-            case "right":
-                self.on_next(event)
-            case "escape":
-                self.on_exit(event)
 
     def reset(self):
         self.step_index = 0
