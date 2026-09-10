@@ -27,9 +27,10 @@ use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
 use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
+use crate::primitives::context::AodCapacity;
 use crate::primitives::graph::MoveSet;
 use crate::primitives::lane_index::LaneIndex;
-use crate::primitives::ordering::{TripletKey, cmp_moveset_config_tiebreak};
+use crate::primitives::ordering::{GroupKey, cmp_moveset_config_tiebreak};
 
 /// One scored `(qubit, lane)` pair produced by Stage 1 of the pipeline.
 #[derive(Debug, Clone)]
@@ -42,7 +43,7 @@ pub(crate) struct ScoredLane {
 /// Group of [`ScoredLane`]s sharing the same triplet key.
 #[derive(Debug, Clone)]
 pub(crate) struct TripletGroup {
-    pub key: TripletKey,
+    pub key: GroupKey,
     pub entries: Vec<ScoredLane>,
 }
 
@@ -54,17 +55,13 @@ pub(crate) struct PackedCandidate {
     pub score_sum: f64,
 }
 
-/// Stage 3: group entries by `(move_type, bus_id, direction)`, sorted by
-/// triplet key ascending. Within each group, entries preserve the
+/// Stage 3: group entries by `(move_type, bus_id, zone_id, direction)`,
+/// sorted by group key ascending. Within each group, entries preserve the
 /// policy-provided input order.
 pub(crate) fn group_by_triplet(scored: Vec<ScoredLane>) -> Vec<TripletGroup> {
-    let mut groups: BTreeMap<TripletKey, Vec<ScoredLane>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<ScoredLane>> = BTreeMap::new();
     for entry in scored {
-        let key = TripletKey::new(
-            entry.lane.move_type,
-            entry.lane.bus_id,
-            entry.lane.direction,
-        );
+        let key = GroupKey::of(&entry.lane);
         groups.entry(key).or_default().push(entry);
     }
     groups
@@ -77,11 +74,15 @@ pub(crate) fn group_by_triplet(scored: Vec<ScoredLane>) -> Vec<TripletGroup> {
 /// [`BusGridContext::build_aod_grids`] and lift to [`PackedCandidate`]s.
 /// Returns candidates sorted by `score_sum desc`, with deterministic
 /// tie-breakers on `(MoveSet encoded lanes, Config entries)`.
+///
+/// `capacity` is the solve's AOD tone limit per axis; every rectangle built
+/// here spans at most that many source columns and rows. `None` is unlimited.
 pub(crate) fn pack_aod_rectangles(
     groups: Vec<TripletGroup>,
     config: &Config,
     index: &LaneIndex,
     blocked: &HashSet<u64>,
+    capacity: Option<AodCapacity>,
 ) -> Vec<PackedCandidate> {
     // Build occupied set: blocked locations + qubits already in this config.
     let mut occupied: HashSet<u64> = HashSet::with_capacity(blocked.len() + config.len());
@@ -97,14 +98,19 @@ pub(crate) fn pack_aod_rectangles(
         if entries.is_empty() {
             continue;
         }
-        let TripletKey {
+        let GroupKey {
             move_type: mt,
             bus_id,
+            zone_id,
             direction: dir,
         } = key;
 
-        // Build the grid context across all zones for the bus.
-        let grid_ctx = BusGridContext::new(index, mt, bus_id, None, dir, &occupied);
+        let grid_ctx = BusGridContext::new(
+            index,
+            GroupKey::new(mt, bus_id, zone_id, dir),
+            &occupied,
+            capacity,
+        );
 
         // Build src→lane entries and lane→entry lookup for score lifting
         // and destination derivation.
@@ -230,7 +236,7 @@ mod tests {
         }];
         let groups = group_by_triplet(scored);
         let blocked = HashSet::new();
-        let candidates = pack_aod_rectangles(groups, &config, &index, &blocked);
+        let candidates = pack_aod_rectangles(groups, &config, &index, &blocked, None);
         assert!(
             !candidates.is_empty(),
             "should produce at least one candidate"
@@ -261,7 +267,7 @@ mod tests {
             score: 3.0,
         }];
         let groups = group_by_triplet(scored);
-        let candidates = pack_aod_rectangles(groups, &config, &index, &blocked);
+        let candidates = pack_aod_rectangles(groups, &config, &index, &blocked, None);
         // No candidate should land qubit 0 on the blocked destination.
         for c in &candidates {
             assert_ne!(c.new_config.location_of(0), Some(dst));

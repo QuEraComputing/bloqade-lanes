@@ -525,7 +525,7 @@ mod tests {
 
         use crate::cost::UniformCost;
         use crate::drivers::frontier::{self, PriorityFrontier};
-        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
         use crate::goals::AllAtTarget;
         use crate::primitives::context::{SearchContext, SearchState};
         use crate::scorers::DistanceScorer;
@@ -549,9 +549,10 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
 
-        let generator = ExhaustiveGenerator::new(None, None);
+        let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
         let scorer = DistanceScorer;
         let cost = UniformCost;
         let goal = AllAtTarget::new(&target_encoded);
@@ -651,7 +652,7 @@ mod tests {
         // Verify h <= actual cost by solving with A*.
         use crate::cost::UniformCost;
         use crate::drivers::frontier::{self, PriorityFrontier};
-        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
         use crate::goals::EntanglingConstraintGoal;
         use crate::primitives::context::{SearchContext, SearchState};
         use crate::scorers::DistanceScorer;
@@ -694,8 +695,9 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
+            capacity: None,
         };
-        let generator = ExhaustiveGenerator::new(None, None);
+        let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
         let scorer = DistanceScorer;
         let cost_fn = UniformCost;
         let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);

@@ -26,13 +26,14 @@ use rayon::prelude::*;
 
 use crate::cost::UniformCost;
 use crate::drivers::frontier::{self, IdsFrontier};
+use crate::drivers::result::Termination;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::generators::{HeuristicGenerator, LooseTargetGenerator};
 use crate::goals::EntanglingConstraintGoal;
 use crate::observer::NoOpObserver;
 use crate::ops::entangling;
 use crate::primitives::config::Config;
-use crate::primitives::context::{SearchContext, SearchState};
+use crate::primitives::context::{AodCapacity, SearchContext, SearchState};
 use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
@@ -384,6 +385,7 @@ fn beam_rollout<G: Goal>(
     goal: &G,
     max_depth: u32,
     beam_width: usize,
+    capacity: Option<AodCapacity>,
 ) -> RolloutOutcome {
     let beam_width = beam_width.max(1);
     let mut graph = SearchGraph::new(root);
@@ -398,6 +400,7 @@ fn beam_rollout<G: Goal>(
         blocked,
         targets,
         cz_pairs: Some(cz_pairs),
+        capacity,
     };
 
     // Root goal check.
@@ -504,6 +507,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     restart_seed: u64,
     greedy_first: bool,
     inner_beam_width: u32,
+    capacity: Option<AodCapacity>,
 ) -> RolloutOutcome {
     let inner =
         HeuristicGenerator::configured(restart_seed, deadlock_policy, inner_lookahead, Some(top_c));
@@ -540,6 +544,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
             goal,
             max_depth,
             inner_beam_width.max(1) as usize,
+            capacity,
         );
         if greedy_outcome.goal_node.is_some() {
             // Tier-0 (goal reached) is always best — accept immediately.
@@ -580,6 +585,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
             blocked,
             targets: &targets_for_ctx,
             cz_pairs: Some(&cz_pairs_for_ctx),
+            capacity,
         };
         frontier::run_search(
             root,
@@ -868,6 +874,8 @@ pub fn solve_entangling_rh_single(
                 deadlocks: 0,
                 entropy_trace: None,
                 bound_stats: crate::bounds::BoundStats::default(),
+                proven: false,
+                termination: crate::drivers::result::Termination::Budget,
             };
         }
         stage_iter = stage_iter.saturating_add(1);
@@ -923,6 +931,7 @@ pub fn solve_entangling_rh_single(
                 stage_seed,
                 rh_opts.greedy_first,
                 rh_opts.inner_beam_width,
+                opts.aod_capacity,
             );
             classify_into_tier(outcome, x, heuristic)
         };
@@ -1012,6 +1021,8 @@ pub fn solve_entangling_rh_single(
         deadlocks: 0,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
+        proven: false,
+        termination: Termination::Stopped,
     }
 }
 
@@ -1085,6 +1096,21 @@ fn merge_fallback(
 ) -> SolveResult {
     let combined_expansions = total_expansions.saturating_add(fallback.nodes_expanded);
     if fallback.status != SolveStatus::Solved {
+        // The fallback ran from wherever the committed prefix left the atoms,
+        // so a proof it carries is a proof about *that* state, not about the
+        // instance the caller asked for: a different prefix might well have
+        // reached the goal. With no prefix the two states coincide and the
+        // proof transfers intact.
+        //
+        // Downgrading only the proof keeps `Budget` intact — a give-up says
+        // the same thing from any state — and keeps `proven` exactly equal to
+        // the termination it is derived from, which the field documents.
+        let termination = match fallback.termination {
+            Termination::Exhausted { proof: true } if !committed_layers.is_empty() => {
+                Termination::Exhausted { proof: false }
+            }
+            other => other,
+        };
         return SolveResult {
             status: fallback.status,
             move_layers: committed_layers,
@@ -1094,6 +1120,8 @@ fn merge_fallback(
             deadlocks: fallback.deadlocks,
             entropy_trace: None,
             bound_stats: crate::bounds::BoundStats::default(),
+            proven: matches!(termination, Termination::Exhausted { proof: true }),
+            termination,
         };
     }
     let mut merged = committed_layers;
@@ -1108,6 +1136,8 @@ fn merge_fallback(
         deadlocks: fallback.deadlocks,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
+        proven: false,
+        termination: crate::drivers::result::Termination::Stopped,
     }
 }
 
@@ -1343,6 +1373,90 @@ mod tests {
     use crate::primitives::graph::SearchGraph;
     use crate::search::options::Strategy;
     use crate::test_utils::{example_arch_json, loc};
+
+    // ── Fallback merge: whose state is the proof about? ──
+
+    /// One arbitrary lane, standing in for "the prefix is not empty". Nothing
+    /// in `merge_fallback` inspects the layers, only whether there are any.
+    fn any_layer() -> Vec<MoveSet> {
+        use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
+        vec![MoveSet::new(vec![LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        }])]
+    }
+
+    /// A prefix-relative proof must not be reported as a proof about the
+    /// instance.
+    ///
+    /// The fallback runs from wherever the committed layers left the atoms, so
+    /// "no plan exists" from there says nothing about the caller's root — a
+    /// different prefix might have reached the goal. With no prefix the two
+    /// states coincide and the proof stands.
+    #[test]
+    fn a_committed_prefix_downgrades_the_fallbacks_proof() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let proven = || {
+            let mut r = SolveResult::proven_unsolvable(root.clone());
+            r.nodes_expanded = 7;
+            r
+        };
+        let one_layer = any_layer;
+
+        let after_prefix = merge_fallback(one_layer(), proven(), 3);
+        assert_eq!(
+            after_prefix.termination,
+            Termination::Exhausted { proof: false },
+            "the proof was about the post-prefix state, not the root"
+        );
+        assert!(!after_prefix.proven);
+
+        let no_prefix = merge_fallback(Vec::new(), proven(), 3);
+        assert_eq!(
+            no_prefix.termination,
+            Termination::Exhausted { proof: true },
+            "with no prefix committed the proof is about the root itself"
+        );
+        assert!(no_prefix.proven);
+    }
+
+    /// Downgrading touches the proof only: a give-up says the same thing from
+    /// any state, so `Budget` survives a committed prefix unchanged.
+    #[test]
+    fn a_committed_prefix_preserves_a_budget_give_up() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let mut give_up = SolveResult::unsolved(SolveStatus::BudgetExceeded, root, 0, 0);
+        give_up.termination = Termination::Budget;
+
+        let merged = merge_fallback(any_layer(), give_up, 1);
+        assert_eq!(merged.termination, Termination::Budget);
+        assert!(!merged.proven);
+    }
+
+    /// `proven` is documented as exactly `Exhausted { proof: true }`, so the
+    /// merge cannot report one without the other in either direction.
+    #[test]
+    fn the_merge_keeps_proven_and_termination_in_agreement() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        for prefix in [Vec::new(), any_layer()] {
+            for fallback in [
+                SolveResult::proven_unsolvable(root.clone()),
+                SolveResult::unsolvable(root.clone()),
+            ] {
+                let merged = merge_fallback(prefix.clone(), fallback, 0);
+                assert_eq!(
+                    merged.proven,
+                    matches!(merged.termination, Termination::Exhausted { proof: true }),
+                    "proven disagreed with {:?}",
+                    merged.termination
+                );
+            }
+        }
+    }
 
     // ── Trivial / structural ──
 

@@ -385,7 +385,7 @@ fn slack(magnitude: f64) -> f64 {
     magnitude.abs().max(1.0) * 1e-12
 }
 
-/// Assert the [`Objective`] contract (C2, C3, C4) for every lane and a
+/// Assert the [`Objective`] contract (C2, C3, C4, C5) for every lane and a
 /// selection of multi-lane shots on `index`.
 ///
 /// These are the properties a weighted-distance bound's admissibility rests on,
@@ -433,12 +433,69 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
                 cost >= min_shot - slack(min_shot),
                 "C4: shot cost {cost} is below min_shot_cost {min_shot} for {shot:?}"
             );
-            for lane in shot.decode() {
+            let decoded = shot.decode();
+            for &lane in &decoded {
                 let w = objective.lane_weight(lane);
                 assert!(
                     cost >= w - slack(w),
                     "C3: shot cost {cost} is below lane weight {w} for {lane:?}"
                 );
+            }
+            // C5: dropping any one lane from a multi-lane shot must not raise
+            // its cost, at equal movers.
+            //
+            // Checked twice, because `edge_cost` is handed both configurations
+            // and may inspect them. With the empty configuration every lane is
+            // a filler and "same movers" holds trivially — but an objective
+            // that discounts added lanes *only when a real atom moves* would
+            // satisfy that and still violate C5 on every shot the generators
+            // actually produce, which would silently make the exhaustive
+            // generator's mover-tight deduplication lossy. So the second pass
+            // puts an atom on the first lane's source and drops only the
+            // others, whose sources stay empty: the mover set is identical
+            // across both shots, which is exactly the condition C5 is stated
+            // under.
+            if decoded.len() > 1 {
+                for (i, dropped) in decoded.iter().enumerate() {
+                    let without = MoveSet::new(
+                        decoded
+                            .iter()
+                            .enumerate()
+                            .filter(|&(j, _)| j != i)
+                            .map(|(_, &l)| l),
+                    );
+                    let cost_without = objective.edge_cost(&without, &config, &config);
+                    assert!(
+                        cost_without <= cost + slack(cost),
+                        "C5: dropping filler lane {dropped:?} from {shot:?} raised the shot cost \
+                         from {cost} to {cost_without}; adding a lane must never make a shot cheaper"
+                    );
+                }
+
+                // Sources within a bus group are unique, so only lane 0's
+                // source is occupied and every other lane is still a filler.
+                if let Some((src, dst)) = index.endpoints(&decoded[0]) {
+                    let from = Config::new([(0u32, src)]).expect("one atom is a valid config");
+                    let to = Config::new([(0u32, dst)]).expect("one atom is a valid config");
+                    let moved = objective.edge_cost(shot, &from, &to);
+                    for (i, dropped) in decoded.iter().enumerate().skip(1) {
+                        let without = MoveSet::new(
+                            decoded
+                                .iter()
+                                .enumerate()
+                                .filter(|&(j, _)| j != i)
+                                .map(|(_, &l)| l),
+                        );
+                        let cost_without = objective.edge_cost(&without, &from, &to);
+                        assert!(
+                            cost_without <= moved + slack(moved),
+                            "C5: with an atom moving on {:?}, dropping filler lane {dropped:?} \
+                             from {shot:?} raised the shot cost from {moved} to {cost_without}; \
+                             adding a lane must never make a shot cheaper",
+                            decoded[0]
+                        );
+                    }
+                }
             }
             checked += 1;
         }
@@ -453,8 +510,10 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
 mod tests {
     use super::*;
     use crate::cost::{UniformCost, WeightedDuration};
+    use crate::primitives::graph::MoveSet;
     use crate::test_utils::{example_arch_json, loc};
-    use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+    use crate::traits::CostFn;
+    use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     /// A no-solution `BoundStats` must equal itself.
@@ -511,6 +570,108 @@ mod tests {
         for tau in [0.5, 1.0, 10.0, 1000.0] {
             assert_objective_contract(&WeightedDuration::new(&index, tau), &index);
         }
+    }
+
+    /// An objective that rebates a shot for the lanes it carries: a shot costs
+    /// `1 + 0.5 / len`, so *adding* a filler lane makes it cheaper. C2, C3 and
+    /// C4 all hold (every shot costs at least `1.0`, which is both the lane
+    /// weight and the shot floor), so the only constraint it breaks is C5.
+    struct FillerDiscount;
+
+    impl CostFn for FillerDiscount {
+        fn edge_cost(&self, move_set: &MoveSet, _from: &Config, _to: &Config) -> f64 {
+            1.0 + 0.5 / move_set.len().max(1) as f64
+        }
+    }
+
+    impl Objective for FillerDiscount {
+        fn lane_weight(&self, _lane: LaneAddr) -> f64 {
+            1.0
+        }
+        fn min_shot_cost(&self) -> f64 {
+            1.0
+        }
+        fn id(&self) -> ObjectiveId {
+            ObjectiveId {
+                kind: "test-filler-discount",
+                params: 0,
+            }
+        }
+    }
+
+    /// The contract check must catch a lane-set *non*-monotone objective and
+    /// name C5, so that a reviewer reading the panic knows which of the five
+    /// constraints failed rather than which lane happened to trip it.
+    #[test]
+    fn a_filler_discounting_objective_fails_c5_by_name() {
+        let index = make_index();
+        let outcome =
+            std::panic::catch_unwind(|| assert_objective_contract(&FillerDiscount, &index));
+        let payload = outcome.expect_err("FillerDiscount must violate the contract");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("panic payload is a message");
+        assert!(
+            message.starts_with("C5:"),
+            "expected the C5 assertion to fire first, got: {message}"
+        );
+    }
+
+    /// An objective that is lane-set monotone on an *empty* configuration and
+    /// non-monotone as soon as an atom really moves.
+    ///
+    /// This is the hole the review found: `edge_cost` is handed both
+    /// configurations and may inspect them, so a check that only ever passes
+    /// the empty one certifies nothing about the shots the generators actually
+    /// produce. C5 is what makes the exhaustive generator's mover-tight
+    /// deduplication sound, so a violation it cannot see would quietly make
+    /// that deduplication lossy.
+    struct MoverOnlyDiscount;
+
+    impl CostFn for MoverOnlyDiscount {
+        fn edge_cost(&self, move_set: &MoveSet, from: &Config, to: &Config) -> f64 {
+            // Indistinguishable from `UniformCost` while nothing moves.
+            if from == to {
+                return 1.0;
+            }
+            1.0 + 0.5 / move_set.len().max(1) as f64
+        }
+    }
+
+    impl Objective for MoverOnlyDiscount {
+        fn lane_weight(&self, _lane: LaneAddr) -> f64 {
+            1.0
+        }
+        fn min_shot_cost(&self) -> f64 {
+            1.0
+        }
+        fn id(&self) -> ObjectiveId {
+            ObjectiveId {
+                kind: "test-mover-only-discount",
+                params: 0,
+            }
+        }
+    }
+
+    /// The contract check must exercise a real mover, not just the empty
+    /// configuration, or an objective like this one passes it.
+    #[test]
+    fn a_discount_that_needs_a_mover_still_fails_c5() {
+        let index = make_index();
+        let outcome =
+            std::panic::catch_unwind(|| assert_objective_contract(&MoverOnlyDiscount, &index));
+        let payload = outcome.expect_err("MoverOnlyDiscount must violate the contract");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("panic payload is a message");
+        assert!(
+            message.starts_with("C5:") && message.contains("with an atom moving on"),
+            "expected the mover-configuration C5 assertion, got: {message}"
+        );
     }
 
     // ── h0 ──
@@ -741,7 +902,7 @@ mod tests {
         budget: u32,
     ) -> Option<f64> {
         use crate::drivers::frontier::{self, BfsFrontier};
-        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
         use crate::goals::AllAtTarget;
         use crate::observer::NoOpObserver;
         use crate::primitives::context::{SearchContext, SearchState};
@@ -756,12 +917,13 @@ mod tests {
             blocked,
             targets,
             cz_pairs: None,
+            capacity: None,
         };
         let goal = AllAtTarget::new(targets);
         let mut frontier = BfsFrontier::new();
         let result = frontier::run_search(
             Config::new(initial.iter().copied()).unwrap(),
-            &ExhaustiveGenerator::new(None, None),
+            &ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap(),
             &DistanceScorer,
             &UniformCost,
             &goal,

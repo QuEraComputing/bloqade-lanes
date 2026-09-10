@@ -13,11 +13,13 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
 use crate::primitives::bus_grid_maps::BusGridMaps;
 use crate::primitives::config::Config;
+use crate::primitives::context::AodCapacity;
 use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::ordering::GroupKey;
 
 /// A cluster represented by its X and Y coordinate sets.
 /// The rectangle covers the Cartesian product X × Y.
@@ -38,30 +40,6 @@ enum RectOutcome {
     /// stationary atom on a filler source, or a destination held by an atom
     /// that does not move at all.
     Invalid,
-}
-
-/// The execution model's **uniform destination rule** (issue #866): a lane's
-/// destination is available when it is unoccupied, or when its occupant is
-/// itself one of the group's moving sources — it vacates in the same
-/// simultaneous shot, so a conveyor chain `x→y, y→z` is legal.
-///
-/// The rule applies to empty-source *filler* lanes exactly as it does to
-/// movers: the AOD trap site arrives at every lane's destination whether or
-/// not that lane carried an atom, so landing on a stationary atom is a fault
-/// either way. This mirrors
-/// `AtomStateData::validate_moves`'s `DestinationOccupiedByStationaryAtom`
-/// check, which is the normative statement of the same rule.
-///
-/// [`BusGridContext::is_valid_rect`] applies this rule inline against a
-/// lazily-built sorted source index (it is the hottest loop in candidate
-/// generation); every other caller should use this helper so the two cannot
-/// drift apart.
-pub(crate) fn destination_is_available(
-    dst_enc: u64,
-    occupied: &HashSet<u64>,
-    group_mover_srcs: &HashSet<u64>,
-) -> bool {
-    !occupied.contains(&dst_enc) || group_mover_srcs.contains(&dst_enc)
 }
 
 /// The lane on which the atom occupying `dst` could vacate in the same AOD shot
@@ -258,11 +236,10 @@ pub(crate) fn close_chain_entries(
 /// non-mover sources may still fill out the complete AOD rectangle.
 ///
 /// The arch-derived lookup maps are borrowed from [`LaneIndex`]'s precomputed
-/// cache when possible (the common all-zones case); only occupancy is
-/// per-call state.
+/// per-group cache; only occupancy is per-call state.
 pub(crate) struct BusGridContext<'a> {
     /// Occupancy-independent bus lookups, borrowed from the `LaneIndex`
-    /// cache in the all-zones case, or freshly built for a single zone.
+    /// cache (tests fabricate their own).
     maps: Cow<'a, BusGridMaps>,
     /// Locations occupied by atoms or blocked locations in the current config.
     /// Borrowed in production (one context per bus group per node — cloning
@@ -273,32 +250,34 @@ pub(crate) struct BusGridContext<'a> {
     /// the rectangle's `(src, dst)` cells and its sorted source encodings.
     cells_scratch: RefCell<Vec<(u64, u64)>>,
     srcs_scratch: RefCell<Vec<u64>>,
+    /// The solve's AOD tone limit per axis (`SearchContext::capacity`);
+    /// `None` is unlimited. A rectangle spanning more source columns or rows
+    /// than this is invalid, and growth stops there.
+    capacity: Option<AodCapacity>,
 }
 
 impl<'a> BusGridContext<'a> {
-    /// Build a grid context from all lanes on a bus group.
+    /// Build a grid context from all lanes of one bus [`GroupKey`].
     ///
     /// `occupied` is the set of encoded locations currently occupied by atoms.
-    /// When `zone_id` is `None`, lanes from all zones are included and the
-    /// arch maps are borrowed from the `LaneIndex` cache (zero rebuild). When
-    /// `zone_id` is `Some`, the maps are built for that zone only.
+    /// The arch maps are borrowed from the `LaneIndex` cache (one entry per
+    /// group, zero rebuild); a group the index has no lanes for gets empty
+    /// maps. Grouping is per zone because a rectangle is one AOD operation on
+    /// one zone's grid: a product spanning two zones is never a valid shot,
+    /// however well its positions align.
+    ///
+    /// `capacity` caps every rectangle this context builds at that many
+    /// distinct source columns and rows; pass the solve's
+    /// `SearchContext::capacity`, or `None` for the uncapped behaviour.
     pub(crate) fn new(
         index: &'a LaneIndex,
-        mt: MoveType,
-        bus_id: u32,
-        zone_id: Option<u32>,
-        dir: Direction,
+        group: GroupKey,
         occupied: &'a HashSet<u64>,
+        capacity: Option<AodCapacity>,
     ) -> Self {
-        let maps = match zone_id {
-            None => match index.bus_grid_maps(mt, bus_id, dir) {
-                Some(cached) => Cow::Borrowed(cached),
-                None => Cow::Owned(BusGridMaps::default()),
-            },
-            Some(z) => Cow::Owned(BusGridMaps::from_lanes(
-                index,
-                index.lanes_for(mt, bus_id, z, dir).iter().copied(),
-            )),
+        let maps = match index.bus_grid_maps(group) {
+            Some(cached) => Cow::Borrowed(cached),
+            None => Cow::Owned(BusGridMaps::default()),
         };
 
         Self {
@@ -306,6 +285,7 @@ impl<'a> BusGridContext<'a> {
             occupied_locs: Cow::Borrowed(occupied),
             cells_scratch: RefCell::new(Vec::new()),
             srcs_scratch: RefCell::new(Vec::new()),
+            capacity,
         }
     }
 
@@ -316,8 +296,15 @@ impl<'a> BusGridContext<'a> {
     /// may only fill the rectangle when both its source and destination avoid
     /// stationary atoms.
     ///
-    /// The destination half of that is [`destination_is_available`]'s rule,
-    /// specialized here to a lazily-built sorted source index for speed.
+    /// The destination half of that is the execution model's **uniform
+    /// destination rule** (issue #866): a lane's destination is available when
+    /// it is unoccupied, or when its occupant is itself one of the group's
+    /// moving sources and vacates in the same shot, so a conveyor chain
+    /// `x→y, y→z` is legal. It applies to empty-source *filler* lanes exactly
+    /// as to movers — the trap arrives at every destination either way — and
+    /// mirrors `AtomStateData::validate_moves`'s
+    /// `DestinationOccupiedByStationaryAtom`, the normative statement of the
+    /// rule. Applied here against a lazily-built sorted source index for speed.
     fn is_valid_rect(&self, xs: &BTreeSet<u64>, ys: &BTreeSet<u64>, movers: &HashSet<u64>) -> bool {
         matches!(self.rect_outcome(xs, ys, movers, None), RectOutcome::Valid)
     }
@@ -339,6 +326,12 @@ impl<'a> BusGridContext<'a> {
     /// positions [`Self::try_add_point`] pulls in. Passing `None` keeps the hot
     /// path allocation-free and early-exiting, which is what
     /// [`Self::is_valid_rect`] does.
+    ///
+    /// A rectangle over the context's [`AodCapacity`] is `Invalid`, never
+    /// `Repairable`: growth only adds coordinates, so nothing the repair loop
+    /// could pull in would bring it back under the cap, and classifying it as
+    /// repairable would keep that loop pulling cells into a rectangle the
+    /// hardware cannot drive.
     fn rect_outcome(
         &self,
         xs: &BTreeSet<u64>,
@@ -346,6 +339,12 @@ impl<'a> BusGridContext<'a> {
         movers: &HashSet<u64>,
         mut repairs: Option<&mut Vec<u64>>,
     ) -> RectOutcome {
+        if let Some(cap) = self.capacity
+            && !cap.admits(xs.len(), ys.len())
+        {
+            return RectOutcome::Invalid;
+        }
+
         // Resolve every cell's (src, dst) once into a reused scratch buffer.
         let mut cells = self.cells_scratch.borrow_mut();
         cells.clear();
@@ -698,6 +697,7 @@ impl<'a> BusGridContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bloqade_lanes_bytecode_core::arch::addr::Direction;
 
     /// A conveyor chain `a→b, b→c` where the atoms sit on `a` and `b`.
     ///
@@ -1334,7 +1334,112 @@ mod tests {
             occupied_locs: Cow::Owned(occupied_locs),
             cells_scratch: RefCell::new(Vec::new()),
             srcs_scratch: RefCell::new(Vec::new()),
+            capacity: None,
         }
+    }
+
+    /// The same context with the solve's AOD capacity set.
+    fn capped(mut ctx: BusGridContext<'static>, x: usize, y: usize) -> BusGridContext<'static> {
+        ctx.capacity = AodCapacity::new(x, y);
+        ctx
+    }
+
+    // ── AOD capacity ──
+
+    /// A 2-column × 3-row block of movers with free destinations. Uncapped it
+    /// is one 6-lane rectangle; the pinned output below is what every caller
+    /// passing `None` keeps getting.
+    fn two_by_three_block() -> (BusGridContext<'static>, HashMap<u64, u64>) {
+        let positions = [
+            ((0, 0), 10),
+            ((1, 0), 11),
+            ((0, 1), 12),
+            ((1, 1), 13),
+            ((0, 2), 14),
+            ((1, 2), 15),
+        ];
+        let lanes = [
+            (10, 100),
+            (11, 101),
+            (12, 102),
+            (13, 103),
+            (14, 104),
+            (15, 105),
+        ];
+        let ctx = make_context(&positions, &lanes, &[]);
+        (ctx, lanes.into_iter().collect())
+    }
+
+    #[test]
+    fn uncapped_block_is_one_rectangle() {
+        let (ctx, entries) = two_by_three_block();
+        let grids = sorted_grids(&ctx.build_aod_grids(&entries));
+        assert_eq!(grids, vec![vec![100, 101, 102, 103, 104, 105]]);
+    }
+
+    #[test]
+    fn capacity_splits_the_block_and_still_covers_every_mover() {
+        let (ctx, entries) = two_by_three_block();
+        let ctx = capped(ctx, 2, 2);
+        let grids = ctx.build_aod_grids(&entries);
+
+        // Positions of each lane's source, to measure a rectangle's span.
+        let lane_to_pos: HashMap<u64, (u64, u64)> = entries
+            .iter()
+            .map(|(&src, &lane)| (lane, ctx.maps.src_to_pos[&src]))
+            .collect();
+
+        let mut covered: BTreeSet<u64> = BTreeSet::new();
+        for grid in &grids {
+            let xs: BTreeSet<u64> = grid.iter().map(|l| lane_to_pos[l].0).collect();
+            let ys: BTreeSet<u64> = grid.iter().map(|l| lane_to_pos[l].1).collect();
+            assert!(
+                xs.len() <= 2 && ys.len() <= 2,
+                "rectangle {grid:?} exceeds the 2×2 cap"
+            );
+            // Still a complete product.
+            assert_eq!(
+                grid.len(),
+                xs.len() * ys.len(),
+                "rectangle {grid:?} is not a product"
+            );
+            covered.extend(grid.iter().copied());
+        }
+        assert_eq!(
+            covered.into_iter().collect::<Vec<_>>(),
+            vec![100, 101, 102, 103, 104, 105]
+        );
+        // Two alternatives: the first 2×2 and the leftover 2×1 row, which the
+        // merge pass may not join because the union would be 2×3.
+        assert_eq!(
+            sorted_grids(&grids),
+            vec![vec![100, 101, 102, 103], vec![104, 105]]
+        );
+    }
+
+    /// Over-cap is `Invalid`, not `Repairable`: the chain's leader cell alone
+    /// is repairable (pull in the follower), but under a 1×1 cap the repaired
+    /// 2×1 rectangle is over the cap, so the repair loop stops and rolls back
+    /// rather than pulling in cells the hardware cannot drive. Only the
+    /// follower, whose destination is free, moves.
+    #[test]
+    fn capacity_stops_the_repair_loop() {
+        let ctx = capped(chain_context(), 1, 1);
+        let movers: HashSet<u64> = [10, 20].into_iter().collect();
+        let xs: BTreeSet<u64> = [0, 1].into_iter().collect();
+        let ys: BTreeSet<u64> = [0].into_iter().collect();
+        let mut repairs = Vec::new();
+        assert!(matches!(
+            ctx.rect_outcome(&xs, &ys, &movers, Some(&mut repairs)),
+            RectOutcome::Invalid
+        ));
+        assert!(repairs.is_empty());
+
+        let entries: HashMap<u64, u64> = [(10, 101), (20, 102)].into_iter().collect();
+        assert_eq!(
+            sorted_grids(&ctx.build_aod_grids(&entries)),
+            vec![vec![102]]
+        );
     }
 
     #[test]

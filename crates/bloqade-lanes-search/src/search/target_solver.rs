@@ -99,9 +99,11 @@ impl TargetSolver {
 /// asymmetric: as a target it is unreachable, as a root it is merely a
 /// starting point the atoms move off. Mirroring across such an endpoint would
 /// "solve" an instance that is genuinely unsolvable (target on a blocked
-/// location) by producing a plan that parks an atom on top of an external one
-/// — which the replay verifier cannot catch, since blocked atoms are not in
-/// the configuration. Skip the mirror instead.
+/// location) by producing a plan that parks an atom on top of an external one.
+/// The replay verifier now holds blocked sites as immovable phantom atoms, so
+/// such a plan would fail at packaging as a generator bug — but it is not one,
+/// it is an unsolvable request, and the right verdict is the forward search's
+/// own. Skip the mirror instead.
 fn mirroring_breaks_blocked(
     blocked: &[LocationAddr],
     initial_pairs: &[(u32, LocationAddr)],
@@ -142,6 +144,7 @@ pub(crate) fn solve_with_engine(
     // feasibility pass — rather than letting it surface as a verdict.
     validate_target_assignment(&target_pairs)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+    let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
     let initial_pairs: Vec<(u32, LocationAddr)> = root.iter().collect();
 
     // Mirroring: solve `target -> initial` and turn the plan around.
@@ -238,6 +241,7 @@ pub(crate) fn solve_with_engine(
             &root,
             &layers,
             engine.index().arch_spec(),
+            &blocked_encoded,
             &goal_config,
         );
         // `nodes_expanded`, `deadlocks` and `cost` describe the search that
@@ -286,13 +290,13 @@ pub(crate) fn solve_with_engine(
     let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
 
     let goal_obj = AllAtTarget::new(&target_encoded);
-    let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
     let ctx = SearchContext {
         index: engine.index(),
         dist_table: &dist_table,
         blocked: &blocked_encoded,
         targets: &target_encoded,
         cz_pairs: None,
+        capacity: opts.aod_capacity,
     };
 
     let lookahead = opts.lookahead;
@@ -334,8 +338,11 @@ pub(crate) fn solve_with_engine(
         }
         // Both failed. Prefer the planner's verdict when it is a *proof* of
         // unsolvability; the search's `Unsolvable` only means its frontier
-        // drained, which says nothing.
-        if fallback.status == SolveStatus::Unsolvable {
+        // drained, which says nothing. Selecting on `proven` rather than on
+        // the status names the property this promotion actually depends on, so
+        // a planner path that ever reports `Unsolvable` without a proof stops
+        // being promoted instead of silently borrowing the proof's authority.
+        if fallback.proven {
             return Ok(fallback);
         }
     }
@@ -345,7 +352,10 @@ pub(crate) fn solve_with_engine(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drivers::result::Termination;
+    use crate::primitives::context::AodCapacity;
     use crate::search::move_search::MoveSearch;
+    use crate::search::options::{BoundKind, EntropyOptions};
     use crate::search::result::SolveStatus;
     use crate::test_utils::{chain_arch_json, example_arch_json, loc};
     use std::sync::Arc;
@@ -360,6 +370,106 @@ mod tests {
     /// is an isolated 4-node path and every plan is forced.
     fn make_chain_engine() -> Arc<SearchEngine> {
         Arc::new(SearchEngine::from_json(&chain_arch_json()).unwrap())
+    }
+
+    /// `SolveResult::proven` carries the root certificate out to the caller.
+    ///
+    /// One atom, one hop: `h(root)` is 1 and the plan costs 1, so the bound has
+    /// proven the plan optimal over *every* legal plan and the driver stops on
+    /// that. Turning `bound_terminates` off makes the driver decline to act on
+    /// the same certificate, so `proven` goes false while the plan stays the
+    /// same -- which is what makes this a test of the reporting rather than of
+    /// the search.
+    ///
+    /// Asserted here, at the `SolveResult` boundary, because the mapping from
+    /// `Termination::Exhausted { proof: true }` to this flag happens in
+    /// `restarts.rs` and is not observable from the driver's own `SearchResult`.
+    #[test]
+    fn solve_reports_the_root_certificate_as_proven() {
+        let engine = make_engine();
+        let solve = |bound_terminates: bool| {
+            let search = MoveSearch::entropy().with_entropy_options(EntropyOptions {
+                completion_bound: Some(BoundKind::WeightedDistance),
+                bound_terminates,
+                ..Default::default()
+            });
+            TargetSolver::new(Arc::clone(&engine), search)
+                .solve(
+                    [(0, loc(0, 0))],
+                    [(0, loc(0, 5))],
+                    std::iter::empty(),
+                    Some(1000),
+                )
+                .expect("valid config")
+        };
+
+        let stopped = solve(true);
+        assert_eq!(stopped.status, SolveStatus::Solved);
+        assert!(stopped.proven, "a plan at h(root) is proven optimal");
+        assert_eq!(
+            stopped.termination,
+            Termination::Exhausted { proof: true },
+            "proven must agree with the termination it is derived from"
+        );
+
+        let spun = solve(false);
+        assert!(
+            !spun.proven,
+            "declining to act on the certificate proves nothing"
+        );
+        assert_eq!(spun.cost.to_bits(), stopped.cost.to_bits());
+    }
+
+    /// `SolveOptions::aod_capacity` reaches the shot generator through the
+    /// public entry point.
+    ///
+    /// Three atoms in one row of the example arch move together in a single
+    /// 3-lane shot when the capacity is unlimited. Capping the AOD at one
+    /// column by one row must serialise that into three 1-lane shots. The
+    /// assertion is on the emitted *widths* rather than the layer count, so it
+    /// pins the capacity rather than any particular plan length.
+    ///
+    /// This covers the wiring, not the generator: the option has to survive
+    /// `solve` building its `SearchContext`. That thread is exactly what the
+    /// loose-target generator got wrong before this test's sibling fix, so it
+    /// is worth an assertion of its own.
+    #[test]
+    fn solve_honours_the_aod_capacity_from_options() {
+        let engine = make_engine();
+        let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
+        let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i + 5))).collect();
+
+        let widths = |capacity: Option<AodCapacity>| -> Vec<usize> {
+            let search = MoveSearch::default().with_options(SolveOptions {
+                aod_capacity: capacity,
+                ..Default::default()
+            });
+            let result = TargetSolver::new(Arc::clone(&engine), search)
+                .solve(
+                    initial.clone(),
+                    target.clone(),
+                    std::iter::empty(),
+                    Some(2000),
+                )
+                .expect("valid config");
+            assert_eq!(result.status, SolveStatus::Solved);
+            result
+                .move_layers
+                .iter()
+                .map(|m| m.decode().len())
+                .collect()
+        };
+
+        assert_eq!(
+            widths(None),
+            vec![3],
+            "unlimited capacity should move the row in one shot"
+        );
+        assert_eq!(
+            widths(AodCapacity::new(1, 1)),
+            vec![1, 1, 1],
+            "a 1x1 AOD cannot carry more than one atom per shot"
+        );
     }
 
     #[test]
@@ -653,8 +763,9 @@ mod tests {
         // The target location holds an external atom, so the instance is
         // unsolvable. The mirror would start *on* that location and happily
         // move away, "solving" it with a plan that parks qubit 0 on top of the
-        // blocker — and the replay verifier cannot see blocked atoms. The
-        // option must decline to mirror here.
+        // blocker — which the replay verifier would now reject as a generator
+        // bug (panic) rather than as the unsolvable request it is. The option
+        // must decline to mirror here.
         let engine = make_engine();
         let result = solve_with_engine(
             &engine,
