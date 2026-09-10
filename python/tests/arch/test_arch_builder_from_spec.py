@@ -542,6 +542,66 @@ class TestSiteBusPathsHonourHasSiteBus:
         assert {lane.word_id for lane in site_lanes} == {0}
         assert spec.zones[0].words_with_site_buses == [0]
 
+    def test_word_zero_opting_out_keeps_movers_clear(self):
+        """The bus reference atom must be one that actually moves.
+
+        ``_enumerate_safe_positions`` derives the bus offset set from
+        ``bus_src_atoms[0]``, so if the reference is word 0 while word 0 has
+        opted out, every safe-waypoint candidate is evaluated in a frame
+        shifted by (first mover - word 0) and the clearance guarantee stops
+        describing the atoms actually being transported.  This is the shape
+        of the shipped Gemini physical spec, whose ``words_with_site_buses``
+        is the odd words only.
+        """
+        # Irregular bases so that a +2 µm frame shift is not a symmetry.
+        bases = [1.0, 3.0, 4.5]
+        pitch = 6.0
+        xs = sorted({b for b in bases} | {b + pitch for b in bases})
+        ys = [-2.0, 0.0, 2.0]
+        x_cl, y_cl = 0.5, 1.5
+
+        zone = ZoneBuilder(
+            "z",
+            Grid.from_positions(xs, ys),
+            word_shape=(2, 1),
+            x_clearance=x_cl,
+            y_clearance=y_cl,
+        )
+        for i, base in enumerate(bases):
+            zone.add_word(
+                [xs.index(base), xs.index(base + pitch)], [1], has_site_bus=i != 0
+            )
+        zone.add_site_bus([0], [1])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            paths = zone._compute_paths(0)
+
+        forward = {
+            lane.word_id: pts
+            for lane, pts in paths.items()
+            if lane.direction == Direction.FORWARD
+        }
+        assert set(forward) == {1, 2}, "only the opted-in words move"
+
+        # Every lane must land on its own destination site.
+        for word_id, pts in forward.items():
+            dst_x, dst_y = zone._site_nm(word_id, 1)
+            assert pts[-1] == (dst_x / 1000, dst_y / 1000)
+
+        # At each intermediate waypoint the whole bus shifts together, so
+        # every mover must clear the grid on at least one axis.
+        n_waypoints = {len(pts) for pts in forward.values()}
+        assert len(n_waypoints) == 1
+        for i in range(1, n_waypoints.pop() - 1):
+            at_step = [pts[i] for pts in forward.values()]
+            x_clear = all(abs(x - g) >= x_cl for x, _ in at_step for g in xs)
+            y_clear = all(abs(y - g) >= y_cl for _, y in at_step for g in ys)
+            assert x_clear or y_clear, (
+                f"waypoint {i} {at_step} puts a moving atom inside the "
+                f"clearance of a static grid site"
+            )
+
 
 # ── ArchResult.builder ──
 

@@ -1278,6 +1278,17 @@ class ZoneBuilder:
             w for w in range(self.num_words) if self._word_has_site_bus[w]
         ]
         for bus_id, (src_sites, dst_sites) in enumerate(self._site_buses):
+            if not site_bus_words:
+                # No word opts into site-bus transport, so this bus moves
+                # nothing and there is no reference atom to route.
+                continue
+            # The reference atom must be one that actually moves.
+            # ``_enumerate_safe_positions`` derives the bus's offset set from
+            # ``bus_src_atoms[0]``, so picking a reference outside the moving
+            # set shifts every candidate waypoint by (first mover − reference)
+            # and the clearance guarantee stops describing the transported
+            # atoms.
+            ref_word = site_bus_words[0]
             bus_lanes = [
                 LaneAddress(MoveType.SITE, w, s, bus_id, direction, zone_id)
                 for w in site_bus_words
@@ -1292,8 +1303,8 @@ class ZoneBuilder:
             # uniform delta per segment to the entire bus.
             displacements = {
                 (
-                    self._site_nm(0, ds)[0] - self._site_nm(0, ss)[0],
-                    self._site_nm(0, ds)[1] - self._site_nm(0, ss)[1],
+                    self._site_nm(ref_word, ds)[0] - self._site_nm(ref_word, ss)[0],
+                    self._site_nm(ref_word, ds)[1] - self._site_nm(ref_word, ss)[1],
                 )
                 for ss, ds in zip(src_sites, dst_sites)
             }
@@ -1311,8 +1322,8 @@ class ZoneBuilder:
                 self._site_nm(w, s) for w in site_bus_words for s in src_sites
             ]
 
-            ref_src = self._site_nm(0, src_sites[0])
-            ref_dst = self._site_nm(0, dst_sites[0])
+            ref_src = self._site_nm(ref_word, src_sites[0])
+            ref_dst = self._site_nm(ref_word, dst_sites[0])
 
             if ref_src == ref_dst:
                 ref_waypoints: tuple[tuple[int, int], ...] = (ref_src, ref_dst)
