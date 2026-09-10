@@ -165,7 +165,7 @@ def test_permute_p4_duplicate_qubit_rejected():
 def test_permute_identity_compiles():
     """An identity permutation is a valid no-op user-movement before a CZ."""
 
-    @physical.kernel(aggressive_unroll=True, verify=False)
+    @physical.kernel(verify=False)
     def k():
         q = squin.qalloc(2)
         arrange.permute([q[0], q[1]], [0, 1])
@@ -181,7 +181,7 @@ def test_permute_then_cz_compiles():
     involved — so it always builds regardless of the permutation (a cycle here).
     """
 
-    @physical.kernel(aggressive_unroll=True, verify=False)
+    @physical.kernel(verify=False)
     def k():
         q = squin.qalloc(3)
         arrange.permute([q[0], q[1], q[2]], [1, 2, 0])
@@ -212,7 +212,7 @@ def test_permute_default_relabel_full_pipeline_emits_no_moves():
     place/movement Permute. Runs under the palindrome strategy, where
     relabel-only is allowed."""
 
-    @physical.kernel(aggressive_unroll=True, verify=False)
+    @physical.kernel(verify=False)
     def k():
         q = squin.qalloc(3)
         arrange.permute([q[0], q[1], q[2]], [1, 2, 0])
@@ -288,7 +288,7 @@ def test_permute_insert_moves_full_pipeline_emits_moves():
     """insert_moves=True under a non-palindrome (no-return) strategy commits the
     permutation to move IR, with no residual place/movement Permute."""
 
-    @physical.kernel(aggressive_unroll=True, verify=False)
+    @physical.kernel(verify=False)
     def k():
         q = squin.qalloc(2)
         arrange.permute([q[0], q[1]], [1, 0], insert_moves=True)
@@ -313,7 +313,7 @@ def test_permute_insert_moves_survives_asap_place_pass():
     never merges/hoists a Permute, so this path was uncovered."""
     from bloqade.lanes.passes import ASAPPlacePass
 
-    @physical.kernel(aggressive_unroll=True, verify=False)
+    @physical.kernel(verify=False)
     def k():
         q = squin.qalloc(2)
         squin.cz(q[0], q[1])
