@@ -226,6 +226,7 @@ pub(crate) fn solve_loose_goal(
         blocked: &blocked_encoded,
         targets: &greedy_targets,
         cz_pairs: Some(cz_pairs),
+        capacity: opts.aod_capacity,
     };
 
     let lookahead = opts.lookahead;
