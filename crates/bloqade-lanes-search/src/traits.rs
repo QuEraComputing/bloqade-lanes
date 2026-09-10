@@ -75,10 +75,20 @@ pub struct ObjectiveId {
 ///   lanes a shot contains. An implementor whose cost is
 ///   `base + f(lanes)` therefore has to seed `f`'s fold at its own minimum
 ///   rather than at zero.
+/// - **C5 — lane-set monotone.** For two shots `s' ⊆ s` that move the same
+///   atoms — `s` differs from `s'` only by *filler* lanes, lanes whose source
+///   holds no atom — `edge_cost(s', ..) <= edge_cost(s, ..)`. Adding a filler
+///   lane never makes a shot cheaper. This is what lets a generator keep one
+///   representative per child configuration: among the AOD rectangles that
+///   move the same atoms to the same places, the *mover-tight* one (fewest
+///   filler lanes) is a subset of every other, so under C5 it is also the
+///   cheapest, and dropping the rest loses no optimal plan. An objective that
+///   discounted a shot for the lanes it fills (a per-lane rebate, say) would
+///   break this and make the tight representative a lossy choice.
 ///
 /// `bounds::assert_objective_contract` — available under `cfg(test)` or the
-/// `test-util` feature — checks C2, C3 and C4 mechanically over a lane sweep;
-/// C1 is structural and cannot be tested from outside.
+/// `test-util` feature — checks C2, C3, C4 and C5 mechanically over a lane
+/// sweep; C1 is structural and cannot be tested from outside.
 ///
 /// `Sync` because one objective is shared by reference across parallel
 /// restarts.

@@ -1086,7 +1086,22 @@ class EntropyOptions:
         collect_entropy_trace: bool = False,
         seed: int = 0,
         completion_bound: str | None = None,
+        bound_terminates: bool = True,
     ) -> None: ...
+    @property
+    def bound_terminates(self) -> bool:
+        """Whether the completion bound may end the search. On by default.
+
+        The driver stops once the bound has proven the plan optimal instead of
+        running on to its expansion budget, and reports
+        ``SolveResult.proven``. The proof is the root certificate: the plan's
+        cost reached ``h(root)``, a lower bound on *every* legal plan, so none
+        is cheaper -- including plans the generator would never have proposed.
+        Stopping skips no expansion, because a cut root cannot be expanded
+        from. Requires ``completion_bound``; inert without one.
+        """
+        ...
+
     @property
     def completion_bound(self) -> str | None:
         """Admissible completion bound for branch-and-bound pruning.
@@ -1257,6 +1272,35 @@ class SolveResult:
         how much earlier the bound cut), ``root_lower_bound`` (a certified
         lower bound on the instance optimum), ``incumbent_cost``, and
         ``optimality_gap`` (``None`` when unsolved).
+        """
+        ...
+
+    @property
+    def proven(self) -> bool:
+        """Whether this plan is *proven* optimal.
+
+        ``True`` means the search drained everything that could still have
+        beaten this plan, and its branching was complete enough for that to
+        mean something. On the entropy driver it is the root certificate: the
+        plan's cost reached ``h(root)``, a lower bound on every legal plan, so
+        none is cheaper -- including plans the generator would never have
+        proposed.
+
+        ``False`` is not "suboptimal", it is "unproven": most solves end on
+        their expansion budget. Read it to tell a solver giving up from an
+        instance that is genuinely this expensive, which is what an escalation
+        policy needs to know.
+        """
+        ...
+
+    @property
+    def termination(self) -> str:
+        """How the search ended, as the driver's own account.
+
+        ``"budget"`` ran out of expansions; ``"stopped"`` ended on a rule of
+        its own, such as collecting its goal quota; ``"exhausted"`` drained
+        its space without that being a proof; ``"exhausted_proof"`` drained it
+        and the result is optimal, which is the case ``proven`` reports.
         """
         ...
 
