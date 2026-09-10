@@ -5,6 +5,7 @@
 
 use crate::bounds::BoundStats;
 use crate::drivers::entropy::EntropyTrace;
+use crate::drivers::result::Termination;
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 
@@ -30,7 +31,10 @@ pub enum SolveStatus {
     /// solves. Callers that branch on this status (fallback logic, feasibility
     /// conclusions, optimality baselines) should treat it as "this search found
     /// nothing" rather than "nothing exists"; for a genuine verdict use the
-    /// feasibility oracle or Push and Rotate.
+    /// feasibility oracle or Push and Rotate. The branch-and-bound driver with
+    /// a complete schedule is the other proof-bearing case: it sets
+    /// [`SolveResult::proven`], which is the flag to read rather than the
+    /// status.
     Unsolvable,
     /// The expansion budget was exhausted before finding a solution or
     /// exhausting the space.
@@ -88,6 +92,28 @@ pub struct SolveResult {
     /// populated either way. The Python surface reports an unbounded run as an
     /// *empty* dict rather than zeros.
     pub bound_stats: BoundStats,
+    /// Whether the verdict is a proof: when `Solved`, the plan is optimal;
+    /// when `Unsolvable`, no plan exists.
+    ///
+    /// Exactly `matches!(termination, Termination::Exhausted { proof: true })`,
+    /// and `false` on every other path. Two things set it, neither of which
+    /// needs an exhaustive walk of the space:
+    ///
+    /// * the **root certificate** — the incumbent's cost has reached
+    ///   `h(root)`, which lower-bounds every legal plan because it depends
+    ///   only on the configuration and not on which candidates a generator
+    ///   proposed, so no plan is cheaper;
+    /// * **Push and Rotate's** `Unsolvable`, which is its completeness
+    ///   theorem rather than a drained frontier — see [`solve_push_rotate`].
+    ///
+    /// A search driver that merely runs out of frontier reports `Unsolvable`
+    /// with `proven` false: that says the heuristic gave up, not that the
+    /// hardware cannot do it.
+    ///
+    /// [`solve_push_rotate`]: crate::push_rotate::solver::solve_push_rotate
+    pub proven: bool,
+    /// How the search that produced this result ended.
+    pub termination: Termination,
 }
 
 impl SolveResult {
@@ -108,6 +134,8 @@ impl SolveResult {
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
+            proven: false,
+            termination: Termination::Stopped,
         }
     }
 
@@ -133,6 +161,11 @@ impl SolveResult {
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
+            proven: false,
+            termination: match status {
+                SolveStatus::BudgetExceeded => Termination::Budget,
+                _ => Termination::Exhausted { proof: false },
+            },
         }
     }
 
@@ -140,6 +173,23 @@ impl SolveResult {
     /// (no expansions happened, no deadlocks encountered).
     pub fn unsolvable(root_config: Config) -> Self {
         Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
+    }
+
+    /// [`SolveStatus::Unsolvable`] as a **proof**: no plan exists, and the
+    /// producer knows it rather than having merely run out of frontier.
+    ///
+    /// [`Self::unsolved`] infers `Exhausted { proof: false }` from the status,
+    /// which is what a search driver wants — its `Unsolvable` says the
+    /// heuristic gave up. A complete method needs the opposite, and every one
+    /// of its proof-bearing exits must agree, or `proven` becomes a property
+    /// of which internal path happened to fire. Hence one constructor rather
+    /// than a flag set at each site.
+    pub fn proven_unsolvable(root_config: Config) -> Self {
+        Self {
+            proven: true,
+            termination: Termination::Exhausted { proof: true },
+            ..Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
+        }
     }
 }
 
@@ -188,6 +238,28 @@ mod tests {
     use crate::search::target_solver::solve_with_engine;
     use crate::test_utils::{example_arch_json, loc};
 
+    /// `proven` is documented as exactly `Exhausted { proof: true }`, and the
+    /// two unsolvable constructors sit on opposite sides of that line: a
+    /// search driver's drained frontier proves nothing, a complete method's
+    /// verdict proves everything.
+    #[test]
+    fn the_two_unsolvable_constructors_differ_only_in_the_proof() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let drained = SolveResult::unsolvable(root.clone());
+        let proved = SolveResult::proven_unsolvable(root);
+
+        assert_eq!(drained.status, proved.status);
+        assert!(!drained.proven);
+        assert_eq!(drained.termination, Termination::Exhausted { proof: false });
+        assert!(proved.proven);
+        assert_eq!(proved.termination, Termination::Exhausted { proof: true });
+        for result in [&drained, &proved] {
+            assert_eq!(
+                result.proven,
+                matches!(result.termination, Termination::Exhausted { proof: true })
+            );
+        }
+    }
     /// Default test options: A*.
     fn default_opts() -> SolveOptions {
         SolveOptions::default()

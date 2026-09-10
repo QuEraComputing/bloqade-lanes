@@ -14,6 +14,7 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import (
     ArchSpec as RustArchSpec,
+    EntropyOptions,
     MoveSearch,
     SearchEngine,
 )
@@ -86,3 +87,55 @@ def test_rust_solver_routes_back_across_zone_bus():
     result = solver.solve({0: gate_loc._inner}, {0: mem_loc._inner}, [], None)
 
     assert result.status == "solved"
+
+
+def test_solve_result_reports_proven_and_termination():
+    """The root certificate reaches Python, and the knob turns it off.
+
+    One atom across the zone bus: the plan costs exactly ``h(root)``, so the
+    bound proves it optimal without any complete generator. With
+    ``bound_terminates`` off the driver declines to act on that and reports no
+    proof, while producing the same plan -- the certificate ends a spin over
+    nodes the bound had already cut, so no expansion is skipped.
+    """
+    engine = SearchEngine.from_arch_spec(RustArchSpec.from_json(_TWO_ZONE_ARCH_JSON))
+    mem = LocationAddress(1, 0, 1)
+    gate = LocationAddress(0, 0, 0)
+
+    def solve(bound_terminates: bool):
+        search = MoveSearch.entropy().with_entropy_options(
+            EntropyOptions(
+                completion_bound="weighted_distance",
+                bound_terminates=bound_terminates,
+            )
+        )
+        return _native.TargetSolver(engine, search).solve(
+            {0: mem._inner}, {0: gate._inner}, [], None
+        )
+
+    stopped, spun = solve(True), solve(False)
+
+    assert stopped.status == "solved"
+    assert stopped.proven is True
+    assert stopped.termination == "exhausted_proof"
+    assert "proven=true" in repr(stopped)
+
+    assert spun.proven is False
+    assert spun.cost == stopped.cost
+    assert spun.nodes_expanded == stopped.nodes_expanded
+
+
+def test_unbounded_solve_is_never_proven():
+    """Without a bound there is nothing to certify, whatever the knob says."""
+    engine = SearchEngine.from_arch_spec(RustArchSpec.from_json(_TWO_ZONE_ARCH_JSON))
+    search = MoveSearch.entropy().with_entropy_options(
+        EntropyOptions(bound_terminates=True)
+    )
+    result = _native.TargetSolver(engine, search).solve(
+        {0: LocationAddress(1, 0, 1)._inner},
+        {0: LocationAddress(0, 0, 0)._inner},
+        [],
+        None,
+    )
+    assert result.status == "solved"
+    assert result.proven is False

@@ -41,6 +41,7 @@ use std::collections::HashSet;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_bytecode_core::atom_state::AtomStateData;
+use bloqade_lanes_search::drivers::result::Termination;
 use bloqade_lanes_search::feasibility::graph::{LaneGraph, VertexId};
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::push_rotate::context::PlanCtx;
@@ -391,6 +392,45 @@ fn phantom_target_is_unsolvable_not_a_fabricated_success() {
     let result = solve_push_rotate(&fx.index, &[(0, loc_a)], &[(7, loc_b)], &[], 10_000)
         .expect("valid config");
     assert_eq!(result.status, SolveStatus::Unsolvable);
+    // The verdict is Theorem 1, not a drained frontier, so it must survive as
+    // a proof on the result the caller reads. `SolveResult::unsolved` infers
+    // the unproven termination from the status, which is right for a search
+    // driver and wrong here.
+    assert!(result.proven, "a proven verdict must report itself as one");
+    assert_eq!(result.termination, Termination::Exhausted { proof: true });
+}
+
+/// A target on a blocked location is off the carved graph entirely, so no
+/// plan can place an atom there — a proof, reported through the same
+/// constructor as the planner's own Theorem 1 verdicts.
+///
+/// This exit runs before the planner does, in `to_vertices`. It is a separate
+/// path from the `PlanError` arms, and the fallback promotion in the target
+/// solver treats every proof-bearing Push and Rotate verdict alike, so the two
+/// paths must agree about carrying a proof.
+#[test]
+fn a_target_off_the_carved_graph_is_a_proven_verdict() {
+    let fx = fixture(LOGICAL);
+    let loc_of = |v: VertexId| LocationAddr::decode(fx.graph.location_of(v));
+    // Block the destination, then ask for it: the vertex is not in the graph
+    // the planner sees, so the request cannot be expressed at all.
+    let blocked = [loc_of(5)];
+
+    let result = solve_push_rotate(
+        &fx.index,
+        &[(0, loc_of(0))],
+        &[(0, loc_of(5))],
+        &blocked,
+        10_000,
+    )
+    .expect("valid config");
+
+    assert_eq!(result.status, SolveStatus::Unsolvable);
+    assert!(
+        result.proven,
+        "an inexpressible request is a proof, not a give-up"
+    );
+    assert_eq!(result.termination, Termination::Exhausted { proof: true });
 }
 
 /// A request assigning two qubits to one target location is malformed —
@@ -437,6 +477,10 @@ fn out_of_regime_reports_budget_exceeded_not_unsolvable() {
         result.status,
         SolveStatus::BudgetExceeded,
         "a solvable out-of-regime instance must not be reported as proven unsolvable"
+    );
+    assert!(
+        !result.proven,
+        "giving up outside the completeness regime proves nothing"
     );
 }
 
@@ -555,6 +599,10 @@ fn verdicts_match_brute_force_on_carved_instances() {
         match result.status {
             SolveStatus::Unsolvable => {
                 proofs += 1;
+                assert!(
+                    result.proven,
+                    "seed {seed}: an Unsolvable verdict must carry its proof"
+                );
                 assert!(
                     !solvable,
                     "seed {seed}: Unsolvable claimed for an oracle-solvable instance \
