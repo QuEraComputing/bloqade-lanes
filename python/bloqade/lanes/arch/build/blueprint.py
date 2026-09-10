@@ -330,6 +330,11 @@ def build_arch(
             arch_builder.add_mode(name, [name])
 
     # 6. Build and return.
+    # Carry the blueprint's capabilities on the builder itself, so that a
+    # caller extending ``ArchResult.builder`` and rebuilding does not have to
+    # re-supply them (and does not silently downgrade the architecture).
+    arch_builder._feed_forward = blueprint.feed_forward
+    arch_builder._atom_reloading = blueprint.atom_reloading
     arch = arch_builder.build(
         feed_forward=blueprint.feed_forward,
         atom_reloading=blueprint.atom_reloading,

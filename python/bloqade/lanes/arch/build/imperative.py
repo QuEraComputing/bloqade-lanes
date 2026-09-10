@@ -1460,6 +1460,12 @@ class ArchBuilder:
         ] = []
         self._modes: list[tuple[str, list[str]]] = []
         self._blockade_radius: float | None = None
+        # Device capabilities carried over from a restored spec (or from
+        # ``build_arch``'s blueprint).  ``build()`` falls back to these when
+        # the caller passes no explicit value, so a round trip does not
+        # silently downgrade an architecture to feed_forward=False.
+        self._feed_forward: bool | None = None
+        self._atom_reloading: bool | None = None
         # Zone buses restored by ``from_spec``; append-only for the same
         # reason as ``ZoneBuilder._restored_*_buses`` (bus_id keys paths).
         self._restored_connections: tuple[
@@ -1480,8 +1486,12 @@ class ArchBuilder:
         ``spec`` is restored so the architecture can be extended through
         the validating builder API instead of by editing ``to_json()``
         output.  Calling :meth:`build` on the result without further
-        changes reproduces ``spec`` (modes' ``bitstring_order`` is
-        regenerated from the zone/word template rather than copied).
+        changes reproduces ``spec``, with one exception: modes'
+        ``bitstring_order`` is regenerated from the zone/word template
+        rather than copied, so a spec that shipped an empty
+        ``bitstring_order`` (as both bundled Gemini specs do) comes back
+        with it fully materialized.  The Rust core only validates that
+        field, never consumes it.
 
         Preserved paths are kept verbatim and take precedence over path
         search, so only the buses added afterwards are routed; an explicit
@@ -1494,8 +1504,9 @@ class ArchBuilder:
         recorded entangling pairs; a layout the scan cannot pair raises
         ``ValueError`` here rather than yielding an inconsistent spec.
 
-        Note that ``feed_forward`` and ``atom_reloading`` are not builder
-        state: pass them to :meth:`build` again.
+        ``feed_forward`` and ``atom_reloading`` are carried over, so a
+        plain :meth:`build` reproduces them; pass either explicitly to
+        override.
 
         Args:
             spec: The architecture to restore.
@@ -1553,6 +1564,9 @@ class ArchBuilder:
 
         for mode in spec.modes:
             builder.add_mode(mode.name, [builder._zones[z].name for z in mode.zones])
+
+        builder._feed_forward = spec.feed_forward
+        builder._atom_reloading = spec.atom_reloading
 
         return builder
 
@@ -1681,15 +1695,19 @@ class ArchBuilder:
 
     def build(
         self,
-        feed_forward: bool = False,
-        atom_reloading: bool = False,
+        feed_forward: bool | None = None,
+        atom_reloading: bool | None = None,
         blockade_radius: float | None = None,
     ) -> ArchSpec:
         """Assemble the ArchSpec and validate via Rust.
 
         Args:
-            feed_forward: Whether the device supports feed-forward.
+            feed_forward: Whether the device supports feed-forward. When
+                omitted, falls back to the value carried by
+                :meth:`from_spec` (or ``build_arch``'s blueprint) and
+                finally to ``False``.
             atom_reloading: Whether the device supports atom reloading.
+                Same fallback chain as ``feed_forward``.
             blockade_radius: Explicit blockade radius (µm). If provided,
                 overrides both builder-level and zone-level radii.
 
@@ -1806,6 +1824,13 @@ class ArchBuilder:
         )
 
         # 7. Assemble and validate.
+        # Capabilities: explicit argument > value carried by from_spec /
+        # build_arch > False.
+        if feed_forward is None:
+            feed_forward = self._feed_forward or False
+        if atom_reloading is None:
+            atom_reloading = self._atom_reloading or False
+
         return ArchSpec.from_components(
             words=tuple(all_words),
             zones=tuple(rust_zones),

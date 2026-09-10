@@ -603,6 +603,40 @@ class TestSiteBusPathsHonourHasSiteBus:
             )
 
 
+# ── Device capabilities survive a round trip ──
+
+
+class TestCapabilitiesRoundTrip:
+    def _spec(self, **kwargs) -> ArchSpec:
+        builder = ArchBuilder()
+        zone = ZoneBuilder(
+            "z", _make_grid(4, 1), word_shape=(2, 1), x_clearance=_CL, y_clearance=_CL
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        zone.add_word_bus([0], [1])
+        builder.add_zone(zone)
+        builder.add_mode("all", ["z"])
+        return builder.build(**kwargs)
+
+    def test_restored_capabilities_are_not_dropped(self):
+        original = self._spec(feed_forward=True, atom_reloading=True)
+        restored = ArchBuilder.from_spec(original, x_clearance=_CL, y_clearance=_CL)
+        rebuilt = restored.build()
+        assert (rebuilt.feed_forward, rebuilt.atom_reloading) == (True, True)
+        _assert_spec_equal(original, rebuilt)
+
+    def test_explicit_argument_overrides_restored(self):
+        original = self._spec(feed_forward=True, atom_reloading=True)
+        restored = ArchBuilder.from_spec(original, x_clearance=_CL, y_clearance=_CL)
+        rebuilt = restored.build(feed_forward=False)
+        assert (rebuilt.feed_forward, rebuilt.atom_reloading) == (False, True)
+
+    def test_fresh_builder_still_defaults_to_false(self):
+        spec = self._spec()
+        assert (spec.feed_forward, spec.atom_reloading) == (False, False)
+
+
 # ── ArchResult.builder ──
 
 
