@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import numpy as np
@@ -63,6 +64,14 @@ KERNEL_B_JSON = _serializer.encode(_kernel_b.dialects.encode(_kernel_b))
 KERNEL_WITH_POSTPROCESSING_JSON = _serializer.encode(
     _kernel_with_postprocessing.dialects.encode(_kernel_with_postprocessing)
 )
+
+
+def reorder_serialized_dialects(kernel_json: str) -> str:
+    """Return equivalent kernel JSON with the serialized dialect order reversed."""
+    payload = json.loads(kernel_json)
+    dialects = payload["body"]["data"]["dialects"]["data"]["data"]["data"]["value"]
+    dialects.reverse()
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def make_shot(
@@ -647,9 +656,9 @@ def test_postprocessing_functions_compile_once_independent_of_bit_convention(
     assert result.postprocessing_functions() is mappings
 
     assert len(mapping_calls) == 1
-    # The duplicate program index across task IDs is decoded once and served
-    # from the convention-independent cache.
-    assert decode_spy.call_count == 1
+    # Each stored program is decoded for structural comparison, while the
+    # convention-independent SLM postprocessing is compiled once per index.
+    assert decode_spy.call_count == 2
 
 
 def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
@@ -1155,8 +1164,7 @@ def test_return_values_merges_shots_across_task_ids(storage, monkeypatch):
 
 
 def test_postprocessing_functions_dedupes_across_task_ids(storage, mocker):
-    """When multiple task_ids share an identical program at the same
-    program_index, decoding and SLM post-processing compilation run once."""
+    """Structurally equal programs at one index compile only once."""
     add_task_definition(
         storage,
         "task-A",
@@ -1165,7 +1173,9 @@ def test_postprocessing_functions_dedupes_across_task_ids(storage, mocker):
     add_task_definition(
         storage,
         "task-B",
-        make_task_definition(programs=[Program(content=KERNEL_A_JSON)]),
+        make_task_definition(
+            programs=[Program(content=reorder_serialized_dialects(KERNEL_A_JSON))]
+        ),
     )
 
     decode_spy = mocker.spy(result_module.logical.kernel, "decode_json")
@@ -1175,7 +1185,7 @@ def test_postprocessing_functions_dedupes_across_task_ids(storage, mocker):
     funcs = res.postprocessing_functions()
 
     assert list(funcs.keys()) == [0]
-    assert decode_spy.call_count == 1
+    assert decode_spy.call_count == 2
     assert mapping_spy.call_count == 1
 
 
