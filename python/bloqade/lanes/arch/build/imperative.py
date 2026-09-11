@@ -11,7 +11,7 @@ import math
 import warnings
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import rustworkx as rx
@@ -64,6 +64,60 @@ def _normalize_index(idx: slice | int | Sequence[int], size: int) -> list[int]:
     if isinstance(idx, int):
         return [idx]
     return sorted(idx)
+
+
+def _normalize_index_ordered(idx: slice | int | Sequence[int], size: int) -> list[int]:
+    """Convert a slice, int, or list to a list of indices, preserving order.
+
+    Unlike :func:`_normalize_index`, an explicit sequence is returned in
+    the order given (duplicates included) so callers can express an
+    arbitrary permutation.
+    """
+    if isinstance(idx, slice):
+        return list(range(*idx.indices(size)))
+    if isinstance(idx, int):
+        return [idx]
+    return list(idx)
+
+
+def _infer_word_shape(words: Sequence[Word]) -> tuple[int, int]:
+    """Derive the uniform ``(num_x, num_y)`` word shape from materialized words.
+
+    Every word must occupy a full ``{x_values} × {y_values}`` block of grid
+    indices, and all words must share the same block dimensions — the
+    invariants :meth:`ZoneBuilder.add_word` enforces on construction.
+
+    Raises:
+        ValueError: If ``words`` is empty, a word is not rectangular, or
+            words have differing shapes.
+    """
+    if not words:
+        raise ValueError(
+            "cannot infer word_shape from an empty word list; a zone needs "
+            "at least one word"
+        )
+    shapes: dict[tuple[int, int], int] = {}
+    for word_id, word in enumerate(words):
+        sites = list(word.sites)
+        xs = {x for x, _ in sites}
+        ys = {y for _, y in sites}
+        expected = {(x, y) for x in xs for y in ys}
+        if len(set(sites)) != len(sites) or set(sites) != expected:
+            raise ValueError(
+                f"word {word_id} sites {sites} do not form a rectangular "
+                f"{len(xs)}x{len(ys)} block of grid indices; ZoneBuilder "
+                "requires every word to occupy a full x × y block"
+            )
+        shapes.setdefault((len(xs), len(ys)), word_id)
+    if len(shapes) != 1:
+        described = ", ".join(
+            f"word {wid} is {nx}x{ny}" for (nx, ny), wid in sorted(shapes.items())
+        )
+        raise ValueError(
+            f"words have non-uniform shapes ({described}); ZoneBuilder "
+            "requires a single word_shape shared by every word"
+        )
+    return next(iter(shapes))
 
 
 def _validate_aod_rectangle(
@@ -137,6 +191,49 @@ class _WordGridQuery:
                 hits.add(word_id)
         return sorted(hits)
 
+    @property
+    def ordered(self) -> _OrderedWordGridQuery:
+        """Order-preserving variant of this query.
+
+        ``zone.words[...]`` returns word IDs sorted ascending, which cannot
+        express an arbitrary permutation.  ``zone.words.ordered[...]``
+        instead returns them in *query order*, so that
+        ``src = zone.words.ordered[[4, 0, 8], 0]`` and
+        ``dst = zone.words.ordered[[0, 8, 4], 0]`` pair ``src[i]`` with
+        ``dst[i]`` exactly as written when handed to ``add_word_bus``.
+        """
+        return _OrderedWordGridQuery(self._zone)
+
+
+class _OrderedWordGridQuery:
+    """Query word indices by grid region, preserving query order.
+
+    Positions are visited with the x-selection as the outer loop and the
+    y-selection as the inner loop, each in the order given (slices expand
+    ascending; explicit sequences are taken verbatim).  Each word is
+    reported once, at its first hit.  Grid positions that hold no word
+    are skipped.
+    """
+
+    def __init__(self, zone: ZoneBuilder):
+        self._zone = zone
+
+    def __getitem__(
+        self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]
+    ) -> list[int]:
+        x_idx, y_idx = key
+        xs = _normalize_index_ordered(x_idx, self._zone._grid.num_x)
+        ys = _normalize_index_ordered(y_idx, self._zone._grid.num_y)
+        result: list[int] = []
+        seen: set[int] = set()
+        for x in xs:
+            for y in ys:
+                word_id = self._zone._position_to_word.get((x, y))
+                if word_id is not None and word_id not in seen:
+                    seen.add(word_id)
+                    result.append(word_id)
+        return result
+
 
 # ── ZoneBuilder ──
 
@@ -202,6 +299,19 @@ class ZoneBuilder:
         self._word_buses: list[tuple[list[int], list[int]]] = []
         self._entangling_pairs: list[tuple[int, int]] = []
         self._blockade_radius_nm: int | None = None
+        # Transport paths that take precedence over path search.  Seeded
+        # by ``from_zone`` with a materialized spec's (calibrated) paths and
+        # written by ``set_path``; ``_compute_paths`` searches only for
+        # lanes absent from this dict.
+        self._path_overrides: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
+        # Buses restored by ``from_zone``.  ``bus_id`` is a bus's list
+        # index and every preserved path is keyed by it, so restored buses
+        # must stay in place: ``_check_append_only`` verifies this prefix
+        # is intact at build time.
+        self._restored_site_buses: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
+        self._restored_site_buses = ()
+        self._restored_word_buses: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
+        self._restored_word_buses = ()
 
     @classmethod
     def from_positions(
@@ -242,6 +352,113 @@ class ZoneBuilder:
             x_clearance=x_clearance,
             y_clearance=y_clearance,
         )
+
+    @classmethod
+    def from_zone(
+        cls,
+        zone: _RustZone,
+        words: Sequence[Word],
+        *,
+        x_clearance: float,
+        y_clearance: float,
+        blockade_radius: float | None = None,
+        paths: Mapping[LaneAddress, Sequence[tuple[float, float]]] | None = None,
+    ) -> ZoneBuilder:
+        """Reconstruct a ``ZoneBuilder`` from a materialized zone.
+
+        Restores the zone's grid, words, buses and entangling pairs so the
+        zone can be extended through the validating ``add_*`` API.  This
+        is the per-zone half of :meth:`ArchBuilder.from_spec`, which is
+        the entry point most callers want.
+
+        Args:
+            zone: The Rust ``Zone`` to restore (e.g. ``spec.zones[i]``).
+            words: The architecture's word template (``spec.words``).
+                Words live globally on the ``ArchSpec`` and every zone
+                shares the same template, so hand the full list to each
+                zone.  ``word_shape`` is inferred from it; every word must
+                occupy a rectangular block of grid indices and all words
+                must share one shape.
+            x_clearance: Minimum x-axis clearance (> 0, µm) used when
+                routing lanes that have **no** preserved path — i.e. the
+                buses added after restoration.  Clearances are search
+                parameters, not spec invariants, so they need not match
+                whatever produced the original paths.
+            y_clearance: Same as ``x_clearance``, applied to the y-axis.
+            blockade_radius: If given, :meth:`set_blockade_radius` is run
+                after restoration and its geometry scan **replaces**
+                ``zone.entangling_pairs``.  A scan failure raises rather
+                than yielding a silently inconsistent zone.  If ``None``,
+                the recorded pairs are restored verbatim.
+            paths: Transport paths to preserve, keyed by ``LaneAddress``.
+                Typically ``spec.paths`` filtered to this zone's
+                ``zone_id``.  They are accepted verbatim (no clearance
+                check) and take precedence over path search; use
+                :meth:`set_path` to replace one.
+
+        Returns:
+            ZoneBuilder: The restored zone.
+
+        Raises:
+            ValueError: If the words are not a uniform rectangular
+                template, a bus fails AOD validation, ``sites_with_word_buses``
+                is a strict subset the builder cannot represent, or the
+                blockade rescan rejects the layout.
+        """
+        word_shape = _infer_word_shape(words)
+        self = cls(
+            zone.name,
+            zone.grid,
+            word_shape,
+            x_clearance=x_clearance,
+            y_clearance=y_clearance,
+        )
+
+        # Words: restore grid indices verbatim — site_id is the index into
+        # the word's site list, so the order must be kept as recorded.
+        site_bus_words = set(zone.words_with_site_buses)
+        for word_id, word in enumerate(words):
+            # ``words_with_site_buses`` is only meaningful when the zone has
+            # site buses (``build`` emits ``[]`` otherwise), so fall back to
+            # the ``add_word(has_site_bus=True)`` default in that case.
+            has_site_bus = word_id in site_bus_words if zone.site_buses else True
+            self._restore_word(list(word.sites), has_site_bus=has_site_bus)
+
+        # Buses: route through the validating API so a hand-edited spec
+        # that breaks the AOD rectangle invariant is caught here.
+        for bus in zone.site_buses:
+            self.add_site_bus(list(bus.src), list(bus.dst))
+        for bus in zone.word_buses:
+            self.add_word_bus(list(bus.src), list(bus.dst))
+        self._restored_site_buses = tuple(
+            (tuple(s), tuple(d)) for s, d in self._site_buses
+        )
+        self._restored_word_buses = tuple(
+            (tuple(s), tuple(d)) for s, d in self._word_buses
+        )
+
+        # ``build`` always emits every site for ``sites_with_word_buses``
+        # when the zone has word buses; a strict subset has no builder
+        # representation and would be silently widened.
+        if zone.word_buses:
+            recorded = sorted(zone.sites_with_word_buses)
+            if recorded != list(range(self.sites_per_word)):
+                raise ValueError(
+                    f"Zone '{zone.name}' sites_with_word_buses={recorded} is a "
+                    f"strict subset of all {self.sites_per_word} sites; "
+                    "ZoneBuilder can only represent word buses that move "
+                    "every site of a word"
+                )
+
+        self._entangling_pairs = [(a, b) for a, b in zone.entangling_pairs]
+        if blockade_radius is not None:
+            self.set_blockade_radius(blockade_radius)
+
+        if paths is not None:
+            for lane, waypoints in paths.items():
+                self.set_path(lane, waypoints)
+
+        return self
 
     @property
     def name(self) -> str:
@@ -346,6 +563,128 @@ class ZoneBuilder:
         for pos in positions:
             self._position_to_word[pos] = word_id
         return word_id
+
+    def _restore_word(
+        self, positions: list[tuple[int, int]], *, has_site_bus: bool
+    ) -> int:
+        """Append a word with its site order taken verbatim.
+
+        Unlike :meth:`add_word`, which lays sites out row-major from index
+        sets, this keeps ``positions[site_id]`` exactly as given so a
+        materialized word's ``site_id`` semantics survive the round trip.
+        Range and overlap checks are still applied.
+        """
+        if len(positions) != self.sites_per_word:
+            raise ValueError(
+                f"word has {len(positions)} sites but word_shape "
+                f"{self._word_shape} requires {self.sites_per_word}"
+            )
+        for x, y in positions:
+            if x < 0 or x >= self._grid.num_x:
+                raise IndexError(
+                    f"x index {x} out of range for grid with "
+                    f"{self._grid.num_x} x-positions"
+                )
+            if y < 0 or y >= self._grid.num_y:
+                raise IndexError(
+                    f"y index {y} out of range for grid with "
+                    f"{self._grid.num_y} y-positions"
+                )
+        for pos in positions:
+            if pos in self._position_to_word:
+                owner = self._position_to_word[pos]
+                raise ValueError(
+                    f"Grid position (x={pos[0]}, y={pos[1]}) "
+                    f"already belongs to word {owner}"
+                )
+        word_id = len(self._words)
+        self._words.append(list(positions))
+        self._word_has_site_bus.append(has_site_bus)
+        for pos in positions:
+            self._position_to_word[pos] = word_id
+        return word_id
+
+    def set_path(
+        self, lane: LaneAddress, waypoints: Sequence[tuple[float, float]]
+    ) -> None:
+        """Pin the transport path for one lane.
+
+        The waypoints are stored verbatim — no clearance or AOD check is
+        applied — and take precedence over both a path preserved by
+        :meth:`from_zone` and anything :meth:`_compute_paths` would search
+        for.  Use this to replace a calibrated path or to route a lane the
+        search cannot.
+
+        Args:
+            lane: The lane to pin.  Its ``zone_id`` must be the id this
+                zone receives from ``ArchBuilder.add_zone`` (checked at
+                build time).  Site- and word-bus lanes must reference a
+                bus, word and site that exist on this zone.
+            waypoints: At least two finite ``(x, y)`` positions in µm,
+                starting at the lane's source and ending at its
+                destination.
+
+        Raises:
+            ValueError: On fewer than two waypoints, a non-finite
+                coordinate, or an out-of-range lane field.
+        """
+        pts = tuple((float(x), float(y)) for x, y in waypoints)
+        if len(pts) < 2:
+            raise ValueError(
+                f"path for {lane!r} needs at least 2 waypoints, got {len(pts)}"
+            )
+        for x, y in pts:
+            if not (math.isfinite(x) and math.isfinite(y)):
+                raise ValueError(f"path for {lane!r} has non-finite waypoint {(x, y)}")
+
+        n_words = self.num_words
+        if lane.word_id < 0 or lane.word_id >= n_words:
+            raise ValueError(
+                f"lane {lane!r}: word index {lane.word_id} out of range "
+                f"[0, {n_words})"
+            )
+        if lane.site_id < 0 or lane.site_id >= self.sites_per_word:
+            raise ValueError(
+                f"lane {lane!r}: site index {lane.site_id} out of range "
+                f"[0, {self.sites_per_word})"
+            )
+        if lane.move_type == MoveType.SITE:
+            n_buses = len(self._site_buses)
+            kind = "site"
+        elif lane.move_type == MoveType.WORD:
+            n_buses = len(self._word_buses)
+            kind = "word"
+        else:
+            # Zone buses live on the ArchBuilder; nothing more to check here.
+            n_buses = None
+            kind = "zone"
+        if n_buses is not None and (lane.bus_id < 0 or lane.bus_id >= n_buses):
+            raise ValueError(
+                f"lane {lane!r}: {kind} bus index {lane.bus_id} out of range "
+                f"[0, {n_buses}) for zone '{self._name}'"
+            )
+        self._path_overrides[lane] = pts
+
+    def _check_append_only(self) -> None:
+        """Verify buses restored by :meth:`from_zone` are still in place.
+
+        ``bus_id`` is a bus's index in its list and every preserved path is
+        keyed by it, so removing or reordering a restored bus would rebind
+        those paths to the wrong bus.  Buses may only be appended.
+        """
+        for kind, restored, current in (
+            ("site", self._restored_site_buses, self._site_buses),
+            ("word", self._restored_word_buses, self._word_buses),
+        ):
+            n = len(restored)
+            prefix = tuple((tuple(s), tuple(d)) for s, d in current[:n])
+            if prefix != restored:
+                raise ValueError(
+                    f"Zone '{self._name}': the {n} {kind} bus(es) restored by "
+                    "from_zone were removed or reordered. bus_id indexes "
+                    "the bus list and keys every preserved path, so "
+                    "restored buses are append-only."
+                )
 
     def add_site_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a site bus (intra-word movement).
@@ -910,21 +1249,62 @@ class ZoneBuilder:
         Site bus paths are intra-word; word bus paths are intra-zone.
         Zone buses are NOT included (inter-zone routing is separate).
 
+        Paths pinned via :meth:`set_path` or preserved by :meth:`from_zone`
+        (``_path_overrides``) are returned as-is; search runs only for
+        lanes absent from that dict, and a bus whose lanes are all pinned
+        is not searched (nor checked against the single-shift invariant).
+
         Returns:
             Dict mapping LaneAddress to waypoint tuples (µm floats) for
             both directions.
         """
+        self._check_append_only()
+
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
+        for lane, waypoints in self._path_overrides.items():
+            if lane.zone_id != zone_id:
+                raise ValueError(
+                    f"Zone '{self._name}' (zone_id {zone_id}) has a pinned path "
+                    f"for lane {lane!r} whose zone_id is {lane.zone_id}"
+                )
+            paths[lane] = waypoints
 
         # ── Site bus paths (intra-word) ──
+        # Only words flagged ``has_site_bus`` take part in site-bus
+        # transport (they alone appear in ``words_with_site_buses``, and a
+        # site-bus lane on any other word is not a valid lane), so only
+        # they move with the bus and only they receive paths.
+        site_bus_words = [
+            w for w in range(self.num_words) if self._word_has_site_bus[w]
+        ]
         for bus_id, (src_sites, dst_sites) in enumerate(self._site_buses):
+            if not site_bus_words:
+                # No word opts into site-bus transport, so this bus moves
+                # nothing and there is no reference atom to route.
+                continue
+            # The reference atom must be one that actually moves.
+            # ``_enumerate_safe_positions`` derives the bus's offset set from
+            # ``bus_src_atoms[0]``, so picking a reference outside the moving
+            # set shifts every candidate waypoint by (first mover − reference)
+            # and the clearance guarantee stops describing the transported
+            # atoms.
+            ref_word = site_bus_words[0]
+            bus_lanes = [
+                LaneAddress(MoveType.SITE, w, s, bus_id, direction, zone_id)
+                for w in site_bus_words
+                for s in src_sites
+                for direction in (Direction.FORWARD, Direction.BACKWARD)
+            ]
+            if all(lane in paths for lane in bus_lanes):
+                continue
+
             # AOD invariant: every (src_site, dst_site) pair must have the
             # same physical displacement, because the AOD applies one
             # uniform delta per segment to the entire bus.
             displacements = {
                 (
-                    self._site_nm(0, ds)[0] - self._site_nm(0, ss)[0],
-                    self._site_nm(0, ds)[1] - self._site_nm(0, ss)[1],
+                    self._site_nm(ref_word, ds)[0] - self._site_nm(ref_word, ss)[0],
+                    self._site_nm(ref_word, ds)[1] - self._site_nm(ref_word, ss)[1],
                 )
                 for ss, ds in zip(src_sites, dst_sites)
             }
@@ -939,11 +1319,11 @@ class ZoneBuilder:
                 continue
 
             bus_src_atoms = [
-                self._site_nm(w, s) for w in range(self.num_words) for s in src_sites
+                self._site_nm(w, s) for w in site_bus_words for s in src_sites
             ]
 
-            ref_src = self._site_nm(0, src_sites[0])
-            ref_dst = self._site_nm(0, dst_sites[0])
+            ref_src = self._site_nm(ref_word, src_sites[0])
+            ref_dst = self._site_nm(ref_word, dst_sites[0])
 
             if ref_src == ref_dst:
                 ref_waypoints: tuple[tuple[int, int], ...] = (ref_src, ref_dst)
@@ -960,7 +1340,7 @@ class ZoneBuilder:
                     continue
                 ref_waypoints = result
 
-            for local_word in range(self.num_words):
+            for local_word in site_bus_words:
                 for src_s in src_sites:
                     lane_src = self._site_nm(local_word, src_s)
                     lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
@@ -974,6 +1354,8 @@ class ZoneBuilder:
                             direction,
                             zone_id,
                         )
+                        if lane in paths:
+                            continue
                         paths[lane] = (
                             lane_path
                             if direction == Direction.FORWARD
@@ -983,6 +1365,14 @@ class ZoneBuilder:
         # ── Word bus paths (intra-zone) ──
         for bus_id, (src_words, dst_words) in enumerate(self._word_buses):
             spw = range(self.sites_per_word)
+            bus_lanes = [
+                LaneAddress(MoveType.WORD, w, s, bus_id, direction, zone_id)
+                for w in src_words
+                for s in spw
+                for direction in (Direction.FORWARD, Direction.BACKWARD)
+            ]
+            if all(lane in paths for lane in bus_lanes):
+                continue
 
             # AOD invariant: every (src_word, dst_word) pair must have
             # the same physical displacement.  Inconsistent spacings
@@ -1039,6 +1429,8 @@ class ZoneBuilder:
                             direction,
                             zone_id,
                         )
+                        if lane in paths:
+                            continue
                         paths[lane] = (
                             lane_path
                             if direction == Direction.FORWARD
@@ -1068,6 +1460,129 @@ class ArchBuilder:
         ] = []
         self._modes: list[tuple[str, list[str]]] = []
         self._blockade_radius: float | None = None
+        # Device capabilities carried over from a restored spec (or from
+        # ``build_arch``'s blueprint).  ``build()`` falls back to these when
+        # the caller passes no explicit value, so a round trip does not
+        # silently downgrade an architecture to feed_forward=False.
+        self._feed_forward: bool | None = None
+        self._atom_reloading: bool | None = None
+        # Zone buses restored by ``from_spec``; append-only for the same
+        # reason as ``ZoneBuilder._restored_*_buses`` (bus_id keys paths).
+        self._restored_connections: tuple[
+            tuple[tuple[str, tuple[int, ...]], tuple[str, tuple[int, ...]]], ...
+        ] = ()
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: ArchSpec,
+        *,
+        x_clearance: float,
+        y_clearance: float,
+    ) -> ArchBuilder:
+        """Reconstruct an ``ArchBuilder`` from a materialized ``ArchSpec``.
+
+        Every zone, word, bus, entangling pair, mode and transport path in
+        ``spec`` is restored so the architecture can be extended through
+        the validating builder API instead of by editing ``to_json()``
+        output.  Calling :meth:`build` on the result without further
+        changes reproduces ``spec``, with one exception: modes'
+        ``bitstring_order`` is regenerated from the zone/word template
+        rather than copied, so a spec that shipped an empty
+        ``bitstring_order`` (as both bundled Gemini specs do) comes back
+        with it fully materialized.  The Rust core only validates that
+        field, never consumes it.
+
+        Preserved paths are kept verbatim and take precedence over path
+        search, so only the buses added afterwards are routed; an explicit
+        :meth:`ZoneBuilder.set_path` beats both.  Restored buses are
+        append-only — ``bus_id`` is a list index that keys every preserved
+        path — and :meth:`build` raises if any were removed or reordered.
+
+        If ``spec.blockade_radius`` is set, each zone re-runs the blockade
+        geometry scan at that radius and the scan result replaces the
+        recorded entangling pairs; a layout the scan cannot pair raises
+        ``ValueError`` here rather than yielding an inconsistent spec.
+
+        ``feed_forward`` and ``atom_reloading`` are carried over, so a
+        plain :meth:`build` reproduces them; pass either explicitly to
+        override.
+
+        Args:
+            spec: The architecture to restore.
+            x_clearance: Minimum x-axis clearance (> 0, µm) for routing
+                lanes without a preserved path (new buses only).  This is
+                a search parameter, not a spec invariant, so it need not
+                match whatever produced ``spec``'s paths.
+            y_clearance: Same as ``x_clearance``, applied to the y-axis.
+
+        Returns:
+            ArchBuilder: Builder whose :meth:`zone` accessor yields the
+            restored ``ZoneBuilder``s.
+
+        Raises:
+            ValueError: If the spec cannot be expressed by the builder
+                (non-rectangular or non-uniform words, duplicate zone
+                names, a zone bus spanning more than two zones, a partial
+                ``sites_with_word_buses``) or the blockade rescan fails.
+        """
+        builder = cls()
+        for zone_id, zone in enumerate(spec.zones):
+            zone_paths = {
+                lane: waypoints
+                for lane, waypoints in spec.paths.items()
+                if lane.zone_id == zone_id
+            }
+            builder.add_zone(
+                ZoneBuilder.from_zone(
+                    zone,
+                    spec.words,
+                    x_clearance=x_clearance,
+                    y_clearance=y_clearance,
+                    blockade_radius=spec.blockade_radius,
+                    paths=zone_paths,
+                )
+            )
+
+        for bus_id, zone_bus in enumerate(spec.zone_buses):
+            endpoints: list[tuple[str, list[int]]] = []
+            for side, pairs in (("src", zone_bus.src), ("dst", zone_bus.dst)):
+                zone_ids = {zid for zid, _ in pairs}
+                if len(zone_ids) != 1:
+                    raise ValueError(
+                        f"zone bus {bus_id} {side} spans zones {sorted(zone_ids)}; "
+                        "ArchBuilder.connect requires each endpoint to lie in "
+                        "a single zone"
+                    )
+                (zid,) = zone_ids
+                endpoints.append((builder._zones[zid].name, [w for _, w in pairs]))
+            builder.connect(endpoints[0], endpoints[1])
+        builder._restored_connections = tuple(
+            ((sn, tuple(sw)), (dn, tuple(dw)))
+            for (sn, sw), (dn, dw) in builder._connections
+        )
+
+        for mode in spec.modes:
+            builder.add_mode(mode.name, [builder._zones[z].name for z in mode.zones])
+
+        builder._feed_forward = spec.feed_forward
+        builder._atom_reloading = spec.atom_reloading
+
+        return builder
+
+    def zone(self, name: str) -> ZoneBuilder:
+        """Look up a zone by name.
+
+        Args:
+            name: The zone name passed to ``ZoneBuilder`` / recorded on
+                the spec.
+
+        Raises:
+            ValueError: If no zone with that name has been added.
+        """
+        if name not in self._zone_name_to_id:
+            raise ValueError(f"Unknown zone: '{name}'")
+        return self._zones[self._zone_name_to_id[name]]
 
     def add_zone(self, zone: ZoneBuilder) -> int:
         """Add a zone. Returns zone_id.
@@ -1180,15 +1695,19 @@ class ArchBuilder:
 
     def build(
         self,
-        feed_forward: bool = False,
-        atom_reloading: bool = False,
+        feed_forward: bool | None = None,
+        atom_reloading: bool | None = None,
         blockade_radius: float | None = None,
     ) -> ArchSpec:
         """Assemble the ArchSpec and validate via Rust.
 
         Args:
-            feed_forward: Whether the device supports feed-forward.
+            feed_forward: Whether the device supports feed-forward. When
+                omitted, falls back to the value carried by
+                :meth:`from_spec` (or ``build_arch``'s blueprint) and
+                finally to ``False``.
             atom_reloading: Whether the device supports atom reloading.
+                Same fallback chain as ``feed_forward``.
             blockade_radius: Explicit blockade radius (µm). If provided,
                 overrides both builder-level and zone-level radii.
 
@@ -1250,6 +1769,17 @@ class ArchBuilder:
         # 3. Build zone_buses from connect() calls.
         # word_ids stay zone-local; the (zone_id, word_id) pair addresses the
         # shared template within each endpoint zone.
+        n_restored = len(self._restored_connections)
+        prefix = tuple(
+            ((sn, tuple(sw)), (dn, tuple(dw)))
+            for (sn, sw), (dn, dw) in self._connections[:n_restored]
+        )
+        if prefix != self._restored_connections:
+            raise ValueError(
+                f"the {n_restored} zone bus(es) restored by from_spec were "
+                "removed or reordered. bus_id indexes the zone-bus list and "
+                "keys every preserved path, so restored buses are append-only."
+            )
         zone_buses: list[_RustZoneBus] = []
         for (src_name, src_words), (dst_name, dst_words) in self._connections:
             src_zid = self._zone_name_to_id[src_name]
@@ -1294,6 +1824,13 @@ class ArchBuilder:
         )
 
         # 7. Assemble and validate.
+        # Capabilities: explicit argument > value carried by from_spec /
+        # build_arch > False.
+        if feed_forward is None:
+            feed_forward = self._feed_forward or False
+        if atom_reloading is None:
+            atom_reloading = self._atom_reloading or False
+
         return ArchSpec.from_components(
             words=tuple(all_words),
             zones=tuple(rust_zones),

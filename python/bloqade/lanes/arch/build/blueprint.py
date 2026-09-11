@@ -162,11 +162,19 @@ class ArchBlueprint:
 
 @dataclass(frozen=True)
 class ArchResult:
-    """Result of build_arch(), containing the ArchSpec and metadata."""
+    """Result of build_arch(), containing the ArchSpec and metadata.
+
+    ``builder`` is the :class:`ArchBuilder` that produced ``arch``.  Keep
+    extending it (``result.builder.zone(name).add_word_bus(...)`` then
+    ``result.builder.build(...)``) to add to a blueprint-built
+    architecture without round-tripping through
+    :meth:`ArchBuilder.from_spec`.
+    """
 
     arch: ArchSpec
     zone_grids: dict[str, WordGrid]
     zone_indices: dict[str, int]
+    builder: ArchBuilder
 
 
 def _build_zone_grid(
@@ -322,6 +330,11 @@ def build_arch(
             arch_builder.add_mode(name, [name])
 
     # 6. Build and return.
+    # Carry the blueprint's capabilities on the builder itself, so that a
+    # caller extending ``ArchResult.builder`` and rebuilding does not have to
+    # re-supply them (and does not silently downgrade the architecture).
+    arch_builder._feed_forward = blueprint.feed_forward
+    arch_builder._atom_reloading = blueprint.atom_reloading
     arch = arch_builder.build(
         feed_forward=blueprint.feed_forward,
         atom_reloading=blueprint.atom_reloading,
@@ -332,6 +345,7 @@ def build_arch(
         arch=arch,
         zone_grids=zone_grids,
         zone_indices=zone_indices,
+        builder=arch_builder,
     )
 
 
