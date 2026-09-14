@@ -34,6 +34,7 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place, clifford2native
+from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
 
@@ -42,7 +43,7 @@ from bloqade.lanes.validation.address import get_validation
 class NativeToPlaceBase:
     """Template-method base for the squin-native → place compilation stage.
 
-    Subclasses override up to four hooks; all other steps are shared:
+    Subclasses override up to five hooks; all other steps are shared:
 
     * ``_pre_native_rewrites(mt, out, no_raise)`` — called after ``out`` is
       created (dialect-extended copy of ``mt``) but before ``SquinToNative``.
@@ -53,6 +54,12 @@ class NativeToPlaceBase:
       as the last step before ``SquinToNative``.  The base implementation
       decomposes composite Cliffords into the neutral-atom gate set; the
       logical subclass appends the Steane transversal adjoint swap.
+
+    * ``_post_unroll_rules()`` — rules applied to the flat native IR right
+      after ``AggressiveUnroll``, the only window where the program is a flat
+      block of ``native.gate`` statements.  Default is no rules.  Logical
+      subclass runs ``EliminateRz``, commuting ``Rz`` phase into later ``R``
+      gates instead of emitting it.
 
     * ``_post_unroll_validation(out)`` — called after ``AggressiveUnroll``,
       before ``ScfToCfRule``.  Default is a no-op.  Physical subclass runs
@@ -88,6 +95,15 @@ class NativeToPlaceBase:
         """
         return [rewrite.Walk(clifford2native.DecomposeCliffordToNative())]
 
+    def _post_unroll_rules(self) -> list[RewriteRule]:
+        """Rules applied to the flat native IR, after unrolling.
+
+        This is the only window where the program is a flat block of
+        ``native.gate`` statements: ``AggressiveUnroll`` has run, and
+        ``RewritePlaceOperations`` has not. Default is no rules.
+        """
+        return []
+
     def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
         pass
 
@@ -112,6 +128,9 @@ class NativeToPlaceBase:
 
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
+
+        if post_unroll_rules := self._post_unroll_rules():
+            rewrite.Walk(rewrite.Chain(*post_unroll_rules)).rewrite(out.code)
 
         self._post_unroll_validation(out, no_raise)
 
@@ -214,6 +233,9 @@ class LogicalNativeToPlace(NativeToPlaceBase):
             # (QuEraComputing/bloqade-internal#404).
             rules.append(rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()))
         return rules
+
+    def _post_unroll_rules(self) -> list[RewriteRule]:
+        return [EliminateRz()]
 
     def _lower_qubits(self, out: Method) -> None:
         rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(

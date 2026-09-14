@@ -82,6 +82,14 @@ def test_unannotated_kernel_unchanged():
 
     Captured against ``LogicalLayoutHeuristic`` + ``LogicalPlacementStrategyNoHome``
     on the gemini logical arch spec.
+
+    ``LocalRz`` dropped from 2 to 0 and ``Store`` from 9 to 7 (one Store per
+    deleted Move statement) once ``EliminateRz`` started running in
+    ``LogicalNativeToPlace``: H's two ``Rz`` layers commute into the sole
+    ``LocalR`` between them and the terminal measurement's residual, instead
+    of surviving as their own statements. ``Constant`` went from 3 to 4
+    because the shifted ``LocalR`` axis is a new angle distinct from the
+    other constants already in the block.
     """
 
     @gemini.logical.kernel(aggressive_unroll=True)
@@ -99,7 +107,7 @@ def test_unannotated_kernel_unchanged():
 
     expected_counts = {
         "CZ": 1,
-        "Constant": 3,
+        "Constant": 4,
         "ConstantNone": 1,
         "ConvertToPhysicalMeasurements": 1,
         "EndMeasure": 1,
@@ -107,11 +115,10 @@ def test_unannotated_kernel_unchanged():
         "GetFutureResult": 2,
         "Load": 1,
         "LocalR": 3,
-        "LocalRz": 2,
         "LogicalInitialize": 1,
         "Move": 2,
         "Return": 1,
-        "Store": 9,
+        "Store": 7,
     }
     assert counts == expected_counts, (
         f"un-pinned kernel statement counts drifted:\n"
