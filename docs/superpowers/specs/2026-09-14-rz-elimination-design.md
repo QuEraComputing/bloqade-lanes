@@ -60,7 +60,7 @@ Rejected, recorded for future context:
 
 ## The rewrite
 
-`EliminateRz` is a single pass: sweep the block in order, absorb every `Rz` into
+`EliminateRzPass` is a single pass: sweep the block in order, absorb every `Rz` into
 the frame, rewrite each `R`, and **discard the residual frame** when the sweep
 ends. Nothing is ever materialized.
 
@@ -114,8 +114,8 @@ terminal-measure validation rules it out for logical kernels.
 
 ### Module
 
-`python/bloqade/lanes/rewrite/eliminate_rz.py`, exporting `EliminateRz` and the
-pure sweep it wraps. Neither imports `place`, `arch`, or anything layout-shaped.
+`python/bloqade/lanes/rewrite/eliminate_rz.py`, exporting `EliminateRzPass` and
+the pure sweep it wraps. Neither imports `place`, `arch`, or anything layout-shaped.
 
 ### Frame: continuous float, keyed on qubit SSA values
 
