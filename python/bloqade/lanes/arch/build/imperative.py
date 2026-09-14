@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import warnings
 from bisect import bisect_left, bisect_right
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
@@ -95,7 +95,8 @@ def _query_axis(
     out_of_range = sorted({i for i in values if not 0 <= i < size})
     if out_of_range:
         raise IndexError(f"{axis} {what} {out_of_range} out of range [0, {size})")
-    repeated = sorted({i for i in values if values.count(i) > 1})
+    counts = Counter(values)
+    repeated = sorted(i for i, n in counts.items() if n > 1)
     if repeated:
         raise ValueError(
             f"{axis} {what} {repeated} repeated in {values}; each position is "
@@ -125,6 +126,37 @@ def _validate_aod_rectangle(
         raise ValueError(
             f"{label} positions do not form a valid AOD Cartesian product. "
             f"Missing positions: {sorted(missing)}"
+        )
+
+
+def _require_complete_tone_grid(
+    positions: list[tuple[int, int]], prefix: str, side: str
+) -> None:
+    """Require a bus's atoms to fill its tone grid exactly.
+
+    ``_validate_aod_rectangle`` answers the same question for grid indices;
+    this one works on physical nm positions and reports in µm, because the
+    atoms a bus carries can form an incomplete rectangle even when the word
+    origins or site-template indices behind them do not.
+
+    Completeness is what keeps a foreign atom out: the AOD traps at every
+    intersection of its tones, so an unoccupied intersection is one a
+    non-participating atom could be sitting on, and it would be carried
+    along with the bus.
+    """
+    if not positions:
+        return
+    xs = sorted({x for x, _ in positions})
+    ys = sorted({y for _, y in positions})
+    missing = {(x, y) for x in xs for y in ys} - set(positions)
+    if missing:
+        listed = sorted((x / _NM_PER_UM, y / _NM_PER_UM) for x, y in missing)
+        raise ValueError(
+            f"{prefix}: the {side} atoms span a {len(xs)}x{len(ys)} grid of "
+            f"tones but do not fill it — {listed} µm "
+            f"{'is' if len(listed) == 1 else 'are'} unoccupied by this bus. "
+            "An AOD traps at every intersection of its tones, so any atom "
+            "sitting there would be carried along too."
         )
 
 
@@ -410,6 +442,25 @@ class ZoneBuilder:
         self._word_has_site_bus.append(has_site_bus)
         for pos in positions:
             self._position_to_word[pos] = word_id
+
+        # A word that opts in joins every site bus already on this zone, and
+        # so changes the atom set those buses carry: it can break the AOD
+        # rectangle, or bring an internal site pitch the bus cannot match.
+        # Re-check them here so the failure names the offending add_word
+        # rather than surfacing later, or not at all.
+        if has_site_bus:
+            for bus_id, (bus_src, bus_dst) in enumerate(self._site_buses):
+                try:
+                    self._check_site_bus_atoms(bus_src, bus_dst, bus_id)
+                except ValueError as exc:
+                    self._words.pop()
+                    self._word_has_site_bus.pop()
+                    for pos in positions:
+                        del self._position_to_word[pos]
+                    raise ValueError(
+                        f"adding this word to zone '{self._name}' would make "
+                        f"site bus {bus_id} unperformable: {exc}"
+                    ) from exc
         return word_id
 
     def add_site_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
@@ -436,11 +487,26 @@ class ZoneBuilder:
         dst_positions = [(d % nx, d // nx) for d in dst]
         _validate_aod_rectangle(src_positions, "Site bus src")
         _validate_aod_rectangle(dst_positions, "Site bus dst")
-        # Every word that takes part must see the same displacement, since
-        # the AOD applies one delta to the whole bus.  Checked against the
-        # words added so far; ``_compute_paths`` re-checks at build time to
-        # cover words added afterwards.
-        movers = [w for w in range(self.num_words) if self._word_has_site_bus[w]]
+        # The atoms this bus carries are every participating word's src
+        # sites; check that set is AOD-realizable.  A word added *later*
+        # joins the bus too, so ``add_word`` re-runs this for every existing
+        # site bus rather than leaving it to the path search.
+        self._check_site_bus_atoms(list(src), list(dst), len(self._site_buses))
+        self._site_buses.append((list(src), list(dst)))
+
+    def _site_bus_words(self) -> list[int]:
+        """Words that take part in site-bus transport.
+
+        Only these appear in the zone's ``words_with_site_buses``, so only
+        these are carried when a site bus fires.
+        """
+        return [w for w in range(self.num_words) if self._word_has_site_bus[w]]
+
+    def _check_site_bus_atoms(
+        self, src: list[int], dst: list[int], bus_id: int
+    ) -> None:
+        """Validate one site bus against every word that participates in it."""
+        movers = self._site_bus_words()
         self._check_aod_compatible(
             [
                 (self._site_nm(w, ss), self._site_nm(w, ds))
@@ -448,9 +514,8 @@ class ZoneBuilder:
                 for ss, ds in zip(src, dst)
             ],
             "Site",
-            len(self._site_buses),
+            bus_id,
         )
-        self._site_buses.append((list(src), list(dst)))
 
     def add_word_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a word bus (intra-zone movement).
@@ -476,9 +541,10 @@ class ZoneBuilder:
         _validate_aod_rectangle(src_positions, "Word bus src")
         _validate_aod_rectangle(dst_positions, "Word bus dst")
         # Every site of every src word moves to the matching site of its dst
-        # word; check that whole atom set is AOD-realizable.  All sites are
-        # used rather than sampling site 0, so a zone whose words differ in
-        # internal geometry is caught too.
+        # word; check that whole atom set is AOD-realizable — separable and
+        # order-preserving, which permits per-column displacement.  All sites
+        # are used rather than sampling site 0, so a zone whose words differ
+        # in internal geometry is caught too.
         self._check_aod_compatible(
             [
                 (self._site_nm(sw, s), self._site_nm(dw, s))
@@ -524,11 +590,21 @@ class ZoneBuilder:
         """
         if not pairs:
             return
+        # The AOD traps at the Cartesian product of its tones, so every atom
+        # sitting at an intersection is carried whether or not it belongs to
+        # this bus.  Requiring the bus's own atoms to fill that product
+        # exactly is what guarantees no foreign atom rides along: with every
+        # intersection occupied by a bus atom, none is left for an outsider.
+        # The earlier ``_validate_aod_rectangle`` calls see only word origins
+        # or site-template indices, so an L-shaped set of participating words
+        # reaches here intact.
+        prefix = f"{kind} bus {bus_id} on zone '{self._name}'"
+        _require_complete_tone_grid([p[0] for p in pairs], prefix, "source")
+        _require_complete_tone_grid([p[1] for p in pairs], prefix, "destination")
         src_x = sorted({p[0][0] for p in pairs})
         src_y = sorted({p[0][1] for p in pairs})
         dst_x = sorted({p[1][0] for p in pairs})
         dst_y = sorted({p[1][1] for p in pairs})
-        prefix = f"{kind} bus {bus_id} on zone '{self._name}'"
         if len(src_x) != len(dst_x) or len(src_y) != len(dst_y):
             raise ValueError(
                 f"{prefix}: the bus spans a {len(src_x)}x{len(src_y)} grid of "
@@ -1069,14 +1145,19 @@ class ZoneBuilder:
 
         # ── Site bus paths (intra-word) ──
         for bus_id, (src_sites, dst_sites) in enumerate(self._site_buses):
-            # AOD invariant: every (src_site, dst_site) pair must have the
-            # same physical displacement, because the AOD applies one
-            # uniform delta per segment to the entire bus.
+            # The search derives one reference path and applies its deltas
+            # to every lane, so it handles rigid translations only — a
+            # stricter rule than ``add_site_bus`` enforces, which also
+            # admits separable compression.  Every participating word is
+            # compared, not just word 0: sampling one word would apply its
+            # delta to a word of different internal pitch and store a path
+            # ending away from its destination.
             displacements = {
                 (
-                    self._site_nm(0, ds)[0] - self._site_nm(0, ss)[0],
-                    self._site_nm(0, ds)[1] - self._site_nm(0, ss)[1],
+                    self._site_nm(w, ds)[0] - self._site_nm(w, ss)[0],
+                    self._site_nm(w, ds)[1] - self._site_nm(w, ss)[1],
                 )
+                for w in self._site_bus_words()
                 for ss, ds in zip(src_sites, dst_sites)
             }
             if len(displacements) > 1:
@@ -1135,16 +1216,18 @@ class ZoneBuilder:
         for bus_id, (src_words, dst_words) in enumerate(self._word_buses):
             spw = range(self.sites_per_word)
 
-            # AOD invariant: every (src_word, dst_word) pair must have
-            # the same physical displacement.  Inconsistent spacings
-            # (e.g., differing source vs destination grid layouts)
-            # cannot be represented by a single uniform shift sequence.
+            # As above: rigid translations only, stricter than
+            # ``add_word_bus``.  Every site is compared, not just site 0 —
+            # words differing in internal geometry can agree on site 0 and
+            # disagree elsewhere, and the reference deltas would then place
+            # those sites off their destinations.
             displacements = {
                 (
-                    self._site_nm(dw, 0)[0] - self._site_nm(sw, 0)[0],
-                    self._site_nm(dw, 0)[1] - self._site_nm(sw, 0)[1],
+                    self._site_nm(dw, s)[0] - self._site_nm(sw, s)[0],
+                    self._site_nm(dw, s)[1] - self._site_nm(sw, s)[1],
                 )
                 for sw, dw in zip(src_words, dst_words)
+                for s in spw
             }
             if len(displacements) > 1:
                 warnings.warn(

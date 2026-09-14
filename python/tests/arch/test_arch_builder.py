@@ -1044,6 +1044,59 @@ class TestAODCompatibility:
         with pytest.raises(ValueError, match="add or drop a tone"):
             zone.add_word_bus(src=[0, 1], dst=[3, 3])
 
+    def test_incomplete_atom_rectangle_is_rejected(self):
+        """An L-shaped participating set leaves a tone intersection open.
+
+        The AOD traps at the Cartesian product of its tones, so any atom at
+        an intersection is carried whether or not it belongs to the bus.
+        Requiring the bus's own atoms to fill that product exactly is what
+        keeps a foreign atom from riding along.
+        """
+        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        zone.add_word([0, 1], [1])  # (2,3)x(row 1) left empty -> L-shape
+        with pytest.raises(ValueError, match="do not fill it"):
+            zone.add_site_bus([0], [1])
+
+    def test_word_joining_a_site_bus_later_is_validated(self):
+        """A word added after the bus joins it, and can break its rectangle."""
+        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        zone.add_site_bus([0], [1])  # fine: two words in one row
+        # A third word in row 1 makes the carried atom set an L — the AOD
+        # would have a fourth tone intersection with nothing of ours in it.
+        with pytest.raises(ValueError, match="site bus 0 unperformable"):
+            zone.add_word([0, 1], [1])
+        # The rejected word must not be left half-added.
+        assert zone.num_words == 2
+        assert (0, 1) not in zone._position_to_word
+
+    def test_word_opting_out_does_not_join(self):
+        """Same layout, but the new word declines site-bus transport."""
+        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        zone.add_site_bus([0], [1])
+        zone.add_word([0, 1], [1], has_site_bus=False)
+        assert zone.num_words == 3
+        assert zone._site_bus_words() == [0, 1]
+
+    def test_completing_the_rectangle_is_accepted(self):
+        """Adding the fourth corner restores the product and is allowed."""
+        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        zone.add_word([0, 1], [1])
+        zone.add_word([2, 3], [1])
+        zone.add_site_bus([0], [1])
+        assert zone._site_buses == [([0], [1])]
+
     def test_path_search_still_declines_a_non_uniform_bus(self):
         """Accepted by the hardware rule, but the search cannot route it.
 
