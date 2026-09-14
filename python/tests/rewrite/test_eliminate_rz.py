@@ -38,6 +38,10 @@ def _axis(stmt) -> float:
     return stmt.axis_angle.owner.value.unwrap()
 
 
+def _axis_value(stmt) -> ir.SSAValue:
+    return stmt.axis_angle
+
+
 def _run(block: ir.Block):
     """Drive the rule the way the pipeline does -- a forward Walk.
 
@@ -147,3 +151,25 @@ def test_rule_is_idempotent():
     _, second = _run(block)
 
     assert not second.has_done_something
+
+
+def test_non_angle_constant_is_not_reused_as_axis():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    # An unrelated constant (e.g. a loop bound or count) that happens to
+    # normalize to the same key as the shifted axis below (7.0 % 1.0 == 0.0).
+    seven = _const(block, 7.0)
+    quarter = _const(block, 0.25)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(
+        native_gate.stmts.R(axis_angle=quarter, rotation_angle=quarter, qubits=reg)
+    )
+
+    _run(block)
+
+    (r,) = _of_type(block, native_gate.stmts.R)
+    # (0.25 - 0.25) mod 1 == 0.0, same cache key as 7.0's normalized value --
+    # but 7.0 itself is not a normalized angle, so it must not be reused.
+    assert _axis_value(r) is not seven
+    assert _axis(r) == 0.0

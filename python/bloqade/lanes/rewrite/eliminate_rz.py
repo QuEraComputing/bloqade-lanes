@@ -152,9 +152,18 @@ class EliminateRz(RewriteRule):
 
     @_rewrite.register(py.Constant)
     def _(self, stmt: py.Constant) -> RewriteResult:
+        # Only seed the cache from a pre-existing constant whose literal is
+        # already normalized (key == value). That keeps the cache invariant
+        # airtight -- a cached SSA value's literal always equals its key --
+        # so an unrelated program constant that merely happens to be
+        # numerically congruent mod 1 turn (e.g. a loop bound like 7.0,
+        # which normalizes to the same key as 0.0) can never be handed back
+        # as an axis angle.
         data = stmt.value.unwrap()
         if isinstance(data, (int, float)) and not isinstance(data, bool):
-            self._constants.setdefault(_normalize(float(data)), stmt.result)
+            value = float(data)
+            if _normalize(value) == value:
+                self._constants.setdefault(value, stmt.result)
         return RewriteResult()
 
     @_rewrite.register(ilist.New)
