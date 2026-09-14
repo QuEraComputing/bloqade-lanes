@@ -190,15 +190,6 @@ class _NoOpEliminateRz(RewriteRule):
     """Stand-in for EliminateRz that leaves every statement alone."""
 
 
-def _stim_circuit(kernel):
-    """The kernel's noiseless physical circuit, via the public simulator API."""
-    return GeminiLogicalSimulator().task(kernel).noiseless_tsim_circuit.stim_circuit
-
-
-def _sample(kernel, *, seed, shots):
-    return _stim_circuit(kernel).compile_sampler(seed=seed).sample(shots=shots)
-
-
 def test_measurement_outcomes_are_unchanged(monkeypatch):
     """The residual EliminateRz discards is diagonal, and a diagonal unitary
     commutes with every Z-basis measurement projector -- so no outcome can
@@ -221,9 +212,19 @@ def test_measurement_outcomes_are_unchanged(monkeypatch):
         squin.cx(reg[0], reg[1])
         default_post_processing(reg)
 
-    with_rule = _sample(kernel, seed=1234, shots=4000)
+    on = GeminiLogicalSimulator().task(kernel).noiseless_tsim_circuit.stim_circuit
+    with_rule = on.compile_sampler(seed=1234).sample(shots=4000)
 
     monkeypatch.setattr(native_to_place, "EliminateRz", _NoOpEliminateRz)
-    without_rule = _sample(kernel, seed=1234, shots=4000)
+    off = GeminiLogicalSimulator().task(kernel).noiseless_tsim_circuit.stim_circuit
+    without_rule = off.compile_sampler(seed=1234).sample(shots=4000)
+
+    # Guard the guard. LogicalNativeToPlace._post_unroll_rules resolves
+    # EliminateRz as a module global at call time, so the patch above takes
+    # effect -- but if a refactor ever captured the class at import time
+    # instead, the patch would silently do nothing and this test would compare
+    # a circuit against itself and pass. Rule-off keeps the Rz, so the two
+    # circuits must differ.
+    assert str(on) != str(off), "monkeypatch did not take effect"
 
     assert np.array_equal(with_rule, without_rule)

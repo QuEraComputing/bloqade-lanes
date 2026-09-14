@@ -216,71 +216,30 @@ ONE_QUBIT_CASES = {
 
 # ── EliminateRz residual vs. this file's exact-state invariant ─────────
 #
-# `EliminateRz` (python/bloqade/lanes/rewrite/eliminate_rz.py) discards a
-# diagonal Z-phase residual immediately before the terminal logical
-# measurement instead of emitting it as a physical `Rz`. This is provably
-# measurement-transparent: a diagonal unitary commutes with every Z-basis
-# measurement projector, so it cannot change any measurement outcome,
-# detector, or observable -- verified analytically in
-# `test_eliminate_rz_algebra.py` (`U_before == Rz(residual) . U_after`) and
-# empirically (a 20000-shot, seed-matched `compile_detector_sampler` run was
-# bit-identical with and without the rule wired in).
+# `EliminateRz` discards a diagonal Z-phase residual at the terminal
+# measurement instead of emitting it as a physical `Rz`. That cannot change
+# any outcome -- a diagonal unitary commutes with every Z-basis projector,
+# asserted end-to-end by `test_measurement_outcomes_are_unchanged` in
+# `test_eliminate_rz_pipeline.py`. But `_assert_matches_reference` checks
+# something stronger: the exact pre-measurement state, sign included, where a
+# residual shows up as a mismatch this test cannot tell apart from a genuine
+# `#404`-class bug (`#404` was itself a diagonal, measurement-invisible sign
+# error).
 #
-# But `_assert_matches_reference` checks something strictly stronger: the
-# *exact* pre-measurement state, phase/sign included, so a nonzero residual
-# would otherwise show up as a spurious mismatch that this test cannot tell
-# apart from a genuine `#404`-class bug (`#404` was itself a diagonal,
-# measurement-invisible sign error).
+# EVERY kernel here carries a residual -- each starts from `squin.h`, whose
+# decomposition (`S . sqrt(X) . S`) contributes `Rz`s. Only some need a
+# compensating gate: whether a residual is *visible* depends on which
+# stabilizers the probe checks. `z`/`sqrt_y`/`sqrt_y_adj` and `swap` pass
+# unmodified because theirs lands where this probe cannot see it -- a property
+# of the probe, not evidence the gate is `Rz`-free. Do not reintroduce a
+# "decomposes to no `Rz`" claim anywhere in this file.
 #
-# EVERY kernel below has a nonzero residual on at least one block -- each one
-# starts from `squin.h`, whose own decomposition (`S . sqrt(X) . S`) already
-# contributes `Rz`s. Only *some* kernels need a compensating gate, though:
-# whether a given residual shows up as a mismatch depends on which
-# stabilizers this test happens to probe, not on whether a residual exists.
-# `z`/`sqrt_y`/`sqrt_y_adj` (one-qubit) and `swap` (two-qubit) all carry a
-# nonzero residual too (confirmed by instrumenting `EliminateRz._frame`) --
-# they pass unmodified only because that residual lands on a block whose
-# probed stabilizers happen not to be sensitive to it, the same way `#404`'s
-# `Zbar(control)` was invisible to the specific circuit that first shipped
-# with it. That is a property of the probe, not evidence the gate is
-# `Rz`-free, and must not be reintroduced as a "decomposes to no `Rz`" claim
-# anywhere in this file.
-#
-# For the kernels whose residual *does* land somewhere the probe would catch
-# it, this file appends an extra single-qubit Z-type Clifford (`squin.z` /
-# `squin.s` / `squin.s_adj`) to that block in the kernel, and the *same* gate
-# to the bare reference Stim string. Residuals always land on the
-# quarter-turn lattice, so one of `{Z, S, S_adj}` always suffices.
-#
-# The kernel-side addition is a genuine no-op on the compiled circuit: any
-# diagonal gate placed here changes *what* accumulates in that block's
-# frame, not *whether* it gets discarded -- `EliminateRz` throws away the
-# whole residual at the terminal measurement regardless of its value, so the
-# compiled Stim circuit is byte-for-byte identical with or without this
-# addition (confirmed directly, twice). Its purpose is traceability, not
-# correctness: it records, at the call site, exactly which kernel the
-# adjacent reference-side correction was derived from, so a future
-# maintainer can re-run `EliminateRz` on this kernel and re-derive the same
-# value instead of trusting an unexplained magic string in the reference.
-# **Do not delete it as dead code** -- doing so would not change the
-# compiled circuit, but it would sever that traceability, and a later
-# change to this kernel's own gate sequence could then silently invalidate
-# the reference-side correction with nothing left to notice.
-#
-# The load-bearing half of the fix is entirely on the *reference* side: that
-# addition shifts the bare circuit's own canonical stabilizers by exactly
-# the amount the compiled circuit's real, residual-bearing state already
-# differs from the naive, uncompensated reference, restoring an exact match.
-# Because the Steane code's transversal single-qubit Cliffords are
-# adjoint-corrected by `RewriteSteaneTransversalCliffordAdjoints`, the needed
-# reference gate is not always the naive sign-flip of the measured residual
-# (`S` cancels a `+0.25`-turn residual here, not `S_adj`) -- each one was
-# derived by instrumenting `EliminateRz._frame` right before the terminal
-# measurement discards it, then confirmed by brute-force search over
-# `{None, Z, S, S_adj}` against the actual compiled circuit. See
-# `.superpowers/sdd/2026-09-14-rz-elimination/final-review-fix-report.md`
-# for the measured residual table and the check that a wrong compensation
-# makes the assertion fail loudly.
+# Where compensation is needed, the same Z-type Clifford is appended to both
+# the kernel and the reference string. The *reference* side is what restores
+# the exact match. The kernel-side gate is a no-op on the compiled circuit
+# (the residual is discarded whatever its value, so the emitted Stim is
+# byte-identical either way) and exists only so the correction is traceable to
+# the kernel it came from -- do not delete it as dead code.
 
 
 @pytest.mark.parametrize("gate", sorted(ONE_QUBIT_CASES))
