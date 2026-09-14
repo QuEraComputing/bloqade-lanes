@@ -60,8 +60,8 @@ Rejected, recorded for future context:
 
 ## The rewrite
 
-`EliminateRz` is a single rewrite rule implementing `rewrite_Block`: scan the
-block in order, absorb every `Rz` into the frame, rewrite each `R`, and
+`EliminateRz` is a single rewrite rule implementing `rewrite_Statement`, driven
+by `Walk`: absorb every `Rz` into the frame, rewrite each `R`, and
 **discard the residual frame** when the block ends. Nothing is ever materialized.
 
 The residual frame is readable after the scan, giving the invariant
@@ -227,12 +227,17 @@ Raising rather than skipping matters: `circuit2place` handles a shape mismatch b
 silently returning, but a skipped statement here leaves an `Rz` behind and breaks
 the guarantee.
 
-The single-block check is what makes the frame sound. A phase frame is a
-property of the program, not of a block: unlike the state that `stack_move2move`
-and `state` thread through block arguments, it has no IR representation that can
-cross a block boundary. So it is initialized once, for the block that *is* the
-program — with two blocks the second would start from zero and silently lose the
-first's phases.
+The single-block check is what makes the frame sound, and it lives in
+`rewrite_Region`. Two reasons: `Walk.populate_worklist_Region` enqueues blocks
+*reversed* under the default `reverse=False`, so with two blocks the frame would
+accumulate backwards; and a phase frame has no IR representation that could cross
+a block boundary anyway — unlike the state `stack_move2move` and `state` thread
+through block arguments. The frame is also reset there, so re-driving the rule
+(under `Fixpoint`, say) cannot start from a stale frame.
+
+The rule relies on `Walk` visiting statements in program order. That is verified
+— `WorkList` is a FIFO `SimpleQueue` and `populate_worklist_Block` enqueues via
+`first_stmt`/`next_stmt` — but it does mean `Walk(reverse=True)` would break it.
 
 The region check does the other half. This rule runs *before*
 `scf2cf`, so control flow surviving `AggressiveUnroll` is an `scf.For` /

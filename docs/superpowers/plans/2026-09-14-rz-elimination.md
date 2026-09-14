@@ -4,7 +4,7 @@
 
 **Goal:** Remove every `Rz` from compiled Gemini logical programs by commuting each Z rotation along its qubit's wire into the terminal Z-basis readout, so the backend never receives a `move.local_rz` it cannot execute.
 
-**Architecture:** One rewrite rule, `EliminateRz`, modelled directly on `move2stack_move.MoveToStackMove`: `rewrite_Block` resets per-block state and scans `list(node.stmts)` in order, dispatching each statement through a `@singledispatchmethod` registry and deferring deletions. The state is a per-qubit phase *frame* (`dict[ir.SSAValue, float]`): each `Rz` is absorbed into it and deleted, each `R` has its `axis_angle` shifted by it, `CZ` and `StarRz` pass through untouched (both diagonal), and whatever frame remains when the block ends is discarded.
+**Architecture:** One rewrite rule, `EliminateRz`, shaped like `RewriteNonCliffordToU3`: `rewrite_Statement` dispatches through a `@singledispatchmethod` registry and `Walk` supplies the traversal. Unlike that rule it carries state — a per-qubit phase *frame* (`dict[ir.SSAValue, float]`) spanning the whole program. Each `Rz` is absorbed into the frame and deleted, each `R` has its `axis_angle` shifted by it, `CZ` and `StarRz` pass through untouched (both diagonal), and the residual frame is simply never applied.
 
 **Tech Stack:** Python 3.10+, kirin IR (`kirin.ir`, `kirin.rewrite`), `bloqade.native.dialects.gate`, `bloqade.gemini.logical.dialects.operations`, pytest, numpy (tests only).
 
@@ -14,28 +14,37 @@
 
 - Angles are in **turns**, not radians (`0.25` = 90°). `clifford2native` emits `axis ∈ {0, ¼}`, `rotation ∈ {±¼, ½}`, `Rz ∈ {±¼, ½}`.
 - The frame is a **continuous `float`**, never an integer `k ∈ ℤ₄`.
-- **Follow `move2stack_move` exactly** for rule structure: `@dataclass`, state in `field(default_factory=..., init=False)`, reset at the top of `rewrite_Block`, per-statement `@singledispatchmethod _rewrite(stmt, to_delete)`, deletions applied in reverse after the loop. Do not invent a parallel record model or a reader/writer split.
+- **`rewrite_Statement`, with state in the rule.** `@dataclass`, state in `field(default_factory=..., init=False)`, per-statement `@singledispatchmethod _rewrite(stmt)`, statements deleted in place. `Walk` supplies the traversal and visits statements in program order — verified, and relied upon. Do not invent a parallel record model, a reader/writer split, or a block-level loop.
 - **Preconditions raise, never skip.** A skipped statement leaves an `Rz` behind and breaks the guarantee. (kirin's own `cse` uses `continue` for region-bearing statements; here that would silently lose a phase, so raise instead.)
 - **No `require_clifford_angles` flag.** A non-Clifford angle has no native mapping, so it cannot reach this rule; and "logical programs are Clifford-only mid-circuit" is `GeminiLogicalValidation`'s invariant, not this rule's to re-check.
 - Imports absolute from `bloqade.lanes`. snake_case files, PascalCase classes. Type annotations enforced by pyright.
 - Lint before each commit: `uv run black python && uv run isort python && uv run ruff check python && uv run pyright python`.
 - Commit messages follow Conventional Commits.
 
-## Why a block scan rather than a per-statement peephole
+## Traversal: `Walk` order is relied upon
 
-Recorded because it is the one structural choice that needs defending.
+`rewrite_Statement` carries state across statements, which only works because
+`Walk` visits them in program order. That is verified, not assumed: `WorkList` is
+a `SimpleQueue` (FIFO — its docstring calling itself a stack is wrong), and
+`populate_worklist_Block` enqueues via `first_stmt`/`next_stmt`. A five-statement
+block visits 1,2,3,4,5.
 
-The local formulation — `rewrite_Statement` matches an `Rz`, swaps it with its successor, and `Fixpoint(Walk(...))` bubbles it to the end — is the right shape for *stateless* rewrites like `RewriteNonCliffordToU3`. It does not work here. `Walk` freezes its worklist before rewriting (its own comment: *"because the rewrite pass may mutate the node thus we need to save the list of nodes to be processed first"*), so one pass moves each `Rz` exactly one position, and `Fixpoint.max_iter` defaults to 32, returning `exceeded_max_iter=True` **silently** on exhaustion. Measured on real native blocks:
+Two consequences the rule must handle, both in `rewrite_Region`:
 
-```
-    teleport(2q):   18 stmts,   3 Rz, earliest Rz 13 positions from the end
-         ghz(6q):   37 stmts,   2 Rz, earliest Rz 28 positions from the end
-  layered(8q,d4):  199 stmts,  96 Rz, earliest Rz 188 positions from the end
-```
+- `populate_worklist_Region` enqueues blocks **reversed** under the default
+  `reverse=False`, so with two blocks the statements would be visited in reverse
+  block order and the frame would accumulate backwards. Hence the single-block
+  precondition. (A phase frame also has no IR representation that could cross a
+  block boundary — unlike the state `stack_move2move` and `state` thread through
+  block arguments.)
+- The frame is reset there so that re-driving the rule is safe. Without it a
+  second `Fixpoint` iteration would start from a stale frame and shift every axis
+  again.
 
-The 8-qubit depth-4 kernel needs 188 iterations against a limit of 32 — it would leave most of its 96 `Rz` in the IR and compile "successfully". ghz(6q) at 28 is worse in kind: just under the limit, so the failure would be data-dependent and would pass every small test.
-
-An ordered `rewrite_Block` scan is O(n) and cannot silently under-apply. It is also the established shape for stateful rewrites — `move2stack_move`, `stack_move2move`, `state`, `place2move` here, and `cse`, `compactify`, `apply_type`, `wrap_const` in kirin itself.
+`Walk(reverse=True)` would still break the rule, and that is undefended. A
+`rewrite_Block` implementation would establish its own order and remove that
+dependency, at the cost of a hand-rolled statement loop; the dependency is
+documented here instead.
 
 ## File Structure
 
@@ -57,7 +66,7 @@ An ordered `rewrite_Block` scan is O(n) and cannot silently under-apply. It is a
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `EliminateRzError`, and `EliminateRz()` — a `kirin.rewrite.abc.RewriteRule` whose `rewrite_Block(block) -> RewriteResult` performs the scan. After it runs, `rule._frame: dict[ir.SSAValue, float]` holds the residual (read by tests in Task 4).
+- Produces: `EliminateRzError`, and `EliminateRz()` — a `kirin.rewrite.abc.RewriteRule` driven by `rewrite.Walk`. After the walk, `rule._frame: dict[ir.SSAValue, float]` holds the residual (read by tests in Task 4).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -67,7 +76,7 @@ Create `python/tests/rewrite/test_eliminate_rz.py`:
 """Tests for the EliminateRz rewrite rule, on hand-built native-dialect IR."""
 
 import pytest
-from kirin import ir, types as kirin_types
+from kirin import ir, rewrite, types as kirin_types
 from kirin.dialects import ilist, py
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
@@ -106,6 +115,15 @@ def _axis(stmt) -> float:
     return stmt.axis_angle.owner.value.unwrap()
 
 
+def _run(block: ir.Block):
+    """Drive the rule the way the pipeline does -- a forward Walk.
+
+    Returns the rule (so tests can read the residual frame) and the result.
+    """
+    rule = EliminateRz()
+    return rule, rewrite.Walk(rule).rewrite(block)
+
+
 def test_rz_is_deleted():
     block = ir.Block()
     (q0,) = _qubits(block, 1)
@@ -113,7 +131,7 @@ def test_rz_is_deleted():
     angle = _const(block, 0.25)
     block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=reg))
 
-    result = EliminateRz().rewrite_Block(block)
+    _, result = _run(block)
 
     assert result.has_done_something
     assert _of_type(block, native_gate.stmts.Rz) == []
@@ -130,7 +148,7 @@ def test_r_axis_is_shifted_by_the_pending_frame():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
     )
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     rs = _of_type(block, native_gate.stmts.R)
     assert len(rs) == 1
@@ -151,7 +169,7 @@ def test_frames_accumulate_across_multiple_rz():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
     )
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     (r,) = _of_type(block, native_gate.stmts.R)
     # (0.0 - 0.75) mod 1 == 0.25
@@ -170,7 +188,7 @@ def test_r_on_an_untouched_qubit_is_left_alone():
     )
     block.stmts.append(original)
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     assert _of_type(block, native_gate.stmts.R) == [original], (
         "an untouched qubit's R must be left in place, not rebuilt"
@@ -186,8 +204,7 @@ def test_cz_passes_through_and_the_frame_survives_it():
     cz = native_gate.stmts.CZ(controls=controls, targets=targets)
     block.stmts.append(cz)
 
-    rule = EliminateRz()
-    rule.rewrite_Block(block)
+    rule, _ = _run(block)
 
     assert _of_type(block, native_gate.stmts.CZ) == [cz]
     # Diagonal, so it commutes with the frame exactly -- nothing changes.
@@ -205,8 +222,8 @@ def test_rule_is_idempotent():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
     )
 
-    EliminateRz().rewrite_Block(block)
-    second = EliminateRz().rewrite_Block(block)
+    _run(block)
+    _, second = _run(block)
 
     assert not second.has_done_something
 ```
@@ -235,9 +252,10 @@ Two exact identities do all the work (angles in turns)::
     R(phi, theta) . Rz(alpha) = Rz(alpha) . R(phi - alpha, theta)
     CZ . Rz(alpha)            = Rz(alpha) . CZ
 
-Structured after ``move2stack_move.MoveToStackMove``: ordered ``rewrite_Block``
-scan, per-block state reset at the top, ``@singledispatchmethod`` per statement,
-deletions deferred. See
+Shaped like ``RewriteNonCliffordToU3`` -- ``rewrite_Statement`` dispatching
+through ``@singledispatchmethod``, with ``Walk`` supplying the traversal -- but
+carrying a frame across statements, which relies on ``Walk`` visiting them in
+program order. See
 ``docs/superpowers/specs/2026-09-14-rz-elimination-design.md``.
 """
 
@@ -247,7 +265,7 @@ from dataclasses import dataclass, field
 from functools import singledispatchmethod
 
 from kirin import ir
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade import types as bloqade_types
@@ -271,48 +289,45 @@ def _normalize(angle: float) -> float:
 
 @dataclass
 class EliminateRz(RewriteRule):
-    """Remove every ``Rz`` from a flat native-dialect block."""
+    """Remove every ``Rz`` from a flat native-dialect program."""
 
     _frame: dict[ir.SSAValue, float] = field(default_factory=dict, init=False)
-    """Pending Z phase per qubit, in turns. The residual is discarded."""
+    """Pending Z phase per qubit, in turns. Spans the whole program."""
 
     _constants: dict[float, ir.SSAValue] = field(default_factory=dict, init=False)
     """One SSA value per distinct angle, so downstream fusion still matches."""
 
     _qubits: set[ir.SSAValue] = field(default_factory=set, init=False)
 
-    def rewrite_Block(self, node: ir.Block) -> RewriteResult:
-        # The phase frame is a property of the *program*, not of a block: unlike
-        # the state threaded by `stack_move2move` or `state`, it has no IR
-        # representation that crosses a block boundary. So it can only be
-        # initialized once, for the single block that constitutes the program.
-        # With two blocks, the second would start from zero and silently lose
-        # the first block's phases -- hence this is a precondition, not a reset.
-        region = node.parent_region
-        if region is not None and len(region.blocks) != 1:
+    def rewrite_Region(self, node: ir.Region) -> RewriteResult:
+        """Require a single block, and start each walk from a clean frame.
+
+        ``Walk`` enqueues a region before its blocks and their statements, so
+        this runs first.
+
+        The single-block requirement is not cosmetic: ``populate_worklist_Region``
+        enqueues blocks *reversed* under the default ``reverse=False``, so with
+        two blocks the statements would be visited in reverse block order and
+        the frame would accumulate backwards. A phase frame also has no IR
+        representation that could cross a block boundary -- unlike the state
+        ``stack_move2move`` and ``state`` thread through block arguments.
+
+        Resetting here makes re-driving safe: without it, a second ``Fixpoint``
+        iteration would start from a stale frame and shift every axis again.
+        """
+        if len(node.blocks) != 1:
             raise EliminateRzError(
                 f"EliminateRz requires a single-block program, found "
-                f"{len(region.blocks)} blocks in one region. A phase frame "
-                "cannot cross a block boundary: it has no IR representation to "
-                "travel in. Run AggressiveUnroll first."
+                f"{len(node.blocks)} blocks. A phase frame cannot cross a block "
+                "boundary. Run AggressiveUnroll first."
             )
-
         self._frame = {}
         self._constants = {}
         self._qubits = set()
-        to_delete: list[ir.Statement] = []
+        return RewriteResult()
 
-        result = RewriteResult()
-        # Snapshot before iterating: the handlers insert replacements, and those
-        # must not be revisited.
-        for stmt in list(node.stmts):
-            result = result.join(self._rewrite(stmt, to_delete))
-
-        for stmt in reversed(to_delete):
-            stmt.delete()
-        if to_delete:
-            result = result.join(RewriteResult(has_done_something=True))
-        return result
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        return self._rewrite(node)
 
     # -- helpers ----------------------------------------------------------
 
@@ -367,10 +382,8 @@ class EliminateRz(RewriteRule):
     # -- per-statement dispatch -------------------------------------------
 
     @singledispatchmethod
-    def _rewrite(
-        self, stmt: ir.Statement, to_delete: list[ir.Statement]
-    ) -> RewriteResult:
-        """Default: record qubit allocations, pass over everything else."""
+    def _rewrite(self, stmt: ir.Statement) -> RewriteResult:
+        """Record qubit allocations, pass over everything else."""
         if len(stmt.results) == 1 and stmt.results[0].type.is_subseteq(
             bloqade_types.QubitType
         ):
@@ -378,26 +391,26 @@ class EliminateRz(RewriteRule):
         return RewriteResult()
 
     @_rewrite.register(py.Constant)
-    def _(self, stmt: py.Constant, to_delete) -> RewriteResult:
+    def _(self, stmt: py.Constant) -> RewriteResult:
         data = stmt.value.unwrap()
         if isinstance(data, (int, float)) and not isinstance(data, bool):
             self._constants.setdefault(_normalize(float(data)), stmt.result)
         return RewriteResult()
 
     @_rewrite.register(ilist.New)
-    def _(self, stmt: ilist.New, to_delete) -> RewriteResult:
+    def _(self, stmt: ilist.New) -> RewriteResult:
         return RewriteResult()
 
     @_rewrite.register(native_gate.stmts.Rz)
-    def _(self, stmt: native_gate.stmts.Rz, to_delete) -> RewriteResult:
+    def _(self, stmt: native_gate.stmts.Rz) -> RewriteResult:
         angle = self._const_float(stmt, stmt.rotation_angle)
         for qubit in self._qubit_values(stmt, stmt.qubits):
             self._frame[qubit] = self._frame.get(qubit, 0.0) + angle
-        to_delete.append(stmt)
+        stmt.delete()
         return RewriteResult(has_done_something=True)
 
     @_rewrite.register(native_gate.stmts.R)
-    def _(self, stmt: native_gate.stmts.R, to_delete) -> RewriteResult:
+    def _(self, stmt: native_gate.stmts.R) -> RewriteResult:
         axis = self._const_float(stmt, stmt.axis_angle)
         qubits = self._qubit_values(stmt, stmt.qubits)
 
@@ -420,13 +433,20 @@ class EliminateRz(RewriteRule):
                 qubits=register.result,
             ).insert_before(stmt)
 
-        to_delete.append(stmt)
+        stmt.delete()
         return RewriteResult(has_done_something=True)
 
     @_rewrite.register(native_gate.stmts.CZ)
-    def _(self, stmt: native_gate.stmts.CZ, to_delete) -> RewriteResult:
+    def _(self, stmt: native_gate.stmts.CZ) -> RewriteResult:
         # Diagonal: commutes with Rz on each qubit independently, so the two
         # sides' frames need not agree and nothing changes.
+        return RewriteResult()
+
+    @_rewrite.register(func.Function)
+    def _(self, stmt: func.Function) -> RewriteResult:
+        # Walk visits the enclosing definition too, and it carries a region --
+        # so it must be registered, or the region guard below would reject the
+        # program's own function statement.
         return RewriteResult()
 ```
 
@@ -473,7 +493,7 @@ def test_r_splits_when_its_qubits_carry_different_frames():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=both)
     )
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     rs = _of_type(block, native_gate.stmts.R)
     assert len(rs) == 2
@@ -496,7 +516,7 @@ def test_split_covers_every_original_qubit_exactly_once():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=all_three)
     )
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     covered = [
         value
@@ -517,7 +537,7 @@ def test_qubits_with_equal_frames_stay_in_one_statement():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=both)
     )
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     rs = _of_type(block, native_gate.stmts.R)
     assert len(rs) == 1
@@ -540,7 +560,7 @@ def test_equal_angles_share_one_constant_ssa_value():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg1)
     )
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     rs = _of_type(block, native_gate.stmts.R)
     assert len(rs) == 2
@@ -560,7 +580,7 @@ def test_an_existing_constant_is_reused_rather_than_duplicated():
         native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
     )
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     (r,) = _of_type(block, native_gate.stmts.R)
     assert r.axis_angle is three_quarter
@@ -617,7 +637,7 @@ def test_statement_carrying_a_region_raises():
     )
 
     with pytest.raises(EliminateRzError, match="region"):
-        EliminateRz().rewrite_Block(block)
+        _run(block)
 
 
 def test_multi_block_region_raises():
@@ -631,7 +651,7 @@ def test_multi_block_region_raises():
     region.blocks.append(ir.Block())
 
     with pytest.raises(EliminateRzError, match="single-block"):
-        EliminateRz().rewrite_Block(region.blocks[0])
+        EliminateRz().rewrite_Region(region)
 
 
 def test_unknown_statement_touching_a_qubit_raises():
@@ -642,7 +662,7 @@ def test_unknown_statement_touching_a_qubit_raises():
     block.stmts.append(squin_qubit.stmts.Measure(qubits=reg))
 
     with pytest.raises(EliminateRzError, match="phase-neutral"):
-        EliminateRz().rewrite_Block(block)
+        _run(block)
 
 
 def test_non_ilist_register_raises():
@@ -654,7 +674,7 @@ def test_non_ilist_register_raises():
     block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=opaque))
 
     with pytest.raises(EliminateRzError, match="ilist.New"):
-        EliminateRz().rewrite_Block(block)
+        _run(block)
 
 
 def test_duplicate_qubit_in_one_register_raises():
@@ -665,7 +685,7 @@ def test_duplicate_qubit_in_one_register_raises():
     block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=doubled))
 
     with pytest.raises(EliminateRzError, match="more than once"):
-        EliminateRz().rewrite_Block(block)
+        _run(block)
 
 
 def test_non_constant_angle_raises():
@@ -676,7 +696,7 @@ def test_non_constant_angle_raises():
     block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=reg))
 
     with pytest.raises(EliminateRzError, match="constant"):
-        EliminateRz().rewrite_Block(block)
+        _run(block)
 
 
 def test_initialize_with_a_pending_frame_raises():
@@ -692,7 +712,7 @@ def test_initialize_with_a_pending_frame_raises():
     )
 
     with pytest.raises(EliminateRzError, match="Initialize"):
-        EliminateRz().rewrite_Block(block)
+        _run(block)
 
 
 def test_initialize_at_the_head_of_a_wire_is_fine():
@@ -703,7 +723,7 @@ def test_initialize_at_the_head_of_a_wire_is_fine():
     init = operations.Initialize(theta=zero, phi=zero, lam=zero, qubits=reg)
     block.stmts.append(init)
 
-    EliminateRz().rewrite_Block(block)
+    _run(block)
 
     assert _of_type(block, operations.Initialize) == [init]
 
@@ -718,8 +738,7 @@ def test_star_rz_is_untouched_and_the_frame_commutes_past_it():
     star = operations.StarRz(rotation_angle=star_angle, qubits=reg)
     block.stmts.append(star)
 
-    rule = EliminateRz()
-    rule.rewrite_Block(block)
+    rule, _ = _run(block)
 
     assert _of_type(block, operations.StarRz) == [star]
     assert rule._frame[q0] == 0.25
@@ -733,8 +752,7 @@ def test_terminal_measurement_discards_the_frame():
     block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
     block.stmts.append(operations.TerminalLogicalMeasurement(qubits=reg))
 
-    rule = EliminateRz()
-    rule.rewrite_Block(block)
+    rule, _ = _run(block)
 
     assert rule._frame == {}
 
@@ -747,8 +765,7 @@ def test_frame_left_at_end_of_block_is_simply_discarded():
     quarter = _const(block, 0.25)
     block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
 
-    rule = EliminateRz()
-    result = rule.rewrite_Block(block)
+    rule, result = _run(block)
 
     assert result.has_done_something
     assert _of_type(block, native_gate.stmts.Rz) == []
@@ -778,9 +795,7 @@ Replace the default `_rewrite` handler with:
 
 ```python
     @singledispatchmethod
-    def _rewrite(
-        self, stmt: ir.Statement, to_delete: list[ir.Statement]
-    ) -> RewriteResult:
+    def _rewrite(self, stmt: ir.Statement) -> RewriteResult:
         """Record qubit allocations, pass over the inert, reject the unknown."""
         if stmt.regions:
             # This rule runs *before* scf2cf, so control flow that survived
@@ -830,13 +845,13 @@ And register the three `operations` statements:
 
 ```python
     @_rewrite.register(operations.StarRz)
-    def _(self, stmt: operations.StarRz, to_delete) -> RewriteResult:
+    def _(self, stmt: operations.StarRz) -> RewriteResult:
         # Diagonal, like CZ: the frame commutes past it exactly. Its own
         # rotation is the payload of a user-requested gadget, not ours to remove.
         return RewriteResult()
 
     @_rewrite.register(operations.Initialize)
-    def _(self, stmt: operations.Initialize, to_delete) -> RewriteResult:
+    def _(self, stmt: operations.Initialize) -> RewriteResult:
         pending = {
             qubit: self._frame[qubit]
             for qubit in self._qubit_values(stmt, stmt.qubits)
@@ -851,9 +866,7 @@ And register the three `operations` statements:
         return RewriteResult()
 
     @_rewrite.register(operations.TerminalLogicalMeasurement)
-    def _(
-        self, stmt: operations.TerminalLogicalMeasurement, to_delete
-    ) -> RewriteResult:
+    def _(self, stmt: operations.TerminalLogicalMeasurement) -> RewriteResult:
         # The residual is diagonal and the readout is in the Z basis, so it
         # cannot shift any outcome. Drop it.
         for qubit in self._qubit_values(stmt, stmt.qubits):
@@ -884,7 +897,7 @@ Structural tests cannot catch a sign error in the commutation identity.
 - Test: `python/tests/rewrite/test_eliminate_rz_algebra.py` (create)
 
 **Interfaces:**
-- Consumes: `EliminateRz`, and `rule._frame` after `rewrite_Block`.
+- Consumes: `EliminateRz`, and `rule._frame` after the walk.
 - Produces: nothing importable — tests only.
 
 - [ ] **Step 1: Write the test**
@@ -902,7 +915,7 @@ builds both circuits as matrices from the IR itself and compares them.
 
 import numpy as np
 import pytest
-from kirin import ir
+from kirin import ir, rewrite
 from kirin.dialects import ilist, py
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
@@ -1037,8 +1050,7 @@ def test_rule_preserves_the_unitary_up_to_the_residual(build):
     block, order = build()
     before = _unitary(block, order)
 
-    rule = EliminateRz()
-    rule.rewrite_Block(block)
+    rule, _ = _run(block)
 
     after = _unitary(block, order)
     residual = np.eye(2 ** len(order), dtype=complex)
@@ -1053,8 +1065,7 @@ def test_a_flipped_sign_would_be_caught():
     block, order = _teleportation_block()
     before = _unitary(block, order)
 
-    rule = EliminateRz()
-    rule.rewrite_Block(block)
+    rule, _ = _run(block)
     after = _unitary(block, order)
 
     wrong = np.eye(4, dtype=complex)
