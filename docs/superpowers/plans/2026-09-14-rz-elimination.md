@@ -1304,63 +1304,95 @@ git commit -m "feat(lanes): run EliminateRz in the logical pipeline via a post-u
 
 ---
 
-### Task 6: Regenerate benchmark baselines
+### Task 6: Dropped
 
-The rule is on by default, so the deterministic benchmark metrics move.
-`AGENT.md` makes regenerating them a rule for any such change.
+Not executed, per explicit instruction mid-run. `.github/workflows/ci.yml` runs
+`just benchmark-logical` / `just benchmark-physical` on `ubuntu-latest` and
+uploads each `latest_<arch>.csv` as an artifact; the committed CSV carries a
+`wall_time_ms` column whose values are machine-specific, so regenerating it
+locally would write this machine's timings into the repo. The intent was to
+leave baseline regeneration to CI rather than do it here.
+
+The measurement itself was not skipped: the final whole-branch review ran the
+logical suite and reported the deterministic deltas (`success` and
+`nodes_explored` unchanged; `move_count_events`/`move_count_lanes` a wash;
+`estimated_fidelity` improved ~1.7% on the `ghz_4`/`ghz_6` cases), which are
+recorded in the spec's "Risks & follow-ups" section. **`latest_logical.csv`
+itself is still stale** — CI's `benchmarks (logical)` job will report a diff on
+this branch until the baseline is regenerated and committed, which needs to
+happen before merge but was left for the branch owner rather than done here.
+
+Steps below are preserved for reference; none were run.
+
+This task therefore **measures**, and records what it found. Regenerating the
+committed baselines is CI's job, from the branch's own benchmark run.
 
 **Files:**
-- Modify: `python/benchmarks/harness/latest_logical.csv`
-- Modify: `docs/superpowers/specs/2026-09-14-rz-elimination-design.md` (record the measured result)
+- Modify: `docs/superpowers/specs/2026-09-14-rz-elimination-design.md` (record the measurement)
+- Do NOT modify: `python/benchmarks/harness/latest_logical.csv` or `latest_physical.csv`
 
 - [ ] **Step 1: Ensure a complete environment**
 
 Run: `uv sync --dev --all-extras --index-strategy=unsafe-best-match`
-Expected: success. Without the extras, kernels fail on import errors that look
-like solver regressions.
+Expected: success. Without the extras, benchmark kernels fail on import errors
+that look like solver regressions.
 
-- [ ] **Step 2: Run the logical suite**
+- [ ] **Step 2: Run the logical suite for information**
 
 Run: `just benchmark-logical`
-Expected: exit 1 with a diff. The recipe writes the CSV in place while comparing,
-so the working copy is updated even on failure.
+Expected: exit 1 with a diff against the committed baseline. That exit code is
+the expected outcome, not a failure — the recipe compares against the committed
+CSV, and this change is supposed to move it.
 
-- [ ] **Step 3: Inspect the diff**
+- [ ] **Step 3: Capture the deterministic deltas, then restore the file**
 
 Run: `git diff python/benchmarks/harness/latest_logical.csv`
 
-Stop if any of these do not hold:
-- The `success` column is unchanged — no new failures.
-- `move_count_events` / `move_count_lanes` shifts are explained by removed `Rz`
-  pulses and any `R` splits.
-- `estimated_fidelity` moves in the direction the pulse-count change implies.
-- Ignore `wall_time_ms`; it is not compared and varies by machine.
+Read the diff and write down, per changed row: the case, and the before/after of
+`success`, `move_count_events`, `move_count_lanes`, `estimated_fidelity`,
+`nodes_explored`, `max_depth_reached`. **Ignore `wall_time_ms` entirely** — it is
+not part of the comparison and varies by machine.
 
-- [ ] **Step 4: Confirm the physical suite did not move**
+Then restore the file so no local timings are committed:
+
+```bash
+git checkout -- python/benchmarks/harness/latest_logical.csv
+```
+
+Stop and report if `success` changed for any case: that is a new compile failure,
+not a metric shift, and it means the rule broke something.
+
+- [ ] **Step 4: Confirm the physical suite is untouched**
 
 Run: `just benchmark-physical`
-Expected: exit 0, no diff. If it moved, the hook is not empty for physical
-compiles — stop and fix Task 5 rather than committing a new baseline.
+Expected: **exit 0, no diff.** `PhysicalNativeToPlace` inherits the empty
+`_post_unroll_rules()` hook, so a physical compile must be bit-identical. A diff
+here means the hook is not empty for the physical path — stop and report it as a
+Task 5 defect rather than accepting the new numbers.
 
-- [ ] **Step 5: Confirm determinism**
+Then `git checkout -- python/benchmarks/harness/latest_physical.csv` if the run
+touched it.
 
-Run `just benchmark-logical` again, then
-`git diff python/benchmarks/harness/latest_logical.csv`.
-Expected: no further change.
+- [ ] **Step 5: Record the result in the spec**
 
-- [ ] **Step 6: Record the parallelism result in the spec**
+The spec's "Risks & follow-ups" names loss of pulse parallelism as the primary
+open risk and says to measure rather than assume. Add a short paragraph there
+giving the observed direction and magnitude of the pulse-count change across the
+suite — `move_count_events` / `move_count_lanes` totals before and after, and
+whether `estimated_fidelity` moved with them. State it plainly, **including if
+it is a loss**. If it is a loss on realistic kernels, say so and note that the
+fallback is to reconsider whether the rule should be on by default.
 
-The spec's primary open risk says to measure rather than assume. Add a short
-paragraph under "Risks & follow-ups" in
-`docs/superpowers/specs/2026-09-14-rz-elimination-design.md` giving the observed
-direction and magnitude of the pulse-count change across the suite. State it
-plainly, including if it is a loss.
+- [ ] **Step 6: Confirm the working tree is clean of benchmark edits**
+
+Run: `git status --short python/benchmarks/`
+Expected: no output. If either CSV still shows as modified, restore it.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add python/benchmarks/harness/latest_logical.csv docs/superpowers/specs/2026-09-14-rz-elimination-design.md
-git commit -m "test(benchmarks): regenerate logical baselines for Rz elimination"
+git add docs/superpowers/specs/2026-09-14-rz-elimination-design.md
+git commit -m "docs: record the measured benchmark impact of Rz elimination"
 ```
 
 ---
