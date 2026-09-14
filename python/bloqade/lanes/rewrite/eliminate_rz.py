@@ -30,6 +30,7 @@ from kirin.dialects import func, ilist, py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade import types as bloqade_types
+from bloqade.gemini.logical.dialects.operations import stmts as operations
 
 __all__ = ["EliminateRz", "EliminateRzError"]
 
@@ -94,12 +95,19 @@ class EliminateRz(RewriteRule):
     def _qubit_values(
         self, stmt: ir.Statement, register: ir.SSAValue
     ) -> tuple[ir.SSAValue, ...]:
-        owner = register.owner
-        if not isinstance(owner, ilist.New):
+        if not isinstance(register, ir.ResultValue) or not isinstance(
+            register.owner, ilist.New
+        ):
+            owner_name = (
+                type(register.owner).__name__
+                if isinstance(register, ir.ResultValue)
+                else type(register).__name__
+            )
             raise EliminateRzError(
-                f"{stmt.name}: qubit register comes from {type(owner).__name__}, "
+                f"{stmt.name}: qubit register comes from {owner_name}, "
                 "not ilist.New. EliminateRz requires the post-unroll IR shape."
             )
+        owner = register.owner
         values = tuple(owner.values)
         if len(set(values)) != len(values):
             raise EliminateRzError(
@@ -109,12 +117,19 @@ class EliminateRz(RewriteRule):
         return values
 
     def _const_float(self, stmt: ir.Statement, value: ir.SSAValue) -> float:
-        owner = value.owner
-        if not isinstance(owner, py.Constant):
+        if not isinstance(value, ir.ResultValue) or not isinstance(
+            value.owner, py.Constant
+        ):
+            owner_name = (
+                type(value.owner).__name__
+                if isinstance(value, ir.ResultValue)
+                else type(value).__name__
+            )
             raise EliminateRzError(
                 f"{stmt.name}: angle is not a compile-time constant "
-                f"(owner is {type(owner).__name__})."
+                f"(owner is {owner_name})."
             )
+        owner = value.owner
         data = owner.value.unwrap()
         if not isinstance(data, (int, float)) or isinstance(data, bool):
             raise EliminateRzError(
@@ -139,15 +154,48 @@ class EliminateRz(RewriteRule):
         self._constants[key] = const.result
         return const.result
 
+    def _touches_qubit(self, stmt: ir.Statement) -> bool:
+        for arg in stmt.args:
+            if arg in self._qubits:
+                return True
+            owner = arg.owner
+            if isinstance(owner, ilist.New) and any(
+                value in self._qubits for value in owner.values
+            ):
+                return True
+        return False
+
     # -- per-statement dispatch -------------------------------------------
 
     @singledispatchmethod
     def _rewrite(self, stmt: ir.Statement) -> RewriteResult:
-        """Record qubit allocations, pass over everything else."""
+        """Record qubit allocations, pass over the inert, reject the unknown."""
+        if stmt.regions:
+            # This rule runs *before* scf2cf, so control flow that survived
+            # unrolling is still an scf.For / scf.IfElse statement holding
+            # regions inside one block -- not multiple blocks. Its body closes
+            # over qubit values rather than taking them as arguments, so the
+            # reachability check below would not see them and the gates inside
+            # would be silently skipped. No statement this rule handles carries
+            # a region, so rejecting all of them is exact.
+            raise EliminateRzError(
+                f"{stmt.name} carries a region; EliminateRz cannot see into it, "
+                "and gates inside would be silently skipped. Control flow must "
+                "be fully unrolled before this rule runs."
+            )
+
         if len(stmt.results) == 1 and stmt.results[0].type.is_subseteq(
             bloqade_types.QubitType
         ):
             self._qubits.add(stmt.results[0])
+            return RewriteResult()
+
+        if self._touches_qubit(stmt):
+            raise EliminateRzError(
+                f"{stmt.name} addresses a qubit but EliminateRz does not know "
+                "whether it is phase-neutral. Register a handler for it, or keep "
+                "it out of the logical pipeline."
+            )
         return RewriteResult()
 
     @_rewrite.register(py.Constant)
@@ -214,4 +262,33 @@ class EliminateRz(RewriteRule):
         # Walk visits the enclosing definition too, and it carries a region --
         # so it must be registered, or the region guard below would reject the
         # program's own function statement.
+        return RewriteResult()
+
+    @_rewrite.register(operations.StarRz)
+    def _(self, stmt: operations.StarRz) -> RewriteResult:
+        # Diagonal, like CZ: the frame commutes past it exactly. Its own
+        # rotation is the payload of a user-requested gadget, not ours to remove.
+        return RewriteResult()
+
+    @_rewrite.register(operations.Initialize)
+    def _(self, stmt: operations.Initialize) -> RewriteResult:
+        pending = {
+            qubit: self._frame[qubit]
+            for qubit in self._qubit_values(stmt, stmt.qubits)
+            if self._frame.get(qubit, 0.0) != 0.0
+        }
+        if pending:
+            raise EliminateRzError(
+                "Initialize reached with a pending phase frame. Initialize is "
+                "expected at the head of a wire; a mid-wire one would need the "
+                "frame absorbed into its (theta, phi, lam) instead."
+            )
+        return RewriteResult()
+
+    @_rewrite.register(operations.TerminalLogicalMeasurement)
+    def _(self, stmt: operations.TerminalLogicalMeasurement) -> RewriteResult:
+        # The residual is diagonal and the readout is in the Z basis, so it
+        # cannot shift any outcome. Drop it.
+        for qubit in self._qubit_values(stmt, stmt.qubits):
+            self._frame.pop(qubit, None)
         return RewriteResult()

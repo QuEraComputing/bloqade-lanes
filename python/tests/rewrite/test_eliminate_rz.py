@@ -2,12 +2,14 @@
 
 from typing import cast
 
+import pytest
 from bloqade.native.dialects import gate as native_gate
-from kirin import ir, rewrite
+from kirin import ir, rewrite, types as kirin_types
 from kirin.dialects import ilist, py
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
-from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+from bloqade.gemini.logical.dialects.operations import stmts as operations
+from bloqade.lanes.rewrite.eliminate_rz import EliminateRz, EliminateRzError
 
 
 def _qubits(block: ir.Block, count: int) -> list[ir.SSAValue]:
@@ -279,3 +281,155 @@ def test_an_existing_constant_is_reused_rather_than_duplicated():
 
     (r,) = cast(list[native_gate.stmts.R], _of_type(block, native_gate.stmts.R))
     assert r.axis_angle is three_quarter
+
+
+def test_statement_carrying_a_region_raises():
+    """Un-unrolled control flow must not be silently scanned past.
+
+    This rule runs before scf2cf, so a surviving scf.For is a statement with a
+    region inside one block -- not a second block. Its body closes over qubit
+    values instead of taking them as arguments, so the qubit-reachability guard
+    would miss it and the gates inside would vanish from the scan.
+    """
+    from kirin.dialects import scf
+
+    block = ir.Block()
+    _qubits(block, 1)
+    block.stmts.append(
+        scf.For(ir.TestValue(type=kirin_types.Any), ir.Region(ir.Block()))
+    )
+
+    with pytest.raises(EliminateRzError, match="region"):
+        _run(block)
+
+
+def test_multi_block_region_raises():
+    """A phase frame cannot cross a block boundary.
+
+    It has no IR representation to travel in -- unlike the state that
+    stack_move2move and state.py thread through block arguments -- so a second
+    block would start from zero and silently lose the first block's phases.
+    """
+    region = ir.Region(ir.Block())
+    region.blocks.append(ir.Block())
+
+    with pytest.raises(EliminateRzError, match="single-block"):
+        EliminateRz().rewrite_Region(region)
+
+
+def test_unknown_statement_touching_a_qubit_raises():
+    """The scan cannot know whether an unrecognised gate is diagonal."""
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    block.stmts.append(squin_qubit.stmts.Measure(qubits=reg))
+
+    with pytest.raises(EliminateRzError, match="phase-neutral"):
+        _run(block)
+
+
+def test_non_ilist_register_raises():
+    block = ir.Block()
+    angle = _const(block, 0.25)
+    opaque = ir.TestValue(
+        type=ilist.IListType[bloqade_types.QubitType, kirin_types.Any]
+    )
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=opaque))
+
+    with pytest.raises(EliminateRzError, match="ilist.New"):
+        _run(block)
+
+
+def test_duplicate_qubit_in_one_register_raises():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    doubled = _register(block, [q0, q0])
+    angle = _const(block, 0.25)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=doubled))
+
+    with pytest.raises(EliminateRzError, match="more than once"):
+        _run(block)
+
+
+def test_non_constant_angle_raises():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    angle = ir.TestValue(type=kirin_types.Float)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=reg))
+
+    with pytest.raises(EliminateRzError, match="constant"):
+        _run(block)
+
+
+def test_initialize_with_a_pending_frame_raises():
+    """Initialize sits at the head of a wire; a mid-wire one would drop a phase."""
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    zero = _const(block, 0.0)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(
+        operations.Initialize(theta=zero, phi=zero, lam=zero, qubits=reg)
+    )
+
+    with pytest.raises(EliminateRzError, match="Initialize"):
+        _run(block)
+
+
+def test_initialize_at_the_head_of_a_wire_is_fine():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    zero = _const(block, 0.0)
+    init = operations.Initialize(theta=zero, phi=zero, lam=zero, qubits=reg)
+    block.stmts.append(init)
+
+    _run(block)
+
+    assert _of_type(block, operations.Initialize) == [init]
+
+
+def test_star_rz_is_untouched_and_the_frame_commutes_past_it():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    star_angle = _const(block, 0.03)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    star = operations.StarRz(rotation_angle=star_angle, qubits=reg)
+    block.stmts.append(star)
+
+    rule, _ = _run(block)
+
+    assert _of_type(block, operations.StarRz) == [star]
+    assert rule._frame[q0] == 0.25
+
+
+def test_terminal_measurement_discards_the_frame():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(operations.TerminalLogicalMeasurement(qubits=reg))
+
+    rule, _ = _run(block)
+
+    assert rule._frame == {}
+
+
+def test_frame_left_at_end_of_block_is_simply_discarded():
+    """The shape left by RemovePostProcessing: no measurement statement at all."""
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+
+    rule, result = _run(block)
+
+    assert result.has_done_something
+    assert _of_type(block, native_gate.stmts.Rz) == []
+    assert rule._frame == {q0: 0.25}  # residual, discarded by the caller
