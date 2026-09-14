@@ -282,6 +282,21 @@ class EliminateRz(RewriteRule):
     _qubits: set[ir.SSAValue] = field(default_factory=set, init=False)
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
+        # The phase frame is a property of the *program*, not of a block: unlike
+        # the state threaded by `stack_move2move` or `state`, it has no IR
+        # representation that crosses a block boundary. So it can only be
+        # initialized once, for the single block that constitutes the program.
+        # With two blocks, the second would start from zero and silently lose
+        # the first block's phases -- hence this is a precondition, not a reset.
+        region = node.parent_region
+        if region is not None and len(region.blocks) != 1:
+            raise EliminateRzError(
+                f"EliminateRz requires a single-block program, found "
+                f"{len(region.blocks)} blocks in one region. A phase frame "
+                "cannot cross a block boundary: it has no IR representation to "
+                "travel in. Run AggressiveUnroll first."
+            )
+
         self._frame = {}
         self._constants = {}
         self._qubits = set()
@@ -605,6 +620,20 @@ def test_statement_carrying_a_region_raises():
         EliminateRz().rewrite_Block(block)
 
 
+def test_multi_block_region_raises():
+    """A phase frame cannot cross a block boundary.
+
+    It has no IR representation to travel in -- unlike the state that
+    stack_move2move and state.py thread through block arguments -- so a second
+    block would start from zero and silently lose the first block's phases.
+    """
+    region = ir.Region(ir.Block())
+    region.blocks.append(ir.Block())
+
+    with pytest.raises(EliminateRzError, match="single-block"):
+        EliminateRz().rewrite_Block(region.blocks[0])
+
+
 def test_unknown_statement_touching_a_qubit_raises():
     """The scan cannot know whether an unrecognised gate is diagonal."""
     block = ir.Block()
@@ -835,7 +864,7 @@ And register the three `operations` statements:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest python/tests/rewrite/test_eliminate_rz.py -v`
-Expected: PASS (21 tests)
+Expected: PASS (22 tests)
 
 - [ ] **Step 5: Lint and commit**
 

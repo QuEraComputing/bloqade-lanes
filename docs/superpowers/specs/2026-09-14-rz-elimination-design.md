@@ -216,6 +216,7 @@ not an optimization.
 
 | precondition | on violation |
 |---|---|
+| the program is a single block | raise |
 | no statement carries a region | raise |
 | every gate's `qubits.owner` is an `ilist.New` | raise |
 | every angle is a compile-time constant | raise |
@@ -226,7 +227,14 @@ Raising rather than skipping matters: `circuit2place` handles a shape mismatch b
 silently returning, but a skipped statement here leaves an `Rz` behind and breaks
 the guarantee.
 
-The region check is the one that does real work. This hook runs *before*
+The single-block check is what makes the frame sound. A phase frame is a
+property of the program, not of a block: unlike the state that `stack_move2move`
+and `state` thread through block arguments, it has no IR representation that can
+cross a block boundary. So it is initialized once, for the block that *is* the
+program — with two blocks the second would start from zero and silently lose the
+first's phases.
+
+The region check does the other half. This rule runs *before*
 `scf2cf`, so control flow surviving `AggressiveUnroll` is an `scf.For` /
 `scf.IfElse` statement holding regions **inside one block** — not a second block.
 Its body closes over qubit values rather than taking them as arguments, so a
