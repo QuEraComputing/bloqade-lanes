@@ -230,29 +230,54 @@ ONE_QUBIT_CASES = {
 # *exact* pre-measurement state, phase/sign included, so a nonzero residual
 # would otherwise show up as a spurious mismatch that this test cannot tell
 # apart from a genuine `#404`-class bug (`#404` was itself a diagonal,
-# measurement-invisible sign error). Every kernel below whose native
-# decomposition leaves a nonzero residual on a block therefore appends an
-# extra single-qubit Z-type Clifford (`squin.z` / `squin.s` / `squin.s_adj`)
-# to that block, and the *same* gate is appended to the bare reference Stim
-# string. Residuals always land on the quarter-turn lattice, so one of
-# `{Z, S, S_adj}` (or nothing, for a zero residual) always suffices.
+# measurement-invisible sign error).
 #
-# The kernel-side addition is provably inert: it is itself diagonal, so
-# `EliminateRz` folds its own native `Rz` straight into the same per-block
-# frame slot and discards it again at the terminal measurement -- the
-# compiled Stim circuit is byte-for-byte identical with or without it. It is
-# kept purely to document, at the call site, which block's residual is being
-# addressed. The actual fix is the identical gate on the *reference* side:
-# it shifts the bare circuit's own canonical stabilizers by exactly the
-# amount the compiled circuit's real (residual-bearing) state already
-# differs from the naive, uncompensated reference, so the comparison is
-# exact again. Because the Steane code's transversal single-qubit Cliffords
-# are adjoint-corrected by `RewriteSteaneTransversalCliffordAdjoints`, the
-# needed reference gate is not always the naive sign-flip of the measured
-# residual (`S` cancels a `+0.25`-turn residual here, not `S_adj`) -- each
-# one was derived by instrumenting `EliminateRz._frame` right before the
-# terminal measurement discards it, then confirmed by brute-force search
-# over `{None, Z, S, S_adj}` against the actual compiled circuit. See
+# EVERY kernel below has a nonzero residual on at least one block -- each one
+# starts from `squin.h`, whose own decomposition (`S . sqrt(X) . S`) already
+# contributes `Rz`s. Only *some* kernels need a compensating gate, though:
+# whether a given residual shows up as a mismatch depends on which
+# stabilizers this test happens to probe, not on whether a residual exists.
+# `z`/`sqrt_y`/`sqrt_y_adj` (one-qubit) and `swap` (two-qubit) all carry a
+# nonzero residual too (confirmed by instrumenting `EliminateRz._frame`) --
+# they pass unmodified only because that residual lands on a block whose
+# probed stabilizers happen not to be sensitive to it, the same way `#404`'s
+# `Zbar(control)` was invisible to the specific circuit that first shipped
+# with it. That is a property of the probe, not evidence the gate is
+# `Rz`-free, and must not be reintroduced as a "decomposes to no `Rz`" claim
+# anywhere in this file.
+#
+# For the kernels whose residual *does* land somewhere the probe would catch
+# it, this file appends an extra single-qubit Z-type Clifford (`squin.z` /
+# `squin.s` / `squin.s_adj`) to that block in the kernel, and the *same* gate
+# to the bare reference Stim string. Residuals always land on the
+# quarter-turn lattice, so one of `{Z, S, S_adj}` always suffices.
+#
+# The kernel-side addition is a genuine no-op on the compiled circuit: any
+# diagonal gate placed here changes *what* accumulates in that block's
+# frame, not *whether* it gets discarded -- `EliminateRz` throws away the
+# whole residual at the terminal measurement regardless of its value, so the
+# compiled Stim circuit is byte-for-byte identical with or without this
+# addition (confirmed directly, twice). Its purpose is traceability, not
+# correctness: it records, at the call site, exactly which kernel the
+# adjacent reference-side correction was derived from, so a future
+# maintainer can re-run `EliminateRz` on this kernel and re-derive the same
+# value instead of trusting an unexplained magic string in the reference.
+# **Do not delete it as dead code** -- doing so would not change the
+# compiled circuit, but it would sever that traceability, and a later
+# change to this kernel's own gate sequence could then silently invalidate
+# the reference-side correction with nothing left to notice.
+#
+# The load-bearing half of the fix is entirely on the *reference* side: that
+# addition shifts the bare circuit's own canonical stabilizers by exactly
+# the amount the compiled circuit's real, residual-bearing state already
+# differs from the naive, uncompensated reference, restoring an exact match.
+# Because the Steane code's transversal single-qubit Cliffords are
+# adjoint-corrected by `RewriteSteaneTransversalCliffordAdjoints`, the needed
+# reference gate is not always the naive sign-flip of the measured residual
+# (`S` cancels a `+0.25`-turn residual here, not `S_adj`) -- each one was
+# derived by instrumenting `EliminateRz._frame` right before the terminal
+# measurement discards it, then confirmed by brute-force search over
+# `{None, Z, S, S_adj}` against the actual compiled circuit. See
 # `.superpowers/sdd/2026-09-14-rz-elimination/final-review-fix-report.md`
 # for the measured residual table and the check that a wrong compensation
 # makes the assertion fail loudly.
@@ -334,9 +359,11 @@ def test_two_qubit_clifford_matches_unencoded(gate):
     """Each two-qubit Clifford, applied to a |+0> pair and a |0+> pair, must
     agree with the same gate on bare qubits. ``cy`` is the case that regressed
     in bloqade-internal#404. ``cx``/``cy``/``cz`` carry a compensating
-    transversal ``Z`` on each block that had a nonzero ``EliminateRz``
-    residual (see the note above ``ONE_QUBIT_CASES``); ``swap`` decomposes to
-    no ``Rz`` and needs none."""
+    transversal ``Z`` on each block whose nonzero ``EliminateRz`` residual
+    the probed stabilizers are sensitive to (see the note above
+    ``ONE_QUBIT_CASES``). ``swap`` also carries a nonzero residual -- it
+    needs no compensation only because it lands where this probe can't see
+    it, not because its decomposition is ``Rz``-free."""
     kernel, reference = TWO_QUBIT_CASES[gate]
     _assert_matches_reference(kernel, _TWO_QUBIT_PREP + "\n" + reference, num_logical=4)
 
@@ -360,19 +387,18 @@ def test_bell_cy_stabilizer_sign():
 
     This kernel's ``H`` leaves a nonzero ``EliminateRz`` residual (0.5 turns,
     i.e. a transversal ``Z``, on the control block) reaching the terminal
-    measurement, per the note above ``ONE_QUBIT_CASES``. The compensating
-    ``squin.z(q[0])`` above is a documentation-only mirror of that residual:
-    it is itself diagonal, so ``EliminateRz`` absorbs its own native ``Rz``
-    straight into the same frame slot and discards it again -- the compiled
-    physical circuit is provably identical with or without it (confirmed by
-    comparing the emitted Stim circuits byte-for-byte). The real
-    compensation is on the *reference* side: adding that same ``Z`` to the
-    bare (unencoded) ``H 0\nCY 0 1`` circuit flips its canonical stabilizer
-    from ``+XY`` to ``-XY``. Folding that flip into the existing
-    ``Ybar = -Y^7`` lift-sign convention turns the expected sign from ``-1``
-    into ``+1`` below, which is exactly what the compiled circuit's exact
-    state gives -- confirmed against ``stim.TableauSimulator`` directly on
-    ``H 0\nCY 0 1\nZ 0``.
+    measurement, per the note above ``ONE_QUBIT_CASES``. ``squin.z(q[0])``
+    above is a no-op on the compiled circuit -- confirmed byte-for-byte
+    identical with or without it, since ``EliminateRz`` discards the whole
+    residual regardless of its value -- kept only so this specific
+    correction is traceable back to the kernel it was derived from; do not
+    delete it. The load-bearing compensation is on the *reference* side:
+    adding that same ``Z`` to the bare (unencoded) ``H 0`` / ``CY 0 1``
+    circuit flips its canonical stabilizer from ``+XY`` to ``-XY``. Folding
+    that flip into the existing ``Ybar = -Y^7`` lift-sign convention turns
+    the expected sign from ``-1`` into ``+1`` below, which is exactly what
+    the compiled circuit's exact state gives -- confirmed against
+    ``stim.TableauSimulator`` directly on ``H 0`` / ``CY 0 1`` / ``Z 0``.
     """
     sim = stim.TableauSimulator()
     sim.do(_noiseless_gate_prefix(_bell_cy))
