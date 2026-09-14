@@ -87,9 +87,9 @@ def test_unannotated_kernel_unchanged():
     deleted ``LocalRz`` statement) once ``EliminateRz`` started running in
     ``LogicalNativeToPlace``: H's two ``Rz`` layers commute into the sole
     ``LocalR`` between them and the terminal measurement's residual, instead
-    of surviving as their own statements. ``Constant`` went from 3 to 4
-    because the shifted ``LocalR`` axis is a new angle distinct from the
-    other constants already in the block.
+    of surviving as their own statements. ``Constant`` is unchanged at 3: the
+    shifted axis folds to a literal that already appears in the block, and CSE
+    merges the two.
     """
 
     @gemini.logical.kernel(aggressive_unroll=True)
@@ -107,7 +107,7 @@ def test_unannotated_kernel_unchanged():
 
     expected_counts = {
         "CZ": 1,
-        "Constant": 4,
+        "Constant": 3,
         "ConstantNone": 1,
         "ConvertToPhysicalMeasurements": 1,
         "EndMeasure": 1,

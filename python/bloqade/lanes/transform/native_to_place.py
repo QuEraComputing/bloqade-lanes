@@ -129,9 +129,6 @@ class NativeToPlaceBase:
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
 
-        if post_unroll_rules := self._post_unroll_rules():
-            rewrite.Walk(rewrite.Chain(*post_unroll_rules)).rewrite(out.code)
-
         self._post_unroll_validation(out, no_raise)
 
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
@@ -142,6 +139,13 @@ class NativeToPlaceBase:
                 [DuplicateAddressValidation, get_validation(self.arch_spec)]
             )
             suite.validate(out).raise_if_invalid()
+
+        # After every validator, so a kernel that is invalid for some unrelated
+        # reason still reports that reason rather than whatever these rules
+        # happen to trip over first. Still before _lower_qubits, which rewrites
+        # qubits into the place dialect and ends the native window.
+        if post_unroll_rules := self._post_unroll_rules():
+            rewrite.Walk(rewrite.Chain(*post_unroll_rules)).rewrite(out.code)
 
         self._lower_qubits(out)
 

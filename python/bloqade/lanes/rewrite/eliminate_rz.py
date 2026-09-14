@@ -12,53 +12,81 @@ Two exact identities do all the work (angles in turns)::
     R(phi, theta) . Rz(alpha) = Rz(alpha) . R(phi - alpha, theta)
     CZ . Rz(alpha)            = Rz(alpha) . CZ
 
-Shaped like ``RewriteNonCliffordToU3`` -- ``rewrite_Statement`` dispatching
-through ``@singledispatchmethod``, with ``Walk`` supplying the traversal -- but
-carrying a frame across statements, which relies on ``Walk`` visiting them in
-program order. See
-``docs/superpowers/specs/2026-09-14-rz-elimination-design.md``.
+The frame holds **SSA values, not floats**: a phase is whatever
+``rotation_angle`` operand the ``Rz`` carried, and a shifted axis is emitted as
+``py.Sub`` over those operands. That keeps the rule working on kernels whose
+angles are function arguments rather than literals -- the pipeline already
+carries non-constant angles end to end (``RewriteStarRz`` feeds a
+``func.Invoke`` result straight into ``move.LocalRz``). When both operands do
+happen to be constants the arithmetic is folded to a literal, since nothing runs
+constant folding after this rule and an unfolded ``py.Sub`` would otherwise
+propagate all the way into the emitted program.
+
+Dispatch is exhaustive: every statement type reachable in this window has a
+registered handler, and the default raises. There is deliberately no "does this
+statement touch a qubit?" heuristic -- an unrecognised statement is a statement
+whose phase behaviour we cannot know, so it is an error rather than a guess.
+
+See ``docs/superpowers/specs/2026-09-14-rz-elimination-design.md``.
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from functools import singledispatchmethod
 
+from bloqade.decoders.dialects.annotate import stmts as annotate
 from bloqade.native.dialects import gate as native_gate
 from kirin import ir
 from kirin.dialects import func, ilist, py
+from kirin.dialects.py import tuple as py_tuple
+from kirin.dialects.py.binop import stmts as py_binop
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
-from bloqade import types as bloqade_types
+from bloqade import qubit as squin_qubit, types as bloqade_types
+from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.logical.dialects.operations import stmts as operations
 
 __all__ = ["EliminateRz", "EliminateRzError"]
-
-# Angles are grouped and cached at this many decimal places, so equal angles land
-# on one dict key and can share a single constant SSA value.
-_ANGLE_NDIGITS = 12
 
 
 class EliminateRzError(Exception):
     """The IR violates a precondition of the Rz elimination scan."""
 
 
-def _normalize(angle: float) -> float:
-    """Fold an angle into [0, 1) turns and round it onto the grouping grid."""
-    return round(angle % 1.0, _ANGLE_NDIGITS) % 1.0
+def _literal(value: ir.SSAValue) -> float | None:
+    """The numeric literal behind ``value``, or ``None`` if it is not a constant."""
+    if not isinstance(value, ir.ResultValue) or not isinstance(
+        value.owner, py.Constant
+    ):
+        return None
+    data = value.owner.value.unwrap()
+    if isinstance(data, bool) or not isinstance(data, (int, float)):
+        return None
+    return float(data)
 
 
 @dataclass
 class EliminateRz(RewriteRule):
     """Remove every ``Rz`` from a flat native-dialect program."""
 
-    _frame: dict[ir.SSAValue, float] = field(default_factory=dict, init=False)
-    """Pending Z phase per qubit, in turns. Spans the whole program."""
+    _frame: dict[ir.SSAValue, ir.SSAValue] = field(default_factory=dict, init=False)
+    """Pending Z phase per qubit, as the SSA value holding it. Spans the program.
 
-    _constants: dict[float, ir.SSAValue] = field(default_factory=dict, init=False)
-    """One SSA value per distinct angle, so downstream fusion still matches."""
+    A qubit is absent until an ``Rz`` touches it, so "no pending phase" and "not
+    in this dict" are the same statement.
+    """
 
-    _qubits: set[ir.SSAValue] = field(default_factory=set, init=False)
+    _shifted: dict[tuple[ir.SSAValue, ir.SSAValue], ir.SSAValue] = field(
+        default_factory=dict, init=False
+    )
+    """Memo of ``(axis, frame) -> shifted axis``.
+
+    ``FuseAdjacentGates`` (downstream, at the place layer) matches parameters by
+    SSA *identity*, so two gates that shift the same axis by the same frame must
+    come out sharing one SSA value or they stop fusing.
+    """
 
     def rewrite_Region(self, node: ir.Region) -> RewriteResult:
         """Require a single block, and start each walk from a clean frame.
@@ -83,8 +111,7 @@ class EliminateRz(RewriteRule):
                 "boundary. Run AggressiveUnroll first."
             )
         self._frame = {}
-        self._constants = {}
-        self._qubits = set()
+        self._shifted = {}
         return RewriteResult()
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
@@ -98,17 +125,11 @@ class EliminateRz(RewriteRule):
         if not isinstance(register, ir.ResultValue) or not isinstance(
             register.owner, ilist.New
         ):
-            owner_name = (
-                type(register.owner).__name__
-                if isinstance(register, ir.ResultValue)
-                else type(register).__name__
-            )
             raise EliminateRzError(
-                f"{stmt.name}: qubit register comes from {owner_name}, "
-                "not ilist.New. EliminateRz requires the post-unroll IR shape."
+                f"{stmt.name}: qubit register does not come from ilist.New. "
+                "EliminateRz requires the post-unroll IR shape."
             )
-        owner = register.owner
-        values = tuple(owner.values)
+        values = tuple(register.owner.values)
         if len(set(values)) != len(values):
             raise EliminateRzError(
                 f"{stmt.name} addresses a qubit more than once; no phase frame "
@@ -116,136 +137,138 @@ class EliminateRz(RewriteRule):
             )
         return values
 
-    def _const_float(self, stmt: ir.Statement, value: ir.SSAValue) -> float:
-        if not isinstance(value, ir.ResultValue) or not isinstance(
-            value.owner, py.Constant
-        ):
-            owner_name = (
-                type(value.owner).__name__
-                if isinstance(value, ir.ResultValue)
-                else type(value).__name__
-            )
-            raise EliminateRzError(
-                f"{stmt.name}: angle is not a compile-time constant "
-                f"(owner is {owner_name})."
-            )
-        owner = value.owner
-        data = owner.value.unwrap()
-        if not isinstance(data, (int, float)) or isinstance(data, bool):
-            raise EliminateRzError(
-                f"{stmt.name}: angle constant is not numeric: {data!r}"
-            )
-        return float(data)
-
-    def _constant(self, angle: float, before: ir.Statement) -> ir.SSAValue:
-        """One ``py.Constant`` per distinct angle, reusing existing ones.
-
-        ``FuseAdjacentGates`` (downstream, at the place layer) matches parameters
-        by SSA *identity*, and ``circuit2place`` carries angle values through
-        unchanged. Minting a fresh constant per statement would break fusion
-        between statements whose angles are numerically equal.
-        """
-        key = _normalize(angle)
-        cached = self._constants.get(key)
-        if cached is not None:
-            return cached
-        const = py.Constant(key)
-        const.insert_before(before)
-        self._constants[key] = const.result
-        return const.result
-
-    def _touches_qubit(self, stmt: ir.Statement) -> bool:
-        for arg in stmt.args:
-            if arg in self._qubits:
-                return True
-            if not isinstance(arg, ir.ResultValue):
-                continue
-            owner = arg.owner
-            if isinstance(owner, ilist.New) and any(
-                value in self._qubits for value in owner.values
-            ):
-                return True
-        return False
+    def _combine(
+        self,
+        op: type[py.Add | py.Sub],
+        lhs: ir.SSAValue,
+        rhs: ir.SSAValue,
+        before: ir.Statement,
+    ) -> ir.SSAValue:
+        """``lhs op rhs`` as an SSA value, folded to a literal when both are."""
+        left, right = _literal(lhs), _literal(rhs)
+        if left is not None and right is not None:
+            folded = left + right if op is py.Add else left - right
+            stmt: ir.Statement = py.Constant(folded)
+        else:
+            stmt = op(lhs, rhs)
+        stmt.insert_before(before)
+        return stmt.results[0]
 
     # -- per-statement dispatch -------------------------------------------
+    #
+    # Exhaustive by design: the default raises, and every statement type that
+    # can appear in this window is registered below. An unregistered type is a
+    # type whose phase behaviour is unknown, and guessing is how an Rz gets
+    # silently left behind.
 
     @singledispatchmethod
     def _rewrite(self, stmt: ir.Statement) -> RewriteResult:
-        """Record qubit allocations, pass over the inert, reject the unknown."""
-        if stmt.regions:
-            # This rule runs *before* scf2cf, so control flow that survived
-            # unrolling is still an scf.For / scf.IfElse statement holding
-            # regions inside one block -- not multiple blocks. Its body closes
-            # over qubit values rather than taking them as arguments, so the
-            # reachability check below would not see them and the gates inside
-            # would be silently skipped. No statement this rule handles carries
-            # a region, so rejecting all of them is exact.
-            raise EliminateRzError(
-                f"{stmt.name} carries a region; EliminateRz cannot see into it, "
-                "and gates inside would be silently skipped. Control flow must "
-                "be fully unrolled before this rule runs."
-            )
+        raise EliminateRzError(
+            f"{stmt.name} has no EliminateRz handler, so its effect on a phase "
+            "frame is unknown. Register it explicitly -- as a no-op if it is "
+            "phase-neutral -- rather than letting it pass silently."
+        )
 
-        if len(stmt.results) == 1 and stmt.results[0].type.is_subseteq(
-            bloqade_types.QubitType
-        ):
-            self._qubits.add(stmt.results[0])
-            return RewriteResult()
-
-        if self._touches_qubit(stmt):
-            raise EliminateRzError(
-                f"{stmt.name} addresses a qubit but EliminateRz does not know "
-                "whether it is phase-neutral. Register a handler for it, or keep "
-                "it out of the logical pipeline."
-            )
-        return RewriteResult()
+    # --- inert: carry no phase, touch no frame ---
 
     @_rewrite.register(py.Constant)
-    def _(self, stmt: py.Constant) -> RewriteResult:
-        # Only seed the cache from a pre-existing constant whose literal is
-        # already normalized (key == value). That keeps the cache invariant
-        # airtight -- a cached SSA value's literal always equals its key --
-        # so an unrelated program constant that merely happens to be
-        # numerically congruent mod 1 turn (e.g. a loop bound like 7.0,
-        # which normalizes to the same key as 0.0) can never be handed back
-        # as an axis angle.
-        data = stmt.value.unwrap()
-        if isinstance(data, (int, float)) and not isinstance(data, bool):
-            value = float(data)
-            if _normalize(value) == value:
-                self._constants.setdefault(value, stmt.result)
+    @_rewrite.register(py.GetItem)
+    @_rewrite.register(py_binop.BinOp)  # Add / Sub / Mult / Div / ...
+    @_rewrite.register(py_tuple.New)
+    @_rewrite.register(ilist.New)
+    @_rewrite.register(squin_qubit.stmts.New)
+    @_rewrite.register(gemini_qubit.stmts.NewAt)
+    @_rewrite.register(func.Return)
+    @_rewrite.register(func.ConstantNone)
+    @_rewrite.register(annotate.SetDetector)
+    @_rewrite.register(annotate.SetObservable)
+    def _(self, stmt: ir.Statement) -> RewriteResult:
         return RewriteResult()
 
-    @_rewrite.register(ilist.New)
-    def _(self, stmt: ilist.New) -> RewriteResult:
+    @_rewrite.register(func.Function)
+    def _(self, stmt: func.Function) -> RewriteResult:
+        # The walk root is the program's own definition and is expected.
+        #
+        # A *nested* func.Function is not: Walk enqueues a statement's regions
+        # into the same worklist as everything else, so a nested function's
+        # block is scanned in line with the outer one, and rewrite_Region would
+        # reset self._frame mid-walk -- discarding every phase the outer block
+        # had accumulated, with no error raised.
+        if stmt.parent_stmt is not None:
+            raise EliminateRzError(
+                f"{stmt.name} is a nested func.Function; EliminateRz only "
+                "accepts the walk root. A nested function's region would reset "
+                "the phase frame mid-walk and silently discard every pending "
+                "phase from the enclosing block."
+            )
         return RewriteResult()
+
+    # --- diagonal: commute with the frame exactly, so nothing to do ---
+
+    @_rewrite.register(native_gate.stmts.CZ)
+    def _(self, stmt: native_gate.stmts.CZ) -> RewriteResult:
+        # Diagonal on each qubit independently, so the two sides' frames need
+        # not agree and nothing changes.
+        return RewriteResult()
+
+    @_rewrite.register(operations.StarRz)
+    def _(self, stmt: operations.StarRz) -> RewriteResult:
+        # Diagonal, so the frame commutes past it exactly -- passing it through
+        # is correct. What we cannot do is *remove* its own rotation: STAR puts
+        # an Rz on a subset of a block's physical qubits, which this rule's
+        # per-logical-qubit frame does not model. That phase stays in the
+        # program and reaches the backend as a physical local Rz; eliminating
+        # it would need a physical-domain pass, which is out of scope here.
+        warnings.warn(
+            "EliminateRz does not remove the Rz introduced by the STAR gadget: "
+            "it acts on a subset of a block's physical qubits, which this rule "
+            "does not model. That rotation will reach the backend as a physical "
+            "local Rz.",
+        )
+        return RewriteResult()
+
+    # --- the actual work ---
 
     @_rewrite.register(native_gate.stmts.Rz)
     def _(self, stmt: native_gate.stmts.Rz) -> RewriteResult:
-        angle = self._const_float(stmt, stmt.rotation_angle)
         for qubit in self._qubit_values(stmt, stmt.qubits):
-            self._frame[qubit] = self._frame.get(qubit, 0.0) + angle
+            pending = self._frame.get(qubit)
+            self._frame[qubit] = (
+                stmt.rotation_angle
+                if pending is None
+                else self._combine(py.Add, pending, stmt.rotation_angle, stmt)
+            )
         stmt.delete()
         return RewriteResult(has_done_something=True)
 
     @_rewrite.register(native_gate.stmts.R)
     def _(self, stmt: native_gate.stmts.R) -> RewriteResult:
-        axis = self._const_float(stmt, stmt.axis_angle)
         qubits = self._qubit_values(stmt, stmt.qubits)
 
-        groups: dict[float, list[ir.SSAValue]] = {}
+        # Group by the frame each qubit carries. Qubits with no pending phase
+        # group under None and keep the original axis; a statement whose qubits
+        # disagree must split, because one pulse cannot carry two axis angles.
+        groups: dict[ir.SSAValue | None, list[ir.SSAValue]] = {}
         for qubit in qubits:
-            shifted = _normalize(axis - self._frame.get(qubit, 0.0))
-            groups.setdefault(shifted, []).append(qubit)
+            groups.setdefault(self._frame.get(qubit), []).append(qubit)
 
-        if len(groups) == 1 and next(iter(groups)) == _normalize(axis):
+        if tuple(groups) == (None,):
             return RewriteResult()
 
-        for shifted, group in groups.items():
+        for frame, group in groups.items():
+            if frame is None:
+                axis = stmt.axis_angle
+            else:
+                key = (stmt.axis_angle, frame)
+                axis = self._shifted.get(key) or self._combine(
+                    py.Sub, stmt.axis_angle, frame, stmt
+                )
+                self._shifted[key] = axis
+
             register = ilist.New(values=tuple(group), elem_type=bloqade_types.QubitType)
             register.insert_before(stmt)
             native_gate.stmts.R(
-                axis_angle=self._constant(shifted, stmt),
+                axis_angle=axis,
                 rotation_angle=stmt.rotation_angle,
                 qubits=register.result,
             ).insert_before(stmt)
@@ -253,61 +276,30 @@ class EliminateRz(RewriteRule):
         stmt.delete()
         return RewriteResult(has_done_something=True)
 
-    @_rewrite.register(native_gate.stmts.CZ)
-    def _(self, stmt: native_gate.stmts.CZ) -> RewriteResult:
-        # Diagonal: commutes with Rz on each qubit independently, so the two
-        # sides' frames need not agree and nothing changes.
-        return RewriteResult()
-
-    @_rewrite.register(func.Function)
-    def _(self, stmt: func.Function) -> RewriteResult:
-        # Walk visits the enclosing definition too, and it carries a region --
-        # so the walk root must be accepted, or the region guard in the
-        # fallback branch would reject the program's own function statement.
-        #
-        # A *nested* func.Function must not get the same pass-through: Walk's
-        # populate_worklist_Statement enqueues a statement's regions into the
-        # same worklist as everything else, so a nested function's block is
-        # scanned in line with the outer one. rewrite_Region resets
-        # self._frame at the start of every region it sees (that is what
-        # makes re-driving via Fixpoint safe) -- so silently accepting a
-        # nested function here would let its (fresh, single-block) region
-        # reset the frame mid-walk, discarding every phase the outer block
-        # had accumulated so far, with no error raised.
-        if stmt.parent_stmt is not None:
-            raise EliminateRzError(
-                f"{stmt.name} is a nested func.Function; EliminateRz only "
-                "accepts the walk root. A nested function's region would "
-                "reset the phase frame mid-walk and silently discard every "
-                "pending phase from the enclosing block."
-            )
-        return RewriteResult()
-
-    @_rewrite.register(operations.StarRz)
-    def _(self, stmt: operations.StarRz) -> RewriteResult:
-        # Diagonal, like CZ: the frame commutes past it exactly. Its own
-        # rotation is the payload of a user-requested gadget, not ours to remove.
-        return RewriteResult()
-
     @_rewrite.register(operations.Initialize)
     def _(self, stmt: operations.Initialize) -> RewriteResult:
-        pending = {
-            qubit: self._frame[qubit]
-            for qubit in self._qubit_values(stmt, stmt.qubits)
-            if _normalize(self._frame.get(qubit, 0.0)) != 0.0
-        }
-        if pending:
-            raise EliminateRzError(
-                "Initialize reached with a pending phase frame. Initialize is "
-                "expected at the head of a wire; a mid-wire one would need the "
-                "frame absorbed into its (theta, phi, lam) instead."
-            )
+        for qubit in self._qubit_values(stmt, stmt.qubits):
+            pending = self._frame.get(qubit)
+            if pending is not None and _literal(pending) != 0.0:
+                raise EliminateRzError(
+                    "Initialize reached with a pending phase frame. Initialize "
+                    "is expected at the head of a wire; a mid-wire one would "
+                    "need the frame absorbed into its (theta, phi, lam)."
+                )
         return RewriteResult()
 
     @_rewrite.register(operations.TerminalLogicalMeasurement)
-    def _(self, stmt: operations.TerminalLogicalMeasurement) -> RewriteResult:
+    @_rewrite.register(squin_qubit.stmts.Measure)
+    def _(
+        self,
+        stmt: operations.TerminalLogicalMeasurement | squin_qubit.stmts.Measure,
+    ) -> RewriteResult:
         # The residual is diagonal and the readout is in the Z basis, so it
         # cannot shift any outcome. Drop it.
+        #
+        # Safe for a mid-circuit measurement too, not just the terminal one: a
+        # Z measurement leaves the qubit in a computational basis state, where
+        # any leftover Z phase is a global phase on that branch.
         for qubit in self._qubit_values(stmt, stmt.qubits):
             self._frame.pop(qubit, None)
         return RewriteResult()

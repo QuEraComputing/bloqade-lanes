@@ -1,9 +1,13 @@
-"""Tests for the EliminateRz rewrite rule, on hand-built native-dialect IR."""
+"""Tests for the EliminateRz rewrite rule.
 
-from typing import cast
+Each case builds the input block and the expected output block explicitly and
+compares them whole with ``assert_nodes``, so a stray statement the rule leaves
+behind fails the test rather than slipping past a spot-check.
+"""
 
 import pytest
 from bloqade.native.dialects import gate as native_gate
+from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite, types as kirin_types
 from kirin.dialects import func, ilist, py
 
@@ -11,594 +15,483 @@ from bloqade import qubit as squin_qubit, types as bloqade_types
 from bloqade.gemini.logical.dialects.operations import stmts as operations
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz, EliminateRzError
 
-
-def _qubits(block: ir.Block, count: int) -> list[ir.SSAValue]:
-    """Append ``count`` qubit allocations to ``block`` and return their values."""
-    values = []
-    for _ in range(count):
-        new = squin_qubit.stmts.New()
-        block.stmts.append(new)
-        values.append(new.result)
-    return values
+QUBIT = bloqade_types.QubitType
 
 
-def _register(block: ir.Block, values) -> ir.SSAValue:
-    reg = ilist.New(values=tuple(values), elem_type=bloqade_types.QubitType)
-    block.stmts.append(reg)
-    return reg.result
+def _rz_is_deleted():
+    """A lone Rz is absorbed into the frame and removed. Its angle constant is
+    left behind as dead code -- DCE later in the pipeline sweeps it, and this
+    rule does not do reference counting."""
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    test = ir.Block([q, reg, quarter, native_gate.stmts.Rz(quarter.result, reg.result)])
+
+    q2 = squin_qubit.stmts.New()
+    reg2 = ilist.New(values=(q2.result,), elem_type=QUBIT)
+    expected = ir.Block([q2, reg2, py.Constant(0.25)])
+    return test, expected
 
 
-def _const(block: ir.Block, value: float) -> ir.SSAValue:
-    const = py.Constant(value)
-    block.stmts.append(const)
-    return const.result
-
-
-def _of_type(block: ir.Block, kind) -> list[ir.Statement]:
-    return [stmt for stmt in block.stmts if isinstance(stmt, kind)]
-
-
-def _axis(stmt) -> float:
-    return stmt.axis_angle.owner.value.unwrap()
-
-
-def _axis_value(stmt) -> ir.SSAValue:
-    return stmt.axis_angle
-
-
-def _run(block: ir.Block):
-    """Drive the rule the way the pipeline does -- a forward Walk.
-
-    Returns the rule (so tests can read the residual frame) and the result.
-    """
-    rule = EliminateRz()
-    return rule, rewrite.Walk(rule).rewrite(block)
-
-
-def test_rz_is_deleted():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    angle = _const(block, 0.25)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=reg))
-
-    _, result = _run(block)
-
-    assert result.has_done_something
-    assert _of_type(block, native_gate.stmts.Rz) == []
-
-
-def test_r_axis_is_shifted_by_the_pending_frame():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+def _r_axis_shifts_by_the_frame():
+    """R(0) after Rz(0.25) becomes R(0 - 0.25). The rule emits a fresh register
+    and gate before the original and deletes it, so the new pair lands where the
+    old R was."""
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q,
+            reg,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, reg.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg.result),
+        ]
     )
 
-    _run(block)
+    q2 = squin_qubit.stmts.New()
+    reg2 = ilist.New(values=(q2.result,), elem_type=QUBIT)
+    quarter2 = py.Constant(0.25)
+    zero2 = py.Constant(0.0)
+    shifted = py.Constant(-0.25)
+    new_reg = ilist.New(values=(q2.result,), elem_type=QUBIT)
+    expected = ir.Block(
+        [
+            q2,
+            reg2,
+            quarter2,
+            zero2,
+            shifted,
+            new_reg,
+            native_gate.stmts.R(shifted.result, quarter2.result, new_reg.result),
+        ]
+    )
+    return test, expected
 
-    rs = _of_type(block, native_gate.stmts.R)
-    assert len(rs) == 1
-    # (0.0 - 0.25) mod 1 == 0.75
-    assert _axis(rs[0]) == 0.75
 
-
-def test_frames_accumulate_across_multiple_rz():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    half = _const(block, 0.5)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=half, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+def _frames_accumulate():
+    """Two Rz on one qubit sum before shifting: 0.0 - (0.25 + 0.5) = -0.75."""
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    half = py.Constant(0.5)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q,
+            reg,
+            quarter,
+            half,
+            zero,
+            native_gate.stmts.Rz(quarter.result, reg.result),
+            native_gate.stmts.Rz(half.result, reg.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg.result),
+        ]
     )
 
-    _run(block)
-
-    (r,) = _of_type(block, native_gate.stmts.R)
-    # (0.0 - 0.75) mod 1 == 0.25
-    assert _axis(r) == 0.25
-
-
-def test_r_on_an_untouched_qubit_is_left_alone():
-    block = ir.Block()
-    q0, q1 = _qubits(block, 2)
-    reg0, reg1 = _register(block, [q0]), _register(block, [q1])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg0))
-    original = native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg1)
-    block.stmts.append(original)
-
-    _run(block)
-
-    assert _of_type(block, native_gate.stmts.R) == [
-        original
-    ], "an untouched qubit's R must be left in place, not rebuilt"
-
-
-def test_cz_passes_through_and_the_frame_survives_it():
-    block = ir.Block()
-    q0, q1 = _qubits(block, 2)
-    controls, targets = _register(block, [q0]), _register(block, [q1])
-    quarter = _const(block, 0.25)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=controls))
-    cz = native_gate.stmts.CZ(controls=controls, targets=targets)
-    block.stmts.append(cz)
-
-    rule, _ = _run(block)
-
-    assert _of_type(block, native_gate.stmts.CZ) == [cz]
-    # Diagonal, so it commutes with the frame exactly -- nothing changes.
-    assert rule._frame[q0] == 0.25
+    q2 = squin_qubit.stmts.New()
+    reg2 = ilist.New(values=(q2.result,), elem_type=QUBIT)
+    quarter2 = py.Constant(0.25)
+    half2 = py.Constant(0.5)
+    zero2 = py.Constant(0.0)
+    summed = py.Constant(0.75)
+    shifted = py.Constant(-0.75)
+    new_reg = ilist.New(values=(q2.result,), elem_type=QUBIT)
+    expected = ir.Block(
+        [
+            q2,
+            reg2,
+            quarter2,
+            half2,
+            zero2,
+            summed,
+            shifted,
+            new_reg,
+            native_gate.stmts.R(shifted.result, quarter2.result, new_reg.result),
+        ]
+    )
+    return test, expected
 
 
-def test_rule_is_idempotent():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+def _untouched_qubit_is_left_alone():
+    """An R on a qubit no Rz ever reached keeps its original statement -- the
+    rule must not rebuild it."""
+    q0 = squin_qubit.stmts.New()
+    q1 = squin_qubit.stmts.New()
+    reg0 = ilist.New(values=(q0.result,), elem_type=QUBIT)
+    reg1 = ilist.New(values=(q1.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q0,
+            q1,
+            reg0,
+            reg1,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, reg0.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg1.result),
+        ]
     )
 
-    _run(block)
-    _, second = _run(block)
+    a0 = squin_qubit.stmts.New()
+    a1 = squin_qubit.stmts.New()
+    areg0 = ilist.New(values=(a0.result,), elem_type=QUBIT)
+    areg1 = ilist.New(values=(a1.result,), elem_type=QUBIT)
+    aquarter = py.Constant(0.25)
+    azero = py.Constant(0.0)
+    expected = ir.Block(
+        [
+            a0,
+            a1,
+            areg0,
+            areg1,
+            aquarter,
+            azero,
+            native_gate.stmts.R(azero.result, aquarter.result, areg1.result),
+        ]
+    )
+    return test, expected
 
-    assert not second.has_done_something
 
-
-def test_non_angle_constant_is_not_reused_as_axis():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    # An unrelated constant (e.g. a loop bound or count) that happens to
-    # normalize to the same key as the shifted axis below (7.0 % 1.0 == 0.0).
-    seven = _const(block, 7.0)
-    quarter = _const(block, 0.25)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=quarter, rotation_angle=quarter, qubits=reg)
+def _r_splits_when_frames_differ():
+    """One pulse cannot carry two axis angles. Only q0 saw an Rz, so the shared
+    R splits: q0 gets the shifted axis, q1 keeps the original."""
+    q0 = squin_qubit.stmts.New()
+    q1 = squin_qubit.stmts.New()
+    only_q0 = ilist.New(values=(q0.result,), elem_type=QUBIT)
+    both = ilist.New(values=(q0.result, q1.result), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q0,
+            q1,
+            only_q0,
+            both,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, only_q0.result),
+            native_gate.stmts.R(zero.result, quarter.result, both.result),
+        ]
     )
 
-    _run(block)
+    a0 = squin_qubit.stmts.New()
+    a1 = squin_qubit.stmts.New()
+    a_only = ilist.New(values=(a0.result,), elem_type=QUBIT)
+    a_both = ilist.New(values=(a0.result, a1.result), elem_type=QUBIT)
+    aquarter = py.Constant(0.25)
+    azero = py.Constant(0.0)
+    shifted = py.Constant(-0.25)
+    shifted_reg = ilist.New(values=(a0.result,), elem_type=QUBIT)
+    plain_reg = ilist.New(values=(a1.result,), elem_type=QUBIT)
+    expected = ir.Block(
+        [
+            a0,
+            a1,
+            a_only,
+            a_both,
+            aquarter,
+            azero,
+            shifted,
+            shifted_reg,
+            native_gate.stmts.R(shifted.result, aquarter.result, shifted_reg.result),
+            plain_reg,
+            native_gate.stmts.R(azero.result, aquarter.result, plain_reg.result),
+        ]
+    )
+    return test, expected
 
-    (r,) = _of_type(block, native_gate.stmts.R)
-    # (0.25 - 0.25) mod 1 == 0.0, same cache key as 7.0's normalized value --
-    # but 7.0 itself is not a normalized angle, so it must not be reused.
-    assert _axis_value(r) is not seven
-    assert _axis(r) == 0.0
 
-
-def test_r_splits_when_its_qubits_carry_different_frames():
-    """One pulse cannot carry two axis angles, so the statement must split."""
-    block = ir.Block()
-    q0, q1 = _qubits(block, 2)
-    only_q0 = _register(block, [q0])
-    both = _register(block, [q0, q1])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=only_q0))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=both)
+def _equal_frames_share_one_shifted_axis():
+    """Two R statements shifted by the same (axis, frame) pair must come out
+    sharing one SSA value -- FuseAdjacentGates matches by identity downstream,
+    so a second constant here would silently stop them fusing."""
+    q0 = squin_qubit.stmts.New()
+    q1 = squin_qubit.stmts.New()
+    both = ilist.New(values=(q0.result, q1.result), elem_type=QUBIT)
+    reg0 = ilist.New(values=(q0.result,), elem_type=QUBIT)
+    reg1 = ilist.New(values=(q1.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q0,
+            q1,
+            both,
+            reg0,
+            reg1,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, both.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg0.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg1.result),
+        ]
     )
 
-    _run(block)
+    a0 = squin_qubit.stmts.New()
+    a1 = squin_qubit.stmts.New()
+    a_both = ilist.New(values=(a0.result, a1.result), elem_type=QUBIT)
+    areg0 = ilist.New(values=(a0.result,), elem_type=QUBIT)
+    areg1 = ilist.New(values=(a1.result,), elem_type=QUBIT)
+    aquarter = py.Constant(0.25)
+    azero = py.Constant(0.0)
+    shifted = py.Constant(-0.25)
+    new0 = ilist.New(values=(a0.result,), elem_type=QUBIT)
+    new1 = ilist.New(values=(a1.result,), elem_type=QUBIT)
+    expected = ir.Block(
+        [
+            a0,
+            a1,
+            a_both,
+            areg0,
+            areg1,
+            aquarter,
+            azero,
+            shifted,
+            new0,
+            native_gate.stmts.R(shifted.result, aquarter.result, new0.result),
+            new1,
+            native_gate.stmts.R(shifted.result, aquarter.result, new1.result),
+        ]
+    )
+    return test, expected
 
-    rs = _of_type(block, native_gate.stmts.R)
-    assert len(rs) == 2
-    rs = cast(list[native_gate.stmts.R], rs)
-    by_axis = {_axis(r): tuple(r.qubits.owner.values) for r in rs}  # type: ignore[attr-defined]
-    assert by_axis == {0.75: (q0,), 0.0: (q1,)}
 
-
-def test_split_covers_every_original_qubit_exactly_once():
-    block = ir.Block()
-    q0, q1, q2 = _qubits(block, 3)
-    only_q0 = _register(block, [q0])
-    only_q2 = _register(block, [q2])
-    all_three = _register(block, [q0, q1, q2])
-    quarter = _const(block, 0.25)
-    half = _const(block, 0.5)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=only_q0))
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=half, qubits=only_q2))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=all_three)
+def _cz_passes_through():
+    """CZ is diagonal, so the frame commutes past it and it is left alone."""
+    q0 = squin_qubit.stmts.New()
+    q1 = squin_qubit.stmts.New()
+    reg0 = ilist.New(values=(q0.result,), elem_type=QUBIT)
+    reg1 = ilist.New(values=(q1.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    test = ir.Block(
+        [
+            q0,
+            q1,
+            reg0,
+            reg1,
+            quarter,
+            native_gate.stmts.Rz(quarter.result, reg0.result),
+            native_gate.stmts.CZ(reg0.result, reg1.result),
+        ]
     )
 
-    _run(block)
+    a0 = squin_qubit.stmts.New()
+    a1 = squin_qubit.stmts.New()
+    areg0 = ilist.New(values=(a0.result,), elem_type=QUBIT)
+    areg1 = ilist.New(values=(a1.result,), elem_type=QUBIT)
+    expected = ir.Block(
+        [
+            a0,
+            a1,
+            areg0,
+            areg1,
+            py.Constant(0.25),
+            native_gate.stmts.CZ(areg0.result, areg1.result),
+        ]
+    )
+    return test, expected
 
-    rs = cast(list[native_gate.stmts.R], _of_type(block, native_gate.stmts.R))
-    covered = [value for r in rs for value in r.qubits.owner.values]  # type: ignore[attr-defined]
-    assert sorted(map(id, covered)) == sorted(map(id, [q0, q1, q2]))
 
-
-def test_qubits_with_equal_frames_stay_in_one_statement():
-    block = ir.Block()
-    q0, q1 = _qubits(block, 2)
-    both = _register(block, [q0, q1])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=both))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=both)
+def _measurement_discards_the_frame():
+    """The residual is diagonal and the readout is in the Z basis, so the
+    measurement drops it and a later R on that qubit is unshifted."""
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q,
+            reg,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, reg.result),
+            operations.TerminalLogicalMeasurement(reg.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg.result),
+        ]
     )
 
-    _run(block)
-
-    rs = cast(list[native_gate.stmts.R], _of_type(block, native_gate.stmts.R))
-    assert len(rs) == 1
-    assert tuple(rs[0].qubits.owner.values) == (q0, q1)  # type: ignore[attr-defined]
-
-
-def test_equal_angles_share_one_constant_ssa_value():
-    """FuseAdjacentGates matches on SSA identity, so equal angles must share."""
-    block = ir.Block()
-    q0, q1 = _qubits(block, 2)
-    reg0, reg1 = _register(block, [q0]), _register(block, [q1])
-    both = _register(block, [q0, q1])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=both))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg0)
+    a = squin_qubit.stmts.New()
+    areg = ilist.New(values=(a.result,), elem_type=QUBIT)
+    aquarter = py.Constant(0.25)
+    azero = py.Constant(0.0)
+    expected = ir.Block(
+        [
+            a,
+            areg,
+            aquarter,
+            azero,
+            operations.TerminalLogicalMeasurement(areg.result),
+            native_gate.stmts.R(azero.result, aquarter.result, areg.result),
+        ]
     )
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg1)
-    )
-
-    _run(block)
-
-    rs = cast(list[native_gate.stmts.R], _of_type(block, native_gate.stmts.R))
-    assert len(rs) == 2
-    assert rs[0].axis_angle is rs[1].axis_angle
+    return test, expected
 
 
-def test_an_existing_constant_is_reused_rather_than_duplicated():
-    """The shifted angle already exists in the block, so no new constant."""
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    three_quarter = _const(block, 0.75)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+def _non_constant_angle_stays_symbolic():
+    """A parametrized angle has no literal to fold, so the shift is emitted as
+    py.Sub over the SSA values -- this is why the frame holds SSA values rather
+    than floats."""
+    theta = ir.TestValue(type=kirin_types.Float)
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    zero = py.Constant(0.0)
+    quarter = py.Constant(0.25)
+    test = ir.Block(
+        [
+            q,
+            reg,
+            zero,
+            quarter,
+            native_gate.stmts.Rz(theta, reg.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg.result),
+        ]
     )
 
-    _run(block)
-
-    (r,) = cast(list[native_gate.stmts.R], _of_type(block, native_gate.stmts.R))
-    assert r.axis_angle is three_quarter
-
-
-def test_statement_carrying_a_region_raises():
-    """Un-unrolled control flow must not be silently scanned past.
-
-    This rule runs before scf2cf, so a surviving scf.For is a statement with a
-    region inside one block -- not a second block. Its body closes over qubit
-    values instead of taking them as arguments, so the qubit-reachability guard
-    would miss it and the gates inside would vanish from the scan.
-    """
-    from kirin.dialects import scf
-
-    block = ir.Block()
-    _qubits(block, 1)
-    block.stmts.append(
-        scf.For(ir.TestValue(type=kirin_types.Any), ir.Region(ir.Block()))
+    a = squin_qubit.stmts.New()
+    areg = ilist.New(values=(a.result,), elem_type=QUBIT)
+    azero = py.Constant(0.0)
+    aquarter = py.Constant(0.25)
+    sub = py.Sub(azero.result, theta)
+    new_reg = ilist.New(values=(a.result,), elem_type=QUBIT)
+    expected = ir.Block(
+        [
+            a,
+            areg,
+            azero,
+            aquarter,
+            sub,
+            new_reg,
+            native_gate.stmts.R(sub.result, aquarter.result, new_reg.result),
+        ]
     )
-
-    with pytest.raises(EliminateRzError, match="region"):
-        _run(block)
+    return test, expected
 
 
-def test_nested_func_function_raises():
-    """A nested func.Function must not get the walk-root pass-through.
+CASES = {
+    "rz_is_deleted": _rz_is_deleted,
+    "r_axis_shifts_by_the_frame": _r_axis_shifts_by_the_frame,
+    "frames_accumulate": _frames_accumulate,
+    "untouched_qubit_is_left_alone": _untouched_qubit_is_left_alone,
+    "r_splits_when_frames_differ": _r_splits_when_frames_differ,
+    "equal_frames_share_one_shifted_axis": _equal_frames_share_one_shifted_axis,
+    "cz_passes_through": _cz_passes_through,
+    "measurement_discards_the_frame": _measurement_discards_the_frame,
+    "non_constant_angle_stays_symbolic": _non_constant_angle_stays_symbolic,
+}
 
-    Walk's populate_worklist_Statement inlines a statement's own regions into
-    the same worklist, so a nested function's (fresh, single-block) region
-    would otherwise be visited in line with the outer block, and
-    rewrite_Region resets self._frame on every region it sees -- silently
-    discarding the pending phase accumulated so far in the enclosing block.
-    """
-    outer_block = ir.Block()
-    (q0,) = _qubits(outer_block, 1)
-    reg = _register(outer_block, [q0])
-    quarter = _const(outer_block, 0.25)
-    outer_block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
 
-    inner_block = ir.Block()
-    nested = func.Function(
-        sym_name="nested",
-        signature=func.Signature((), kirin_types.NoneType),
-        body=ir.Region(inner_block),
-    )
-    outer_block.stmts.append(nested)
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_rewrite(case):
+    test_block, expected_block = CASES[case]()
+    rewrite.Walk(EliminateRz()).rewrite(test_block)
+    assert_nodes(test_block, expected_block)
 
-    # Embed outer_block in a region owned by another func.Function, so
-    # `nested.parent_stmt` resolves to that enclosing statement rather than
-    # `None` -- i.e. `nested` really is nested, not a walk root itself.
-    func.Function(
-        sym_name="outer",
-        signature=func.Signature((), kirin_types.NoneType),
-        body=ir.Region(outer_block),
-    )
 
-    with pytest.raises(EliminateRzError, match="nested"):
-        _run(outer_block)
+def test_rewrite_is_idempotent():
+    """A second walk finds no Rz and reports no change."""
+    test_block, _ = _r_axis_shifts_by_the_frame()
+    rewrite.Walk(EliminateRz()).rewrite(test_block)
+    assert not rewrite.Walk(EliminateRz()).rewrite(test_block).has_done_something
+
+
+# ---------------------------------------------------------------------------
+# Preconditions. Dispatch is exhaustive, so anything unregistered is an error
+# rather than a silent pass -- that is what keeps an Rz from being left behind.
+# ---------------------------------------------------------------------------
+
+
+def test_unregistered_statement_raises():
+    """An unrecognised statement is one whose phase behaviour is unknown, so it
+    is an error rather than a guess."""
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    block = ir.Block([q, reg, ilist.Push(reg.result, q.result)])
+    with pytest.raises(EliminateRzError, match="no EliminateRz handler"):
+        rewrite.Walk(EliminateRz()).rewrite(block)
 
 
 def test_multi_block_region_raises():
-    """A phase frame cannot cross a block boundary.
-
-    It has no IR representation to travel in -- unlike the state that
-    stack_move2move and state.py thread through block arguments -- so a second
-    block would start from zero and silently lose the first block's phases.
-    """
+    """A phase frame has no IR representation that could cross a block."""
     region = ir.Region(ir.Block())
     region.blocks.append(ir.Block())
-
     with pytest.raises(EliminateRzError, match="single-block"):
         EliminateRz().rewrite_Region(region)
 
 
-def test_unknown_statement_touching_a_qubit_raises():
-    """The scan cannot know whether an unrecognised gate is diagonal."""
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    block.stmts.append(squin_qubit.stmts.Measure(qubits=reg))
-
-    with pytest.raises(EliminateRzError, match="phase-neutral"):
-        _run(block)
-
-
-def test_non_ilist_register_raises():
-    block = ir.Block()
-    angle = _const(block, 0.25)
-    opaque = ir.TestValue(
-        type=ilist.IListType[bloqade_types.QubitType, kirin_types.Any]
+def test_nested_func_function_raises():
+    """A nested function's region would reset the frame mid-walk."""
+    inner = func.Function(
+        sym_name="inner",
+        signature=func.Signature(inputs=(), output=kirin_types.NoneType),
+        body=ir.Region(ir.Block([func.ConstantNone(), func.Return()])),
     )
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=opaque))
-
-    with pytest.raises(EliminateRzError, match="ilist.New"):
-        _run(block)
+    outer = func.Function(
+        sym_name="outer",
+        signature=func.Signature(inputs=(), output=kirin_types.NoneType),
+        body=ir.Region(ir.Block([inner])),
+    )
+    with pytest.raises(EliminateRzError, match="nested func.Function"):
+        rewrite.Walk(EliminateRz()).rewrite(outer)
 
 
 def test_duplicate_qubit_in_one_register_raises():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    doubled = _register(block, [q0, q0])
-    angle = _const(block, 0.25)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=doubled))
-
+    q = squin_qubit.stmts.New()
+    doubled = ilist.New(values=(q.result, q.result), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    block = ir.Block(
+        [q, doubled, quarter, native_gate.stmts.Rz(quarter.result, doubled.result)]
+    )
     with pytest.raises(EliminateRzError, match="more than once"):
-        _run(block)
+        rewrite.Walk(EliminateRz()).rewrite(block)
 
 
-def test_non_constant_angle_raises():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    angle = ir.TestValue(type=kirin_types.Float)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=angle, qubits=reg))
-
-    with pytest.raises(EliminateRzError, match="constant"):
-        _run(block)
+def test_non_ilist_register_raises():
+    opaque = ir.TestValue(type=ilist.IListType[QUBIT, kirin_types.Any])
+    quarter = py.Constant(0.25)
+    block = ir.Block([quarter, native_gate.stmts.Rz(quarter.result, opaque)])
+    with pytest.raises(EliminateRzError, match="ilist.New"):
+        rewrite.Walk(EliminateRz()).rewrite(block)
 
 
 def test_initialize_with_a_pending_frame_raises():
     """Initialize sits at the head of a wire; a mid-wire one would drop a phase."""
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(
-        operations.Initialize(theta=zero, phi=zero, lam=zero, qubits=reg)
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    block = ir.Block(
+        [
+            q,
+            reg,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, reg.result),
+            operations.Initialize(zero.result, zero.result, zero.result, reg.result),
+        ]
     )
-
     with pytest.raises(EliminateRzError, match="Initialize"):
-        _run(block)
+        rewrite.Walk(EliminateRz()).rewrite(block)
 
 
-def test_initialize_with_a_full_turn_frame_is_fine():
-    """Rz(1.0 turn) == I: a full-turn frame has no effect and must not raise,
-    even though the raw (un-normalized) frame value is nonzero."""
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    three_quarter = _const(block, 0.75)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=three_quarter, qubits=reg))
-    block.stmts.append(
-        operations.Initialize(theta=zero, phi=zero, lam=zero, qubits=reg)
-    )
+def test_star_rz_is_left_alone_and_warns():
+    """STAR puts an Rz on a subset of a block's physical qubits, which this
+    rule's per-logical-qubit frame does not model. It passes through -- the
+    commutation still holds -- but the phase reaches the backend, so the rule
+    says so rather than letting it look eliminated."""
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    theta = py.Constant(0.03)
+    star = operations.StarRz(theta.result, reg.result)
+    block = ir.Block([q, reg, theta, star])
 
-    _run(block)  # must not raise
+    with pytest.warns(UserWarning, match="STAR gadget"):
+        rewrite.Walk(EliminateRz()).rewrite(block)
 
-
-def test_initialize_at_the_head_of_a_wire_is_fine():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    zero = _const(block, 0.0)
-    init = operations.Initialize(theta=zero, phi=zero, lam=zero, qubits=reg)
-    block.stmts.append(init)
-
-    _run(block)
-
-    assert _of_type(block, operations.Initialize) == [init]
-
-
-def test_star_rz_is_untouched_and_the_frame_commutes_past_it():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    star_angle = _const(block, 0.03)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    star = operations.StarRz(rotation_angle=star_angle, qubits=reg)
-    block.stmts.append(star)
-
-    rule, _ = _run(block)
-
-    assert _of_type(block, operations.StarRz) == [star]
-    assert rule._frame[q0] == 0.25
-
-
-def test_terminal_measurement_discards_the_frame():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(operations.TerminalLogicalMeasurement(qubits=reg))
-
-    rule, _ = _run(block)
-
-    assert rule._frame == {}
-
-
-def test_frame_left_at_end_of_block_is_simply_discarded():
-    """The shape left by RemovePostProcessing: no measurement statement at all."""
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-
-    rule, result = _run(block)
-
-    assert result.has_done_something
-    assert _of_type(block, native_gate.stmts.Rz) == []
-    assert rule._frame == {q0: 0.25}  # residual, discarded by the caller
-
-
-# ── quarter-turn lattice closure ────────────────────────────────────────
-#
-# `GeminiLogicalValidation` is what actually enforces that every axis angle
-# in the compiled program is Clifford (i.e. a multiple of a quarter turn) --
-# this rule has no runtime check of its own, by design (see
-# `docs/superpowers/specs/2026-09-14-rz-elimination-design.md`). These tests
-# instead guard the frame *arithmetic* itself: every shifted axis this rule
-# produces must land on {0.0, 0.25, 0.5, 0.75} to within floating-point
-# tolerance, across a representative set of the constructions above plus a
-# long-running accumulation, so a regression in the commutation/normalization
-# math would be caught here rather than silently producing a non-Clifford,
-# non-transversal angle.
-
-_LATTICE = (0.0, 0.25, 0.5, 0.75)
-
-
-def _assert_on_quarter_turn_lattice(angle: float, *, tol: float = 1e-9) -> None:
-    distance = min(min(abs(angle - k), abs(angle - k - 1.0)) for k in _LATTICE)
-    assert distance <= tol, f"{angle} is not within {tol} of a quarter turn"
-
-
-def _all_r_axes(block: ir.Block) -> list[float]:
-    return [_axis(r) for r in _of_type(block, native_gate.stmts.R)]
-
-
-def test_r_axes_stay_on_the_quarter_turn_lattice_after_single_shift():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
-    )
-
-    _run(block)
-
-    axes = _all_r_axes(block)
-    assert axes, "expected at least one R statement"
-    for axis in axes:
-        _assert_on_quarter_turn_lattice(axis)
-
-
-def test_r_axes_stay_on_the_quarter_turn_lattice_after_multiple_accumulations():
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    half = _const(block, 0.5)
-    three_quarter = _const(block, 0.75)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=half, qubits=reg))
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=three_quarter, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
-    )
-
-    _run(block)
-
-    axes = _all_r_axes(block)
-    assert axes, "expected at least one R statement"
-    for axis in axes:
-        _assert_on_quarter_turn_lattice(axis)
-
-
-def test_r_axes_stay_on_the_quarter_turn_lattice_after_a_split():
-    block = ir.Block()
-    q0, q1, q2 = _qubits(block, 3)
-    only_q0 = _register(block, [q0])
-    only_q2 = _register(block, [q2])
-    all_three = _register(block, [q0, q1, q2])
-    quarter = _const(block, 0.25)
-    half = _const(block, 0.5)
-    zero = _const(block, 0.0)
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=only_q0))
-    block.stmts.append(native_gate.stmts.Rz(rotation_angle=half, qubits=only_q2))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=all_three)
-    )
-
-    _run(block)
-
-    axes = _all_r_axes(block)
-    assert axes, "expected at least one R statement"
-    for axis in axes:
-        _assert_on_quarter_turn_lattice(axis)
-
-
-def test_r_axes_stay_on_the_quarter_turn_lattice_after_many_accumulations():
-    """A long-running wire: thousands of quarter-turn `Rz`s before the first
-    `R`. Every individual addend is exactly representable in binary
-    floating point, but the running sum grows large enough that a sloppy
-    ``% 1.0`` (rather than `EliminateRz`'s round-then-mod normalization)
-    could drift off the lattice."""
-    block = ir.Block()
-    (q0,) = _qubits(block, 1)
-    reg = _register(block, [q0])
-    quarter = _const(block, 0.25)
-    zero = _const(block, 0.0)
-    for _ in range(10_000):
-        block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
-    block.stmts.append(
-        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
-    )
-
-    _run(block)
-
-    axes = _all_r_axes(block)
-    assert axes, "expected at least one R statement"
-    for axis in axes:
-        _assert_on_quarter_turn_lattice(axis)
+    assert star in list(block.stmts)
