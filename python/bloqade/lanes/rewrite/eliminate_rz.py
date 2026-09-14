@@ -158,6 +158,8 @@ class EliminateRz(RewriteRule):
         for arg in stmt.args:
             if arg in self._qubits:
                 return True
+            if not isinstance(arg, ir.ResultValue):
+                continue
             owner = arg.owner
             if isinstance(owner, ilist.New) and any(
                 value in self._qubits for value in owner.values
@@ -260,8 +262,25 @@ class EliminateRz(RewriteRule):
     @_rewrite.register(func.Function)
     def _(self, stmt: func.Function) -> RewriteResult:
         # Walk visits the enclosing definition too, and it carries a region --
-        # so it must be registered, or the region guard below would reject the
-        # program's own function statement.
+        # so the walk root must be accepted, or the region guard in the
+        # fallback branch would reject the program's own function statement.
+        #
+        # A *nested* func.Function must not get the same pass-through: Walk's
+        # populate_worklist_Statement enqueues a statement's regions into the
+        # same worklist as everything else, so a nested function's block is
+        # scanned in line with the outer one. rewrite_Region resets
+        # self._frame at the start of every region it sees (that is what
+        # makes re-driving via Fixpoint safe) -- so silently accepting a
+        # nested function here would let its (fresh, single-block) region
+        # reset the frame mid-walk, discarding every phase the outer block
+        # had accumulated so far, with no error raised.
+        if stmt.parent_stmt is not None:
+            raise EliminateRzError(
+                f"{stmt.name} is a nested func.Function; EliminateRz only "
+                "accepts the walk root. A nested function's region would "
+                "reset the phase frame mid-walk and silently discard every "
+                "pending phase from the enclosing block."
+            )
         return RewriteResult()
 
     @_rewrite.register(operations.StarRz)
@@ -275,7 +294,7 @@ class EliminateRz(RewriteRule):
         pending = {
             qubit: self._frame[qubit]
             for qubit in self._qubit_values(stmt, stmt.qubits)
-            if self._frame.get(qubit, 0.0) != 0.0
+            if _normalize(self._frame.get(qubit, 0.0)) != 0.0
         }
         if pending:
             raise EliminateRzError(

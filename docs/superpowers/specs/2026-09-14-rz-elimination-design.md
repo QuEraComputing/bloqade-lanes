@@ -352,6 +352,15 @@ the surviving `local_rz` is the payload they asked for.
   the cost is every subsequent fused statement spanning divergent frames, and a
   frame persists to the end of the wire. **Do not assume the win** — measure the
   logical benchmark suite and record the result here.
+
+  Measured (final review, logical benchmark suite, machine-independent metrics
+  only): `move_count_events` and `move_count_lanes` are unchanged — a wash, as
+  the pessimistic case above anticipated. `estimated_fidelity` improves by
+  roughly 1.7% on the `ghz_4`/`ghz_6` cases (e.g. one row moved
+  0.2059243505 → 0.2095079943). `success` and `nodes_explored` are unchanged,
+  i.e. no new failures. So the loss-of-parallelism risk did not materialize as
+  a net loss on this suite; the fidelity gain from fewer physical `Rz` pulses
+  dominates.
 - **Benchmark baselines.** On by default, so the committed logical CSVs move and
   must be regenerated per `AGENT.md`.
 - **The `ilist.New` shape invariant is unenforced** — it holds because

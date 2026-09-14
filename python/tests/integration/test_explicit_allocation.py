@@ -84,7 +84,7 @@ def test_unannotated_kernel_unchanged():
     on the gemini logical arch spec.
 
     ``LocalRz`` dropped from 2 to 0 and ``Store`` from 9 to 7 (one Store per
-    deleted Move statement) once ``EliminateRz`` started running in
+    deleted ``LocalRz`` statement) once ``EliminateRz`` started running in
     ``LogicalNativeToPlace``: H's two ``Rz`` layers commute into the sole
     ``LocalR`` between them and the terminal measurement's residual, instead
     of surviving as their own statements. ``Constant`` went from 3 to 4

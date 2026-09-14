@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 from bloqade.native.dialects import gate as native_gate
 from kirin import ir, rewrite, types as kirin_types
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
 from bloqade.gemini.logical.dialects.operations import stmts as operations
@@ -303,6 +303,42 @@ def test_statement_carrying_a_region_raises():
         _run(block)
 
 
+def test_nested_func_function_raises():
+    """A nested func.Function must not get the walk-root pass-through.
+
+    Walk's populate_worklist_Statement inlines a statement's own regions into
+    the same worklist, so a nested function's (fresh, single-block) region
+    would otherwise be visited in line with the outer block, and
+    rewrite_Region resets self._frame on every region it sees -- silently
+    discarding the pending phase accumulated so far in the enclosing block.
+    """
+    outer_block = ir.Block()
+    (q0,) = _qubits(outer_block, 1)
+    reg = _register(outer_block, [q0])
+    quarter = _const(outer_block, 0.25)
+    outer_block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+
+    inner_block = ir.Block()
+    nested = func.Function(
+        sym_name="nested",
+        signature=func.Signature((), kirin_types.NoneType),
+        body=ir.Region(inner_block),
+    )
+    outer_block.stmts.append(nested)
+
+    # Embed outer_block in a region owned by another func.Function, so
+    # `nested.parent_stmt` resolves to that enclosing statement rather than
+    # `None` -- i.e. `nested` really is nested, not a walk root itself.
+    func.Function(
+        sym_name="outer",
+        signature=func.Signature((), kirin_types.NoneType),
+        body=ir.Region(outer_block),
+    )
+
+    with pytest.raises(EliminateRzError, match="nested"):
+        _run(outer_block)
+
+
 def test_multi_block_region_raises():
     """A phase frame cannot cross a block boundary.
 
@@ -378,6 +414,24 @@ def test_initialize_with_a_pending_frame_raises():
         _run(block)
 
 
+def test_initialize_with_a_full_turn_frame_is_fine():
+    """Rz(1.0 turn) == I: a full-turn frame has no effect and must not raise,
+    even though the raw (un-normalized) frame value is nonzero."""
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    three_quarter = _const(block, 0.75)
+    zero = _const(block, 0.0)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=three_quarter, qubits=reg))
+    block.stmts.append(
+        operations.Initialize(theta=zero, phi=zero, lam=zero, qubits=reg)
+    )
+
+    _run(block)  # must not raise
+
+
 def test_initialize_at_the_head_of_a_wire_is_fine():
     block = ir.Block()
     (q0,) = _qubits(block, 1)
@@ -433,3 +487,118 @@ def test_frame_left_at_end_of_block_is_simply_discarded():
     assert result.has_done_something
     assert _of_type(block, native_gate.stmts.Rz) == []
     assert rule._frame == {q0: 0.25}  # residual, discarded by the caller
+
+
+# ── quarter-turn lattice closure ────────────────────────────────────────
+#
+# `GeminiLogicalValidation` is what actually enforces that every axis angle
+# in the compiled program is Clifford (i.e. a multiple of a quarter turn) --
+# this rule has no runtime check of its own, by design (see
+# `docs/superpowers/specs/2026-09-14-rz-elimination-design.md`). These tests
+# instead guard the frame *arithmetic* itself: every shifted axis this rule
+# produces must land on {0.0, 0.25, 0.5, 0.75} to within floating-point
+# tolerance, across a representative set of the constructions above plus a
+# long-running accumulation, so a regression in the commutation/normalization
+# math would be caught here rather than silently producing a non-Clifford,
+# non-transversal angle.
+
+_LATTICE = (0.0, 0.25, 0.5, 0.75)
+
+
+def _assert_on_quarter_turn_lattice(angle: float, *, tol: float = 1e-9) -> None:
+    distance = min(min(abs(angle - k), abs(angle - k - 1.0)) for k in _LATTICE)
+    assert distance <= tol, f"{angle} is not within {tol} of a quarter turn"
+
+
+def _all_r_axes(block: ir.Block) -> list[float]:
+    return [_axis(r) for r in _of_type(block, native_gate.stmts.R)]
+
+
+def test_r_axes_stay_on_the_quarter_turn_lattice_after_single_shift():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    zero = _const(block, 0.0)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(
+        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+    )
+
+    _run(block)
+
+    axes = _all_r_axes(block)
+    assert axes, "expected at least one R statement"
+    for axis in axes:
+        _assert_on_quarter_turn_lattice(axis)
+
+
+def test_r_axes_stay_on_the_quarter_turn_lattice_after_multiple_accumulations():
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    half = _const(block, 0.5)
+    three_quarter = _const(block, 0.75)
+    zero = _const(block, 0.0)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=half, qubits=reg))
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=three_quarter, qubits=reg))
+    block.stmts.append(
+        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+    )
+
+    _run(block)
+
+    axes = _all_r_axes(block)
+    assert axes, "expected at least one R statement"
+    for axis in axes:
+        _assert_on_quarter_turn_lattice(axis)
+
+
+def test_r_axes_stay_on_the_quarter_turn_lattice_after_a_split():
+    block = ir.Block()
+    q0, q1, q2 = _qubits(block, 3)
+    only_q0 = _register(block, [q0])
+    only_q2 = _register(block, [q2])
+    all_three = _register(block, [q0, q1, q2])
+    quarter = _const(block, 0.25)
+    half = _const(block, 0.5)
+    zero = _const(block, 0.0)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=only_q0))
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=half, qubits=only_q2))
+    block.stmts.append(
+        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=all_three)
+    )
+
+    _run(block)
+
+    axes = _all_r_axes(block)
+    assert axes, "expected at least one R statement"
+    for axis in axes:
+        _assert_on_quarter_turn_lattice(axis)
+
+
+def test_r_axes_stay_on_the_quarter_turn_lattice_after_many_accumulations():
+    """A long-running wire: thousands of quarter-turn `Rz`s before the first
+    `R`. Every individual addend is exactly representable in binary
+    floating point, but the running sum grows large enough that a sloppy
+    ``% 1.0`` (rather than `EliminateRz`'s round-then-mod normalization)
+    could drift off the lattice."""
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    zero = _const(block, 0.0)
+    for _ in range(10_000):
+        block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(
+        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+    )
+
+    _run(block)
+
+    axes = _all_r_axes(block)
+    assert axes, "expected at least one R statement"
+    for axis in axes:
+        _assert_on_quarter_turn_lattice(axis)
