@@ -60,12 +60,11 @@ Rejected, recorded for future context:
 
 ## The rewrite
 
-`EliminateRz` is a single rewrite rule implementing `rewrite_Block`: sweep the
-block in order, absorb every `Rz` into
-the frame, rewrite each `R`, and **discard the residual frame** when the sweep
-ends. Nothing is ever materialized.
+`EliminateRz` is a single rewrite rule implementing `rewrite_Block`: scan the
+block in order, absorb every `Rz` into the frame, rewrite each `R`, and
+**discard the residual frame** when the block ends. Nothing is ever materialized.
 
-The pure sweep returns `(rewritten, residual_frame)`, with the invariant
+The residual frame is readable after the scan, giving the invariant
 
 ```
 U_before  =  Rz(residual)  ·  U_after
@@ -116,8 +115,7 @@ terminal-measure validation rules it out for logical kernels.
 ### Module
 
 `python/bloqade/lanes/rewrite/eliminate_rz.py`, exporting the `EliminateRz`
-rewrite rule and the pure sweep it wraps. Neither imports `place`, `arch`, or
-anything layout-shaped.
+rewrite rule. It imports neither `place`, `arch`, nor anything layout-shaped.
 
 A `RewriteRule`, not a `Pass`: the convention here is that a transform is one
 rule and passes exist to *combine* rules (`SequentialPlacePass` and friends are
@@ -218,12 +216,11 @@ not an optimization.
 
 | precondition | on violation |
 |---|---|
-| every region has exactly one block | raise |
 | no statement carries a region | raise |
 | every gate's `qubits.owner` is an `ilist.New` | raise |
-| every `Rz` angle is a multiple of ¼ turn, when `require_clifford_angles` | raise, quoting the angle |
+| every angle is a compile-time constant | raise |
 | no duplicate qubit value within one statement's register | raise, naming value + statement |
-| only the statement kinds above | raise |
+| an unregistered statement does not touch a qubit | raise |
 
 Raising rather than skipping matters: `circuit2place` handles a shape mismatch by
 silently returning, but a skipped statement here leaves an `Rz` behind and breaks
@@ -237,14 +234,15 @@ qubit-reachability check would not see them and the gates inside would be
 silently skipped. None of the statements this sweep handles carries a region, so
 rejecting all region-bearing statements is exact.
 
-`require_clifford_angles` defaults `True`. It keeps axis angles on the ¼-turn
-lattice, so the gate set stays `{X, Y, √X, √Y}`+adjoints — all Steane-transversal
-Cliffords. This matters because a transversal gate at a non-Clifford angle is not
-a logical gate at all (Eastin–Knill; see References). Set `False` only for a
-future `PhysicalPipeline` use, where there is no code and no such constraint.
-
-The tolerance is a backstop, not load-bearing: values are exact today
-(`clifford2native` emits literal `0.25`/`-0.25`/`0.5`, exact dyadic floats).
+**There is deliberately no Clifford-angle check.** Axis angles stay on the
+¼-turn lattice by closure — `clifford2native` emits only quarter-turn multiples,
+the frame is a sum of those, and `axis − frame` stays on the lattice — so the
+gate set remains `{X, Y, √X, √Y}`+adjoints, all Steane-transversal Cliffords.
+That closure matters (a transversal gate at a non-Clifford angle is not a logical
+gate at all — Eastin–Knill, see References), but enforcing it is
+`GeminiLogicalValidation`'s job, and a non-Clifford angle has no native mapping
+so it cannot reach this rule regardless. A second copy of the check here would
+duplicate an invariant that lives elsewhere.
 
 A related precondition, inherited rather than checked: several rewrites hold only
 up to global phase, which is unobservable because `GeminiLogicalValidation`
@@ -302,8 +300,9 @@ the surviving `local_rz` is the payload they asked for.
 - **Distribution equality**, for both shapes (terminal measure present, and
   deleted by `RemovePostProcessing`): outcome distributions match before and
   after, with a nonzero residual in play.
-- **Gate-set closure.** Under `require_clifford_angles`, assert every rewritten
-  axis angle stays on the ¼-turn lattice.
+- **Gate-set closure.** Assert every rewritten axis angle stays on the ¼-turn
+  lattice — the property the design relies on, now that nothing checks it at
+  runtime.
 - **Constant sharing.** Two gates whose frames coincide: assert they share one
   `axis_angle` SSA value (`is`, not `==`) and that `FuseAdjacentGates` still
   fuses them after lowering to place. Must span the native→place boundary to be
