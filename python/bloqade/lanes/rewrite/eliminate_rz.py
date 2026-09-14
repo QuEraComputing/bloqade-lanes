@@ -20,7 +20,10 @@ carries non-constant angles end to end (``RewriteStarRz`` feeds a
 ``func.Invoke`` result straight into ``move.LocalRz``). When both operands do
 happen to be constants the arithmetic is folded to a literal, since nothing runs
 constant folding after this rule and an unfolded ``py.Sub`` would otherwise
-propagate all the way into the emitted program.
+propagate all the way into the emitted program. Duplicate angle values are left
+for the ``CommonSubexpressionElimination`` already in ``NativeToPlaceBase.emit``
+to merge -- both ``py.Constant`` and ``py.Sub`` are ``Pure``, so it does, and a
+memo here would only re-implement it while growing with circuit depth.
 
 Dispatch is exhaustive: every statement type reachable in this window has a
 registered handler, and the default raises. There is deliberately no "does this
@@ -78,16 +81,6 @@ class EliminateRz(RewriteRule):
     in this dict" are the same statement.
     """
 
-    _shifted: dict[tuple[ir.SSAValue, ir.SSAValue], ir.SSAValue] = field(
-        default_factory=dict, init=False
-    )
-    """Memo of ``(axis, frame) -> shifted axis``.
-
-    ``FuseAdjacentGates`` (downstream, at the place layer) matches parameters by
-    SSA *identity*, so two gates that shift the same axis by the same frame must
-    come out sharing one SSA value or they stop fusing.
-    """
-
     def rewrite_Region(self, node: ir.Region) -> RewriteResult:
         """Require a single block, and start each walk from a clean frame.
 
@@ -111,7 +104,6 @@ class EliminateRz(RewriteRule):
                 "boundary. Run AggressiveUnroll first."
             )
         self._frame = {}
-        self._shifted = {}
         return RewriteResult()
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
@@ -245,26 +237,32 @@ class EliminateRz(RewriteRule):
     def _(self, stmt: native_gate.stmts.R) -> RewriteResult:
         qubits = self._qubit_values(stmt, stmt.qubits)
 
-        # Group by the frame each qubit carries. Qubits with no pending phase
-        # group under None and keep the original axis; a statement whose qubits
-        # disagree must split, because one pulse cannot carry two axis angles.
         groups: dict[ir.SSAValue | None, list[ir.SSAValue]] = {}
         for qubit in qubits:
             groups.setdefault(self._frame.get(qubit), []).append(qubit)
 
         if tuple(groups) == (None,):
+            # Nothing pending on any of these qubits.
             return RewriteResult()
 
-        for frame, group in groups.items():
-            if frame is None:
-                axis = stmt.axis_angle
-            else:
-                key = (stmt.axis_angle, frame)
-                axis = self._shifted.get(key) or self._combine(
-                    py.Sub, stmt.axis_angle, frame, stmt
-                )
-                self._shifted[key] = axis
+        if len(groups) == 1:
+            # Every qubit here carries the same frame, so the register is
+            # unchanged and only the axis moves. Swap that one operand in
+            # place: rebuilding the statement and its register would emit
+            # identical IR at the cost of churn on every rewritten gate.
+            (frame,) = groups
+            assert frame is not None  # the all-None case returned above
+            assert stmt.args[0] is stmt.axis_angle, "native.gate.R arg order changed"
+            stmt.args[0] = self._combine(py.Sub, stmt.axis_angle, frame, stmt)
+            return RewriteResult(has_done_something=True)
 
+        # Frames disagree, and one pulse cannot carry two axis angles.
+        for frame, group in groups.items():
+            axis = (
+                stmt.axis_angle
+                if frame is None
+                else self._combine(py.Sub, stmt.axis_angle, frame, stmt)
+            )
             register = ilist.New(values=tuple(group), elem_type=bloqade_types.QubitType)
             register.insert_before(stmt)
             native_gate.stmts.R(

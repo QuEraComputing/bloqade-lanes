@@ -57,7 +57,6 @@ def _r_axis_shifts_by_the_frame():
     quarter2 = py.Constant(0.25)
     zero2 = py.Constant(0.0)
     shifted = py.Constant(-0.25)
-    new_reg = ilist.New(values=(q2.result,), elem_type=QUBIT)
     expected = ir.Block(
         [
             q2,
@@ -65,8 +64,7 @@ def _r_axis_shifts_by_the_frame():
             quarter2,
             zero2,
             shifted,
-            new_reg,
-            native_gate.stmts.R(shifted.result, quarter2.result, new_reg.result),
+            native_gate.stmts.R(shifted.result, quarter2.result, reg2.result),
         ]
     )
     return test, expected
@@ -99,7 +97,6 @@ def _frames_accumulate():
     zero2 = py.Constant(0.0)
     summed = py.Constant(0.75)
     shifted = py.Constant(-0.75)
-    new_reg = ilist.New(values=(q2.result,), elem_type=QUBIT)
     expected = ir.Block(
         [
             q2,
@@ -109,8 +106,7 @@ def _frames_accumulate():
             zero2,
             summed,
             shifted,
-            new_reg,
-            native_gate.stmts.R(shifted.result, quarter2.result, new_reg.result),
+            native_gate.stmts.R(shifted.result, quarter2.result, reg2.result),
         ]
     )
     return test, expected
@@ -207,10 +203,12 @@ def _r_splits_when_frames_differ():
     return test, expected
 
 
-def _equal_frames_share_one_shifted_axis():
-    """Two R statements shifted by the same (axis, frame) pair must come out
-    sharing one SSA value -- FuseAdjacentGates matches by identity downstream,
-    so a second constant here would silently stop them fusing."""
+def _equal_frames_produce_equal_axes():
+    """Two R statements shifted by the same frame get the same axis *value*,
+    each as its own constant. Deduplicating them is not this rule's job --
+    py.Constant is Pure, so the CommonSubexpressionElimination already in
+    NativeToPlaceBase.emit merges them, and the fusion this protects is asserted
+    end-to-end by test_equal_frames_still_fuse_after_lowering_to_place."""
     q0 = squin_qubit.stmts.New()
     q1 = squin_qubit.stmts.New()
     both = ilist.New(values=(q0.result, q1.result), elem_type=QUBIT)
@@ -240,9 +238,8 @@ def _equal_frames_share_one_shifted_axis():
     areg1 = ilist.New(values=(a1.result,), elem_type=QUBIT)
     aquarter = py.Constant(0.25)
     azero = py.Constant(0.0)
-    shifted = py.Constant(-0.25)
-    new0 = ilist.New(values=(a0.result,), elem_type=QUBIT)
-    new1 = ilist.New(values=(a1.result,), elem_type=QUBIT)
+    shifted0 = py.Constant(-0.25)
+    shifted1 = py.Constant(-0.25)
     expected = ir.Block(
         [
             a0,
@@ -252,11 +249,10 @@ def _equal_frames_share_one_shifted_axis():
             areg1,
             aquarter,
             azero,
-            shifted,
-            new0,
-            native_gate.stmts.R(shifted.result, aquarter.result, new0.result),
-            new1,
-            native_gate.stmts.R(shifted.result, aquarter.result, new1.result),
+            shifted0,
+            native_gate.stmts.R(shifted0.result, aquarter.result, areg0.result),
+            shifted1,
+            native_gate.stmts.R(shifted1.result, aquarter.result, areg1.result),
         ]
     )
     return test, expected
@@ -359,7 +355,6 @@ def _non_constant_angle_stays_symbolic():
     azero = py.Constant(0.0)
     aquarter = py.Constant(0.25)
     sub = py.Sub(azero.result, theta)
-    new_reg = ilist.New(values=(a.result,), elem_type=QUBIT)
     expected = ir.Block(
         [
             a,
@@ -367,8 +362,7 @@ def _non_constant_angle_stays_symbolic():
             azero,
             aquarter,
             sub,
-            new_reg,
-            native_gate.stmts.R(sub.result, aquarter.result, new_reg.result),
+            native_gate.stmts.R(sub.result, aquarter.result, areg.result),
         ]
     )
     return test, expected
@@ -380,7 +374,7 @@ CASES = {
     "frames_accumulate": _frames_accumulate,
     "untouched_qubit_is_left_alone": _untouched_qubit_is_left_alone,
     "r_splits_when_frames_differ": _r_splits_when_frames_differ,
-    "equal_frames_share_one_shifted_axis": _equal_frames_share_one_shifted_axis,
+    "equal_frames_produce_equal_axes": _equal_frames_produce_equal_axes,
     "cz_passes_through": _cz_passes_through,
     "measurement_discards_the_frame": _measurement_discards_the_frame,
     "non_constant_angle_stays_symbolic": _non_constant_angle_stays_symbolic,
