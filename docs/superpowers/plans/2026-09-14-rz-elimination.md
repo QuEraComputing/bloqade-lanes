@@ -4,9 +4,9 @@
 
 **Goal:** Remove every `Rz` from compiled Gemini logical programs by commuting each Z rotation along its qubit's wire into the terminal Z-basis readout, so the backend never receives a `move.local_rz` it cannot execute.
 
-**Architecture:** A single native-dialect pass, `EliminateRzPass`. It sweeps the (already flat, already unrolled) block in order carrying a per-qubit phase *frame*; each `Rz` is absorbed into the frame and deleted, each `R` has its `axis_angle` shifted by the frame, `CZ` and `StarRz` pass through untouched (both diagonal), and the residual frame is discarded when the sweep ends. The algebra lives in a pure, IR-free `sweep()` function; a thin adapter reads native statements into records and writes the results back.
+**Architecture:** A single native-dialect rewrite rule, `EliminateRz`, implementing `rewrite_Block`. It sweeps the (already flat, already unrolled) block in order carrying a per-qubit phase *frame*; each `Rz` is absorbed into the frame and deleted, each `R` has its `axis_angle` shifted by the frame, `CZ` and `StarRz` pass through untouched (both diagonal), and the residual frame is discarded when the sweep ends. The algebra lives in a pure, IR-free `sweep()` function; a thin adapter reads native statements into records and writes the results back.
 
-**Tech Stack:** Python 3.10+, kirin IR (`kirin.ir`, `kirin.rewrite`, `kirin.passes`), `bloqade.native.dialects.gate`, `bloqade.gemini.logical.dialects.operations`, pytest, numpy (tests only).
+**Tech Stack:** Python 3.10+, kirin IR (`kirin.ir`, `kirin.rewrite`), `bloqade.native.dialects.gate`, `bloqade.gemini.logical.dialects.operations`, pytest, numpy (tests only).
 
 **Spec:** `docs/superpowers/specs/2026-09-14-rz-elimination-design.md`
 
@@ -14,7 +14,8 @@
 
 - Angles are in **turns**, not radians (`0.25` = 90°). `clifford2native` emits `axis ∈ {0, ¼}`, `rotation ∈ {±¼, ½}`, `Rz ∈ {±¼, ½}`.
 - The frame is a **continuous `float`**, never an integer `k ∈ ℤ₄`. Quantizing is explicitly rejected by the spec.
-- **Preconditions raise, never skip.** A skipped statement leaves an `Rz` behind and breaks the guarantee. This means the pass raises even when `no_raise=True` — a deliberate deviation from the surrounding convention, because the guarantee is the feature. (`kirin.passes.Pass.__call__` does not swallow exceptions; `no_raise` is only a field sub-rewrites may honor.)
+- **Preconditions raise, never skip.** A skipped statement leaves an `Rz` behind and breaks the guarantee, so the rule raises rather than returning a no-op `RewriteResult`. Rewrite rules carry no `no_raise` field, so there is nothing to suppress it.
+- **This is a `RewriteRule`, not a `Pass`.** The convention here is that a transform is one rewrite rule, and passes exist to *combine* rules. `FuseAdjacentGates` is the local precedent: a stateful whole-block sweep written as a rule.
 - Imports are absolute from the `bloqade.lanes` namespace. snake_case files, PascalCase classes. Type annotations are enforced by pyright.
 - Lint before each commit: `uv run black python && uv run isort python && uv run ruff check python && uv run pyright python`. Pre-commit runs these too.
 - Commit messages follow Conventional Commits (`feat(rewrite): ...`, `test: ...`).
@@ -23,8 +24,8 @@
 
 | File | Responsibility |
 |---|---|
-| `python/bloqade/lanes/rewrite/eliminate_rz.py` (create) | Everything: the IR-free `sweep()` core, the native-IR reader, the writer, and `EliminateRzPass`. One file because the three parts are meaningless apart and total ~300 lines. |
-| `python/bloqade/lanes/transform/native_to_place.py` (modify) | Gains the fifth hook `_post_unroll_rewrites`; `LogicalNativeToPlace` overrides it. |
+| `python/bloqade/lanes/rewrite/eliminate_rz.py` (create) | Everything: the IR-free `sweep()` core, the native-IR reader, the writer, and the `EliminateRz` rewrite rule. One file because the parts are meaningless apart and total ~300 lines. |
+| `python/bloqade/lanes/transform/native_to_place.py` (modify) | Gains the fifth hook `_post_unroll_rules()`, mirroring `_squin_clifford_rules()`; `LogicalNativeToPlace` overrides it. |
 | `python/tests/rewrite/test_eliminate_rz_core.py` (create) | Core algebra — no IR at all. Qubit keys are plain strings. |
 | `python/tests/rewrite/test_eliminate_rz.py` (create) | IR-level: reader preconditions, writer structure, constant sharing. |
 | `python/tests/gemini/test_eliminate_rz_pipeline.py` (create) | End-to-end through `LogicalPipeline`; physical-pipeline-unchanged regression. |
@@ -849,6 +850,26 @@ def test_statements_not_touching_qubits_are_skipped():
     assert owners == []
 
 
+def test_statement_carrying_a_region_raises():
+    """Un-unrolled control flow must not be silently swept past.
+
+    This hook runs before scf2cf, so a surviving ``scf.For`` is a statement with
+    a region inside one block -- not a second block. Its body closes over qubit
+    values instead of taking them as arguments, so the qubit-reachability guard
+    would miss it and the gates inside would vanish from the sweep.
+    """
+    from kirin.dialects import scf
+
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    body = ir.Region(ir.Block())
+    loop = scf.For(ir.TestValue(type=kirin_types.Any), body)
+    block.stmts.append(loop)
+
+    with pytest.raises(EliminateRzError, match="region"):
+        read_block(block)
+
+
 def test_qubit_reachability_drives_the_unknown_statement_guard():
     """The safety net: an unknown statement that touches a qubit must raise.
 
@@ -943,6 +964,20 @@ def read_block(block: ir.Block) -> tuple[list[Gate], list[ir.Statement]]:
     qubit_values: set[ir.SSAValue] = set()
 
     for stmt in block.stmts:
+        if stmt.regions:
+            # This hook runs *before* scf2cf, so control flow that survived
+            # unrolling is still an scf.For / scf.IfElse statement holding
+            # regions inside one block -- not multiple blocks. Its body closes
+            # over qubit values rather than taking them as arguments, so the
+            # qubit-reachability guard below would not see them and the gates
+            # inside would be silently skipped. None of the statements this
+            # sweep handles carries a region, so rejecting all of them is exact.
+            raise EliminateRzError(
+                f"{stmt.name} carries a region; EliminateRz cannot see into it, "
+                "and gates inside would be silently skipped. Control flow must "
+                "be fully unrolled before this rule runs."
+            )
+
         if len(stmt.results) == 1 and stmt.results[0].type.is_subseteq(
             bloqade_types.QubitType
         ):
@@ -996,7 +1031,7 @@ def read_block(block: ir.Block) -> tuple[list[Gate], list[ir.Statement]]:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest python/tests/rewrite/test_eliminate_rz.py -v`
-Expected: PASS (6 tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Lint and commit**
 
@@ -1008,7 +1043,7 @@ git commit -m "feat(rewrite): read native gate statements into Rz sweep records"
 
 ---
 
-### Task 5: Native-IR writer and `EliminateRzPass`
+### Task 5: Native-IR writer and the `EliminateRz` rule
 
 **Files:**
 - Modify: `python/bloqade/lanes/rewrite/eliminate_rz.py`
@@ -1016,7 +1051,7 @@ git commit -m "feat(rewrite): read native gate statements into Rz sweep records"
 
 **Interfaces:**
 - Consumes: `read_block`, `sweep`, `Action`, `Rewrite`.
-- Produces: `EliminateRzPass(dialects, *, require_clifford_angles: bool = True, no_raise: bool = True)`, a `kirin.passes.Pass` with `name = "eliminate_rz"`.
+- Produces: `apply_actions(block, owners, actions) -> bool`, and `EliminateRz(require_clifford_angles: bool = True)`, a `kirin.rewrite.abc.RewriteRule` implementing `rewrite_Block` (the sweep) and `rewrite_Region` (rejects multi-block regions).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1031,7 +1066,7 @@ def _stmts(block: ir.Block, kind) -> list[ir.Statement]:
 
 
 def _rewrite(block: ir.Block) -> None:
-    """Read, sweep, and write back -- what EliminateRzPass does to one block."""
+    """Read, sweep, and write back -- what EliminateRz does to one block."""
     gates, owners = read_block(block)
     apply_actions(block, owners, sweep(gates).actions)
 
@@ -1100,21 +1135,58 @@ def test_split_emits_one_statement_and_register_per_frame():
     assert sorted(map(id, covered)) == sorted(map(id, [q0, q1]))
 
 
-def test_pass_rejects_a_method_with_multiple_blocks():
+def test_rule_rejects_a_multi_block_region():
     """Frame tracking across a branch is undefined, so this must raise."""
-    from bloqade.lanes.rewrite.eliminate_rz import EliminateRzPass
+    from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def kernel():
-        reg = qubit.qalloc(1)
-        squin.s(reg[0])
-        gemini_logical.terminal_measure(reg)
+    region = ir.Region(ir.Block())
+    region.blocks.append(ir.Block())
 
-    # Give the callable region a second block so the precondition fires.
-    kernel.callable_region.blocks.append(ir.Block())
+    with pytest.raises(EliminateRzError, match="single block"):
+        EliminateRz().rewrite_Region(region)
 
-    with pytest.raises(EliminateRzError, match="single flat block"):
-        EliminateRzPass(kernel.dialects)(kernel)
+
+def test_rule_sweeps_a_block_end_to_end():
+    """rewrite_Block is the entry point Walk drives."""
+    from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    zero = _const(block, 0.0)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(
+        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+    )
+
+    result = EliminateRz().rewrite_Block(block)
+
+    assert result.has_done_something
+    assert _stmts(block, native_gate.stmts.Rz) == []
+
+
+def test_rule_is_idempotent():
+    """A second application finds no Rz and reports no change.
+
+    Matters because the rule may be run under Fixpoint or chained with others.
+    """
+    from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+
+    block = ir.Block()
+    (q0,) = _qubits(block, 1)
+    reg = _register(block, [q0])
+    quarter = _const(block, 0.25)
+    zero = _const(block, 0.0)
+    block.stmts.append(native_gate.stmts.Rz(rotation_angle=quarter, qubits=reg))
+    block.stmts.append(
+        native_gate.stmts.R(axis_angle=zero, rotation_angle=quarter, qubits=reg)
+    )
+
+    EliminateRz().rewrite_Block(block)
+    second = EliminateRz().rewrite_Block(block)
+
+    assert not second.has_done_something
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1124,9 +1196,8 @@ Expected: FAIL — `ImportError: cannot import name 'apply_actions'`
 
 - [ ] **Step 3: Write the implementation**
 
-Add `"apply_actions"` and `"EliminateRzPass"` to `__all__`, add
-`from kirin import passes` and `from kirin.rewrite.abc import RewriteResult` to the
-imports, and append:
+Add `"apply_actions"` and `"EliminateRz"` to `__all__`, add
+`from kirin.rewrite import abc as rewrite_abc` to the imports, and append:
 
 ```python
 class _ConstantCache:
@@ -1194,35 +1265,45 @@ def apply_actions(
 
 
 @dataclass
-class EliminateRzPass(passes.Pass):
-    """Remove every ``Rz`` from a flat native-dialect method.
+class EliminateRz(rewrite_abc.RewriteRule):
+    """Remove every ``Rz`` from a flat native-dialect block.
 
-    Raises on any precondition violation even when ``no_raise=True``: leaving an
-    ``Rz`` behind produces IR the backend cannot execute, so failing loudly is
-    the feature rather than a rough edge.
+    A single rewrite rule rather than a pass: the convention in this codebase is
+    that a transform is one rule, and passes exist to *combine* rules.
+    ``FuseAdjacentGates`` is the local precedent -- also a stateful whole-block
+    sweep expressed as a rule.
+
+    Raises on any precondition violation rather than returning a no-op result.
+    Leaving an ``Rz`` behind produces IR the backend cannot execute, so failing
+    loudly is the feature.
     """
 
-    name = "eliminate_rz"
     require_clifford_angles: bool = True
 
-    def unsafe_run(self, mt: ir.Method) -> RewriteResult:
-        blocks = mt.callable_region.blocks
-        if len(blocks) != 1:
+    def rewrite_Region(self, node: ir.Region) -> rewrite_abc.RewriteResult:
+        """Reject control flow that survived unrolling.
+
+        Frame tracking has no meaning across a branch: a qubit's frame entering
+        a block would depend on which predecessor ran.
+        """
+        if len(node.blocks) != 1:
             raise EliminateRzError(
-                f"EliminateRz requires a single flat block, found {len(blocks)}. "
-                "Run AggressiveUnroll first."
+                f"EliminateRz requires a single block per region, found "
+                f"{len(node.blocks)}. Run AggressiveUnroll first."
             )
-        block = blocks[0]
-        gates, owners = read_block(block)
+        return rewrite_abc.RewriteResult()
+
+    def rewrite_Block(self, node: ir.Block) -> rewrite_abc.RewriteResult:
+        gates, owners = read_block(node)
         result = sweep(gates, require_clifford_angles=self.require_clifford_angles)
-        changed = apply_actions(block, owners, result.actions)
-        return RewriteResult(has_done_something=changed)
+        changed = apply_actions(node, owners, result.actions)
+        return rewrite_abc.RewriteResult(has_done_something=changed)
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest python/tests/rewrite/test_eliminate_rz.py -v`
-Expected: PASS (10 tests)
+Expected: PASS (13 tests)
 
 - [ ] **Step 5: Run the whole rewrite suite for regressions**
 
@@ -1234,7 +1315,7 @@ Expected: PASS, no new failures.
 ```bash
 uv run black python && uv run isort python && uv run ruff check python && uv run pyright python
 git add python/bloqade/lanes/rewrite/eliminate_rz.py python/tests/rewrite/test_eliminate_rz.py
-git commit -m "feat(rewrite): add EliminateRzPass and its native-IR writer"
+git commit -m "feat(rewrite): add the EliminateRz rule and its native-IR writer"
 ```
 
 ---
@@ -1246,8 +1327,8 @@ git commit -m "feat(rewrite): add EliminateRzPass and its native-IR writer"
 - Test: `python/tests/gemini/test_eliminate_rz_pipeline.py` (create)
 
 **Interfaces:**
-- Consumes: `EliminateRzPass`.
-- Produces: `NativeToPlaceBase._post_unroll_rewrites(self, out: Method, no_raise: bool) -> None`, default no-op; overridden in `LogicalNativeToPlace`.
+- Consumes: `EliminateRz`.
+- Produces: `NativeToPlaceBase._post_unroll_rules(self) -> list[RewriteRule]`, default `[]`; overridden in `LogicalNativeToPlace` to return `[EliminateRz()]`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1344,7 +1425,7 @@ def test_equal_frames_still_fuse_after_lowering_to_place():
     """Constant sharing must survive the native->place boundary.
 
     ``FuseAdjacentGates`` matches axis angles by SSA identity, and
-    ``circuit2place`` carries the angle values through unchanged. If the pass
+    ``circuit2place`` carries the angle values through unchanged. If the rule
     minted a fresh constant per statement, these two identical gates would stop
     fusing even though their angles are numerically equal. ``ASAPPlacePass`` is
     used because it is the pipeline option that actually runs fusion.
@@ -1435,42 +1516,52 @@ In `python/bloqade/lanes/transform/native_to_place.py`, add the method to
 `NativeToPlaceBase` next to the other hooks:
 
 ```python
-    def _post_unroll_rewrites(self, out: Method, no_raise: bool) -> None:
-        """Rewrites over the flat native IR, after unrolling and before lowering.
+    def _post_unroll_rules(self) -> list[RewriteRule]:
+        """Rules applied to the flat native IR, after unrolling.
 
         This is the only window where the program is a flat block of
         ``native.gate`` statements: ``AggressiveUnroll`` has run, and
-        ``RewritePlaceOperations`` has not. Default is a no-op.
+        ``RewritePlaceOperations`` has not. Default is no rules.
         """
-        pass
+        return []
 ```
 
-Call it in `emit`, immediately after the unroll:
+This mirrors `_squin_clifford_rules` deliberately — same shape, same
+`rewrite.Chain` treatment — so the class has one way of expressing "rules to run
+at stage X" rather than two.
+
+Call it in `emit`, immediately after the unroll, using the same `Walk` idiom the
+neighbouring `scf2cf` line already uses:
 
 ```python
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
 
-        self._post_unroll_rewrites(out, no_raise)
+        if post_unroll_rules := self._post_unroll_rules():
+            rewrite.Walk(rewrite.Chain(*post_unroll_rules)).rewrite(out.code)
+
         self._post_unroll_validation(out, no_raise)
 ```
 
 Update the class docstring's hook list from four to five, adding an entry for
-`_post_unroll_rewrites` in the same style as the others.
+`_post_unroll_rules` in the same style as the others.
 
 - [ ] **Step 4: Override it in the logical subclass**
 
 Add to `LogicalNativeToPlace`:
 
 ```python
-    def _post_unroll_rewrites(self, out: Method, no_raise: bool) -> None:
-        EliminateRzPass(out.dialects, no_raise=no_raise)(out)
+    def _post_unroll_rules(self) -> list[RewriteRule]:
+        return [EliminateRz()]
 ```
 
 And import at the top of the file:
 
 ```python
-from bloqade.lanes.rewrite.eliminate_rz import EliminateRzPass
+from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
 ```
+
+`RewriteRule` is already imported there (`from kirin.rewrite.abc import
+RewriteRule`), as is `rewrite` — `_squin_clifford_rules` uses both.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -1495,7 +1586,7 @@ assertion to make it pass.
 ```bash
 uv run black python && uv run isort python && uv run ruff check python && uv run pyright python
 git add python/bloqade/lanes/transform/native_to_place.py python/tests/gemini/test_eliminate_rz_pipeline.py
-git commit -m "feat(lanes): eliminate Rz in the logical pipeline via a post-unroll hook"
+git commit -m "feat(lanes): run EliminateRz in the logical pipeline via a post-unroll hook"
 ```
 
 ---
@@ -1564,7 +1655,7 @@ git commit -m "test(benchmarks): regenerate logical baselines for Rz elimination
 
 - **Angles are turns.** `0.25` is 90°. Every angle in this plan and in the IR is
   in turns; only the test simulator converts to radians.
-- **Do not add a flag to disable the pass** in the logical pipeline. The hard
+- **Do not add a flag to disable the rule** in the logical pipeline. The hard
   invariant is the feature; an off switch produces IR the backend cannot run.
   `require_clifford_angles` is a different thing — it exists for a future
   unencoded (`PhysicalPipeline`) use, where there is no code and no

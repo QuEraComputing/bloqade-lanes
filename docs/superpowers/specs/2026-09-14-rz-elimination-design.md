@@ -30,7 +30,7 @@ rewritten in place with a new `axis_angle`.
   larger optimization; it would stop the emitted circuit resembling the user's
   source. Virtual Z preserves structure, so no opt-out flag is needed here.
 - **Gate fusion or reordering.** `FuseAdjacentGates` and the ASAP/ALAP policies
-  compose with this; the pass never moves a statement.
+  compose with this; the rule never moves a statement.
 - **Making STAR rotations disappear.** `operations.StarRz` is a user-requested
   payload, not a compiler artifact.
 - **Absorbing the residual into `Initialize`** instead of discarding it — needed
@@ -60,7 +60,8 @@ Rejected, recorded for future context:
 
 ## The rewrite
 
-`EliminateRzPass` is a single pass: sweep the block in order, absorb every `Rz` into
+`EliminateRz` is a single rewrite rule implementing `rewrite_Block`: sweep the
+block in order, absorb every `Rz` into
 the frame, rewrite each `R`, and **discard the residual frame** when the sweep
 ends. Nothing is ever materialized.
 
@@ -107,15 +108,21 @@ source program's one measurement is terminal.
 **The assumption this rests on, stated explicitly:** the program's observable
 output is a Z-basis readout of the final state, not the final state itself. A
 future flow that consumed the output *state* — feeding it to another program
-phase-sensitively — would invalidate the pass. Nothing today does this, and the
+phase-sensitively — would invalidate the rule. Nothing today does this, and the
 terminal-measure validation rules it out for logical kernels.
 
 ## Implementation
 
 ### Module
 
-`python/bloqade/lanes/rewrite/eliminate_rz.py`, exporting `EliminateRzPass` and
-the pure sweep it wraps. Neither imports `place`, `arch`, or anything layout-shaped.
+`python/bloqade/lanes/rewrite/eliminate_rz.py`, exporting the `EliminateRz`
+rewrite rule and the pure sweep it wraps. Neither imports `place`, `arch`, or
+anything layout-shaped.
+
+A `RewriteRule`, not a `Pass`: the convention here is that a transform is one
+rule and passes exist to *combine* rules (`SequentialPlacePass` and friends are
+compositions). `FuseAdjacentGates` is the local precedent — also a stateful
+whole-block sweep written as a rule.
 
 ### Frame: continuous float, keyed on qubit SSA values
 
@@ -125,7 +132,7 @@ new_axis  = (r.axis_angle - frame[v]) % 1.0
 ```
 
 A `float` in turns, not an integer `k ∈ ℤ₄`: angles are already continuous floats
-in native IR, so quantizing would add a rounding concern the pass does not
+in native IR, so quantizing would add a rounding concern the rule does not
 otherwise have, and would block reuse by `PhysicalPipeline` where arbitrary
 angles are legitimate. Accumulate the frame as a running sum and derive each new
 axis from the *original* axis in one subtraction, so rounding is one ulp per gate
@@ -211,7 +218,8 @@ not an optimization.
 
 | precondition | on violation |
 |---|---|
-| single block, no `cf`/`scf`, no unresolved calls | raise |
+| every region has exactly one block | raise |
+| no statement carries a region | raise |
 | every gate's `qubits.owner` is an `ilist.New` | raise |
 | every `Rz` angle is a multiple of ¼ turn, when `require_clifford_angles` | raise, quoting the angle |
 | no duplicate qubit value within one statement's register | raise, naming value + statement |
@@ -220,6 +228,14 @@ not an optimization.
 Raising rather than skipping matters: `circuit2place` handles a shape mismatch by
 silently returning, but a skipped statement here leaves an `Rz` behind and breaks
 the guarantee.
+
+The region check is the one that does real work. This hook runs *before*
+`scf2cf`, so control flow surviving `AggressiveUnroll` is an `scf.For` /
+`scf.IfElse` statement holding regions **inside one block** — not a second block.
+Its body closes over qubit values rather than taking them as arguments, so a
+qubit-reachability check would not see them and the gates inside would be
+silently skipped. None of the statements this sweep handles carries a region, so
+rejecting all region-bearing statements is exact.
 
 `require_clifford_angles` defaults `True`. It keeps axis angles on the ¼-turn
 lattice, so the gate set stays `{X, Y, √X, √Y}`+adjoints — all Steane-transversal
@@ -237,20 +253,26 @@ phase to become relative.
 
 ### Wiring — a fifth hook
 
-The native window lives entirely inside `NativeToPlaceBase.emit`, so the pass
+The native window lives entirely inside `NativeToPlaceBase.emit`, so the rule
 cannot be wired additively from `LogicalPipeline.emit`. The template documents
 four hooks, none in the right place (`_post_unroll_validation` is adjacent but is
-a validation hook and must not be abused for a rewrite). Add a fifth:
+a validation hook and must not be abused for a rewrite). Add a fifth,
+`_post_unroll_rules()`, mirroring the existing `_squin_clifford_rules()` so the
+class has one way of saying "rules to run at stage X" rather than two:
 
 ```python
 AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
-self._post_unroll_rewrites(out, no_raise)      # new hook, default no-op
+
+if post_unroll_rules := self._post_unroll_rules():
+    rewrite.Walk(rewrite.Chain(*post_unroll_rules)).rewrite(out.code)
+
 self._post_unroll_validation(out, no_raise)
 ```
 
-`LogicalNativeToPlace` overrides it; `PhysicalNativeToPlace` and the generic
-`NativeToPlace` inherit the no-op, so no physical compile changes. Update the
-base class docstring's hook list to five.
+`LogicalNativeToPlace` overrides it to return `[EliminateRz()]`;
+`PhysicalNativeToPlace` and the generic `NativeToPlace` inherit the empty list,
+so no physical compile changes. Update the base class docstring's hook list to
+five.
 
 On by default and not flag-guarded: a flag that turns it off produces IR the
 backend cannot run.
@@ -258,9 +280,9 @@ backend cannot run.
 ## Scope of the guarantee
 
 The logical pipeline gains a hard invariant: **no `Rz` reaches the backend.** Any
-`Rz` the pass cannot eliminate is a compile error, not a silent pass-through.
+`Rz` the rule cannot eliminate is a compile error, not a silent pass-through.
 
-`StarRz` is exempt and is not an `Rz` as far as the pass is concerned. The
+`StarRz` is exempt and is not an `Rz` as far as the rule is concerned. The
 pipeline never synthesizes it — the only producer is the user-facing
 `gemini.logical.star_rz`, and a mid-circuit non-Clifford `squin.rz` is a
 validation error rather than a fallback to the gadget. So on the default path
