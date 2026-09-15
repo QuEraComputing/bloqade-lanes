@@ -105,6 +105,29 @@ def _query_axis(
     return values
 
 
+def _reject_duplicate_endpoints(
+    src: Sequence[int], dst: Sequence[int], kind: str, zone_name: str, unit: str
+) -> None:
+    """Reject a bus that names the same endpoint twice.
+
+    The geometry checks downstream collapse endpoints to sets — a
+    Cartesian product, a tone count, a rank map — so a repeated index
+    survives all of them and the malformed bus is only caught by Rust at
+    ``build()``.  It is malformed for two independent reasons: a repeated
+    source shadows every later pair under the positional first-match
+    resolution the bus relation uses, and a repeated destination asks for
+    two simultaneous transports into one place.
+    """
+    for side, values in (("src", src), ("dst", dst)):
+        repeated = sorted(i for i, n in Counter(values).items() if n > 1)
+        if repeated:
+            raise ValueError(
+                f"{kind} bus on zone '{zone_name}': {side} {unit} "
+                f"{repeated} repeated in {list(values)}; a bus moves each "
+                f"{unit} once"
+            )
+
+
 def _validate_aod_rectangle(
     positions: list[tuple[int, int]],
     label: str,
@@ -475,8 +498,8 @@ class ZoneBuilder:
 
         Raises:
             ValueError: If the two differ in length, either is empty, an
-                index is out of range, or either endpoint is not a
-                Cartesian product.
+                index is repeated, an index is out of range, or either
+                endpoint is not a Cartesian product.
 
         Note:
             Unlike :meth:`add_word_bus`, this does not check that the bus is
@@ -503,6 +526,8 @@ class ZoneBuilder:
         for d in dst:
             if d < 0 or d >= total:
                 raise ValueError(f"site index {d} out of range [0, {total})")
+
+        _reject_duplicate_endpoints(src, dst, "Site", self._name, "site")
 
         src_positions = [(s % nx, s // nx) for s in src]
         dst_positions = [(d % nx, d // nx) for d in dst]
@@ -536,8 +561,9 @@ class ZoneBuilder:
 
         Raises:
             ValueError: If the two differ in length, either is empty, an
-                index is out of range, either endpoint is not a Cartesian
-                product, or the transport is not AOD-realizable — see
+                index is repeated, an index is out of range, either
+                endpoint is not a Cartesian product, or the transport is
+                not AOD-realizable — see
                 :meth:`_check_aod_compatible`.  Unlike a site bus, a word
                 bus's carried atoms are fixed at this call: it names its
                 words explicitly and ``_words`` is append-only.
@@ -560,6 +586,8 @@ class ZoneBuilder:
         for d in dst:
             if d < 0 or d >= n:
                 raise ValueError(f"word index {d} out of range [0, {n})")
+
+        _reject_duplicate_endpoints(src, dst, "Word", self._name, "word")
 
         src_positions = [self._word_origin(s) for s in src]
         dst_positions = [self._word_origin(d) for d in dst]

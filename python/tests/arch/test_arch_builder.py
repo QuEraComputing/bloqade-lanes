@@ -1046,14 +1046,40 @@ class TestAODCompatibility:
         assert not any(k.move_type == MoveType.SITE for k in paths)
 
     def test_tone_count_must_match(self):
-        """Two source columns collapsing onto one destination column."""
-        grid = Grid.from_positions([0.0, 1.0, 2.0], [0.0, 10.0])
+        """Two source columns collapsing onto one destination column.
+
+        Endpoints are all distinct, so this reaches the tone-count check
+        rather than the duplicate-endpoint one.
+        """
+        grid = Grid.from_positions([0.0, 1.0], [0.0, 10.0, 20.0])
         zone = ZoneBuilder("z", grid, (1, 1), x_clearance=0.25, y_clearance=3.0)
-        for y in range(2):
-            for x in range(3):
-                zone.add_word([x], [y])
+        zone.add_word([0], [0])  # word 0 at (0, 0)
+        zone.add_word([1], [0])  # word 1 at (1, 0)
+        zone.add_word([0], [1])  # word 2 at (0, 10)
+        zone.add_word([0], [2])  # word 3 at (0, 20)
+        # src spans 2 x-tones and 1 y-tone; dst spans 1 and 2.
         with pytest.raises(ValueError, match="add or drop a tone"):
-            zone.add_word_bus(src=[0, 1], dst=[3, 3])
+            zone.add_word_bus(src=[0, 1], dst=[2, 3])
+
+    def test_duplicate_endpoints_are_rejected(self):
+        """Repeats survive every downstream check, which collapses to sets.
+
+        A repeated source shadows later pairs under positional first-match
+        resolution; a repeated destination asks for two transports into one
+        place.  Rust catches both at ``build()``; fail at the call instead.
+        """
+        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        with pytest.raises(ValueError, match=r"src word \[0\] repeated"):
+            zone.add_word_bus([0, 0], [1, 1])
+        with pytest.raises(ValueError, match=r"dst word \[1\] repeated"):
+            zone.add_word_bus([0, 1], [1, 1])
+        assert zone._word_buses == []
+        with pytest.raises(ValueError, match=r"src site \[0\] repeated"):
+            zone.add_site_bus([0, 0], [1, 1])
+        assert zone._site_buses == []
 
     def test_duplicate_site_indices_are_rejected(self):
         """A repeat passes the count check but collapses two sites onto one.
