@@ -76,6 +76,7 @@ mod tests {
             blocked: &blocked,
             targets: &targets_vec,
             cz_pairs: None,
+            capacity: None,
         };
 
         // Qubit starts at site 0, candidate moves it to site 5 (the target).
@@ -109,6 +110,7 @@ mod tests {
             blocked: &blocked,
             targets: &targets_vec,
             cz_pairs: None,
+            capacity: None,
         };
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
@@ -139,6 +141,7 @@ mod tests {
             blocked: &blocked,
             targets: &targets_vec,
             cz_pairs: None,
+            capacity: None,
         };
 
         // Start at site 5 (1 hop from target site 0 via site bus).

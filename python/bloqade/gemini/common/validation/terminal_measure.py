@@ -1,8 +1,9 @@
 """Terminal-measurement validation for physical Gemini programs (post-unroll).
 
 ``PhysicalTerminalMeasurementValidation`` checks that the unrolled squin kernel
-has exactly one ``qubit.stmts.Measure`` statement and that it consumes every
-qubit allocated in the circuit.
+allocates no more than 80 qubits, has exactly one ``qubit.stmts.Measure``
+statement, and that the statement consumes every qubit allocated in the
+circuit.
 
 Run this after ``SquinToNative`` + ``AggressiveUnroll`` so that
 ``qubit.stmts.New`` and ``qubit.stmts.Measure`` are present as direct IR
@@ -25,6 +26,8 @@ from kirin import ir
 from kirin.analysis import Forward, ForwardFrame
 from kirin.lattice import EmptyLattice
 from kirin.validation import ValidationPass
+
+MAX_PHYSICAL_QUBITS = 80
 
 
 def _collect_qubit_ids(addr: address.Address) -> set[int]:
@@ -65,8 +68,10 @@ class _PhysicalTerminalMeasurementAnalysis(Forward[EmptyLattice]):
 
 @dataclass
 class PhysicalTerminalMeasurementValidation(ValidationPass):
-    """Validate that a physical (post-unroll) circuit contains exactly one
-    ``qubit.stmts.Measure`` consuming all allocated qubits.
+    """Validate Gemini physical-qubit capacity and terminal measurement.
+
+    A physical (post-unroll) circuit may allocate at most 80 qubits and must
+    contain exactly one ``qubit.stmts.Measure`` consuming all of them.
     """
 
     def name(self) -> str:
@@ -85,6 +90,15 @@ class PhysicalTerminalMeasurementValidation(ValidationPass):
         frame, _ = analysis.run(method)
 
         errors = list(analysis.get_validation_errors())
+
+        if total_qubits > MAX_PHYSICAL_QUBITS:
+            errors.append(
+                ir.ValidationError(
+                    method.code,
+                    f"Physical circuit allocates {total_qubits} qubits, exceeding "
+                    f"the maximum of {MAX_PHYSICAL_QUBITS}.",
+                )
+            )
 
         if analysis.measure_count == 0:
             return_stmt = method.callable_region.blocks[0].last_stmt

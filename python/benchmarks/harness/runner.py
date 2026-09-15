@@ -6,6 +6,7 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
@@ -79,7 +80,37 @@ class _RunArtifacts:
     nodes_explored: int | None
     max_depth_reached: int | None
     bound_stats: dict[str, float] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
+    """The root-bound summary every *bounded* row carries: summed `h(root)`,
+    summed plan cost, their gap, the count of solves where they are equal, and
+    how many solves reported `proven`. Empty for unbounded strategies.
+    Console-only: adding CSV columns would change the committed baselines."""
     notes: str = ""
+
+
+def _root_bound_extra(bound_stats: dict[str, float], proven: int) -> dict[str, Any]:
+    """Summarise `h(root)` against the plans actually found.
+
+    `certs` counts solves where the two are equal, which proves the plan
+    optimal over every legal plan -- not just the ones the generator proposed,
+    since `h(root)` does not depend on what was generated. Both sums range over
+    the same solves, so their ratio is a meaningful gap.
+    """
+    solves = int(bound_stats.get("measured_solves", 0))
+    if solves == 0:
+        return {}
+    h_sum = float(bound_stats.get("root_lower_bound_sum", 0.0))
+    cost_sum = float(bound_stats.get("incumbent_cost_sum", 0.0))
+    certificates = int(bound_stats.get("certificates", 0))
+    return {
+        "h_root_sum": f"{h_sum:.3f}",
+        "cost_sum": f"{cost_sum:.3f}",
+        "gap_pct": (
+            f"{100.0 * (cost_sum - h_sum) / cost_sum:.0f}%" if cost_sum > 0 else ""
+        ),
+        "certificates": f"{certificates}/{solves}",
+        "proven_solves": proven,
+    }
 
 
 @dataclass
@@ -111,6 +142,7 @@ class BenchmarkRunner:
         nodes_explored = None
         max_depth_reached = None
         bound_stats: dict[str, float] = {}
+        extra: dict[str, Any] = {}
         notes = [job.strategy.notes] if job.strategy.notes else []
 
         try:
@@ -127,6 +159,7 @@ class BenchmarkRunner:
                     nodes_explored = artifacts.nodes_explored
                     max_depth_reached = artifacts.max_depth_reached
                     bound_stats = artifacts.bound_stats
+                    extra = dict(artifacts.extra)
                     if artifacts.notes:
                         notes.append(artifacts.notes)
 
@@ -160,6 +193,7 @@ class BenchmarkRunner:
                 cut_depth_sum=_stat_int(bound_stats, "cut_depth_sum"),
                 cut_depth_g_only_sum=_stat_int(bound_stats, "cut_depth_g_only_sum"),
                 max_optimality_gap=bound_stats.get("max_optimality_gap"),
+                extra=extra,
                 arch_spec_id=job.strategy.arch_spec_id,
                 notes="; ".join([n for n in notes if n]),
             )
@@ -196,12 +230,14 @@ class BenchmarkRunner:
 
         nodes: int | None = None
         bound_stats: dict[str, float] = {}
+        extra: dict[str, Any] = {}
         inner = getattr(placement_strategy, "inner", placement_strategy)
         if isinstance(inner, PhysicalPlacementStrategy) and isinstance(
             inner.traversal, RustPlacementTraversal
         ):
             nodes = inner.rust_nodes_expanded_total
             bound_stats = inner.rust_bound_stats_total
+            extra = _root_bound_extra(bound_stats, inner.rust_proven_total)
         elif isinstance(inner, NoReturnStrategyBase):
             # The no-return family (NoHome / NoReturn / RecedingHorizon) mirrors
             # PhysicalPlacementStrategy's expansion counter, so search effort is
@@ -216,6 +252,7 @@ class BenchmarkRunner:
             nodes_explored=nodes,
             max_depth_reached=None,
             bound_stats=bound_stats,
+            extra=extra,
         )
 
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:

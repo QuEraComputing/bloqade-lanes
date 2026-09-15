@@ -9,7 +9,7 @@ pub mod heuristic;
 pub mod loose_target;
 
 pub use entropy::EntropyGenerator;
-pub use exhaustive::ExhaustiveGenerator;
+pub use exhaustive::{ExhaustiveGenerator, ExhaustivePrecondition, GroupKey, SeedPolicy};
 pub use greedy::GreedyGenerator;
 pub use heuristic::{DeadlockPolicy, HeuristicGenerator};
 pub use loose_target::LooseTargetGenerator;
