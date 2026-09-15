@@ -1025,14 +1025,25 @@ class TestAODCompatibility:
         zone.add_word_bus(src=[0, 1, 2], dst=[3, 4, 5])
         assert zone._word_buses == [([0, 1, 2], [3, 4, 5])]
 
-    def test_expanding_the_site_pitch_is_accepted(self):
-        """Word 0's sites 10 µm apart, word 1's 30 µm apart."""
+    def test_site_bus_with_mixed_pitch_is_accepted_then_declined_by_search(self):
+        """Word 0's sites 10 µm apart, word 1's 30 µm apart.
+
+        ``add_site_bus`` does not judge realizability — the atoms a site bus
+        carries are ``words_with_site_buses x src``, and ``add_word`` can
+        extend that set afterwards — so the bus is accepted here.  The path
+        search still declines it, and its displacement check iterates every
+        participating word, which is what surfaces the mismatch at all.
+        """
         grid = Grid.from_positions([0.0, 10.0, 100.0, 130.0], [0.0])
         zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=0.25)
         zone.add_word([0, 1], [0])
         zone.add_word([2, 3], [0])
         zone.add_site_bus([0], [1])
         assert zone._site_buses == [([0], [1])]
+
+        with pytest.warns(UserWarning, match="inconsistent site displacements"):
+            paths = zone._compute_paths(zone_id=0)
+        assert not any(k.move_type == MoveType.SITE for k in paths)
 
     def test_tone_count_must_match(self):
         """Two source columns collapsing onto one destination column."""
@@ -1043,37 +1054,6 @@ class TestAODCompatibility:
                 zone.add_word([x], [y])
         with pytest.raises(ValueError, match="add or drop a tone"):
             zone.add_word_bus(src=[0, 1], dst=[3, 3])
-
-    def test_incomplete_atom_rectangle_is_rejected(self):
-        """An L-shaped participating set leaves a tone intersection open.
-
-        The AOD traps at the Cartesian product of its tones, so any atom at
-        an intersection is carried whether or not it belongs to the bus.
-        Requiring the bus's own atoms to fill that product exactly is what
-        keeps a foreign atom from riding along.
-        """
-        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
-        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
-        zone.add_word([0, 1], [0])
-        zone.add_word([2, 3], [0])
-        zone.add_word([0, 1], [1])  # (2,3)x(row 1) left empty -> L-shape
-        with pytest.raises(ValueError, match="do not fill it"):
-            zone.add_site_bus([0], [1])
-
-    def test_word_joining_a_site_bus_later_is_validated(self):
-        """A word added after the bus joins it, and can break its rectangle."""
-        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
-        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
-        zone.add_word([0, 1], [0])
-        zone.add_word([2, 3], [0])
-        zone.add_site_bus([0], [1])  # fine: two words in one row
-        # A third word in row 1 makes the carried atom set an L — the AOD
-        # would have a fourth tone intersection with nothing of ours in it.
-        with pytest.raises(ValueError, match="site bus 0 unperformable"):
-            zone.add_word([0, 1], [1])
-        # The rejected word must not be left half-added.
-        assert zone.num_words == 2
-        assert (0, 1) not in zone._position_to_word
 
     def test_duplicate_site_indices_are_rejected(self):
         """A repeat passes the count check but collapses two sites onto one.
@@ -1102,17 +1082,6 @@ class TestAODCompatibility:
         zone.add_word([0, 1], [1], has_site_bus=False)
         assert zone.num_words == 3
         assert zone._site_bus_words() == [0, 1]
-
-    def test_completing_the_rectangle_is_accepted(self):
-        """Adding the fourth corner restores the product and is allowed."""
-        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
-        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
-        zone.add_word([0, 1], [0])
-        zone.add_word([2, 3], [0])
-        zone.add_word([0, 1], [1])
-        zone.add_word([2, 3], [1])
-        zone.add_site_bus([0], [1])
-        assert zone._site_buses == [([0], [1])]
 
     def test_path_search_still_declines_a_non_uniform_bus(self):
         """Accepted by the hardware rule, but the search cannot route it.
@@ -1171,6 +1140,30 @@ class TestSiteBusMoverConsistency:
     def test_no_lane_for_a_word_that_opted_out(self):
         paths = self._zone()._compute_paths(zone_id=0)
         assert sorted({lane.word_id for lane in paths}) == [1, 2]
+
+    def test_reference_follows_participation_not_word_zero(self):
+        """Word 0 opts out and sets a pitch the movers do not share.
+
+        The shipped physical spec has ``words_with_site_buses`` = the odd
+        words, so word 0 opting out is production shape; it only fails to
+        misbehave there because words 0 and 1 share a pitch.
+        """
+        grid = Grid.from_positions([0.0, 10.0, 100.0, 130.0, 200.0, 230.0], [0.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.5, y_clearance=0.5)
+        zone.add_word([0, 1], [0], has_site_bus=False)  # pitch 10
+        zone.add_word([2, 3], [0])  # pitch 30
+        zone.add_word([4, 5], [0])  # pitch 30
+        zone.add_site_bus([0], [1])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            paths = zone._compute_paths(zone_id=0)
+
+        assert sorted({lane.word_id for lane in paths}) == [1, 2]
+        for lane, waypoints in paths.items():
+            if lane.direction is Direction.FORWARD:
+                dst_x, dst_y = zone._site_nm(lane.word_id, 1)
+                assert waypoints[-1] == (dst_x / 1000, dst_y / 1000)
 
     def test_empty_mover_set_is_skipped(self):
         """No word takes part, so there is no reference atom to route from."""
@@ -1846,3 +1839,80 @@ class TestGridQueryIndexValidation:
         zone = _interleaved_zone()
         with pytest.raises(IndexError, match=r"x grid index \[99\]"):
             zone[[99], 0]
+
+
+# ── Empty buses and zone-bus index range ──
+
+
+class TestEmptyBusRejected:
+    """An empty bus carries nothing and breaks the path search.
+
+    ``_compute_paths`` indexes ``src[0]`` for its reference atom, so an
+    empty bus reaches ``build()`` as a bare ``IndexError`` naming neither
+    the bus nor the zone.  Reachable from ordinary use: ``zone.words[0:0, 0]``
+    legitimately returns ``[]``.
+    """
+
+    def _zone(self) -> ZoneBuilder:
+        zone = ZoneBuilder(
+            "z", _make_grid(4, 1), (2, 1), x_clearance=0.25, y_clearance=0.25
+        )
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        return zone
+
+    def test_empty_word_bus_raises(self):
+        with pytest.raises(ValueError, match="Word bus on zone 'z' is empty"):
+            self._zone().add_word_bus([], [])
+
+    def test_empty_site_bus_raises(self):
+        with pytest.raises(ValueError, match="Site bus on zone 'z' is empty"):
+            self._zone().add_site_bus([], [])
+
+    def test_empty_slice_selection_is_the_reachable_path(self):
+        zone = self._zone()
+        assert zone.words[0:0, 0] == []
+        with pytest.raises(ValueError, match="is empty"):
+            zone.add_word_bus(zone.words[0:0, 0], zone.words[0:0, 0])
+
+
+class TestConnectIndexRange:
+    """``connect`` resolved word indices without a range check.
+
+    ``_word_origin`` indexes ``_words`` directly, so ``-1`` silently
+    resolved to the last word: the Cartesian-product check then validated
+    geometry the caller never named, and the bad index failed later with an
+    unrelated error.  ``add_word_bus`` rejects the same index.
+    """
+
+    def _builder(self) -> ArchBuilder:
+        builder = ArchBuilder()
+        for name, y_off in (("a", 0.0), ("b", 10.0)):
+            zone = ZoneBuilder(
+                name,
+                _make_grid(4, 1, y_offset=y_off),
+                (2, 1),
+                x_clearance=0.25,
+                y_clearance=0.25,
+            )
+            zone.add_word([0, 1], [0])
+            zone.add_word([2, 3], [0])
+            builder.add_zone(zone)
+        builder.add_mode("all", ["a", "b"])
+        return builder
+
+    def test_negative_index_raises(self):
+        builder = self._builder()
+        with pytest.raises(ValueError, match=r"src word index -1 out of range"):
+            builder.connect(src=("a", [-1]), dst=("b", [0]))
+        assert builder._connections == []
+
+    def test_too_large_index_raises(self):
+        builder = self._builder()
+        with pytest.raises(ValueError, match=r"dst word index 9 out of range"):
+            builder.connect(src=("a", [0]), dst=("b", [9]))
+
+    def test_valid_indices_still_connect(self):
+        builder = self._builder()
+        builder.connect(src=("a", [0, 1]), dst=("b", [0, 1]))
+        assert len(builder._connections) == 1

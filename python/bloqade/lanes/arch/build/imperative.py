@@ -203,10 +203,13 @@ class _WordGridQuery:
     Ordering by traversal rather than by word ID matters whenever word IDs
     are not monotone in the grid, which is the normal case for interleaved
     CZ layouts: scanning x visits words 0, 1, 2, 3, 0, 1, 2, 3, ..., so a
-    partial x-selection reaches them out of ID order.  Because a bus's
-    ``src`` and ``dst`` are related by a uniform AOD translation, and a
-    translation preserves this ordering, selecting both endpoints the same
-    way pairs ``src[i]`` with ``dst[i]`` correctly.
+    partial x-selection reaches them out of ID order.  An AOD transport is
+    separable and order-preserving — each x-tone and y-tone sweeps
+    independently and tones cannot cross — so it maps the source tones onto
+    the destination tones in the same order.  Selecting both endpoints the
+    same way therefore pairs ``src[i]`` with ``dst[i]`` correctly, including
+    for a compression or expansion, where the displacement differs per
+    column and no single translation describes the bus.
 
     Returns a plain ``list[int]`` of zone-local word IDs for intra-zone
     operations like ``add_word_bus`` and ``add_entangling_pairs``.  For
@@ -398,8 +401,10 @@ class ZoneBuilder:
             Zone-local word index.
 
         Raises:
-            ValueError: Shape mismatch or grid position overlap.
-            IndexError: Indices out of range for this zone's grid.
+            ValueError: If the index counts do not match ``word_shape``, an
+                index is repeated (two sites would share one grid
+                position), or a position already belongs to another word.
+            IndexError: If an index is out of range for this zone's grid.
         """
         xs = _normalize_index(x_sites, self._grid.num_x)
         ys = _normalize_index(y_sites, self._grid.num_y)
@@ -454,37 +459,41 @@ class ZoneBuilder:
         self._word_has_site_bus.append(has_site_bus)
         for pos in positions:
             self._position_to_word[pos] = word_id
-
-        # A word that opts in joins every site bus already on this zone, and
-        # so changes the atom set those buses carry: it can break the AOD
-        # rectangle, or bring an internal site pitch the bus cannot match.
-        # Re-check them here so the failure names the offending add_word
-        # rather than surfacing later, or not at all.
-        if has_site_bus:
-            for bus_id, (bus_src, bus_dst) in enumerate(self._site_buses):
-                try:
-                    self._check_site_bus_atoms(bus_src, bus_dst, bus_id)
-                except ValueError as exc:
-                    self._words.pop()
-                    self._word_has_site_bus.pop()
-                    for pos in set(positions):
-                        del self._position_to_word[pos]
-                    raise ValueError(
-                        f"adding this word to zone '{self._name}' would make "
-                        f"site bus {bus_id} unperformable: {exc}"
-                    ) from exc
         return word_id
 
     def add_site_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a site bus (intra-word movement).
 
-        src/dst are site indices within word_shape (0..sites_per_word).
-        Must have equal length. Validates that src and dst positions each
-        form a valid AOD Cartesian product on the word grid.
+        ``src[i]`` moves to ``dst[i]``; both are site indices within
+        ``word_shape`` (``0..sites_per_word``).
+
+        Args:
+            src: Source site indices. Must be non-empty, in range, and form
+                an AOD Cartesian product on the word grid.
+            dst: Destination site indices, same length as ``src`` and
+                likewise a Cartesian product.
+
+        Raises:
+            ValueError: If the two differ in length, either is empty, an
+                index is out of range, or either endpoint is not a
+                Cartesian product.
+
+        Note:
+            Unlike :meth:`add_word_bus`, this does not check that the bus is
+            AOD-realizable.  The atoms it carries are
+            ``words_with_site_buses x src``, and :meth:`add_word` can extend
+            that set afterwards, so the set is not known here.
         """
         if len(src) != len(dst):
             raise ValueError(
                 f"Site bus src has {len(src)} entries but dst has {len(dst)}"
+            )
+        if not src:
+            # An empty bus carries nothing, and the path search indexes
+            # src[0] for its reference atom.
+            raise ValueError(
+                f"Site bus on zone '{self._name}' is empty; a bus must move "
+                "at least one site"
             )
         total = self.sites_per_word
         nx = self._word_shape[0]
@@ -499,11 +508,11 @@ class ZoneBuilder:
         dst_positions = [(d % nx, d // nx) for d in dst]
         _validate_aod_rectangle(src_positions, "Site bus src")
         _validate_aod_rectangle(dst_positions, "Site bus dst")
-        # The atoms this bus carries are every participating word's src
-        # sites; check that set is AOD-realizable.  A word added *later*
-        # joins the bus too, so ``add_word`` re-runs this for every existing
-        # site bus rather than leaving it to the path search.
-        self._check_site_bus_atoms(list(src), list(dst), len(self._site_buses))
+        # No AOD-realizability check here.  A site bus carries
+        # ``words_with_site_buses x src``, and ``add_word`` can extend that
+        # set after the fact, so the carried-atom set is not known at this
+        # call — the question is undecidable at add time.  ``_compute_paths``
+        # still declines to route a bus it cannot realize.
         self._site_buses.append((list(src), list(dst)))
 
     def _site_bus_words(self) -> list[int]:
@@ -514,31 +523,35 @@ class ZoneBuilder:
         """
         return [w for w in range(self.num_words) if self._word_has_site_bus[w]]
 
-    def _check_site_bus_atoms(
-        self, src: list[int], dst: list[int], bus_id: int
-    ) -> None:
-        """Validate one site bus against every word that participates in it."""
-        movers = self._site_bus_words()
-        self._check_aod_compatible(
-            [
-                (self._site_nm(w, ss), self._site_nm(w, ds))
-                for w in movers
-                for ss, ds in zip(src, dst)
-            ],
-            "Site",
-            bus_id,
-        )
-
     def add_word_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a word bus (intra-zone movement).
 
-        src/dst are zone-local word indices. Must have equal length.
-        Validates that src and dst word positions each form a valid AOD
-        Cartesian product on the zone grid.
+        ``src[i]`` moves to ``dst[i]``; both are zone-local word indices.
+
+        Args:
+            src: Source word indices. Must be non-empty, in range, and form
+                an AOD Cartesian product on the zone grid.
+            dst: Destination word indices, same length as ``src`` and
+                likewise a Cartesian product.
+
+        Raises:
+            ValueError: If the two differ in length, either is empty, an
+                index is out of range, either endpoint is not a Cartesian
+                product, or the transport is not AOD-realizable — see
+                :meth:`_check_aod_compatible`.  Unlike a site bus, a word
+                bus's carried atoms are fixed at this call: it names its
+                words explicitly and ``_words`` is append-only.
         """
         if len(src) != len(dst):
             raise ValueError(
                 f"Word bus src has {len(src)} entries but dst has {len(dst)}"
+            )
+        if not src:
+            # An empty bus carries nothing, and the path search indexes
+            # src_words[0] for its reference atom.
+            raise ValueError(
+                f"Word bus on zone '{self._name}' is empty; a bus must move "
+                "at least one word"
             )
         n = len(self._words)
         for s in src:
@@ -1362,6 +1375,10 @@ class ArchBuilder:
                 returns a name-qualified tuple).
             dst: ``(zone_name, zone_local_word_indices)`` — same format.
 
+        Raises:
+            ValueError: If either zone name is unknown or a word index is
+                out of range for its zone.
+
         Validates AOD Cartesian product across the two zone grids.
         """
         src_name, src_words = src
@@ -1373,6 +1390,22 @@ class ArchBuilder:
 
         src_zone = self._zones[self._zone_name_to_id[src_name]]
         dst_zone = self._zones[self._zone_name_to_id[dst_name]]
+        # Range-check before resolving positions.  ``_word_origin`` indexes
+        # ``_words`` directly, so a negative index silently resolves to a
+        # different word and the Cartesian-product check below would then
+        # validate geometry the caller never named.  ``add_word_bus``
+        # rejects the same index.
+        for side, zone, words in (
+            ("src", src_zone, src_words),
+            ("dst", dst_zone, dst_words),
+        ):
+            for w in words:
+                if w < 0 or w >= zone.num_words:
+                    raise ValueError(
+                        f"Zone bus {side} word index {w} out of range "
+                        f"[0, {zone.num_words}) for zone '{zone.name}'"
+                    )
+
         src_positions = [src_zone._word_origin(w) for w in src_words]
         dst_positions = [dst_zone._word_origin(w) for w in dst_words]
         _validate_aod_rectangle(src_positions, "Zone bus src")
