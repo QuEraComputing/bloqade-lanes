@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 from bloqade.core.device import Result
+from kirin import ir
 
 from bloqade.gemini import logical
 
@@ -36,30 +37,30 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             subtask scope. Defaults to the DETECTED frame type.
     """
 
-    def _program_contents_by_index(self) -> dict[int, str]:
-        """Return one kernel payload per selected program index.
+    def _program_contents_by_index(self) -> dict[int, ir.Method]:
+        """Return one decoded kernel per selected program index.
 
         Program indices are local to a task. Multiple selected task IDs may
-        reuse an index only when the serialized kernel contents are identical.
+        reuse an index only when their decoded kernels are structurally equal.
         """
-        programs_by_index: dict[int, tuple[str, str]] = {}
+        programs_by_index: dict[int, tuple[str, ir.Method]] = {}
         selected_task_ids = tuple(
             sorted({subtask["task_id"] for subtask in self.full_subtasks()})
         )
         for program in self.storage.get_programs(task_ids=selected_task_ids):
             idx = program["program_index"]
             task_id = program["task_id"]
-            content = program["content"]
+            kernel = logical.kernel.decode_json(program["content"])  # type: ignore[attr-defined]
             previous = programs_by_index.get(idx)
-            if previous is not None and previous[1] != content:
+            if previous is not None and not previous[1].is_structurally_equal(kernel):
                 raise ValueError(
                     "Selected task IDs contain different kernels for "
                     f"program_index={idx}: {previous[0]!r} and {task_id!r}. "
                     "Narrow the result view to compatible task IDs."
                 )
-            programs_by_index[idx] = (task_id, content)
+            programs_by_index[idx] = (task_id, kernel)
 
-        return {idx: content for idx, (_, content) in programs_by_index.items()}
+        return {idx: kernel for idx, (_, kernel) in programs_by_index.items()}
 
     def _slm_postprocessing_functions(
         self,
@@ -88,8 +89,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         from .utils import get_slm_mapping_postprocessing
 
         postprocessing_functions = {}
-        for idx, kernel_json in self._program_contents_by_index().items():
-            kernel_mt = logical.kernel.decode_json(kernel_json)  # type: ignore[attr-defined]
+        for idx, kernel_mt in self._program_contents_by_index().items():
             slm_to_raw, postprocessing_function = get_slm_mapping_postprocessing(
                 kernel_mt,
             )
