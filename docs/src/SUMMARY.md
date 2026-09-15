@@ -6,6 +6,7 @@
 
 - [Architecture Specification](arch/archspec.md)
 - [Zone-Centric Concepts (Visual Guide)](arch/zone-centric-concepts.md)
+- [Interactive Visualization and HTML Export](arch/interactive-visualization.md)
 
 # Bytecode
 
