@@ -189,6 +189,20 @@ Clearances themselves are not part of an `ArchSpec` — they are inputs to the
 path search, not properties of the architecture — so a round-trip cannot
 recover them, and the builder says so rather than guessing.
 
+### `ArchSpec` is more permissive than this builder
+
+Some valid specs have no equivalent in this model, and `from_spec` rejects them
+by name rather than restoring something subtly different. The one worth calling
+out as a deliberate gap: a zone bus carries a zone ID *per element*, and Rust
+only requires each pair to cross a boundary, so an endpoint may name several
+zones — while `connect` addresses one zone per side. An architecture that needs
+that shape needs a richer `connect` first.
+
+The rest are consequences of the model: a word must be a row-major Cartesian
+product (that is what `word_shape` and `column + row * num_columns` mean, and
+renumbering sites would re-map every bus endpoint and inherited lane), zones
+must agree on grid dimensions, and a bus must have participants.
+
 ## Migration
 
 1. Land the new builder alongside the existing one, under a new name.

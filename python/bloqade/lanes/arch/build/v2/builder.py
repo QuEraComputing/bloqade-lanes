@@ -834,6 +834,32 @@ class ArchBuilder:
         re-routing.  Passing them does not by itself discard the inherited
         paths — use ``build(recompute_paths=True)`` for that.
 
+        **Specs this builder cannot represent are rejected, not
+        reinterpreted.**  ``ArchSpec`` is a more permissive format than this
+        builder's model, so some valid specs have no equivalent here.  Each
+        raises ``ValueError`` naming the problem rather than being restored
+        as something subtly different, because the alternative is a silent
+        change to word numbering or routing:
+
+        * **A zone bus whose endpoint spans several zones.**  :meth:`connect`
+          addresses one zone per side, while a ``Bus[ZonedWordRef]`` carries a
+          zone ID per element.  Rust only asks that each *pair* cross a zone
+          boundary, so a bus whose source entries name two different zones is
+          valid and unrepresentable here.  This is a genuine expressiveness
+          gap, not an oversight — an architecture that needs that shape needs
+          a richer ``connect`` first.
+        * **A zone bus with an empty endpoint**, which Rust also accepts.
+        * **A word whose sites are not a row-major Cartesian product.**
+          ``word_shape`` and the ``column + row * num_columns`` numbering
+          require one; a word laid out otherwise cannot be rebuilt without
+          renumbering its sites, which would re-map every bus endpoint and
+          inherited lane that addresses them.
+        * **Zones that disagree on grid dimensions**, since the word template
+          is spec-wide and indexes one shared index space.
+        * **A bus with no participants** — an empty ``words_with_site_buses``
+          alongside site buses, or the same for word buses — which would carry
+          no atoms.
+
         Args:
             spec: The spec to rebuild.
             x_clearance: Minimum x-axis waypoint clearance (µm), or
@@ -841,9 +867,9 @@ class ArchBuilder:
             y_clearance: Same, for the y-axis.
 
         Raises:
-            ValueError: If the spec has no words or zones, if its zones
-                disagree on grid dimensions, or if any bus is not
-                realizable under the builder's rules.
+            ValueError: If the spec has no words or zones, if it uses any of
+                the shapes listed above, or if any bus is not realizable
+                under the builder's AOD rules.
         """
         inner = spec._inner
         if not inner.words:
