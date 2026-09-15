@@ -9,7 +9,7 @@ import pytest
 from bloqade.native.dialects import gate as native_gate
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite, types as kirin_types
-from kirin.dialects import func, ilist, py
+from kirin.dialects import ilist, py
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
 from bloqade.gemini.logical.dialects.operations import stmts as operations
@@ -368,8 +368,108 @@ def _non_constant_angle_stays_symbolic():
     return test, expected
 
 
+def _squin_measure_discards_the_frame():
+    """The mid-circuit measurement the handler's comment argues about.
+
+    ``squin.qubit.Measure`` is co-registered with the terminal measurement on
+    the strength of a claim in that handler -- "safe for a mid-circuit
+    measurement too [...] a Z measurement leaves the qubit in a computational
+    basis state, where any leftover Z phase is a global phase on that branch".
+    Nothing exercised it: the real pipeline never emits one (confirmed by
+    instrumenting the rule across the gemini and integration suites), so the
+    registration could be deleted with every test still green, after which a
+    kernel that does measure mid-circuit would hit the raising default.
+    """
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q,
+            reg,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, reg.result),
+            squin_qubit.stmts.Measure(reg.result),
+            native_gate.stmts.R(zero.result, quarter.result, reg.result),
+        ]
+    )
+
+    a = squin_qubit.stmts.New()
+    areg = ilist.New(values=(a.result,), elem_type=QUBIT)
+    aquarter = py.Constant(0.25)
+    azero = py.Constant(0.0)
+    expected = ir.Block(
+        [
+            a,
+            areg,
+            aquarter,
+            azero,
+            squin_qubit.stmts.Measure(areg.result),
+            native_gate.stmts.R(azero.result, aquarter.result, areg.result),
+        ]
+    )
+    return test, expected
+
+
+def _split_preserves_the_source_elem_type():
+    """Rebuilt registers inherit the element type of the one they replace.
+
+    The real post-unroll IR mixes these: a two-qubit register arrives as
+    ``!Any`` while a one-qubit register is ``!py.Qubit``. Hardcoding
+    ``QubitType`` here would silently re-type every fragment of an ``!Any``
+    register, leaving TypeInfer to re-derive what the rewrite already knew.
+    """
+    q0 = squin_qubit.stmts.New()
+    q1 = squin_qubit.stmts.New()
+    only_q0 = ilist.New(values=(q0.result,), elem_type=QUBIT)
+    both = ilist.New(values=(q0.result, q1.result), elem_type=kirin_types.Any)
+    quarter = py.Constant(0.25)
+    zero = py.Constant(0.0)
+    test = ir.Block(
+        [
+            q0,
+            q1,
+            only_q0,
+            both,
+            quarter,
+            zero,
+            native_gate.stmts.Rz(quarter.result, only_q0.result),
+            native_gate.stmts.R(zero.result, quarter.result, both.result),
+        ]
+    )
+
+    a0 = squin_qubit.stmts.New()
+    a1 = squin_qubit.stmts.New()
+    a_only = ilist.New(values=(a0.result,), elem_type=QUBIT)
+    a_both = ilist.New(values=(a0.result, a1.result), elem_type=kirin_types.Any)
+    aquarter = py.Constant(0.25)
+    azero = py.Constant(0.0)
+    shifted = py.Constant(-0.25)
+    shifted_reg = ilist.New(values=(a0.result,), elem_type=kirin_types.Any)
+    plain_reg = ilist.New(values=(a1.result,), elem_type=kirin_types.Any)
+    expected = ir.Block(
+        [
+            a0,
+            a1,
+            a_only,
+            a_both,
+            aquarter,
+            azero,
+            shifted,
+            shifted_reg,
+            native_gate.stmts.R(shifted.result, aquarter.result, shifted_reg.result),
+            plain_reg,
+            native_gate.stmts.R(azero.result, aquarter.result, plain_reg.result),
+        ]
+    )
+    return test, expected
+
+
 CASES = {
     "rz_is_deleted": _rz_is_deleted,
+    "split_preserves_the_source_elem_type": _split_preserves_the_source_elem_type,
     "r_axis_shifts_by_the_frame": _r_axis_shifts_by_the_frame,
     "frames_accumulate": _frames_accumulate,
     "untouched_qubit_is_left_alone": _untouched_qubit_is_left_alone,
@@ -377,6 +477,7 @@ CASES = {
     "equal_frames_produce_equal_axes": _equal_frames_produce_equal_axes,
     "cz_passes_through": _cz_passes_through,
     "measurement_discards_the_frame": _measurement_discards_the_frame,
+    "squin_measure_discards_the_frame": _squin_measure_discards_the_frame,
     "non_constant_angle_stays_symbolic": _non_constant_angle_stays_symbolic,
 }
 
@@ -395,6 +496,50 @@ def test_rewrite_is_idempotent():
     assert not rewrite.Walk(EliminateRz()).rewrite(test_block).has_done_something
 
 
+REGISTERED_STATEMENTS = {
+    "bloqade.decoders.dialects.annotate.stmts.SetDetector",
+    "bloqade.decoders.dialects.annotate.stmts.SetObservable",
+    "bloqade.gemini.common.dialects.qubit.stmts.NewAt",
+    "bloqade.gemini.logical.dialects.operations.stmts.Initialize",
+    "bloqade.gemini.logical.dialects.operations.stmts.StarRz",
+    "bloqade.gemini.logical.dialects.operations.stmts.TerminalLogicalMeasurement",
+    "bloqade.native.dialects.gate.stmts.CZ",
+    "bloqade.native.dialects.gate.stmts.R",
+    "bloqade.native.dialects.gate.stmts.Rz",
+    "bloqade.qubit.stmts.Measure",
+    "bloqade.qubit.stmts.New",
+    "kirin.dialects.func.stmts.ConstantNone",
+    "kirin.dialects.func.stmts.Function",
+    "kirin.dialects.func.stmts.Return",
+    "kirin.dialects.ilist.stmts.New",
+    "kirin.dialects.py.binop.stmts.BinOp",
+    "kirin.dialects.py.constant.Constant",
+    "kirin.dialects.py.indexing.GetItem",
+    "kirin.dialects.py.tuple.New",
+}
+
+
+def test_dispatch_table_is_what_it_claims_to_be():
+    """Pin every registration, because deleting one is currently invisible.
+
+    The table is load-bearing -- the default raises, so an unregistered type
+    is a hard failure -- but most entries are reached by no test, and several
+    only by kernels outside this file. Removing one would leave the suite
+    green and fail later on a program nobody ran here.
+
+    A new entry is not a problem to be silenced: update this set and say in
+    the commit why that statement is phase-neutral.
+    """
+    registry = EliminateRz.__dict__["_rewrite"].dispatcher.registry
+    registered = {
+        f"{cls.__module__}.{cls.__qualname__}"
+        for cls in registry
+        if cls is not object  # the raising default
+    }
+
+    assert registered == REGISTERED_STATEMENTS
+
+
 # ---------------------------------------------------------------------------
 # Preconditions. Dispatch is exhaustive, so anything unregistered is an error
 # rather than a silent pass -- that is what keeps an Rz from being left behind.
@@ -411,81 +556,182 @@ def test_unregistered_statement_raises():
         rewrite.Walk(EliminateRz()).rewrite(block)
 
 
-def test_multi_block_region_raises():
-    """A phase frame has no IR representation that could cross a block."""
-    region = ir.Region(ir.Block())
-    region.blocks.append(ir.Block())
-    with pytest.raises(EliminateRzError, match="single-block"):
-        EliminateRz().rewrite_Region(region)
+def _constant_angle(block: ir.Block, value: float) -> ir.SSAValue:
+    block.stmts.append(constant := py.Constant(value))
+    return constant.result
 
 
-def test_nested_func_function_raises():
-    """A nested function's region would reset the frame mid-walk."""
-    inner = func.Function(
-        sym_name="inner",
-        signature=func.Signature(inputs=(), output=kirin_types.NoneType),
-        body=ir.Region(ir.Block([func.ConstantNone(), func.Return()])),
+def _symbolic_angle(block: ir.Block, _: float) -> ir.SSAValue:
+    """An angle that arrives as a function argument, so it has no literal."""
+    return block.args.append_from(kirin_types.Float, name="angle")
+
+
+def _initialize_after_a_phase(make_angle, value: float = 0.25) -> ir.Block:
+    """A mid-wire Initialize: invalid, and what the guard below exists to catch."""
+    block = ir.Block()
+    angle = make_angle(block, value)
+    block.stmts.append(q := squin_qubit.stmts.New())
+    block.stmts.append(reg := ilist.New(values=(q.result,), elem_type=QUBIT))
+    block.stmts.append(zero := py.Constant(0.0))
+    block.stmts.append(native_gate.stmts.Rz(angle, reg.result))
+    block.stmts.append(
+        operations.Initialize(zero.result, zero.result, zero.result, reg.result)
     )
-    outer = func.Function(
-        sym_name="outer",
-        signature=func.Signature(inputs=(), output=kirin_types.NoneType),
-        body=ir.Region(ir.Block([inner])),
-    )
-    with pytest.raises(EliminateRzError, match="nested func.Function"):
-        rewrite.Walk(EliminateRz()).rewrite(outer)
+    return block
 
 
-def test_duplicate_qubit_in_one_register_raises():
-    q = squin_qubit.stmts.New()
-    doubled = ilist.New(values=(q.result, q.result), elem_type=QUBIT)
-    quarter = py.Constant(0.25)
-    block = ir.Block(
-        [q, doubled, quarter, native_gate.stmts.Rz(quarter.result, doubled.result)]
-    )
-    with pytest.raises(EliminateRzError, match="more than once"):
-        rewrite.Walk(EliminateRz()).rewrite(block)
+@pytest.mark.parametrize(
+    ("make_angle", "value"),
+    [
+        pytest.param(_constant_angle, 0.25, id="constant"),
+        # Regression: the guard used to compare `_literal(pending) != 0.0`, and
+        # a non-constant has no literal, so an angle arriving as a function
+        # argument raised here -- the very case the SSA-valued frame exists to
+        # support.
+        pytest.param(_symbolic_angle, 0.25, id="symbolic"),
+        # Regression: two Z gates accumulate to exactly one turn, the identity,
+        # and the old comparison against 0.0 rejected that too.
+        pytest.param(_constant_angle, 1.0, id="identity"),
+    ],
+)
+def test_initialize_with_a_pending_frame_raises(make_angle, value):
+    """Initialize sits at the head of a wire; a mid-wire one would drop a phase.
+
+    There is no logical reset statement, and ``_RewriteU3ToInitialize``
+    documents that it assumes no later gate touches the qubit -- so a pending
+    phase here is evidence that an upstream rewrite broke that assumption.
+    Raising says so; popping the frame would quietly accept it.
+    """
+    with pytest.raises(EliminateRzError, match="head of a wire"):
+        rewrite.Walk(EliminateRz()).rewrite(
+            _initialize_after_a_phase(make_angle, value)
+        )
 
 
-def test_non_ilist_register_raises():
-    opaque = ir.TestValue(type=ilist.IListType[QUBIT, kirin_types.Any])
-    quarter = py.Constant(0.25)
-    block = ir.Block([quarter, native_gate.stmts.Rz(quarter.result, opaque)])
-    with pytest.raises(EliminateRzError, match="ilist.New"):
-        rewrite.Walk(EliminateRz()).rewrite(block)
+def test_initialize_with_a_pending_frame_drains_under_no_raise():
+    block = _initialize_after_a_phase(_constant_angle)
+
+    rewrite.Walk(EliminateRz(no_raise=True)).rewrite(block)
+
+    restored = [s for s in block.stmts if isinstance(s, native_gate.stmts.Rz)]
+    assert len(restored) == 1, "the pending phase comes back rather than vanishing"
 
 
-def test_initialize_with_a_pending_frame_raises():
-    """Initialize sits at the head of a wire; a mid-wire one would drop a phase."""
+# ---------------------------------------------------------------------------
+# Best-effort mode. Under `no_raise` a precondition failure drains the pending
+# frame back into the IR as real `Rz` statements instead of raising. That is
+# exact rather than merely conservative: the scan pushes each `Rz` *later* in
+# the circuit, so a pending `alpha` means the emitted program followed by
+# `Rz(alpha)` equals the original, and writing it back restores the original.
+#
+# Skipping the statement *without* draining is the failure mode these tests
+# exist to rule out -- it leaves the program half commuted, structurally valid,
+# and silently wrong.
+# ---------------------------------------------------------------------------
+
+
+def test_unregistered_statement_drains_the_frame_under_no_raise():
+    """The absorbed Rz is written back out, not dropped."""
     q = squin_qubit.stmts.New()
     reg = ilist.New(values=(q.result,), elem_type=QUBIT)
     quarter = py.Constant(0.25)
-    zero = py.Constant(0.0)
+    unknown = ilist.Push(reg.result, q.result)
+    block = ir.Block(
+        [q, reg, quarter, native_gate.stmts.Rz(quarter.result, reg.result), unknown]
+    )
+
+    rewrite.Walk(EliminateRz(no_raise=True)).rewrite(block)
+
+    stmts = list(block.stmts)
+    restored = [stmt for stmt in stmts if isinstance(stmt, native_gate.stmts.Rz)]
+    assert len(restored) == 1, "the pending phase must come back as an Rz"
+    assert restored[0].rotation_angle is quarter.result, "same angle, same SSA value"
+    assert stmts.index(restored[0]) < stmts.index(unknown), "drained before giving up"
+
+
+def test_drained_frame_is_not_reapplied_to_later_gates():
+    """After a drain the frame is empty, which is the state the scan starts in.
+
+    A later ``R`` must therefore keep its original axis: re-applying the phase
+    that was just written back out would double-count it.
+    """
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    axis = py.Constant(0.0)
+    turn = py.Constant(0.5)
+    later = native_gate.stmts.R(axis.result, turn.result, reg.result)
     block = ir.Block(
         [
             q,
             reg,
             quarter,
-            zero,
+            axis,
+            turn,
             native_gate.stmts.Rz(quarter.result, reg.result),
-            operations.Initialize(zero.result, zero.result, zero.result, reg.result),
+            ilist.Push(reg.result, q.result),
+            later,
         ]
     )
-    with pytest.raises(EliminateRzError, match="Initialize"):
-        rewrite.Walk(EliminateRz()).rewrite(block)
+
+    rewrite.Walk(EliminateRz(no_raise=True)).rewrite(block)
+
+    assert later.axis_angle is axis.result
 
 
-def test_star_rz_is_left_alone_and_warns():
+def test_star_rz_is_left_alone_silently(recwarn):
     """STAR puts an Rz on a subset of a block's physical qubits, which this
     rule's per-logical-qubit frame does not model. It passes through -- the
-    commutation still holds -- but the phase reaches the backend, so the rule
-    says so rather than letting it look eliminated."""
+    commutation still holds -- but the phase reaches the backend.
+
+    No warning is emitted for it. The condition is static and the caller
+    cannot act on it, so it belongs in the class docstring; warning instead
+    would fire once per gadget invocation after unrolling, and with no
+    dedicated category, so silencing it would mean silencing every
+    ``UserWarning`` the compiler emits.
+    """
     q = squin_qubit.stmts.New()
     reg = ilist.New(values=(q.result,), elem_type=QUBIT)
     theta = py.Constant(0.03)
     star = operations.StarRz(theta.result, reg.result)
     block = ir.Block([q, reg, theta, star])
 
-    with pytest.warns(UserWarning, match="STAR gadget"):
-        rewrite.Walk(EliminateRz()).rewrite(block)
+    rewrite.Walk(EliminateRz()).rewrite(block)
 
     assert star in list(block.stmts)
+    assert not recwarn.list
+
+
+@pytest.mark.parametrize(
+    ("with_pending_frame", "expected"),
+    [
+        pytest.param(False, False, id="empty_frame_changes_nothing"),
+        pytest.param(True, True, id="pending_frame_is_written_back"),
+    ],
+)
+def test_giving_up_reports_whether_it_actually_changed_the_ir(
+    with_pending_frame, expected
+):
+    """`has_done_something` must describe the IR, not the decision to give up.
+
+    Draining emits one `Rz` per pending phase, so it emits nothing at all when
+    the frame is empty -- the common case, since the scan usually meets
+    something it cannot handle before absorbing any `Rz`. Claiming a change
+    there would tell a `Fixpoint` driver to go round again on an untouched
+    program.
+    """
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    quarter = py.Constant(0.25)
+    stmts = [q, reg, quarter]
+    if with_pending_frame:
+        stmts.append(native_gate.stmts.Rz(quarter.result, reg.result))
+    stmts.append(ilist.Push(reg.result, q.result))  # unregistered: forces a give-up
+    block = ir.Block(stmts)
+
+    before = len(list(block.stmts))
+    result = rewrite.Walk(EliminateRz(no_raise=True)).rewrite(block)
+    after = len(list(block.stmts))
+
+    assert result.has_done_something is expected
+    assert (after != before) is expected, "reported change must match reality"
