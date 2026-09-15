@@ -8,9 +8,11 @@ index space, and the buses that run on it.
 The API is phased, and the phase order is what makes every check
 decidable at the call that raises it:
 
-1. **Words.**  ``add_word`` defines the spec-wide template.  A ``Word`` is
-   a set of ``(x_idx, y_idx)`` grid-index pairs, so the template is
-   independent of any zone's coordinates.
+1. **Words.**  ``add_word`` defines the spec-wide template.  A word is a
+   set of grid ``(row, column)`` index pairs, so the template is
+   independent of any zone's coordinates.  Every index-space API here is
+   ``(rows, columns)``, row-major, including the ``words[...]`` and
+   ``sites[...]`` selections.
 2. **Zones.**  ``add_zone`` supplies coordinates for that index space,
    plus which words and sites take part in transport there.  The template
    is frozen from the first zone on, because a later word would change the
@@ -102,34 +104,34 @@ def _checked_subset(values: Sequence[int], size: int, what: str) -> tuple[int, .
 
 
 class _SiteQuery:
-    """Select site indices within the word shape.
+    """Select site indices within the word shape, as ``[rows, columns]``.
 
-    Traversal is row-major over the selected positions — y the outer loop,
-    x the inner — with each axis visited in the order given.  Site index is
-    ``x + y * num_x``.
+    Traversal is row-major over the selected positions — rows the outer
+    loop, columns the inner — with each axis visited in the order given.
+    Site index is ``column + row * num_columns``.
     """
 
     def __init__(self, word_shape: tuple[int, int]):
-        self._nx, self._ny = word_shape
+        self._rows, self._cols = word_shape
 
     def __getitem__(self, key: tuple[Index, Index]) -> list[int]:
-        x_idx, y_idx = key
-        xs = _query_axis(x_idx, self._nx, "x", "site index")
-        ys = _query_axis(y_idx, self._ny, "y", "site index")
-        return [x + y * self._nx for y in ys for x in xs]
+        row_idx, col_idx = key
+        rows = _query_axis(row_idx, self._rows, "row", "site index")
+        cols = _query_axis(col_idx, self._cols, "column", "site index")
+        return [c + r * self._cols for r in rows for c in cols]
 
 
 class _WordQuery:
-    """Select word IDs by grid region on the spec-wide template.
+    """Select word IDs by grid region, as ``[rows, columns]``.
 
-    The selected positions are traversed row-major — y the outer loop, x
-    the inner, each axis in the order given — and each word is taken at
-    its first arrival, since a word spans several grid positions.
+    The selected positions are traversed row-major — rows the outer loop,
+    columns the inner, each axis in the order given — and each word is
+    taken at its first arrival, since a word spans several grid positions.
 
     Ordering by traversal rather than by word ID matters whenever word IDs
     are not monotone in the grid, which is the normal case for interleaved
-    CZ layouts: scanning x visits words 0, 1, 2, 3, 0, 1, 2, 3, ..., so a
-    partial x-selection reaches them out of ID order.  Because a bus's
+    CZ layouts: scanning a row visits words 0, 1, 2, 3, 0, 1, 2, 3, ..., so
+    a partial column selection reaches them out of ID order.  Because a bus's
     ``src`` and ``dst`` are related by a separable, order-preserving AOD
     transport, selecting both endpoints the same way pairs ``src[i]`` with
     ``dst[i]`` correctly.
@@ -142,15 +144,15 @@ class _WordQuery:
         self._builder = builder
 
     def __getitem__(self, key: tuple[Index, Index]) -> list[int]:
-        x_idx, y_idx = key
-        nx, ny = self._builder.grid_shape
-        xs = _query_axis(x_idx, nx, "x", "grid index")
-        ys = _query_axis(y_idx, ny, "y", "grid index")
+        row_idx, col_idx = key
+        n_rows, n_cols = self._builder.grid_shape
+        rows = _query_axis(row_idx, n_rows, "row", "grid index")
+        cols = _query_axis(col_idx, n_cols, "column", "grid index")
         result: list[int] = []
         seen: set[int] = set()
-        for y in ys:
-            for x in xs:
-                word_id = self._builder._position_to_word.get((x, y))
+        for r in rows:
+            for c in cols:
+                word_id = self._builder._position_to_word.get((c, r))
                 if word_id is not None and word_id not in seen:
                     seen.add(word_id)
                     result.append(word_id)
@@ -196,10 +198,10 @@ class ArchBuilder:
         """Initialize the builder.
 
         Args:
-            grid_shape: ``(num_x, num_y)`` size of the grid index space
-                that word templates index into.  Every zone supplies
-                exactly this many coordinates.
-            word_shape: ``(num_x_sites, num_y_sites)`` for every word;
+            grid_shape: ``(num_rows, num_columns)`` size of the grid index
+                space that word templates index into.  Every zone supplies
+                exactly this many coordinates on each axis.
+            word_shape: ``(num_rows, num_columns)`` of sites in every word;
                 ``sites_per_word`` is their product.
 
         Raises:
@@ -238,12 +240,12 @@ class ArchBuilder:
 
     @property
     def grid_shape(self) -> tuple[int, int]:
-        """``(num_x, num_y)`` of the shared grid index space."""
+        """``(num_rows, num_columns)`` of the shared grid index space."""
         return self._grid_shape
 
     @property
     def word_shape(self) -> tuple[int, int]:
-        """``(num_x_sites, num_y_sites)`` for every word."""
+        """``(num_rows, num_columns)`` of sites in every word."""
         return self._word_shape
 
     @property
@@ -263,23 +265,23 @@ class ArchBuilder:
 
     @property
     def words(self) -> _WordQuery:
-        """Select word IDs by region of the shared grid index space."""
+        """Select word IDs by ``[rows, columns]`` of the grid index space."""
         return _WordQuery(self)
 
     @property
     def sites(self) -> _SiteQuery:
-        """Select site indices within the word shape."""
+        """Select site indices by ``[rows, columns]`` of the word shape."""
         return _SiteQuery(self._word_shape)
 
     # ── Phase 1: the word template ──
 
-    def add_word(self, x: Index, y: Index) -> int:
+    def add_word(self, rows: Index, columns: Index) -> int:
         """Add a word to the spec-wide template.
 
         Args:
-            x: Grid x-indices for the word's sites; must number
+            rows: Grid row indices for the word's sites; must number
                 ``word_shape[0]``.
-            y: Grid y-indices; must number ``word_shape[1]``.
+            columns: Grid column indices; must number ``word_shape[1]``.
 
         Returns:
             The new word ID.
@@ -297,27 +299,29 @@ class ArchBuilder:
                 "a word now would change their occupancy and their transport "
                 "participants. Add every word before the first add_zone."
             )
-        nx, ny = self._grid_shape
-        xs = _query_axis(x, nx, "x", "grid index")
-        ys = _query_axis(y, ny, "y", "grid index")
-        if len(xs) != self._word_shape[0]:
+        n_rows, n_cols = self._grid_shape
+        rs = _query_axis(rows, n_rows, "row", "grid index")
+        cs = _query_axis(columns, n_cols, "column", "grid index")
+        if len(rs) != self._word_shape[0]:
             raise ValueError(
-                f"x has {len(xs)} indices but word_shape requires "
+                f"rows has {len(rs)} indices but word_shape requires "
                 f"{self._word_shape[0]}"
             )
-        if len(ys) != self._word_shape[1]:
+        if len(cs) != self._word_shape[1]:
             raise ValueError(
-                f"y has {len(ys)} indices but word_shape requires "
+                f"columns has {len(cs)} indices but word_shape requires "
                 f"{self._word_shape[1]}"
             )
 
-        positions = [(px, py) for py in ys for px in xs]
+        # Stored in the spec's own ``(x_idx, y_idx)`` order, which is
+        # ``(column, row)``; the row-major traversal is what fixes site IDs.
+        positions = [(c, r) for r in rs for c in cs]
         for pos in positions:
             owner = self._position_to_word.get(pos)
             if owner is not None:
                 raise ValueError(
-                    f"grid position (x={pos[0]}, y={pos[1]}) already belongs "
-                    f"to word {owner}"
+                    f"grid position (row={pos[1]}, column={pos[0]}) already "
+                    f"belongs to word {owner}"
                 )
 
         word_id = len(self._words)
@@ -331,8 +335,8 @@ class ArchBuilder:
     def add_zone(
         self,
         name: str,
-        x: Sequence[float],
-        y: Sequence[float],
+        rows: Sequence[float],
+        columns: Sequence[float],
         *,
         x_clearance: float | None,
         y_clearance: float | None,
@@ -343,9 +347,10 @@ class ArchBuilder:
 
         Args:
             name: Zone name; must be unique.
-            x: ``grid_shape[0]`` x-coordinates in µm, each representable at
-                1 nm precision.
-            y: ``grid_shape[1]`` y-coordinates in µm.
+            rows: ``grid_shape[0]`` row positions — the y-coordinate of
+                each grid row, in µm, each representable at 1 nm precision.
+            columns: ``grid_shape[1]`` column positions — the x-coordinate
+                of each grid column, in µm.
             x_clearance: Minimum x-axis distance (> 0, µm) that path
                 waypoints keep from every grid line.  ``None`` only when
                 paths are inherited from an existing spec via
@@ -373,12 +378,12 @@ class ArchBuilder:
             )
         if name in self._zone_ids:
             raise ValueError(f"duplicate zone name: '{name}'")
-        nx, ny = self._grid_shape
-        if len(x) != nx or len(y) != ny:
+        n_rows, n_cols = self._grid_shape
+        if len(rows) != n_rows or len(columns) != n_cols:
             raise ValueError(
-                f"zone '{name}' supplies {len(x)}x{len(y)} coordinates but "
-                f"grid_shape is {nx}x{ny}; every zone indexes the same shared "
-                "grid index space."
+                f"zone '{name}' supplies {len(rows)} rows x {len(columns)} "
+                f"columns but grid_shape is {n_rows}x{n_cols}; every zone "
+                "indexes the same shared grid index space."
             )
         if x_clearance is not None and x_clearance <= 0:
             raise ValueError(f"x_clearance must be positive, got {x_clearance}")
@@ -402,9 +407,9 @@ class ArchBuilder:
 
         zone = _Zone(
             name=name,
-            grid=_RustGrid.from_positions(list(x), list(y)),
-            grid_x_nm=tuple(to_nm(v, "grid x-position") for v in x),
-            grid_y_nm=tuple(to_nm(v, "grid y-position") for v in y),
+            grid=_RustGrid.from_positions(list(columns), list(rows)),
+            grid_x_nm=tuple(to_nm(v, "column position") for v in columns),
+            grid_y_nm=tuple(to_nm(v, "row position") for v in rows),
             x_clearance_nm=(
                 None if x_clearance is None else to_nm(x_clearance, "x_clearance")
             ),
@@ -782,14 +787,15 @@ class ArchBuilder:
 
         sites = [tuple(s) for s in inner.words[0].sites]
         word_shape = (
-            len({s[0] for s in sites}),
             len({s[1] for s in sites}),
+            len({s[0] for s in sites}),
         )
 
-        shapes = {(z.grid.num_x, z.grid.num_y) for z in inner.zones}
+        shapes = {(z.grid.num_y, z.grid.num_x) for z in inner.zones}
         if len(shapes) > 1:
             raise ValueError(
-                f"zones disagree on grid dimensions: {sorted(shapes)}. The word "
+                f"zones disagree on grid dimensions (rows, columns): "
+                f"{sorted(shapes)}. The word "
                 "template indexes one shared index space, so every zone's grid "
                 "must have the same dimensions."
             )
@@ -799,15 +805,15 @@ class ArchBuilder:
         for word in inner.words:
             positions = [tuple(s) for s in word.sites]
             builder.add_word(
-                x=sorted({p[0] for p in positions}),
-                y=sorted({p[1] for p in positions}),
+                rows=sorted({p[1] for p in positions}),
+                columns=sorted({p[0] for p in positions}),
             )
 
         for zone in inner.zones:
             builder.add_zone(
                 zone.name,
-                x=list(zone.grid.x_positions),
-                y=list(zone.grid.y_positions),
+                rows=list(zone.grid.y_positions),
+                columns=list(zone.grid.x_positions),
                 x_clearance=x_clearance,
                 y_clearance=y_clearance,
                 words_with_site_buses=(

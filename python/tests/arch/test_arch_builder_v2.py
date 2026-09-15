@@ -26,20 +26,20 @@ def interleaved(rows: int = 2, cols: int = 4) -> ArchBuilder:
     0, 1, ..., cols-1, 0, 1, ... and a partial x-selection reaches them out
     of ID order.
     """
-    b = ArchBuilder(grid_shape=(cols * 2, rows), word_shape=(2, 1))
+    b = ArchBuilder(grid_shape=(rows, cols * 2), word_shape=(1, 2))
     for row in range(rows):
         for col in range(cols):
-            b.add_word(x=[col, col + cols], y=[row])
+            b.add_word(rows=[row], columns=[col, col + cols])
     return b
 
 
 def with_zone(b: ArchBuilder, name: str = "z", **kwargs) -> ArchBuilder:
     """Attach a unit-spaced zone covering the builder's index space."""
-    nx, ny = b.grid_shape
+    n_rows, n_cols = b.grid_shape
     b.add_zone(
         name,
-        x=[float(i) for i in range(nx)],
-        y=[10.0 * j for j in range(ny)],
+        rows=[10.0 * j for j in range(n_rows)],
+        columns=[float(i) for i in range(n_cols)],
         x_clearance=_CL,
         y_clearance=3.0,
         **kwargs,
@@ -54,68 +54,74 @@ class TestTemplate:
     def test_words_are_frozen_by_the_first_zone(self):
         b = with_zone(interleaved())
         with pytest.raises(ValueError, match="word template is frozen"):
-            b.add_word(x=[0, 1], y=[0])
+            b.add_word(rows=[0], columns=[0, 1])
 
     def test_zone_needs_a_template_first(self):
-        b = ArchBuilder(grid_shape=(4, 1), word_shape=(2, 1))
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 2))
         with pytest.raises(ValueError, match="add_word before adding a zone"):
             with_zone(b)
 
     def test_overlapping_words_are_rejected(self):
-        b = ArchBuilder(grid_shape=(4, 1), word_shape=(2, 1))
-        b.add_word(x=[0, 1], y=[0])
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 2))
+        b.add_word(rows=[0], columns=[0, 1])
         with pytest.raises(ValueError, match="already belongs to word 0"):
-            b.add_word(x=[1, 2], y=[0])
+            b.add_word(rows=[0], columns=[1, 2])
 
     def test_word_shape_is_enforced(self):
-        b = ArchBuilder(grid_shape=(4, 1), word_shape=(2, 1))
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 2))
         with pytest.raises(ValueError, match="word_shape requires 2"):
-            b.add_word(x=[0], y=[0])
+            b.add_word(rows=[0], columns=[0])
 
     def test_every_zone_indexes_the_same_space(self):
         b = interleaved()
-        with pytest.raises(ValueError, match="grid_shape is 8x2"):
-            b.add_zone("z", x=[0.0, 1.0], y=[0.0], x_clearance=_CL, y_clearance=_CL)
+        with pytest.raises(ValueError, match="grid_shape is 2x8"):
+            b.add_zone(
+                "z",
+                rows=[0.0],
+                columns=[0.0, 1.0],
+                x_clearance=_CL,
+                y_clearance=_CL,
+            )
 
 
 class TestTemplateQueries:
     def test_partial_selection_follows_the_grid_not_word_ids(self):
         # x index 3 is a site of word 3; x index 4 is a site of word 0.
-        assert interleaved().words[[3, 4], [0, 1]] == [3, 0, 7, 4]
+        assert interleaved().words[[0, 1], [3, 4]] == [3, 0, 7, 4]
 
     def test_axis_order_is_the_callers(self):
         b = interleaved()
-        assert b.words[[4, 3], [0, 1]] == [0, 3, 4, 7]
-        assert b.words[[3, 4], [1, 0]] == [7, 4, 3, 0]
+        assert b.words[[0, 1], [4, 3]] == [0, 3, 4, 7]
+        assert b.words[[1, 0], [3, 4]] == [7, 4, 3, 0]
 
     def test_rows_are_the_outer_loop(self):
         assert interleaved().words[:, :] == [0, 1, 2, 3, 4, 5, 6, 7]
 
     def test_word_reached_twice_is_appended_once(self):
-        # Both x=0 and x=4 are sites of word 0.
-        assert interleaved().words[[0, 4], 0] == [0]
+        # Both column 0 and column 4 are sites of word 0.
+        assert interleaved().words[0, [0, 4]] == [0]
 
     def test_out_of_range_raises(self):
-        with pytest.raises(IndexError, match=r"x grid index \[99\]"):
-            interleaved().words[[0, 99], 0]
+        with pytest.raises(IndexError, match=r"column grid index \[99\]"):
+            interleaved().words[0, [0, 99]]
 
     def test_negative_raises(self):
-        with pytest.raises(IndexError, match=r"x grid index \[-1\]"):
-            interleaved().words[[-1], 0]
+        with pytest.raises(IndexError, match=r"column grid index \[-1\]"):
+            interleaved().words[0, [-1]]
 
     def test_repeated_index_raises(self):
-        with pytest.raises(ValueError, match=r"x grid index \[0\] repeated"):
-            interleaved().words[[0, 0, 1], 0]
+        with pytest.raises(ValueError, match=r"column grid index \[0\] repeated"):
+            interleaved().words[0, [0, 0, 1]]
 
     def test_slices_are_clamped_not_rejected(self):
-        assert interleaved().words[0:99, 0] == [0, 1, 2, 3]
+        assert interleaved().words[0, 0:99] == [0, 1, 2, 3]
 
     def test_reverse_slice_expands_descending(self):
-        assert interleaved().words[::-1, 0] == [3, 2, 1, 0]
+        assert interleaved().words[0, ::-1] == [3, 2, 1, 0]
 
     def test_site_query_validates_too(self):
-        with pytest.raises(IndexError, match=r"x site index \[9\]"):
-            interleaved().sites[[9], 0]
+        with pytest.raises(IndexError, match=r"column site index \[9\]"):
+            interleaved().sites[0, [9]]
 
 
 # ── Bus realizability ──
@@ -131,10 +137,10 @@ class TestBusRealizability:
     """
 
     def _rows(self, cols: int = 4) -> ArchBuilder:
-        b = ArchBuilder(grid_shape=(cols, 2), word_shape=(1, 1))
+        b = ArchBuilder(grid_shape=(2, cols), word_shape=(1, 1))
         for y in range(2):
             for x in range(cols):
-                b.add_word(x=[x], y=[y])
+                b.add_word(rows=[y], columns=[x])
         return with_zone(b)
 
     def test_uniform_translation_is_accepted(self):
@@ -155,7 +161,7 @@ class TestBusRealizability:
         b = ArchBuilder(grid_shape=(2, 2), word_shape=(1, 1))
         for y in range(2):
             for x in range(2):
-                b.add_word(x=[x], y=[y])
+                b.add_word(rows=[y], columns=[x])
         with_zone(b)
         # row 0 holds still; row 1 swaps columns.
         with pytest.raises(ValueError, match="stay on its own"):
@@ -168,15 +174,15 @@ class TestBusRealizability:
 
     def test_non_uniform_but_separable_is_accepted(self):
         """Compressing a rectangle gives each column its own displacement."""
-        b = ArchBuilder(grid_shape=(4, 2), word_shape=(1, 1))
+        b = ArchBuilder(grid_shape=(2, 4), word_shape=(1, 1))
         for x in (0, 2, 3):  # x = 0, 10, 20
-            b.add_word(x=[x], y=[0])
+            b.add_word(rows=[0], columns=[x])
         for x in (0, 1, 2):  # x = 0, 5, 10
-            b.add_word(x=[x], y=[1])
+            b.add_word(rows=[1], columns=[x])
         b.add_zone(
             "z",
-            x=[0.0, 5.0, 10.0, 20.0],
-            y=[0.0, 30.0],
+            rows=[0.0, 30.0],
+            columns=[0.0, 5.0, 10.0, 20.0],
             x_clearance=_CL,
             y_clearance=3.0,
         )
@@ -214,10 +220,10 @@ class TestStowaways:
     """
 
     def _l_shape(self, **zone_kwargs) -> ArchBuilder:
-        b = ArchBuilder(grid_shape=(4, 2), word_shape=(2, 1))
-        b.add_word(x=[0, 1], y=[0])
-        b.add_word(x=[2, 3], y=[0])
-        b.add_word(x=[0, 1], y=[1])
+        b = ArchBuilder(grid_shape=(2, 4), word_shape=(1, 2))
+        b.add_word(rows=[0], columns=[0, 1])
+        b.add_word(rows=[0], columns=[2, 3])
+        b.add_word(rows=[1], columns=[0, 1])
         return with_zone(b, **zone_kwargs)
 
     def test_empty_intersection_is_allowed(self):
@@ -227,19 +233,19 @@ class TestStowaways:
 
     def test_occupied_intersection_is_rejected(self):
         """A fourth word fills the crossing but sits out the bus."""
-        b = ArchBuilder(grid_shape=(4, 2), word_shape=(2, 1))
+        b = ArchBuilder(grid_shape=(2, 4), word_shape=(1, 2))
         for y in range(2):
             for x0 in (0, 2):
-                b.add_word(x=[x0, x0 + 1], y=[y])
+                b.add_word(rows=[y], columns=[x0, x0 + 1])
         with_zone(b, words_with_site_buses=[0, 1, 2])  # word 3 opts out
         with pytest.raises(ValueError, match="would be carried along"):
             b.add_site_bus("z", src=[0], dst=[1])
 
     def test_including_the_intruder_makes_it_legal(self):
-        b = ArchBuilder(grid_shape=(4, 2), word_shape=(2, 1))
+        b = ArchBuilder(grid_shape=(2, 4), word_shape=(1, 2))
         for y in range(2):
             for x0 in (0, 2):
-                b.add_word(x=[x0, x0 + 1], y=[y])
+                b.add_word(rows=[y], columns=[x0, x0 + 1])
         with_zone(b)  # every word participates
         b.add_site_bus("z", src=[0], dst=[1])
 
@@ -254,10 +260,10 @@ class TestParticipation:
 
     def test_sites_with_word_buses_is_not_forced_to_every_site(self):
         """The legacy builder could not express a proper subset here."""
-        b = ArchBuilder(grid_shape=(4, 2), word_shape=(2, 1))
+        b = ArchBuilder(grid_shape=(2, 4), word_shape=(1, 2))
         for y in range(2):
             for x0 in (0, 2):
-                b.add_word(x=[x0, x0 + 1], y=[y])
+                b.add_word(rows=[y], columns=[x0, x0 + 1])
         with_zone(b, sites_with_word_buses=[0])
         b.add_word_bus("z", src=[0, 1], dst=[2, 3])
         b.add_mode("all", ["z"])
@@ -279,7 +285,7 @@ class TestBuild:
     def test_selected_endpoints_pair_into_a_routable_bus(self):
         b = interleaved()
         with_zone(b)
-        src, dst = b.words[:, 0], b.words[:, 1]
+        src, dst = b.words[0, :], b.words[1, :]
         assert (src, dst) == ([0, 1, 2, 3], [4, 5, 6, 7])
         b.add_word_bus("z", src, dst)
         b.add_mode("all", ["z"])
@@ -289,21 +295,21 @@ class TestBuild:
         assert len(spec.paths) == 16
 
     def test_build_requires_words_and_zones(self):
-        b = ArchBuilder(grid_shape=(2, 1), word_shape=(1, 1))
+        b = ArchBuilder(grid_shape=(1, 2), word_shape=(1, 1))
         with pytest.raises(ValueError, match="no words defined"):
             b.build()
-        b.add_word(x=[0], y=[0])
+        b.add_word(rows=[0], columns=[0])
         with pytest.raises(ValueError, match="no zones defined"):
             b.build()
 
     def test_blockade_radius_derives_pairs_per_zone(self):
-        b = ArchBuilder(grid_shape=(4, 1), word_shape=(1, 1))
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 1))
         for x in range(4):
-            b.add_word(x=[x], y=[0])
+            b.add_word(rows=[0], columns=[x])
         b.add_zone(
             "z",
-            x=[0.0, 1.0, 10.0, 11.0],
-            y=[0.0],
+            rows=[0.0],
+            columns=[0.0, 1.0, 10.0, 11.0],
             x_clearance=_CL,
             y_clearance=_CL,
         )
@@ -378,10 +384,10 @@ class TestFromSpec:
 class Layout:
     """One zone, described once and built through both builders."""
 
-    x: tuple[float, ...]
-    y: tuple[float, ...]
-    word_shape: tuple[int, int]
-    words: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
+    rows: tuple[float, ...]  # y-coordinate of each grid row, µm
+    columns: tuple[float, ...]  # x-coordinate of each grid column, µm
+    word_shape: tuple[int, int]  # (num_rows, num_columns)
+    words: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]  # (rows, columns)
     site_bus_words: tuple[int, ...] | None = None
     site_buses: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = ()
     word_buses: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = ()
@@ -390,17 +396,18 @@ class Layout:
     y_clearance: float = 3.0
 
     def legacy(self) -> ArchSpec:
+        # The legacy builder is (x, y) / (num_x, num_y) throughout.
         zone = ZoneBuilder.from_positions(
             "z",
-            list(self.x),
-            list(self.y),
-            self.word_shape,
+            list(self.columns),
+            list(self.rows),
+            (self.word_shape[1], self.word_shape[0]),
             x_clearance=self.x_clearance,
             y_clearance=self.y_clearance,
         )
-        for i, (xs, ys) in enumerate(self.words):
+        for i, (rs, cs) in enumerate(self.words):
             opts_in = self.site_bus_words is None or i in self.site_bus_words
-            zone.add_word(list(xs), list(ys), has_site_bus=opts_in)
+            zone.add_word(list(cs), list(rs), has_site_bus=opts_in)
         for src, dst in self.site_buses:
             zone.add_site_bus(list(src), list(dst))
         for src, dst in self.word_buses:
@@ -414,14 +421,15 @@ class Layout:
 
     def modern(self) -> ArchSpec:
         b = ArchBuilder(
-            grid_shape=(len(self.x), len(self.y)), word_shape=self.word_shape
+            grid_shape=(len(self.rows), len(self.columns)),
+            word_shape=self.word_shape,
         )
-        for xs, ys in self.words:
-            b.add_word(x=list(xs), y=list(ys))
+        for rs, cs in self.words:
+            b.add_word(rows=list(rs), columns=list(cs))
         b.add_zone(
             "z",
-            x=list(self.x),
-            y=list(self.y),
+            rows=list(self.rows),
+            columns=list(self.columns),
             x_clearance=self.x_clearance,
             y_clearance=self.y_clearance,
             words_with_site_buses=(
@@ -454,28 +462,28 @@ def assert_specs_equal(a: ArchSpec, b: ArchSpec) -> None:
 
 
 ROWS = Layout(
-    x=(0.0, 1.0, 2.0, 3.0),
-    y=(0.0, 10.0),
+    rows=(0.0, 10.0),
+    columns=(0.0, 1.0, 2.0, 3.0),
     word_shape=(1, 1),
-    words=tuple(((x,), (y,)) for y in (0, 1) for x in range(4)),
+    words=tuple(((y,), (x,)) for y in (0, 1) for x in range(4)),
     word_buses=(((0, 1, 2, 3), (4, 5, 6, 7)),),
 )
 
 INTERLEAVED = Layout(
-    x=tuple(float(i) for i in range(8)),
-    y=(0.0, 10.0),
-    word_shape=(2, 1),
-    words=tuple(((c, c + 4), (r,)) for r in (0, 1) for c in range(4)),
+    rows=(0.0, 10.0),
+    columns=tuple(float(i) for i in range(8)),
+    word_shape=(1, 2),
+    words=tuple(((r,), (c, c + 4)) for r in (0, 1) for c in range(4)),
     site_buses=(((0,), (1,)),),
     word_buses=(((0, 1, 2, 3), (4, 5, 6, 7)),),
 )
 
 OPTED_OUT = Layout(
-    x=(0.0, 10.0, 100.0, 130.0, 200.0, 230.0),
-    y=(0.0,),
-    word_shape=(2, 1),
+    rows=(0.0,),
+    columns=(0.0, 10.0, 100.0, 130.0, 200.0, 230.0),
+    word_shape=(1, 2),
     # Word 0 has a 10 µm site pitch and sits the bus out; words 1-2 use 30 µm.
-    words=(((0, 1), (0,)), ((2, 3), (0,)), ((4, 5), (0,))),
+    words=(((0,), (0, 1)), ((0,), (2, 3)), ((0,), (4, 5))),
     site_bus_words=(1, 2),
     site_buses=(((0,), (1,)),),
     x_clearance=0.5,
@@ -483,10 +491,10 @@ OPTED_OUT = Layout(
 )
 
 BLOCKADE = Layout(
-    x=(0.0, 1.0, 10.0, 11.0),
-    y=(0.0,),
+    rows=(0.0,),
+    columns=(0.0, 1.0, 10.0, 11.0),
     word_shape=(1, 1),
-    words=tuple(((x,), (0,)) for x in range(4)),
+    words=tuple(((0,), (x,)) for x in range(4)),
     radius=2.0,
 )
 
@@ -510,7 +518,7 @@ class TestParityWithLegacyBuilder:
 
     def test_multi_zone_with_a_connection_matches(self):
         x, y = [0.0, 1.0, 2.0, 3.0], [0.0]
-        words = [([c], [0]) for c in range(4)]
+        words = [([0], [c]) for c in range(4)]  # (rows, columns)
 
         zones = []
         for name, shift in (("a", 0.0), ("b", 50.0)):
@@ -522,8 +530,8 @@ class TestParityWithLegacyBuilder:
                 x_clearance=0.25,
                 y_clearance=0.25,
             )
-            for xs, ys in words:
-                z.add_word(xs, ys)
+            for rs, cs in words:
+                z.add_word(cs, rs)  # legacy is (x, y)
             z.add_word_bus(src=[0, 1], dst=[2, 3])
             zones.append(z)
         legacy_builder = LegacyArchBuilder()
@@ -532,14 +540,14 @@ class TestParityWithLegacyBuilder:
         legacy_builder.connect(("a", [0, 1]), ("b", [0, 1]))
         legacy_builder.add_mode("all", ["a", "b"])
 
-        b = ArchBuilder(grid_shape=(4, 1), word_shape=(1, 1))
-        for xs, ys in words:
-            b.add_word(x=xs, y=ys)
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 1))
+        for rs, cs in words:
+            b.add_word(rows=rs, columns=cs)
         for name, shift in (("a", 0.0), ("b", 50.0)):
             b.add_zone(
                 name,
-                x=[v + shift for v in x],
-                y=y,
+                rows=y,
+                columns=[v + shift for v in x],
                 x_clearance=0.25,
                 y_clearance=0.25,
             )
@@ -703,8 +711,8 @@ class TestAddBusesGivenAnArchitecture:
 
     def test_selection_preserves_order_so_src_i_maps_to_dst_i(self):
         b = interleaved()
-        assert b.words[:, 0] == [0, 1, 2, 3]
-        assert b.words[[3, 2, 1, 0], 0] == [3, 2, 1, 0]
+        assert b.words[0, :] == [0, 1, 2, 3]
+        assert b.words[0, [3, 2, 1, 0]] == [3, 2, 1, 0]
 
     def test_whole_axis_selects_everything_in_order(self):
         b = interleaved()
@@ -712,29 +720,29 @@ class TestAddBusesGivenAnArchitecture:
 
     def test_duplicate_indices_are_rejected(self):
         with pytest.raises(ValueError, match="repeated"):
-            interleaved().words[[0, 0], 0]
+            interleaved().words[0, [0, 0]]
 
     def test_out_of_range_indices_are_rejected(self):
         with pytest.raises(IndexError, match="out of range"):
-            interleaved().words[[99], 0]
+            interleaved().words[0, [99]]
 
     def test_mismatched_selection_sizes_are_rejected(self):
         b = with_zone(interleaved())
         with pytest.raises(ValueError, match="src has 4 entries but dst has 2"):
-            b.add_word_bus("z", src=b.words[:, 0], dst=b.words[[0, 1], 1])
+            b.add_word_bus("z", src=b.words[0, :], dst=b.words[1, [0, 1]])
 
     def test_a_duplicate_word_bus_is_rejected(self):
         b = with_zone(interleaved())
-        src, dst = b.words[:, 0], b.words[:, 1]
+        src, dst = b.words[0, :], b.words[1, :]
         b.add_word_bus("z", src, dst)
         with pytest.raises(ValueError, match="word bus 0 already has this exact"):
             b.add_word_bus("z", src, dst)
         assert len(b._zones[0].word_buses) == 1
 
     def test_a_duplicate_site_bus_is_rejected(self):
-        b = ArchBuilder(grid_shape=(4, 1), word_shape=(2, 1))
-        b.add_word(x=[0, 1], y=[0])
-        b.add_word(x=[2, 3], y=[0])
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 2))
+        b.add_word(rows=[0], columns=[0, 1])
+        b.add_word(rows=[0], columns=[2, 3])
         with_zone(b)
         b.add_site_bus("z", src=[0], dst=[1])
         with pytest.raises(ValueError, match="site bus 0 already has this exact"):
@@ -742,7 +750,7 @@ class TestAddBusesGivenAnArchitecture:
 
     def test_the_reverse_of_a_bus_is_not_a_duplicate(self):
         b = with_zone(interleaved())
-        src, dst = b.words[:, 0], b.words[:, 1]
+        src, dst = b.words[0, :], b.words[1, :]
         b.add_word_bus("z", src, dst)
         b.add_word_bus("z", dst, src)
         assert len(b._zones[0].word_buses) == 2

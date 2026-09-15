@@ -95,17 +95,17 @@ has `words_with_site_buses: [1, 3, 5, ..., 19]`, odd words only.
 ## Proposed API
 
 ```python
-b = ArchBuilder(grid_shape=(32, 5), word_shape=(8, 1))
+b = ArchBuilder(grid_shape=(5, 32), word_shape=(1, 8))   # (rows, columns)
 
 # 1. Word template — spec-wide index patterns, defined once.
-b.add_word(x=[0, 4, 8, 12, 16, 20, 24, 28], y=[0])   # -> word 0
-b.add_word(x=[1, 5, 9, 13, 17, 21, 25, 29], y=[0])   # -> word 1
+b.add_word(rows=[0], columns=[0, 4, 8, 12, 16, 20, 24, 28])   # -> word 0
+b.add_word(rows=[0], columns=[1, 5, 9, 13, 17, 21, 25, 29])   # -> word 1
 
 # 2. Zones — a name plus coordinates for that shared index space,
 #    plus which words/sites take part in transport here.
 b.add_zone(
     "gate",
-    x=[...32 coordinates...], y=[...5 coordinates...],
+    rows=[...5 row positions, µm...], columns=[...32 column positions...],
     x_clearance=..., y_clearance=...,
     words_with_site_buses=[1, 3, 5, ...],
     sites_with_word_buses=range(8),
@@ -121,6 +121,19 @@ b.set_blockade_radius(2.0)          # derives per-zone entangling_pairs
 b.add_mode("all", ["gate"])
 spec = b.build()
 ```
+
+### Index order
+
+Every index-space API is `(rows, columns)`, row-major — `grid_shape`,
+`word_shape`, `add_word`, and the `words[...]` / `sites[...]` selections. This
+follows the selection convention specified in bloqade-internal#445 rather than
+the legacy builder's `(x, y)`; since this is a new API there is no reason to
+carry the old order forward. Coordinates keep their physical meaning: a zone's
+`rows` are y-positions and its `columns` are x-positions, in µm.
+
+Internally, positions are still stored in the spec's own `(x_idx, y_idx)`
+order, because that is what `Word.sites` holds; the transposition happens at
+the API boundary and nowhere else.
 
 ### What this makes unrepresentable
 
