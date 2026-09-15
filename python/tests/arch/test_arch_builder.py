@@ -1075,6 +1075,23 @@ class TestAODCompatibility:
         assert zone.num_words == 2
         assert (0, 1) not in zone._position_to_word
 
+    def test_duplicate_site_indices_are_rejected(self):
+        """A repeat passes the count check but collapses two sites onto one.
+
+        The overlap check cannot catch it: it runs before any of the word's
+        own positions is recorded, so the second copy does not yet look
+        taken.
+        """
+        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=3.0)
+        with pytest.raises(ValueError, match=r"x_sites \[0\] repeated"):
+            zone.add_word([0, 0], [0])
+        assert zone.num_words == 0
+        with pytest.raises(ValueError, match=r"y_sites \[1\] repeated"):
+            ZoneBuilder("z", grid, (2, 2), x_clearance=0.25, y_clearance=3.0).add_word(
+                [0, 1], [1, 1]
+            )
+
     def test_word_opting_out_does_not_join(self):
         """Same layout, but the new word declines site-bus transport."""
         grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0, 10.0])
@@ -1114,6 +1131,57 @@ class TestAODCompatibility:
         with pytest.warns(UserWarning, match="inconsistent word displacements"):
             paths = zone._compute_paths(zone_id=0)
         assert not any(k.move_type == MoveType.WORD for k in paths)
+
+
+class TestSiteBusMoverConsistency:
+    """The mover set must govern reference, obstacles and emitted lanes.
+
+    Only words flagged ``has_site_bus`` are carried when a site bus fires.
+    Using that set for some of the path computation and word 0 for the rest
+    applies a delta from a word the bus does not move.
+    """
+
+    def _zone(self) -> ZoneBuilder:
+        # word 0 opts out and has a 100 µm site pitch; words 1 and 2 opt in
+        # with a 10 µm pitch.
+        xs = [0.0, 100.0, 200.0, 210.0, 300.0, 310.0]
+        zone = ZoneBuilder(
+            "z",
+            Grid.from_positions(xs, [0.0]),
+            (2, 1),
+            x_clearance=0.25,
+            y_clearance=0.25,
+        )
+        zone.add_word([0, 1], [0], has_site_bus=False)
+        zone.add_word([2, 3], [0])
+        zone.add_word([4, 5], [0])
+        zone.add_site_bus([0], [1])
+        return zone
+
+    def test_paths_land_on_their_destinations(self):
+        zone = self._zone()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            paths = zone._compute_paths(zone_id=0)
+        for lane, waypoints in paths.items():
+            if lane.direction is Direction.FORWARD:
+                dst_x, dst_y = zone._site_nm(lane.word_id, 1)
+                assert waypoints[-1] == (dst_x / 1000, dst_y / 1000)
+
+    def test_no_lane_for_a_word_that_opted_out(self):
+        paths = self._zone()._compute_paths(zone_id=0)
+        assert sorted({lane.word_id for lane in paths}) == [1, 2]
+
+    def test_empty_mover_set_is_skipped(self):
+        """No word takes part, so there is no reference atom to route from."""
+        grid = Grid.from_positions([0.0, 1.0, 2.0, 3.0], [0.0])
+        zone = ZoneBuilder("z", grid, (2, 1), x_clearance=0.25, y_clearance=0.25)
+        zone.add_word([0, 1], [0], has_site_bus=False)
+        zone.add_word([2, 3], [0], has_site_bus=False)
+        zone.add_site_bus([0], [1])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert zone._compute_paths(zone_id=0) == {}
 
 
 class TestSearchFailureWarning:

@@ -415,6 +415,18 @@ class ZoneBuilder:
                 f"{self._word_shape[1]}"
             )
 
+        # A repeated index satisfies the count check above while collapsing
+        # two sites onto one grid position, producing a word that claims
+        # sites_per_word atoms but occupies fewer — the overlap check below
+        # cannot see it, since it runs before any of them is recorded.
+        for axis, values in (("x_sites", xs), ("y_sites", ys)):
+            repeated = sorted(i for i, n in Counter(values).items() if n > 1)
+            if repeated:
+                raise ValueError(
+                    f"{axis} {repeated} repeated in {values}; each site of a "
+                    "word must occupy its own grid position"
+                )
+
         for x in xs:
             if x < 0 or x >= self._grid.num_x:
                 raise IndexError(
@@ -455,7 +467,7 @@ class ZoneBuilder:
                 except ValueError as exc:
                     self._words.pop()
                     self._word_has_site_bus.pop()
-                    for pos in positions:
+                    for pos in set(positions):
                         del self._position_to_word[pos]
                     raise ValueError(
                         f"adding this word to zone '{self._name}' would make "
@@ -1144,20 +1156,34 @@ class ZoneBuilder:
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
 
         # ── Site bus paths (intra-word) ──
+        # Only words flagged ``has_site_bus`` are carried when a site bus
+        # fires — they alone appear in ``words_with_site_buses`` — so the
+        # mover set governs the displacement check, the reference atom, the
+        # obstacle set and the lanes emitted.  Using it in some of those and
+        # word 0 in the others silently mismatches: the reference's delta
+        # gets applied to words it does not describe, and every emitted path
+        # ends away from its destination.
+        movers = self._site_bus_words()
         for bus_id, (src_sites, dst_sites) in enumerate(self._site_buses):
+            if not movers:
+                # Nothing takes part, so the bus carries nothing and there
+                # is no reference atom to route from.
+                continue
+            ref_word = movers[0]
+
             # The search derives one reference path and applies its deltas
             # to every lane, so it handles rigid translations only — a
             # stricter rule than ``add_site_bus`` enforces, which also
             # admits separable compression.  Every participating word is
-            # compared, not just word 0: sampling one word would apply its
-            # delta to a word of different internal pitch and store a path
-            # ending away from its destination.
+            # compared, not just the reference: sampling one word would
+            # apply its delta to a word of different internal pitch and
+            # store a path ending away from its destination.
             displacements = {
                 (
                     self._site_nm(w, ds)[0] - self._site_nm(w, ss)[0],
                     self._site_nm(w, ds)[1] - self._site_nm(w, ss)[1],
                 )
-                for w in self._site_bus_words()
+                for w in movers
                 for ss, ds in zip(src_sites, dst_sites)
             }
             if len(displacements) > 1:
@@ -1170,12 +1196,10 @@ class ZoneBuilder:
                 )
                 continue
 
-            bus_src_atoms = [
-                self._site_nm(w, s) for w in range(self.num_words) for s in src_sites
-            ]
+            bus_src_atoms = [self._site_nm(w, s) for w in movers for s in src_sites]
 
-            ref_src = self._site_nm(0, src_sites[0])
-            ref_dst = self._site_nm(0, dst_sites[0])
+            ref_src = self._site_nm(ref_word, src_sites[0])
+            ref_dst = self._site_nm(ref_word, dst_sites[0])
 
             if ref_src == ref_dst:
                 ref_waypoints: tuple[tuple[int, int], ...] = (ref_src, ref_dst)
@@ -1192,7 +1216,7 @@ class ZoneBuilder:
                     continue
                 ref_waypoints = result
 
-            for local_word in range(self.num_words):
+            for local_word in movers:
                 for src_s in src_sites:
                     lane_src = self._site_nm(local_word, src_s)
                     lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
