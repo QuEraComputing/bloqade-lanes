@@ -1,12 +1,19 @@
 """Tests for the spec-shaped ArchBuilder in ``arch.build.v2``."""
 
 import warnings
+from dataclasses import dataclass
 
 import pytest
 
+from bloqade.lanes.arch.build.imperative import (
+    ArchBuilder as LegacyArchBuilder,
+    ZoneBuilder,
+)
 from bloqade.lanes.arch.build.v2 import ArchBuilder
 from bloqade.lanes.arch.gemini.logical.spec import get_arch_spec as logical_spec
 from bloqade.lanes.arch.gemini.physical.spec import get_arch_spec as physical_spec
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import MoveType
 
 _CL = 0.25
 
@@ -358,3 +365,408 @@ class TestFromSpec:
         b.add_word_bus(name, src=b.words[0, 0], dst=b.words[0, 0])
         with pytest.raises(ValueError, match="no clearances"):
             b.build()
+
+
+# ── Parity with the legacy builder ──
+#
+# The two builders share one geometry layer, so an architecture expressed
+# both ways must produce the same ArchSpec — words, zones, buses,
+# participation, entangling pairs, modes and every transport path.
+
+
+@dataclass(frozen=True)
+class Layout:
+    """One zone, described once and built through both builders."""
+
+    x: tuple[float, ...]
+    y: tuple[float, ...]
+    word_shape: tuple[int, int]
+    words: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
+    site_bus_words: tuple[int, ...] | None = None
+    site_buses: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = ()
+    word_buses: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = ()
+    radius: float | None = None
+    x_clearance: float = 0.25
+    y_clearance: float = 3.0
+
+    def legacy(self) -> ArchSpec:
+        zone = ZoneBuilder.from_positions(
+            "z",
+            list(self.x),
+            list(self.y),
+            self.word_shape,
+            x_clearance=self.x_clearance,
+            y_clearance=self.y_clearance,
+        )
+        for i, (xs, ys) in enumerate(self.words):
+            opts_in = self.site_bus_words is None or i in self.site_bus_words
+            zone.add_word(list(xs), list(ys), has_site_bus=opts_in)
+        for src, dst in self.site_buses:
+            zone.add_site_bus(list(src), list(dst))
+        for src, dst in self.word_buses:
+            zone.add_word_bus(src=list(src), dst=list(dst))
+        builder = LegacyArchBuilder()
+        builder.add_zone(zone)
+        builder.add_mode("all", ["z"])
+        if self.radius is not None:
+            builder.set_blockade_radius(self.radius)
+        return builder.build()
+
+    def modern(self) -> ArchSpec:
+        b = ArchBuilder(
+            grid_shape=(len(self.x), len(self.y)), word_shape=self.word_shape
+        )
+        for xs, ys in self.words:
+            b.add_word(x=list(xs), y=list(ys))
+        b.add_zone(
+            "z",
+            x=list(self.x),
+            y=list(self.y),
+            x_clearance=self.x_clearance,
+            y_clearance=self.y_clearance,
+            words_with_site_buses=(
+                None if self.site_bus_words is None else list(self.site_bus_words)
+            ),
+        )
+        for src, dst in self.site_buses:
+            b.add_site_bus("z", list(src), list(dst))
+        for src, dst in self.word_buses:
+            b.add_word_bus("z", list(src), list(dst))
+        b.add_mode("all", ["z"])
+        if self.radius is not None:
+            b.set_blockade_radius(self.radius)
+        return b.build()
+
+
+def assert_specs_equal(a: ArchSpec, b: ArchSpec) -> None:
+    """Compare two specs field by field, paths included."""
+    assert a._inner.words == b._inner.words
+    assert list(a._inner.zones) == list(b._inner.zones)
+    assert list(a._inner.zone_buses) == list(b._inner.zone_buses)
+    assert [(m.name, list(m.zones)) for m in a._inner.modes] == [
+        (m.name, list(m.zones)) for m in b._inner.modes
+    ]
+    assert [list(m.bitstring_order) for m in a._inner.modes] == [
+        list(m.bitstring_order) for m in b._inner.modes
+    ]
+    assert a.blockade_radius == b.blockade_radius
+    assert (a.paths or {}) == (b.paths or {})
+
+
+ROWS = Layout(
+    x=(0.0, 1.0, 2.0, 3.0),
+    y=(0.0, 10.0),
+    word_shape=(1, 1),
+    words=tuple(((x,), (y,)) for y in (0, 1) for x in range(4)),
+    word_buses=(((0, 1, 2, 3), (4, 5, 6, 7)),),
+)
+
+INTERLEAVED = Layout(
+    x=tuple(float(i) for i in range(8)),
+    y=(0.0, 10.0),
+    word_shape=(2, 1),
+    words=tuple(((c, c + 4), (r,)) for r in (0, 1) for c in range(4)),
+    site_buses=(((0,), (1,)),),
+    word_buses=(((0, 1, 2, 3), (4, 5, 6, 7)),),
+)
+
+OPTED_OUT = Layout(
+    x=(0.0, 10.0, 100.0, 130.0, 200.0, 230.0),
+    y=(0.0,),
+    word_shape=(2, 1),
+    # Word 0 has a 10 µm site pitch and sits the bus out; words 1-2 use 30 µm.
+    words=(((0, 1), (0,)), ((2, 3), (0,)), ((4, 5), (0,))),
+    site_bus_words=(1, 2),
+    site_buses=(((0,), (1,)),),
+    x_clearance=0.5,
+    y_clearance=0.5,
+)
+
+BLOCKADE = Layout(
+    x=(0.0, 1.0, 10.0, 11.0),
+    y=(0.0,),
+    word_shape=(1, 1),
+    words=tuple(((x,), (0,)) for x in range(4)),
+    radius=2.0,
+)
+
+
+class TestParityWithLegacyBuilder:
+    @pytest.mark.parametrize(
+        "layout",
+        [ROWS, INTERLEAVED, OPTED_OUT, BLOCKADE],
+        ids=["rows", "interleaved", "opted-out", "blockade"],
+    )
+    def test_same_architecture_yields_the_same_spec(self, layout):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            assert_specs_equal(layout.legacy(), layout.modern())
+
+    def test_opted_out_word_gets_no_lanes_in_either_builder(self):
+        """Word 0 sits the bus out, so it must not appear in any lane."""
+        for spec in (OPTED_OUT.legacy(), OPTED_OUT.modern()):
+            assert list(spec.zones[0].words_with_site_buses) == [1, 2]
+            assert all(lane.word_id != 0 for lane in spec.paths)
+
+    def test_multi_zone_with_a_connection_matches(self):
+        x, y = [0.0, 1.0, 2.0, 3.0], [0.0]
+        words = [([c], [0]) for c in range(4)]
+
+        zones = []
+        for name, shift in (("a", 0.0), ("b", 50.0)):
+            z = ZoneBuilder.from_positions(
+                name,
+                [v + shift for v in x],
+                y,
+                (1, 1),
+                x_clearance=0.25,
+                y_clearance=0.25,
+            )
+            for xs, ys in words:
+                z.add_word(xs, ys)
+            z.add_word_bus(src=[0, 1], dst=[2, 3])
+            zones.append(z)
+        legacy_builder = LegacyArchBuilder()
+        for z in zones:
+            legacy_builder.add_zone(z)
+        legacy_builder.connect(("a", [0, 1]), ("b", [0, 1]))
+        legacy_builder.add_mode("all", ["a", "b"])
+
+        b = ArchBuilder(grid_shape=(4, 1), word_shape=(1, 1))
+        for xs, ys in words:
+            b.add_word(x=xs, y=ys)
+        for name, shift in (("a", 0.0), ("b", 50.0)):
+            b.add_zone(
+                name,
+                x=[v + shift for v in x],
+                y=y,
+                x_clearance=0.25,
+                y_clearance=0.25,
+            )
+            b.add_word_bus(name, src=[0, 1], dst=[2, 3])
+        b.connect(("a", [0, 1]), ("b", [0, 1]))
+        b.add_mode("all", ["a", "b"])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            assert_specs_equal(legacy_builder.build(), b.build())
+
+
+# ── Extending an existing architecture ──
+
+
+def _extendable(spec):
+    """A builder over a shipped spec, with clearances so it can route."""
+    return ArchBuilder.from_spec(spec, x_clearance=0.5, y_clearance=1.0), (
+        spec._inner.zones[0].name
+    )
+
+
+@pytest.mark.parametrize(
+    "getter", [physical_spec, logical_spec], ids=["physical", "logical"]
+)
+class TestExtendingWordBuses:
+    def test_appending_preserves_every_inherited_lane(self, getter):
+        """The whole point: a new bus must not re-route the existing ones.
+
+        Bundled lane geometry is hardware-derived, so recomputing it as a
+        side effect of adding a bus would silently shift move durations.
+        """
+        spec = getter()
+        b, zone = _extendable(spec)
+        existing = spec._inner.zones[0].word_buses[0]
+        # The reverse transport: legal, and not a duplicate of any bus.
+        b.add_word_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build()
+        assert all(out.paths[k] == v for k, v in spec.paths.items())
+
+    def test_appending_adds_lanes_for_the_new_bus_only(self, getter):
+        spec = getter()
+        b, zone = _extendable(spec)
+        n_before = len(spec._inner.zones[0].word_buses)
+        existing = spec._inner.zones[0].word_buses[0]
+        # The reverse transport: legal, and not a duplicate of any bus.
+        b.add_word_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build()
+        assert len(out.zones[0].word_buses) == n_before + 1
+        new_lanes = {k for k in out.paths if k not in spec.paths}
+        assert new_lanes and all(
+            k.move_type == MoveType.WORD and k.bus_id == n_before for k in new_lanes
+        )
+
+    def test_unrealizable_extension_is_rejected_at_the_call(self, getter):
+        """A reversal cannot be swept by an AOD, so it never reaches build."""
+        spec = getter()
+        b, zone = _extendable(spec)
+        src = list(spec._inner.zones[0].word_buses[0].src)
+        with pytest.raises(ValueError, match="stay on its own|add or drop a tone"):
+            b.add_word_bus(zone, src=src, dst=list(reversed(src)))
+        assert len(b._zones[0].word_buses) == len(spec._inner.zones[0].word_buses)
+
+    def test_extending_without_clearances_raises(self, getter):
+        spec = getter()
+        b = ArchBuilder.from_spec(spec)
+        zone = spec._inner.zones[0].name
+        existing = spec._inner.zones[0].word_buses[0]
+        # The reverse transport: legal, and not a duplicate of any bus.
+        b.add_word_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with pytest.raises(ValueError, match="no clearances"):
+            b.build()
+
+
+@pytest.mark.parametrize("getter", [physical_spec], ids=["physical"])
+class TestExtendingSiteBuses:
+    def test_appending_preserves_every_inherited_lane(self, getter):
+        spec = getter()
+        b, zone = _extendable(spec)
+        existing = spec._inner.zones[0].site_buses[0]
+        b.add_site_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build()
+        assert all(out.paths[k] == v for k, v in spec.paths.items())
+
+    def test_appending_adds_lanes_for_the_new_bus_only(self, getter):
+        spec = getter()
+        b, zone = _extendable(spec)
+        n_before = len(spec._inner.zones[0].site_buses)
+        existing = spec._inner.zones[0].site_buses[0]
+        b.add_site_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build()
+        assert len(out.zones[0].site_buses) == n_before + 1
+        new_lanes = {k for k in out.paths if k not in spec.paths}
+        assert new_lanes and all(
+            k.move_type == MoveType.SITE and k.bus_id == n_before for k in new_lanes
+        )
+
+    def test_new_site_bus_only_carries_participating_words(self, getter):
+        """The shipped spec runs site buses on odd words only."""
+        spec = getter()
+        movers = list(spec._inner.zones[0].words_with_site_buses)
+        b, zone = _extendable(spec)
+        existing = spec._inner.zones[0].site_buses[0]
+        b.add_site_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build()
+        new_lanes = [k for k in out.paths if k not in spec.paths]
+        assert {k.word_id for k in new_lanes} == set(movers)
+
+    def test_unrealizable_extension_is_rejected_at_the_call(self, getter):
+        spec = getter()
+        b, zone = _extendable(spec)
+        src = list(spec._inner.zones[0].site_buses[0].src)
+        with pytest.raises(ValueError, match="stay on its own|add or drop a tone"):
+            b.add_site_bus(zone, src=src, dst=list(reversed(src)))
+
+
+class TestPathInheritanceBoundaries:
+    def test_recompute_paths_discards_inherited_geometry(self):
+        spec = physical_spec()
+        b = ArchBuilder.from_spec(spec, x_clearance=0.5, y_clearance=1.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build(recompute_paths=True)
+        assert set(out.paths) == set(spec.paths)
+        assert out.paths != spec.paths
+
+    def test_changed_participation_invalidates_inherited_site_lanes(self):
+        """Participation decides which words get site lanes."""
+        spec = physical_spec()
+        b = ArchBuilder.from_spec(spec, x_clearance=0.5, y_clearance=1.0)
+        zone = b._zones[0]
+        zone.words_with_site_buses = zone.words_with_site_buses[:-1]
+        reusable = b._reusable_inherited(0, zone)
+        assert reusable, "word-bus lanes should still be inheritable"
+        assert all(k.move_type == MoveType.WORD for k in reusable)
+
+    def test_a_fresh_builder_inherits_nothing(self):
+        b = with_zone(interleaved())
+        b.add_word_bus("z", src=[0, 1, 2, 3], dst=[4, 5, 6, 7])
+        assert b._reusable_inherited(0, b._zones[0]) == {}
+
+
+# ── The contract from bloqade-internal#445 ──
+#
+# "add buses given an architecture": select words by grid region, append
+# ordered buses, leave the calibrated paths alone.
+
+
+class TestAddBusesGivenAnArchitecture:
+    """Behaviours the reference implementation in #445 specifies."""
+
+    def test_selection_preserves_order_so_src_i_maps_to_dst_i(self):
+        b = interleaved()
+        assert b.words[:, 0] == [0, 1, 2, 3]
+        assert b.words[[3, 2, 1, 0], 0] == [3, 2, 1, 0]
+
+    def test_whole_axis_selects_everything_in_order(self):
+        b = interleaved()
+        assert b.words[:, :] == list(range(8))
+
+    def test_duplicate_indices_are_rejected(self):
+        with pytest.raises(ValueError, match="repeated"):
+            interleaved().words[[0, 0], 0]
+
+    def test_out_of_range_indices_are_rejected(self):
+        with pytest.raises(IndexError, match="out of range"):
+            interleaved().words[[99], 0]
+
+    def test_mismatched_selection_sizes_are_rejected(self):
+        b = with_zone(interleaved())
+        with pytest.raises(ValueError, match="src has 4 entries but dst has 2"):
+            b.add_word_bus("z", src=b.words[:, 0], dst=b.words[[0, 1], 1])
+
+    def test_a_duplicate_word_bus_is_rejected(self):
+        b = with_zone(interleaved())
+        src, dst = b.words[:, 0], b.words[:, 1]
+        b.add_word_bus("z", src, dst)
+        with pytest.raises(ValueError, match="word bus 0 already has this exact"):
+            b.add_word_bus("z", src, dst)
+        assert len(b._zones[0].word_buses) == 1
+
+    def test_a_duplicate_site_bus_is_rejected(self):
+        b = ArchBuilder(grid_shape=(4, 1), word_shape=(2, 1))
+        b.add_word(x=[0, 1], y=[0])
+        b.add_word(x=[2, 3], y=[0])
+        with_zone(b)
+        b.add_site_bus("z", src=[0], dst=[1])
+        with pytest.raises(ValueError, match="site bus 0 already has this exact"):
+            b.add_site_bus("z", src=[0], dst=[1])
+
+    def test_the_reverse_of_a_bus_is_not_a_duplicate(self):
+        b = with_zone(interleaved())
+        src, dst = b.words[:, 0], b.words[:, 1]
+        b.add_word_bus("z", src, dst)
+        b.add_word_bus("z", dst, src)
+        assert len(b._zones[0].word_buses) == 2
+
+    def test_existing_bus_ids_are_stable_across_an_append(self):
+        """A bus's index is its bus_id, and preserved paths key off it."""
+        spec = physical_spec()
+        before = [(list(x.src), list(x.dst)) for x in spec._inner.zones[0].word_buses]
+        b, zone = _extendable(spec)
+        existing = spec._inner.zones[0].word_buses[0]
+        b.add_word_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build()
+        after = [(list(x.src), list(x.dst)) for x in out.zones[0].word_buses]
+        assert after[: len(before)] == before
+
+    def test_calibrated_paths_survive_adding_a_bus(self):
+        """The headline requirement: extending must not re-route the rest."""
+        spec = physical_spec()
+        b, zone = _extendable(spec)
+        existing = spec._inner.zones[0].word_buses[0]
+        b.add_word_bus(zone, src=list(existing.dst), dst=list(existing.src))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = b.build()
+        assert {k: out.paths[k] for k in spec.paths} == dict(spec.paths)

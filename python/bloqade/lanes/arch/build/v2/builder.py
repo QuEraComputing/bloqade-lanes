@@ -48,7 +48,7 @@ from bloqade.lanes.arch.build._geometry import (
 )
 from bloqade.lanes.arch.build.v2._aod import check_aod_transport
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode.encoding import LaneAddress
+from bloqade.lanes.bytecode.encoding import LaneAddress, MoveType
 from bloqade.lanes.bytecode.word import Word
 
 Index = slice | int | Sequence[int]
@@ -227,7 +227,12 @@ class ArchBuilder:
         self._inherited_paths: (
             dict[LaneAddress, tuple[tuple[float, float], ...]] | None
         ) = None
-        self._inherited_buses: tuple | None = None
+        # Per zone: (n_site_buses, n_word_buses, movers, carried) as of
+        # from_spec, so lanes for buses that existed then stay inheritable
+        # even after new buses are appended.
+        self._inherited_shape: dict[
+            str, tuple[int, int, tuple[int, ...], tuple[int, ...]]
+        ] = {}
 
     # ── Shape ──
 
@@ -435,6 +440,9 @@ class ArchBuilder:
         z = self._zone(zone)
         self._check_bus_endpoints(src, dst, self.sites_per_word, "site")
         bus_id = len(z.site_buses)
+        self._reject_duplicate_bus(
+            z.site_buses, src, dst, "site", f"site bus {bus_id} on zone '{zone}'"
+        )
         geom = self._geometry(z)
         check_aod_transport(
             [
@@ -447,6 +455,30 @@ class ArchBuilder:
             label=f"site bus {bus_id} on zone '{zone}'",
         )
         z.site_buses.append((list(src), list(dst)))
+
+    def _reject_duplicate_bus(
+        self,
+        existing: Sequence[tuple[list[int], list[int]]],
+        src: Sequence[int],
+        dst: Sequence[int],
+        kind: str,
+        label: str,
+    ) -> None:
+        """Reject a bus that repeats an existing ordered mapping.
+
+        A bus's index is its ``bus_id`` and every lane address is built
+        from it, so a duplicate adds a second set of lanes that move the
+        same atoms along the same route — wasted lanes that also make
+        ``bus_id`` ambiguous to anything reasoning about the spec.
+        """
+        pair = (list(src), list(dst))
+        for i, (e_src, e_dst) in enumerate(existing):
+            if [list(e_src), list(e_dst)] == list(pair):
+                raise ValueError(
+                    f"{label}: {kind} bus {i} already has this exact ordered "
+                    "src/dst mapping. Buses are addressed by index, so a "
+                    "duplicate only adds redundant lanes."
+                )
 
     def add_word_bus(self, zone: str, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a word bus (intra-zone movement) to one zone.
@@ -463,6 +495,9 @@ class ArchBuilder:
         z = self._zone(zone)
         self._check_bus_endpoints(src, dst, self.num_words, "word")
         bus_id = len(z.word_buses)
+        self._reject_duplicate_bus(
+            z.word_buses, src, dst, "word", f"word bus {bus_id} on zone '{zone}'"
+        )
         geom = self._geometry(z)
         check_aod_transport(
             [
@@ -592,9 +627,9 @@ class ArchBuilder:
             atom_reloading: Whether the device supports atom reloading.
             blockade_radius: Explicit radius (µm), overriding the value
                 recorded by :meth:`set_blockade_radius`.
-            recompute_paths: Search paths afresh even when a spec's own
-                paths were inherited and its buses are untouched.  Off by
-                default, so a round-trip never silently replaces
+            recompute_paths: Search every lane afresh, discarding inherited
+                paths even for buses that predate any edit.  Off by default,
+                so neither a round-trip nor an extension silently replaces
                 hardware-derived lane geometry.
 
         Raises:
@@ -657,24 +692,28 @@ class ArchBuilder:
         # off those segment lengths, so recomputing silently would shift
         # fidelity estimates and routing metrics.
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
-        if (
-            not recompute_paths
-            and self._inherited_paths is not None
-            and self._inherited_buses == self._bus_fingerprint()
-        ):
-            paths = dict(self._inherited_paths)
-        else:
-            for zone_id, z in enumerate(self._zones):
-                paths.update(
-                    compute_transport_paths(
-                        self._routing_geometry(z),
-                        site_buses=z.site_buses,
-                        word_buses=z.word_buses,
-                        site_bus_words=z.words_with_site_buses,
-                        zone_id=zone_id,
-                        warn_stacklevel=3,
-                    )
-                )
+        for zone_id, z in enumerate(self._zones):
+            shape = self._inherited_shape.get(z.name)
+            unchanged = shape is not None and shape == self._zone_shape(z)
+            if not recompute_paths and unchanged:
+                # Nothing about this zone's buses moved, so its inherited
+                # lanes still describe it exactly; no search, and no
+                # clearances needed.
+                paths.update(self._reusable_inherited(zone_id, z))
+                continue
+            computed = compute_transport_paths(
+                self._routing_geometry(z),
+                site_buses=z.site_buses,
+                word_buses=z.word_buses,
+                site_bus_words=z.words_with_site_buses,
+                zone_id=zone_id,
+                warn_stacklevel=3,
+            )
+            if not recompute_paths:
+                # Buses that existed at from_spec keep their inherited
+                # geometry; only the appended ones take search results.
+                computed.update(self._reusable_inherited(zone_id, z))
+            paths.update(computed)
 
         return ArchSpec.from_components(
             words=words,
@@ -708,7 +747,8 @@ class ArchBuilder:
         rather than restored silently.
 
         The spec's transport paths are carried over and reused verbatim by
-        :meth:`build` for as long as the bus structure is untouched.  That
+        :meth:`build`, per bus: appending a bus searches paths for that bus
+        alone and leaves every pre-existing lane exactly as it was.  That
         matters: the bundled architectures ship hardware-derived lane
         geometry that this path search does not reproduce (no clearance
         value regenerates it), and move durations — hence fidelity
@@ -806,7 +846,9 @@ class ArchBuilder:
             builder.add_mode(mode.name, [names[z] for z in mode.zones])
 
         builder._inherited_paths = dict(spec.paths) if spec.paths else None
-        builder._inherited_buses = builder._bus_fingerprint()
+        builder._inherited_shape = {
+            z.name: builder._zone_shape(z) for z in builder._zones
+        }
         builder._blockade_radius = spec.blockade_radius
         if spec.blockade_radius is not None:
             radius_nm = to_nm(spec.blockade_radius, "blockade_radius")
@@ -849,18 +891,44 @@ class ArchBuilder:
             )
         return self._geometry(zone)
 
-    def _bus_fingerprint(self) -> tuple:
-        """Structure the inherited paths were computed for."""
-        return tuple(
-            (
-                z.name,
-                tuple((tuple(s), tuple(d)) for s, d in z.site_buses),
-                tuple((tuple(s), tuple(d)) for s, d in z.word_buses),
-                z.words_with_site_buses,
-                z.sites_with_word_buses,
-            )
-            for z in self._zones
+    def _zone_shape(self, zone: _Zone) -> tuple[int, int, tuple, tuple]:
+        """Bus counts and participation, the things inherited lanes depend on."""
+        return (
+            len(zone.site_buses),
+            len(zone.word_buses),
+            zone.words_with_site_buses,
+            zone.sites_with_word_buses,
         )
+
+    def _reusable_inherited(
+        self, zone_id: int, zone: _Zone
+    ) -> dict[LaneAddress, tuple[tuple[float, float], ...]]:
+        """Inherited lanes still valid for this zone.
+
+        Buses are only ever appended, so a bus that existed at
+        ``from_spec`` keeps its ID and its lanes stay meaningful.  What
+        invalidates them is a change of participation: ``words_with_site_buses``
+        decides which words get site lanes, ``sites_with_word_buses`` which
+        sites get word lanes.
+        """
+        shape = self._inherited_shape.get(zone.name)
+        if shape is None or self._inherited_paths is None:
+            return {}
+        n_site, n_word, movers, carried = shape
+        site_ok = movers == zone.words_with_site_buses
+        word_ok = carried == zone.sites_with_word_buses
+        site_cap = min(n_site, len(zone.site_buses))
+        word_cap = min(n_word, len(zone.word_buses))
+        out: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
+        for lane, path in self._inherited_paths.items():
+            if lane.zone_id != zone_id:
+                continue
+            if lane.move_type == MoveType.SITE:
+                if site_ok and lane.bus_id < site_cap:
+                    out[lane] = path
+            elif word_ok and lane.bus_id < word_cap:
+                out[lane] = path
+        return out
 
     @staticmethod
     def _occupied(geom: ZoneGeometry) -> frozenset[tuple[int, int]]:
