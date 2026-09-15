@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pytest
+from kirin import rewrite
 from kirin.dialects import func, py
 from kirin.rewrite.abc import RewriteRule
 
@@ -25,6 +26,7 @@ from bloqade.lanes.transform import (
     PhysicalPipeline,
     native_to_place,
 )
+from bloqade.lanes.transform.native_to_place import LogicalNativeToPlace
 
 
 def _compile(kernel, **kwargs):
@@ -153,65 +155,124 @@ def test_physical_pipeline_is_unchanged():
     assert _count(out, move.LocalRz) + _count(out, move.GlobalRz) > 0
 
 
-# ── distribution equality ────────────────────────────────────────────────
-#
-# `EliminateRz` is measurement-transparent: it only ever discards a diagonal
-# (Z-type) residual, which cannot move probability between computational
-# basis outcomes. These tests check that directly, by simulation, for both
-# IR shapes the rule has to handle: a flat block that ends in a
-# `TerminalLogicalMeasurement` (the frame is popped there), and one that
-# doesn't (the frame is simply abandoned, since nothing downstream ever
-# reads it) -- see `test_kernel_with_the_terminal_measure_removed_still_drops_rz`
-# above for the same two shapes at the IR-count level.
-#
-# `GeminiLogicalSimulator.task()` itself requires exactly one
-# `TerminalLogicalMeasurement` (`GeminiTerminalMeasurementValidation`), so it
-# cannot compile the delete-the-measurement shape end to end. Both shapes
-# below instead follow the same recipe `compile_task` uses internally
-# (`LogicalPipeline` -> `MoveToSquinLogical` -> `TsimSimulatorBackend`'s own
-# `_tsim_circuit`), skipping only that one validation call, then append a
-# fresh `M` over every physical qubit to the emitted Stim circuit so both
-# shapes always have something to sample. Sampling the same seed against the
-# rule enabled vs. replaced by a structural no-op must give bit-identical
-# shots.
+def test_post_unroll_rules_are_returned_pre_wrapped():
+    """The hook returns rules already wrapped in their traversal.
+
+    ``emit`` only chains what this hook returns, matching
+    ``_squin_clifford_rules``. A bare rule here would be applied once to the
+    function statement rather than to every statement -- and if ``emit`` were
+    changed to wrap instead, a rule that arrives pre-wrapped would be walked
+    twice, shifting each ``R`` axis more than once with no error raised.
+    Neither failure is visible in the output of a passing compile, so pin the
+    convention here.
+    """
+    rules = LogicalNativeToPlace(get_logical_spec())._post_unroll_rules(no_raise=False)
+
+    assert rules, "the logical subclass is expected to contribute a rule"
+    assert all(isinstance(rule, rewrite.Walk) for rule in rules)
 
 
-# ---------------------------------------------------------------------------
-# Measurement-outcome equivalence.
+# ── measurement-outcome equivalence ───────────────────────────────────────
 #
 # This is the honest statement of what EliminateRz promises: the residual it
 # discards is diagonal, and a diagonal unitary commutes with every Z-basis
-# measurement projector, so no outcome can shift. Compare the compiled circuit
-# with the rule on against the same circuit with it off.
-# ---------------------------------------------------------------------------
+# measurement projector, so no outcome can shift. Compile each kernel with the
+# rule on and with it replaced by a structural no-op, and require bit-identical
+# shots from the same seed.
+#
+# The kernels below differ in *source shape*, not just gate content. They all
+# reach EliminateRz as one flat block, but they get there through different
+# upstream machinery -- inlining a call, unrolling a loop, indexing a register
+# -- so a future change to how kirin lays that block out would show up here.
+# The frame is accumulated in visit order, so a reordering emits a different
+# circuit rather than an error; each kernel puts an Rz between two rotations on
+# one wire, which is the shape that makes such a difference non-diagonal and so
+# visible to Z-basis sampling.
+
+
+@squin.kernel
+def _phase_then_rotate(q: qubit.Qubit):
+    squin.s(q)
+    squin.sqrt_x(q)
+
+
+@gemini_logical.kernel(aggressive_unroll=True)
+def _straight_line():
+    """The minimal order-sensitive shape: rotate, phase, rotate."""
+    q = qubit.qalloc(1)
+    squin.sqrt_x(q[0])
+    squin.s(q[0])
+    squin.sqrt_x(q[0])
+    default_post_processing(q)
+
+
+@gemini_logical.kernel(aggressive_unroll=True)
+def _frames_diverge_across_qubits():
+    """Two wires carrying different pending phases at the same moment."""
+    q = qubit.qalloc(2)
+    squin.s(q[0])
+    squin.sqrt_x(q[0])
+    squin.sqrt_x(q[1])
+    squin.s(q[1])
+    squin.sqrt_x(q[1])
+    default_post_processing(q)
+
+
+@gemini_logical.kernel(aggressive_unroll=True)
+def _through_a_subroutine():
+    """Half the sequence arrives by inlining a call rather than written inline."""
+    q = qubit.qalloc(1)
+    squin.sqrt_x(q[0])
+    _phase_then_rotate(q[0])
+    default_post_processing(q)
+
+
+@gemini_logical.kernel(aggressive_unroll=True)
+def _through_a_loop():
+    """The block is produced by unrolling, and indexes the register per turn."""
+    q = qubit.qalloc(2)
+    for i in range(2):
+        squin.sqrt_x(q[i])
+        squin.s(q[i])
+        squin.sqrt_x(q[i])
+    default_post_processing(q)
+
+
+@gemini_logical.kernel(aggressive_unroll=True)
+def _entangled():
+    """The motivating kernel: h/s/cx, whose Rz this pass exists to remove."""
+    q = qubit.qalloc(2)
+    squin.h(q[1])
+    squin.s(q[1])
+    squin.cx(q[0], q[1])
+    default_post_processing(q)
 
 
 class _NoOpEliminateRz(RewriteRule):
     """Stand-in for EliminateRz that leaves every statement alone."""
 
+    def __init__(self, no_raise: bool = False) -> None:
+        self.no_raise = no_raise
 
-def test_measurement_outcomes_are_unchanged(monkeypatch):
-    """The residual EliminateRz discards is diagonal, and a diagonal unitary
-    commutes with every Z-basis measurement projector -- so no outcome can
-    shift. Compare the compiled circuit with the rule on against the same
-    circuit with it off.
 
-    Only the terminal-measurement shape is testable this way, and that is not a
-    gap: the ``RemovePostProcessing`` shape has no measurement, hence no outcome
-    distribution to compare. Making it comparable would mean appending a
-    measurement the program does not contain, which tests a circuit nobody
-    compiles. That shape is covered structurally by
-    ``test_kernel_with_the_terminal_measure_removed_still_drops_rz``.
-    """
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def kernel():
-        reg = qubit.qalloc(2)
-        squin.h(reg[1])
-        squin.s(reg[1])
-        squin.cx(reg[0], reg[1])
-        default_post_processing(reg)
-
+@pytest.mark.parametrize(
+    "kernel",
+    [
+        _straight_line,
+        _frames_diverge_across_qubits,
+        _through_a_subroutine,
+        _through_a_loop,
+        _entangled,
+    ],
+    ids=[
+        "straight_line",
+        "frames_diverge_across_qubits",
+        "through_a_subroutine",
+        "through_a_loop",
+        "entangled",
+    ],
+)
+def test_eliminating_rz_does_not_change_what_is_measured(kernel, monkeypatch):
     on = GeminiLogicalSimulator().task(kernel).noiseless_tsim_circuit.stim_circuit
     with_rule = on.compile_sampler(seed=1234).sample(shots=4000)
 
@@ -219,12 +280,11 @@ def test_measurement_outcomes_are_unchanged(monkeypatch):
     off = GeminiLogicalSimulator().task(kernel).noiseless_tsim_circuit.stim_circuit
     without_rule = off.compile_sampler(seed=1234).sample(shots=4000)
 
-    # Guard the guard. LogicalNativeToPlace._post_unroll_rules resolves
-    # EliminateRz as a module global at call time, so the patch above takes
-    # effect -- but if a refactor ever captured the class at import time
-    # instead, the patch would silently do nothing and this test would compare
-    # a circuit against itself and pass. Rule-off keeps the Rz, so the two
-    # circuits must differ.
+    # Guard the guard. `_post_unroll_rules` resolves EliminateRz as a module
+    # global at call time, so the patch above takes effect -- but if a refactor
+    # ever captured the class at import time instead, the patch would silently
+    # do nothing and this test would compare a circuit against itself. Rule-off
+    # keeps the Rz, so the two circuits must differ.
     assert str(on) != str(off), "monkeypatch did not take effect"
 
     assert np.array_equal(with_rule, without_rule)

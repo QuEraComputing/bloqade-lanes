@@ -39,8 +39,52 @@ import stim
 from bloqade import qubit, squin
 from bloqade.gemini import GeminiLogicalSimulator, logical as gemini_logical
 from bloqade.gemini.logical.stdlib import default_post_processing
+from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+from bloqade.lanes.transform import native_to_place
 
 PHYSICAL_PER_LOGICAL = 7
+
+
+# ── EliminateRz runs here with its residual flushed ───────────────────────
+#
+# `EliminateRz` normally discards a diagonal Z-phase residual instead of
+# emitting it. That cannot move a measurement outcome -- a diagonal unitary
+# commutes with every Z-basis projector -- and `test_eliminate_rz_pipeline.py`
+# asserts exactly that by simulation.
+#
+# But this file checks the *exact* pre-measurement state, sign included, and a
+# discarded residual lands in the same place a genuine `#404`-class bug does:
+# `#404` was itself a spurious `Zbar`. So a discarded residual is
+# indistinguishable here from the defect this file exists to catch.
+#
+# Running with `flush_residual=True` removes the ambiguity rather than
+# compensating for it. The pass does all of its real work -- every phase is
+# commuted forward through the `R` gates exactly as in production -- and then
+# writes the leftover back out at the end of the wire, which is exact, so the
+# compiled circuit equals the un-eliminated one and the plain unencoded
+# references below apply unchanged.
+#
+# This is what makes the checks bite in both directions: they cover the
+# transversal lowering (`#404`) *and* the commutation algebra. Inverting one
+# sign in `EliminateRz` -- `phi - alpha` to `phi + alpha` -- fails all 15
+# cases here.
+#
+# Do NOT "fix" a failure in this file by appending Z-type gates to the kernels
+# or the reference strings. That was tried; it hides a real residual behind a
+# hand-derived constant and blunts the `#404` probe.
+
+
+class _FlushingEliminateRz(EliminateRz):
+    """``EliminateRz`` with the residual restored instead of discarded."""
+
+    def __init__(self, no_raise: bool = False) -> None:
+        super().__init__(no_raise=no_raise, flush_residual=True)
+
+
+@pytest.fixture(autouse=True)
+def _flush_eliminate_rz_residual(monkeypatch):
+    monkeypatch.setattr(native_to_place, "EliminateRz", _FlushingEliminateRz)
+
 
 _LIFT = {"_": "_", "X": "X", "Y": "Y", "Z": "Z"}
 _LIFT_SIGN = {"_": 1, "X": 1, "Y": -1, "Z": 1}
@@ -109,7 +153,6 @@ def _one_qubit_x():
     squin.h(q[1])
     squin.x(q[0])
     squin.x(q[1])
-    squin.z(q[1])
     return default_post_processing(q)
 
 
@@ -119,7 +162,6 @@ def _one_qubit_y():
     squin.h(q[1])
     squin.y(q[0])
     squin.y(q[1])
-    squin.z(q[1])
     return default_post_processing(q)
 
 
@@ -138,7 +180,6 @@ def _one_qubit_h():
     squin.h(q[1])
     squin.h(q[0])
     squin.h(q[1])
-    squin.z(q[0])
     return default_post_processing(q)
 
 
@@ -147,7 +188,6 @@ def _one_qubit_s():
     q = qubit.qalloc(2)
     squin.h(q[1])
     squin.s(q[0])
-    squin.s(q[1])
     squin.s(q[1])
     return default_post_processing(q)
 
@@ -158,7 +198,6 @@ def _one_qubit_s_adj():
     squin.h(q[1])
     squin.s_adj(q[0])
     squin.s_adj(q[1])
-    squin.s_adj(q[1])
     return default_post_processing(q)
 
 
@@ -168,7 +207,6 @@ def _one_qubit_sqrt_x():
     squin.h(q[1])
     squin.sqrt_x(q[0])
     squin.sqrt_x(q[1])
-    squin.z(q[1])
     return default_post_processing(q)
 
 
@@ -178,7 +216,6 @@ def _one_qubit_sqrt_x_adj():
     squin.h(q[1])
     squin.sqrt_x_adj(q[0])
     squin.sqrt_x_adj(q[1])
-    squin.z(q[1])
     return default_post_processing(q)
 
 
@@ -201,45 +238,17 @@ def _one_qubit_sqrt_y_adj():
 
 
 ONE_QUBIT_CASES = {
-    "x": (_one_qubit_x, "X 0\nX 1\nZ 1"),
-    "y": (_one_qubit_y, "Y 0\nY 1\nZ 1"),
+    "x": (_one_qubit_x, "X 0\nX 1"),
+    "y": (_one_qubit_y, "Y 0\nY 1"),
     "z": (_one_qubit_z, "Z 0\nZ 1"),
-    "h": (_one_qubit_h, "H 0\nH 1\nZ 0"),
-    "s": (_one_qubit_s, "S 0\nS 1\nS 1"),
-    "s_adj": (_one_qubit_s_adj, "S_DAG 0\nS_DAG 1\nS_DAG 1"),
-    "sqrt_x": (_one_qubit_sqrt_x, "SQRT_X 0\nSQRT_X 1\nZ 1"),
-    "sqrt_x_adj": (_one_qubit_sqrt_x_adj, "SQRT_X_DAG 0\nSQRT_X_DAG 1\nZ 1"),
+    "h": (_one_qubit_h, "H 0\nH 1"),
+    "s": (_one_qubit_s, "S 0\nS 1"),
+    "s_adj": (_one_qubit_s_adj, "S_DAG 0\nS_DAG 1"),
+    "sqrt_x": (_one_qubit_sqrt_x, "SQRT_X 0\nSQRT_X 1"),
+    "sqrt_x_adj": (_one_qubit_sqrt_x_adj, "SQRT_X_DAG 0\nSQRT_X_DAG 1"),
     "sqrt_y": (_one_qubit_sqrt_y, "SQRT_Y 0\nSQRT_Y 1"),
     "sqrt_y_adj": (_one_qubit_sqrt_y_adj, "SQRT_Y_DAG 0\nSQRT_Y_DAG 1"),
 }
-
-
-# ── EliminateRz residual vs. this file's exact-state invariant ─────────
-#
-# `EliminateRz` discards a diagonal Z-phase residual at the terminal
-# measurement instead of emitting it as a physical `Rz`. That cannot change
-# any outcome -- a diagonal unitary commutes with every Z-basis projector,
-# asserted end-to-end by `test_measurement_outcomes_are_unchanged` in
-# `test_eliminate_rz_pipeline.py`. But `_assert_matches_reference` checks
-# something stronger: the exact pre-measurement state, sign included, where a
-# residual shows up as a mismatch this test cannot tell apart from a genuine
-# `#404`-class bug (`#404` was itself a diagonal, measurement-invisible sign
-# error).
-#
-# EVERY kernel here carries a residual -- each starts from `squin.h`, whose
-# decomposition (`S . sqrt(X) . S`) contributes `Rz`s. Only some need a
-# compensating gate: whether a residual is *visible* depends on which
-# stabilizers the probe checks. `z`/`sqrt_y`/`sqrt_y_adj` and `swap` pass
-# unmodified because theirs lands where this probe cannot see it -- a property
-# of the probe, not evidence the gate is `Rz`-free. Do not reintroduce a
-# "decomposes to no `Rz`" claim anywhere in this file.
-#
-# Where compensation is needed, the same Z-type Clifford is appended to both
-# the kernel and the reference string. The *reference* side is what restores
-# the exact match. The kernel-side gate is a no-op on the compiled circuit
-# (the residual is discarded whatever its value, so the emitted Stim is
-# byte-identical either way) and exists only so the correction is traceable to
-# the kernel it came from -- do not delete it as dead code.
 
 
 @pytest.mark.parametrize("gate", sorted(ONE_QUBIT_CASES))
@@ -261,8 +270,6 @@ def _two_qubit_cx():
     squin.h(q[3])
     squin.cx(q[0], q[1])
     squin.cx(q[2], q[3])
-    squin.z(q[0])
-    squin.z(q[3])
     return default_post_processing(q)
 
 
@@ -273,8 +280,6 @@ def _two_qubit_cy():
     squin.h(q[3])
     squin.cy(q[0], q[1])
     squin.cy(q[2], q[3])
-    squin.z(q[0])
-    squin.z(q[3])
     return default_post_processing(q)
 
 
@@ -285,8 +290,6 @@ def _two_qubit_cz():
     squin.h(q[3])
     squin.cz(q[0], q[1])
     squin.cz(q[2], q[3])
-    squin.z(q[0])
-    squin.z(q[3])
     return default_post_processing(q)
 
 
@@ -301,9 +304,9 @@ def _two_qubit_swap():
 
 
 TWO_QUBIT_CASES = {
-    "cx": (_two_qubit_cx, "CX 0 1\nCX 2 3\nZ 0\nZ 3"),
-    "cy": (_two_qubit_cy, "CY 0 1\nCY 2 3\nZ 0\nZ 3"),
-    "cz": (_two_qubit_cz, "CZ 0 1\nCZ 2 3\nZ 0\nZ 3"),
+    "cx": (_two_qubit_cx, "CX 0 1\nCX 2 3"),
+    "cy": (_two_qubit_cy, "CY 0 1\nCY 2 3"),
+    "cz": (_two_qubit_cz, "CZ 0 1\nCZ 2 3"),
     # squin.swap only became legal on the logical path in #956; its
     # decomposition is all sqrt(Y), so the transversal rewrite must leave every
     # layer alone.
@@ -317,12 +320,7 @@ _TWO_QUBIT_PREP = "H 0\nH 3"
 def test_two_qubit_clifford_matches_unencoded(gate):
     """Each two-qubit Clifford, applied to a |+0> pair and a |0+> pair, must
     agree with the same gate on bare qubits. ``cy`` is the case that regressed
-    in bloqade-internal#404. ``cx``/``cy``/``cz`` carry a compensating
-    transversal ``Z`` on each block whose nonzero ``EliminateRz`` residual
-    the probed stabilizers are sensitive to (see the note above
-    ``ONE_QUBIT_CASES``). ``swap`` also carries a nonzero residual -- it
-    needs no compensation only because it lands where this probe can't see
-    it, not because its decomposition is ``Rz``-free."""
+    in bloqade-internal#404."""
     kernel, reference = TWO_QUBIT_CASES[gate]
     _assert_matches_reference(kernel, _TWO_QUBIT_PREP + "\n" + reference, num_logical=4)
 
@@ -335,35 +333,38 @@ def _bell_cy():
     q = qubit.qalloc(2)
     squin.h(q[0])
     squin.cy(q[0], q[1])
-    squin.z(q[0])
     return default_post_processing(q)
 
 
 def test_bell_cy_stabilizer_sign():
     """The reproducer from bloqade-internal#404 verbatim: ``H`` then ``CY``
     leaves ``Xbar_control Ybar_target`` as a ``+1`` stabilizer. The bug flipped
-    it to ``-1``, i.e. an extra ``Zbar`` on the control.
-
-    This kernel's ``H`` leaves a nonzero ``EliminateRz`` residual (0.5 turns,
-    i.e. a transversal ``Z``, on the control block) reaching the terminal
-    measurement, per the note above ``ONE_QUBIT_CASES``. ``squin.z(q[0])``
-    above is a no-op on the compiled circuit -- confirmed byte-for-byte
-    identical with or without it, since ``EliminateRz`` discards the whole
-    residual regardless of its value -- kept only so this specific
-    correction is traceable back to the kernel it was derived from; do not
-    delete it. The load-bearing compensation is on the *reference* side:
-    adding that same ``Z`` to the bare (unencoded) ``H 0`` / ``CY 0 1``
-    circuit flips its canonical stabilizer from ``+XY`` to ``-XY``. Folding
-    that flip into the existing ``Ybar = -Y^7`` lift-sign convention turns
-    the expected sign from ``-1`` into ``+1`` below, which is exactly what
-    the compiled circuit's exact state gives -- confirmed against
-    ``stim.TableauSimulator`` directly on ``H 0`` / ``CY 0 1`` / ``Z 0``.
-    """
+    it to ``-1``, i.e. an extra ``Zbar`` on the control."""
     sim = stim.TableauSimulator()
     sim.do(_noiseless_gate_prefix(_bell_cy))
 
     xbar_ybar = stim.PauliString(
         "X" * PHYSICAL_PER_LOGICAL + "Y" * PHYSICAL_PER_LOGICAL
     )
-    xbar_ybar.sign = 1  # Ybar = -Y^7, folded with the Z-compensated -XY canonical sign
+    xbar_ybar.sign = -1  # Ybar = -Y^7
     assert sim.peek_observable_expectation(xbar_ybar) == 1
+
+
+def test_the_residual_flush_is_in_effect(monkeypatch):
+    """Guard the guard: prove the autouse fixture changes what gets compiled.
+
+    Every assertion in this file depends on `EliminateRz` running with
+    `flush_residual=True`. The fixture achieves that by rebinding a module
+    global that `_post_unroll_rules` resolves at call time -- so a refactor
+    capturing the class at import time instead would leave the patch doing
+    nothing, and every test here would silently go back to measuring the
+    discarding rule and start failing for a reason that looks like a lowering
+    bug. Flushing must therefore produce a *different* circuit from
+    discarding.
+    """
+    flushed = str(_noiseless_gate_prefix(_one_qubit_h))
+
+    monkeypatch.setattr(native_to_place, "EliminateRz", EliminateRz)
+    discarded = str(_noiseless_gate_prefix(_one_qubit_h))
+
+    assert flushed != discarded, "the residual flush patch did not take effect"
