@@ -154,6 +154,28 @@ transfer to a deposit, and the intra-bus collision it might catch is already
 impossible once the mapping check passes (that mapping is injective by
 construction).
 
+### Transport paths are inherited, not recomputed
+
+The bundled architectures' `paths` are **hardware-derived and baked in**, not
+products of the builder's path search. A sweep of clearance values from 0.1 to
+5.0 µm reproduces 0 of the logical spec's 110 lanes and at best 240 of the
+physical spec's 1120 — the search simply does not generate that geometry.
+
+This matters because move durations are read off those segment lengths, so
+`estimated_fidelity` and the committed routing benchmark baselines depend on
+them. A `from_spec` → `build()` round-trip that recomputed paths would silently
+replace calibrated lane geometry with search output and shift every routing
+metric.
+
+So `from_spec` carries the spec's paths over and `build()` reuses them verbatim
+while the bus structure is untouched; editing a bus invalidates them and forces
+a search, which is why clearances are optional on `from_spec` and required only
+then. `build(recompute_paths=True)` is the explicit opt-in.
+
+Clearances themselves are not part of an `ArchSpec` — they are inputs to the
+path search, not properties of the architecture — so a round-trip cannot
+recover them, and the builder says so rather than guessing.
+
 ## Migration
 
 1. Land the new builder alongside the existing one, under a new name.
