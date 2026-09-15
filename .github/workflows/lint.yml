@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   javascript:
-    name: JavaScript syntax
+    name: JavaScript syntax and controller tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -23,9 +23,9 @@ repos:
     hooks:
       - id: arch-interactive-js-check
         name: arch-interactive-js-check
-        entry: node --check python/bloqade/lanes/visualize/_arch_interactive.js
+        entry: just check-visualization-js
         language: system
-        files: ^python/bloqade/lanes/visualize/_arch_interactive\.js$
+        files: ^(python/bloqade/lanes/visualize/_arch_interactive\.js|python/tests/visualize/test_arch_interactive\.cjs|justfile)$
         pass_filenames: false
       - id: pyright-check
         name: pyright-check

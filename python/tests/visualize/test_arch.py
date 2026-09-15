@@ -301,7 +301,7 @@ def test_plot_interactive_html_highlights_hovered_bus(
 
     assert "plotly_hover" in html
     assert "plotly_unhover" in html
-    assert "else if (busPoint)" in html
+    assert "drawHighlight(busPoint.curveNumber)" in html
     assert "data-arch-visualizer-bus-highlight" in html
     assert "data-arch-visualizer-site-lane" in html
     assert "function siteCustomdataAt(x, y)" in html

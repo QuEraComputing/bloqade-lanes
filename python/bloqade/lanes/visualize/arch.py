@@ -89,7 +89,10 @@ def _is_jupyter_kernel(shell: Any) -> bool:
 
 
 class _InteractiveArchFigureMixin:
-    """Install architecture interactions in every HTML display route."""
+    """Install architecture interactions in figure HTML methods and displays.
+
+    Module-level ``plotly.io`` exports bypass these overrides.
+    """
 
     @staticmethod
     def _interactive_post_scripts(
@@ -115,6 +118,13 @@ class _InteractiveArchFigureMixin:
         post_script: str | Sequence[str] | None = None,
         **kwargs: Any,
     ) -> str:
+        """Return interactive HTML with architecture controls installed.
+
+        Use this method (or ``write_html``) for export instead of
+        ``plotly.io.to_html(self)``, which bypasses the controller. Plotly.js
+        is embedded by default; ``include_plotlyjs="cdn"`` explicitly opts
+        into loading a versioned bundle over the network.
+        """
         scripts = self._interactive_post_scripts(post_script)
         config = self._interactive_config(kwargs.pop("config", None))
         return cast(

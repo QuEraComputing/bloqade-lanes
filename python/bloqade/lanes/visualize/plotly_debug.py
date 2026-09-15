@@ -622,7 +622,7 @@ def build_plotly_debugger_figure(
         show_all_buses=False,
         show_bus_legend=False,
         path_style="exact",
-        site_lane_preview="click",
+        site_lane_preview="hover",
         bus_line_style="dashed",
         theme=theme,
         height=height,
@@ -840,6 +840,9 @@ def plotly_debugger(
     existing Matplotlib debugger or :func:`animated_debugger`. In a notebook,
     Plotly embeds the controls in the cell output. In a regular Python process,
     the default renderer opens the figure in a browser.
+
+    Hover over an empty site or an atom to preview the transport lanes
+    available at that site, using the architecture's exact/cartoon path view.
 
     Args:
         mt: Compiled physical move program to visualize.

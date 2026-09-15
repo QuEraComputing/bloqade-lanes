@@ -120,7 +120,7 @@ def test_build_debugger_figure_has_clickable_step_slider(
     assert site_trace.name == "sites"
     assert site_trace.marker.color == "#e2e8f0"
     assert site_trace.marker.size == 9
-    assert figure.layout.meta["archVisualizerSiteLanePreviewMode"] == "click"
+    assert figure.layout.meta["archVisualizerSiteLanePreviewMode"] == "hover"
     assert "grid (x, y)" in site_trace.hovertemplate
     assert list(atom_trace.text) == ["0"]
     assert "atom %{customdata[0]}" in atom_trace.hovertemplate

@@ -29,6 +29,7 @@ coverage: coverage-run coverage-xml coverage-report
 # substitutes the concrete div ID during HTML generation.
 check-visualization-js:
     node --check python/bloqade/lanes/visualize/_arch_interactive.js
+    node --test python/tests/visualize/test_arch_interactive.cjs
 
 # ── Rust Coverage ───────────────────────────────────────────────────
 

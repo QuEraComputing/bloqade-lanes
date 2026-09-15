@@ -1006,6 +1006,13 @@
     }
     if (plotlyHoverLayer) plotlyHoverLayer.style.display = '';
     hideLanePreviewTooltip();
+    // Resolve previews before the atom-tooltip branches return. In the
+    // debugger, either the atom or its coincident SLM site can win the hover;
+    // both must expose the site's available lanes as well as the atom label.
+    const siteCustomdata = siteCustomdataFromPlotlyEvent(event);
+    if (siteLanePreviewMode === 'hover' && siteCustomdata) {
+      activateSiteLaneOverlays(siteCustomdata);
+    }
     const directSitePoint = event.points.find(
       (item) => item.curveNumber === siteTraceIndex
     );
@@ -1046,10 +1053,7 @@
     // Once a bus is visible, Plotly may report its endpoint instead of the
     // coincident site marker. Treat an endpoint at a site coordinate as a site
     // hover so lane previews are independent of bus visibility.
-    const siteCustomdata = siteCustomdataFromPlotlyEvent(event);
-    if (siteLanePreviewMode === 'hover' && siteCustomdata) {
-      activateSiteLaneOverlays(siteCustomdata);
-    } else if (busPoint) {
+    if (!(siteLanePreviewMode === 'hover' && siteCustomdata) && busPoint) {
       drawHighlight(busPoint.curveNumber);
     }
     if (
