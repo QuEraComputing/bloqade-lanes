@@ -189,19 +189,30 @@ Clearances themselves are not part of an `ArchSpec` — they are inputs to the
 path search, not properties of the architecture — so a round-trip cannot
 recover them, and the builder says so rather than guessing.
 
-### `ArchSpec` is more permissive than this builder
+### `ArchSpec` is more permissive than the construction API
 
-Some valid specs have no equivalent in this model, and `from_spec` rejects them
-by name rather than restoring something subtly different. The one worth calling
-out as a deliberate gap: a zone bus carries a zone ID *per element*, and Rust
-only requires each pair to cross a boundary, so an endpoint may name several
-zones — while `connect` addresses one zone per side. An architecture that needs
-that shape needs a richer `connect` first.
+`(rows, columns)` is an ergonomic way to *write* a word, but an `ArchSpec` word
+is an ordered list of grid positions: it may be listed in any order, need not
+be a Cartesian product, and words may differ in shape — the only cross-word
+rule Rust enforces is an equal site count. A site's ID is its index in that
+list, and that integer is what bus endpoints and lane addresses point at.
 
-The rest are consequences of the model: a word must be a row-major Cartesian
-product (that is what `word_shape` and `column + row * num_columns` mean, and
-renumbering sites would re-map every bus endpoint and inherited lane), zones
-must agree on grid dimensions, and a bus must have participants.
+So `from_spec` restores the template **verbatim** rather than replaying it
+through `add_word`. Regenerating positions from axis values would renumber any
+word not already listed row-major, silently re-mapping routing while the spec
+still looked unchanged. When the restored template has no single row-major
+shape, `word_shape` is `None` and the `sites[...]` query is unavailable;
+`word_sites(word_id)` gives per-site positions for any template.
+
+One genuine expressiveness gap remains: a zone bus carries a zone ID *per
+element* and Rust only requires each pair to cross a boundary, so an endpoint
+may name several zones — while `connect` addresses one zone per side. An
+architecture needing that shape needs a richer `connect` first. Zones must also
+agree on grid dimensions, and a bus must have participants.
+
+The builder is *stricter* than Rust in two places, both of which describe two
+atoms in one place: a word listing the same grid position twice, and two words
+sharing a position. Rust accepts both; `from_spec` rejects them.
 
 ## Migration
 

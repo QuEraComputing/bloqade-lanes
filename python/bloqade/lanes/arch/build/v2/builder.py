@@ -101,6 +101,27 @@ def _checked_subset(values: Sequence[int], size: int, what: str) -> tuple[int, .
     return tuple(out)
 
 
+def _uniform_row_major_shape(
+    words: Sequence[Sequence[tuple[int, int]]],
+) -> tuple[int, int] | None:
+    """The ``(rows, columns)`` shape every word shares, or ``None``.
+
+    ``None`` means the template is something ``word_shape`` cannot describe:
+    a word listed other than row-major, a word that is not a Cartesian
+    product, or words of differing shapes.  ``ArchSpec`` permits all three —
+    it stores a word as an ordered list of grid positions and only requires
+    every word to hold the same *number* of sites.
+    """
+    shapes: set[tuple[int, int]] = set()
+    for sites in words:
+        rows = list(dict.fromkeys(y for _, y in sites))
+        cols = list(dict.fromkeys(x for x, _ in sites))
+        if [(c, r) for r in rows for c in cols] != list(sites):
+            return None
+        shapes.add((len(rows), len(cols)))
+    return shapes.pop() if len(shapes) == 1 else None
+
+
 # ── Template queries ──
 
 
@@ -229,7 +250,7 @@ class ArchBuilder:
             return (out[0], out[1])
 
         self._grid_shape = _shape("grid_shape", grid_shape)
-        self._word_shape = _shape("word_shape", word_shape)
+        self._word_shape: tuple[int, int] | None = _shape("word_shape", word_shape)
         self._words: list[list[tuple[int, int]]] = []
         self._position_to_word: dict[tuple[int, int], int] = {}
         self._zones: list[_Zone] = []
@@ -264,13 +285,25 @@ class ArchBuilder:
         return self._grid_shape
 
     @property
-    def word_shape(self) -> tuple[int, int]:
-        """``(num_rows, num_columns)`` of sites in every word."""
+    def word_shape(self) -> tuple[int, int] | None:
+        """``(num_rows, num_columns)`` of sites in every word.
+
+        ``None`` after :meth:`from_spec` restored a template that no single
+        shape describes — see :func:`_uniform_row_major_shape`.
+        """
         return self._word_shape
 
     @property
     def sites_per_word(self) -> int:
-        """Total sites per word."""
+        """Total sites per word.
+
+        Read off the template once words exist, since that holds whatever
+        was restored; ``ArchSpec`` requires every word to have the same
+        count even when their shapes differ.
+        """
+        if self._words:
+            return len(self._words[0])
+        assert self._word_shape is not None
         return self._word_shape[0] * self._word_shape[1]
 
     @property
@@ -290,10 +323,31 @@ class ArchBuilder:
 
     @property
     def sites(self) -> _SiteQuery:
-        """Select site indices by ``[rows, columns]`` of the word shape."""
+        """Select site indices by ``[rows, columns]`` of the word shape.
+
+        Raises:
+            ValueError: If the template has no single row-major shape to
+                query against, which :meth:`from_spec` can restore.
+        """
+        if self._word_shape is None:
+            raise ValueError(
+                "this template has no single row-major (rows x columns) "
+                "shape — it was restored from a spec whose words are listed "
+                "in another order, are not Cartesian products, or differ in "
+                "shape. Address sites by index, or read a word's positions "
+                "from word_sites()."
+            )
         return _SiteQuery(self._word_shape)
 
     # ── Phase 1: the word template ──
+
+    def word_sites(self, word_id: int) -> list[tuple[int, int]]:
+        """The ``(row, column)`` grid position of each of a word's sites.
+
+        Indexed by site ID, so this works for any template — including one
+        restored from a spec that ``word_shape`` cannot describe.
+        """
+        return [(r, c) for c, r in self._words[word_id]]
 
     def add_word(self, rows: Index, columns: Index) -> int:
         """Add a word to the spec-wide template.
@@ -318,6 +372,11 @@ class ArchBuilder:
                 "already resolve it against their own coordinates, so adding "
                 "a word now would change their occupancy and their transport "
                 "participants. Add every word before the first add_zone."
+            )
+        if self._word_shape is None:
+            raise ValueError(
+                "this builder restored a template with no single row-major "
+                "shape, so add_word has no shape to validate against"
             )
         n_rows, n_cols = self._grid_shape
         rs = _query_axis(rows, n_rows, "row", "grid index")
@@ -834,6 +893,21 @@ class ArchBuilder:
         re-routing.  Passing them does not by itself discard the inherited
         paths — use ``build(recompute_paths=True)`` for that.
 
+        The word template is restored **verbatim**, not replayed through
+        :meth:`add_word`.  An ``ArchSpec`` word is an ordered list of grid
+        positions — it may be listed in any order, need not be a Cartesian
+        product, and words may differ in shape, since the only cross-word
+        rule is an equal site count.  A site's ID is its index in that list,
+        so regenerating it would renumber sites and re-map every bus
+        endpoint and inherited lane that addresses them.  When the restored
+        template has no single row-major shape, :attr:`word_shape` is
+        ``None`` and the ``sites[...]`` query is unavailable; use
+        :meth:`word_sites` and plain site indices instead.
+
+        Two things ``ArchSpec`` permits and this builder still refuses,
+        because both put two atoms in one place: a word listing the same
+        grid position twice, and two words sharing a position.
+
         **Specs this builder cannot represent are rejected, not
         reinterpreted.**  ``ArchSpec`` is a more permissive format than this
         builder's model, so some valid specs have no equivalent here.  Each
@@ -849,11 +923,6 @@ class ArchBuilder:
           gap, not an oversight — an architecture that needs that shape needs
           a richer ``connect`` first.
         * **A zone bus with an empty endpoint**, which Rust also accepts.
-        * **A word whose sites are not a row-major Cartesian product.**
-          ``word_shape`` and the ``column + row * num_columns`` numbering
-          require one; a word laid out otherwise cannot be rebuilt without
-          renumbering its sites, which would re-map every bus endpoint and
-          inherited lane that addresses them.
         * **Zones that disagree on grid dimensions**, since the word template
           is spec-wide and indexes one shared index space.
         * **A bus with no participants** — an empty ``words_with_site_buses``
@@ -877,31 +946,15 @@ class ArchBuilder:
         if not inner.zones:
             raise ValueError("spec has no zones")
 
-        def _factor(sites: list[tuple[int, ...]]) -> tuple[list[int], list[int]]:
-            """Split a word's sites into (rows, columns), or reject it.
-
-            A word here is a row-major Cartesian product, because that is
-            what ``word_shape`` and the ``column + row * num_columns`` site
-            numbering mean.  ``ArchSpec`` does not require that, so a spec
-            can hold words this builder cannot express — say so instead of
-            canonicalizing them, since site IDs address bus endpoints and
-            inherited lanes and renumbering them would re-map routing.
-            """
-            rows = list(dict.fromkeys(y for _, y in sites))
-            cols = list(dict.fromkeys(x for x, _ in sites))
-            if [(c, r) for r in rows for c in cols] != sites:
-                raise ValueError(
-                    f"word sites {sites} are not a row-major grid of "
-                    f"{len(rows)} row(s) x {len(cols)} column(s). This builder "
-                    "numbers sites as column + row * num_columns, so it cannot "
-                    "represent this word without renumbering it — which would "
-                    "silently re-map every bus endpoint and inherited lane."
-                )
-            return rows, cols
-
-        sites = [tuple(s) for s in inner.words[0].sites]
-        first_rows, first_cols = _factor(sites)
-        word_shape = (len(first_rows), len(first_cols))
+        # The template is restored verbatim rather than replayed through
+        # add_word: ArchSpec stores a word as an ordered list of grid
+        # positions, which is more general than (rows x columns), and a
+        # site's ID is its index in that list — the integer every bus
+        # endpoint and inherited lane address points at. Regenerating the
+        # list from axis values would renumber any word not already listed
+        # row-major and so silently re-map routing.
+        words = [[(int(s[0]), int(s[1])) for s in w.sites] for w in inner.words]
+        word_shape = _uniform_row_major_shape(words)
 
         shapes = {(z.grid.num_y, z.grid.num_x) for z in inner.zones}
         if len(shapes) > 1:
@@ -913,10 +966,34 @@ class ArchBuilder:
             )
         grid_shape = shapes.pop()
 
-        builder = cls(grid_shape=grid_shape, word_shape=word_shape)
-        for word in inner.words:
-            rows, cols = _factor([tuple(s) for s in word.sites])
-            builder.add_word(rows=rows, columns=cols)
+        # word_shape may be None here; the constructor needs *a* shape, and
+        # the real template overwrites it immediately.
+        builder = cls(
+            grid_shape=grid_shape,
+            word_shape=word_shape or (1, len(words[0])),
+        )
+        builder._word_shape = word_shape
+        builder._words = [list(sites) for sites in words]
+
+        # Rust validates site indices and equal site counts, but not these
+        # two, so the builder keeps them: both describe an architecture with
+        # two atoms in one place.
+        for word_id, sites in enumerate(words):
+            seen: set[tuple[int, int]] = set()
+            for pos in sites:
+                if pos in seen:
+                    raise ValueError(
+                        f"word {word_id} lists grid position "
+                        f"(row={pos[1]}, column={pos[0]}) more than once"
+                    )
+                seen.add(pos)
+                owner = builder._position_to_word.get(pos)
+                if owner is not None:
+                    raise ValueError(
+                        f"words {owner} and {word_id} both occupy grid "
+                        f"position (row={pos[1]}, column={pos[0]})"
+                    )
+                builder._position_to_word[pos] = word_id
 
         for zone in inner.zones:
             builder.add_zone(
@@ -939,7 +1016,7 @@ class ArchBuilder:
                 sites_with_word_buses=(
                     list(zone.sites_with_word_buses)
                     if zone.word_buses
-                    else list(range(word_shape[0] * word_shape[1]))
+                    else list(range(len(words[0])))
                 ),
             )
 

@@ -840,18 +840,6 @@ class TestSpecFidelity:
         rebuilt = ArchBuilder.from_spec(spec).build()
         assert list(rebuilt._inner.words[0].sites) == list(spec._inner.words[0].sites)
 
-    def test_a_word_this_builder_cannot_express_is_rejected(self):
-        """Not a row-major product: refuse rather than invent a site."""
-
-        def bend_word_zero(d):
-            sites = list(d["words"][0]["sites"])
-            sites[-1] = [sites[-1][0], 1]
-            d["words"][0]["sites"] = sites
-
-        spec = perturbed(physical_spec(), bend_word_zero)
-        with pytest.raises(ValueError, match="not a row-major grid"):
-            ArchBuilder.from_spec(spec)
-
     def test_custom_bitstring_order_is_preserved(self):
         """An ArchSpec may carry any measurement ordering."""
 
@@ -937,3 +925,108 @@ class TestConnectContract:
             ArchBuilder.from_spec(
                 perturbed(spec, lambda d: d["zone_buses"][0].update(src=[], dst=[]))
             )
+
+
+# ── Word templates ArchSpec allows but (rows x columns) cannot describe ──
+
+
+def busless_spec() -> ArchSpec:
+    """Two 2x2 words on a 4x4 grid, no buses — isolates word restoration.
+
+    Rows 2 and 3 are left empty so a test can move a site somewhere free
+    without tripping the overlap guard.
+    """
+    b = ArchBuilder(grid_shape=(4, 4), word_shape=(2, 2))
+    for rs, cs in (([0, 1], [0, 1]), ([0, 1], [2, 3])):
+        b.add_word(rows=rs, columns=cs)
+    b.add_zone(
+        "z",
+        rows=[0.0, 10.0, 20.0, 30.0],
+        columns=[0.0, 1.0, 2.0, 3.0],
+        x_clearance=0.25,
+        y_clearance=3.0,
+    )
+    b.add_mode("all", ["z"])
+    return b.build()
+
+
+class TestVerbatimTemplateRestore:
+    """A word is an ordered list of positions; its index is the site ID.
+
+    ``ArchSpec`` is more general than ``(rows x columns)`` here, so the
+    template is restored as-is rather than regenerated — regenerating would
+    renumber sites and re-map every bus endpoint and inherited lane.
+    """
+
+    def test_column_major_word_round_trips(self):
+        spec = perturbed(
+            busless_spec(),
+            lambda d: d["words"][0].update(sites=[[0, 0], [0, 1], [1, 0], [1, 1]]),
+        )
+        assert as_comparable(ArchBuilder.from_spec(spec).build()) == as_comparable(spec)
+
+    def test_non_rectangular_word_round_trips(self):
+        """Four sites that are not a Cartesian product at all."""
+        spec = perturbed(
+            busless_spec(),
+            lambda d: d["words"][0].update(sites=[[0, 0], [1, 0], [0, 1], [2, 2]]),
+        )
+        assert as_comparable(ArchBuilder.from_spec(spec).build()) == as_comparable(spec)
+
+    def test_words_of_differing_shapes_round_trip(self):
+        """Rust's only cross-word rule is an equal site count."""
+
+        def reshape(d):
+            d["words"][1]["sites"] = [[0, 3], [1, 3], [2, 3], [3, 3]]  # 1x4
+
+        spec = perturbed(busless_spec(), reshape)
+        b = ArchBuilder.from_spec(spec)
+        assert b.word_shape is None
+        assert as_comparable(b.build()) == as_comparable(spec)
+
+    def test_word_shape_survives_a_uniform_template(self):
+        b = ArchBuilder.from_spec(busless_spec())
+        assert b.word_shape == (2, 2)
+        assert b.sites[0, :] == [0, 1]
+
+    def test_sites_query_is_unavailable_without_one_shape(self):
+        spec = perturbed(
+            busless_spec(),
+            lambda d: d["words"][0].update(sites=[[0, 0], [0, 1], [1, 0], [1, 1]]),
+        )
+        b = ArchBuilder.from_spec(spec)
+        assert b.word_shape is None
+        with pytest.raises(ValueError, match="no single row-major"):
+            _ = b.sites[0, :]
+
+    def test_word_sites_reports_positions_for_any_template(self):
+        spec = perturbed(
+            busless_spec(),
+            lambda d: d["words"][0].update(sites=[[0, 0], [0, 1], [1, 0], [1, 1]]),
+        )
+        b = ArchBuilder.from_spec(spec)
+        # (row, column) per site ID, matching the spec's own ordering.
+        assert b.word_sites(0) == [(0, 0), (1, 0), (0, 1), (1, 1)]
+
+    def test_sites_per_word_follows_the_restored_template(self):
+        assert ArchBuilder.from_spec(busless_spec()).sites_per_word == 4
+
+
+class TestTemplateGuardsRustDoesNotMake:
+    """Rust accepts these; both put two atoms in one place."""
+
+    def test_overlapping_words_are_rejected(self):
+        spec = perturbed(
+            busless_spec(),
+            lambda d: d["words"][1].update(sites=list(d["words"][0]["sites"])),
+        )
+        with pytest.raises(ValueError, match="both occupy grid position"):
+            ArchBuilder.from_spec(spec)
+
+    def test_a_word_listing_a_position_twice_is_rejected(self):
+        spec = perturbed(
+            busless_spec(),
+            lambda d: d["words"][1].update(sites=[[2, 0], [2, 0], [2, 1], [3, 1]]),
+        )
+        with pytest.raises(ValueError, match="more than once"):
+            ArchBuilder.from_spec(spec)
