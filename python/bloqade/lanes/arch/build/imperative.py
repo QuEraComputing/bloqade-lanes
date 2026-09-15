@@ -7,6 +7,7 @@ The high-level ``build_arch()`` function uses these internally.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 
 from bloqade.lanes.bytecode._native import (
@@ -32,7 +33,7 @@ from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.bytecode.word import Word
 
 # ── Helpers ──
-#
+
 # Unit conversion, AOD path search and blockade-pair derivation live in
 # :mod:`bloqade.lanes.arch.build._geometry`, shared with the redesigned
 # builder in :mod:`bloqade.lanes.arch.build.v2`.  This module keeps the
@@ -46,6 +47,68 @@ def _normalize_index(idx: slice | int | Sequence[int], size: int) -> list[int]:
     if isinstance(idx, int):
         return [idx]
     return sorted(idx)
+
+
+def _query_axis(
+    idx: slice | int | Sequence[int], size: int, axis: str, what: str
+) -> list[int]:
+    """Normalize one axis of a grid *query*, rejecting bad indices.
+
+    The selection is returned **in the order given** — a sequence verbatim,
+    a slice as it expands (including a negative step).  The query as a whole
+    then behaves like ``arr[np.ix_(y_values, x_values)].ravel()``: the axis
+    order is the caller's, and "row-major" describes only the nesting, with
+    y as the outer loop.
+
+    Indices must be unique.  Repeats cannot add anything — a word bus moves
+    each position once — and since duplicates would otherwise be dropped by
+    the first-unique rule, rejecting them keeps a typo from silently
+    shortening the result.
+
+    Out-of-range and negative indices also raise rather than selecting
+    nothing, since queries resolve positions through a dict lookup: without
+    this a ``src``/``dst`` pair shortened by the same amount would still
+    satisfy ``add_word_bus``'s equal-length check.  ``add_word`` and
+    ``add_word_bus`` already reject such indices; this makes the read side
+    agree.  Slices are clamped by ``slice.indices`` and are always valid.
+    """
+    if isinstance(idx, slice):
+        return list(range(*idx.indices(size)))
+    values = [idx] if isinstance(idx, int) else list(idx)
+    out_of_range = sorted({i for i in values if not 0 <= i < size})
+    if out_of_range:
+        raise IndexError(f"{axis} {what} {out_of_range} out of range [0, {size})")
+    counts = Counter(values)
+    repeated = sorted(i for i, n in counts.items() if n > 1)
+    if repeated:
+        raise ValueError(
+            f"{axis} {what} {repeated} repeated in {values}; each position is "
+            "selected once, so a repeat cannot select anything new"
+        )
+    return values
+
+
+def _reject_duplicate_endpoints(
+    src: Sequence[int], dst: Sequence[int], kind: str, zone_name: str, unit: str
+) -> None:
+    """Reject a bus that names the same endpoint twice.
+
+    The geometry checks downstream collapse endpoints to sets — a
+    Cartesian product, a tone count, a rank map — so a repeated index
+    survives all of them and the malformed bus is only caught by Rust at
+    ``build()``.  It is malformed for two independent reasons: a repeated
+    source shadows every later pair under the positional first-match
+    resolution the bus relation uses, and a repeated destination asks for
+    two simultaneous transports into one place.
+    """
+    for side, values in (("src", src), ("dst", dst)):
+        repeated = sorted(i for i, n in Counter(values).items() if n > 1)
+        if repeated:
+            raise ValueError(
+                f"{kind} bus on zone '{zone_name}': {side} {unit} "
+                f"{repeated} repeated in {list(values)}; a bus moves each "
+                f"{unit} once"
+            )
 
 
 def _validate_aod_rectangle(
@@ -72,13 +135,47 @@ def _validate_aod_rectangle(
         )
 
 
+def _require_complete_tone_grid(
+    positions: list[tuple[int, int]], prefix: str, side: str
+) -> None:
+    """Require a bus's atoms to fill its tone grid exactly.
+
+    ``_validate_aod_rectangle`` answers the same question for grid indices;
+    this one works on physical nm positions and reports in µm, because the
+    atoms a bus carries can form an incomplete rectangle even when the word
+    origins or site-template indices behind them do not.
+
+    Completeness is what keeps a foreign atom out: the AOD traps at every
+    intersection of its tones, so an unoccupied intersection is one a
+    non-participating atom could be sitting on, and it would be carried
+    along with the bus.
+    """
+    if not positions:
+        return
+    xs = sorted({x for x, _ in positions})
+    ys = sorted({y for _, y in positions})
+    missing = {(x, y) for x in xs for y in ys} - set(positions)
+    if missing:
+        listed = sorted((x / _NM_PER_UM, y / _NM_PER_UM) for x, y in missing)
+        raise ValueError(
+            f"{prefix}: the {side} atoms span a {len(xs)}x{len(ys)} grid of "
+            f"tones but do not fill it — {listed} µm "
+            f"{'is' if len(listed) == 1 else 'are'} unoccupied by this bus. "
+            "An AOD traps at every intersection of its tones, so any atom "
+            "sitting there would be carried along too."
+        )
+
+
 # ── Grid query helpers ──
 
 
 class _SiteGridQuery:
     """Query site indices within a word shape.
 
-    Site index is computed as ``x + y * num_x`` (row-major in x).
+    Traversal is row-major over the selected positions — y is the outer
+    loop, x the inner — with each axis visited in the order given, exactly
+    like ``arr[np.ix_(y_values, x_values)].ravel()``.  Site index is
+    ``x + y * num_x``.
     """
 
     def __init__(self, word_shape: tuple[int, int]):
@@ -88,13 +185,37 @@ class _SiteGridQuery:
         self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]
     ) -> list[int]:
         x_idx, y_idx = key
-        xs = _normalize_index(x_idx, self._nx)
-        ys = _normalize_index(y_idx, self._ny)
-        return sorted(x + y * self._nx for x in xs for y in ys)
+        xs = _query_axis(x_idx, self._nx, "x", "site index")
+        ys = _query_axis(y_idx, self._ny, "y", "site index")
+        return [x + y * self._nx for y in ys for x in xs]
 
 
 class _WordGridQuery:
     """Query word indices by grid region on a ZoneBuilder.
+
+    The selected positions are traversed row-major — y the outer loop, x
+    the inner, each axis in the order given::
+
+        for y in y_values:
+            for x in x_values:
+                ...  # append the word here, if not already appended
+
+    which is the same rule as ``arr[np.ix_(y_values, x_values)].ravel()``:
+    "row-major" describes the nesting, while the order within each axis is
+    the caller's.  A word spans several grid positions and so is reached
+    more than once; taking the first arrival is what makes its place in the
+    result well defined.
+
+    Ordering by traversal rather than by word ID matters whenever word IDs
+    are not monotone in the grid, which is the normal case for interleaved
+    CZ layouts: scanning x visits words 0, 1, 2, 3, 0, 1, 2, 3, ..., so a
+    partial x-selection reaches them out of ID order.  An AOD transport is
+    separable and order-preserving — each x-tone and y-tone sweeps
+    independently and tones cannot cross — so it maps the source tones onto
+    the destination tones in the same order.  Selecting both endpoints the
+    same way therefore pairs ``src[i]`` with ``dst[i]`` correctly, including
+    for a compression or expansion, where the displacement differs per
+    column and no single translation describes the bus.
 
     Returns a plain ``list[int]`` of zone-local word IDs for intra-zone
     operations like ``add_word_bus`` and ``add_entangling_pairs``.  For
@@ -110,14 +231,17 @@ class _WordGridQuery:
         self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]
     ) -> list[int]:
         x_idx, y_idx = key
-        xs = _normalize_index(x_idx, self._zone._grid.num_x)
-        ys = _normalize_index(y_idx, self._zone._grid.num_y)
-        query_positions = {(x, y) for x in xs for y in ys}
-        hits: set[int] = set()
-        for pos, word_id in self._zone._position_to_word.items():
-            if pos in query_positions:
-                hits.add(word_id)
-        return sorted(hits)
+        xs = _query_axis(x_idx, self._zone._grid.num_x, "x", "grid index")
+        ys = _query_axis(y_idx, self._zone._grid.num_y, "y", "grid index")
+        result: list[int] = []
+        seen: set[int] = set()
+        for y in ys:
+            for x in xs:
+                word_id = self._zone._position_to_word.get((x, y))
+                if word_id is not None and word_id not in seen:
+                    seen.add(word_id)
+                    result.append(word_id)
+        return result
 
 
 # ── ZoneBuilder ──
@@ -283,8 +407,10 @@ class ZoneBuilder:
             Zone-local word index.
 
         Raises:
-            ValueError: Shape mismatch or grid position overlap.
-            IndexError: Indices out of range for this zone's grid.
+            ValueError: If the index counts do not match ``word_shape``, an
+                index is repeated (two sites would share one grid
+                position), or a position already belongs to another word.
+            IndexError: If an index is out of range for this zone's grid.
         """
         xs = _normalize_index(x_sites, self._grid.num_x)
         ys = _normalize_index(y_sites, self._grid.num_y)
@@ -299,6 +425,18 @@ class ZoneBuilder:
                 f"y_sites has {len(ys)} indices but word_shape requires "
                 f"{self._word_shape[1]}"
             )
+
+        # A repeated index satisfies the count check above while collapsing
+        # two sites onto one grid position, producing a word that claims
+        # sites_per_word atoms but occupies fewer — the overlap check below
+        # cannot see it, since it runs before any of them is recorded.
+        for axis, values in (("x_sites", xs), ("y_sites", ys)):
+            repeated = sorted(i for i, n in Counter(values).items() if n > 1)
+            if repeated:
+                raise ValueError(
+                    f"{axis} {repeated} repeated in {values}; each site of a "
+                    "word must occupy its own grid position"
+                )
 
         for x in xs:
             if x < 0 or x >= self._grid.num_x:
@@ -332,13 +470,36 @@ class ZoneBuilder:
     def add_site_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a site bus (intra-word movement).
 
-        src/dst are site indices within word_shape (0..sites_per_word).
-        Must have equal length. Validates that src and dst positions each
-        form a valid AOD Cartesian product on the word grid.
+        ``src[i]`` moves to ``dst[i]``; both are site indices within
+        ``word_shape`` (``0..sites_per_word``).
+
+        Args:
+            src: Source site indices. Must be non-empty, in range, and form
+                an AOD Cartesian product on the word grid.
+            dst: Destination site indices, same length as ``src`` and
+                likewise a Cartesian product.
+
+        Raises:
+            ValueError: If the two differ in length, either is empty, an
+                index is repeated, an index is out of range, or either
+                endpoint is not a Cartesian product.
+
+        Note:
+            Unlike :meth:`add_word_bus`, this does not check that the bus is
+            AOD-realizable.  The atoms it carries are
+            ``words_with_site_buses x src``, and :meth:`add_word` can extend
+            that set afterwards, so the set is not known here.
         """
         if len(src) != len(dst):
             raise ValueError(
                 f"Site bus src has {len(src)} entries but dst has {len(dst)}"
+            )
+        if not src:
+            # An empty bus carries nothing, and the path search indexes
+            # src[0] for its reference atom.
+            raise ValueError(
+                f"Site bus on zone '{self._name}' is empty; a bus must move "
+                "at least one site"
             )
         total = self.sites_per_word
         nx = self._word_shape[0]
@@ -349,22 +510,57 @@ class ZoneBuilder:
             if d < 0 or d >= total:
                 raise ValueError(f"site index {d} out of range [0, {total})")
 
+        _reject_duplicate_endpoints(src, dst, "Site", self._name, "site")
+
         src_positions = [(s % nx, s // nx) for s in src]
         dst_positions = [(d % nx, d // nx) for d in dst]
         _validate_aod_rectangle(src_positions, "Site bus src")
         _validate_aod_rectangle(dst_positions, "Site bus dst")
+        # No AOD-realizability check here.  A site bus carries
+        # ``words_with_site_buses x src``, and ``add_word`` can extend that
+        # set after the fact, so the carried-atom set is not known at this
+        # call — the question is undecidable at add time.  ``_compute_paths``
+        # still declines to route a bus it cannot realize.
         self._site_buses.append((list(src), list(dst)))
+
+    def _site_bus_words(self) -> list[int]:
+        """Words that take part in site-bus transport.
+
+        Only these appear in the zone's ``words_with_site_buses``, so only
+        these are carried when a site bus fires.
+        """
+        return [w for w in range(self.num_words) if self._word_has_site_bus[w]]
 
     def add_word_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a word bus (intra-zone movement).
 
-        src/dst are zone-local word indices. Must have equal length.
-        Validates that src and dst word positions each form a valid AOD
-        Cartesian product on the zone grid.
+        ``src[i]`` moves to ``dst[i]``; both are zone-local word indices.
+
+        Args:
+            src: Source word indices. Must be non-empty, in range, and form
+                an AOD Cartesian product on the zone grid.
+            dst: Destination word indices, same length as ``src`` and
+                likewise a Cartesian product.
+
+        Raises:
+            ValueError: If the two differ in length, either is empty, an
+                index is repeated, an index is out of range, either
+                endpoint is not a Cartesian product, or the transport is
+                not AOD-realizable — see
+                :meth:`_check_aod_compatible`.  Unlike a site bus, a word
+                bus's carried atoms are fixed at this call: it names its
+                words explicitly and ``_words`` is append-only.
         """
         if len(src) != len(dst):
             raise ValueError(
                 f"Word bus src has {len(src)} entries but dst has {len(dst)}"
+            )
+        if not src:
+            # An empty bus carries nothing, and the path search indexes
+            # src_words[0] for its reference atom.
+            raise ValueError(
+                f"Word bus on zone '{self._name}' is empty; a bus must move "
+                "at least one word"
             )
         n = len(self._words)
         for s in src:
@@ -374,11 +570,96 @@ class ZoneBuilder:
             if d < 0 or d >= n:
                 raise ValueError(f"word index {d} out of range [0, {n})")
 
+        _reject_duplicate_endpoints(src, dst, "Word", self._name, "word")
+
         src_positions = [self._word_origin(s) for s in src]
         dst_positions = [self._word_origin(d) for d in dst]
         _validate_aod_rectangle(src_positions, "Word bus src")
         _validate_aod_rectangle(dst_positions, "Word bus dst")
+        # Every site of every src word moves to the matching site of its dst
+        # word; check that whole atom set is AOD-realizable — separable and
+        # order-preserving, which permits per-column displacement.  All sites
+        # are used rather than sampling site 0, so a zone whose words differ
+        # in internal geometry is caught too.
+        self._check_aod_compatible(
+            [
+                (self._site_nm(sw, s), self._site_nm(dw, s))
+                for sw, dw in zip(src, dst)
+                for s in range(self.sites_per_word)
+            ],
+            "Word",
+            len(self._word_buses),
+        )
         self._word_buses.append((list(src), list(dst)))
+
+    def _check_aod_compatible(
+        self,
+        pairs: list[tuple[tuple[int, int], tuple[int, int]]],
+        kind: str,
+        bus_id: int,
+    ) -> None:
+        """Reject a bus no AOD operation can perform.
+
+        An AOD is a crossed pair of deflectors: the traps sit at the
+        Cartesian product of its x-tones and y-tones, and each tone is
+        swept independently.  A transport is therefore realizable exactly
+        when it is **separable and order-preserving**:
+
+        * every atom's x-displacement depends only on which column it is
+          in, and its y-displacement only on its row — an atom cannot leave
+          its own tone;
+        * tones keep their relative order, since two frequencies cannot
+          pass through each other.
+
+        Note this is weaker than a uniform translation: compressing or
+        expanding a rectangle gives each column a different displacement
+        and is still one AOD operation.  ``_compute_paths`` is the stricter
+        party — it searches one reference path and applies its deltas to
+        every lane — so it still declines to route a non-uniform bus.  That
+        is a limit of the path search, not of the hardware.
+
+        Args:
+            pairs: ``(src_position, dst_position)`` in nm, one entry per
+                atom the bus carries.
+            kind: ``"Word"`` or ``"Site"``, for the error message.
+            bus_id: Index the bus would receive, for the error message.
+        """
+        if not pairs:
+            return
+        # The AOD traps at the Cartesian product of its tones, so every atom
+        # sitting at an intersection is carried whether or not it belongs to
+        # this bus.  Requiring the bus's own atoms to fill that product
+        # exactly is what guarantees no foreign atom rides along: with every
+        # intersection occupied by a bus atom, none is left for an outsider.
+        # The earlier ``_validate_aod_rectangle`` calls see only word origins
+        # or site-template indices, so an L-shaped set of participating words
+        # reaches here intact.
+        prefix = f"{kind} bus {bus_id} on zone '{self._name}'"
+        _require_complete_tone_grid([p[0] for p in pairs], prefix, "source")
+        _require_complete_tone_grid([p[1] for p in pairs], prefix, "destination")
+        src_x = sorted({p[0][0] for p in pairs})
+        src_y = sorted({p[0][1] for p in pairs})
+        dst_x = sorted({p[1][0] for p in pairs})
+        dst_y = sorted({p[1][1] for p in pairs})
+        if len(src_x) != len(dst_x) or len(src_y) != len(dst_y):
+            raise ValueError(
+                f"{prefix}: the bus spans a {len(src_x)}x{len(src_y)} grid of "
+                f"tones at its source but {len(dst_x)}x{len(dst_y)} at its "
+                "destination. An AOD cannot add or drop a tone mid-transport."
+            )
+        column = {v: i for i, v in enumerate(src_x)}
+        row = {v: i for i, v in enumerate(src_y)}
+        for (sx, sy), (dx, dy) in pairs:
+            want = (dst_x[column[sx]], dst_y[row[sy]])
+            if (dx, dy) != want:
+                raise ValueError(
+                    f"{prefix}: the atom at "
+                    f"{(sx / _NM_PER_UM, sy / _NM_PER_UM)} µm is sent to "
+                    f"{(dx / _NM_PER_UM, dy / _NM_PER_UM)} µm, but its column "
+                    f"and row land at {(want[0] / _NM_PER_UM, want[1] / _NM_PER_UM)}"
+                    " µm. An AOD sweeps whole x- and y-tones, which cannot "
+                    "cross or trade places, so every atom must stay on its own."
+                )
 
     def add_entangling_pairs(
         self, words_a: Sequence[int], words_b: Sequence[int]
@@ -528,14 +809,6 @@ class ZoneBuilder:
             words=tuple(tuple(w) for w in self._words),
         )
 
-    def _site_bus_words(self) -> list[int]:
-        """Words that take part in site-bus transport.
-
-        Only these appear in the zone's ``words_with_site_buses``, so only
-        these are carried when a site bus fires.
-        """
-        return [w for w in range(self.num_words) if self._word_has_site_bus[w]]
-
     def _site_nm(self, word_id: int, site_id: int) -> tuple[int, int]:
         """Physical (x, y) position of a site, in nm integers."""
         x_idx, y_idx = self._words[word_id][site_id]
@@ -629,6 +902,10 @@ class ArchBuilder:
                 returns a name-qualified tuple).
             dst: ``(zone_name, zone_local_word_indices)`` — same format.
 
+        Raises:
+            ValueError: If either zone name is unknown or a word index is
+                out of range for its zone.
+
         Validates AOD Cartesian product across the two zone grids.
         """
         src_name, src_words = src
@@ -640,6 +917,22 @@ class ArchBuilder:
 
         src_zone = self._zones[self._zone_name_to_id[src_name]]
         dst_zone = self._zones[self._zone_name_to_id[dst_name]]
+        # Range-check before resolving positions.  ``_word_origin`` indexes
+        # ``_words`` directly, so a negative index silently resolves to a
+        # different word and the Cartesian-product check below would then
+        # validate geometry the caller never named.  ``add_word_bus``
+        # rejects the same index.
+        for side, zone, words in (
+            ("src", src_zone, src_words),
+            ("dst", dst_zone, dst_words),
+        ):
+            for w in words:
+                if w < 0 or w >= zone.num_words:
+                    raise ValueError(
+                        f"Zone bus {side} word index {w} out of range "
+                        f"[0, {zone.num_words}) for zone '{zone.name}'"
+                    )
+
         src_positions = [src_zone._word_origin(w) for w in src_words]
         dst_positions = [dst_zone._word_origin(w) for w in dst_words]
         _validate_aod_rectangle(src_positions, "Zone bus src")
