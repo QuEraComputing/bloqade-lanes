@@ -35,8 +35,11 @@ from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place, clifford2native
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+from bloqade.lanes.rewrite.normalize_axis_angles import NormalizeGateAxisAngles
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
+from bloqade.lanes.validation.flat_block import FlatBlockValidation
+from bloqade.lanes.validation.qubit_register import QubitRegisterValidation
 
 
 @dataclass
@@ -55,11 +58,12 @@ class NativeToPlaceBase:
       decomposes composite Cliffords into the neutral-atom gate set; the
       logical subclass appends the Steane transversal adjoint swap.
 
-    * ``_post_unroll_rules()`` — rules applied to the flat native IR right
-      after ``AggressiveUnroll``, the only window where the program is a flat
-      block of ``native.gate`` statements.  Default is no rules.  Logical
-      subclass runs ``EliminateRz``, commuting ``Rz`` phase into later ``R``
-      gates instead of emitting it.
+    * ``_post_unroll_rules(no_raise)`` — rules applied to the flat native IR, after
+      ``AggressiveUnroll`` and after every validator, in the only window where
+      the program is a flat block of ``native.gate`` statements.  Returned
+      pre-wrapped in their traversal, as ``_squin_clifford_rules`` are.
+      Default is no rules.  Logical subclass runs ``EliminateRz``, commuting
+      ``Rz`` phase into later ``R`` gates instead of emitting it.
 
     * ``_post_unroll_validation(out)`` — called after ``AggressiveUnroll``,
       before ``ScfToCfRule``.  Default is a no-op.  Physical subclass runs
@@ -95,12 +99,25 @@ class NativeToPlaceBase:
         """
         return [rewrite.Walk(clifford2native.DecomposeCliffordToNative())]
 
-    def _post_unroll_rules(self) -> list[RewriteRule]:
+    def _post_unroll_rules(self, no_raise: bool) -> list[RewriteRule]:
         """Rules applied to the flat native IR, after unrolling.
 
         This is the only window where the program is a flat block of
         ``native.gate`` statements: ``AggressiveUnroll`` has run, and
         ``RewritePlaceOperations`` has not. Default is no rules.
+
+        Rules are returned **already wrapped** in whatever traversal they
+        need, exactly as ``_squin_clifford_rules`` returns them; the caller
+        only chains them in order. Returning a bare rule here applies it once
+        to the function statement instead of to every statement, and wrapping
+        at the call site instead would double-walk a rule that arrives
+        pre-wrapped -- shifting each ``R`` axis more than once, silently.
+
+        ``no_raise`` is the pipeline's best-effort flag, passed on so a rule
+        can degrade rather than raise. What degrading *means* is the rule's
+        own business: ``EliminateRz`` writes its pending phase back out as
+        ``Rz`` rather than skipping ahead, because skipping would leave the
+        program half commuted and silently wrong.
         """
         return []
 
@@ -144,8 +161,30 @@ class NativeToPlaceBase:
         # reason still reports that reason rather than whatever these rules
         # happen to trip over first. Still before _lower_qubits, which rewrites
         # qubits into the place dialect and ends the native window.
-        if post_unroll_rules := self._post_unroll_rules():
-            rewrite.Walk(rewrite.Chain(*post_unroll_rules)).rewrite(out.code)
+        if post_unroll_rules := self._post_unroll_rules(no_raise):
+            # A rule here may carry physical, time-ordered state -- EliminateRz
+            # tracks accumulated Z rotation per atom, which persists for the
+            # whole shot and only means anything read in execution order. Walk
+            # supplies that order within a block and nowhere else, so the flat
+            # shape is a correctness precondition, not a convenience.
+            #
+            # It is checked here, and not inside the rule, because a rule
+            # cannot catch it in time: Walk reaches a nested function's region
+            # before the statement owning it, so by the time a handler could
+            # object, the state it would report has already been reset. And
+            # neither hazard yields broken-looking output -- just a different
+            # circuit, off by phases a Z-basis measurement cannot see.
+            #
+            # Under no_raise, skip the rules rather than run them on IR they
+            # cannot model: a silently wrong circuit is worse than an
+            # un-optimised one.
+            shape = ValidationSuite(
+                [FlatBlockValidation, QubitRegisterValidation]
+            ).validate(out)
+            if not no_raise:
+                shape.raise_if_invalid()
+            if shape.is_valid:
+                rewrite.Chain(*post_unroll_rules).rewrite(out.code)
 
         self._lower_qubits(out)
 
@@ -238,8 +277,14 @@ class LogicalNativeToPlace(NativeToPlaceBase):
             rules.append(rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()))
         return rules
 
-    def _post_unroll_rules(self) -> list[RewriteRule]:
-        return [EliminateRz()]
+    def _post_unroll_rules(self, no_raise: bool) -> list[RewriteRule]:
+        return [
+            rewrite.Walk(EliminateRz(no_raise=no_raise)),
+            # After EliminateRz, which is what grows the angles, and before
+            # the CSE below, which is what turns equal angles back into one
+            # shared SSA value.
+            rewrite.Walk(NormalizeGateAxisAngles()),
+        ]
 
     def _lower_qubits(self, out: Method) -> None:
         rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
