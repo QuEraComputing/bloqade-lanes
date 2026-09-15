@@ -29,6 +29,7 @@ made consistent.
 
 from __future__ import annotations
 
+import operator
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -205,13 +206,30 @@ class ArchBuilder:
                 ``sites_per_word`` is their product.
 
         Raises:
-            ValueError: If either shape is not positive in both axes.
+            ValueError: If either shape is not a pair of positive integers.
         """
-        for label, shape in (("grid_shape", grid_shape), ("word_shape", word_shape)):
-            if len(shape) != 2 or shape[0] < 1 or shape[1] < 1:
-                raise ValueError(f"{label} must be two positive ints, got {shape}")
-        self._grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
-        self._word_shape = (int(word_shape[0]), int(word_shape[1]))
+
+        def _shape(label: str, shape: tuple[int, int]) -> tuple[int, int]:
+            # ``int(2.5)`` would silently accept a malformed index space, so
+            # require values that are integers already.
+            if len(shape) != 2:
+                raise ValueError(f"{label} must be two positive ints, got {shape!r}")
+            out = []
+            for v in shape:
+                if isinstance(v, bool) or not hasattr(v, "__index__"):
+                    raise ValueError(
+                        f"{label} must be two positive ints, got {shape!r}"
+                    )
+                i = operator.index(v)
+                if i < 1:
+                    raise ValueError(
+                        f"{label} must be two positive ints, got {shape!r}"
+                    )
+                out.append(i)
+            return (out[0], out[1])
+
+        self._grid_shape = _shape("grid_shape", grid_shape)
+        self._word_shape = _shape("word_shape", word_shape)
         self._words: list[list[tuple[int, int]]] = []
         self._position_to_word: dict[tuple[int, int], int] = {}
         self._zones: list[_Zone] = []
@@ -219,8 +237,10 @@ class ArchBuilder:
         self._connections: list[tuple[tuple[int, list[int]], tuple[int, list[int]]]] = (
             []
         )
-        self._modes: list[tuple[str, list[str]]] = []
+        self._modes: list[tuple[str, list[str], list | None]] = []
         self._blockade_radius: float | None = None
+        self._feed_forward = False
+        self._atom_reloading = False
         # Paths carried in from an existing spec, plus the bus structure
         # they were computed for.  Bundled architectures ship hardware-
         # derived lane geometry that this path search does not reproduce,
@@ -444,6 +464,12 @@ class ArchBuilder:
         """
         z = self._zone(zone)
         self._check_bus_endpoints(src, dst, self.sites_per_word, "site")
+        if not z.words_with_site_buses:
+            raise ValueError(
+                f"zone '{zone}' has no words_with_site_buses, so a site bus "
+                "there would carry nothing. Declare the participating words "
+                "on add_zone."
+            )
         bus_id = len(z.site_buses)
         self._reject_duplicate_bus(
             z.site_buses, src, dst, "site", f"site bus {bus_id} on zone '{zone}'"
@@ -499,6 +525,12 @@ class ArchBuilder:
         """
         z = self._zone(zone)
         self._check_bus_endpoints(src, dst, self.num_words, "word")
+        if not z.sites_with_word_buses:
+            raise ValueError(
+                f"zone '{zone}' has no sites_with_word_buses, so a word bus "
+                "there would carry nothing. Declare the participating sites "
+                "on add_zone."
+            )
         bus_id = len(z.word_buses)
         self._reject_duplicate_bus(
             z.word_buses, src, dst, "word", f"word bus {bus_id} on zone '{zone}'"
@@ -535,6 +567,11 @@ class ArchBuilder:
         dst_name, dst_words = dst
         src_zone = self._zone(src_name)
         dst_zone = self._zone(dst_name)
+        if src_name == dst_name:
+            raise ValueError(
+                f"connect adds an inter-zone bus, but '{src_name}' is both "
+                "endpoints. Use add_word_bus for movement inside one zone."
+            )
         self._check_bus_endpoints(src_words, dst_words, self.num_words, "word")
 
         src_geom = self._geometry(src_zone)
@@ -610,26 +647,49 @@ class ArchBuilder:
         """Blockade radius (µm) applied to every zone, or ``None``."""
         return self._blockade_radius
 
-    def add_mode(self, name: str, zones: Sequence[str]) -> None:
-        """Add an operational mode over a subset of zones."""
+    def add_mode(
+        self,
+        name: str,
+        zones: Sequence[str],
+        *,
+        bitstring_order: Sequence[_RustLocAddr] | None = None,
+    ) -> None:
+        """Add an operational mode over a subset of zones.
+
+        Args:
+            name: Mode name.
+            zones: Zone names active in this mode.
+            bitstring_order: Explicit measurement bit ordering.  Defaults to
+                every ``(zone, word, site)`` of the listed zones in order;
+                an ``ArchSpec`` may carry any ordering, so :meth:`from_spec`
+                passes the original through rather than regenerating it.
+        """
         for z in zones:
             if z not in self._zone_ids:
                 raise ValueError(f"unknown zone: '{z}'")
-        self._modes.append((name, list(zones)))
+        self._modes.append(
+            (
+                name,
+                list(zones),
+                None if bitstring_order is None else list(bitstring_order),
+            )
+        )
 
     def build(
         self,
         *,
-        feed_forward: bool = False,
-        atom_reloading: bool = False,
+        feed_forward: bool | None = None,
+        atom_reloading: bool | None = None,
         blockade_radius: float | None = None,
         recompute_paths: bool = False,
     ) -> ArchSpec:
         """Assemble the :class:`ArchSpec` and validate it via Rust.
 
         Args:
-            feed_forward: Whether the device supports feed-forward.
-            atom_reloading: Whether the device supports atom reloading.
+            feed_forward: Whether the device supports feed-forward.  Defaults
+                to the value carried in by :meth:`from_spec`, else ``False``.
+            atom_reloading: Whether the device supports atom reloading, with
+                the same default.
             blockade_radius: Explicit radius (µm), overriding the value
                 recorded by :meth:`set_blockade_radius`.
             recompute_paths: Search every lane afresh, discarding inherited
@@ -676,18 +736,22 @@ class ArchBuilder:
         ]
 
         modes: list[_RustMode] = []
-        for mode_name, zone_names in self._modes:
+        for mode_name, zone_names, order in self._modes:
             zone_ids = [self._zone_ids[z] for z in zone_names]
             modes.append(
                 _RustMode(
                     name=mode_name,
                     zones=zone_ids,
-                    bitstring_order=[
-                        _RustLocAddr(zid, w, s)
-                        for zid in zone_ids
-                        for w in range(self.num_words)
-                        for s in range(self.sites_per_word)
-                    ],
+                    bitstring_order=(
+                        list(order)
+                        if order is not None
+                        else [
+                            _RustLocAddr(zid, w, s)
+                            for zid in zone_ids
+                            for w in range(self.num_words)
+                            for s in range(self.sites_per_word)
+                        ]
+                    ),
                 )
             )
 
@@ -726,8 +790,10 @@ class ArchBuilder:
             modes=modes,
             zone_buses=zone_buses,
             paths=paths or None,
-            feed_forward=feed_forward,
-            atom_reloading=atom_reloading,
+            feed_forward=(self._feed_forward if feed_forward is None else feed_forward),
+            atom_reloading=(
+                self._atom_reloading if atom_reloading is None else atom_reloading
+            ),
             blockade_radius=(
                 blockade_radius
                 if blockade_radius is not None
@@ -785,11 +851,31 @@ class ArchBuilder:
         if not inner.zones:
             raise ValueError("spec has no zones")
 
+        def _factor(sites: list[tuple[int, ...]]) -> tuple[list[int], list[int]]:
+            """Split a word's sites into (rows, columns), or reject it.
+
+            A word here is a row-major Cartesian product, because that is
+            what ``word_shape`` and the ``column + row * num_columns`` site
+            numbering mean.  ``ArchSpec`` does not require that, so a spec
+            can hold words this builder cannot express — say so instead of
+            canonicalizing them, since site IDs address bus endpoints and
+            inherited lanes and renumbering them would re-map routing.
+            """
+            rows = list(dict.fromkeys(y for _, y in sites))
+            cols = list(dict.fromkeys(x for x, _ in sites))
+            if [(c, r) for r in rows for c in cols] != sites:
+                raise ValueError(
+                    f"word sites {sites} are not a row-major grid of "
+                    f"{len(rows)} row(s) x {len(cols)} column(s). This builder "
+                    "numbers sites as column + row * num_columns, so it cannot "
+                    "represent this word without renumbering it — which would "
+                    "silently re-map every bus endpoint and inherited lane."
+                )
+            return rows, cols
+
         sites = [tuple(s) for s in inner.words[0].sites]
-        word_shape = (
-            len({s[1] for s in sites}),
-            len({s[0] for s in sites}),
-        )
+        first_rows, first_cols = _factor(sites)
+        word_shape = (len(first_rows), len(first_cols))
 
         shapes = {(z.grid.num_y, z.grid.num_x) for z in inner.zones}
         if len(shapes) > 1:
@@ -803,11 +889,8 @@ class ArchBuilder:
 
         builder = cls(grid_shape=grid_shape, word_shape=word_shape)
         for word in inner.words:
-            positions = [tuple(s) for s in word.sites]
-            builder.add_word(
-                rows=sorted({p[1] for p in positions}),
-                columns=sorted({p[0] for p in positions}),
-            )
+            rows, cols = _factor([tuple(s) for s in word.sites])
+            builder.add_word(rows=rows, columns=cols)
 
         for zone in inner.zones:
             builder.add_zone(
@@ -816,15 +899,21 @@ class ArchBuilder:
                 columns=list(zone.grid.x_positions),
                 x_clearance=x_clearance,
                 y_clearance=y_clearance,
+                # Participation is passed through verbatim: an empty list
+                # alongside buses is a real value and must not be rebuilt as
+                # "everything". With no buses of that kind, ``build`` emits
+                # ``[]`` whatever the builder holds, so the spec's empty list
+                # carries no information and defaulting to all keeps the zone
+                # extensible.
                 words_with_site_buses=(
                     list(zone.words_with_site_buses)
-                    if zone.words_with_site_buses
+                    if zone.site_buses
                     else list(range(len(inner.words)))
                 ),
                 sites_with_word_buses=(
                     list(zone.sites_with_word_buses)
-                    if zone.sites_with_word_buses
-                    else list(range(len(sites)))
+                    if zone.word_buses
+                    else list(range(word_shape[0] * word_shape[1]))
                 ),
             )
 
@@ -840,21 +929,38 @@ class ArchBuilder:
                 )
 
         names = [z.name for z in inner.zones]
-        for bus in inner.zone_buses:
-            src_entries = [tuple(e) for e in bus.src]
-            dst_entries = [tuple(e) for e in bus.dst]
-            builder.connect(
-                (names[src_entries[0][0]], [w for _, w in src_entries]),
-                (names[dst_entries[0][0]], [w for _, w in dst_entries]),
-            )
+        for bus_id, bus in enumerate(inner.zone_buses):
+            endpoints = []
+            for side, entries in (("src", bus.src), ("dst", bus.dst)):
+                pairs = [tuple(e) for e in entries]
+                if not pairs:
+                    raise ValueError(
+                        f"zone bus {bus_id} has an empty {side} endpoint; a bus "
+                        "must move at least one word."
+                    )
+                zone_ids = {z for z, _ in pairs}
+                if len(zone_ids) != 1:
+                    raise ValueError(
+                        f"zone bus {bus_id}'s {side} endpoint spans zones "
+                        f"{sorted(zone_ids)}. connect addresses one zone per "
+                        "side, so this builder cannot express it."
+                    )
+                endpoints.append((names[zone_ids.pop()], [w for _, w in pairs]))
+            builder.connect(endpoints[0], endpoints[1])
 
         for mode in inner.modes:
-            builder.add_mode(mode.name, [names[z] for z in mode.zones])
+            builder.add_mode(
+                mode.name,
+                [names[z] for z in mode.zones],
+                bitstring_order=list(mode.bitstring_order),
+            )
 
         builder._inherited_paths = dict(spec.paths) if spec.paths else None
         builder._inherited_shape = {
             z.name: builder._zone_shape(z) for z in builder._zones
         }
+        builder._feed_forward = spec.feed_forward
+        builder._atom_reloading = spec.atom_reloading
         builder._blockade_radius = spec.blockade_radius
         if spec.blockade_radius is not None:
             radius_nm = to_nm(spec.blockade_radius, "blockade_radius")

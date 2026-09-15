@@ -1,5 +1,6 @@
 """Tests for the spec-shaped ArchBuilder in ``arch.build.v2``."""
 
+import json
 import warnings
 from dataclasses import dataclass
 
@@ -13,7 +14,28 @@ from bloqade.lanes.arch.build.v2 import ArchBuilder
 from bloqade.lanes.arch.gemini.logical.spec import get_arch_spec as logical_spec
 from bloqade.lanes.arch.gemini.physical.spec import get_arch_spec as physical_spec
 from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode._native import ArchSpec as RustArchSpec
 from bloqade.lanes.bytecode.encoding import MoveType
+
+
+def as_comparable(spec: ArchSpec) -> dict:
+    """The whole spec as plain data, with paths in a stable order.
+
+    Comparing field by field only tests the fields someone thought to
+    list; serializing compares everything the spec actually carries.
+    """
+    data = json.loads(spec.to_json())
+    if data.get("paths"):
+        data["paths"] = sorted(data["paths"], key=json.dumps)
+    return data
+
+
+def perturbed(spec: ArchSpec, mutate) -> ArchSpec:
+    """A copy of *spec* with ``mutate`` applied to its JSON form."""
+    data = json.loads(spec.to_json())
+    mutate(data)
+    return ArchSpec(RustArchSpec.from_json_validated(json.dumps(data)))
+
 
 _CL = 0.25
 
@@ -333,18 +355,18 @@ class TestBuild:
 )
 class TestFromSpec:
     def test_round_trip_is_lossless(self, getter):
-        """Rebuilding a shipped spec reproduces it exactly, paths included."""
+        """Rebuilding a shipped spec reproduces it exactly, in every field.
+
+        Compared through the serialized form rather than a hand-picked set
+        of attributes: a subset comparison only checks what someone thought
+        to list, and silently passed while ``from_spec`` was dropping the
+        capability flags and regenerating ``bitstring_order``.
+        """
         spec = getter()
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            rebuilt = ArchBuilder.from_spec(spec).build(
-                feed_forward=spec.feed_forward,
-                atom_reloading=spec.atom_reloading,
-            )
-        assert rebuilt._inner.words == spec._inner.words
-        assert list(rebuilt._inner.zones) == list(spec._inner.zones)
-        assert list(rebuilt._inner.zone_buses) == list(spec._inner.zone_buses)
-        assert rebuilt.paths == spec.paths
+            rebuilt = ArchBuilder.from_spec(spec).build()
+        assert as_comparable(rebuilt) == as_comparable(spec)
 
     def test_inherited_paths_survive_because_the_search_cannot_recreate_them(
         self, getter
@@ -778,3 +800,140 @@ class TestAddBusesGivenAnArchitecture:
             warnings.simplefilter("ignore")
             out = b.build()
         assert {k: out.paths[k] for k in spec.paths} == dict(spec.paths)
+
+
+# ── Regressions from the Copilot review of PR #1012 ──
+
+
+class TestSpecFidelity:
+    """``from_spec`` must reproduce a spec, or refuse it — never reinterpret."""
+
+    def test_shape_must_be_whole_numbers(self):
+        """``int(2.5)`` would silently accept a malformed index space."""
+        with pytest.raises(ValueError, match="grid_shape must be two positive"):
+            ArchBuilder(grid_shape=(2.5, 1), word_shape=(1, 1))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="word_shape must be two positive"):
+            ArchBuilder(grid_shape=(2, 1), word_shape=(1, 0))
+
+    def test_capability_flags_survive_a_round_trip(self):
+        """build() defaulted both to False, silently clearing them."""
+        spec = perturbed(
+            physical_spec(),
+            lambda d: d.update(feed_forward=True, atom_reloading=True),
+        )
+        rebuilt = ArchBuilder.from_spec(spec).build()
+        assert (rebuilt.feed_forward, rebuilt.atom_reloading) == (True, True)
+
+    def test_explicit_capability_arguments_still_win(self):
+        spec = perturbed(physical_spec(), lambda d: d.update(feed_forward=True))
+        rebuilt = ArchBuilder.from_spec(spec).build(feed_forward=False)
+        assert rebuilt.feed_forward is False
+
+    def test_site_order_is_preserved_not_canonicalized(self):
+        """Site IDs address bus endpoints and lanes; renumbering re-maps them."""
+
+        def reverse_every_word(d):
+            for w in d["words"]:
+                w["sites"] = list(reversed(w["sites"]))
+
+        spec = perturbed(physical_spec(), reverse_every_word)
+        rebuilt = ArchBuilder.from_spec(spec).build()
+        assert list(rebuilt._inner.words[0].sites) == list(spec._inner.words[0].sites)
+
+    def test_a_word_this_builder_cannot_express_is_rejected(self):
+        """Not a row-major product: refuse rather than invent a site."""
+
+        def bend_word_zero(d):
+            sites = list(d["words"][0]["sites"])
+            sites[-1] = [sites[-1][0], 1]
+            d["words"][0]["sites"] = sites
+
+        spec = perturbed(physical_spec(), bend_word_zero)
+        with pytest.raises(ValueError, match="not a row-major grid"):
+            ArchBuilder.from_spec(spec)
+
+    def test_custom_bitstring_order_is_preserved(self):
+        """An ArchSpec may carry any measurement ordering."""
+
+        def reverse_order(d):
+            for mode in d["modes"]:
+                mode["bitstring_order"] = list(reversed(mode["bitstring_order"]))
+
+        spec = perturbed(physical_spec(), reverse_order)
+        rebuilt = ArchBuilder.from_spec(spec).build()
+        assert list(rebuilt._inner.modes[0].bitstring_order) == list(
+            spec._inner.modes[0].bitstring_order
+        )
+
+    def test_empty_participation_is_not_read_as_everything(self):
+        """[] alongside buses is a real value, not an unset one."""
+        spec = perturbed(
+            physical_spec(), lambda d: d["zones"][0].update(words_with_site_buses=[])
+        )
+        with pytest.raises(ValueError, match="no words_with_site_buses"):
+            ArchBuilder.from_spec(spec)
+
+    def test_absent_participation_still_leaves_a_zone_extensible(self):
+        """With no buses of that kind, [] carries no information."""
+        spec = logical_spec()
+        assert not spec._inner.zones[0].site_buses
+        b = ArchBuilder.from_spec(spec, x_clearance=0.5, y_clearance=1.0)
+        assert b._zones[0].words_with_site_buses == tuple(range(b.num_words))
+
+
+class TestConnectContract:
+    def test_same_zone_endpoints_are_rejected_at_the_call(self):
+        """Rust rejects these at build; phase 3 promises to catch them here."""
+        spec = physical_spec()
+        b = ArchBuilder.from_spec(spec, x_clearance=0.5, y_clearance=1.0)
+        name = spec._inner.zones[0].name
+        with pytest.raises(ValueError, match="inter-zone bus"):
+            b.connect((name, [0, 1]), (name, [2, 3]))
+
+    def test_zone_bus_endpoints_spanning_zones_are_rejected(self):
+        """connect addresses one zone per side; a mixed endpoint cannot map."""
+        x, y = [0.0, 1.0, 2.0, 3.0], [0.0]
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 1))
+        for c in range(4):
+            b.add_word(rows=[0], columns=[c])
+        for name, shift in (("a", 0.0), ("b", 50.0)):
+            b.add_zone(
+                name,
+                rows=y,
+                columns=[v + shift for v in x],
+                x_clearance=0.25,
+                y_clearance=0.25,
+            )
+        b.connect(("a", [0, 1]), ("b", [0, 1]))
+        b.add_mode("all", ["a", "b"])
+        spec = b.build()
+
+        def mix_endpoint(d):
+            # Every pair still crosses a boundary, which is all Rust asks,
+            # but the src endpoint now names both zones.
+            d["zone_buses"][0]["src"] = [[0, 0], [1, 1]]
+            d["zone_buses"][0]["dst"] = [[1, 0], [0, 1]]
+
+        with pytest.raises(ValueError, match="spans zones"):
+            ArchBuilder.from_spec(perturbed(spec, mix_endpoint))
+
+    def test_empty_zone_bus_endpoint_is_rejected(self):
+        b = ArchBuilder(grid_shape=(1, 4), word_shape=(1, 1))
+        for c in range(4):
+            b.add_word(rows=[0], columns=[c])
+        for name, shift in (("a", 0.0), ("b", 50.0)):
+            b.add_zone(
+                name,
+                rows=[0.0],
+                columns=[v + shift for v in (0.0, 1.0, 2.0, 3.0)],
+                x_clearance=0.25,
+                y_clearance=0.25,
+            )
+        b.connect(("a", [0, 1]), ("b", [0, 1]))
+        b.add_mode("all", ["a", "b"])
+        spec = b.build()
+        # Rust accepts a bus with both endpoints empty, so this is reachable.
+        with pytest.raises(ValueError, match="empty src endpoint"):
+            ArchBuilder.from_spec(
+                perturbed(spec, lambda d: d["zone_buses"][0].update(src=[], dst=[]))
+            )
