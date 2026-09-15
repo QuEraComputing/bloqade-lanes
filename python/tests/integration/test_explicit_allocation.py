@@ -105,9 +105,16 @@ def test_unannotated_kernel_unchanged():
     for s in out.callable_region.walk():
         counts[type(s).__name__] = counts.get(type(s).__name__, 0) + 1
 
+    # `Constant` is 4 rather than 3 because `NormalizeGateAxisAngles` rewrites
+    # this kernel's `-0.25` axis angle to `0.75`, while `-0.25` is still needed
+    # as a *rotation* angle -- so the two roles stop sharing one constant. That
+    # is the rule costing a constant on a shallow kernel; it is worth it
+    # because the same rule takes a 40-layer kernel from 22 constants and 20
+    # distinct axis angles (up to 5.0 turns) down to 5 and 4. Nothing fuses
+    # differently here either way: 0.75 and 0.25 are distinct axes regardless.
     expected_counts = {
         "CZ": 1,
-        "Constant": 3,
+        "Constant": 4,
         "ConstantNone": 1,
         "ConvertToPhysicalMeasurements": 1,
         "EndMeasure": 1,
