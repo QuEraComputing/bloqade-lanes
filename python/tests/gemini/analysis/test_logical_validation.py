@@ -2,7 +2,7 @@ import bloqade.squin as squin
 import pytest
 from bloqade.analysis.address import AddressAnalysis
 from bloqade.types import Qubit
-from kirin.dialects import func, ilist
+from kirin.dialects import func, ilist, scf
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
@@ -53,7 +53,7 @@ def test_if_stmt_invalid():
 
 
 def test_for_loop():
-    @gemini.logical.kernel(aggressive_unroll=True)
+    @gemini.logical.kernel
     def valid_loop():
         q = squin.qalloc(3)
 
@@ -63,6 +63,9 @@ def test_for_loop():
         gemini.logical.terminal_measure(q)
 
     valid_loop.print()
+    assert not any(
+        isinstance(stmt, scf.For) for stmt in valid_loop.callable_region.walk()
+    )
 
     with pytest.raises(ValidationErrorGroup):
 
@@ -72,6 +75,19 @@ def test_for_loop():
 
             for i in range(n):
                 squin.x(q[i])
+
+
+def test_aggressive_unroll_can_be_disabled():
+    @gemini.logical.kernel(aggressive_unroll=False, verify=False)
+    def retained_loop():
+        q = squin.qalloc(3)
+        for i in range(3):
+            squin.x(q[i])
+        gemini.logical.terminal_measure(q)
+
+    assert any(
+        isinstance(stmt, scf.For) for stmt in retained_loop.callable_region.walk()
+    )
 
 
 def test_func():
