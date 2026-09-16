@@ -39,8 +39,52 @@ import stim
 from bloqade import qubit, squin
 from bloqade.gemini import GeminiLogicalSimulator, logical as gemini_logical
 from bloqade.gemini.logical.stdlib import default_post_processing
+from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+from bloqade.lanes.transform import native_to_place
 
 PHYSICAL_PER_LOGICAL = 7
+
+
+# ── EliminateRz runs here with its residual flushed ───────────────────────
+#
+# `EliminateRz` normally discards a diagonal Z-phase residual instead of
+# emitting it. That cannot move a measurement outcome -- a diagonal unitary
+# commutes with every Z-basis projector -- and `test_eliminate_rz_pipeline.py`
+# asserts exactly that by simulation.
+#
+# But this file checks the *exact* pre-measurement state, sign included, and a
+# discarded residual lands in the same place a genuine `#404`-class bug does:
+# `#404` was itself a spurious `Zbar`. So a discarded residual is
+# indistinguishable here from the defect this file exists to catch.
+#
+# Running with `flush_residual=True` removes the ambiguity rather than
+# compensating for it. The pass does all of its real work -- every phase is
+# commuted forward through the `R` gates exactly as in production -- and then
+# writes the leftover back out at the end of the wire, which is exact, so the
+# compiled circuit equals the un-eliminated one and the plain unencoded
+# references below apply unchanged.
+#
+# This is what makes the checks bite in both directions: they cover the
+# transversal lowering (`#404`) *and* the commutation algebra. Inverting one
+# sign in `EliminateRz` -- `phi - alpha` to `phi + alpha` -- fails all 15
+# cases here.
+#
+# Do NOT "fix" a failure in this file by appending Z-type gates to the kernels
+# or the reference strings. That was tried; it hides a real residual behind a
+# hand-derived constant and blunts the `#404` probe.
+
+
+class _FlushingEliminateRz(EliminateRz):
+    """``EliminateRz`` with the residual restored instead of discarded."""
+
+    def __init__(self, no_raise: bool = False) -> None:
+        super().__init__(no_raise=no_raise, flush_residual=True)
+
+
+@pytest.fixture(autouse=True)
+def _flush_eliminate_rz_residual(monkeypatch):
+    monkeypatch.setattr(native_to_place, "EliminateRz", _FlushingEliminateRz)
+
 
 _LIFT = {"_": "_", "X": "X", "Y": "Y", "Z": "Z"}
 _LIFT_SIGN = {"_": 1, "X": 1, "Y": -1, "Z": 1}
@@ -304,3 +348,23 @@ def test_bell_cy_stabilizer_sign():
     )
     xbar_ybar.sign = -1  # Ybar = -Y^7
     assert sim.peek_observable_expectation(xbar_ybar) == 1
+
+
+def test_the_residual_flush_is_in_effect(monkeypatch):
+    """Guard the guard: prove the autouse fixture changes what gets compiled.
+
+    Every assertion in this file depends on `EliminateRz` running with
+    `flush_residual=True`. The fixture achieves that by rebinding a module
+    global that `_post_unroll_rules` resolves at call time -- so a refactor
+    capturing the class at import time instead would leave the patch doing
+    nothing, and every test here would silently go back to measuring the
+    discarding rule and start failing for a reason that looks like a lowering
+    bug. Flushing must therefore produce a *different* circuit from
+    discarding.
+    """
+    flushed = str(_noiseless_gate_prefix(_one_qubit_h))
+
+    monkeypatch.setattr(native_to_place, "EliminateRz", EliminateRz)
+    discarded = str(_noiseless_gate_prefix(_one_qubit_h))
+
+    assert flushed != discarded, "the residual flush patch did not take effect"
