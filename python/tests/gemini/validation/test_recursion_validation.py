@@ -285,7 +285,7 @@ def test_opaque_call_inside_a_reachable_callee_is_rejected():
     started = time.monotonic()
     with pytest.raises(ValidationErrorGroup) as exc_info:
 
-        @gemini.logical.kernel(verify=False, inline=False)
+        @gemini.logical.kernel(verify=False, inline=False, aggressive_unroll=False)
         def main():
             _foreign_calls_its_parameter_twice(main)
 
@@ -346,10 +346,10 @@ def test_callgraph_records_edges_caller_to_callee():
     def leaf(q):
         squin.x(q)
 
-    # inline=False keeps the `func.Invoke` in place instead of splicing the
+    # Disable both inlining paths to keep `func.Invoke` instead of splicing the
     # callee body in; verify=False because a surviving invoke is separately
     # rejected by the logical validation.
-    @gemini.logical.kernel(verify=False, inline=False)
+    @gemini.logical.kernel(verify=False, inline=False, aggressive_unroll=False)
     def caller():
         q = squin.qalloc(1)
         leaf(q[0])
@@ -482,7 +482,7 @@ def test_cycle_far_below_the_entry_is_rejected():
     started = time.monotonic()
     with pytest.raises(ValidationErrorGroup) as exc_info:
 
-        @gemini.logical.kernel(verify=False, inline=False)
+        @gemini.logical.kernel(verify=False, inline=False, aggressive_unroll=False)
         def main():
             _deep_cycle_start(1)
 
