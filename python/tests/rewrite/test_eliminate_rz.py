@@ -584,7 +584,7 @@ def _initialize_after_a_phase(make_angle, value: float = 0.25) -> ir.Block:
     ("make_angle", "value"),
     [
         pytest.param(_constant_angle, 0.25, id="constant"),
-        # Regression: the guard used to compare `_literal(pending) != 0.0`, and
+        # Regression: the guard used to compare `constant_float(pending) != 0.0`, and
         # a non-constant has no literal, so an angle arriving as a function
         # argument raised here -- the very case the SSA-valued frame exists to
         # support.

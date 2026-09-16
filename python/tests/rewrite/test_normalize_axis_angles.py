@@ -125,10 +125,13 @@ def _rotation_angle_is_left_alone():
     return test, expected
 
 
-def _symbolic_axis_is_left_alone():
-    """Reducing this needs a live `py.Mod`, and nothing folds constants after
-    this point in `emit` -- it would survive into the emitted program. The
-    symbolic branch does not have the problem being fixed anyway."""
+def _symbolic_axis_gets_a_runtime_mod():
+    """The compiler cannot read this one, so the reduction is deferred.
+
+    `py.Mod` is emitted rather than the axis being skipped: there is nothing
+    to fold, so nothing is lost by deferring, and the program still gets a
+    normalized axis -- computed by whoever runs it.
+    """
     q = squin_qubit.stmts.New()
     reg = ilist.New(values=(q.result,), elem_type=QUBIT)
     lhs = py.Constant(1.5)
@@ -153,6 +156,8 @@ def _symbolic_axis_is_left_alone():
     arhs = py.Constant(0.25)
     aaxis = py.Add(albs.result, arhs.result)
     aturn = py.Constant(0.5)
+    one = py.Constant(1.0)
+    reduced = py.Mod(aaxis.result, one.result)
     expected = ir.Block(
         [
             a,
@@ -161,7 +166,9 @@ def _symbolic_axis_is_left_alone():
             arhs,
             aaxis,
             aturn,
-            native_gate.stmts.R(aaxis.result, aturn.result, areg.result),
+            one,
+            reduced,
+            native_gate.stmts.R(reduced.result, aturn.result, areg.result),
         ]
     )
     return test, expected
@@ -172,7 +179,7 @@ CASES = {
     "negative_axis_wraps_into_range": _negative_axis_wraps_into_range,
     "axis_already_in_range_is_untouched": _axis_already_in_range_is_untouched,
     "rotation_angle_is_left_alone": _rotation_angle_is_left_alone,
-    "symbolic_axis_is_left_alone": _symbolic_axis_is_left_alone,
+    "symbolic_axis_gets_a_runtime_mod": _symbolic_axis_gets_a_runtime_mod,
 }
 
 
@@ -206,9 +213,32 @@ def test_a_constant_shared_across_roles_is_not_mutated():
     assert gate.axis_angle.owner.value.unwrap() == 0.25  # type: ignore[union-attr]
 
 
-def test_rewrite_is_idempotent():
-    """A reduced angle is already in range, so a second pass finds nothing."""
+def test_a_constant_axis_is_idempotent():
+    """A reduced constant is already in range, so a second pass finds nothing."""
     test_block, _ = _axis_above_one_turn_is_reduced()
     rewrite.Walk(NormalizeGateAxisAngles()).rewrite(test_block)
     result = rewrite.Walk(NormalizeGateAxisAngles()).rewrite(test_block)
     assert not result.has_done_something
+
+
+def test_a_symbolic_axis_is_not_idempotent():
+    """Pins the contract stated on the class, rather than guarding against it.
+
+    `constant_float` cannot see through a `py.Mod`, so a second pass wraps the axis
+    again. The rule is run once by `NativeToPlaceBase.emit`; this test exists
+    so that anyone reaching for `Fixpoint` -- which would nest one `py.Mod`
+    per iteration until `max_iter` -- finds the property written down and
+    failing loudly rather than discovering it in an emitted program.
+    """
+    test_block, _ = _symbolic_axis_gets_a_runtime_mod()
+
+    rewrite.Walk(NormalizeGateAxisAngles()).rewrite(test_block)
+    first = sum(1 for stmt in test_block.stmts if isinstance(stmt, py.Mod))
+
+    rewrite.Walk(NormalizeGateAxisAngles()).rewrite(test_block)
+    second = sum(1 for stmt in test_block.stmts if isinstance(stmt, py.Mod))
+
+    assert (first, second) == (
+        1,
+        2,
+    ), "documented behaviour changed; update the docstring"

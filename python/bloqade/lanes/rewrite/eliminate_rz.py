@@ -66,6 +66,7 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 from bloqade import qubit as squin_qubit, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.logical.dialects.operations import stmts as operations
+from bloqade.lanes.utils import constant_float
 
 __all__ = ["EliminateRz", "EliminateRzError"]
 
@@ -79,18 +80,6 @@ class EliminateRzError(ir.ValidationError):
     ``NativeToPlaceBase.emit``. Construct it as
     ``EliminateRzError(node, "message")``.
     """
-
-
-def _literal(value: ir.SSAValue) -> float | None:
-    """The numeric literal behind ``value``, or ``None`` if it is not a constant."""
-    if not isinstance(value, ir.ResultValue) or not isinstance(
-        value.owner, py.Constant
-    ):
-        return None
-    data = value.owner.value.unwrap()
-    if isinstance(data, bool) or not isinstance(data, (int, float)):
-        return None
-    return float(data)
 
 
 @dataclass
@@ -218,7 +207,7 @@ class EliminateRz(RewriteRule):
         before: ir.Statement,
     ) -> ir.SSAValue:
         """``lhs op rhs`` as an SSA value, folded to a literal when both are."""
-        left, right = _literal(lhs), _literal(rhs)
+        left, right = constant_float(lhs), constant_float(rhs)
         if left is not None and right is not None:
             folded = left + right if op is py.Add else left - right
             stmt: ir.Statement = py.Constant(folded)
