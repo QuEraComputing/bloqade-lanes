@@ -24,7 +24,11 @@ from .dialects import operations
     )
 )
 def kernel(self):
-    """Compile a function to a Gemini logical kernel."""
+    """Compile a function to a Gemini logical kernel.
+
+    Aggressive inlining and unrolling are enabled by default. Set
+    ``aggressive_unroll=False`` to use the standard pass pipeline instead.
+    """
     address_analysis = address.AddressAnalysis(dialects=self)
 
     def run_pass(
@@ -41,13 +45,14 @@ def kernel(self):
         aggressive: Annotated[
             bool, Doc("run aggressive folding passes if `fold=True`")
         ] = False,
-        inline: Annotated[bool, Doc("inline function calls, default `True`")] = True,
+        inline: Annotated[
+            bool,
+            Doc("inline function calls when `aggressive_unroll=False`, default `True`"),
+        ] = True,
         aggressive_unroll: Annotated[
             bool,
-            Doc(
-                "Run aggressive inlining and unrolling pass on the IR, default `False`"
-            ),
-        ] = False,
+            Doc("Run aggressive inlining and unrolling pass on the IR, default `True`"),
+        ] = True,
         no_raise: Annotated[bool, Doc("do not raise exception during analysis")] = True,
         num_physical_qubits: Annotated[
             int, Doc("number of physical qubits per logical qubit")
