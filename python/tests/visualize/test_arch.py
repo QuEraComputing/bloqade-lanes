@@ -133,6 +133,7 @@ def test_plot_returns_axes(small_arch_spec: ArchSpec) -> None:
 
 
 def test_plot_interactive_starts_with_bus_paths_hidden(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -154,6 +155,7 @@ def test_plot_interactive_starts_with_bus_paths_hidden(
 
 
 def test_plot_interactive_uses_architecture_paths(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     visualizer = ArchVisualizer(small_arch_spec)
@@ -172,6 +174,7 @@ def test_plot_interactive_uses_architecture_paths(
 
 
 def test_plot_interactive_bus_hover_identifies_endpoints(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive(show_all_buses=True)
@@ -193,6 +196,7 @@ def test_plot_interactive_bus_hover_identifies_endpoints(
 
 
 def test_plot_interactive_site_hover_keeps_text_compact_and_stores_lane_paths(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -236,6 +240,7 @@ def test_plot_interactive_site_hover_keeps_text_compact_and_stores_lane_paths(
 
 
 def test_plot_interactive_supports_click_previews_and_dashed_buses(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive(
@@ -294,6 +299,7 @@ def test_plot_interactive_supports_click_previews_and_dashed_buses(
 
 
 def test_plot_interactive_html_highlights_hovered_bus(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -327,6 +333,7 @@ def test_plot_interactive_html_highlights_hovered_bus(
 
 
 def test_plot_interactive_notebook_representation_keeps_interactions(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -339,6 +346,7 @@ def test_plot_interactive_notebook_representation_keeps_interactions(
 
 
 def test_plot_interactive_ipython_display_keeps_interactions(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -352,6 +360,7 @@ def test_plot_interactive_ipython_display_keeps_interactions(
 
 
 def test_plot_interactive_show_keeps_interactions_in_jupyter(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -369,7 +378,76 @@ def test_plot_interactive_show_keeps_interactions_in_jupyter(
     assert '"scrollZoom": false' in html
 
 
+@pytest.fixture
+def fresh_plotlyjs_state():
+    """Run with no plotly.js emitted yet, and leave the session as found."""
+    arch_visualization.reset_plotlyjs_state()
+    mode = arch_visualization.PLOTLYJS_MODE
+    yield
+    arch_visualization.PLOTLYJS_MODE = mode
+    arch_visualization.reset_plotlyjs_state()
+
+
+def test_plotly_bundle_is_embedded_once_per_session(
+    plotly, small_arch_spec: ArchSpec, fresh_plotlyjs_state
+) -> None:
+    """Only the first display carries plotly.js; later cells reference it.
+
+    Every display is HTML rather than a Plotly MIME bundle, because the
+    architecture controller needs the rendered div -- so without this, each
+    cell of a notebook embedded its own ~4 MB copy of the same script.
+    """
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    first = figure._repr_mimebundle_()["text/html"]
+    second = figure._repr_mimebundle_()["text/html"]
+
+    assert len(second) < len(first)
+    # The figure itself is unchanged; only the script payload differs.
+    assert "data-arch-visualizer-bus-selectors" in second
+    # A CDN tag rather than nothing, so the cell still renders if the embedded
+    # copy is missing from the page -- cleared output, or re-ordered cells.
+    assert "cdn.plot.ly" in second
+
+    # `_ipython_display_` is a separate entry point onto the same state, so it
+    # must not re-embed what `_repr_mimebundle_` already sent.
+    with patch("IPython.display.display") as display:
+        figure._ipython_display_()
+
+    assert len(display.call_args.args[0].data) == len(second)
+
+
+def test_plotly_bundle_returns_after_reset(
+    plotly, small_arch_spec: ArchSpec, fresh_plotlyjs_state
+) -> None:
+    """Resetting re-embeds, for a session whose bundle-carrying output is gone."""
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    first = figure._repr_mimebundle_()["text/html"]
+    assert len(figure._repr_mimebundle_()["text/html"]) < len(first)
+
+    arch_visualization.reset_plotlyjs_state()
+    assert len(figure._repr_mimebundle_()["text/html"]) == len(first)
+
+
+def test_plotlyjs_mode_overrides_session_dedup(
+    plotly, small_arch_spec: ArchSpec, fresh_plotlyjs_state
+) -> None:
+    """``PLOTLYJS_MODE`` opts out, for offline use or a CDN reference."""
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    arch_visualization.PLOTLYJS_MODE = True
+    embedded = [len(figure._repr_mimebundle_()["text/html"]) for _ in range(2)]
+    assert embedded[0] == embedded[1], "every cell should embed under True"
+
+    arch_visualization.PLOTLYJS_MODE = "cdn"
+    cdn = figure._repr_mimebundle_()["text/html"]
+    assert len(cdn) < embedded[0]
+    assert "cdn.plot.ly" in cdn
+
+
 def test_plot_interactive_show_recognizes_derived_jupyter_shell(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -387,6 +465,7 @@ def test_plot_interactive_show_recognizes_derived_jupyter_shell(
 
 
 def test_plot_interactive_show_rejects_unsupported_html_options(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -399,6 +478,7 @@ def test_plot_interactive_show_rejects_unsupported_html_options(
 
 
 def test_plot_interactive_show_keeps_interactions_in_browser(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -417,6 +497,7 @@ def test_plot_interactive_show_keeps_interactions_in_browser(
 
 
 def test_plot_interactive_explicit_browser_keeps_interactions_in_jupyter(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -434,6 +515,7 @@ def test_plot_interactive_explicit_browser_keeps_interactions_in_jupyter(
 
 
 def test_plot_interactive_browser_preserves_animation_options(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -454,6 +536,7 @@ def test_plot_interactive_browser_preserves_animation_options(
 
 
 def test_plot_interactive_html_preserves_caller_config(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -469,6 +552,7 @@ def test_plot_interactive_html_preserves_caller_config(
 
 
 def test_plot_interactive_write_html_keeps_interactions(
+    plotly,
     small_arch_spec: ArchSpec,
     tmp_path: Path,
 ) -> None:
@@ -489,6 +573,7 @@ def test_plot_interactive_write_html_keeps_interactions(
 
 
 def test_plot_interactive_site_identity_toggle(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive(show_site_ids=True)
@@ -521,6 +606,7 @@ def test_plot_interactive_site_identity_toggle(
 
 
 def test_plot_interactive_controls_can_show_and_clear_all_bus_previews(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -549,6 +635,7 @@ def test_plot_interactive_controls_can_show_and_clear_all_bus_previews(
 
 
 def test_plot_interactive_controls_are_below_title(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -558,6 +645,7 @@ def test_plot_interactive_controls_are_below_title(
 
 
 def test_plot_interactive_has_color_labelled_bus_multiselectors(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -583,6 +671,7 @@ def test_plot_interactive_has_color_labelled_bus_multiselectors(
 
 
 def test_plot_interactive_can_restore_legacy_bus_legend(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive(show_bus_legend=True)
@@ -597,6 +686,7 @@ def test_plot_interactive_can_restore_legacy_bus_legend(
 
 
 def test_plot_interactive_cartoon_paths_keep_column_pair_hops_straight(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive(
@@ -616,6 +706,7 @@ def test_plot_interactive_cartoon_paths_keep_column_pair_hops_straight(
 
 
 def test_plot_interactive_path_toggle_preserves_bus_selection(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive()
@@ -630,6 +721,7 @@ def test_plot_interactive_path_toggle_preserves_bus_selection(
 
 
 def test_plot_interactive_supports_dark_theme(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     figure = ArchVisualizer(small_arch_spec).plot_interactive(theme="dark")
@@ -724,7 +816,10 @@ def test_cartoon_path_curves_lanes_that_cross_column_pairs() -> None:
     # A word bus that crosses to another column pair is arched, so collinear
     # hops of different lengths stay distinguishable.
     across_path = viz._cartoon_path(across_pairs)
-    assert len(across_path) == 21
+    # Against the constant rather than a literal: the sample count is a
+    # document-size knob, not a property of the curve, and every sample is
+    # paid for six times over in the exported figure.
+    assert len(across_path) == arch_visualization._CARTOON_ARC_SAMPLES
     assert across_path[0] == (0.0, 0.0)
     assert across_path[-1] == (10.0, 0.0)
     assert max(abs(y) for _, y in across_path) > 1.0

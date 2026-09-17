@@ -79,7 +79,7 @@ def _state_at(arch_spec: ArchSpec, *, moved: bool) -> tuple[AtomState, Any]:
 
 
 def test_build_debugger_figure_has_clickable_step_slider(
-    monkeypatch, small_arch_spec: ArchSpec
+    plotly, monkeypatch, small_arch_spec: ArchSpec
 ) -> None:
     state, _ = _state_at(small_arch_spec, moved=False)
     step = DebugStep(move.Load(), state, "Step 1 / 1: Load()")
@@ -131,7 +131,7 @@ def test_build_debugger_figure_has_clickable_step_slider(
 
 
 def test_gate_parameters_are_shown_on_affected_atom_and_gate(
-    monkeypatch, small_arch_spec: ArchSpec
+    plotly, monkeypatch, small_arch_spec: ArchSpec
 ) -> None:
     state, _ = _state_at(small_arch_spec, moved=False)
     location = state.data.qubit_to_locations[0]
@@ -171,7 +171,7 @@ def test_gate_parameters_are_shown_on_affected_atom_and_gate(
 
 
 def test_global_gate_is_visible_and_hoverable_on_single_row_architecture(
-    monkeypatch, small_arch_spec: ArchSpec
+    plotly, monkeypatch, small_arch_spec: ArchSpec
 ) -> None:
     state, _ = _state_at(small_arch_spec, moved=False)
     load = move.Load()
@@ -236,6 +236,7 @@ def test_collect_debug_steps_resolves_global_gate_parameters_from_frame(
 
 
 def test_end_measure_is_a_distinct_zone_wide_debug_step(
+    plotly,
     small_arch_spec: ArchSpec,
 ) -> None:
     @kernel
@@ -272,7 +273,7 @@ def test_end_measure_is_a_distinct_zone_wide_debug_step(
 
 
 def test_move_path_hover_shows_source_and_destination(
-    monkeypatch, small_arch_spec: ArchSpec
+    plotly, monkeypatch, small_arch_spec: ArchSpec
 ) -> None:
     state, _ = _state_at(small_arch_spec, moved=True)
     monkeypatch.setattr(
@@ -330,7 +331,7 @@ def test_move_path_hover_shows_source_and_destination(
 
 
 def test_shorter_route_frames_hide_preceding_arrows(
-    monkeypatch, small_arch_spec: ArchSpec
+    plotly, monkeypatch, small_arch_spec: ArchSpec
 ) -> None:
     moved_state, _ = _state_at(small_arch_spec, moved=True)
     stationary_state, _ = _state_at(small_arch_spec, moved=False)
@@ -380,7 +381,7 @@ def test_shorter_route_frames_hide_preceding_arrows(
 
 
 def test_noninteractive_figure_hides_controls(
-    monkeypatch, small_arch_spec: ArchSpec
+    plotly, monkeypatch, small_arch_spec: ArchSpec
 ) -> None:
     state, _ = _state_at(small_arch_spec, moved=False)
     monkeypatch.setattr(
@@ -484,3 +485,32 @@ def test_plotly_debugger_argument_validation(small_arch_spec: ArchSpec) -> None:
             theme="light",
             height=600,
         )
+
+
+def test_move_path_and_site_preview_name_a_bus_identically(
+    plotly,
+    small_arch_spec: ArchSpec,
+) -> None:
+    """One bus gets one name, whichever hover surfaces it.
+
+    The JS controller shows the ``previewLabel`` baked into the figure when a
+    site is hovered; ``_lane_bus_label`` builds the name in Python when a move
+    path is hovered. Both appear in the same figure, so a divergence reads as
+    two different buses. They share a builder now -- this fails if that is
+    undone on either side.
+    """
+    import json
+
+    from bloqade.lanes.visualize.arch import ArchVisualizer
+
+    payload = ArchVisualizer(small_arch_spec).plot_interactive().to_json()
+    assert payload is not None
+    figure = json.loads(payload)
+    baked = {
+        entry["previewLabel"]
+        for entry in figure["layout"]["meta"]["archVisualizerSiteLanePaths"]
+    }
+    derived = {plotly_debug._lane_bus_label(lane) for lane in small_arch_spec.paths}
+
+    assert baked, "fixture should contribute at least one lane preview"
+    assert baked == derived

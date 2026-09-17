@@ -342,19 +342,20 @@ class _SimulatorTaskBase(Generic[RetType]):
         Args:
             animated (bool): Whether to use the animated debugger. Defaults to False.
             interactive (bool): Whether to enable interactive mode. Defaults to True.
+            arch_vis (bool): Whether to use the interactive plotly debugger to visualize the architecture. Defaults to False.
 
         """
         from bloqade.lanes.visualize import animated_debugger, debugger, plotly_debugger
 
-        if animated:
-            animated_debugger(
+        if arch_vis:
+            plotly_debugger(
                 self.physical_move_kernel,
                 self.physical_arch_spec,
                 interactive=interactive,
             )
         else:
-            if arch_vis:
-                plotly_debugger(
+            if animated:
+                animated_debugger(
                     self.physical_move_kernel,
                     self.physical_arch_spec,
                     interactive=interactive,

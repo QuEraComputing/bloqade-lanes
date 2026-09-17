@@ -101,7 +101,7 @@ def test_circuit_columns_resolve_qubits_from_atom_state() -> None:
     assert plotly_circuit.circuit_qubit_ids(steps) == [0, 1]
 
 
-def test_highlight_trace_is_a_band_on_gates_and_a_cursor_elsewhere() -> None:
+def test_highlight_trace_is_a_band_on_gates_and_a_cursor_elsewhere(plotly) -> None:
     arch_spec = get_arch_spec()
     steps = _local_gate_steps(arch_spec)
     columns = circuit_columns(steps, arch_spec)
@@ -167,7 +167,9 @@ def test_compiled_program_circuit_matches_gate_steps(compiled_program) -> None:
     assert columns[-1].qubit_ids == (0, 1, 2)
 
 
-def test_debugger_figure_hosts_a_step_synced_circuit_panel(compiled_program) -> None:
+def test_debugger_figure_hosts_a_step_synced_circuit_panel(
+    plotly, compiled_program
+) -> None:
     mt, arch_spec = compiled_program
     steps = collect_debug_steps(mt, arch_spec)
     columns = circuit_columns(steps, arch_spec)
@@ -223,7 +225,7 @@ def test_debugger_figure_hosts_a_step_synced_circuit_panel(compiled_program) -> 
     assert "jumpToDebuggerStep" in html
 
 
-def test_debugger_figure_can_omit_the_circuit_panel(compiled_program) -> None:
+def test_debugger_figure_can_omit_the_circuit_panel(plotly, compiled_program) -> None:
     mt, arch_spec = compiled_program
 
     figure = plotly_debug.build_plotly_debugger_figure(
@@ -262,7 +264,7 @@ def test_circuit_window_must_be_positive(compiled_program) -> None:
         )
 
 
-def test_gate_highlight_variants_share_attribute_keys(compiled_program) -> None:
+def test_gate_highlight_variants_share_attribute_keys(plotly, compiled_program) -> None:
     """Frame merging would otherwise leak a CZ fill into LocalR marker frames."""
     mt, arch_spec = compiled_program
     colors = plotly_debug._theme_colors("light")
@@ -309,7 +311,7 @@ def test_cz_pair_offsets_separate_overlapping_pairs_only() -> None:
     assert cz_pair_offsets([], rows) == []
 
 
-def test_cz_layers_draw_one_connector_per_pair_with_partner_hover() -> None:
+def test_cz_layers_draw_one_connector_per_pair_with_partner_hover(plotly) -> None:
     colors = plotly_debug._theme_colors("light")
     column = CircuitColumn(
         step_index=3,

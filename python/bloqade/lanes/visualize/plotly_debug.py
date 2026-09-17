@@ -12,12 +12,13 @@ from bloqade.lanes.analysis.atom import AtomState
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.dialects import move
-from bloqade.lanes.visualize.arch import ArchVisualizer
+from bloqade.lanes.visualize.arch import ArchVisualizer, bus_preview_label
 from bloqade.lanes.visualize.artist import DebugStep, collect_debug_steps
 from bloqade.lanes.visualize.plotly_circuit import (
     CIRCUIT_X_AXIS,
     CIRCUIT_Y_AXIS,
     CircuitColumn,
+    _plotly,
     circuit_columns,
     circuit_cursor,
     circuit_highlight_trace,
@@ -65,10 +66,15 @@ class _MovePathSegment:
 
 
 def _lane_bus_label(lane: LaneAddress) -> str:
-    kind = lane.move_type.name.capitalize()
-    if lane.move_type == MoveType.ZONE:
-        return f"Zone bus {lane.bus_id}"
-    return f"Zone ID {lane.zone_id}, {kind} bus {lane.bus_id}"
+    """Name the bus a lane belongs to, as ``arch`` names it.
+
+    Delegates so a move-path tooltip and a site-hover preview cannot end up
+    calling one bus two things; see :func:`bus_preview_label`. An inter-zone
+    lane carries a ``zone_id`` that names only where it starts, so it maps to
+    the zone-less case rather than being labelled with that zone.
+    """
+    zone_id = None if lane.move_type == MoveType.ZONE else lane.zone_id
+    return bus_preview_label(lane.move_type, zone_id, lane.bus_id)
 
 
 def _move_path_segments(
@@ -94,16 +100,6 @@ def _move_path_segments(
             for index, (start, end) in enumerate(path_segments)
         )
     return segments
-
-
-def _plotly() -> Any:
-    try:
-        import plotly.graph_objects as go
-    except ImportError as exc:  # pragma: no cover - environment dependent
-        raise ImportError(
-            "The Plotly move debugger requires the 'visualization' extra"
-        ) from exc
-    return go
 
 
 def _theme_colors(theme: Theme) -> dict[str, str]:

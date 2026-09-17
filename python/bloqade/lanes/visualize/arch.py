@@ -55,6 +55,28 @@ _BusTraceData = tuple[
 # within its column pair for straight versus curved schematic paths.
 _COLUMN_TOLERANCE_UM = 1e-6
 
+_CARTOON_ARC_SAMPLES = 11
+"""Points per cartoon Bézier arc, endpoints included.
+
+Every sample is paid for six times over in the exported document -- twice in
+``layout.meta`` (both path styles), and again in each path button's ``x``,
+``y`` and ``customdata`` restyle payload, where the per-point ``customdata``
+entry is several times the size of the coordinate itself. So the sample count
+sets the size of the whole figure far more than it sets the look of one curve.
+
+Eleven is where a quadratic Bézier stops visibly gaining at the zoom levels
+these plots are read at; the previous 21 doubled the document to smooth a
+curve that was already smooth.
+"""
+
+_PATH_COORD_DECIMALS = 4
+"""Decimals kept on generated cartoon coordinates.
+
+Positions are micrometres over a device tens of micrometres wide, so the
+fourth decimal is far below one screen pixel at any usable zoom. Full float64
+repr costs up to 17 significant digits per number for no visible return.
+"""
+
 
 @cache
 def _arch_interactive_script() -> str:
@@ -64,6 +86,25 @@ def _arch_interactive_script() -> str:
         .joinpath("_arch_interactive.js")
         .read_text(encoding="utf-8")
     )
+
+
+def bus_preview_label(move_type: MoveType, zone_id: int | None, bus_id: int) -> str:
+    """Name one bus the way both hover paths must name it.
+
+    A single figure labels the same bus from two directions: the JS controller
+    shows this string, baked in as each lane's ``previewLabel``, when a site is
+    hovered, and the debugger builds a label in Python when a move path is
+    hovered. They appear in the same tooltip vocabulary, so any difference in
+    wording reads as two different buses. One function so they cannot drift.
+
+    ``zone_id`` is ``None`` for an inter-zone bus, which belongs to no single
+    zone; :class:`MoveType.ZONE` lanes are the same case seen from the lane
+    side.
+    """
+    if zone_id is None:
+        return f"Zone bus {bus_id}"
+
+    return f"Zone ID {zone_id}, {move_type.name.capitalize()} bus {bus_id}"
 
 
 def _is_jupyter_kernel(shell: Any) -> bool:
@@ -86,6 +127,61 @@ def _is_jupyter_kernel(shell: Any) -> bool:
             return True
 
     return any(cls.__name__ == "ZMQInteractiveShell" for cls in type(shell).__mro__)
+
+
+_plotlyjs_emitted = False
+"""Whether this kernel session has already written plotly.js into an output.
+
+These figures display as HTML rather than through Plotly's MIME bundle,
+because the architecture controller has to run against the rendered div. HTML
+output carries its own scripts, so every display used to embed the whole
+plotly.js bundle -- ~4.3 MB per cell, repeated in full for every cell showing
+a figure, and saved into the ``.ipynb`` that many times over.
+
+The bundle only has to arrive once: it defines ``window.Plotly`` for the whole
+page. So the first display in a session embeds it, and the rest fall back to a
+CDN ``<script src>`` -- 252 bytes, against 4.3 MB for another copy.
+
+Not ``include_plotlyjs=False`` for the later cells, which would be 252 bytes
+smaller still. ``False`` renders nothing at all if the embedded copy is not on
+the page, and it can be absent for reasons the kernel cannot see: the output
+holding it was cleared before the notebook was saved, or the cells were
+re-ordered. The CDN tag makes every cell independently renderable, and costs
+nothing when the embedded copy *is* present -- ``window.Plotly`` is already
+defined by then, so a tag that fails to load (offline, say) is harmless.
+"""
+
+PLOTLYJS_MODE: bool | str | None = None
+"""How notebook displays should supply plotly.js. ``None`` dedupes per session.
+
+Set to ``True`` to embed the full bundle in every cell, which is what a fully
+air-gapped notebook wants: no cell then depends on the CDN tag resolving, even
+after its outputs are cleared. Anything Plotly's ``include_plotlyjs`` accepts
+works here.
+"""
+
+
+def _notebook_plotlyjs() -> bool | str:
+    """Return the ``include_plotlyjs`` value for one notebook display."""
+    global _plotlyjs_emitted
+
+    if PLOTLYJS_MODE is not None:
+        return PLOTLYJS_MODE
+
+    if _plotlyjs_emitted:
+        return "cdn"
+
+    _plotlyjs_emitted = True
+    return True
+
+
+def reset_plotlyjs_state() -> None:
+    """Forget that plotly.js was emitted, so the next display embeds it again.
+
+    For tests, and for a session that needs a fresh embedded copy.
+    """
+    global _plotlyjs_emitted
+    _plotlyjs_emitted = False
 
 
 class _InteractiveArchFigureMixin:
@@ -179,7 +275,7 @@ class _InteractiveArchFigureMixin:
         return {
             "text/html": self.to_html(
                 full_html=False,
-                include_plotlyjs=True,
+                include_plotlyjs=_notebook_plotlyjs(),
                 validate=validate,
             )
         }
@@ -196,7 +292,7 @@ class _InteractiveArchFigureMixin:
             HTML(
                 self.to_html(
                     full_html=False,
-                    include_plotlyjs=True,
+                    include_plotlyjs=_notebook_plotlyjs(),
                 )
             )
         )
@@ -260,7 +356,7 @@ class _InteractiveArchFigureMixin:
                 HTML(
                     self.to_html(
                         full_html=False,
-                        include_plotlyjs=True,
+                        include_plotlyjs=_notebook_plotlyjs(),
                         config=kwargs.get("config"),
                         validate=kwargs.get("validate", True),
                         **html_options,
@@ -279,6 +375,9 @@ class _InteractiveArchFigureMixin:
             open_html_in_browser(
                 self.to_html(
                     full_html=True,
+                    # Always embedded, unlike the notebook paths above: this is
+                    # a standalone page with no earlier output to inherit
+                    # ``window.Plotly`` from.
                     include_plotlyjs=True,
                     config=kwargs.get("config"),
                     validate=kwargs.get("validate", True),
@@ -511,17 +610,24 @@ class ArchVisualizer:
             (start[1] + end[1]) / 2 + dx / distance * bend,
         )
         path: list[tuple[float, float]] = []
-        for step in range(21):
-            t = step / 20
+        segments = _CARTOON_ARC_SAMPLES - 1
+        for step in range(_CARTOON_ARC_SAMPLES):
+            t = step / segments
             one_minus_t = 1.0 - t
             path.append(
                 (
-                    one_minus_t**2 * start[0]
-                    + 2 * one_minus_t * t * control[0]
-                    + t**2 * end[0],
-                    one_minus_t**2 * start[1]
-                    + 2 * one_minus_t * t * control[1]
-                    + t**2 * end[1],
+                    round(
+                        one_minus_t**2 * start[0]
+                        + 2 * one_minus_t * t * control[0]
+                        + t**2 * end[0],
+                        _PATH_COORD_DECIMALS,
+                    ),
+                    round(
+                        one_minus_t**2 * start[1]
+                        + 2 * one_minus_t * t * control[1]
+                        + t**2 * end[1],
+                        _PATH_COORD_DECIMALS,
+                    ),
                 )
             )
         return tuple(path)
@@ -744,12 +850,7 @@ class ArchVisualizer:
                         "cartoonY": [point[1] for point in cartoon_path],
                         "color": bus_color,
                         "busName": bus_name,
-                        "previewLabel": (
-                            f"Zone bus {bus_id}"
-                            if zone_id is None
-                            else f"Zone ID {zone_id}, {kind.capitalize()} bus "
-                            f"{bus_id}"
-                        ),
+                        "previewLabel": bus_preview_label(move_type, zone_id, bus_id),
                         "busId": bus_id,
                         "moveType": kind,
                         "source": src_label,
