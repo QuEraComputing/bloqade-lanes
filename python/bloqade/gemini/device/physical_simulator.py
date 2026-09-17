@@ -232,8 +232,9 @@ class GeminiPhysicalSimulator:
 
         Positional and keyword kernel arguments are bound as compile-time
         constants in an owned copy before physical compilation. Values must
-        be bool, int, float, str, None, or recursively immutable tuples of
-        these types. Python signature defaults are applied when omitted.
+        be bool, int, float, str, None, or recursively nested tuples/ILists of
+        these types. IList backing storage is copied during binding.
+        Python signature defaults are applied when omitted.
         Create a new task to use different argument values.
 
         For parameter-dependent validation, define the source kernel with

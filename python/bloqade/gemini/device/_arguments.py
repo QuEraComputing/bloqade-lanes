@@ -7,7 +7,7 @@ from typing import Any, ParamSpec, TypeVar, cast
 
 from bloqade.rewrite.passes import AggressiveUnroll
 from kirin import ir, types
-from kirin.dialects import func, py
+from kirin.dialects import func, ilist, py
 
 Params = ParamSpec("Params")
 RetType = TypeVar("RetType")
@@ -16,15 +16,42 @@ RetType = TypeVar("RetType")
 def _is_classical_constant(value: Any) -> bool:
     # Exact builtin types exclude qubit handles, mutable containers, and objects
     # whose methods could execute during constant folding.
+    if type(value) is ilist.IList:
+        return type(value.data) in (list, tuple, range) and all(
+            _is_classical_constant(item) for item in value.data
+        )
     return type(value) in (bool, int, float, str, type(None)) or (
         type(value) is tuple and all(_is_classical_constant(item) for item in value)
     )
 
 
 def _constant_type(value: Any) -> types.TypeAttribute:
+    if type(value) is ilist.IList:
+        # Infer from contents rather than the optional (often Any) elem hint.
+        # Bottom makes an empty IList compatible with any element type.
+        elem: types.TypeAttribute = types.Bottom
+        for item in value.data:
+            elem = elem.join(_constant_type(item))
+        return ilist.IListType[elem, types.Literal(len(value))]
     if type(value) is tuple:
         return types.Generic(tuple, *(_constant_type(item) for item in value))
     return ir.PyAttr(value).type
+
+
+def _snapshot_constant(value: Any) -> Any:
+    """Detach IList backing storage, including lists nested inside tuples."""
+    if type(value) is ilist.IList:
+        data = [_snapshot_constant(item) for item in value.data]
+        if type(value.data) is tuple:
+            data = tuple(data)
+        elif type(value.data) is range:
+            data = value.data
+        value_type = _constant_type(value)
+        assert isinstance(value_type, types.Generic)
+        return ilist.IList(data, elem=value_type.vars[0])
+    if type(value) is tuple:
+        return tuple(_snapshot_constant(item) for item in value)
+    return value
 
 
 def bind_task_arguments(
@@ -36,7 +63,8 @@ def bind_task_arguments(
 
     Python-backed methods use their Python signature (including defaults).
     Deserialized methods use the argument names and types retained in the IR.
-    Only immutable classical constants are accepted; no live qubit handles.
+    Classical scalars and recursively nested tuples/ILists are accepted;
+    no live qubit handles. IList backing storage is copied before binding.
     Pass kernel arguments directly, e.g. ``bind_task_arguments(kernel, 2, flip=True)``.
     """
     if kernel.py_func is not None:
@@ -58,7 +86,7 @@ def bind_task_arguments(
         if not _is_classical_constant(value):
             raise TypeError(
                 f"Kernel argument {name!r} must be an immutable classical value "
-                "(bool, int, float, str, None, or a tuple of these)"
+                "(bool, int, float, str, None, or nested tuples/ILists of these)"
             )
         actual = _constant_type(value)
         if not actual.is_subseteq(expected):
@@ -81,6 +109,7 @@ def bind_task_arguments(
     if first is None:
         raise ValueError("Cannot bind arguments to an empty kernel")
     for argument, value in zip(tuple(specialized.args), values):
+        value = _snapshot_constant(value)
         constant = py.Constant(ir.PyAttr(value, pytype=_constant_type(value)))
         constant.insert_before(first)
         argument.replace_by(constant.result)

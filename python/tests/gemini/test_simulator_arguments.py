@@ -3,9 +3,11 @@
 # Expected type errors below must remain errors as the public signature evolves.
 # pyright: reportUnnecessaryTypeIgnoreComment=true
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
+from kirin import types
+from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import squin
@@ -107,6 +109,49 @@ def test_float_and_tuple_arguments_compile():
         sim.task(tuple_argument, ("bad", True))  # pyright: ignore[reportArgumentType]
 
 
+@logical.kernel(verify=False)
+def ilist_argument(flips: ilist.IList[int, Any]):
+    q = squin.qalloc(1)
+    for flip in flips:
+        if flip:
+            squin.x(q[0])
+    return logical.terminal_measure(q)
+
+
+@squin.kernel
+def fixed_length_ilist(values: ilist.IList[int, Literal[2]]):
+    return values[0] + values[1]
+
+
+@pytest.mark.parametrize("flips", [ilist.IList([1, 0]), ilist.IList([])])
+def test_ilist_arguments_compile_and_run(flips):
+    original = ilist_argument.similar()
+    task = GeminiLogicalSimulator().task(ilist_argument, flips=flips)
+    assert task.logical_squin_kernel.args == ()
+    assert ilist_argument.code.is_structurally_equal(original.code)
+    result = task.run(shots=2, with_noise=False)
+    assert all(
+        sum(bool(bit) for bit in shot[0]) % 2 == sum(flips) % 2
+        for shot in result.return_values
+    )
+
+
+def test_ilist_argument_element_and_length_types():
+    assert bind_task_arguments(fixed_length_ilist, ilist.IList([2, 3]))() == 5
+    for value in (ilist.IList([1]), ilist.IList(["x", "y"], elem=types.Int)):
+        with pytest.raises(TypeError, match="has type"):
+            bind_task_arguments(
+                fixed_length_ilist,
+                value,  # pyright: ignore[reportArgumentType]
+            )
+
+
+def test_ir_only_kernel_can_bind_ilist():
+    kernel = fixed_length_ilist.similar()
+    kernel.py_func = None
+    assert bind_task_arguments(kernel, values=ilist.IList([2, 3]))() == 5
+
+
 @pytest.mark.parametrize("flip", [False, True])
 def test_noiseless_run_obeys_bound_argument(flip):
     task = GeminiLogicalSimulator().task(parameterized, 1, flip=flip)
@@ -137,10 +182,45 @@ def echo(value):
     return value
 
 
-@pytest.mark.parametrize("value", [None, "label", 0.25, True, 3, (1, (False, "x"))])
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "label",
+        0.25,
+        True,
+        3,
+        (1, (False, "x")),
+        ilist.IList([1, 2]),
+        ilist.IList((1, 2)),
+        ilist.IList(range(2)),
+        ilist.IList([True, "label", None]),
+        ilist.IList([ilist.IList([1]), ilist.IList([2, 3])]),
+    ],
+)
 def test_supported_constants_preserve_values(value):
     bound = bind_task_arguments(echo, value)
     assert bound() == value
+
+
+def test_nested_ilist_arguments_are_snapshots():
+    inner = ilist.IList([1, 2])
+    outer = ilist.IList([(inner, True)])
+    bound = bind_task_arguments(echo, (outer,))
+    inner.data = [9]
+    outer.data = []
+    result = bound()
+    assert tuple(result[0][0][0]) == (1, 2)
+    assert result[0][0][1] is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [ilist.IList([[]]), ilist.IList([object()]), (ilist.IList([{}]),)],
+)
+def test_ilist_mutable_or_opaque_elements_are_rejected(value):
+    with pytest.raises(TypeError, match="immutable classical"):
+        bind_task_arguments(echo, value)
 
 
 @pytest.mark.parametrize("value", [object(), {"x": 1}, (1, []), [1, 2]])

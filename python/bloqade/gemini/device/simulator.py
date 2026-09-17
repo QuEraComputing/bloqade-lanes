@@ -128,7 +128,8 @@ class GeminiLogicalSimulator:
                 squin kernel to compile and run.
             *args: Positional kernel arguments.
             **kernel_args: Keyword kernel arguments. Values must be bool, int, float,
-                str, None, or recursively immutable tuples of these types.
+                str, None, or recursively nested tuples/ILists of these types.
+                IList backing storage is copied during binding.
 
         Returns:
             GeminiLogicalSimulatorTask[RetType]: The compiled simulation task.

@@ -1,6 +1,9 @@
 """Physical task arguments are resolved before placement and validation."""
 
+from typing import Any
+
 import pytest
+from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import squin
@@ -68,3 +71,17 @@ def test_bound_physical_program_is_validated():
 def test_existing_physical_kernel_keyword_is_preserved():
     task = GeminiPhysicalSimulator().task(physical_kernel=parameterized, n=1)
     assert task.source_squin_kernel.args == ()
+
+
+def test_physical_ilist_argument_compiles_and_runs():
+    @physical.kernel(verify=False)
+    def selected(flips: ilist.IList[int, Any]):
+        q = squin.qalloc(len(flips))
+        for i in range(len(flips)):
+            if flips[i]:
+                squin.x(q[i])
+        return squin.broadcast.measure(q)
+
+    task = GeminiPhysicalSimulator().task(selected, ilist.IList([1, 0]))
+    result = task.run(shots=2, with_noise=False)
+    assert [list(shot) for shot in result.return_values] == [[True, False]] * 2
