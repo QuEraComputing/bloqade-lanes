@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import matplotlib
 import numpy as np
+from bloqade.analysis.tomography import TomographyResult
 
 from bloqade.gemini.decoding import (
     ConfidenceDecoder,
     PostselectionCurveData,
     TableDecoderWithConfidence,
-    TomographyResult,
     empty_logical_circuit,
     single_qubit_state_tomography,
 )

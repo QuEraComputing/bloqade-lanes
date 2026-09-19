@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import stim
+from bloqade.analysis.tomography import TomographyResult
 from bloqade.decoders import BaseDecoder
 from kirin import ir
 
@@ -26,6 +27,7 @@ from .kernels import (
 from .layout import _DEFAULT_SYNDROME_LAYOUT
 from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
 from .postselection import (
+    _DEFAULT_TARGET_BLOCH,
     PostselectionCurveData,
     _build_generic_threshold_tables,
     _DecodedPostselectionResult,
@@ -34,7 +36,6 @@ from .postselection import (
 )
 from .sampling import _BasisDataset
 from .special_tasks import _apply_special_tsim_circuit_strategy
-from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 from .workflow import _plot_decoder_curves
 
 if TYPE_CHECKING:
