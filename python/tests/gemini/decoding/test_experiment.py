@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 import numpy as np
 import pytest
+from bloqade.analysis.tomography import TomographyResult
 from bloqade.decoders import BaseDecoder
 from bloqade.squin.gate import stmts as gate_stmts
 from kirin.dialects import func, py
@@ -17,7 +18,6 @@ from bloqade.gemini.decoding import (
     GurobiDecoderWithConfidence,
     PostSelectionExperiment,
     TableDecoderWithConfidence,
-    TomographyResult,
     empty_logical_circuit,
     magic_state_dist_steane,
     single_qubit_state_tomography,

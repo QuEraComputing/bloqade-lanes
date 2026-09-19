@@ -4,14 +4,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from bloqade.analysis.tomography import TomographyResult
 from bloqade.decoders import BaseDecoder
 
 from .confidence import ConfidenceDecoder
 from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
 from .sampling import _BasisDataset
-from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 
 _DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
+_DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 _ProgressLabel = str | bool
 
 

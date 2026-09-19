@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import stim
+from bloqade.analysis.tomography import TomographyResult
 from bloqade.decoders._decoders.mld.utils import pack_boolean_array, shots_to_counts
 
 from bloqade.gemini.decoding.confidence import (
@@ -11,7 +12,6 @@ from bloqade.gemini.decoding.confidence import (
 )
 from bloqade.gemini.decoding.dem import _sub_detector_error_model
 from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
-from bloqade.gemini.decoding.tomography import TomographyResult
 
 
 def test_tomography_result_builds_density_matrix_and_point_fidelity():
