@@ -1,5 +1,6 @@
-from typing import Any
+from typing import Any, Literal
 
+from bloqade.decoders.dialects.annotate.types import Detector, Observable
 from kirin.dialects import ilist
 
 from bloqade import squin, types
@@ -9,7 +10,9 @@ from ..group import kernel
 
 
 @kernel(aggressive_unroll=True, verify=False)
-def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
+def set_detector(
+    meas: ilist.IList[types.MeasurementResult, Any],
+) -> ilist.IList[Detector, Literal[3]]:
     return ilist.IList(
         [
             squin.set_detector(
@@ -26,12 +29,17 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 
 @kernel(aggressive_unroll=True, verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any]) -> Observable:
     return squin.set_observable([meas[0], meas[1], meas[5]])
 
 
 @kernel(aggressive_unroll=True, verify=False)
-def default_post_processing(register: ilist.IList[types.Qubit, Any]):
+def default_post_processing(
+    register: ilist.IList[types.Qubit, Any],
+) -> tuple[ilist.IList[Detector, Any], ilist.IList[Observable, Any]]:
+    """
+    Helper kernel to measure all of the qubits in a
+    """
     measurements = operations.terminal_measure(register)
 
     detectors = set_detector(measurements[0])
