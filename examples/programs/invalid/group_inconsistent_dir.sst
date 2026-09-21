@@ -5,6 +5,8 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: simple
+// expect: LaneGroupValidation
 // Invalid: move group has lanes with different direction
 // Lane 0: forward, Lane 1: backward
 // dir=1 (backward) sets bit 63 -> 0x8000000000000000

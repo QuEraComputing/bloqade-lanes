@@ -5,6 +5,7 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: full
 // Full pipeline exercising every instruction type.
 // Uses full.json arch spec: 3 words, 10 sites each, site_bus 0, zone 0.
 // LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]

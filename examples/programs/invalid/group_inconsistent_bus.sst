@@ -5,6 +5,8 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: full
+// expect: LaneGroupValidation
 // Invalid: move group has lanes with different bus_id
 // Lane 0: bus 0, Lane 1: bus 1
 

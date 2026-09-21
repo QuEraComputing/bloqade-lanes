@@ -5,6 +5,8 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: simple
+// expect: TypeMismatch
 // Invalid: initial_fill expects location, but stack has float
 
 fn @main() {

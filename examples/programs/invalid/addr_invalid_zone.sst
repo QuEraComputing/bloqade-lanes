@@ -5,6 +5,8 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: simple
+// expect: InvalidZone
 // Invalid: zone_id=5 does not exist (only zone 0)
 
 fn @main() {

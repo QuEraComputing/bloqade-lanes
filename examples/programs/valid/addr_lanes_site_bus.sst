@@ -5,6 +5,7 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: full
 // Valid forward site_bus lanes on bus 0, word 0
 // LaneAddr (64-bit): [dir:1][mt:2][zone_id:8][pad:5][bus:16][word:16][site:16]
 // site_bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]

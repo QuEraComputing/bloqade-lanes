@@ -5,6 +5,8 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: simple
+// expect: InvalidLane
 // Invalid: bus_id=20 does not exist (site buses 0-8 only)
 
 fn @main() {

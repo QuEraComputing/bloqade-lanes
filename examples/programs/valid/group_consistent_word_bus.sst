@@ -5,6 +5,7 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: full
 // Move 2 lanes on the same word_bus, same direction.
 // LaneAddr (64-bit): [dir:1][mt:2][zone_id:8][pad:5][bus:16][word:16][site:16]
 // mt=1 (word_bus) sets bits 62-61 -> 0x2000000000000000

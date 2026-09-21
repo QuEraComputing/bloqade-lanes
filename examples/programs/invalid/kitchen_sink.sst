@@ -5,6 +5,11 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: simple
+// expect: InvalidLocation
+// expect: InvalidZone
+// expect: TypeMismatch
+// expect: StackUnderflow
 // Multiple errors in one file to demonstrate multi-error collection.
 // LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
 
@@ -19,7 +24,10 @@ fn @main() {
   cpu::cpu.const f64, 99.0
   lanes::lanes.cz
 
-  // Error 4: stack underflow -- pop on empty stack
+  // Error 4: stack underflow -- the location and the zone are still on the
+  // stack after `cz` consumed the float, so it takes a third `pop` to run out.
+  lanes::lanes.pop
+  lanes::lanes.pop
   lanes::lanes.pop
 
   cpu::cpu.halt

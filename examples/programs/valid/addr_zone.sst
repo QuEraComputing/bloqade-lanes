@@ -5,6 +5,7 @@ sst v1
 version 1.0
 .header(root).
 .text(root):
+// arch: simple
 // Valid zone address
 // full.json has zone 0
 
