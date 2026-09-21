@@ -394,7 +394,7 @@ class ProgramError(Exception):
 
 class BadMagicError(ProgramError):
     def __init__(self):
-        super().__init__("bad magic bytes (expected LANES)")
+        super().__init__("bad magic bytes (expected VHBC)")
 
 
 class TruncatedError(ProgramError):

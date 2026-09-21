@@ -25,8 +25,8 @@ which today is `new_array` (1 + 3×u32 = 13). It will change if a wider operand
 set is added. Instructions with no operands are the opcode byte followed by 12
 zero bytes.
 
-Because every word is the same width, a program is just N concatenated words and
-decodes without desync.
+Because every word is the same width, the code region is just N concatenated
+words and decodes without desync.
 
 Examples:
 
@@ -49,23 +49,71 @@ inserting an instruction anywhere but the end renumbers every instruction after
 it, which changes the binary encoding of existing programs. The values in this
 document are correct for this revision; `Instruction::opcode()` is the authority.
 
-Bloqade Lanes programs are not binary-compatible with the pre-`LANES` container
-format, nor with the FLAIR-aligned device/instruction-code scheme this
+Bloqade Lanes programs are not binary-compatible with either earlier container
+(`BLQD`, `LANES`), nor with the FLAIR-aligned device/instruction-code scheme this
 specification previously described.
+
+## Binary Container (`VHBC`)
+
+The instruction words above sit inside vihaco's `VHBC` section container, which
+mirrors the `sst v1` text structure: one root section, whose header is the
+version and whose bytecode is the code region.
+
+```text
+magic                : 4 bytes = b"VHBC"
+version              : u16 LE  = 1
+flags                : u16 LE  = 0
+context_len          : u64 LE  = 0        (empty global context)
+── root section ──
+section_len          : u64 LE             (total, including this frame)
+composite_header_len : u64 LE  = 4
+composite header     : u32 LE  = (major << 16) | minor
+bytecode_len         : u64 LE
+bytecode             : N × 13 bytes
+child_count          : u32 LE  = 0        (no child sections)
+```
+
+vihaco ships readers for this container but no writers, so Bloqade Lanes owns
+the emitters (`isa::container`); the round-trip tests read everything back
+through vihaco's own parser to keep the two in step.
 
 ## Text Format (`.sst`)
 
-The text form is a version directive followed by a single `@main` function:
+The text form is vihaco's `sst v1` section container. A lanes program is one
+root section: a header carrying the version, and a text body holding a single
+`@main` function.
 
 ```
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000000000000
   lanes.const_loc 0x0000000001000000
   lanes.initial_fill 2
   cpu.halt
 }
+.text(root).
+.section(root).
 ```
+
+Container rules:
+
+- `sst v1` must be the first significant line.
+- The root section must be named `root`; a lanes program declares no child
+  sections.
+- `.name(x):` opens a block and `.name(x).` closes it — note the trailing dot
+  versus colon.
+- The global context block (`.global:` … `.global.`) may be omitted, and must be
+  empty if present: a lanes program has no child-section names to resolve.
+- Only `.global:` or the root section may appear between `sst v1` and the first
+  section, so file-level comments belong **inside** `.text(root):`.
+
+Instruction rules:
 
 - Comments are `//` to end of line.
 - Every instruction carries a **dialect head**: `cpu.` for the stack ops,

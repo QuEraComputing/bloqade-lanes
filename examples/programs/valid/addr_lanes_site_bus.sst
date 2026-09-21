@@ -1,7 +1,12 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Valid forward site_bus lanes on bus 0, word 0
-// Lane encoding: data0=[word:16][site:16], data1=[dir:1][mt:1][pad:14][bus:16]
+// LaneAddr (64-bit): [dir:1][mt:2][zone_id:8][pad:5][bus:16][word:16][site:16]
 // site_bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]
 
 fn @main() {
@@ -10,3 +15,5 @@ fn @main() {
   lanes.const_lane 0x0000000000000002    // fwd, site_bus, word 0, site 2, bus 0
   cpu.halt
 }
+.text(root).
+.section(root).

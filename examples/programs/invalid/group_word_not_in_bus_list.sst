@@ -1,5 +1,10 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Invalid: site_bus move on word 2, which is NOT in words_with_site_buses [0, 1]
 // Word 2 has no bus connections.
 
@@ -9,3 +14,5 @@ fn @main() {
   lanes.move 2
   cpu.halt
 }
+.text(root).
+.section(root).

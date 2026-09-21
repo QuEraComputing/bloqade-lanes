@@ -1,8 +1,15 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Invalid: zone_id=5 does not exist (only zone 0)
 
 fn @main() {
   lanes.const_zone 0x00000005    // zone 5
   cpu.halt
 }
+.text(root).
+.section(root).

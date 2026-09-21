@@ -13,6 +13,7 @@ from bloqade.lanes.bytecode import (
 )
 from bloqade.lanes.bytecode.exceptions import (
     AtomReloadingNotSupportedError,
+    BadInstructionError,
     BadMagicError,
     EmptyProgramError,
     FeedForwardNotSupportedError,
@@ -396,32 +397,58 @@ class TestProgramConstruction:
 
     def test_from_text(self):
         source = """\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.initial_fill 1
   cpu.halt
 }
+.text(root).
+.section(root).
 """
         program = Program.from_text(source)
         assert program.version == (1, 0)
         assert len(program) == 3
 
     def test_from_text_invalid(self):
+        # Well-formed container, no `.header(root)` section.
         with pytest.raises(MissingVersionError):
-            Program.from_text("fn @main() {\n  cpu.halt\n}\n")  # missing version header
+            Program.from_text(
+                "sst v1\n\n.section(root):\n.text(root):\n"
+                "fn @main() {\n  cpu.halt\n}\n"
+                ".text(root).\n.section(root).\n"
+            )
+
+    def test_from_text_rejects_non_container(self):
+        # The bare `version 1.0;` + `fn @main` form is no longer accepted.
+        with pytest.raises(BadInstructionError):
+            Program.from_text("version 1.0;\nfn @main() {\n  cpu.halt\n}\n")
 
 
 class TestProgramSerialization:
     def _sample_program(self):
         return Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.const_loc 0x00000001
   lanes.initial_fill 2
   cpu.halt
 }
+.text(root).
+.section(root).
 """)
 
     def test_to_text(self):
@@ -442,7 +469,7 @@ fn @main() {
         program = self._sample_program()
         binary = program.to_binary()
         assert isinstance(binary, bytes)
-        assert binary[:5] == b"LANES"
+        assert binary[:4] == b"VHBC"
 
     def test_binary_round_trip(self):
         program = self._sample_program()
@@ -455,17 +482,29 @@ fn @main() {
         with pytest.raises(BadMagicError):
             Program.from_binary(b"XXXXX\x00\x00\x00\x00")
 
-    def test_bad_magic_message_mentions_lanes(self):
+    def test_bad_magic_message_mentions_vhbc(self):
         with pytest.raises(BadMagicError) as e:
             Program.from_binary(b"XXXXX\x00\x00\x00\x00")
-        assert "LANES" in str(e.value)
+        assert "VHBC" in str(e.value)
 
     def test_unaligned_binary_raises_unaligned_code_error(self):
-        # Append one stray byte so the code region is not a multiple of the
-        # 17-byte instruction word width.
-        valid = self._sample_program().to_binary()
+        # Grow the bytecode region by one byte, and the section holding it, so
+        # the container stays well-formed and the only fault is that the region
+        # is no longer a whole number of instruction words. Offsets follow the
+        # container layout: section_len at 16, bytecode_len at 36, bytecode at 44.
+        SECTION_LEN, BYTECODE_LEN, BYTECODE = 16, 36, 44
+        raw = bytearray(self._sample_program().to_binary())
+
+        def bump(at):
+            v = int.from_bytes(raw[at : at + 8], "little") + 1
+            raw[at : at + 8] = v.to_bytes(8, "little")
+
+        bump(SECTION_LEN)
+        bump(BYTECODE_LEN)
+        raw.insert(BYTECODE, 0)
+
         with pytest.raises(UnalignedCodeError):
-            Program.from_binary(valid + b"\x00")
+            Program.from_binary(bytes(raw))
 
     def test_text_binary_round_trip(self):
         program = self._sample_program()
@@ -479,23 +518,39 @@ fn @main() {
 class TestProgramValidation:
     def test_structural_valid(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.initial_fill 1
   cpu.halt
 }
+.text(root).
+.section(root).
 """)
         program.validate()  # should not raise
 
     def test_structural_invalid(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.halt
   lanes.const_loc 0x00000000
   lanes.initial_fill 1
 }
+.text(root).
+.section(root).
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -505,10 +560,18 @@ fn @main() {
 
     def test_stack_validation(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.pop
 }
+.text(root).
+.section(root).
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(stack=True)
@@ -516,18 +579,30 @@ fn @main() {
 
     def test_stack_type_mismatch(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.const_float 1.0
   lanes.initial_fill 1
 }
+.text(root).
+.section(root).
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(stack=True)
         assert any(isinstance(e, TypeMismatchError) for e in exc_info.value.errors)
 
     def test_empty_program_raises_empty_program_error(self):
-        program = Program.from_text("version 1.0;\nfn @main() {\n}\n")
+        program = Program.from_text(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n"
+            ".header(root).\n.text(root):\nfn @main() {\n}\n"
+            ".text(root).\n.section(root).\n"
+        )
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
         assert any(isinstance(e, EmptyProgramError) for e in exc_info.value.errors)
@@ -537,10 +612,18 @@ fn @main() {
 
     def test_missing_terminator_raises_missing_terminator_error(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.const_int 0
 }
+.text(root).
+.section(root).
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -548,11 +631,19 @@ fn @main() {
 
     def test_unreachable_instruction_raises_unreachable_error(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.halt
   cpu.const_int 0
 }
+.text(root).
+.section(root).
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
@@ -565,20 +656,36 @@ fn @main() {
 
     def test_valid_program_with_return_no_errors(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.const_int 0
   cpu.return
 }
+.text(root).
+.section(root).
 """)
         program.validate()  # should not raise
 
     def test_valid_program_with_halt_no_errors(self):
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.halt
 }
+.text(root).
+.section(root).
 """)
         program.validate()  # should not raise
 
@@ -611,7 +718,13 @@ class TestCapabilityValidation:
     def test_single_measure_allowed(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.const_loc 0x00000001
@@ -621,13 +734,21 @@ fn @main() {
   lanes.await_measure
   cpu.return
 }
+.text(root).
+.section(root).
 """)
         program.validate(arch=arch)  # should not raise
 
     def test_multiple_measure_rejected_without_feed_forward(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.const_loc 0x00000001
@@ -640,6 +761,8 @@ fn @main() {
   lanes.await_measure
   cpu.return
 }
+.text(root).
+.section(root).
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
@@ -654,7 +777,13 @@ fn @main() {
         data["feed_forward"] = True
         arch = ArchSpec.from_json(json.dumps(data))
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.const_loc 0x00000001
@@ -667,13 +796,21 @@ fn @main() {
   lanes.await_measure
   cpu.return
 }
+.text(root).
+.section(root).
 """)
         program.validate(arch=arch)  # should not raise
 
     def test_fill_rejected_without_atom_reloading(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.const_loc 0x00000001
@@ -682,6 +819,8 @@ fn @main() {
   lanes.fill 1
   cpu.halt
 }
+.text(root).
+.section(root).
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
@@ -696,7 +835,13 @@ fn @main() {
         data["atom_reloading"] = True
         arch = ArchSpec.from_json(json.dumps(data))
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.const_loc 0x00000001
@@ -705,18 +850,28 @@ fn @main() {
   lanes.fill 1
   cpu.halt
 }
+.text(root).
+.section(root).
 """)
         program.validate(arch=arch)  # should not raise
 
     def test_initial_fill_always_allowed(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
         program = Program.from_text("""\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000000
   lanes.initial_fill 1
   cpu.halt
 }
+.text(root).
+.section(root).
 """)
         program.validate(arch=arch)  # should not raise
 
@@ -732,7 +887,9 @@ fn @main() {
 
 class TestProgramRepr:
     def test_repr(self):
-        program = Program.from_text("version 1.0;\nfn @main() {\n  cpu.halt\n}\n")
+        program = Program.from_text(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu.halt\n}\n.text(root).\n.section(root).\n"
+        )
         r = repr(program)
         assert "Program" in r
         assert "(1, 0)" in r

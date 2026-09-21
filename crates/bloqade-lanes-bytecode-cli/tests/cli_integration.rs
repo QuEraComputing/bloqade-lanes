@@ -9,18 +9,32 @@ fn cmd() -> Command {
 
 /// A small program for basic command tests.
 const SAMPLE_PROGRAM: &str = "\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000102
   lanes.const_lane 0x0000000100030002
   cpu.halt
 }
+.text(root).
+.section(root).
 ";
 
 /// All 23 instructions exercised in a single program.
 /// Ordered so that initial_fill comes right after constants (structurally valid).
 const ALL_INSTRUCTIONS_PROGRAM: &str = "\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.const_float 1.5
   cpu.const_int 42
@@ -46,16 +60,26 @@ fn @main() {
   lanes.set_observable
   cpu.halt
 }
+.text(root).
+.section(root).
 ";
 
 /// A program with addresses valid for the test arch spec (word_id=0, site_id in 0..5, bus_id=0).
 const ARCH_VALID_PROGRAM: &str = "\
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x00000001
   lanes.const_zone 0x00000000
   cpu.halt
 }
+.text(root).
+.section(root).
 ";
 
 #[test]
@@ -77,8 +101,8 @@ fn test_assemble_creates_binary() {
         .stderr(predicate::str::contains("assembled 23 instructions"));
 
     let bytes = fs::read(&output).unwrap();
-    // Should start with the native LANES magic bytes
-    assert_eq!(&bytes[..5], b"LANES");
+    // Should start with vihaco's container magic
+    assert_eq!(&bytes[..4], b"VHBC");
 }
 
 #[test]
@@ -377,7 +401,7 @@ fn test_assemble_invalid_syntax() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("bad.sst");
     let output = dir.path().join("out.bin");
-    fs::write(&input, "version 1.0;\nfn @main() {\n  foobar_invalid\n}\n").unwrap();
+    fs::write(&input, "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  foobar_invalid}\n.text(root).\n.section(root).\n").unwrap();
 
     cmd()
         .args([
@@ -526,7 +550,7 @@ fn test_round_trip_preserves_version() {
     let binary = dir.path().join("prog.bin");
     fs::write(
         &input,
-        "version 2.3;\nfn @main() {\n  cpu.const_int 99\n  cpu.halt\n}\n",
+        "sst v1\n\n.section(root):\n.header(root):\nversion 2.3\n.header(root).\n.text(root):\nfn @main() {\n  cpu.const_int 99\n  cpu.halt}\n.text(root).\n.section(root).\n",
     )
     .unwrap();
 

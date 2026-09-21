@@ -1,8 +1,15 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Invalid: pop on empty stack
 
 fn @main() {
   cpu.pop
   cpu.halt
 }
+.text(root).
+.section(root).

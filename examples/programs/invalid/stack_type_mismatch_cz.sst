@@ -1,5 +1,10 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Invalid: cz expects zone, but stack has float
 
 fn @main() {
@@ -7,3 +12,5 @@ fn @main() {
   lanes.cz
   cpu.halt
 }
+.text(root).
+.section(root).

@@ -51,7 +51,13 @@ expect_fail() {
 # also stack-balanced: `validate --arch` runs the stack-type simulation
 # (a bare `return` with nothing on the stack is an underflow).
 prog valid <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000000000000
   lanes.const_loc 0x0000000001000000
@@ -60,6 +66,8 @@ fn @main() {
   lanes.global_rz
   cpu.halt
 }
+.text(root).
+.section(root).
 EOF
 
 echo ""
@@ -76,28 +84,50 @@ echo "=== Category B: structural validation ==="
 expect_pass "valid program" validate "$WORK/valid.sst"
 
 prog no_terminator <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000000000000
   lanes.initial_fill 1
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "missing terminator" "return or halt" validate "$WORK/no_terminator.sst"
 
 prog fill_not_first <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.global_r
   lanes.initial_fill 1
   cpu.return
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "initial_fill not first" "initial_fill" validate "$WORK/fill_not_first.sst"
 
 echo ""
 echo "=== Category C: capability validation (--arch) ==="
 prog multi_measure <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000000000000
   lanes.initial_fill 1
@@ -107,12 +137,20 @@ fn @main() {
   lanes.measure 1
   cpu.return
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "multiple measure (feed_forward=false)" "feed_forward" \
     validate "$WORK/multi_measure.sst" --arch "$ARCH"
 
 prog fill_reload <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000000000000
   lanes.initial_fill 1
@@ -120,6 +158,8 @@ fn @main() {
   lanes.fill 1
   cpu.return
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "fill without atom_reloading" "atom_reloading" \
     validate "$WORK/fill_reload.sst" --arch "$ARCH"
@@ -134,7 +174,13 @@ echo "=== Category D: address validation (--arch) ==="
 expect_pass "valid addresses" validate "$WORK/valid.sst" --arch "$ARCH"
 
 prog bad_zone <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000000000000
   lanes.initial_fill 1
@@ -142,16 +188,26 @@ fn @main() {
   lanes.measure 1
   cpu.return
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "invalid zone" "invalid zone" validate "$WORK/bad_zone.sst" --arch "$ARCH"
 
 prog bad_site <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000063000000
   lanes.initial_fill 1
   cpu.return
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "invalid site" "invalid location" validate "$WORK/bad_site.sst" --arch "$ARCH"
 
@@ -160,32 +216,56 @@ echo "=== Category E: stack-type simulation (--simulate-stack) ==="
 # Stack-balanced: the two locations are consumed by initial_fill, leaving the
 # stack empty at the `halt` terminator (halt pops nothing).
 prog typed_ok <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   lanes.const_loc 0x0000000000000000
   lanes.const_loc 0x0000000001000000
   lanes.initial_fill 2
   cpu.halt
 }
+.text(root).
+.section(root).
 EOF
 expect_pass "well-typed program" validate "$WORK/typed_ok.sst" --simulate-stack
 
 prog underflow <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.pop
   cpu.return
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "stack underflow" "underflow" validate "$WORK/underflow.sst" --simulate-stack
 
 prog mismatch <<'EOF'
-version 1.0;
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 fn @main() {
   cpu.const_float 1.0
   lanes.initial_fill 1
   cpu.return
 }
+.text(root).
+.section(root).
 EOF
 expect_fail "type mismatch" "type mismatch" validate "$WORK/mismatch.sst" --simulate-stack
 

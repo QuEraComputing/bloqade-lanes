@@ -1,9 +1,14 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Full pipeline exercising every instruction type.
 // Uses full.json arch spec: 3 words, 10 sites each, site_bus 0, zone 0.
 // LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
-// LaneAddr: data0=[word:16][site:16], data1=[dir:1][mt:2][zone_id:8][pad:5][bus:16]
+// LaneAddr (64-bit): [dir:1][mt:2][zone_id:8][pad:5][bus:16][word:16][site:16]
 
 fn @main() {
   // --- Initial fill: load 2 sites into word 0 ---
@@ -12,7 +17,7 @@ fn @main() {
   lanes.initial_fill 2
 
   // --- Move: forward site_bus, zone 0, word 0, sites 0 and 1, bus 0 ---
-  // mt=0 (site_bus): data1 = 0x00000000
+  // mt=0 (site_bus)
   lanes.const_lane 0x0000000000000000    // fwd, site_bus, z0, w0, s0, bus 0
   lanes.const_lane 0x0000000000000001    // fwd, site_bus, z0, w0, s1, bus 0
   lanes.move 2
@@ -91,3 +96,5 @@ fn @main() {
   cpu.pop    // discard detector_ref → [observable_ref]
   cpu.return    // return observable_ref
 }
+.text(root).
+.section(root).

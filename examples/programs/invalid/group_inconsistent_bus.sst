@@ -1,5 +1,10 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Invalid: move group has lanes with different bus_id
 // Lane 0: bus 0, Lane 1: bus 1
 
@@ -9,3 +14,5 @@ fn @main() {
   lanes.move 2
   cpu.halt
 }
+.text(root).
+.section(root).

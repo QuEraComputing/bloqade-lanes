@@ -1,5 +1,10 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Valid locations for words 0 and 1 in full.json
 // word 0 has sites 0-9, word 1 has sites 0-9
 // LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
@@ -14,3 +19,5 @@ fn @main() {
   lanes.initial_fill 6
   cpu.halt
 }
+.text(root).
+.section(root).

@@ -1,8 +1,13 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Move 2 lanes on the same word_bus, same direction.
-// LaneAddr: data0=[word:16][site:16], data1=[dir:1][mt:2][zone_id:8][pad:5][bus:16]
-// mt=1 (word_bus): data1 = (1 << 29) = 0x20000000
+// LaneAddr (64-bit): [dir:1][mt:2][zone_id:8][pad:5][bus:16][word:16][site:16]
+// mt=1 (word_bus) sets bits 62-61 -> 0x2000000000000000
 // word_bus 0: src=[0] dst=[1]
 // sites_with_word_buses: [5,6,7,8,9]
 
@@ -12,3 +17,5 @@ fn @main() {
   lanes.move 2
   cpu.halt
 }
+.text(root).
+.section(root).

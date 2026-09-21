@@ -23,12 +23,13 @@
 //! adopting the vihaco container is tracked separately.
 
 use chumsky::prelude::*;
-use vihaco::syntax::ParsedFunction;
+use vihaco::SstFile;
+use vihaco::syntax::ParsedModule;
 use vihaco_parser::Parse;
 
 use super::Instruction;
-use super::program::{Program, from_code};
-use crate::version::Version;
+use super::container::LanesContext;
+use super::program::{LanesInfo, Program, from_code};
 
 /// Error from text (`.sst`) parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,48 +61,11 @@ impl std::fmt::Display for TextError {
 
 impl std::error::Error for TextError {}
 
-// ── LanesHeader ──────────────────────────────────────────────────────────────
-
-/// The only header we support: `version <major>.<minor>`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum LanesHeader {
-    Version(Version),
-}
-
-impl<'src> Parse<'src> for LanesHeader {
-    fn parser() -> impl chumsky::Parser<
-        'src,
-        &'src str,
-        Self,
-        chumsky::extra::Err<chumsky::error::Simple<'src, char>>,
-    > {
-        let uint = || {
-            any()
-                .filter(|c: &char| c.is_ascii_digit())
-                .repeated()
-                .at_least(1)
-                .collect::<String>()
-        };
-        just("version")
-            .ignore_then(chumsky::text::whitespace())
-            .ignore_then(uint().then_ignore(just('.')).then(uint()))
-            .try_map(|(maj, min), span| {
-                let major = maj
-                    .parse::<u16>()
-                    .map_err(|_| chumsky::error::Simple::new(None, span))?;
-                let minor = min
-                    .parse::<u16>()
-                    .map_err(|_| chumsky::error::Simple::new(None, span))?;
-                Ok(LanesHeader::Version(Version::new(major, minor)))
-            })
-    }
-}
-
 // ── NoType ────────────────────────────────────────────────────────────────────
 
-/// Source-type syntax for [`ParsedFunction`]. A lanes `@main` takes no
-/// parameters and returns nothing, so no type ever appears in the grammar; this
-/// parser rejects everything, making `params` and `return_ty` unreachable.
+/// Source-type syntax for [`ParsedModule`]. A lanes `@main` takes no parameters
+/// and returns nothing, so no type ever appears in the grammar; this parser
+/// rejects everything, making `params` and `return_ty` unreachable.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NoType {}
 
@@ -116,23 +80,58 @@ impl<'src> Parse<'src> for NoType {
     }
 }
 
-// ── resolve ───────────────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
-/// Lower the parsed header + functions into a [`Program`].
-fn resolve(
-    version: Version,
-    functions: Vec<ParsedFunction<Instruction, NoType>>,
-) -> Result<Program, TextError> {
+/// Parse vihaco's `sst v1` container into a [`Program`].
+///
+/// Expected format:
+/// ```text
+/// sst v1
+///
+/// .section(root):
+/// .header(root):
+/// version <major>.<minor>
+/// .header(root).
+/// .text(root):
+/// fn @main() {
+///   <instruction>
+///   ...
+/// }
+/// .text(root).
+/// .section(root).
+/// ```
+///
+/// Note: `TextError::BadInstruction` errors have `line: 0`; the underlying
+/// diagnostics are preserved in `text` even though a precise line number is not
+/// yet available.
+pub fn parse_text(src: &str) -> Result<Program, TextError> {
+    let file = SstFile::<LanesContext>::from_text(src).map_err(|e| TextError::BadInstruction {
+        line: 0,
+        text: e.to_string(),
+    })?;
+
+    let parsed = ParsedModule::<Instruction, NoType, LanesInfo>::parse_section(file.root())
+        .map_err(|e| {
+            // A missing or malformed `version` header is the common authoring
+            // mistake, so it gets its own error rather than a generic one.
+            let msg = e.to_string();
+            if msg.contains("missing version header") || msg.contains("expected `version") {
+                TextError::MissingVersion
+            } else {
+                TextError::BadInstruction { line: 0, text: msg }
+            }
+        })?;
+
     // Exactly one function, and it must be `@main`. The parser strips the
     // leading `@`, so the parsed name is bare `"main"`.
-    let func = match functions.as_slice() {
+    let func = match parsed.functions.as_slice() {
         [f] => f,
         _ => {
             return Err(TextError::BadInstruction {
                 line: 0,
                 text: format!(
                     "expected exactly one function (@main), found {}",
-                    functions.len()
+                    parsed.functions.len()
                 ),
             });
         }
@@ -144,75 +143,21 @@ fn resolve(
         });
     }
 
-    Ok(from_code(version, func.body.clone()))
+    Ok(from_code(parsed.header.version, func.body.clone()))
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/// Parse the vihaco `fn @main` grammar into a [`Program`].
-///
-/// Expected format:
-/// ```text
-/// version <major>.<minor>;
-/// fn @main() {
-///   <instruction>
-///   ...
-/// }
-/// ```
-///
-/// Note: `TextError::BadInstruction` errors have `line: 0` for parse-level
-/// failures; the underlying chumsky diagnostics are preserved in `text` even
-/// though a precise line number is not yet available.
-pub fn parse_text(src: &str) -> Result<Program, TextError> {
-    let skip = vihaco::syntax::skip;
-
-    let module = skip()
-        .ignore_then(LanesHeader::parser())
-        .then_ignore(skip())
-        .then_ignore(just(';'))
-        .then(
-            skip()
-                .ignore_then(ParsedFunction::<Instruction, NoType>::parser())
-                .repeated()
-                .collect::<Vec<_>>(),
-        )
-        .then_ignore(skip());
-
-    let (LanesHeader::Version(version), functions) =
-        module.parse(src).into_result().map_err(|errs| {
-            // Distinguish "no header at all" from a malformed one: the former
-            // is the common authoring mistake and gets its own error.
-            if !src.trim_start().starts_with("version") {
-                return TextError::MissingVersion;
-            }
-            TextError::BadInstruction {
-                line: 0,
-                text: errs
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            }
-        })?;
-
-    resolve(version, functions)
-}
-
-/// Emit the program as the vihaco `fn @main` grammar.
+/// Emit the program as vihaco's `sst v1` container.
 ///
 /// The output is accepted by [`parse_text`] and round-trips losslessly.
 pub fn to_text(program: &Program) -> String {
-    let mut out = format!(
-        "version {}.{};\nfn @main() {{\n",
-        program.extra.version.major, program.extra.version.minor
-    );
+    let mut body = String::from("fn @main() {\n");
     for inst in &program.code {
-        out.push_str("  ");
-        out.push_str(&inst.to_string());
-        out.push('\n');
+        body.push_str("  ");
+        body.push_str(&inst.to_string());
+        body.push('\n');
     }
-    out.push_str("}\n");
-    out
+    body.push_str("}\n");
+    super::container::to_sst(&program.extra, &body)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -220,6 +165,16 @@ pub fn to_text(program: &Program) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::version::Version;
+
+    /// Wrap a `fn @main` body in the `sst v1` container, for tests that care
+    /// about the instructions rather than the framing.
+    fn sst(version: &str, body: &str) -> String {
+        format!(
+            "sst v1\n\n.section(root):\n.header(root):\nversion {version}\n.header(root).\n\
+             .text(root):\n{body}.text(root).\n.section(root).\n"
+        )
+    }
 
     fn sample() -> Program {
         from_code(
@@ -250,8 +205,11 @@ mod tests {
 
     #[test]
     fn text_round_trips_fn_main() {
-        let src = "version 1.2;\nfn @main() {\n  lanes.const_loc 0x0000000000000000\n  lanes.initial_fill 1\n  cpu.halt\n}\n";
-        let p = parse_text(src).unwrap();
+        let src = sst(
+            "1.2",
+            "fn @main() {\n  lanes.const_loc 0x0000000000000000\n  lanes.initial_fill 1\n  cpu.halt\n}\n",
+        );
+        let p = parse_text(&src).unwrap();
         assert_eq!(p.extra.version, Version::new(1, 2));
         assert_eq!(p.code.len(), 3);
         assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
@@ -265,18 +223,43 @@ mod tests {
     }
 
     #[test]
-    fn to_text_contains_fn_main_header() {
+    fn to_text_emits_the_sst_container() {
         let text = to_text(&sample());
-        assert!(text.starts_with("version 1.2;\n"));
-        assert!(text.contains("fn @main() {"));
-        assert!(text.ends_with("}\n"));
+        assert!(text.starts_with("sst v1\n"), "got {text}");
+        for expected in [
+            ".section(root):",
+            ".header(root):",
+            "version 1.2",
+            ".header(root).",
+            ".text(root):",
+            "fn @main() {",
+            ".text(root).",
+            ".section(root).",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+        }
+    }
+
+    #[test]
+    fn to_text_is_readable_by_vihacos_own_parser() {
+        // We emit the container by hand (vihaco ships no writer), so pin that
+        // vihaco reads back what we wrote, not just that we round-trip.
+        let text = to_text(&sample());
+        let file = SstFile::<LanesContext>::from_text(&text).unwrap();
+        let root = file.root();
+        assert!(root.path().is_root());
+        assert_eq!(root.children().count(), 0);
+        assert_eq!(
+            root.parse_header::<LanesInfo>().unwrap().version,
+            Version::new(1, 2)
+        );
+        assert!(root.sst().contains("fn @main() {"));
     }
 
     #[test]
     fn to_text_indents_instructions() {
         let prog = from_code(Version::new(1, 0), vec![Instruction::Halt]);
-        let text = to_text(&prog);
-        assert!(text.contains("  cpu.halt\n"));
+        assert!(to_text(&prog).contains("  cpu.halt\n"));
     }
 
     #[test]
@@ -287,15 +270,17 @@ mod tests {
 
     #[test]
     fn missing_version_header_returns_error() {
-        let src = "fn @main() {\n  cpu.halt\n}\n";
+        // A well-formed container whose header section is absent.
+        let src = "sst v1\n\n.section(root):\n.text(root):\nfn @main() {\n  cpu.halt\n}\n\
+                   .text(root).\n.section(root).\n";
         assert_eq!(parse_text(src), Err(TextError::MissingVersion));
     }
 
     #[test]
     fn bad_instruction_returns_error() {
-        let src = "version 1.0;\nfn @main() {\n  lanes.nope_nope\n}\n";
+        let src = sst("1.0", "fn @main() {\n  lanes.nope_nope\n}\n");
         assert!(matches!(
-            parse_text(src),
+            parse_text(&src),
             Err(TextError::BadInstruction { .. })
         ));
     }
@@ -304,9 +289,8 @@ mod tests {
     fn version_preserved() {
         let prog = from_code(Version::new(3, 7), vec![]);
         let text = to_text(&prog);
-        assert!(text.starts_with("version 3.7;\n"));
-        let reparsed = parse_text(&text).unwrap();
-        assert_eq!(reparsed.extra.version, Version::new(3, 7));
+        assert!(text.contains("version 3.7"));
+        assert_eq!(parse_text(&text).unwrap().extra.version, Version::new(3, 7));
     }
 
     #[test]
@@ -337,18 +321,40 @@ mod tests {
     fn multiple_functions_rejected() {
         // The grammar admits several `fn` blocks, but a lanes program is a
         // single flat `@main`; the resolver rejects anything but exactly one.
-        let src = "version 1.0;\nfn @main() {\n  cpu.halt\n}\nfn @extra() {\n  cpu.halt\n}\n";
+        let src = sst(
+            "1.0",
+            "fn @main() {\n  cpu.halt\n}\nfn @extra() {\n  cpu.halt\n}\n",
+        );
         assert!(matches!(
-            parse_text(src),
+            parse_text(&src),
+            Err(TextError::BadInstruction { .. })
+        ));
+    }
+
+    #[test]
+    fn non_main_function_rejected() {
+        let src = sst("1.0", "fn @extra() {\n  cpu.halt\n}\n");
+        assert!(matches!(
+            parse_text(&src),
             Err(TextError::BadInstruction { .. })
         ));
     }
 
     #[test]
     fn syntactically_broken_source_is_a_parse_error() {
-        // An unterminated function body fails the `ParsedModule` parser itself
-        // (before resolution), so `parse_text` maps it to `BadInstruction`.
-        let src = "version 1.0;\nfn @main() {\n  cpu.halt\n";
+        // An unterminated function body fails the function grammar.
+        let src = sst("1.0", "fn @main() {\n  cpu.halt\n");
+        assert!(matches!(
+            parse_text(&src),
+            Err(TextError::BadInstruction { .. })
+        ));
+    }
+
+    #[test]
+    fn broken_container_is_a_parse_error() {
+        // Missing the `sst v1` line entirely: the container parser rejects it
+        // before any instruction is seen.
+        let src = ".section(root):\n.section(root).\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })
@@ -357,11 +363,8 @@ mod tests {
 
     #[test]
     fn parse_error_preserves_diagnostic_text() {
-        // Parse-level failures surface the underlying chumsky diagnostic rather
-        // than a bare "parse error" placeholder, so CLI/Python errors are
-        // debuggable.
-        let src = "version 1.0;\nfn @main() {\n  cpu.halt\n";
-        match parse_text(src) {
+        let src = sst("1.0", "fn @main() {\n  cpu.halt\n");
+        match parse_text(&src) {
             Err(TextError::BadInstruction { text, .. }) => {
                 assert_ne!(text, "parse error");
                 assert!(!text.is_empty(), "diagnostic text should be non-empty");
@@ -371,20 +374,10 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_version_headers_rejected() {
-        // Two `version` directives are ambiguous; the resolver rejects them
-        // rather than silently taking the first.
-        let src = "version 1.0;\nversion 2.0;\nfn @main() {\n  cpu.halt\n}\n";
-        assert!(matches!(
-            parse_text(src),
-            Err(TextError::BadInstruction { .. })
-        ));
-    }
-
-    #[test]
-    fn non_main_function_rejected() {
-        // The single function must be named `@main`.
-        let src = "version 1.0;\nfn @extra() {\n  cpu.halt\n}\n";
+    fn global_context_must_be_empty() {
+        // A lanes program has no child sections, so it carries no global
+        // context; a non-empty one is a malformed file rather than ignored.
+        let src = "sst v1\n.global:\nsomething\n.global.\n.section(root):\n.section(root).\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })

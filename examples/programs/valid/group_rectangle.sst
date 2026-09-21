@@ -1,5 +1,10 @@
-version 1.0;
+sst v1
 
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
 // Move 4 lanes forming a 2x2 grid.
 // site_bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]
 // Word 0: y_start=2.5, Word 1: y_start=12.5
@@ -18,3 +23,5 @@ fn @main() {
   lanes.move 4
   cpu.halt
 }
+.text(root).
+.section(root).

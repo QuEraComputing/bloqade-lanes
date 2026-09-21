@@ -43,43 +43,75 @@
  * zone 0, word 0, site 0 = 0x0000000000000000
  * zone 0, word 0, site 1 = 0x0000000001000000 */
 static const char *VALID_PROGRAM =
-    "version 1.0;\n"
+    "sst v1\n"
+    "\n"
+    ".section(root):\n"
+    ".header(root):\n"
+    "version 1.0\n"
+    ".header(root).\n"
+    ".text(root):\n"
     "fn @main() {\n"
     "  lanes.const_loc 0x0000000000000000\n"
     "  lanes.const_loc 0x0000000001000000\n"
     "  lanes.initial_fill 2\n"
     "  cpu.halt\n"
-    "}\n";
+    "}\n"
+    ".text(root).\n"
+    ".section(root).\n";
 
 /* Program that triggers a structural error (initial_fill not first). */
 static const char *INVALID_STRUCTURE =
-    "version 1.0;\n"
+    "sst v1\n"
+    "\n"
+    ".section(root):\n"
+    ".header(root):\n"
+    "version 1.0\n"
+    ".header(root).\n"
+    ".text(root):\n"
     "fn @main() {\n"
     "  cpu.halt\n"
     "  lanes.const_loc 0x0000000000000000\n"
     "  lanes.initial_fill 1\n"
-    "}\n";
+    "}\n"
+    ".text(root).\n"
+    ".section(root).\n";
 
 /* Program that triggers a stack underflow: `pop` on an empty stack. */
 static const char *STACK_UNDERFLOW =
-    "version 1.0;\n"
+    "sst v1\n"
+    "\n"
+    ".section(root):\n"
+    ".header(root):\n"
+    "version 1.0\n"
+    ".header(root).\n"
+    ".text(root):\n"
     "fn @main() {\n"
     "  cpu.pop\n"
     "  cpu.halt\n"
-    "}\n";
+    "}\n"
+    ".text(root).\n"
+    ".section(root).\n";
 
 /* Program with a type mismatch: `fill` expects a location but gets a float.
  * `initial_fill` is fed a valid location first so the mismatch lands squarely
  * on `fill`. */
 static const char *TYPE_MISMATCH =
-    "version 1.0;\n"
+    "sst v1\n"
+    "\n"
+    ".section(root):\n"
+    ".header(root):\n"
+    "version 1.0\n"
+    ".header(root).\n"
+    ".text(root):\n"
     "fn @main() {\n"
     "  lanes.const_loc 0x0000000000000000\n"
     "  lanes.initial_fill 1\n"
     "  cpu.const_float 3.14\n"
     "  lanes.fill 1\n"
     "  cpu.halt\n"
-    "}\n";
+    "}\n"
+    ".text(root).\n"
+    ".section(root).\n";
 
 int main(void) {
     int tests_passed = 0;
@@ -260,12 +292,20 @@ int main(void) {
 
         /* Site-bus lane on bus 7, which does not exist in the arch. */
         static const char *BAD_LANE_PROGRAM =
-            "version 1.0;\n"
+            "sst v1\n"
+            "\n"
+            ".section(root):\n"
+            ".header(root):\n"
+            "version 1.0\n"
+            ".header(root).\n"
+            ".text(root):\n"
             "fn @main() {\n"
             "  lanes.const_lane 0x0000000700000000\n"
             "  lanes.move 1\n"
             "  cpu.halt\n"
-            "}\n";
+            "}\n"
+            ".text(root).\n"
+            ".section(root).\n";
 
         struct LANESArchSpec *arch = NULL;
         ASSERT_OK(lanes_arch_from_json(ARCH_JSON, &arch), "parse arch json");

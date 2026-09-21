@@ -15,4 +15,5 @@
 
 # Migration guides
 
-- [Migrating to v0.11](migration/v0.11.md)
+- [Migrating to v0.12](migration/migration_guide_0_12.md)
+- [Migrating to v0.11](migration/migration_guide_0_11.md)

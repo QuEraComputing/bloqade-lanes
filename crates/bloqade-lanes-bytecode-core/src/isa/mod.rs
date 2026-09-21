@@ -13,9 +13,11 @@
 //! Text (`.sst`) parsing lives in [`syntax`], which layers vihaco 0.4's pattern
 //! parser on top of the same enum.
 //!
-//! This adopts vihaco's **native** byte layout (the issue #769 decision); it is
-//! intentionally *not* compatible with the original `BLQD` container that the
-//! hand-rolled bytecode used.
+//! Those words are then framed by vihaco's own section containers — binary
+//! `VHBC` and text `sst v1` — carrying a single root section whose header holds
+//! the version. vihaco ships readers for both and writers for neither, so
+//! [`container`] owns the emitters. This is intentionally *not* compatible with
+//! either container Bloqade Lanes used before (`BLQD`, then `LANES`).
 //!
 //! ## Two dialects, one flat enum
 //!
@@ -31,6 +33,7 @@
 //! nesting one in an encodable ISA is no longer possible. The `cpu.` head is
 //! kept to signal where the semantics come from.
 
+pub mod container;
 pub mod def;
 pub mod parse_helpers;
 pub mod program;
