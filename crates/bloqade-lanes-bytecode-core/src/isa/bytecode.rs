@@ -378,26 +378,85 @@ mod tests {
     use vihaco::instruction::{FromBytes, WriteBytes};
     use vihaco_parser::Ident;
 
-    /// Every shape in both devices.
+    /// **Every** variant of both instruction sets.
+    ///
+    /// The mirror exists to cover the two device enums exactly; anything missing
+    /// here is a variant whose encoding nothing checks. The only omission is
+    /// `Label`, which carries a parse-local identifier and deliberately has no
+    /// encodable form — `a_runtime_label_cannot_be_encoded` covers that.
     fn samples() -> Vec<MachineInstruction> {
-        let cpu = [
-            CpuInstruction::Halt,
-            CpuInstruction::Dup,
-            CpuInstruction::Const(Type::F64, Value::F64(1.5)),
-            CpuInstruction::Const(Type::I64, Value::I64(-42)),
-            CpuInstruction::Const(Type::U64, Value::U64(7)),
+        // One instance of each typed op per type, so the Type mirror is covered
+        // in both directions too.
+        let tys = [
+            Type::Undefined,
+            Type::String,
+            Type::Bool,
+            Type::I64,
+            Type::U32,
+            Type::U64,
+            Type::F64,
+            Type::FunctionRef,
+            Type::HeapRef,
+        ];
+        let mut cpu = vec![
             CpuInstruction::Span(1, 2, 3),
+            CpuInstruction::FunctionStart,
+            CpuInstruction::FunctionEnd,
+            CpuInstruction::Breakpoint,
             CpuInstruction::Branch(4),
             CpuInstruction::ConditionalBranch(5, 6),
-            CpuInstruction::Call(1, 2),
             CpuInstruction::Return(0),
+            CpuInstruction::IndirectCall,
+            CpuInstruction::Call(1, 2),
+            CpuInstruction::Halt,
+            CpuInstruction::Print,
+            CpuInstruction::Dup,
             CpuInstruction::HeapAlloc(3),
             CpuInstruction::GetItem,
             CpuInstruction::HeapDealloc,
-            CpuInstruction::Add(Type::I64),
-            CpuInstruction::Ge(Type::F64),
-            CpuInstruction::Load(Type::U32, 9),
+            CpuInstruction::Not,
+            CpuInstruction::And,
+            CpuInstruction::Or,
+            CpuInstruction::Xor,
         ];
+        // Every Value variant, so the Value mirror is covered too.
+        cpu.extend([
+            CpuInstruction::Const(Type::Undefined, Value::Undefined),
+            CpuInstruction::Const(Type::String, Value::String(2)),
+            CpuInstruction::Const(Type::Bool, Value::Bool(true)),
+            CpuInstruction::Const(Type::I64, Value::I64(-42)),
+            CpuInstruction::Const(Type::U32, Value::U32(3)),
+            CpuInstruction::Const(Type::U64, Value::U64(7)),
+            CpuInstruction::Const(Type::F64, Value::F64(1.5)),
+            CpuInstruction::Const(Type::FunctionRef, Value::FunctionRef(4)),
+            CpuInstruction::Const(Type::HeapRef, Value::HeapRef(5)),
+        ]);
+        for ty in tys {
+            cpu.extend([
+                CpuInstruction::Load(ty, 7),
+                CpuInstruction::Store(ty, 9),
+                CpuInstruction::Add(ty),
+                CpuInstruction::Sub(ty),
+                CpuInstruction::Mul(ty),
+                CpuInstruction::Div(ty),
+                CpuInstruction::Rem(ty),
+                CpuInstruction::Neg(ty),
+                CpuInstruction::Shl(ty),
+                CpuInstruction::Shr(ty),
+                CpuInstruction::Rol(ty),
+                CpuInstruction::Ror(ty),
+                CpuInstruction::BitAnd(ty),
+                CpuInstruction::BitOr(ty),
+                CpuInstruction::BitXor(ty),
+                CpuInstruction::Eq(ty),
+                CpuInstruction::Ne(ty),
+                CpuInstruction::Lt(ty),
+                CpuInstruction::Gt(ty),
+                CpuInstruction::Le(ty),
+                CpuInstruction::Ge(ty),
+            ]);
+        }
+
         let lanes = [
             LanesInstruction::Pop,
             LanesInstruction::Swap,
