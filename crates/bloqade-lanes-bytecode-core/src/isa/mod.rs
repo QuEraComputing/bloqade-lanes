@@ -51,6 +51,7 @@ pub mod device;
 pub mod machine;
 pub mod parse_helpers;
 pub mod program;
+pub mod resolve;
 pub mod syntax;
 pub mod text;
 pub mod validate;

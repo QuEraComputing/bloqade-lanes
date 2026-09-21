@@ -792,7 +792,7 @@ mod tests {
     const SIMPLE_ARCH_JSON: &str = include_str!("../../../../examples/arch/simple.json");
 
     fn machine() -> LanesMachine {
-        LanesMachine::default()
+        LanesMachine::new()
             .with_arch(ArchSpec::from_json(SIMPLE_ARCH_JSON).expect("simple.json should parse"))
     }
 
@@ -856,6 +856,44 @@ mod tests {
                 msg: LanesMessage::Zones(_)
             })
         ));
+    }
+
+    /// The entry frame is what makes locals addressable at all: without it every
+    /// `load`/`store` fails with "no current frame".
+    ///
+    /// It also pins *what* a local is. vihaco locals are `stack[base + index]`
+    /// — a window into the operand stack, not separate memory — so under the
+    /// entry frame (`base = 0`) local 0 is literally stack slot 0. A function
+    /// with no parameters therefore has no private locals, which is why `store`
+    /// cannot stand in for `pop`: here it pops the operand and writes it
+    /// straight back into slot 0.
+    #[test]
+    fn the_entry_frame_makes_locals_addressable_but_they_alias_the_stack() {
+        use vihaco::traits::StackMemory;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        // Without a frame, locals are unreachable.
+        let mut bare = LanesMachine::default();
+        bare.cpu.stack_push(Value::U64(7));
+        assert!(
+            bare.cpu
+                .execute_instruction(C::Store(Type::U64, 0))
+                .unwrap_err()
+                .to_string()
+                .contains("no current frame")
+        );
+
+        // With one, the same store succeeds — and lands back in slot 0.
+        let mut m = LanesMachine::new();
+        m.cpu.stack_push(Value::U64(7));
+        m.cpu.execute_instruction(C::Store(Type::U64, 0)).unwrap();
+        assert_eq!(
+            m.cpu.stack(),
+            &[Value::U64(7)],
+            "local 0 aliases stack slot 0 under the entry frame"
+        );
+        m.cpu.execute_instruction(C::Load(Type::U64, 0)).unwrap();
+        assert_eq!(m.cpu.stack(), &[Value::U64(7), Value::U64(7)]);
     }
 
     #[test]
@@ -1549,7 +1587,7 @@ mod tests {
     #[test]
     fn move_without_an_arch_is_an_error() {
         // `move` cannot resolve a lane into endpoints without a spec.
-        let mut m = LanesMachine::default();
+        let mut m = LanesMachine::new();
         m.step_lanes(I::ConstLane(0)).unwrap();
         let err = m.step_lanes(I::Move(1)).unwrap_err().to_string();
         assert!(err.contains("arch spec"), "got {err}");

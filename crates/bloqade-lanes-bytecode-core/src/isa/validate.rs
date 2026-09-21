@@ -324,6 +324,14 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     errors
 }
 
+/// True if `inst` transfers control somewhere the linear walk cannot follow.
+fn is_control_flow(inst: &M) -> bool {
+    matches!(
+        inst,
+        M::Cpu(C::Branch(_) | C::ConditionalBranch(_, _) | C::Call(_, _) | C::IndirectCall)
+    )
+}
+
 /// True if `inst` terminates execution (`return` or `halt`).
 fn is_terminator(inst: &M) -> bool {
     matches!(inst, M::Cpu(C::Return(_)) | M::Cpu(C::Halt))
@@ -709,6 +717,19 @@ impl<'a> StackSimulator<'a> {
 
     fn run(mut self, program: &Program) -> Vec<ValidationError> {
         for (pc, inst) in program.code.iter().enumerate() {
+            // The simulator walks straight through, so the stack state it
+            // carries is only correct while control flow is linear. At a branch
+            // or call the state at the next instruction depends on which edge
+            // was taken, and merging those needs a CFG walk this does not do.
+            //
+            // So it stops rather than reporting underflows and type mismatches
+            // derived from a state it cannot know. A lanes program emits no
+            // control flow today, so nothing we generate reaches this; it
+            // matters for hand-written and decoded programs. Full CFG-aware
+            // simulation is tracked separately.
+            if is_control_flow(inst) {
+                break;
+            }
             self.pc = pc;
             self.dispatch(inst);
         }
@@ -1578,6 +1599,35 @@ mod tests {
             simulate_stack(&obs, None).is_empty(),
             "{:?}",
             simulate_stack(&obs, None)
+        );
+    }
+
+    #[test]
+    fn stack_sim_stops_at_control_flow_rather_than_guessing() {
+        // A `pop` on an empty stack is an underflow the simulator would
+        // normally catch — but behind a branch it cannot know the stack state,
+        // so it stops instead of reporting something it cannot justify.
+        let behind_branch = program(vec![
+            M::Cpu(C::Branch(2)),
+            M::Lanes(L::Pop),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            simulate_stack(&behind_branch, None).is_empty(),
+            "must not report errors derived from an unknown post-branch state"
+        );
+
+        // The same underflow ahead of the branch is still caught.
+        let before_branch = program(vec![
+            M::Lanes(L::Pop),
+            M::Cpu(C::Branch(2)),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            simulate_stack(&before_branch, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
+            "linear prefix is still checked"
         );
     }
 

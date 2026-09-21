@@ -19,8 +19,9 @@ use vihaco::traits::FromText as _;
 use vihaco_parser::Parse;
 
 use super::container::LanesContext;
-use super::machine::{self, MachineSurfaceInstruction};
-use super::program::{LanesInfo, Program, from_code};
+use super::machine::{self, MachineInstruction, MachineSurfaceInstruction};
+use super::program::{LanesInfo, Program};
+use super::resolve::resolve;
 
 /// Error from text (`.sst`) parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,41 +121,16 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
                 text: e.to_string(),
             })?;
 
-    // Exactly one function, and it must be `@main`. The parser strips the
-    // leading `@`, so the parsed name is bare `"main"`.
-    let func = match parsed.functions.as_slice() {
-        [f] => f,
-        _ => {
-            return Err(TextError::BadInstruction {
-                line: 0,
-                text: format!(
-                    "expected exactly one function (@main), found {}",
-                    parsed.functions.len()
-                ),
-            });
-        }
-    };
-    if func.name.as_str() != "main" {
-        return Err(TextError::BadInstruction {
-            line: 0,
-            text: format!("expected function @main, found @{}", func.name.as_str()),
-        });
-    }
-
-    // The composite's surface and runtime enums are independent, so each
-    // parsed instruction is lowered before it becomes program code.
-    let code = func
-        .body
-        .iter()
-        .cloned()
-        .map(machine::lower)
-        .collect::<eyre::Result<Vec<_>>>()
-        .map_err(|e| TextError::BadInstruction {
-            line: 0,
-            text: e.to_string(),
-        })?;
-
-    Ok(from_code(info.version, code))
+    // Any number of functions, resolved together: symbolic branch and call
+    // targets need the whole module in view. See `super::resolve`.
+    //
+    // The header comes from `parse_version_header` above rather than
+    // `parsed.header`: both parse the same text with the same `FromText` impl,
+    // but only that one classifies its failures.
+    resolve(parsed.functions, info).map_err(|e| TextError::BadInstruction {
+        line: 0,
+        text: e.to_string(),
+    })
 }
 
 /// Read the root section's `version` directive.
@@ -187,13 +163,92 @@ fn line_of(src: &str, needle: &str) -> usize {
 ///
 /// The output is accepted by [`parse_text`] and round-trips losslessly.
 pub fn to_text(program: &Program) -> String {
-    let mut body = String::from("fn @main() {\n");
+    use vihaco_cpu::RuntimeInstruction as C;
+
+    let name_of = |index: u32| -> &str {
+        program
+            .strings
+            .get(index as usize)
+            .map(String::as_str)
+            .unwrap_or("?")
+    };
+
+    // Control flow is stored as addresses but written as symbols, so rendering
+    // needs a name for every branch target. A module resolved from text already
+    // has one; a module built programmatically may not, so those get a
+    // synthesised `L<address>` — emitted as a label too, so the text still
+    // round-trips.
+    let mut label_names: Vec<(u32, String)> = program
+        .labels
+        .iter()
+        .map(|l| (l.address, name_of(l.name).to_owned()))
+        .collect();
     for inst in &program.code {
-        body.push_str("  ");
-        body.push_str(&machine::to_sst_text(inst));
-        body.push('\n');
+        let targets: &[u32] = match inst {
+            MachineInstruction::Cpu(C::Branch(t)) => &[*t],
+            MachineInstruction::Cpu(C::ConditionalBranch(t, f)) => &[*t, *f],
+            _ => &[],
+        };
+        for target in targets {
+            if !label_names.iter().any(|(a, _)| a == target) {
+                label_names.push((*target, format!("L{target}")));
+            }
+        }
     }
-    body.push_str("}\n");
+    let label_of = |address: u32| -> String {
+        label_names
+            .iter()
+            .find(|(a, _)| *a == address)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| format!("L{address}"))
+    };
+    let function_at = |address: u32| -> String {
+        program
+            .functions
+            .iter()
+            .find(|f| f.start_address == address)
+            .map(|f| name_of(f.name).to_owned())
+            .unwrap_or_else(|| format!("F{address}"))
+    };
+
+    let render = |inst: &MachineInstruction| -> String {
+        match inst {
+            MachineInstruction::Cpu(C::Branch(t)) => {
+                format!("cpu::cpu.br @{}", label_of(*t))
+            }
+            MachineInstruction::Cpu(C::ConditionalBranch(t, f)) => {
+                format!("cpu::cpu.cond_br @{}, @{}", label_of(*t), label_of(*f))
+            }
+            // `br`/`cond_br` spell their target `@name` (their patterns include
+            // the sigil); `call` does not — its generated pattern is
+            // `'call $0 `,` $1`, so the callee is a bare identifier.
+            MachineInstruction::Cpu(C::Call(arity, target)) => {
+                format!("cpu::cpu.call {arity}, {}", function_at(*target))
+            }
+            other => machine::to_sst_text(other),
+        }
+    };
+
+    let mut body = String::new();
+    for func in &program.functions {
+        body.push_str(&format!("fn @{}() {{\n", name_of(func.name)));
+        let emit_labels = |body: &mut String, address: u32| {
+            for (_, name) in label_names.iter().filter(|(a, _)| *a == address) {
+                body.push_str(&format!("  cpu::cpu.label @{name}\n"));
+            }
+        };
+        for address in func.start_address..func.end_address {
+            emit_labels(&mut body, address);
+            body.push_str("  ");
+            body.push_str(&render(&program.code[address as usize]));
+            body.push('\n');
+        }
+        // A label on the function's end address marks the position after its
+        // last instruction.
+        emit_labels(&mut body, func.end_address);
+        body.push_str("}\n");
+    }
+
     super::container::to_sst(&program.extra, &body)
 }
 
@@ -204,6 +259,7 @@ mod tests {
     use super::*;
     use crate::isa::device::LanesInstruction as L;
     use crate::isa::machine::MachineInstruction as M;
+    use crate::isa::program::from_code;
     use crate::version::Version;
     use vihaco::{Type, Value};
     use vihaco_cpu::RuntimeInstruction as C;
@@ -381,17 +437,91 @@ mod tests {
     }
 
     #[test]
-    fn multiple_functions_rejected() {
-        // The grammar admits several `fn` blocks, but a lanes program is a
-        // single flat `@main`; the resolver rejects anything but exactly one.
+    fn several_functions_resolve_together() {
         let src = sst(
             "1.0",
-            "fn @main() {\n  cpu::cpu.halt\n}\nfn @extra() {\n  cpu::cpu.halt\n}\n",
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n\
+             fn @helper() {\n  cpu::cpu.ret 0\n}\n",
         );
-        assert!(matches!(
-            parse_text(&src),
-            Err(TextError::BadInstruction { .. })
-        ));
+        let p = parse_text(&src).unwrap();
+
+        assert_eq!(p.functions.len(), 2);
+        assert_eq!(p.main_function, Some(0));
+        // `@helper` starts right after main's two instructions, and the call
+        // was patched to that address.
+        assert_eq!(p.functions[1].start_address, 2);
+        assert_eq!(
+            p.code[0],
+            M::Cpu(C::Call(0, 2)),
+            "call target should be resolved to @helper's address"
+        );
+        assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
+    }
+
+    #[test]
+    fn labels_resolve_and_leave_the_code_stream() {
+        let src = sst(
+            "1.0",
+            "fn @main() {\n  cpu::cpu.br @done\n  lanes::lanes.cz\n  \
+             cpu::cpu.label @done\n  cpu::cpu.halt\n}\n",
+        );
+        let p = parse_text(&src).unwrap();
+
+        // Three instructions: the label is metadata, not code.
+        assert_eq!(p.code.len(), 3);
+        assert_eq!(p.labels.len(), 1);
+        assert_eq!(p.labels[0].address, 2, "@done marks the halt");
+        assert_eq!(p.code[0], M::Cpu(C::Branch(2)));
+        assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
+    }
+
+    #[test]
+    fn conditional_branches_resolve_both_arms() {
+        let src = sst(
+            "1.0",
+            "fn @main() {\n  cpu::cpu.cond_br @yes, @no\n  \
+             cpu::cpu.label @yes\n  lanes::lanes.cz\n  \
+             cpu::cpu.label @no\n  cpu::cpu.halt\n}\n",
+        );
+        let p = parse_text(&src).unwrap();
+        assert_eq!(p.code[0], M::Cpu(C::ConditionalBranch(1, 2)));
+        assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
+    }
+
+    #[test]
+    fn unresolvable_symbols_are_reported_by_name() {
+        for (src, needle) in [
+            ("fn @main() {\n  cpu::cpu.br @nowhere\n}\n", "@nowhere"),
+            ("fn @main() {\n  cpu::cpu.call 0, missing\n}\n", "@missing"),
+        ] {
+            let err = parse_text(&sst("1.0", src)).unwrap_err().to_string();
+            assert!(err.contains(needle), "got {err}");
+        }
+    }
+
+    #[test]
+    fn duplicate_symbols_are_rejected() {
+        let dup_label = sst(
+            "1.0",
+            "fn @main() {\n  cpu::cpu.label @x\n  cpu::cpu.label @x\n  cpu::cpu.halt\n}\n",
+        );
+        assert!(
+            parse_text(&dup_label)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate label")
+        );
+
+        let dup_fn = sst(
+            "1.0",
+            "fn @main() {\n  cpu::cpu.halt\n}\nfn @main() {\n  cpu::cpu.halt\n}\n",
+        );
+        assert!(
+            parse_text(&dup_fn)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate function")
+        );
     }
 
     #[test]

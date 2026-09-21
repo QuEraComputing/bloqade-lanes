@@ -19,7 +19,7 @@
 
 use vihaco::BytecodeFile;
 use vihaco::instruction::{FromBytes, WriteBytes};
-use vihaco::module::LocalModule;
+use vihaco::module::{FunctionInfo, LocalModule, Signature};
 use vihaco::value::{Type, Value};
 
 use super::bytecode::{self, BytecodeInstruction};
@@ -94,13 +94,35 @@ impl vihaco::SstHeader for LanesInfo {}
 /// single `@main` function's worth of flat code plus the version in `extra`.
 pub type Program = LocalModule<MachineInstruction, Value, Type, LanesInfo>;
 
-/// Build a `Program` from a version + flat instruction list. This is the ONE
-/// constructor used by both binary and text loading, so all `Program`s built
-/// from the same (version, code) compare equal regardless of source.
+/// Build a `Program` from a version + flat instruction list, wrapped in a
+/// single `@main`.
+///
+/// This is the ONE constructor used by both binary and text loading, so all
+/// `Program`s built from the same (version, code) compare equal regardless of
+/// source. It declares the `@main` function table entry that rendering and
+/// execution both need — a `Program` with code but no functions would emit
+/// nothing and have no entry point.
+///
+/// Programs with several functions or with labels come from
+/// [`super::resolve::resolve`] instead; this is the flat case.
 #[allow(clippy::field_reassign_with_default)] // `LocalModule` is a foreign type; struct-literal init is not possible
 pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> Program {
+    let end_address = code.len() as u32;
     let mut m = Program::default();
     m.code = code;
+    m.strings = vec!["main".to_owned()];
+    m.functions = vec![FunctionInfo {
+        name: 0,
+        signature: Signature {
+            params: Vec::new(),
+            ret: Vec::new(),
+        },
+        local_count: 0,
+        start_address: 0,
+        end_address,
+        file: 0,
+    }];
+    m.main_function = Some(0);
     m.extra = LanesInfo { version };
     m
 }
