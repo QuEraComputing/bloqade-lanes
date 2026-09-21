@@ -35,6 +35,8 @@
 
 pub mod container;
 pub mod def;
+pub mod device;
+pub mod machine;
 pub mod parse_helpers;
 pub mod program;
 pub mod syntax;

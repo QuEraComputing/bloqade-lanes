@@ -15,11 +15,11 @@ version = "0.12.0-dev"
 # vihaco — virtual ISA + machine framework (QuEra, MIT).
 # See https://github.com/QuEraComputing/bloqade-lanes/issues/769.
 #
-# `vihaco-cpu` is deliberately absent: as of 0.4 it is a *runtime component*
-# (a CPU you plug into a machine) with no binary codec — its instructions
-# implement neither `WriteBytes`/`FromBytes` nor `OpCode` — so the stack ops we
-# use are declared natively in our own ISA instead. See `isa::def`.
+# `vihaco-cpu` supplies the `CPU` component composed alongside our own device
+# (see `isa::machine`). Note it carries no binary codec of its own — see
+# `isa::bytecode` for the mirror ISA that encoding goes through.
 vihaco = "0.4"
+vihaco-cpu = "0.4"
 vihaco-parser = "0.4"
 chumsky = "0.10"
 eyre = "0.6"
