@@ -10,14 +10,14 @@ version 1.0
 // LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
 
 fn @main() {
-  lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
-  lanes.const_loc 0x0000000005000000    // zone 0, word 0, site 5
-  lanes.const_loc 0x0000000009000000    // zone 0, word 0, site 9
-  lanes.const_loc 0x0000010000000000    // zone 0, word 1, site 0
-  lanes.const_loc 0x0000010005000000    // zone 0, word 1, site 5
-  lanes.const_loc 0x0000010009000000    // zone 0, word 1, site 9
-  lanes.initial_fill 6
-  cpu.halt
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.const_loc 0x0000000005000000    // zone 0, word 0, site 5
+  lanes::lanes.const_loc 0x0000000009000000    // zone 0, word 0, site 9
+  lanes::lanes.const_loc 0x0000010000000000    // zone 0, word 1, site 0
+  lanes::lanes.const_loc 0x0000010005000000    // zone 0, word 1, site 5
+  lanes::lanes.const_loc 0x0000010009000000    // zone 0, word 1, site 9
+  lanes::lanes.initial_fill 6
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

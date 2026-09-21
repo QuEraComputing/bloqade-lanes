@@ -10,8 +10,8 @@ version 1.0
 // zone 0, word 5, site 0 = (5 << 40) = 0x0000050000000000
 
 fn @main() {
-  lanes.const_loc 0x0000050000000000    // zone 0, word 5, site 0
-  cpu.halt
+  lanes::lanes.const_loc 0x0000050000000000    // zone 0, word 5, site 0
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

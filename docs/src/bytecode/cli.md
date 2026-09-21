@@ -206,7 +206,7 @@ bloqade-bytecode arch validate gemini-logical.json
 | Extension | Format | Description |
 |-----------|--------|-------------|
 | `.sst` | Text | Human-readable bytecode (vihaco `sst v1` container, `//` comments) |
-| `.bin` | Binary | Compact binary encoding (vihaco `VHBC` container, 13 bytes per instruction) |
+| `.bin` | Binary | Compact binary encoding (vihaco `VHBC` container, 14 bytes per instruction) |
 | `.json` | JSON | Architecture specification |
 
 See also the [Instruction Quick Reference](inst-quick-ref.md) for a compact summary of all 24 instructions, or the full [Instruction Set](inst-spec.md) for encoding details.

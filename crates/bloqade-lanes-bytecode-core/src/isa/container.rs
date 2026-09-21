@@ -53,6 +53,7 @@
 
 use vihaco::instruction::WriteBytes;
 
+use super::bytecode;
 use super::program::{LanesInfo, Program};
 
 /// The one section name vihaco accepts for a file's root.
@@ -114,7 +115,10 @@ mod len {
 }
 
 /// Serialize a program into vihaco's `VHBC` container.
-pub fn to_binary(program: &Program) -> Vec<u8> {
+///
+/// Instructions go through [`bytecode::encode`] because neither half of the
+/// composite carries a codec of its own.
+pub fn to_binary(program: &Program) -> eyre::Result<Vec<u8>> {
     let mut header = Vec::new();
     program
         .extra
@@ -123,7 +127,8 @@ pub fn to_binary(program: &Program) -> Vec<u8> {
 
     let mut code = Vec::new();
     for inst in &program.code {
-        inst.write_bytes(&mut code)
+        bytecode::encode(inst)?
+            .write_bytes(&mut code)
             .expect("writing instruction bytes to a Vec cannot fail");
     }
 
@@ -146,7 +151,7 @@ pub fn to_binary(program: &Program) -> Vec<u8> {
     out.extend_from_slice(&(code.len() as u64).to_le_bytes());
     out.extend_from_slice(&code);
     out.extend_from_slice(&0u32.to_le_bytes()); // no child sections
-    out
+    Ok(out)
 }
 
 /// Emit a program as vihaco's `sst v1` text container.

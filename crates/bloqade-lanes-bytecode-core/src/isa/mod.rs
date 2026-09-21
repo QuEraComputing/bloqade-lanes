@@ -33,8 +33,8 @@
 //! nesting one in an encodable ISA is no longer possible. The `cpu.` head is
 //! kept to signal where the semantics come from.
 
+pub mod bytecode;
 pub mod container;
-pub mod def;
 pub mod device;
 pub mod machine;
 pub mod parse_helpers;
@@ -43,7 +43,8 @@ pub mod syntax;
 pub mod text;
 pub mod validate;
 
-pub use def::{INSTRUCTION_WIDTH, Instruction};
+pub use bytecode::instruction_width;
+pub use device::{LanesInstruction, LanesSurfaceInstruction};
+pub use machine::{LanesMachine, MachineInstruction, MachineSurfaceInstruction};
 pub use program::{LanesInfo, Program, from_code};
-pub use syntax::{CPU_HEAD, LANES_HEAD};
 pub use text::{parse_text, to_text};

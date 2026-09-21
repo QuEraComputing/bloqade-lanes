@@ -405,9 +405,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.initial_fill 1
-  cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -421,14 +421,14 @@ fn @main() {
         with pytest.raises(MissingVersionError):
             Program.from_text(
                 "sst v1\n\n.section(root):\n.text(root):\n"
-                "fn @main() {\n  cpu.halt\n}\n"
+                "fn @main() {\n  cpu::cpu.halt\n}\n"
                 ".text(root).\n.section(root).\n"
             )
 
     def test_from_text_rejects_non_container(self):
         # The bare `version 1.0;` + `fn @main` form is no longer accepted.
         with pytest.raises(BadInstructionError):
-            Program.from_text("version 1.0;\nfn @main() {\n  cpu.halt\n}\n")
+            Program.from_text("version 1.0;\nfn @main() {\n  cpu::cpu.halt\n}\n")
 
 
 class TestProgramSerialization:
@@ -442,10 +442,10 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.const_loc 0x00000001
-  lanes.initial_fill 2
-  cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -456,8 +456,8 @@ fn @main() {
         text = program.to_text()
         assert "version 1.0" in text
         assert "fn @main()" in text
-        assert "lanes.initial_fill 2" in text
-        assert "cpu.halt" in text
+        assert "lanes::lanes.initial_fill 2" in text
+        assert "cpu::cpu.halt" in text
 
     def test_text_round_trip(self):
         program = self._sample_program()
@@ -526,9 +526,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.initial_fill 1
-  cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -545,9 +545,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.halt
-  lanes.const_loc 0x00000000
-  lanes.initial_fill 1
+  cpu::cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
 }
 .text(root).
 .section(root).
@@ -568,7 +568,7 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.pop
+  lanes::lanes.pop
 }
 .text(root).
 .section(root).
@@ -587,8 +587,8 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.const_float 1.0
-  lanes.initial_fill 1
+  cpu::cpu.const f64, 1.0
+  lanes::lanes.initial_fill 1
 }
 .text(root).
 .section(root).
@@ -620,7 +620,7 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.const_int 0
+  cpu::cpu.const i64, 0
 }
 .text(root).
 .section(root).
@@ -639,8 +639,8 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.halt
-  cpu.const_int 0
+  cpu::cpu.halt
+  cpu::cpu.const i64, 0
 }
 .text(root).
 .section(root).
@@ -664,8 +664,8 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.const_int 0
-  cpu.return
+  cpu::cpu.const i64, 0
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -682,7 +682,7 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.halt
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -726,13 +726,13 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.const_loc 0x00000001
-  lanes.initial_fill 2
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure
-  cpu.return
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -750,16 +750,16 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.const_loc 0x00000001
-  lanes.initial_fill 2
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure
-  cpu.return
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -785,16 +785,16 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.const_loc 0x00000001
-  lanes.initial_fill 2
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure
-  cpu.return
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -812,12 +812,12 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.const_loc 0x00000001
-  lanes.initial_fill 2
-  lanes.const_loc 0x00000000
-  lanes.fill 1
-  cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.fill 1
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -843,12 +843,12 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.const_loc 0x00000001
-  lanes.initial_fill 2
-  lanes.const_loc 0x00000000
-  lanes.fill 1
-  cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.fill 1
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -866,9 +866,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000000
-  lanes.initial_fill 1
-  cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -888,7 +888,7 @@ fn @main() {
 class TestProgramRepr:
     def test_repr(self):
         program = Program.from_text(
-            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu.halt\n}\n.text(root).\n.section(root).\n"
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n"
         )
         r = repr(program)
         assert "Program" in r

@@ -6,48 +6,53 @@ The instruction set is organized around the physical structure of the hardware. 
 
 Programs execute on a stack machine. Address constants and numeric parameters are pushed onto the stack, then consumed by operation instructions (fills, moves, gates, measurements). The bytecode is designed to be validated offline against an architecture specification (`ArchSpec`) that captures the geometry, bus topology, and zone layout of a specific device.
 
+## The machine
+
+A lanes program runs on a **composite machine** of two vihaco devices:
+
+| Device | Code | Supplies |
+|---|---|---|
+| `cpu` | `0x00` | vihaco-cpu's `CPU` component: the stack, constants, arithmetic, comparisons, control flow, the heap allocator |
+| `lanes` | `0x01` | atom movement, gates, measurement, arrays, and the `pop`/`swap` the CPU lacks |
+
+Instructions are spelled `<device>::<dialect>.<mnemonic>`. The first half is the
+device; the second is that device's own dialect head.
+
+Only the atom-arrangement ops (`initial_fill`, `fill`, `move`) are executed by
+the machine — they advance the atom state and fault on an illegal move. The
+quantum ops are emitted as effects rather than simulated, and the array and
+measurement ops likewise, pending
+[#776](https://github.com/QuEraComputing/bloqade-lanes/issues/776).
+
 ## Instruction Format
 
-Every instruction is a fixed **13 bytes**: a 1-byte opcode followed by the
-operands in declaration order, each little-endian, zero-padded out to the full
-width.
+Every instruction is a fixed **14-byte** word: a 1-byte device opcode, a 1-byte
+instruction opcode, then the operands in declaration order, each little-endian,
+zero-padded out to the full width.
 
 ```
-┌────────────┬────────────────────────────────────────────┐
-│ opcode(u8) │ operands (LE, in order) ‖ zero padding      │
-├────────────┼────────────────────────────────────────────┤
-│   byte 0   │                bytes 1–12                  │
-└────────────┴────────────────────────────────────────────┘
+┌────────────┬────────────┬──────────────────────────────────┐
+│ device(u8) │ opcode(u8) │ operands (LE) ‖ zero padding      │
+├────────────┼────────────┼──────────────────────────────────┤
+│   byte 0   │   byte 1   │            bytes 2–13            │
+└────────────┴────────────┴──────────────────────────────────┘
 ```
 
-The width is not a chosen constant: vihaco derives it as the widest variant,
-which today is `new_array` (1 + 3×u32 = 13). It will change if a wider operand
-set is added. Instructions with no operands are the opcode byte followed by 12
-zero bytes.
+The width is not a chosen constant — vihaco derives it as the widest variant
+across both devices, and it changes if either gains a wider operand.
 
 Because every word is the same width, the code region is just N concatenated
 words and decodes without desync.
 
-Examples:
-
-```
-cpu.halt              04 00 00 00 00 00 00 00 00 00 00 00 00
-cpu.const_int 42      06 2a 00 00 00 00 00 00 00 00 00 00 00   (i64 LE, 4B pad)
-lanes.move 1          0c 01 00 00 00 00 00 00 00 00 00 00 00   (u32 LE, 8B pad)
-lanes.new_array 2 10 20
-                      14 02 00 00 00 0a 00 00 00 14 00 00 00   (3 × u32 LE)
-```
-
 ## Opcodes
 
-vihaco assigns the opcode byte from the variant's **position** in the
-`Instruction` enum: the first variant is `0x00`, the second `0x01`, and so on.
-There is no device-code packing and no structure inside the byte.
+vihaco assigns opcodes by **declaration position**. The Python API reports them
+packed as `(device_code << 8) | instruction_code`.
 
-The practical consequence is that opcodes are **not stable across revisions** —
-inserting an instruction anywhere but the end renumbers every instruction after
-it, which changes the binary encoding of existing programs. The values in this
-document are correct for this revision; `Instruction::opcode()` is the authority.
+Both halves are positional, so adding an instruction to either device anywhere
+but the end renumbers everything after it — which changes the binary encoding of
+existing programs. The values in this document are correct for this revision;
+`Instruction.op_name()` is the stable identity.
 
 Bloqade Lanes programs are not binary-compatible with either earlier container
 (`BLQD`, `LANES`), nor with the FLAIR-aligned device/instruction-code scheme this
@@ -55,7 +60,7 @@ specification previously described.
 
 ## Binary Container (`VHBC`)
 
-The instruction words above sit inside vihaco's `VHBC` section container, which
+The instruction words sit inside vihaco's `VHBC` section container, which
 mirrors the `sst v1` text structure: one root section, whose header is the
 version and whose bytecode is the code region.
 
@@ -69,13 +74,17 @@ section_len          : u64 LE             (total, including this frame)
 composite_header_len : u64 LE  = 4
 composite header     : u32 LE  = (major << 16) | minor
 bytecode_len         : u64 LE
-bytecode             : N × 13 bytes
+bytecode             : N × instruction words
 child_count          : u32 LE  = 0        (no child sections)
 ```
 
 vihaco ships readers for this container but no writers, so Bloqade Lanes owns
 the emitters (`isa::container`); the round-trip tests read everything back
 through vihaco's own parser to keep the two in step.
+
+Neither device's instruction enum carries a binary codec — vihaco-cpu's has none
+and `#[composite]` derives none — so encoding goes through a parallel mirror ISA
+(`isa::bytecode`) that does. PPVM solves this the same way.
 
 ## Text Format (`.sst`)
 
@@ -92,10 +101,10 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000000000000
-  lanes.const_loc 0x0000000001000000
-  lanes.initial_fill 2
-  cpu.halt
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.const_loc 0x0000000001000000
+  lanes::lanes.initial_fill 2
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -116,9 +125,9 @@ Container rules:
 Instruction rules:
 
 - Comments are `//` to end of line.
-- Every instruction carries a **dialect head**: `cpu.` for the stack ops,
-  `lanes.` for the device ops. The head is required — a bare `move 2` does not
-  parse, and neither does a mnemonic under the wrong head (`cpu.move`).
+- Every instruction carries a **device prefix and dialect head**:
+  `lanes::lanes.move 2`, `cpu::cpu.halt`. Both halves are required — a bare
+  `move 2` does not parse, and neither does a mnemonic under the wrong device.
 - Address operands are `0x`-prefixed hexadecimal; arities and array dimensions
   are decimal.
 - Exactly one function is allowed and it must be named `@main`.
@@ -204,119 +213,119 @@ are declared natively in our own `Instruction` enum: as of vihaco 0.4,
 vihaco-cpu is a runtime *component* whose instructions carry no binary codec, so
 they cannot be nested in an encodable ISA.
 
-#### `cpu.const_int` — Push integer constant
+#### `cpu::cpu.const_int` — Push integer constant
 
 | Field | Value |
 |---|---|
-| Opcode | `0x06` |
+| Opcode | `0x0011` |
 | Operands | `i64` LE (8 bytes) |
 | Stack | `( -- int)` |
 
 Pushes a signed 64-bit integer onto the stack.
 
-#### `cpu.const_float` — Push float constant
+#### `cpu::cpu.const_float` — Push float constant
 
 | Field | Value |
 |---|---|
-| Opcode | `0x05` |
+| Opcode | `0x0011` |
 | Operands | `f64` LE (8 bytes) |
 | Stack | `( -- float)` |
 
 Pushes a 64-bit float onto the stack.
 
-#### `cpu.dup` — Duplicate top of stack
+#### `cpu::cpu.dup` — Duplicate top of stack
 
 | Field | Value |
 |---|---|
-| Opcode | `0x03` |
+| Opcode | `0x000D` |
 | Operands | none |
 | Stack | `(a -- a a)` |
 
-#### `cpu.pop` — Discard top of stack
+#### `lanes::lanes.pop` — Discard top of stack
 
 | Field | Value |
 |---|---|
-| Opcode | `0x00` |
+| Opcode | `0x0100` |
 | Operands | none |
 | Stack | `(a -- )` |
 
-#### `cpu.swap` — Swap top two stack elements
+#### `lanes::lanes.swap` — Swap top two stack elements
 
 | Field | Value |
 |---|---|
-| Opcode | `0x01` |
+| Opcode | `0x0101` |
 | Operands | none |
 | Stack | `(a b -- b a)` |
 
-#### `cpu.return` — Return from program
+#### `cpu::cpu.return` — Return from program
 
 | Field | Value |
 |---|---|
-| Opcode | `0x02` |
+| Opcode | `0x0006` |
 | Operands | none |
 | Stack | `( -- )` |
 
-#### `cpu.halt` — Halt execution
+#### `cpu::cpu.halt` — Halt execution
 
 | Field | Value |
 |---|---|
-| Opcode | `0x04` |
+| Opcode | `0x0009` |
 | Operands | none |
 | Stack | `( -- )` |
 
 ### Address constants
 
-#### `lanes.const_loc` — Push location address
+#### `lanes::lanes.const_loc` — Push location address
 
 | Field | Value |
 |---|---|
-| Opcode | `0x07` |
+| Opcode | `0x0102` |
 | Operands | `LocationAddr` as `u64` LE — `[zone_id:8][word_id:16][site_id:16][pad:24]` |
 | Stack | `( -- loc)` |
 
-#### `lanes.const_lane` — Push lane address
+#### `lanes::lanes.const_lane` — Push lane address
 
 | Field | Value |
 |---|---|
-| Opcode | `0x08` |
+| Opcode | `0x0103` |
 | Operands | `LaneAddr` as `u64` LE — `[dir:1][mt:2][zone_id:8][pad:5][bus_id:16][word_id:16][site_id:16]` |
 | Stack | `( -- lane)` |
 
-#### `lanes.const_zone` — Push zone address
+#### `lanes::lanes.const_zone` — Push zone address
 
 | Field | Value |
 |---|---|
-| Opcode | `0x09` |
+| Opcode | `0x0104` |
 | Operands | `ZoneAddr` as `u32` LE — `[pad:24][zone_id:8]` |
 | Stack | `( -- zone)` |
 
 ### Atom arrangement
 
-#### `lanes.initial_fill` — Initial atom loading
+#### `lanes::lanes.initial_fill` — Initial atom loading
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0A` |
+| Opcode | `0x0105` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ -- )` |
 
 Pops `n` location addresses and performs the initial atom fill at those sites.
 
-#### `lanes.fill` — Atom refill
+#### `lanes::lanes.fill` — Atom refill
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0B` |
+| Opcode | `0x0106` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ -- )` |
 
 Pops `n` location addresses and refills atoms at those sites.
 
-#### `lanes.move` — Atom transport
+#### `lanes::lanes.move` — Atom transport
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0C` |
+| Opcode | `0x0107` |
 | Operands | `u32` LE arity |
 | Stack | `(lane₁ lane₂ … laneₙ -- )` |
 
@@ -347,51 +356,51 @@ For example, if a move group contains lanes at positions `(0,0)`, `(0,1)`, `(1,0
 
 ### Quantum gates
 
-#### `lanes.local_r` — Local R rotation
+#### `lanes::lanes.local_r` — Local R rotation
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0E` |
+| Opcode | `0x0109` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ θ φ -- )` |
 
 Pops 2 float parameters (φ = axis angle, θ = rotation angle) then `n` location addresses, and applies a local R rotation. The call convention matches the SSA IR: `local_r(%φ, %θ, %loc₁, …)` — first argument (φ) is pushed last and popped first.
 
-#### `lanes.local_rz` — Local Rz rotation
+#### `lanes::lanes.local_rz` — Local Rz rotation
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0D` |
+| Opcode | `0x0108` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ θ -- )` |
 
 Pops 1 float parameter (θ = rotation angle) then `n` location addresses, and applies a local Rz rotation. The call convention matches the SSA IR: `local_rz(%θ, %loc₁, …)`.
 
-#### `lanes.global_r` — Global R rotation
+#### `lanes::lanes.global_r` — Global R rotation
 
 | Field | Value |
 |---|---|
-| Opcode | `0x10` |
+| Opcode | `0x010B` |
 | Operands | none |
 | Stack | `(θ φ -- )` |
 
 Pops 2 float parameters (φ = axis angle, θ = rotation angle), applies a global R rotation. The call convention matches the SSA IR: `global_r(%φ, %θ)`.
 
-#### `lanes.global_rz` — Global Rz rotation
+#### `lanes::lanes.global_rz` — Global Rz rotation
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0F` |
+| Opcode | `0x010A` |
 | Operands | none |
 | Stack | `(θ -- )` |
 
 Pops 1 float parameter (θ = rotation angle), applies a global Rz rotation. Since there is only one parameter, it is both pushed last and popped first.
 
-#### `lanes.cz` — Controlled-Z gate
+#### `lanes::lanes.cz` — Controlled-Z gate
 
 | Field | Value |
 |---|---|
-| Opcode | `0x11` |
+| Opcode | `0x010C` |
 | Operands | none |
 | Stack | `(zone -- )` |
 
@@ -399,21 +408,21 @@ Pops a zone address and applies a CZ gate across the zone.
 
 ### Measurement
 
-#### `lanes.measure` — Initiate measurement
+#### `lanes::lanes.measure` — Initiate measurement
 
 | Field | Value |
 |---|---|
-| Opcode | `0x12` |
+| Opcode | `0x010D` |
 | Operands | `u32` LE arity |
 | Stack | `(zone₁ zone₂ … zoneₙ -- future₁ future₂ … futureₙ)` |
 
 Pops `n` zone addresses and pushes `n` measure futures.
 
-#### `lanes.await_measure` — Wait for measurement result
+#### `lanes::lanes.await_measure` — Wait for measurement result
 
 | Field | Value |
 |---|---|
-| Opcode | `0x13` |
+| Opcode | `0x010E` |
 | Operands | none |
 | Stack | `(future -- array_ref)` |
 
@@ -421,21 +430,21 @@ Pops a measure future and pushes an array reference containing the measurement r
 
 ### Arrays
 
-#### `lanes.new_array` — Construct array from stack
+#### `lanes::lanes.new_array` — Construct array from stack
 
 | Field | Value |
 |---|---|
-| Opcode | `0x14` |
+| Opcode | `0x010F` |
 | Operands | three `u32` LE: `type_tag`, `dim0`, `dim1` (`dim1 = 0` for 1-D) |
 | Stack | `(elem₁ elem₂ … elemₙ -- array_ref)` |
 
 Constructs an array of `dim0 × dim1` elements with element type `type_tag`. If `dim1` is 0, the array is 1-dimensional with `dim0` elements.
 
-#### `lanes.get_item` — Index into array
+#### `lanes::lanes.get_item` — Index into array
 
 | Field | Value |
 |---|---|
-| Opcode | `0x15` |
+| Opcode | `0x0110` |
 | Operands | `u32` LE ndims |
 | Stack | `(array_ref idx₁ … idxₙ -- value)` |
 
@@ -443,21 +452,21 @@ Pops `ndims` index values then the array reference, and pushes the indexed eleme
 
 ### Detectors and observables
 
-#### `lanes.set_detector` — Set detector
+#### `lanes::lanes.set_detector` — Set detector
 
 | Field | Value |
 |---|---|
-| Opcode | `0x16` |
+| Opcode | `0x0111` |
 | Operands | none |
 | Stack | `(array_ref -- detector_ref)` |
 
 Pops an array reference and pushes a detector reference.
 
-#### `lanes.set_observable` — Set observable
+#### `lanes::lanes.set_observable` — Set observable
 
 | Field | Value |
 |---|---|
-| Opcode | `0x17` |
+| Opcode | `0x0112` |
 | Operands | none |
 | Stack | `(array_ref -- observable_ref)` |
 

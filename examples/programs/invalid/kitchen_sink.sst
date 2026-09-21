@@ -10,19 +10,19 @@ version 1.0
 
 fn @main() {
   // Error 1: invalid location (word 5 doesn't exist)
-  lanes.const_loc 0x0000050000000000    // zone 0, word 5, site 0
+  lanes::lanes.const_loc 0x0000050000000000    // zone 0, word 5, site 0
 
   // Error 2: invalid zone (zone 5 doesn't exist)
-  lanes.const_zone 0x00000005    // zone 5
+  lanes::lanes.const_zone 0x00000005    // zone 5
 
   // Error 3: type mismatch -- cz expects zone, gets float
-  cpu.const_float 99.0
-  lanes.cz
+  cpu::cpu.const f64, 99.0
+  lanes::lanes.cz
 
   // Error 4: stack underflow -- pop on empty stack
-  cpu.pop
+  lanes::lanes.pop
 
-  cpu.halt
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

@@ -10,7 +10,7 @@ pub(crate) type PyObject = Py<PyAny>;
 use bloqade_lanes_bytecode_core::arch::query::{LaneGroupError, LocationGroupError};
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 use bloqade_lanes_bytecode_core::atom_state::MoveValidationError;
-use bloqade_lanes_bytecode_core::isa::INSTRUCTION_WIDTH;
+use bloqade_lanes_bytecode_core::isa::instruction_width;
 use bloqade_lanes_bytecode_core::isa::program::BinaryError;
 use bloqade_lanes_bytecode_core::isa::text::TextError;
 use bloqade_lanes_bytecode_core::isa::validate::ValidationError;
@@ -396,7 +396,7 @@ pub fn program_error_to_py(py: Python<'_>, error: &BinaryError) -> PyErr {
             }
             BinaryError::UnalignedCode { len } => {
                 let cls = module.getattr("UnalignedCodeError")?;
-                cls.call1((*len, INSTRUCTION_WIDTH as usize))?
+                cls.call1((*len, instruction_width() as usize))?
             }
             BinaryError::Decode { pc, message } => {
                 let cls = module.getattr("DecodeErrorInProgram")?;

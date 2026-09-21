@@ -17,9 +17,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000102
-  lanes.const_lane 0x0000000100030002
-  cpu.halt
+  lanes::lanes.const_loc 0x00000102
+  lanes::lanes.const_lane 0x0000000100030002
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -36,29 +36,29 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.const_float 1.5
-  cpu.const_int 42
-  lanes.const_loc 0x00010002
-  lanes.const_lane 0x8000000000010002
-  lanes.const_zone 0x00000003
-  lanes.initial_fill 3
-  cpu.pop
-  cpu.dup
-  cpu.swap
-  lanes.fill 2
-  lanes.move 1
-  lanes.local_r 4
-  lanes.local_rz 2
-  lanes.global_r
-  lanes.global_rz
-  lanes.cz
-  lanes.measure 1
-  lanes.await_measure
-  lanes.new_array 2 10 20
-  lanes.get_item 2
-  lanes.set_detector
-  lanes.set_observable
-  cpu.halt
+  cpu::cpu.const f64, 1.5
+  cpu::cpu.const i64, 42
+  lanes::lanes.const_loc 0x00010002
+  lanes::lanes.const_lane 0x8000000000010002
+  lanes::lanes.const_zone 0x00000003
+  lanes::lanes.initial_fill 3
+  lanes::lanes.pop
+  cpu::cpu.dup
+  lanes::lanes.swap
+  lanes::lanes.fill 2
+  lanes::lanes.move 1
+  lanes::lanes.local_r 4
+  lanes::lanes.local_rz 2
+  lanes::lanes.global_r
+  lanes::lanes.global_rz
+  lanes::lanes.cz
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  lanes::lanes.new_array 2 10 20
+  lanes::lanes.get_item 2
+  lanes::lanes.set_detector
+  lanes::lanes.set_observable
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -74,9 +74,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x00000001
-  lanes.const_zone 0x00000000
-  cpu.halt
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.const_zone 0x00000000
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -128,11 +128,11 @@ fn test_disassemble_to_stdout() {
         .args(["disassemble", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("cpu.const_float 1.5"))
-        .stdout(predicate::str::contains("cpu.const_int 42"))
-        .stdout(predicate::str::contains("lanes.const_loc"))
-        .stdout(predicate::str::contains("lanes.const_lane"))
-        .stdout(predicate::str::contains("lanes.const_zone"))
+        .stdout(predicate::str::contains("cpu::cpu.const f64, 1.5"))
+        .stdout(predicate::str::contains("cpu::cpu.const i64, 42"))
+        .stdout(predicate::str::contains("lanes::lanes.const_loc"))
+        .stdout(predicate::str::contains("lanes::lanes.const_lane"))
+        .stdout(predicate::str::contains("lanes::lanes.const_zone"))
         .stdout(predicate::str::contains("new_array 2 10 20"))
         .stdout(predicate::str::contains("halt"));
 }
@@ -170,29 +170,29 @@ fn test_disassemble_to_file() {
     // Spot-check all instruction categories are present. Each is asserted with
     // its dialect head, so the check also pins which dialect an op belongs to.
     for expected in [
-        "cpu.const_float",
-        "cpu.const_int",
-        "lanes.const_loc",
-        "lanes.const_lane",
-        "lanes.const_zone",
-        "cpu.pop",
-        "cpu.dup",
-        "cpu.swap",
-        "lanes.initial_fill 3",
-        "lanes.fill 2",
-        "lanes.move 1",
-        "lanes.local_r 4",
-        "lanes.local_rz 2",
-        "lanes.global_r",
-        "lanes.global_rz",
-        "lanes.cz",
-        "lanes.measure 1",
-        "lanes.await_measure",
-        "lanes.new_array 2 10 20",
-        "lanes.get_item 2",
-        "lanes.set_detector",
-        "lanes.set_observable",
-        "cpu.halt",
+        "cpu::cpu.const f64,",
+        "cpu::cpu.const i64,",
+        "lanes::lanes.const_loc",
+        "lanes::lanes.const_lane",
+        "lanes::lanes.const_zone",
+        "lanes::lanes.pop",
+        "cpu::cpu.dup",
+        "lanes::lanes.swap",
+        "lanes::lanes.initial_fill 3",
+        "lanes::lanes.fill 2",
+        "lanes::lanes.move 1",
+        "lanes::lanes.local_r 4",
+        "lanes::lanes.local_rz 2",
+        "lanes::lanes.global_r",
+        "lanes::lanes.global_rz",
+        "lanes::lanes.cz",
+        "lanes::lanes.measure 1",
+        "lanes::lanes.await_measure",
+        "lanes::lanes.new_array 2 10 20",
+        "lanes::lanes.get_item 2",
+        "lanes::lanes.set_detector",
+        "lanes::lanes.set_observable",
+        "cpu::cpu.halt",
     ] {
         assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
     }
@@ -550,7 +550,7 @@ fn test_round_trip_preserves_version() {
     let binary = dir.path().join("prog.bin");
     fs::write(
         &input,
-        "sst v1\n\n.section(root):\n.header(root):\nversion 2.3\n.header(root).\n.text(root):\nfn @main() {\n  cpu.const_int 99\n  cpu.halt}\n.text(root).\n.section(root).\n",
+        "sst v1\n\n.section(root):\n.header(root):\nversion 2.3\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.const i64, 99\n  cpu::cpu.halt}\n.text(root).\n.section(root).\n",
     )
     .unwrap();
 

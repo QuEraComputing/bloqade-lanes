@@ -185,7 +185,18 @@ class BytecodeDecoder:
         name = instr.op_name()
         handler = getattr(self, f"_visit_{name}", None)
         if handler is None:
-            raise DecodingError(idx, name, self.frame.snapshot(), "unknown opcode")
+            # The instruction decoded fine — it is a real op on one of the
+            # machine's devices — but the stack_move dialect has no statement
+            # for it. That is reachable from a *valid* program: vihaco-cpu
+            # contributes arithmetic, comparison, bitwise and control-flow ops
+            # that the lanes compiler never emits and this dialect cannot
+            # represent.
+            raise DecodingError(
+                idx,
+                name,
+                self.frame.snapshot(),
+                f"`{instr.device()}::{name}` has no stack_move representation",
+            )
         try:
             handler(idx, instr)
         except StackUnderflowError as e:

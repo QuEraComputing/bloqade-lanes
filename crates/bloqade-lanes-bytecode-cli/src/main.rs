@@ -171,7 +171,7 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
     let program = parse_text(&source).map_err(|e| e.to_string())?;
-    let binary = to_binary(&program);
+    let binary = to_binary(&program).map_err(|e| e.to_string())?;
     fs::write(output, &binary).map_err(|e| format!("writing {}: {}", output.display(), e))?;
     eprintln!(
         "assembled {} instructions -> {}",

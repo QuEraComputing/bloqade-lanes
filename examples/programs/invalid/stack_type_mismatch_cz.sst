@@ -8,9 +8,9 @@ version 1.0
 // Invalid: cz expects zone, but stack has float
 
 fn @main() {
-  cpu.const_float 1.0
-  lanes.cz
-  cpu.halt
+  cpu::cpu.const f64, 1.0
+  lanes::lanes.cz
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

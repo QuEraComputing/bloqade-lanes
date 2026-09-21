@@ -21,8 +21,9 @@ use vihaco::instruction::{FromBytes, WriteBytes};
 use vihaco::module::LocalModule;
 use vihaco::value::{Type, Value};
 
+use super::bytecode::{self, BytecodeInstruction};
 use super::container::LanesContext;
-use super::{INSTRUCTION_WIDTH, Instruction};
+use super::machine::MachineInstruction;
 use crate::version::Version;
 
 /// The section header of a lanes program: everything the container carries
@@ -90,13 +91,13 @@ impl vihaco::SstHeader for LanesInfo {}
 
 /// A Bloqade Lanes program: a vihaco `LocalModule` specialised to our ISA. A
 /// single `@main` function's worth of flat code plus the version in `extra`.
-pub type Program = LocalModule<Instruction, Value, Type, LanesInfo>;
+pub type Program = LocalModule<MachineInstruction, Value, Type, LanesInfo>;
 
 /// Build a `Program` from a version + flat instruction list. This is the ONE
 /// constructor used by both binary and text loading, so all `Program`s built
 /// from the same (version, code) compare equal regardless of source.
 #[allow(clippy::field_reassign_with_default)] // `LocalModule` is a foreign type; struct-literal init is not possible
-pub fn from_code(version: Version, code: Vec<Instruction>) -> Program {
+pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> Program {
     let mut m = Program::default();
     m.code = code;
     m.extra = LanesInfo { version };
@@ -115,7 +116,7 @@ pub enum BinaryError {
     BadMagic,
     /// Buffer ended before a complete header, section or instruction word.
     Truncated { expected: usize, got: usize },
-    /// The code region length is not a multiple of [`INSTRUCTION_WIDTH`].
+    /// The code region length is not a multiple of the instruction width.
     UnalignedCode { len: usize },
     /// A word held an opcode/payload vihaco could not decode, or the container
     /// was otherwise malformed.
@@ -131,7 +132,8 @@ impl std::fmt::Display for BinaryError {
             }
             BinaryError::UnalignedCode { len } => write!(
                 f,
-                "code length {len} is not a multiple of {INSTRUCTION_WIDTH}"
+                "code length {len} is not a multiple of {}",
+                bytecode::instruction_width()
             ),
             BinaryError::Decode { pc, message } => {
                 write!(f, "decode error at instruction {pc}: {message}")
@@ -181,8 +183,14 @@ fn unaligned_len(msg: &str) -> Option<usize> {
 }
 
 /// Serialize into vihaco's `VHBC` container (see [`super::container`]).
-pub fn to_binary(program: &Program) -> Vec<u8> {
-    super::container::to_binary(program)
+///
+/// Fails only if an instruction has no encodable form — today just a runtime
+/// label, whose identifier is meaningless outside its parse.
+pub fn to_binary(program: &Program) -> Result<Vec<u8>, BinaryError> {
+    super::container::to_binary(program).map_err(|e| BinaryError::Decode {
+        pc: 0,
+        message: e.to_string(),
+    })
 }
 
 /// Deserialize from vihaco's `VHBC` container.
@@ -205,8 +213,11 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
     let root = file.root();
     let info: LanesInfo = root.decode_header().map_err(|e| classify(&e))?;
     let code = root
-        .decode_instructions::<Instruction>()
-        .map_err(|e| classify(&e))?;
+        .decode_instructions::<BytecodeInstruction>()
+        .map_err(|e| classify(&e))?
+        .into_iter()
+        .map(bytecode::decode)
+        .collect();
     Ok(from_code(info.version, code))
 }
 
@@ -214,30 +225,33 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
 #[allow(clippy::approx_constant)] // illustrative sample floats, not math constants
 mod tests {
     use super::*;
+    use crate::isa::device::LanesInstruction as L;
+    use crate::isa::machine::MachineInstruction as M;
+    use vihaco_cpu::RuntimeInstruction as C;
 
     fn sample() -> Program {
         from_code(
             Version::new(1, 2),
             vec![
-                Instruction::ConstFloat(1.5),
-                Instruction::ConstInt(-42),
-                Instruction::Dup,
-                Instruction::ConstLoc(0x0000_0000_0100_0000),
-                Instruction::ConstLane(0x0000_0000_0000_0001),
-                Instruction::ConstZone(0x0000_0003),
-                Instruction::InitialFill(2),
-                Instruction::Move(1),
-                Instruction::LocalRz(1),
-                Instruction::LocalR(3),
-                Instruction::GlobalRz,
-                Instruction::Cz,
-                Instruction::Measure(1),
-                Instruction::AwaitMeasure,
-                Instruction::NewArray(2, 10, 20),
-                Instruction::GetItem(2),
-                Instruction::SetDetector,
-                Instruction::Halt,
-                Instruction::Return,
+                M::Cpu(C::Const(Type::F64, Value::F64(1.5))),
+                M::Cpu(C::Const(Type::I64, Value::I64(-42))),
+                M::Cpu(C::Dup),
+                M::Lanes(L::ConstLoc(0x0000_0000_0100_0000)),
+                M::Lanes(L::ConstLane(0x0000_0000_0000_0001)),
+                M::Lanes(L::ConstZone(0x0000_0003)),
+                M::Lanes(L::InitialFill(2)),
+                M::Lanes(L::Move(1)),
+                M::Lanes(L::LocalRz(1)),
+                M::Lanes(L::LocalR(3)),
+                M::Lanes(L::GlobalRz),
+                M::Lanes(L::Cz),
+                M::Lanes(L::Measure(1)),
+                M::Lanes(L::AwaitMeasure),
+                M::Lanes(L::NewArray(2, 10, 20)),
+                M::Lanes(L::GetItem(2)),
+                M::Lanes(L::SetDetector),
+                M::Cpu(C::Halt),
+                M::Cpu(C::Return(0)),
             ],
         )
     }
@@ -245,7 +259,7 @@ mod tests {
     #[test]
     fn binary_round_trips() {
         let program = sample();
-        let bytes = to_binary(&program);
+        let bytes = to_binary(&program).unwrap();
         assert_eq!(&bytes[0..vihaco::MAGIC.len()], vihaco::MAGIC);
         assert_eq!(from_binary(&bytes).unwrap(), program);
     }
@@ -256,12 +270,17 @@ mod tests {
         // worth pinning is that vihaco can read back what we wrote — not that
         // our writer agrees with our reader.
         let program = sample();
-        let file = vihaco::BytecodeFile::<LanesContext>::from_bytes(to_binary(&program)).unwrap();
+        let file =
+            vihaco::BytecodeFile::<LanesContext>::from_bytes(to_binary(&program).unwrap()).unwrap();
         let root = file.root();
         assert!(root.path().is_root());
         assert_eq!(root.children().count(), 0);
         assert_eq!(
-            root.decode_instructions::<Instruction>().unwrap(),
+            root.decode_instructions::<BytecodeInstruction>()
+                .unwrap()
+                .into_iter()
+                .map(bytecode::decode)
+                .collect::<Vec<_>>(),
             program.code
         );
         assert_eq!(
@@ -272,7 +291,7 @@ mod tests {
 
     #[test]
     fn binary_preserves_version() {
-        let bytes = to_binary(&sample());
+        let bytes = to_binary(&sample()).unwrap();
         assert_eq!(
             from_binary(&bytes).unwrap().extra.version,
             Version::new(1, 2)
@@ -282,13 +301,13 @@ mod tests {
     #[test]
     fn empty_program_round_trips() {
         let program = from_code(Version::new(1, 0), vec![]);
-        let bytes = to_binary(&program);
+        let bytes = to_binary(&program).unwrap();
         assert_eq!(from_binary(&bytes).unwrap(), program);
     }
 
     #[test]
     fn bad_magic_rejected() {
-        let mut bytes = to_binary(&sample());
+        let mut bytes = to_binary(&sample()).unwrap();
         bytes[0] = b'X';
         assert_eq!(from_binary(&bytes), Err(BinaryError::BadMagic));
     }
@@ -310,7 +329,7 @@ mod tests {
     fn truncated_section_reports_vihacos_message() {
         // A complete file header, then a section that claims more bytes than
         // the file holds.
-        let mut bytes = to_binary(&sample());
+        let mut bytes = to_binary(&sample()).unwrap();
         bytes.truncate(bytes.len() - 20);
         // vihaco reports this structurally, with no byte counts to report, so
         // it surfaces as `Decode` carrying vihaco's own message.
@@ -334,18 +353,18 @@ mod tests {
         const BYTECODE_LEN: usize = 36;
         const BYTECODE: usize = 44;
 
-        let mut bytes = to_binary(&from_code(Version::new(1, 0), vec![Instruction::Halt]));
+        let mut bytes = to_binary(&from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)])).unwrap();
         let bump = |buf: &mut Vec<u8>, at: usize| {
             let v = u64::from_le_bytes(buf[at..at + 8].try_into().unwrap()) + 1;
             buf[at..at + 8].copy_from_slice(&v.to_le_bytes());
         };
         bump(&mut bytes, SECTION_LEN);
         bump(&mut bytes, BYTECODE_LEN);
-        bytes.insert(BYTECODE + INSTRUCTION_WIDTH as usize, 0);
+        bytes.insert(BYTECODE + bytecode::instruction_width() as usize, 0);
 
         assert!(
             matches!(from_binary(&bytes), Err(BinaryError::UnalignedCode { len }) if len
-                == INSTRUCTION_WIDTH as usize + 1),
+                == bytecode::instruction_width() as usize + 1),
             "got {:?}",
             from_binary(&bytes)
         );
@@ -356,9 +375,9 @@ mod tests {
         // A well-formed container holding one aligned word whose opcode byte
         // (0xFF) names no instruction: every length check passes, so the
         // failure must come from per-word decoding.
-        let good = to_binary(&from_code(Version::new(1, 0), vec![Instruction::Halt; 1]));
+        let good = to_binary(&from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)])).unwrap();
         let mut bytes = good.clone();
-        let last_word = bytes.len() - 4 - INSTRUCTION_WIDTH as usize;
+        let last_word = bytes.len() - 4 - bytecode::instruction_width() as usize;
         bytes[last_word] = 0xFF;
         assert!(
             matches!(from_binary(&bytes), Err(BinaryError::Decode { .. })),
@@ -383,7 +402,10 @@ mod tests {
         );
         assert_eq!(
             BinaryError::UnalignedCode { len: 5 }.to_string(),
-            format!("code length 5 is not a multiple of {INSTRUCTION_WIDTH}")
+            format!(
+                "code length 5 is not a multiple of {}",
+                bytecode::instruction_width()
+            )
         );
         assert_eq!(
             BinaryError::Decode {

@@ -10,21 +10,21 @@ version 1.0
 // LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
 
 fn @main() {
-  lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
-  lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
-  lanes.initial_fill 2
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
+  lanes::lanes.initial_fill 2
 
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
 
   // Second measure is not allowed without feed_forward
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
 
-  cpu.return
-  cpu.halt
+  cpu::cpu.ret 0
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

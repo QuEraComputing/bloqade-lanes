@@ -9,10 +9,10 @@ version 1.0
 // Lane 0: bus 0, Lane 1: bus 1
 
 fn @main() {
-  lanes.const_lane 0x0000000000000000    // fwd, site_bus, word 0, site 0, bus 0
-  lanes.const_lane 0x0000000100000001    // fwd, site_bus, word 0, site 1, bus 1
-  lanes.move 2
-  cpu.halt
+  lanes::lanes.const_lane 0x0000000000000000    // fwd, site_bus, word 0, site 0, bus 0
+  lanes::lanes.const_lane 0x0000000100000001    // fwd, site_bus, word 0, site 1, bus 1
+  lanes::lanes.move 2
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

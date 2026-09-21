@@ -10,10 +10,10 @@ version 1.0
 // dir=1 (backward) sets bit 63 -> 0x8000000000000000
 
 fn @main() {
-  lanes.const_lane 0x0000000000000000    // fwd, site_bus, word 0, site 0, bus 0
-  lanes.const_lane 0x8000000000000001    // bwd, site_bus, word 0, site 1, bus 0
-  lanes.move 2
-  cpu.halt
+  lanes::lanes.const_lane 0x0000000000000000    // fwd, site_bus, word 0, site 0, bus 0
+  lanes::lanes.const_lane 0x8000000000000001    // bwd, site_bus, word 0, site 1, bus 0
+  lanes::lanes.move 2
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

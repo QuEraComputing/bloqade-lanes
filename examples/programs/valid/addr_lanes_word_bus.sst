@@ -12,9 +12,9 @@ version 1.0
 // sites_with_word_buses: [5,6,7,8,9]
 
 fn @main() {
-  lanes.const_lane 0x2000000000000005    // fwd, word_bus, zone 0, word 0, site 5, bus 0
-  lanes.const_lane 0x2000000000000006    // fwd, word_bus, zone 0, word 0, site 6, bus 0
-  cpu.halt
+  lanes::lanes.const_lane 0x2000000000000005    // fwd, word_bus, zone 0, word 0, site 5, bus 0
+  lanes::lanes.const_lane 0x2000000000000006    // fwd, word_bus, zone 0, word 0, site 6, bus 0
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

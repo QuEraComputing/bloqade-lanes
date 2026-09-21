@@ -8,8 +8,8 @@ version 1.0
 // Invalid: pop on empty stack
 
 fn @main() {
-  cpu.pop
-  cpu.halt
+  lanes::lanes.pop
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

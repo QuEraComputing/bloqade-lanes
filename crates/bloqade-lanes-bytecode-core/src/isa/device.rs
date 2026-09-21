@@ -46,6 +46,15 @@ vihaco::component! {
     }
 
     instruction {
+        // ---- Stack ops vihaco-cpu does not provide ----
+        // The CPU component has `dup` but no `pop` or `swap`, and the lanes
+        // pipeline emits both. They live here for want of anywhere better; the
+        // machine does the actual stack work on the device's behalf.
+        #[pattern = "'pop"]
+        Pop,
+        #[pattern = "'swap"]
+        Swap,
+
         // ---- Address constants ----
         // Written in hex, executed as the packed integer. The composite pushes
         // the value onto the CPU stack; keeping them here (rather than using
@@ -114,6 +123,8 @@ pub use surface::Instruction as LanesSurfaceInstruction;
 pub fn lower(inst: LanesSurfaceInstruction) -> LanesInstruction {
     use LanesSurfaceInstruction as S;
     match inst {
+        S::Pop => LanesInstruction::Pop,
+        S::Swap => LanesInstruction::Swap,
         S::ConstLoc(HexU64(v)) => LanesInstruction::ConstLoc(v),
         S::ConstLane(HexU64(v)) => LanesInstruction::ConstLane(v),
         S::ConstZone(HexU32(v)) => LanesInstruction::ConstZone(v),
@@ -160,6 +171,8 @@ pub enum LanesMessage {
     GlobalRotation { angles: Vec<f64> },
     /// Array element count (`new_array`) or index count (`get_item`).
     Arity(u32),
+    /// Raw stack values, in pop order (`swap`).
+    Values(Vec<vihaco::Value>),
 }
 
 /// What a lanes instruction did, for a consumer downstream of atom movement.
@@ -177,11 +190,15 @@ pub enum LanesEffect {
     Arrangement(AtomStateData),
     /// The request was recorded but **not** simulated.
     ///
-    /// Covers the quantum ops, which are deliberately out of scope, and the
-    /// array/measurement ops, whose representation is still being decided in
-    /// <https://github.com/QuEraComputing/bloqade-lanes/issues/776>. Executing
-    /// them here would mean inventing the semantics that issue exists to
+    /// Covers the quantum ops, which are deliberately out of scope here, and
+    /// the array/measurement ops, whose representation is still being decided
+    /// in <https://github.com/QuEraComputing/bloqade-lanes/issues/776>.
+    /// Executing those would mean inventing the semantics that issue exists to
     /// settle, so they are surfaced rather than interpreted.
+    ///
+    /// This is the extension point for simulating them: see
+    /// <https://github.com/QuEraComputing/bloqade-lanes/issues/1022> for the
+    /// planned gate-recording and PPVM-tableau observers.
     NotSimulated {
         inst: LanesInstruction,
         msg: LanesMessage,
@@ -199,6 +216,15 @@ impl Lanes {
     ) -> eyre::Result<vihaco::Effects<LanesEffect>> {
         use LanesInstruction as I;
         match (&inst, &msg) {
+            // ---- Stack ops: the machine popped for us; hand back what to push ----
+            // `pop` discards (nothing to push); `swap` pushes the two values
+            // back in pop order, which lands them swapped.
+            (I::Pop, _) => Ok(vihaco::Effects::none()),
+            (I::Swap, LanesMessage::Values(values)) if values.len() == 2 => Ok(
+                vihaco::Effects::many(values.iter().cloned().map(LanesEffect::Push).collect()),
+            ),
+            (I::Swap, _) => Err(eyre::eyre!("swap expects two stack values, got {msg:?}")),
+
             // ---- Address constants: hand the value back for the stack ----
             (I::ConstLoc(v) | I::ConstLane(v), _) => Ok(vihaco::Effects::one(LanesEffect::Push(
                 vihaco::Value::U64(*v),

@@ -10,11 +10,11 @@ version 1.0
 // Sites 0,1 = (1,2.5),(3,2.5) and site 5 = (1,5.0) -> L-shape
 
 fn @main() {
-  lanes.const_lane 0x0000000000000000    // fwd, site_bus, word 0, site 0, bus 0
-  lanes.const_lane 0x0000000000000001    // fwd, site_bus, word 0, site 1, bus 0
-  lanes.const_lane 0x0000000000000005    // fwd, site_bus, word 0, site 5, bus 0
-  lanes.move 3
-  cpu.halt
+  lanes::lanes.const_lane 0x0000000000000000    // fwd, site_bus, word 0, site 0, bus 0
+  lanes::lanes.const_lane 0x0000000000000001    // fwd, site_bus, word 0, site 1, bus 0
+  lanes::lanes.const_lane 0x0000000000000005    // fwd, site_bus, word 0, site 5, bus 0
+  lanes::lanes.move 3
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

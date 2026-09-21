@@ -8,8 +8,8 @@ version 1.0
 // Invalid: zone_id=5 does not exist (only zone 0)
 
 fn @main() {
-  lanes.const_zone 0x00000005    // zone 5
-  cpu.halt
+  lanes::lanes.const_zone 0x00000005    // zone 5
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

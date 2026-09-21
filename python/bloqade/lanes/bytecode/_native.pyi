@@ -2395,17 +2395,36 @@ class Instruction:
 
     @property
     def opcode(self) -> int:
-        """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
+        """Packed 16-bit opcode: ``(device_code << 8) | instruction_code``.
+
+        Device codes are ``0x00`` for the CPU and ``0x01`` for the lanes
+        device. Both halves are assigned by declaration order, so they shift
+        whenever either instruction set gains a variant — compare identity with
+        :meth:`op_name`, not with a literal opcode.
+        """
+        ...
+
+    def device(self) -> str:
+        """The device this instruction belongs to: ``"cpu"`` or ``"lanes"``.
+
+        The stack and arithmetic ops come from vihaco-cpu's CPU component; the
+        atom-movement, gate, measurement and array ops are the lanes device's.
+        In ``.sst`` text this is the prefix before ``::``.
+        """
         ...
 
     def op_name(self) -> str:
-        """Lowercase snake_case opcode name matching the bytecode text-format
-        parser's canonical names (see
-        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
+        """Lowercase snake_case opcode name, without the device prefix or
+        dialect head — ``"move"`` for ``lanes::lanes.move``.
 
         Factory methods use trailing underscores for Python-keyword conflicts
         (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
-        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
+        returns the bare names: ``"move"`` and ``"return"``.
+
+        Two names deliberately differ from the text mnemonic because the
+        decoder depends on them: the constants are ``"const_float"`` /
+        ``"const_int"`` rather than vihaco-cpu's single typed ``const``, and
+        ``"return"`` keeps its spelling rather than vihaco-cpu's ``ret``.
         """
         ...
 

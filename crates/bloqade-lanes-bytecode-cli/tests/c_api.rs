@@ -13,7 +13,7 @@ use bloqade_lanes_bytecode::ffi::validate::*;
 #[test]
 fn text_to_binary_to_text_round_trip() {
     let source =
-        CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu.const_int 42\n  cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
+        CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.const i64, 42\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
 
     // Parse text
@@ -52,7 +52,7 @@ fn text_to_binary_to_text_round_trip() {
     assert!(!text_out.is_null());
 
     let text_str = unsafe { CStr::from_ptr(text_out) }.to_str().unwrap();
-    assert!(text_str.contains("cpu.const_int 42"));
+    assert!(text_str.contains("cpu::cpu.const i64, 42"));
     assert!(text_str.contains("halt"));
 
     // Cleanup
@@ -67,7 +67,7 @@ fn text_to_binary_to_text_round_trip() {
 #[test]
 fn binary_decode_known_good() {
     // Build a known binary via text parse, then decode it
-    let source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
+    let source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
     let status = unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
     assert_eq!(status, LanesStatus::Ok);
@@ -156,7 +156,8 @@ fn validation_error_message_null_returns_null() {
 
 #[test]
 fn invalid_input_sets_last_error() {
-    let bad_source = CString::new("no version directive\nfn @main() {\n  cpu.halt\n}\n").unwrap();
+    let bad_source =
+        CString::new("no version directive\nfn @main() {\n  cpu::cpu.halt\n}\n").unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
 
     let status = unsafe { lanes_program_from_text(bad_source.as_ptr(), &mut prog) };
@@ -190,7 +191,7 @@ fn successful_call_clears_last_error() {
     assert!(!lanes_last_error().is_null());
 
     // Now make a successful call
-    let good_source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
+    let good_source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
     let status = unsafe { lanes_program_from_text(good_source.as_ptr(), &mut prog) };
     assert_eq!(status, LanesStatus::Ok);
 
@@ -205,7 +206,7 @@ fn successful_call_clears_last_error() {
 #[test]
 fn validate_structure_valid_program() {
     let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes.const_loc 0x00000000\n  lanes.initial_fill 1\n  cpu.halt\n}\n.text(root).\n.section(root).\n",
+        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
@@ -226,7 +227,7 @@ fn validate_structure_valid_program() {
 fn validate_structure_with_errors() {
     // initial_fill after a non-constant instruction
     let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu.halt\n  lanes.const_loc 0x00000000\n  lanes.initial_fill 1\n}\n.text(root).\n.section(root).\n",
+        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n}\n.text(root).\n.section(root).\n",
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
@@ -257,7 +258,7 @@ fn validate_structure_with_errors() {
 #[test]
 fn simulate_stack_valid() {
     let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes.const_loc 0x00000000\n  lanes.initial_fill 1\n  cpu.halt\n}\n.text(root).\n.section(root).\n",
+        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
@@ -277,7 +278,7 @@ fn simulate_stack_valid() {
 #[test]
 fn simulate_stack_with_errors() {
     // Pop on an empty stack underflows.
-    let source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu.pop\n}\n.text(root).\n.section(root).\n").unwrap();
+    let source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.pop\n}\n.text(root).\n.section(root).\n").unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
     unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 
@@ -337,7 +338,7 @@ fn arch_from_json_invalid() {
 #[test]
 fn validate_addresses_with_arch() {
     let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes.const_loc 0x00000000\n  lanes.const_loc 0x00000001\n  lanes.initial_fill 2\n  cpu.halt\n}\n.text(root).\n.section(root).\n",
+        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.const_loc 0x00000001\n  lanes::lanes.initial_fill 2\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();

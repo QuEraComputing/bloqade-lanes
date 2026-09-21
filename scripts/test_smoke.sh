@@ -2,7 +2,7 @@
 # Smoke tests for the bytecode CLI (vihaco-backed).
 #
 # Self-contained: programs are generated inline in the *native* text format
-# (cpu.const_int/cpu.const_float etc.), so this does not depend on the legacy example
+# (cpu.const_int/cpu::cpu.const f64, etc.), so this does not depend on the legacy example
 # .sst files. Covers assemble/disassemble round-trip plus validation:
 # structural checks, arch-dependent capability + address checks, and
 # stack-type simulation (--simulate-stack).
@@ -59,12 +59,12 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000000000000
-  lanes.const_loc 0x0000000001000000
-  lanes.initial_fill 2
-  cpu.const_float 1.5708
-  lanes.global_rz
-  cpu.halt
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.const_loc 0x0000000001000000
+  lanes::lanes.initial_fill 2
+  cpu::cpu.const f64, 1.5708
+  lanes::lanes.global_rz
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -92,8 +92,8 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000000000000
-  lanes.initial_fill 1
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.initial_fill 1
 }
 .text(root).
 .section(root).
@@ -109,9 +109,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.global_r
-  lanes.initial_fill 1
-  cpu.return
+  lanes::lanes.global_r
+  lanes::lanes.initial_fill 1
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -129,13 +129,13 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000000000000
-  lanes.initial_fill 1
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  cpu.return
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.initial_fill 1
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -152,11 +152,11 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000000000000
-  lanes.initial_fill 1
-  lanes.const_loc 0x0000000000000000
-  lanes.fill 1
-  cpu.return
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.initial_fill 1
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.fill 1
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -182,11 +182,11 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000000000000
-  lanes.initial_fill 1
-  lanes.const_zone 0x00000005
-  lanes.measure 1
-  cpu.return
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.initial_fill 1
+  lanes::lanes.const_zone 0x00000005
+  lanes::lanes.measure 1
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -202,9 +202,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000063000000
-  lanes.initial_fill 1
-  cpu.return
+  lanes::lanes.const_loc 0x0000000063000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -224,10 +224,10 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  lanes.const_loc 0x0000000000000000
-  lanes.const_loc 0x0000000001000000
-  lanes.initial_fill 2
-  cpu.halt
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.const_loc 0x0000000001000000
+  lanes::lanes.initial_fill 2
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).
@@ -243,8 +243,8 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.pop
-  cpu.return
+  lanes::lanes.pop
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
@@ -260,9 +260,9 @@ version 1.0
 .header(root).
 .text(root):
 fn @main() {
-  cpu.const_float 1.0
-  lanes.initial_fill 1
-  cpu.return
+  cpu::cpu.const f64, 1.0
+  lanes::lanes.initial_fill 1
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).

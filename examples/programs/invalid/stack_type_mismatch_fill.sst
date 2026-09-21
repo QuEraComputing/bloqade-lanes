@@ -8,9 +8,9 @@ version 1.0
 // Invalid: initial_fill expects location, but stack has float
 
 fn @main() {
-  cpu.const_float 1.0
-  lanes.initial_fill 1
-  cpu.halt
+  cpu::cpu.const f64, 1.0
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
 }
 .text(root).
 .section(root).

@@ -34,10 +34,14 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use super::{Instruction, Program};
+use super::device::LanesInstruction as L;
+use super::machine::MachineInstruction as M;
+use super::program::Program;
 use crate::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
 use crate::arch::query::{LaneGroupError, LocationGroupError};
 use crate::arch::types::ArchSpec;
+use vihaco::{Type, Value};
+use vihaco_cpu::RuntimeInstruction as C;
 
 /// Value type tags tracked by the [`simulate_stack`] type simulator. These
 /// mirror the stack value kinds the runtime distinguishes.
@@ -180,7 +184,7 @@ impl std::error::Error for ValidationError {}
 /// If `cpu` is a control-flow instruction, return its canonical mnemonic.
 ///
 /// `Return` is deliberately excluded: it is a terminator, not a feed-forward
-/// branch (and lanes uses its own [`Return`](super::Instruction::Return)
+/// branch (and lanes uses its own [`Return`](super::M::Cpu(C::Return(_)))
 /// rather than the nested CPU one).
 /// Validate a program's arch-dependent constraints (capabilities + addresses).
 ///
@@ -200,28 +204,28 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
             // ---- capability checks ----
             // No `ControlFlowRequiresFeedForward` arm: the ISA has no
             // branch/call instructions to check for (see the variant's docs).
-            Instruction::Measure(_) => {
+            M::Lanes(L::Measure(_)) => {
                 measure_count += 1;
                 if !arch.feed_forward && measure_count > 1 {
                     errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
                 }
             }
-            Instruction::Fill(_) if !arch.atom_reloading => {
+            M::Lanes(L::Fill(_)) if !arch.atom_reloading => {
                 errors.push(ValidationError::FillRequiresAtomReloading { pc });
             }
 
             // ---- address checks ----
-            Instruction::ConstLoc(bits) => {
+            M::Lanes(L::ConstLoc(bits)) => {
                 if let Some(message) = arch.check_location(&LocationAddr::decode(*bits)) {
                     errors.push(ValidationError::InvalidLocation { pc, message });
                 }
             }
-            Instruction::ConstLane(bits) => {
+            M::Lanes(L::ConstLane(bits)) => {
                 for message in arch.check_lane(&LaneAddr::decode_u64(*bits)) {
                     errors.push(ValidationError::InvalidLane { pc, message });
                 }
             }
-            Instruction::ConstZone(bits) => {
+            M::Lanes(L::ConstZone(bits)) => {
                 if let Some(message) = arch.check_zone(&ZoneAddr::decode(*bits)) {
                     errors.push(ValidationError::InvalidZone { pc, message });
                 }
@@ -235,19 +239,19 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
 }
 
 /// True if `inst` terminates execution (`return` or `halt`).
-fn is_terminator(inst: &Instruction) -> bool {
-    matches!(inst, Instruction::Return | Instruction::Halt)
+fn is_terminator(inst: &M) -> bool {
+    matches!(inst, M::Cpu(C::Return(_)) | M::Cpu(C::Halt))
 }
 
 /// True if `inst` only pushes a constant (and so may precede `initial_fill`).
-fn is_constant_push(inst: &Instruction) -> bool {
+fn is_constant_push(inst: &M) -> bool {
     matches!(
         inst,
-        Instruction::ConstLoc(_)
-            | Instruction::ConstLane(_)
-            | Instruction::ConstZone(_)
-            | Instruction::ConstFloat(_)
-            | Instruction::ConstInt(_)
+        M::Lanes(L::ConstLoc(_))
+            | M::Lanes(L::ConstLane(_))
+            | M::Lanes(L::ConstZone(_))
+            | M::Cpu(C::Const(Type::F64, Value::F64(_)))
+            | M::Cpu(C::Const(Type::I64, Value::I64(_)))
     )
 }
 
@@ -260,7 +264,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
-            Instruction::NewArray(type_tag, dim0, _dim1) => {
+            M::Lanes(L::NewArray(type_tag, dim0, _dim1)) => {
                 if *dim0 == 0 {
                     errors.push(ValidationError::NewArrayZeroDim0 { pc });
                 }
@@ -272,7 +276,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                 }
                 seen_non_constant = true;
             }
-            Instruction::InitialFill(_) => {
+            M::Lanes(L::InitialFill(_)) => {
                 if seen_non_constant {
                     errors.push(ValidationError::InitialFillNotFirst { pc });
                 }
@@ -482,60 +486,60 @@ impl<'a> StackSimulator<'a> {
         }
     }
 
-    fn dispatch(&mut self, inst: &Instruction) {
+    fn dispatch(&mut self, inst: &M) {
         match inst {
             // constants push a typed value
-            Instruction::ConstFloat(v) => self.push(tag::FLOAT, Some(v.to_bits())),
-            Instruction::ConstInt(v) => self.push(tag::INT, Some(*v as u64)),
-            Instruction::ConstLoc(v) => self.push(tag::LOCATION, Some(*v)),
-            Instruction::ConstLane(v) => self.push(tag::LANE, Some(*v)),
-            Instruction::ConstZone(v) => self.push(tag::ZONE, Some(*v as u64)),
+            M::Cpu(C::Const(Type::F64, Value::F64(v))) => self.push(tag::FLOAT, Some(v.to_bits())),
+            M::Cpu(C::Const(Type::I64, Value::I64(v))) => self.push(tag::INT, Some(*v as u64)),
+            M::Lanes(L::ConstLoc(v)) => self.push(tag::LOCATION, Some(*v)),
+            M::Lanes(L::ConstLane(v)) => self.push(tag::LANE, Some(*v)),
+            M::Lanes(L::ConstZone(v)) => self.push(tag::ZONE, Some(*v as u64)),
 
             // stack manipulation
-            Instruction::Pop => self.pop_any(),
-            Instruction::Dup => self.sim_dup(),
-            Instruction::Swap => self.sim_swap(),
+            M::Lanes(L::Pop) => self.pop_any(),
+            M::Cpu(C::Dup) => self.sim_dup(),
+            M::Lanes(L::Swap) => self.sim_swap(),
 
             // atom arrangement
-            Instruction::InitialFill(arity) | Instruction::Fill(arity) => {
+            M::Lanes(L::InitialFill(arity)) | M::Lanes(L::Fill(arity)) => {
                 self.pop_and_validate_locations(*arity)
             }
-            Instruction::Move(arity) => self.sim_move(*arity),
+            M::Lanes(L::Move(arity)) => self.sim_move(*arity),
 
             // gates
-            Instruction::LocalR(arity) => {
+            M::Lanes(L::LocalR(arity)) => {
                 self.pop_typed_n(tag::FLOAT, 2);
                 self.pop_and_validate_locations(*arity);
             }
-            Instruction::LocalRz(arity) => {
+            M::Lanes(L::LocalRz(arity)) => {
                 self.pop_typed_n(tag::FLOAT, 1);
                 self.pop_and_validate_locations(*arity);
             }
-            Instruction::GlobalR => self.pop_typed_n(tag::FLOAT, 2),
-            Instruction::GlobalRz => self.pop_typed_n(tag::FLOAT, 1),
-            Instruction::Cz => self.pop_typed(tag::ZONE),
+            M::Lanes(L::GlobalR) => self.pop_typed_n(tag::FLOAT, 2),
+            M::Lanes(L::GlobalRz) => self.pop_typed_n(tag::FLOAT, 1),
+            M::Lanes(L::Cz) => self.pop_typed(tag::ZONE),
 
             // measurement
-            Instruction::Measure(arity) => {
+            M::Lanes(L::Measure(arity)) => {
                 self.pop_typed_n(tag::ZONE, *arity);
                 for _ in 0..*arity {
                     self.push(tag::MEASURE_FUTURE, None);
                 }
             }
-            Instruction::AwaitMeasure => {
+            M::Lanes(L::AwaitMeasure) => {
                 self.pop_typed(tag::MEASURE_FUTURE);
                 self.push(tag::MEASUREMENT_RESULT, None);
             }
 
             // arrays
-            Instruction::NewArray(_type_tag, dim0, dim1) => {
+            M::Lanes(L::NewArray(_type_tag, dim0, dim1)) => {
                 let count = dim0 * if *dim1 == 0 { 1 } else { *dim1 };
                 for _ in 0..count {
                     self.pop_any();
                 }
                 self.push(tag::ARRAY_REF, None);
             }
-            Instruction::GetItem(ndims) => {
+            M::Lanes(L::GetItem(ndims)) => {
                 self.pop_typed_n(tag::INT, *ndims);
                 self.pop_typed(tag::ARRAY_REF);
                 // Element type is not tracked; assume float.
@@ -543,18 +547,25 @@ impl<'a> StackSimulator<'a> {
             }
 
             // detectors / observables
-            Instruction::SetDetector => {
+            M::Lanes(L::SetDetector) => {
                 self.pop_typed(tag::ARRAY_REF);
                 self.push(tag::DETECTOR_REF, None);
             }
-            Instruction::SetObservable => {
+            M::Lanes(L::SetObservable) => {
                 self.pop_typed(tag::ARRAY_REF);
                 self.push(tag::OBSERVABLE_REF, None);
             }
 
             // control
-            Instruction::Return => self.pop_any(),
-            Instruction::Halt => {}
+            M::Cpu(C::Return(_)) => self.pop_any(),
+            M::Cpu(C::Halt) => {}
+
+            // Every other vihaco-cpu op — arithmetic, comparisons, control
+            // flow, the heap ops — is reachable in a decoded program but is
+            // never emitted by the lanes pipeline, so its stack effect is not
+            // modelled here. Treating it as a no-op means the simulator does
+            // not invent underflows for code it does not understand.
+            M::Cpu(_) => {}
         }
     }
 
@@ -602,7 +613,7 @@ mod tests {
         }
     }
 
-    fn program(instructions: Vec<Instruction>) -> Program {
+    fn program(instructions: Vec<M>) -> Program {
         crate::isa::program::from_code(Version::new(1, 0), instructions)
     }
 
@@ -620,33 +631,33 @@ mod tests {
     #[test]
     fn no_arch_skips_all_checks() {
         let p = program(vec![
-            Instruction::Fill(1),
-            Instruction::Measure(1),
-            Instruction::Measure(1),
-            Instruction::ConstZone(99), // also an invalid address
+            M::Lanes(L::Fill(1)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::ConstZone(99)), // also an invalid address
         ]);
         assert!(validate(&p, None).is_empty());
     }
 
     #[test]
     fn repeated_measures_allowed_with_feed_forward() {
-        let p = program(vec![Instruction::Measure(1), Instruction::Measure(1)]);
+        let p = program(vec![M::Lanes(L::Measure(1)), M::Lanes(L::Measure(1))]);
         assert!(validate(&p, Some(&caps_arch(true, false))).is_empty());
     }
 
     #[test]
     fn stack_ops_need_no_capability() {
         let p = program(vec![
-            Instruction::ConstInt(1),
-            Instruction::Dup,
-            Instruction::Halt,
+            M::Cpu(C::Const(Type::I64, Value::I64(1))),
+            M::Cpu(C::Dup),
+            M::Cpu(C::Halt),
         ]);
         assert!(validate(&p, Some(&caps_arch(false, false))).is_empty());
     }
 
     #[test]
     fn single_measure_ok_but_second_rejected_without_feed_forward() {
-        let p = program(vec![Instruction::Measure(1), Instruction::Measure(1)]);
+        let p = program(vec![M::Lanes(L::Measure(1)), M::Lanes(L::Measure(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
             vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 1 }]
@@ -655,7 +666,7 @@ mod tests {
 
     #[test]
     fn fill_requires_atom_reloading() {
-        let p = program(vec![Instruction::Fill(1)]);
+        let p = program(vec![M::Lanes(L::Fill(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
             vec![ValidationError::FillRequiresAtomReloading { pc: 0 }]
@@ -670,9 +681,9 @@ mod tests {
         let arch = simple_arch();
         // zone 0, word 0, sites 0 and 4 are in range; zone 0 exists.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 4)),
-            Instruction::ConstZone(ZoneAddr { zone_id: 0 }.encode()),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 4))),
+            M::Lanes(L::ConstZone(ZoneAddr { zone_id: 0 }.encode())),
         ]);
         assert!(validate(&p, Some(&arch)).is_empty(), "expected no errors");
     }
@@ -681,7 +692,7 @@ mod tests {
     fn invalid_location_rejected() {
         let arch = simple_arch();
         // site 99 is out of range for a 5-site word.
-        let p = program(vec![Instruction::ConstLoc(loc(0, 0, 99))]);
+        let p = program(vec![M::Lanes(L::ConstLoc(loc(0, 0, 99)))]);
         let errors = validate(&p, Some(&arch));
         assert!(
             matches!(
@@ -696,9 +707,9 @@ mod tests {
     fn invalid_zone_rejected() {
         let arch = simple_arch();
         // zone 5 does not exist (only zone 0).
-        let p = program(vec![Instruction::ConstZone(
+        let p = program(vec![M::Lanes(L::ConstZone(
             ZoneAddr { zone_id: 5 }.encode(),
-        )]);
+        ))]);
         let errors = validate(&p, Some(&arch));
         assert!(
             matches!(
@@ -721,7 +732,7 @@ mod tests {
             site_id: 0,
             bus_id: 0,
         };
-        let p = program(vec![Instruction::ConstLane(bad.encode_u64())]);
+        let p = program(vec![M::Lanes(L::ConstLane(bad.encode_u64()))]);
         let errors = validate(&p, Some(&arch));
         assert!(
             errors
@@ -736,9 +747,9 @@ mod tests {
     #[test]
     fn well_formed_program_has_no_structural_errors() {
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(1),
-            Instruction::Return,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(1)),
+            M::Cpu(C::Return(0)),
         ]);
         assert!(validate_structure(&p).is_empty());
     }
@@ -754,8 +765,8 @@ mod tests {
     #[test]
     fn missing_terminator_rejected() {
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(1),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(1)),
         ]);
         assert_eq!(
             validate_structure(&p),
@@ -765,13 +776,13 @@ mod tests {
 
     #[test]
     fn halt_is_a_valid_terminator() {
-        let p = program(vec![Instruction::Halt]);
+        let p = program(vec![M::Cpu(C::Halt)]);
         assert!(validate_structure(&p).is_empty());
     }
 
     #[test]
     fn unreachable_after_terminator_rejected() {
-        let p = program(vec![Instruction::Return, Instruction::Halt]);
+        let p = program(vec![M::Cpu(C::Return(0)), M::Cpu(C::Halt)]);
         assert_eq!(
             validate_structure(&p),
             vec![ValidationError::UnreachableInstruction { pc: 1 }]
@@ -782,23 +793,23 @@ mod tests {
     fn initial_fill_must_be_first_non_constant() {
         // A const push before initial_fill is fine; a gate before it is not.
         let ok = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(1),
-            Instruction::Return,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(1)),
+            M::Cpu(C::Return(0)),
         ]);
         assert!(validate_structure(&ok).is_empty());
 
         let bad = program(vec![
-            Instruction::GlobalR,
-            Instruction::InitialFill(1),
-            Instruction::Return,
+            M::Lanes(L::GlobalR),
+            M::Lanes(L::InitialFill(1)),
+            M::Cpu(C::Return(0)),
         ]);
         assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 1 }));
     }
 
     #[test]
     fn new_array_bounds_checked() {
-        let p = program(vec![Instruction::NewArray(99, 0, 0), Instruction::Return]);
+        let p = program(vec![M::Lanes(L::NewArray(99, 0, 0)), M::Cpu(C::Return(0))]);
         let errors = validate_structure(&p);
         assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 0 }));
         assert!(errors.contains(&ValidationError::NewArrayInvalidTypeTag {
@@ -812,9 +823,9 @@ mod tests {
         // The composition consumers run: structural + arch-dependent checks
         // both fire and collect. Missing terminator (structural) + bad zone (arch).
         let arch = simple_arch();
-        let p = program(vec![Instruction::ConstZone(
+        let p = program(vec![M::Lanes(L::ConstZone(
             ZoneAddr { zone_id: 5 }.encode(),
-        )]);
+        ))]);
         let errors: Vec<_> = validate_structure(&p)
             .into_iter()
             .chain(validate(&p, Some(&arch)))
@@ -831,8 +842,8 @@ mod tests {
     fn capability_and_address_errors_collected_together() {
         let arch = simple_arch(); // feed_forward = false, atom_reloading = false
         let p = program(vec![
-            Instruction::Fill(1),                                     // pc 0: reloading
-            Instruction::ConstZone(ZoneAddr { zone_id: 5 }.encode()), // pc 1: bad zone
+            M::Lanes(L::Fill(1)),                                     // pc 0: reloading
+            M::Lanes(L::ConstZone(ZoneAddr { zone_id: 5 }.encode())), // pc 1: bad zone
         ]);
         let errors = validate(&p, Some(&arch));
         assert_eq!(
@@ -852,8 +863,8 @@ mod tests {
 
     // ---- stack simulation ----
 
-    fn cpu_float(v: f64) -> Instruction {
-        Instruction::ConstFloat(v)
+    fn cpu_float(v: f64) -> M {
+        M::Cpu(C::Const(Type::F64, Value::F64(v)))
     }
 
     #[test]
@@ -861,13 +872,13 @@ mod tests {
         // const_loc, const_loc, initial_fill 2, const_zone, measure 1,
         // await_measure, return — all types line up.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 1)),
-            Instruction::InitialFill(2),
-            Instruction::ConstZone(0),
-            Instruction::Measure(1),
-            Instruction::AwaitMeasure,
-            Instruction::Return,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),
+            M::Lanes(L::InitialFill(2)),
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::AwaitMeasure),
+            M::Cpu(C::Return(0)),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -878,7 +889,7 @@ mod tests {
 
     #[test]
     fn stack_underflow_detected() {
-        let p = program(vec![Instruction::Pop]);
+        let p = program(vec![M::Lanes(L::Pop)]);
         assert_eq!(
             simulate_stack(&p, None),
             vec![ValidationError::StackUnderflow { pc: 0 }]
@@ -888,7 +899,7 @@ mod tests {
     #[test]
     fn type_mismatch_detected() {
         // initial_fill expects locations; a float is on the stack instead.
-        let p = program(vec![cpu_float(1.0), Instruction::InitialFill(1)]);
+        let p = program(vec![cpu_float(1.0), M::Lanes(L::InitialFill(1))]);
         let errors = simulate_stack(&p, None);
         assert!(
             errors.iter().any(|e| matches!(
@@ -906,7 +917,7 @@ mod tests {
     #[test]
     fn measure_pushes_future_consumed_by_await() {
         // A measure future left dangling is fine; awaiting a non-future is not.
-        let p = program(vec![cpu_float(1.0), Instruction::AwaitMeasure]);
+        let p = program(vec![cpu_float(1.0), M::Lanes(L::AwaitMeasure)]);
         let errors = simulate_stack(&p, None);
         assert!(
             errors.iter().any(|e| matches!(
@@ -921,10 +932,10 @@ mod tests {
     fn local_r_pops_two_floats_then_locations() {
         // const_loc, const_float, const_float, local_r 1 — well typed.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
             cpu_float(1.5),
             cpu_float(0.5),
-            Instruction::LocalR(1),
+            M::Lanes(L::LocalR(1)),
         ]);
         assert!(simulate_stack(&p, None).is_empty());
     }
@@ -933,9 +944,9 @@ mod tests {
     fn duplicate_locations_flagged_without_arch() {
         // Two identical locations into a single fill group.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(2),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(2)),
         ]);
         let errors = simulate_stack(&p, None);
         assert!(
@@ -959,8 +970,8 @@ mod tests {
             bus_id: 0,
         };
         let p = program(vec![
-            Instruction::ConstLane(bad.encode_u64()),
-            Instruction::Move(1),
+            M::Lanes(L::ConstLane(bad.encode_u64())),
+            M::Lanes(L::Move(1)),
         ]);
         let errors = simulate_stack(&p, Some(&arch));
         assert!(
@@ -977,9 +988,9 @@ mod tests {
         // measurement-result tag, so a following set_detector (wants ARRAY_REF)
         // now type-mismatches on MEASUREMENT_RESULT rather than silently matching.
         let p = program(vec![
-            Instruction::ConstZone(0),
-            Instruction::Measure(1),
-            Instruction::AwaitMeasure,
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::AwaitMeasure),
         ]);
         // await_measure must push the measurement-result tag.
         assert_eq!(tag::MEASUREMENT_RESULT, 0x9);
@@ -1104,21 +1115,24 @@ mod tests {
     #[test]
     fn stack_sim_int_const_and_pop() {
         // `const.i64` pushes an INT; `pop` discards it. Well typed.
-        let p = program(vec![Instruction::ConstInt(7), Instruction::Pop]);
+        let p = program(vec![
+            M::Cpu(C::Const(Type::I64, Value::I64(7))),
+            M::Lanes(L::Pop),
+        ]);
         assert!(simulate_stack(&p, None).is_empty());
     }
 
     #[test]
     fn stack_sim_swap_needs_two_entries() {
         let ok = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 1)),
-            Instruction::Swap,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),
+            M::Lanes(L::Swap),
         ]);
         assert!(simulate_stack(&ok, None).is_empty());
 
         // Only one entry: swap underflows.
-        let bad = program(vec![Instruction::ConstLoc(loc(0, 0, 0)), Instruction::Swap]);
+        let bad = program(vec![M::Lanes(L::ConstLoc(loc(0, 0, 0))), M::Lanes(L::Swap)]);
         assert_eq!(
             simulate_stack(&bad, None),
             vec![ValidationError::StackUnderflow { pc: 1 }]
@@ -1127,7 +1141,7 @@ mod tests {
 
     #[test]
     fn stack_sim_dup_underflow_on_empty() {
-        let p = program(vec![Instruction::Dup]);
+        let p = program(vec![M::Cpu(C::Dup)]);
         assert_eq!(
             simulate_stack(&p, None),
             vec![ValidationError::StackUnderflow { pc: 0 }]
@@ -1139,10 +1153,10 @@ mod tests {
         // `dup` on a non-empty stack pushes a copy of the top entry; popping
         // both leaves an empty, well-typed stack.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::Dup,
-            Instruction::Pop,
-            Instruction::Pop,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Cpu(C::Dup),
+            M::Lanes(L::Pop),
+            M::Lanes(L::Pop),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -1155,16 +1169,16 @@ mod tests {
     fn stack_sim_gate_ops_are_well_typed() {
         // Exercises the LocalRz / GlobalR / GlobalRz / Cz dispatch arms.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
             cpu_float(0.5),
-            Instruction::LocalRz(1),
+            M::Lanes(L::LocalRz(1)),
             cpu_float(0.5),
-            Instruction::GlobalRz,
+            M::Lanes(L::GlobalRz),
             cpu_float(0.5),
             cpu_float(0.25),
-            Instruction::GlobalR,
-            Instruction::ConstZone(0),
-            Instruction::Cz,
+            M::Lanes(L::GlobalR),
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Cz),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -1177,12 +1191,12 @@ mod tests {
     fn stack_sim_gate_underflow_on_empty_stack() {
         // GlobalRz pops one float via `pop_typed`; empty stack -> underflow.
         assert_eq!(
-            simulate_stack(&program(vec![Instruction::GlobalRz]), None),
+            simulate_stack(&program(vec![M::Lanes(L::GlobalRz)]), None),
             vec![ValidationError::StackUnderflow { pc: 0 }]
         );
         // Move pops a lane via `pop_addr`; empty stack -> underflow.
         assert_eq!(
-            simulate_stack(&program(vec![Instruction::Move(1)]), None),
+            simulate_stack(&program(vec![M::Lanes(L::Move(1))]), None),
             vec![ValidationError::StackUnderflow { pc: 0 }]
         );
     }
@@ -1192,11 +1206,11 @@ mod tests {
         // new_array pops `dim0` elements and pushes an ARRAY_REF; get_item pops
         // `ndims` INT indices plus the ARRAY_REF and pushes the element.
         let p = program(vec![
-            Instruction::ConstInt(1),
-            Instruction::ConstInt(2),
-            Instruction::NewArray(tag::INT as u32, 2, 0),
-            Instruction::ConstInt(0),
-            Instruction::GetItem(1),
+            M::Cpu(C::Const(Type::I64, Value::I64(1))),
+            M::Cpu(C::Const(Type::I64, Value::I64(2))),
+            M::Lanes(L::NewArray(tag::INT as u32, 2, 0)),
+            M::Cpu(C::Const(Type::I64, Value::I64(0))),
+            M::Lanes(L::GetItem(1)),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -1209,9 +1223,9 @@ mod tests {
     fn stack_sim_set_detector_and_observable() {
         // Each consumes an ARRAY_REF (produced by a 1-element new_array).
         let det = program(vec![
-            Instruction::ConstInt(0),
-            Instruction::NewArray(tag::INT as u32, 1, 0),
-            Instruction::SetDetector,
+            M::Cpu(C::Const(Type::I64, Value::I64(0))),
+            M::Lanes(L::NewArray(tag::INT as u32, 1, 0)),
+            M::Lanes(L::SetDetector),
         ]);
         assert!(
             simulate_stack(&det, None).is_empty(),
@@ -1220,9 +1234,9 @@ mod tests {
         );
 
         let obs = program(vec![
-            Instruction::ConstInt(0),
-            Instruction::NewArray(tag::INT as u32, 1, 0),
-            Instruction::SetObservable,
+            M::Cpu(C::Const(Type::I64, Value::I64(0))),
+            M::Lanes(L::NewArray(tag::INT as u32, 1, 0)),
+            M::Lanes(L::SetObservable),
         ]);
         assert!(
             simulate_stack(&obs, None).is_empty(),
@@ -1234,7 +1248,7 @@ mod tests {
     #[test]
     fn stack_sim_halt_is_a_noop() {
         // `halt` neither pushes nor pops, so it cannot underflow an empty stack.
-        let p = program(vec![Instruction::Halt]);
+        let p = program(vec![M::Cpu(C::Halt)]);
         assert!(simulate_stack(&p, None).is_empty());
     }
 
@@ -1245,9 +1259,9 @@ mod tests {
         // locations produce no group error.
         let arch = simple_arch();
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 1)),
-            Instruction::InitialFill(2),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),
+            M::Lanes(L::InitialFill(2)),
         ]);
         let errors = simulate_stack(&p, Some(&arch));
         assert!(
@@ -1266,9 +1280,9 @@ mod tests {
         // group is invalid.
         let arch = simple_arch();
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(2),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(2)),
         ]);
         let errors = simulate_stack(&p, Some(&arch));
         assert!(
@@ -1291,9 +1305,9 @@ mod tests {
             bus_id: 0,
         };
         let p = program(vec![
-            Instruction::ConstLane(lane.encode_u64()),
-            Instruction::ConstLane(lane.encode_u64()),
-            Instruction::Move(2),
+            M::Lanes(L::ConstLane(lane.encode_u64())),
+            M::Lanes(L::ConstLane(lane.encode_u64())),
+            M::Lanes(L::Move(2)),
         ]);
         let errors = simulate_stack(&p, None);
         assert!(

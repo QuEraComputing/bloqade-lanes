@@ -27,8 +27,8 @@ use vihaco::SstFile;
 use vihaco::syntax::ParsedModule;
 use vihaco_parser::Parse;
 
-use super::Instruction;
 use super::container::LanesContext;
+use super::machine::{self, MachineSurfaceInstruction};
 use super::program::{LanesInfo, Program, from_code};
 
 /// Error from text (`.sst`) parsing.
@@ -110,17 +110,18 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
         text: e.to_string(),
     })?;
 
-    let parsed = ParsedModule::<Instruction, NoType, LanesInfo>::parse_section(file.root())
-        .map_err(|e| {
-            // A missing or malformed `version` header is the common authoring
-            // mistake, so it gets its own error rather than a generic one.
-            let msg = e.to_string();
-            if msg.contains("missing version header") || msg.contains("expected `version") {
-                TextError::MissingVersion
-            } else {
-                TextError::BadInstruction { line: 0, text: msg }
-            }
-        })?;
+    let parsed =
+        ParsedModule::<MachineSurfaceInstruction, NoType, LanesInfo>::parse_section(file.root())
+            .map_err(|e| {
+                // A missing or malformed `version` header is the common authoring
+                // mistake, so it gets its own error rather than a generic one.
+                let msg = e.to_string();
+                if msg.contains("missing version header") || msg.contains("expected `version") {
+                    TextError::MissingVersion
+                } else {
+                    TextError::BadInstruction { line: 0, text: msg }
+                }
+            })?;
 
     // Exactly one function, and it must be `@main`. The parser strips the
     // leading `@`, so the parsed name is bare `"main"`.
@@ -143,7 +144,20 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
         });
     }
 
-    Ok(from_code(parsed.header.version, func.body.clone()))
+    // The composite's surface and runtime enums are independent, so each
+    // parsed instruction is lowered before it becomes program code.
+    let code = func
+        .body
+        .iter()
+        .cloned()
+        .map(machine::lower)
+        .collect::<eyre::Result<Vec<_>>>()
+        .map_err(|e| TextError::BadInstruction {
+            line: 0,
+            text: e.to_string(),
+        })?;
+
+    Ok(from_code(parsed.header.version, code))
 }
 
 /// Emit the program as vihaco's `sst v1` container.
@@ -153,7 +167,7 @@ pub fn to_text(program: &Program) -> String {
     let mut body = String::from("fn @main() {\n");
     for inst in &program.code {
         body.push_str("  ");
-        body.push_str(&inst.to_string());
+        body.push_str(&machine::to_sst_text(inst));
         body.push('\n');
     }
     body.push_str("}\n");
@@ -165,7 +179,11 @@ pub fn to_text(program: &Program) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::isa::device::LanesInstruction as L;
+    use crate::isa::machine::MachineInstruction as M;
     use crate::version::Version;
+    use vihaco::{Type, Value};
+    use vihaco_cpu::RuntimeInstruction as C;
 
     /// Wrap a `fn @main` body in the `sst v1` container, for tests that care
     /// about the instructions rather than the framing.
@@ -180,25 +198,25 @@ mod tests {
         from_code(
             Version::new(1, 2),
             vec![
-                Instruction::ConstFloat(1.5),
-                Instruction::ConstInt(-42),
-                Instruction::Dup,
-                Instruction::ConstLoc(0x0000_0000_0100_0000),
-                Instruction::ConstLane(0x0000_0000_0000_0001),
-                Instruction::ConstZone(0x0000_0003),
-                Instruction::InitialFill(2),
-                Instruction::Move(1),
-                Instruction::LocalRz(1),
-                Instruction::LocalR(3),
-                Instruction::GlobalRz,
-                Instruction::Cz,
-                Instruction::Measure(1),
-                Instruction::AwaitMeasure,
-                Instruction::NewArray(2, 10, 20),
-                Instruction::GetItem(2),
-                Instruction::SetDetector,
-                Instruction::Halt,
-                Instruction::Return,
+                M::Cpu(C::Const(Type::F64, Value::F64(1.5))),
+                M::Cpu(C::Const(Type::I64, Value::I64(-42))),
+                M::Cpu(C::Dup),
+                M::Lanes(L::ConstLoc(0x0000_0000_0100_0000)),
+                M::Lanes(L::ConstLane(0x0000_0000_0000_0001)),
+                M::Lanes(L::ConstZone(0x0000_0003)),
+                M::Lanes(L::InitialFill(2)),
+                M::Lanes(L::Move(1)),
+                M::Lanes(L::LocalRz(1)),
+                M::Lanes(L::LocalR(3)),
+                M::Lanes(L::GlobalRz),
+                M::Lanes(L::Cz),
+                M::Lanes(L::Measure(1)),
+                M::Lanes(L::AwaitMeasure),
+                M::Lanes(L::NewArray(2, 10, 20)),
+                M::Lanes(L::GetItem(2)),
+                M::Lanes(L::SetDetector),
+                M::Cpu(C::Halt),
+                M::Cpu(C::Return(0)),
             ],
         )
     }
@@ -207,7 +225,7 @@ mod tests {
     fn text_round_trips_fn_main() {
         let src = sst(
             "1.2",
-            "fn @main() {\n  lanes.const_loc 0x0000000000000000\n  lanes.initial_fill 1\n  cpu.halt\n}\n",
+            "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n",
         );
         let p = parse_text(&src).unwrap();
         assert_eq!(p.extra.version, Version::new(1, 2));
@@ -258,8 +276,8 @@ mod tests {
 
     #[test]
     fn to_text_indents_instructions() {
-        let prog = from_code(Version::new(1, 0), vec![Instruction::Halt]);
-        assert!(to_text(&prog).contains("  cpu.halt\n"));
+        let prog = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]);
+        assert!(to_text(&prog).contains("  cpu::cpu.halt\n"));
     }
 
     #[test]
@@ -271,14 +289,14 @@ mod tests {
     #[test]
     fn missing_version_header_returns_error() {
         // A well-formed container whose header section is absent.
-        let src = "sst v1\n\n.section(root):\n.text(root):\nfn @main() {\n  cpu.halt\n}\n\
+        let src = "sst v1\n\n.section(root):\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n\
                    .text(root).\n.section(root).\n";
         assert_eq!(parse_text(src), Err(TextError::MissingVersion));
     }
 
     #[test]
     fn bad_instruction_returns_error() {
-        let src = sst("1.0", "fn @main() {\n  lanes.nope_nope\n}\n");
+        let src = sst("1.0", "fn @main() {\n  lanes::lanes.nope_nope\n}\n");
         assert!(matches!(
             parse_text(&src),
             Err(TextError::BadInstruction { .. })
@@ -323,7 +341,7 @@ mod tests {
         // single flat `@main`; the resolver rejects anything but exactly one.
         let src = sst(
             "1.0",
-            "fn @main() {\n  cpu.halt\n}\nfn @extra() {\n  cpu.halt\n}\n",
+            "fn @main() {\n  cpu::cpu.halt\n}\nfn @extra() {\n  cpu::cpu.halt\n}\n",
         );
         assert!(matches!(
             parse_text(&src),
@@ -333,7 +351,7 @@ mod tests {
 
     #[test]
     fn non_main_function_rejected() {
-        let src = sst("1.0", "fn @extra() {\n  cpu.halt\n}\n");
+        let src = sst("1.0", "fn @extra() {\n  cpu::cpu.halt\n}\n");
         assert!(matches!(
             parse_text(&src),
             Err(TextError::BadInstruction { .. })
@@ -343,7 +361,7 @@ mod tests {
     #[test]
     fn syntactically_broken_source_is_a_parse_error() {
         // An unterminated function body fails the function grammar.
-        let src = sst("1.0", "fn @main() {\n  cpu.halt\n");
+        let src = sst("1.0", "fn @main() {\n  cpu::cpu.halt\n");
         assert!(matches!(
             parse_text(&src),
             Err(TextError::BadInstruction { .. })
@@ -363,7 +381,7 @@ mod tests {
 
     #[test]
     fn parse_error_preserves_diagnostic_text() {
-        let src = sst("1.0", "fn @main() {\n  cpu.halt\n");
+        let src = sst("1.0", "fn @main() {\n  cpu::cpu.halt\n");
         match parse_text(&src) {
             Err(TextError::BadInstruction { text, .. }) => {
                 assert_ne!(text, "parse error");

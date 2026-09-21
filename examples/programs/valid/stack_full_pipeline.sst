@@ -12,89 +12,89 @@ version 1.0
 
 fn @main() {
   // --- Initial fill: load 2 sites into word 0 ---
-  lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
-  lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
-  lanes.initial_fill 2
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
+  lanes::lanes.initial_fill 2
 
   // --- Move: forward site_bus, zone 0, word 0, sites 0 and 1, bus 0 ---
   // mt=0 (site_bus)
-  lanes.const_lane 0x0000000000000000    // fwd, site_bus, z0, w0, s0, bus 0
-  lanes.const_lane 0x0000000000000001    // fwd, site_bus, z0, w0, s1, bus 0
-  lanes.move 2
+  lanes::lanes.const_lane 0x0000000000000000    // fwd, site_bus, z0, w0, s0, bus 0
+  lanes::lanes.const_lane 0x0000000000000001    // fwd, site_bus, z0, w0, s1, bus 0
+  lanes::lanes.move 2
 
   // --- Fill: reload sites after move ---
-  lanes.const_loc 0x0000000005000000    // zone 0, word 0, site 5
-  lanes.const_loc 0x0000000006000000    // zone 0, word 0, site 6
-  lanes.fill 2
+  lanes::lanes.const_loc 0x0000000005000000    // zone 0, word 0, site 5
+  lanes::lanes.const_loc 0x0000000006000000    // zone 0, word 0, site 6
+  lanes::lanes.fill 2
 
   // --- Local R rotation: push locations, then rotation_angle, then axis_angle ---
-  lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
-  cpu.const_float 3.14159    // rotation_angle
-  cpu.const_float 1.5708    // axis_angle
-  lanes.local_r 1    // pops axis_angle, rotation_angle (2 floats), then 1 location
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  cpu::cpu.const f64, 3.14159    // rotation_angle
+  cpu::cpu.const f64, 1.5708    // axis_angle
+  lanes::lanes.local_r 1    // pops axis_angle, rotation_angle (2 floats), then 1 location
 
   // --- Local Rz rotation: push locations, then rotation_angle ---
-  lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
-  cpu.const_float 0.7854    // rotation_angle
-  lanes.local_rz 1    // pops rotation_angle (1 float), then 1 location
+  lanes::lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
+  cpu::cpu.const f64, 0.7854    // rotation_angle
+  lanes::lanes.local_rz 1    // pops rotation_angle (1 float), then 1 location
 
   // --- Global R rotation: push rotation_angle, then axis_angle ---
-  cpu.const_float 3.14159    // rotation_angle
-  cpu.const_float 1.5708    // axis_angle
-  lanes.global_r    // pops axis_angle, rotation_angle (2 floats)
+  cpu::cpu.const f64, 3.14159    // rotation_angle
+  cpu::cpu.const f64, 1.5708    // axis_angle
+  lanes::lanes.global_r    // pops axis_angle, rotation_angle (2 floats)
 
   // --- Global Rz rotation: push rotation_angle ---
-  cpu.const_float 0.7854    // rotation_angle
-  lanes.global_rz    // pops rotation_angle (1 float)
+  cpu::cpu.const f64, 0.7854    // rotation_angle
+  lanes::lanes.global_rz    // pops rotation_angle (1 float)
 
   // --- CZ gate ---
-  lanes.const_zone 0x00000000    // zone 0
-  lanes.cz
+  lanes::lanes.const_zone 0x00000000    // zone 0
+  lanes::lanes.cz
 
   // --- Measure and await ---
-  lanes.const_zone 0x00000000    // zone 0
-  lanes.measure 1
-  lanes.await_measure    // pops future, pushes array_ref
+  lanes::lanes.const_zone 0x00000000    // zone 0
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure    // pops future, pushes array_ref
 
   // --- Stack manipulation: dup, swap, pop ---
-  cpu.const_float 3.0
-  cpu.dup    // [array_ref, 3.0, 3.0]
-  cpu.swap    // [array_ref, 3.0, 3.0]
-  cpu.pop    // [array_ref, 3.0]
-  cpu.pop    // [array_ref]
+  cpu::cpu.const f64, 3.0
+  cpu::cpu.dup    // [array_ref, 3.0, 3.0]
+  lanes::lanes.swap    // [array_ref, 3.0, 3.0]
+  lanes::lanes.pop    // [array_ref, 3.0]
+  lanes::lanes.pop    // [array_ref]
 
   // --- Array operations ---
   // Build a 1D array of 3 floats
-  cpu.const_float 1.0
-  cpu.const_float 2.0
-  cpu.const_float 3.0
-  lanes.new_array 1 3 0    // type_tag=1 (float), dim0=3, dim1=0 (1-D) -> pops 3, pushes array_ref
+  cpu::cpu.const f64, 1.0
+  cpu::cpu.const f64, 2.0
+  cpu::cpu.const f64, 3.0
+  lanes::lanes.new_array 1 3 0    // type_tag=1 (float), dim0=3, dim1=0 (1-D) -> pops 3, pushes array_ref
 
   // Get item from array using index
-  cpu.const_int 0    // index
-  lanes.get_item 1    // ndims=1 -> pops u32 + array_ref, pushes float
+  cpu::cpu.const i64, 0    // index
+  lanes::lanes.get_item 1    // ndims=1 -> pops u32 + array_ref, pushes float
 
   // Clean up the float and first array_ref
-  cpu.pop    // discard float from get_item
-  cpu.pop    // discard first array_ref from await_measure
+  lanes::lanes.pop    // discard float from get_item
+  lanes::lanes.pop    // discard first array_ref from await_measure
 
   // --- Set detector ---
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure    // pushes array_ref
-  lanes.set_detector    // pops array_ref, pushes detector_ref
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure    // pushes array_ref
+  lanes::lanes.set_detector    // pops array_ref, pushes detector_ref
 
   // --- Set observable ---
-  lanes.const_zone 0x00000000
-  lanes.measure 1
-  lanes.await_measure    // pushes array_ref
-  lanes.set_observable    // pops array_ref, pushes observable_ref
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure    // pushes array_ref
+  lanes::lanes.set_observable    // pops array_ref, pushes observable_ref
 
   // --- Return one value ---
   // Stack: [detector_ref, observable_ref]. Discard detector_ref first, then return.
-  cpu.swap    // [observable_ref, detector_ref]
-  cpu.pop    // discard detector_ref → [observable_ref]
-  cpu.return    // return observable_ref
+  lanes::lanes.swap    // [observable_ref, detector_ref]
+  lanes::lanes.pop    // discard detector_ref → [observable_ref]
+  cpu::cpu.ret 0    // return observable_ref
 }
 .text(root).
 .section(root).

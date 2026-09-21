@@ -9,9 +9,9 @@ version 1.0
 // halt is a non-constant instruction before initial_fill
 
 fn @main() {
-  cpu.halt
-  lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
-  lanes.initial_fill 1
+  cpu::cpu.halt
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.initial_fill 1
 }
 .text(root).
 .section(root).
