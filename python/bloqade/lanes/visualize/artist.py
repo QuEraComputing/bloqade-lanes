@@ -30,6 +30,60 @@ class QuEraColorCode(str, Enum):
 
 
 @dataclass(frozen=True)
+class DebugStep:
+    """A statement and atom state shared by the debugger renderers."""
+
+    statement: ir.Statement
+    state: AtomState
+    title: str
+    parameter_values: tuple[float | int, ...] = ()
+
+
+def collect_debug_steps(mt: ir.Method, arch_spec: ArchSpec) -> list[DebugStep]:
+    """Interpret ``mt`` once and collect the steps rendered by each debugger."""
+    frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
+    statements_and_states: list[tuple[ir.Statement, AtomState]] = []
+
+    for statement in mt.callable_region.walk():
+        results = frame.get_values(statement.results)
+        if isinstance(statement, move.EndMeasure):
+            current_state = frame.get(statement.current_state)
+            if isinstance(current_state, AtomState):
+                statements_and_states.append((statement, current_state))
+        match results:
+            case (AtomState() as state,):
+                statements_and_states.append((statement, state))
+
+    def parameter_values(statement: ir.Statement) -> tuple[float | int, ...]:
+        """Resolve numeric operands from the completed interpreter frame.
+
+        Reading operands from the frame also handles values produced by
+        folded expressions or forwarded through SSA values, rather than only
+        direct ``py.Constant`` results encountered during the IR walk.
+        """
+        return tuple(
+            result.value
+            for result in frame.get_values(statement.args)
+            if isinstance(result, Value) and isinstance(result.value, (float, int))
+        )
+
+    def statement_text(statement: ir.Statement) -> str:
+        values = parameter_values(statement)
+        return f"{type(statement).__name__}({', '.join(map(str, values))})"
+
+    num_steps = len(statements_and_states)
+    return [
+        DebugStep(
+            statement=statement,
+            state=state,
+            title=f"Step {index + 1} / {num_steps}: {statement_text(statement)}",
+            parameter_values=parameter_values(statement),
+        )
+        for index, (statement, state) in enumerate(statements_and_states)
+    ]
+
+
+@dataclass(frozen=True)
 class PlotParameters:
     scale: float
 
@@ -642,9 +696,6 @@ def get_state_artist(
 
 def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"):
     artist = get_state_artist(arch_spec, ax, atom_marker)
-
-    frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
-
     methods: dict = {
         move.LocalR: artist.show_local_r,
         move.LocalRz: artist.show_local_rz,
@@ -652,40 +703,22 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         move.GlobalRz: artist.show_global_rz,
         move.CZ: artist.show_cz,
     }
-
-    steps: list[tuple[ir.Statement, AtomState]] = []
-    constants = {}
-    for stmt in mt.callable_region.walk():
-        results = frame.get_values(stmt.results)
-        match results:
-            case (AtomState() as state,):
-                steps.append((stmt, state))
-            case (Value(value),) if isinstance(value, (float, int)):
-                constants[stmt.results[0]] = value
-
-    def stmt_text(stmt: ir.Statement) -> str:
-        stmt_str = f"{type(stmt).__name__}("
-        if len(stmt.args) != 0:
-            stmt_str = stmt_str + (
-                ", ".join(f"{constants[arg]}" for arg in stmt.args if arg in constants)
-            )
-        stmt_str = stmt_str + ")"
-        return stmt_str
+    steps = collect_debug_steps(mt, arch_spec)
 
     def draw(step_index: int):
         if len(steps) == 0:
             return
 
-        stmt, _ = steps[step_index]
-        ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
+        step = steps[step_index]
+        statement = step.statement
+        ax.set_title(step.title)
         ax.set_aspect("equal", adjustable="box")
-        stmt, curr_state = steps[step_index]
-        artist.show_slm(stmt, atom_marker)
+        artist.show_slm(statement, atom_marker)
 
-        visualize_fn = methods.get(type(stmt), lambda stmt: None)
-        visualize_fn(stmt)
-        artist.draw_atoms(curr_state)
-        artist.draw_moves(curr_state)
+        visualize_fn = methods.get(type(statement), lambda statement: None)
+        visualize_fn(statement)
+        artist.draw_atoms(step.state)
+        artist.draw_moves(step.state)
         ax.set_xlim(artist.x_min, artist.x_max)
         ax.set_ylim(artist.y_min, artist.y_max)
         plt.draw()
@@ -696,9 +729,7 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
 def render_generator(
     mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o", fps: int = 30
 ) -> tuple[Callable[[int], tuple[int, Callable[[int], None]]], int]:
-
     artist = get_state_artist(arch_spec, ax, atom_marker)
-
     methods: dict = {
         move.LocalR: artist.show_local_r,
         move.LocalRz: artist.show_local_rz,
@@ -706,27 +737,7 @@ def render_generator(
         move.GlobalRz: artist.show_global_rz,
         move.CZ: artist.show_cz,
     }
-
-    frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
-
-    steps: list[tuple[ir.Statement, AtomState]] = []
-    constants = {}
-    for stmt in mt.callable_region.walk():
-        results = frame.get_values(stmt.results)
-        match results:
-            case (AtomState() as state,):
-                steps.append((stmt, state))
-            case (Value(value),) if isinstance(value, (float, int)):
-                constants[stmt.results[0]] = value
-
-    def stmt_text(stmt: ir.Statement) -> str:
-        stmt_str = f"{type(stmt).__name__}("
-        if len(stmt.args) != 0:
-            stmt_str = stmt_str + (
-                ", ".join(f"{constants[arg]}" for arg in stmt.args if arg in constants)
-            )
-        stmt_str = stmt_str + ")"
-        return stmt_str
+    steps = collect_debug_steps(mt, arch_spec)
 
     def _no_op(ani_step_index: int):
         pass
@@ -735,20 +746,21 @@ def render_generator(
         if len(steps) == 0:
             return 3 * fps, _no_op
 
-        stmt, curr_state = steps[step_index]
-        artist.show_slm(stmt, atom_marker)
-        ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
+        step = steps[step_index]
+        statement = step.statement
+        artist.show_slm(statement, atom_marker)
+        ax.set_title(step.title)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlim(artist.x_min, artist.x_max)
         ax.set_ylim(artist.y_min, artist.y_max)
 
-        visualize_fn = methods.get(type(stmt))
+        visualize_fn = methods.get(type(statement))
         if visualize_fn is not None:
-            artist.draw_atoms(curr_state)
-            visualize_fn(stmt)
+            artist.draw_atoms(step.state)
+            visualize_fn(statement)
             return 3 * fps, _no_op
 
-        move_renderer = artist.move_renderer(curr_state, speed=2.0)
+        move_renderer = artist.move_renderer(step.state, speed=2.0)
         if move_renderer is not None:
             operation_time = min(5.0, max(1.0, move_renderer.total_time))
             total_frames = int(operation_time * fps)
@@ -756,12 +768,12 @@ def render_generator(
             def _move_renderer(ani_step_index: int):
                 if ani_step_index > total_frames or ani_step_index < 0:
                     return
-                t = ani_step_index / total_frames * move_renderer.total_time
-                move_renderer.update(t)
+                time = ani_step_index / total_frames * move_renderer.total_time
+                move_renderer.update(time)
 
             return total_frames, _move_renderer
 
-        artist.draw_atoms(curr_state)
+        artist.draw_atoms(step.state)
         return 3 * fps, _no_op
 
     return get_renderer, len(steps)
