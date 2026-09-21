@@ -168,6 +168,44 @@ Re-assemble any persisted `.bin` from source.
   Previously every decodable instruction had a handler, so this path was
   unreachable from a valid program.
 
+## Functions and control flow
+
+Programs are no longer restricted to a single flat `@main`. Any number of
+functions may be declared, and branch and call targets are written as symbols:
+
+```
+fn @main() {
+  cpu::cpu.call 0, helper
+  cpu::cpu.br @done
+  lanes::lanes.cz
+  cpu::cpu.label @done
+  cpu::cpu.halt
+}
+
+fn @helper() {
+  cpu::cpu.ret 0
+}
+```
+
+Nothing the lanes compiler emits uses this yet — it still produces a single flat
+`@main` — but the format and loader support it now rather than being retrofitted
+later.
+
+- `br` / `cond_br` name a **label** with `@`; `call` names a **function**
+  without one (`call <arity>, <name>`).
+- Labels are module-global; duplicates are an error.
+- A label occupies no address and is not stored in the code stream. It is
+  recorded in the label table, and re-emitted when the program is written back
+  out.
+- The binary container gained three child sections — `functions`, `labels`,
+  `strings` — so these survive a round-trip. A file without them still loads.
+
+**Stack validation stops at the first branch or call.** The type simulator walks
+straight through, so its state is only correct while control flow is linear;
+past a branch it would report underflows and mismatches derived from a state it
+cannot know. The linear prefix is still checked. Full CFG-aware simulation is
+tracked in [#1026](https://github.com/QuEraComputing/bloqade-lanes/issues/1026).
+
 ## Why the CPU instructions changed
 
 In vihaco 0.1 the instruction set nested vihaco-cpu's opcodes wholesale, which

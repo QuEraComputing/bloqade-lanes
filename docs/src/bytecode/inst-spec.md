@@ -82,6 +82,33 @@ vihaco ships readers for this container but no writers, so Bloqade Lanes owns
 the emitters (`isa::container`); the round-trip tests read everything back
 through vihaco's own parser to keep the two in step.
 
+### Symbol tables
+
+The root section has one payload slot and the code occupies it, so a program's
+symbol tables are nested as child sections — `functions`, `labels` and
+`strings`. Each is a `u32` count followed by fixed-size little-endian records;
+strings are length-prefixed. Child offsets are relative to the start of the
+parent section, and the children live inside the parent's extent.
+
+| Section | Record |
+|---|---|
+| `functions` | `name: u32` (string index), `local_count: u32`, `start_address: u32`, `end_address: u32`, `file: u32` |
+| `labels` | `address: u32`, `name: u32` (string index) |
+| `strings` | `len: u32` followed by `len` bytes, per entry |
+
+Labels are recorded here rather than in the code stream. vihaco runs `Label` as
+a no-op and it carries a parse-local identifier with no encodable form, so the
+resolver stores the address it marks and drops the instruction. Addresses are
+computed after the drop, so they stay consistent.
+
+Because vihaco stores a child section's name as an index resolved through the
+global context, the binary global context carries the section-name table. The
+text container has no child sections — functions and labels are written
+syntactically — so its `.global:` block stays empty.
+
+A file with no table sections still loads: a single `@main` spanning the code
+stands in.
+
 Neither device's instruction enum carries a binary codec — vihaco-cpu's has none
 and `#[composite]` derives none — so encoding goes through a parallel mirror ISA
 (`isa::bytecode`) that does. PPVM solves this the same way.
@@ -130,7 +157,47 @@ Instruction rules:
   `move 2` does not parse, and neither does a mnemonic under the wrong device.
 - Address operands are `0x`-prefixed hexadecimal; arities and array dimensions
   are decimal.
-- Exactly one function is allowed and it must be named `@main`.
+- Any number of functions may be declared; `@main` is the entry point and must
+  be present.
+
+### Functions, labels and control flow
+
+Branch and call targets are written as symbols and resolved to addresses when
+the module is loaded, because a forward branch names something not yet placed.
+
+```
+fn @main() {
+  cpu::cpu.call 0, helper
+  cpu::cpu.br @done
+  lanes::lanes.cz
+  cpu::cpu.label @done
+  cpu::cpu.halt
+}
+
+fn @helper() {
+  cpu::cpu.ret 0
+}
+```
+
+- `br` and `cond_br` name a **label** with a leading `@`; `call` names a
+  **function** without one (`call <arity>, <name>`), because vihaco-cpu's
+  generated pattern for `call` carries no sigil.
+- Labels are module-global — two with the same name is an error, not shadowing.
+- A label is a position marker, not an instruction: it does not occupy an
+  address, and it is not stored in the code stream. See
+  [Symbol tables](#symbol-tables).
+
+### Frames and locals
+
+`call <arity>, <name>` makes the top `arity` operands the callee's locals
+`0..arity-1` — that is how arguments are passed. `ret <keep>` returns the top
+`keep` values and discards the rest of the frame.
+
+A frame holds **no storage of its own**: locals are `stack[frame.base + index]`,
+a window into the same operand stack. So `load`/`store` address a function's
+arguments, not scratch registers, and a function with no parameters has no
+private locals. That is why `pop` and `swap` are lanes instructions rather than
+being expressed with `load`/`store`.
 
 `to_text` emits this form and `parse_text` accepts it, round-tripping losslessly.
 

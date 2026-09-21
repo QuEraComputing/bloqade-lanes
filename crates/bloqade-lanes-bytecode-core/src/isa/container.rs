@@ -88,7 +88,9 @@ impl LanesContext {
         }
     }
 
-    /// Serialized form: one name per line, matching [`Self::from_bytes`].
+    /// Serialized form: one name per line, matching the
+    /// [`BytecodeGlobalContext::from_bytes`](vihaco::BytecodeGlobalContext::from_bytes)
+    /// impl below.
     pub fn to_bytes(&self) -> Vec<u8> {
         self.names.join("\n").into_bytes()
     }

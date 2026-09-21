@@ -726,7 +726,8 @@ impl<'a> StackSimulator<'a> {
             // derived from a state it cannot know. A lanes program emits no
             // control flow today, so nothing we generate reaches this; it
             // matters for hand-written and decoded programs. Full CFG-aware
-            // simulation is tracked separately.
+            // simulation is tracked in
+            // <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>.
             if is_control_flow(inst) {
                 break;
             }
