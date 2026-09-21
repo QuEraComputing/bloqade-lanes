@@ -27,6 +27,8 @@
 //! pushing [`Value::Undefined`] placeholders — the depth the simulator
 //! predicts, with a value nothing can mistake for a result.
 
+use vihaco::frame::Frame;
+use vihaco::machine::StackFrame;
 use vihaco::traits::StackMemory;
 use vihaco::{Effects, GeneratedComponent, ProgramImage, Type, Value, composite};
 use vihaco_cpu::{CPU, SurfaceInstruction as CpuSurfaceInstruction};
@@ -37,6 +39,7 @@ use crate::arch::types::ArchSpec;
 use super::container::LanesContext;
 use super::device::{Lanes, LanesEffect, LanesInstruction, LanesMessage};
 use super::program::LanesInfo;
+use super::program::Program;
 use super::validate::array_element_count;
 
 /// The combined instruction set: one variant per device.
@@ -75,12 +78,124 @@ pub struct LanesMachine {
     lanes: Lanes,
 }
 
+/// Why [`LanesMachine::run`] stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// The program executed `halt`.
+    Halted,
+    /// `@main` returned.
+    Returned,
+    /// Execution ran off the end of the code without a terminator.
+    ///
+    /// [`super::validate::validate_structure`] rejects such a program, so this
+    /// only happens when running one that was never validated.
+    RanOff,
+    /// The step budget was exhausted. A program with a backward branch can
+    /// run forever, and a machine with no budget would hang rather than say
+    /// so.
+    OutOfSteps,
+}
+
+/// What running a program produced.
+#[derive(Debug, Clone)]
+pub struct Run {
+    /// Every effect the lanes device reported, in execution order. This is the
+    /// record of what the program asked the hardware to do, and the input an
+    /// observer for <https://github.com/QuEraComputing/bloqade-lanes/issues/1022>
+    /// would consume.
+    pub effects: Vec<LanesEffect>,
+    /// Why execution stopped.
+    pub stopped: Stopped,
+    /// How many instructions ran.
+    pub steps: u64,
+}
+
 impl LanesMachine {
+    /// A machine ready to run, with the entry frame already pushed.
+    ///
+    /// vihaco's locals are a window into the operand stack starting at the
+    /// current frame's `base`, so `load`/`store` and `ret` all fail with "no
+    /// current frame" until one exists. A `call` pushes its own; `@main` is
+    /// entered without one, so the machine establishes it.
+    pub fn new() -> Self {
+        let mut machine = Self::default();
+        machine.cpu.push_frame(Frame {
+            base: 0,
+            span: (0, 0, 0),
+            function: None,
+            ret_pc: 0,
+        });
+        machine
+    }
+
     /// Point the machine at an architecture. `move` cannot resolve a lane into
     /// (src, dst) endpoints without one, so it fails until this is set.
     pub fn with_arch(mut self, arch: ArchSpec) -> Self {
         self.lanes.arch = Some(arch);
         self
+    }
+
+    /// Run a program: dispatch each instruction to the device that owns it,
+    /// until it halts, returns, or runs out of code or budget.
+    ///
+    /// This is the piece that makes the composite a machine rather than two
+    /// devices: [`step_lanes`](Self::step_lanes) handles one lanes
+    /// instruction, `CPU::execute_instruction` one CPU instruction, and
+    /// nothing until now walked a `MachineInstruction` stream across both.
+    ///
+    /// `max_steps` bounds execution. A program with a backward branch can run
+    /// forever, and the ISA carries vihaco-cpu's control flow whether or not
+    /// the lanes compiler emits it, so the budget is a parameter rather than
+    /// an assumption.
+    pub fn run(&mut self, program: &Program, max_steps: u64) -> eyre::Result<Run> {
+        use vihaco_cpu::StepOutcome;
+
+        let mut effects = Vec::new();
+        let mut steps = 0u64;
+        let mut pc = 0usize;
+
+        let stopped = loop {
+            let Some(inst) = program.code.get(pc) else {
+                break Stopped::RanOff;
+            };
+            if steps == max_steps {
+                break Stopped::OutOfSteps;
+            }
+            steps += 1;
+
+            // `op_call` reads this to work out where to return to, so it has
+            // to be set before the instruction runs, not after.
+            self.cpu.set_current_pc(pc as u32);
+
+            match inst {
+                MachineInstruction::Lanes(inst) => {
+                    collect(self.step_lanes(inst.clone())?, &mut effects);
+                }
+                MachineInstruction::Cpu(inst) => {
+                    match self.cpu.execute_instruction(inst.clone())? {
+                        StepOutcome::Halt => break Stopped::Halted,
+                        // `op_return` reports `Return` only when it pops the
+                        // last frame; an inner return sets the resume address
+                        // and reports `Continue`.
+                        StepOutcome::Return => break Stopped::Returned,
+                        StepOutcome::Continue | StepOutcome::Breakpoint => {}
+                    }
+                }
+            }
+
+            // A branch or call leaves its destination here; anything else
+            // falls through to the next instruction.
+            pc = match self.cpu.take_pending_pc() {
+                Some(target) => target as usize,
+                None => pc + 1,
+            };
+        };
+
+        Ok(Run {
+            effects,
+            stopped,
+            steps,
+        })
     }
 
     /// Pop the operands `inst` consumes and pack them into its message.
@@ -239,6 +354,15 @@ impl LanesMachine {
     /// The atom arrangement as it currently stands.
     pub fn atoms(&self) -> &crate::atom_state::AtomStateData {
         &self.lanes.atoms
+    }
+}
+
+/// Flatten one instruction's effects onto the run's record.
+fn collect(effects: Effects<LanesEffect>, into: &mut Vec<LanesEffect>) {
+    match effects {
+        Effects::None => {}
+        Effects::One(effect) => into.push(effect),
+        Effects::Many(effects) => into.extend(effects),
     }
 }
 
@@ -877,6 +1001,147 @@ mod tests {
                 "op_name {name:?} does not match mnemonic {mnemonic:?} for {inst:?}"
             );
         }
+    }
+
+    // ── run ───────────────────────────────────────────────────────────────
+
+    /// A whole program runs across both devices.
+    ///
+    /// Until `run` existed nothing walked a `MachineInstruction` stream: the
+    /// tests pushed CPU operands by hand and stepped the lanes device alone,
+    /// so the Cpu/Lanes dispatch had no caller and the execution layer was
+    /// exercised only by its own unit tests.
+    #[test]
+    fn a_program_runs_across_both_devices() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Lanes(I::ConstLoc(loc(0, 0, 0))),
+                MachineInstruction::Lanes(I::ConstLoc(loc(0, 0, 1))),
+                MachineInstruction::Lanes(I::InitialFill(2)),
+                // A CPU constant feeding a lanes gate: the whole point of the
+                // composite, and only reachable by dispatching both devices.
+                MachineInstruction::Cpu(C::Const(Type::F64, Value::F64(1.5))),
+                MachineInstruction::Lanes(I::GlobalRz),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        );
+
+        let mut m = machine();
+        let run = m.run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Halted);
+        assert_eq!(run.steps, 6);
+
+        // The atoms actually moved, and the gate was reported not simulated.
+        assert_eq!(
+            m.atoms().get_qubit(&LocationAddr::decode(loc(0, 0, 1))),
+            Some(1)
+        );
+        assert!(run.effects.iter().any(|e| matches!(
+            e,
+            LanesEffect::NotSimulated {
+                inst: I::GlobalRz,
+                msg: LanesMessage::GlobalRotation { angles }
+            } if angles == &[1.5]
+        )));
+    }
+
+    /// `ret` at top level ends the program, which needs the entry frame:
+    /// `op_return` pops a frame and errors when there is none.
+    #[test]
+    fn main_returning_stops_the_program() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![MachineInstruction::Cpu(C::Return(0))],
+        );
+        let run = LanesMachine::new().run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Returned);
+    }
+
+    /// The ops the device does not simulate must still leave the stack at the
+    /// depth `simulate_stack` predicts, or a *validated* program underflows
+    /// the moment it runs.
+    #[test]
+    fn a_validated_measurement_pipeline_runs_without_underflowing() {
+        use crate::isa::program::from_code;
+        use crate::isa::validate::simulate_stack;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Lanes(I::ConstZone(0)),
+                MachineInstruction::Lanes(I::Measure(1)),
+                MachineInstruction::Lanes(I::AwaitMeasure),
+                MachineInstruction::Lanes(I::SetDetector),
+                MachineInstruction::Lanes(I::Pop),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        );
+        // The static half accepts it...
+        assert_eq!(simulate_stack(&program, None), vec![]);
+        // ...so running it must not underflow.
+        let run = machine().run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Halted);
+    }
+
+    /// `set_detector` must report *which* array it referenced, not just that
+    /// it happened — that is the whole point of the `NotSimulated` effect.
+    #[test]
+    fn a_not_simulated_op_reports_the_operands_it_consumed() {
+        let mut m = machine();
+        m.cpu.stack_push(Value::U32(7));
+        let effects = m.step_lanes(I::SetDetector).unwrap();
+        assert!(matches!(
+            effects,
+            Effects::Many(ref e) if matches!(
+                &e[0],
+                LanesEffect::NotSimulated { msg: LanesMessage::Values(v), .. }
+                    if v == &[Value::U32(7)]
+            )
+        ));
+    }
+
+    /// A backward branch is a loop, and the budget is what keeps it from
+    /// being a hang.
+    #[test]
+    fn a_looping_program_runs_out_of_steps() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![MachineInstruction::Cpu(C::Branch(0))],
+        );
+        let run = LanesMachine::new().run(&program, 50).unwrap();
+        assert_eq!(run.stopped, Stopped::OutOfSteps);
+        assert_eq!(run.steps, 50);
+    }
+
+    /// Running off the end is reported rather than silently treated as a halt
+    /// — `validate_structure` rejects such a program, so reaching it means
+    /// something skipped validation.
+    #[test]
+    fn a_program_without_a_terminator_runs_off_the_end() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![MachineInstruction::Lanes(I::ConstZone(0))],
+        );
+        let run = LanesMachine::new().run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::RanOff);
     }
 
     /// Every `<device>::<dialect>.<mnemonic>` the docs print must be real.

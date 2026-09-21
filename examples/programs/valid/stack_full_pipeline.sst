@@ -23,9 +23,12 @@ fn @main() {
   lanes::lanes.const_lane 0x0000000000000001    // fwd, site_bus, z0, w0, s1, bus 0
   lanes::lanes.move 2
 
-  // --- Fill: reload sites after move ---
-  lanes::lanes.const_loc 0x0000000005000000    // zone 0, word 0, site 5
-  lanes::lanes.const_loc 0x0000000006000000    // zone 0, word 0, site 6
+  // --- Fill: reload the sites the move vacated ---
+  // The move carries the two atoms from sites 0 and 1 along site_bus 0, which
+  // lands them on sites 5 and 6. Reloading means refilling 0 and 1 — the sites
+  // the following local_r/local_rz then act on.
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
   lanes::lanes.fill 2
 
   // --- Local R rotation: push locations, then rotation_angle, then axis_angle ---

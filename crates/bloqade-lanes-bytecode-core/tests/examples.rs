@@ -232,6 +232,35 @@ fn every_invalid_example_reports_exactly_what_it_declares() {
     report(bad);
 }
 
+/// A program that validates must also *run*.
+///
+/// Validation cannot see everything: it type-checks the stack and checks each
+/// address against the architecture, but it does not track which sites are
+/// occupied. `stack_full_pipeline.sst` validated clean while trying to refill
+/// the two sites its own `move` had just filled — only executing it says so.
+#[test]
+fn every_valid_example_runs_to_completion() {
+    use bloqade_lanes_bytecode_core::isa::machine::{LanesMachine, Stopped};
+
+    let mut bad = Vec::new();
+    for fixture in fixtures("valid") {
+        let src = fs::read_to_string(&fixture.path).unwrap();
+        let program = parse_text(&src).unwrap();
+        let mut machine = LanesMachine::new();
+        if let Some(arch) = fixture.arch.clone() {
+            machine = machine.with_arch(arch);
+        }
+        match machine.run(&program, 10_000) {
+            Err(e) => bad.push(format!("  {}: {e}", fixture.name)),
+            Ok(run) if !matches!(run.stopped, Stopped::Halted | Stopped::Returned) => {
+                bad.push(format!("  {}: stopped as {:?}", fixture.name, run.stopped));
+            }
+            Ok(_) => {}
+        }
+    }
+    report(bad);
+}
+
 /// Round-tripping is the other thing the fixtures are for: every one of them
 /// must survive text -> binary -> text and come back identical.
 #[test]

@@ -22,10 +22,26 @@ single flat instruction set:
 | `lanes` | atom movement, gates, measurement, arrays, and the `pop`/`swap` the CPU lacks |
 
 This is the idiomatic vihaco composition (PPVM is built the same way), and it
-means the machine can now **execute** a program's atom movement: `initial_fill`,
-`fill` and `move` advance the atom state and fault on an illegal move. The
-quantum, array and measurement ops are emitted as effects rather than simulated
-— see [#1022](https://github.com/QuEraComputing/bloqade-lanes/issues/1022).
+means a lanes program can now be **executed**, via the new `bloqade-bytecode
+run` subcommand:
+
+```bash
+bloqade-bytecode run prog.sst --arch gemini-logical.json
+# halted after 50 instruction(s); 4 atom(s) placed
+```
+
+What runs is the *atom movement*: `initial_fill`, `fill` and `move` advance
+the atom state and fail on an illegal move. That is a check validation cannot
+make — the validator does not track which sites are occupied — and it found a
+bug in this repository's own `stack_full_pipeline.sst` example, which
+validated clean while refilling the two sites its own `move` had just filled.
+
+The quantum, array and measurement ops are reported as effects rather than
+simulated. Each carries the operands it consumed, so an observer knows which
+array a `set_detector` referenced and not merely that one happened; see
+[#1022](https://github.com/QuEraComputing/bloqade-lanes/issues/1022). They
+still push placeholder values, so the stack stays at the depth validation
+predicts and a program that validates does not underflow when it runs.
 
 ## Text format (`.sst`)
 

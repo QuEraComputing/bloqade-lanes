@@ -146,6 +146,48 @@ bloqade-bytecode validate bad.sst --arch gemini-logical.json
 
 ---
 
+### `run`
+
+Execute a program on the composite machine. Accepts both text (`.sst`) and
+binary formats.
+
+```
+bloqade-bytecode run <INPUT> [--arch <ARCH>] [--max-steps <N>] [--effects]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<INPUT>` | Input file (`.sst` = text, otherwise binary) |
+| `--arch <ARCH>` | ArchSpec JSON file. `move` cannot resolve a lane into endpoints without one |
+| `--max-steps <N>` | Instruction budget before giving up (default 1,000,000) |
+| `--effects` | Print every effect the lanes device reported, in order |
+
+**What actually runs.** The machine executes *atom movement*: `initial_fill`,
+`fill` and `move` advance the atom state and fail on an illegal move — which
+is a real check, and one validation cannot make, since the validator does not
+track which sites are occupied. The quantum, array and measurement ops are
+reported as `NotSimulated` effects carrying the operands they consumed, rather
+than interpreted; simulating them is
+[#1022](https://github.com/QuEraComputing/bloqade-lanes/issues/1022).
+
+**Examples:**
+
+```bash
+bloqade-bytecode run prog.sst --arch gemini-logical.json
+# halted after 50 instruction(s); 4 atom(s) placed
+
+# A move onto an occupied site fails, naming the instruction
+bloqade-bytecode run bad.sst --arch gemini-logical.json
+# error: Fill(2): Attempted to add atom to occupied location
+
+# See what the program asked the hardware to do
+bloqade-bytecode run prog.sst --arch gemini-logical.json --effects
+#   NotSimulated { inst: Cz, msg: Zones([ZoneAddr { zone_id: 0 }]) }
+#   ...
+```
+
+---
+
 ### `arch`
 
 Pretty-print an architecture specification.

@@ -570,3 +570,161 @@ fn test_round_trip_preserves_version() {
         .stdout(predicate::str::contains("version 2.3"))
         .stdout(predicate::str::contains("fn @main()"));
 }
+
+// --- run ---
+
+/// A five-site word with one site bus, written to `dir` — the same shape the
+/// validate tests use, kept here so the run tests do not depend on the
+/// repository layout.
+fn test_arch(dir: &TempDir) -> std::path::PathBuf {
+    let path = dir.path().join("arch.json");
+    fs::write(
+        &path,
+        r#"{
+            "version": "2.0",
+            "words": [
+                { "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] }
+            ],
+            "zones": [
+                {
+                    "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [] },
+                    "site_buses": [ { "src": [0, 1], "dst": [3, 4] } ],
+                    "word_buses": [],
+                    "words_with_site_buses": [0],
+                    "sites_with_word_buses": []
+                }
+            ],
+            "zone_buses": [],
+            "modes": [ { "name": "default", "zones": [0], "bitstring_order": [] } ]
+        }"#,
+    )
+    .unwrap();
+    path
+}
+
+/// The execution layer had no caller before this: nothing in the CLI, the C
+/// FFI or the PyO3 bindings constructed a `LanesMachine`, so "lanes programs
+/// now run" was not something a user could do.
+#[test]
+fn test_run_places_atoms() {
+    let dir = TempDir::new().unwrap();
+    let arch = test_arch(&dir);
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst(
+            "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.const_loc 0x0000000001000000\n  \
+             lanes::lanes.initial_fill 2\n  cpu::cpu.halt\n}\n",
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .args(["--arch", arch.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("halted"))
+        .stderr(predicate::str::contains("2 atom(s) placed"));
+}
+
+/// A move drives the atom state, which is the part the machine really does
+/// simulate — and the reason it needs the architecture.
+#[test]
+fn test_run_moves_atoms() {
+    let dir = TempDir::new().unwrap();
+    let arch = test_arch(&dir);
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst(
+            "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.initial_fill 1\n  \
+             lanes::lanes.const_lane 0x0000000000000000\n  \
+             lanes::lanes.move 1\n  cpu::cpu.halt\n}\n",
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .args(["--arch", arch.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 atom(s) placed"));
+}
+
+/// `move` cannot resolve a lane into endpoints without an architecture, so
+/// the failure has to name that rather than something generic.
+#[test]
+fn test_run_without_arch_reports_why_move_failed() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst(
+            "fn @main() {\n  lanes::lanes.const_lane 0x0000000000000000\n  \
+             lanes::lanes.move 1\n  cpu::cpu.halt\n}\n",
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("arch spec"));
+}
+
+/// The budget turns a runaway program into a message rather than a hang.
+///
+/// A backward branch is the way to run forever, but this branch cannot lower
+/// symbolic control flow from text yet, so the budget itself is exercised by
+/// setting it below the program's length. `machine::tests` covers the actual
+/// loop, where a `Branch` can be constructed directly.
+#[test]
+fn test_run_bounds_execution_by_max_steps() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.cz\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .args(["--max-steps", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("budget"));
+
+    // The same program finishes when the budget allows it.
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("halted"));
+}
+
+/// The ops the machine does not simulate are still reported, which is what
+/// `--effects` is for.
+#[test]
+fn test_run_effects_reports_unsimulated_ops() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.cz\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap(), "--effects"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("NotSimulated"));
+}
