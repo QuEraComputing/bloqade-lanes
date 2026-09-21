@@ -1,30 +1,21 @@
 //! Text (`.sst`) codec for the vihaco-backed ISA.
 //!
-//! The grammar is:
-//! ```text
-//! version <major>.<minor>;
-//! fn @main() {
-//!   <instruction>
-//!   ...
-//! }
-//! ```
+//! A program is vihaco's `sst v1` section container holding one root section:
+//! a `.header(root)` block carrying the version, and a `.text(root)` block
+//! carrying `fn @main()`. [`parse_text`] shows the full shape.
 //!
-//! `version_header` parses the `version <major>.<minor>;` directive; the
-//! function body is vihaco's own grammar via
-//! [`ParsedFunction::parser`](vihaco::syntax::ParsedFunction), and `resolve`
-//! lowers the result into a `Program` via [`super::program::from_code`].
+//! Both halves are vihaco's own grammar. [`SstFile`] frames the container and
+//! [`ParsedModule::parse_section`] parses the functions inside it; this module
+//! reads the version header itself (see `parse_version_header`) and lowers the
+//! parsed surface instructions into a [`Program`] via [`machine::lower`].
 //!
-//! ## Why not `ParsedModule`
-//!
-//! vihaco 0.4 reshaped `ParsedModule` around its multi-section `.sst`
-//! container: it no longer implements `Parse`, only `parse_section(SstSectionView)`,
-//! which requires adopting vihaco's section format wholesale. We keep our own
-//! single-section header and compose vihaco's *function* grammar underneath —
-//! adopting the vihaco container is tracked separately.
+//! vihaco ships a reader for this container and no writer, so [`to_text`]
+//! emits it via [`super::container::to_sst`].
 
 use chumsky::prelude::*;
 use vihaco::SstFile;
 use vihaco::syntax::ParsedModule;
+use vihaco::traits::FromText as _;
 use vihaco_parser::Parse;
 
 use super::container::LanesContext;
@@ -34,11 +25,13 @@ use super::program::{LanesInfo, Program, from_code};
 /// Error from text (`.sst`) parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextError {
-    /// No `version M.N;` header was found before the first instruction.
+    /// The root section has no `version <major>.<minor>` header.
     MissingVersion,
-    /// The version header's value could not be parsed.
-    /// Currently unreachable: a malformed version fails the whole parse via `BadInstruction`.
-    /// Retained for API stability and potential future use.
+    /// The header is present but its value will not parse — `version 1`,
+    /// `version abc`, `version 1.x`. Distinct from [`MissingVersion`], which
+    /// it used to be reported as.
+    ///
+    /// [`MissingVersion`]: TextError::MissingVersion
     InvalidVersion { line: usize, value: String },
     /// A line could not be parsed as an instruction. `line` is currently always
     /// `0` for parse-level failures from the chumsky parser.
@@ -110,17 +103,20 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
         text: e.to_string(),
     })?;
 
+    // Read the header before handing the section to vihaco. `parse_section`
+    // parses it too, but reports every failure as an `eyre` message wrapped
+    // around `LanesInfo::from_text`'s own — so telling a *missing* header from
+    // a *malformed* one downstream meant matching on prose, and got it wrong:
+    // `version 1` and `version abc` were both reported as missing, and
+    // `version 1.x` as an unparseable instruction. Here the distinction is
+    // still available.
+    parse_version_header(src, file.root().header_text())?;
+
     let parsed =
         ParsedModule::<MachineSurfaceInstruction, NoType, LanesInfo>::parse_section(file.root())
-            .map_err(|e| {
-                // A missing or malformed `version` header is the common authoring
-                // mistake, so it gets its own error rather than a generic one.
-                let msg = e.to_string();
-                if msg.contains("missing version header") || msg.contains("expected `version") {
-                    TextError::MissingVersion
-                } else {
-                    TextError::BadInstruction { line: 0, text: msg }
-                }
+            .map_err(|e| TextError::BadInstruction {
+                line: 0,
+                text: e.to_string(),
             })?;
 
     // Exactly one function, and it must be `@main`. The parser strips the
@@ -158,6 +154,32 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
         })?;
 
     Ok(from_code(parsed.header.version, code))
+}
+
+/// Read the root section's `version` directive.
+///
+/// The two failures are genuinely different mistakes and get different
+/// errors: no `version` line at all, versus one whose value will not parse.
+fn parse_version_header(src: &str, header_text: &str) -> Result<LanesInfo, TextError> {
+    let trimmed = header_text.trim();
+    let Some(value) = trimmed.strip_prefix("version") else {
+        return Err(TextError::MissingVersion);
+    };
+    LanesInfo::from_text(trimmed).map_err(|_| TextError::InvalidVersion {
+        line: line_of(src, trimmed),
+        value: value.trim().to_owned(),
+    })
+}
+
+/// 1-based line of `needle` in `src`, or `0` if it cannot be located.
+///
+/// The header arrives as a detached slice, so its position is recovered by
+/// search rather than carried along — good enough to point an author at the
+/// right line, and honest about failing (`line 0`) rather than guessing.
+fn line_of(src: &str, needle: &str) -> usize {
+    src.lines()
+        .position(|line| line.trim() == needle)
+        .map_or(0, |i| i + 1)
 }
 
 /// Emit the program as vihaco's `sst v1` container.
@@ -292,6 +314,28 @@ mod tests {
         let src = "sst v1\n\n.section(root):\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n\
                    .text(root).\n.section(root).\n";
         assert_eq!(parse_text(src), Err(TextError::MissingVersion));
+    }
+
+    /// A header that is present but malformed is not a *missing* header.
+    ///
+    /// All three of these used to be misreported: `version 1` and
+    /// `version abc` as `MissingVersion`, and `version 1.x` as an unparseable
+    /// *instruction* — because the classification matched on the text of
+    /// vihaco's wrapped `eyre` message rather than reading the header.
+    #[test]
+    fn a_malformed_version_is_not_a_missing_one() {
+        for value in ["1", "abc", "1.x", "x.1", "1.2.3", ""] {
+            let src = sst(value, "fn @main() {\n  cpu::cpu.halt\n}\n");
+            assert_eq!(
+                parse_text(&src),
+                Err(TextError::InvalidVersion {
+                    // `version <value>` is the fifth line of the container.
+                    line: 5,
+                    value: value.to_owned(),
+                }),
+                "version {value:?}"
+            );
+        }
     }
 
     #[test]

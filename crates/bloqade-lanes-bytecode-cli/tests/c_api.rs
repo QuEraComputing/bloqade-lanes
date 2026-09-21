@@ -8,12 +8,31 @@ use bloqade_lanes_bytecode::ffi::memory::*;
 use bloqade_lanes_bytecode::ffi::program::*;
 use bloqade_lanes_bytecode::ffi::validate::*;
 
+/// Wrap a program body in vihaco's `sst v1` section container.
+///
+/// The framing is eleven lines that say nothing about the test, and it was
+/// pasted into all eight programs below. Behind this helper a container change
+/// is one edit rather than eight.
+fn sst(body: &str) -> String {
+    sst_version("1.0", body)
+}
+
+#[allow(dead_code)]
+fn sst_version(version: &str, body: &str) -> String {
+    format!(
+        "sst v1\n\n.section(root):\n.header(root):\nversion {version}\n\
+         .header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
+    )
+}
+
 // --- Program round-trip tests ---
 
 #[test]
 fn text_to_binary_to_text_round_trip() {
-    let source =
-        CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.const i64, 42\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
+    let source = CString::new(sst(
+        "fn @main() {\n  cpu::cpu.const i64, 42\n  cpu::cpu.halt\n}\n",
+    ))
+    .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
 
     // Parse text
@@ -67,7 +86,7 @@ fn text_to_binary_to_text_round_trip() {
 #[test]
 fn binary_decode_known_good() {
     // Build a known binary via text parse, then decode it
-    let source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
+    let source = CString::new(sst("fn @main() {\n  cpu::cpu.halt\n}\n")).unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
     let status = unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
     assert_eq!(status, LanesStatus::Ok);
@@ -191,7 +210,7 @@ fn successful_call_clears_last_error() {
     assert!(!lanes_last_error().is_null());
 
     // Now make a successful call
-    let good_source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n").unwrap();
+    let good_source = CString::new(sst("fn @main() {\n  cpu::cpu.halt\n}\n")).unwrap();
     let status = unsafe { lanes_program_from_text(good_source.as_ptr(), &mut prog) };
     assert_eq!(status, LanesStatus::Ok);
 
@@ -205,8 +224,7 @@ fn successful_call_clears_last_error() {
 
 #[test]
 fn validate_structure_valid_program() {
-    let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
+    let source = CString::new(sst("fn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n"),
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
@@ -226,8 +244,7 @@ fn validate_structure_valid_program() {
 #[test]
 fn validate_structure_with_errors() {
     // initial_fill after a non-constant instruction
-    let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.halt\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n}\n.text(root).\n.section(root).\n",
+    let source = CString::new(sst("fn @main() {\n  cpu::cpu.halt\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n}\n"),
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
@@ -257,8 +274,7 @@ fn validate_structure_with_errors() {
 
 #[test]
 fn simulate_stack_valid() {
-    let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
+    let source = CString::new(sst("fn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n"),
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
@@ -278,7 +294,7 @@ fn simulate_stack_valid() {
 #[test]
 fn simulate_stack_with_errors() {
     // Pop on an empty stack underflows.
-    let source = CString::new("sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.pop\n}\n.text(root).\n.section(root).\n").unwrap();
+    let source = CString::new(sst("fn @main() {\n  lanes::lanes.pop\n}\n")).unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
     unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 
@@ -337,8 +353,7 @@ fn arch_from_json_invalid() {
 
 #[test]
 fn validate_addresses_with_arch() {
-    let source = CString::new(
-        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.const_loc 0x00000001\n  lanes::lanes.initial_fill 2\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
+    let source = CString::new(sst("fn @main() {\n  lanes::lanes.const_loc 0x00000000\n  lanes::lanes.const_loc 0x00000001\n  lanes::lanes.initial_fill 2\n  cpu::cpu.halt\n}\n"),
     )
     .unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();

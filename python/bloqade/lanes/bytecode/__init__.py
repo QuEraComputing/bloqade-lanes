@@ -29,8 +29,8 @@ C library helpers:
 Exception hierarchy:
     - :class:`ArchSpecError` -- architecture validation (18 subclasses)
     - :class:`ValidationError` -- bytecode validation
-    - :class:`ParseError` -- SST text format parsing
-    - :class:`ProgramError` -- native LANES binary format parsing
+    - :class:`ParseError` -- ``sst v1`` text container parsing
+    - :class:`ProgramError` -- ``VHBC`` binary container parsing
     - :class:`DecodeError` -- instruction decoding
 """
 

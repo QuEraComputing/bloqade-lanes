@@ -2520,8 +2520,8 @@ class Instruction:
 class Program:
     """A bytecode program consisting of a version and instruction sequence.
 
-    Programs can be constructed directly, parsed from SST text assembly,
-    or deserialized from native LANES binary format.
+    Programs can be constructed directly, parsed from vihaco's ``sst v1``
+    text container, or deserialized from its ``VHBC`` binary container.
 
     Args:
         version (tuple[int, int]): Program version as ``(major, minor)``.
@@ -2556,10 +2556,10 @@ class Program:
 
     @staticmethod
     def from_binary(data: bytes) -> Program:
-        """Deserialize a program from native LANES binary format.
+        """Deserialize a program from vihaco's ``VHBC`` binary container.
 
         Args:
-            data (bytes): Raw native LANES binary data.
+            data (bytes): Raw ``VHBC`` container bytes.
 
         Returns:
             Program: The deserialized program.
@@ -2570,10 +2570,15 @@ class Program:
         ...
 
     def to_binary(self) -> bytes:
-        """Serialize the program to native LANES binary format.
+        """Serialize the program to vihaco's ``VHBC`` binary container.
 
         Returns:
-            bytes: The native LANES binary representation.
+            bytes: The ``VHBC`` container bytes.
+
+        Raises:
+            ProgramError: If an instruction has no encodable form. Today
+                that is only a runtime label, whose identifier means
+                nothing outside the parse that produced it.
         """
         ...
 

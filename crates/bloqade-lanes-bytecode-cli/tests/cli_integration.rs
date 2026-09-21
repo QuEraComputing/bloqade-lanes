@@ -7,34 +7,38 @@ fn cmd() -> Command {
     assert_cmd::cargo_bin_cmd!("bloqade-bytecode")
 }
 
-/// A small program for basic command tests.
-const SAMPLE_PROGRAM: &str = "\
-sst v1
+/// Wrap a program body in vihaco's `sst v1` section container.
+///
+/// The framing is eleven lines that say nothing about the test, and it was
+/// pasted into every program below. Behind this helper a container change is
+/// one edit rather than five. `body` is the `.text(root)` payload — normally a
+/// whole `fn @main()` block, trailing newline included.
+fn sst(body: &str) -> String {
+    sst_version("1.0", body)
+}
 
-.section(root):
-.header(root):
-version 1.0
-.header(root).
-.text(root):
+fn sst_version(version: &str, body: &str) -> String {
+    format!(
+        "sst v1\n\n.section(root):\n.header(root):\nversion {version}\n\
+         .header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
+    )
+}
+
+/// A small program for basic command tests.
+fn sample_program() -> String {
+    sst("\
 fn @main() {
   lanes::lanes.const_loc 0x00000102
   lanes::lanes.const_lane 0x0000000100030002
   cpu::cpu.halt
 }
-.text(root).
-.section(root).
-";
+")
+}
 
 /// All 23 instructions exercised in a single program.
 /// Ordered so that initial_fill comes right after constants (structurally valid).
-const ALL_INSTRUCTIONS_PROGRAM: &str = "\
-sst v1
-
-.section(root):
-.header(root):
-version 1.0
-.header(root).
-.text(root):
+fn all_instructions_program() -> String {
+    sst("\
 fn @main() {
   cpu::cpu.const f64, 1.5
   cpu::cpu.const i64, 42
@@ -60,34 +64,26 @@ fn @main() {
   lanes::lanes.set_observable
   cpu::cpu.halt
 }
-.text(root).
-.section(root).
-";
+")
+}
 
 /// A program with addresses valid for the test arch spec (word_id=0, site_id in 0..5, bus_id=0).
-const ARCH_VALID_PROGRAM: &str = "\
-sst v1
-
-.section(root):
-.header(root):
-version 1.0
-.header(root).
-.text(root):
+fn arch_valid_program() -> String {
+    sst("\
 fn @main() {
   lanes::lanes.const_loc 0x00000001
   lanes::lanes.const_zone 0x00000000
   cpu::cpu.halt
 }
-.text(root).
-.section(root).
-";
+")
+}
 
 #[test]
 fn test_assemble_creates_binary() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
     let output = dir.path().join("prog.bin");
-    fs::write(&input, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input, all_instructions_program()).unwrap();
 
     cmd()
         .args([
@@ -110,7 +106,7 @@ fn test_disassemble_to_stdout() {
     let dir = TempDir::new().unwrap();
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     // First assemble
     cmd()
@@ -143,7 +139,7 @@ fn test_disassemble_to_file() {
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
     let output_txt = dir.path().join("out.sst");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     cmd()
         .args([
@@ -204,7 +200,7 @@ fn test_round_trip_assemble_disassemble() {
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
     let output_txt = dir.path().join("out.sst");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     // Assemble
     cmd()
@@ -250,7 +246,7 @@ fn test_round_trip_assemble_disassemble() {
 fn test_validate_text_file() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
-    fs::write(&input, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input, all_instructions_program()).unwrap();
 
     cmd()
         .args(["validate", input.to_str().unwrap()])
@@ -264,7 +260,7 @@ fn test_validate_binary_file() {
     let dir = TempDir::new().unwrap();
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     cmd()
         .args([
@@ -287,7 +283,7 @@ fn test_validate_binary_file() {
 fn test_validate_with_arch_spec() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
-    fs::write(&input, ARCH_VALID_PROGRAM).unwrap();
+    fs::write(&input, arch_valid_program()).unwrap();
 
     let arch_json = r#"{
         "version": "2.0",
@@ -329,7 +325,7 @@ fn test_validate_with_arch_spec() {
 fn test_validate_with_simulate_stack() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
-    fs::write(&input, SAMPLE_PROGRAM).unwrap();
+    fs::write(&input, sample_program()).unwrap();
 
     cmd()
         .args(["validate", input.to_str().unwrap(), "--simulate-stack"])
@@ -359,7 +355,7 @@ fn test_validate_detects_invalid_arch_addresses() {
     let dir = TempDir::new().unwrap();
     // This program references word_id=1, site_id=2 which doesn't exist in the arch
     let input = dir.path().join("prog.sst");
-    fs::write(&input, SAMPLE_PROGRAM).unwrap();
+    fs::write(&input, sample_program()).unwrap();
 
     let arch_json = r#"{
         "version": "2.0",
@@ -401,7 +397,7 @@ fn test_assemble_invalid_syntax() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("bad.sst");
     let output = dir.path().join("out.bin");
-    fs::write(&input, "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n.text(root):\nfn @main() {\n  foobar_invalid}\n.text(root).\n.section(root).\n").unwrap();
+    fs::write(&input, sst("fn @main() {\n  foobar_invalid}\n")).unwrap();
 
     cmd()
         .args([
@@ -550,7 +546,10 @@ fn test_round_trip_preserves_version() {
     let binary = dir.path().join("prog.bin");
     fs::write(
         &input,
-        "sst v1\n\n.section(root):\n.header(root):\nversion 2.3\n.header(root).\n.text(root):\nfn @main() {\n  cpu::cpu.const i64, 99\n  cpu::cpu.halt}\n.text(root).\n.section(root).\n",
+        sst_version(
+            "2.3",
+            "fn @main() {\n  cpu::cpu.const i64, 99\n  cpu::cpu.halt}\n",
+        ),
     )
     .unwrap();
 

@@ -421,7 +421,7 @@ class InvalidOperandError(ParseError):
 
 
 class ProgramError(Exception):
-    """Base class for native LANES binary format errors."""
+    """Base class for ``VHBC`` binary container errors."""
 
 
 class BadMagicError(ProgramError):
@@ -436,6 +436,10 @@ class TruncatedError(ProgramError):
         super().__init__(f"truncated: expected {expected} bytes, got {got}")
 
 
+# Deprecated: no Rust path maps here anymore. `LANES` framed a program as a
+# flat list of typed sections; `VHBC` carries a section *tree* whose framing
+# faults vihaco reports itself, surfacing as DecodeErrorInProgram (kept for
+# backward-compatible imports).
 class UnknownSectionTypeError(ProgramError):
     def __init__(self, section_type: int):
         self.section_type = section_type
@@ -460,11 +464,16 @@ class UnalignedCodeError(ProgramError):
         super().__init__(f"code length {length} is not a multiple of {width}")
 
 
+# Deprecated: no Rust path maps here anymore. A `VHBC` root section always
+# has a header and a bytecode region, so neither can go missing the way a
+# `LANES` section could (kept for backward-compatible imports).
 class MissingMetadataSectionError(ProgramError):
     def __init__(self):
         super().__init__("missing metadata section")
 
 
+# Deprecated: see MissingMetadataSectionError (kept for backward-compatible
+# imports).
 class MissingCodeSectionError(ProgramError):
     def __init__(self):
         super().__init__("missing code section")
