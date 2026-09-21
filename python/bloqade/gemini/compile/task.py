@@ -11,6 +11,7 @@ from kirin.validation import ValidationSuite
 
 from bloqade.gemini.cudaq import cudaq_to_squin, is_cudaq_kernel
 from bloqade.gemini.logical.dialects.operations.stmts import TerminalLogicalMeasurement
+from bloqade.gemini.logical.validation.arguments import GeminiLogicalArgumentValidation
 from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
 from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
@@ -53,6 +54,11 @@ def run_squin_kernel_validation(mt: ir.Method):
             GeminiLogicalValidation,
             GeminiTerminalMeasurementValidation,
             FlatKernelNoCloningValidation,
+            # NOTE: not redundant with the `@logical.kernel` decorator. A method
+            # reaching `compile_task` need never have been decorated -- the
+            # CUDA-Q path builds one by conversion -- so this is the only place
+            # the no-arguments contract is checked on that route.
+            GeminiLogicalArgumentValidation,
         ]
     )
     return validator.validate(mt)

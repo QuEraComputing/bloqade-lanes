@@ -10,7 +10,8 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
 from bloqade import squin
-from bloqade.gemini import logical
+from bloqade.gemini import GeminiLogicalDevice, logical
+from bloqade.gemini.compile import run_squin_kernel_validation
 from bloqade.gemini.logical.validation.arguments import (
     GeminiLogicalArgumentValidation,
 )
@@ -18,6 +19,28 @@ from bloqade.gemini.logical.validation.arguments import (
 
 def _validate(method):
     return ValidationSuite([GeminiLogicalArgumentValidation]).validate(method)
+
+
+def _program_taking_an_argument():
+    """A program that would not survive decoration -- hence `verify=False`."""
+
+    @logical.kernel(verify=False)
+    def main(n: int):
+        q = squin.qalloc(2)
+        squin.h(q[0])
+        logical.terminal_measure(q)
+
+    return main
+
+
+def _program_taking_nothing():
+    @logical.kernel
+    def main():
+        q = squin.qalloc(2)
+        squin.h(q[0])
+        logical.terminal_measure(q)
+
+    return main
 
 
 # --- programs -----------------------------------------------------------------
@@ -99,3 +122,40 @@ def test_a_sub_kernel_that_allocates_is_treated_as_a_program():
         logical.terminal_measure(q)
 
     assert not _validate(allocates).is_valid
+
+
+# --- the other entry points ---------------------------------------------------
+#
+# The decorator is not the only way a method reaches compilation: `compile_task`
+# takes any `ir.Method` (the CUDA-Q route builds one by conversion), and a
+# method can be handed straight to the device. Each is its own enforcement
+# point, so each is pinned here.
+
+
+def test_the_squin_compile_path_rejects_a_program_with_arguments():
+    result = run_squin_kernel_validation(_program_taking_an_argument())
+
+    assert not result.is_valid
+    assert any(
+        "must take no arguments" in error.args[0]
+        for errors in result.errors.values()
+        for error in errors
+    )
+
+
+def test_the_squin_compile_path_accepts_a_program_without_arguments():
+    assert run_squin_kernel_validation(_program_taking_nothing()).is_valid
+
+
+def test_the_device_suite_rejects_a_program_with_arguments():
+    suite = GeminiLogicalDevice().validation_suite
+    assert suite is not None
+
+    assert not suite.validate(_program_taking_an_argument()).is_valid
+
+
+def test_the_device_suite_accepts_a_program_without_arguments():
+    suite = GeminiLogicalDevice().validation_suite
+    assert suite is not None
+
+    assert suite.validate(_program_taking_nothing()).is_valid
