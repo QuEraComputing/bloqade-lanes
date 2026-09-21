@@ -879,6 +879,82 @@ mod tests {
         }
     }
 
+    /// Every `<device>::<dialect>.<mnemonic>` the docs print must be real.
+    ///
+    /// `inst-spec.md` documented `cpu::cpu.const_int`, `cpu::cpu.const_float`
+    /// and `cpu::cpu.return`, none of which parse: the constants are one typed
+    /// `const` taking a comma, and `return` is spelled `ret`. Prose drifts
+    /// silently, so the docs are read here rather than trusted.
+    #[test]
+    fn every_documented_mnemonic_exists() {
+        use crate::isa::bytecode::tests_support::every_instruction;
+        use std::collections::BTreeSet;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let docs = [
+            (
+                "docs/src/bytecode/inst-quick-ref.md",
+                include_str!("../../../../docs/src/bytecode/inst-quick-ref.md"),
+            ),
+            (
+                "docs/src/bytecode/inst-spec.md",
+                include_str!("../../../../docs/src/bytecode/inst-spec.md"),
+            ),
+            (
+                "docs/src/migration/migration_guide_0_12.md",
+                include_str!("../../../../docs/src/migration/migration_guide_0_12.md"),
+            ),
+        ];
+
+        // `label` is excluded from the exhaustive list because it has no
+        // encodable form, but it is still a spelling the docs may use.
+        let real: BTreeSet<String> = every_instruction()
+            .iter()
+            .chain(std::iter::once(&MachineInstruction::Cpu(C::Label(
+                vihaco_parser::Ident("l".into()),
+            ))))
+            .map(|i| to_sst_text(i).split([' ', ',']).next().unwrap().to_owned())
+            .collect();
+
+        // A full text spelling is `<device>::<dialect>.<mnemonic>`. The
+        // narrower `cpu::add` form also appears in the docs — it is how a
+        // `DecodingError` names an instruction — but that is `op_name`, not a
+        // text mnemonic, so it is not what this test is about.
+        let is_text_spelling = |token: &str| {
+            token
+                .split_once("::")
+                .and_then(|(device, rest)| {
+                    let (dialect, mnemonic) = rest.split_once('.')?;
+                    Some(
+                        matches!(device, "cpu" | "lanes")
+                            && matches!(dialect, "cpu" | "lanes")
+                            && !mnemonic.is_empty(),
+                    )
+                })
+                .unwrap_or(false)
+        };
+
+        let mut bogus = Vec::new();
+        for (file, text) in docs {
+            let tokens =
+                text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':' || c == '.'));
+            for token in tokens {
+                let token = token.trim_end_matches('.');
+                if is_text_spelling(token) && !real.contains(token) {
+                    bogus.push(format!("  {file}: `{token}`"));
+                }
+            }
+        }
+        bogus.sort();
+        bogus.dedup();
+        assert!(
+            bogus.is_empty(),
+            "the docs name {} mnemonic(s) the machine does not have:\n{}",
+            bogus.len(),
+            bogus.join("\n")
+        );
+    }
+
     /// Symbolic control flow renders, but cannot be lowered without a label
     /// table — the error says so rather than silently inventing an address.
     #[test]

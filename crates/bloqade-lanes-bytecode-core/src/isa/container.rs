@@ -64,8 +64,9 @@ pub const ROOT_SECTION: &str = "root";
 /// The global context exists to resolve child-section *names*, and a lanes
 /// program has no child sections — so there is nothing to carry and nothing to
 /// resolve. vihaco's own [`vihaco::NoContext`] would say the same thing, but it
-/// only implements the SST half of the pair ([`SstGlobalContext`], not
-/// [`BytecodeGlobalContext`]), so it cannot be used on the binary path.
+/// only implements the SST half of the pair ([`vihaco::SstGlobalContext`],
+/// not [`vihaco::BytecodeGlobalContext`]), so it cannot be used on the
+/// binary path.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LanesContext;
 

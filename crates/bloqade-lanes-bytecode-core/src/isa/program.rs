@@ -1,12 +1,13 @@
 //! Flat program container for the vihaco-backed ISA.
 //!
-//! A program is a [`Version`] plus a flat `Vec<`[`Instruction`]`>` — no
-//! functions, labels, or string interner (our programs are a single flat
-//! instruction list; see <https://github.com/QuEraComputing/bloqade-lanes/issues/769>).
-//! vihaco's [`LocalModule`] / loader machinery carries that structured-language
-//! support, so we keep a thin container and delegate the per-instruction work to
-//! vihaco's derived codec ([`WriteBytes`]/[`FromBytes`]) and to the text parser
-//! in [`super::syntax`].
+//! A program is a [`Version`] plus a flat `Vec<`[`MachineInstruction`]`>` —
+//! no functions, labels, or string interner (our programs are a single flat
+//! instruction list; see
+//! <https://github.com/QuEraComputing/bloqade-lanes/issues/769>). vihaco's
+//! [`LocalModule`] / loader machinery carries that structured-language
+//! support, so we keep a thin container and delegate the per-instruction
+//! work to the mirror ISA's derived codec ([`WriteBytes`]/[`FromBytes`], see
+//! [`super::bytecode`]) and to the text parser in [`super::text`].
 //!
 //! ## Container
 //!
@@ -108,8 +109,8 @@ pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> Program {
 ///
 /// The variants are unchanged from the pre-container format because each maps to
 /// a Python exception class; what changed is where they come from. vihaco's
-/// container parser reports failures as `eyre::Report`, so
-/// [`classify`] sorts those messages back into these variants.
+/// container parser reports failures as `eyre::Report`, so `classify` sorts
+/// those messages back into these variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryError {
     /// The file did not start with vihaco's `VHBC` magic.

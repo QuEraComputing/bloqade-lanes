@@ -1314,7 +1314,7 @@ mod tests {
 
     #[test]
     fn stack_sim_int_const_and_pop() {
-        // `const.i64` pushes an INT; `pop` discards it. Well typed.
+        // `cpu::cpu.const i64` pushes an INT; `pop` discards it. Well typed.
         let p = program(vec![
             M::Cpu(C::Const(Type::I64, Value::I64(7))),
             M::Lanes(L::Pop),

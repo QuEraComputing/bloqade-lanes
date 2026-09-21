@@ -208,30 +208,24 @@ Packed into one `u32`:
 
 ### Stack ops
 
-Spelled under the `cpu.` dialect head. These mirror vihaco-cpu's stack ops, but
-are declared natively in our own `Instruction` enum: as of vihaco 0.4,
-vihaco-cpu is a runtime *component* whose instructions carry no binary codec, so
-they cannot be nested in an encodable ISA.
+These come from vihaco-cpu's `CPU` component, composed as the `cpu` device
+(see [The machine](#the-machine)) — except `pop` and `swap`, which vihaco-cpu
+has neither of and which therefore live on the lanes device.
 
-#### `cpu::cpu.const_int` — Push integer constant
-
-| Field | Value |
-|---|---|
-| Opcode | `0x0011` |
-| Operands | `i64` LE (8 bytes) |
-| Stack | `( -- int)` |
-
-Pushes a signed 64-bit integer onto the stack.
-
-#### `cpu::cpu.const_float` — Push float constant
+#### `cpu::cpu.const <type>, <value>` — Push a constant
 
 | Field | Value |
 |---|---|
 | Opcode | `0x0011` |
-| Operands | `f64` LE (8 bytes) |
-| Stack | `( -- float)` |
+| Operands | type tag (1 byte) + value tag (1 byte) + payload (up to 8 bytes) |
+| Stack | `( -- value)` |
 
-Pushes a 64-bit float onto the stack.
+One typed instruction, not one per type — note the comma:
+`cpu::cpu.const i64, 42`, `cpu::cpu.const f64, 1.5`. All nine of vihaco's
+types encode, though the lanes compiler emits only `i64` and `f64`. The Python
+`op_name()` still reports `const_int` / `const_float`, because the decoder
+pushes a different value type for each and the mnemonic alone would not say
+which.
 
 #### `cpu::cpu.dup` — Duplicate top of stack
 
@@ -257,13 +251,16 @@ Pushes a 64-bit float onto the stack.
 | Operands | none |
 | Stack | `(a b -- b a)` |
 
-#### `cpu::cpu.return` — Return from program
+#### `cpu::cpu.ret <n>` — Return from the current function
 
 | Field | Value |
 |---|---|
 | Opcode | `0x0006` |
-| Operands | none |
-| Stack | `( -- )` |
+| Operands | keep count, `u32` LE (4 bytes) |
+| Stack | `(a -- )` |
+
+`<n>` is how many values to keep as the return value. The Python `op_name()`
+reports `"return"`, which predates vihaco-cpu's spelling.
 
 #### `cpu::cpu.halt` — Halt execution
 

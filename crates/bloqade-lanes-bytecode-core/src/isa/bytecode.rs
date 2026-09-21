@@ -32,8 +32,12 @@ use super::machine::MachineInstruction;
 
 /// Width, in bytes, of every encoded instruction word.
 ///
-/// Derived, not chosen: vihaco computes it as the widest variant. Today that is
-/// `Cpu(Const(BytecodeType, BytecodeValue))`.
+/// Derived, not chosen: vihaco computes it as `1 + Σ field widths` of the
+/// widest variant. Today that is 14 — a device byte, an opcode byte, and
+/// three `u32`s — reached by both `Cpu(Span(u32, u32, u32))` and
+/// `Lanes(NewArray(u32, u32, u32))`. (`Const(BytecodeType, BytecodeValue)` is
+/// only 12.) Every narrower instruction is zero-padded to match, so a program
+/// is N concatenated words.
 pub fn instruction_width() -> u32 {
     BytecodeInstruction::width()
 }
@@ -573,6 +577,35 @@ mod tests {
                 &buf[..2]
             );
         }
+    }
+
+    /// The word width is what the doc on `instruction_width` claims it is.
+    ///
+    /// 14 = 1 device byte + 1 opcode byte + three `u32`s, reached by the
+    /// widest variant on *either* device. It is derived, so it moves the
+    /// moment either gains a wider operand — which is worth noticing, since
+    /// it is the on-disk format.
+    #[test]
+    fn the_word_width_comes_from_the_widest_variant() {
+        assert_eq!(instruction_width(), 14);
+        for widest in [
+            BytecodeInstruction::Cpu(BytecodeCpu::Span(1, 2, 3)),
+            BytecodeInstruction::Lanes(BytecodeLanes::NewArray(1, 2, 3)),
+        ] {
+            let mut buf = Vec::new();
+            widest.write_bytes(&mut buf).unwrap();
+            assert_eq!(buf.len(), 14, "{widest:?}");
+        }
+        // The `const` word is narrower, and is padded out to match.
+        let mut buf = Vec::new();
+        BytecodeInstruction::Cpu(BytecodeCpu::Const(
+            BytecodeType::F64,
+            BytecodeValue::F64(1.5),
+        ))
+        .write_bytes(&mut buf)
+        .unwrap();
+        assert_eq!(buf.len(), 14);
+        assert_eq!(&buf[12..], &[0, 0], "the last two bytes should be padding");
     }
 
     /// Distinct instructions must get distinct opcodes — the defect the
