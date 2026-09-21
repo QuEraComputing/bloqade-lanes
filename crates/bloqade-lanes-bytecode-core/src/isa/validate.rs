@@ -131,7 +131,7 @@ const MAX_TYPE_TAG: u32 = tag::MEASUREMENT_RESULT as u32;
 /// site, so a million is already orders of magnitude past any physical
 /// architecture — the bound exists to make a malformed word a diagnosis
 /// rather than a hang.
-const MAX_ARRAY_ELEMENTS: u64 = 1 << 20;
+pub const MAX_ARRAY_ELEMENTS: u64 = 1 << 20;
 
 /// Maximum number of indices a `get_item` may take.
 ///
@@ -139,7 +139,7 @@ const MAX_ARRAY_ELEMENTS: u64 = 1 << 20;
 /// 2-D and one or two indices is the only well-formed shape. The Python
 /// `stack_move.GetItem` documents the same invariant and defers enforcement
 /// here.
-const MAX_GET_ITEM_DIMS: u32 = 2;
+pub const MAX_GET_ITEM_DIMS: u32 = 2;
 
 /// Element count of a `new_array`, in `u64` so the product cannot overflow.
 /// `dim1 == 0` means a 1-D array.

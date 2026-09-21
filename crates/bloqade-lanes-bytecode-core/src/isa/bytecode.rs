@@ -190,22 +190,35 @@ pub enum BytecodeInstruction {
 ///
 /// Both halves shift when either instruction set gains a variant, so compare
 /// identity with `op_name()` rather than a literal.
+///
+/// Neither half is written down here. The device tag is read back off the
+/// constructed [`BytecodeInstruction`], so it is by construction the byte that
+/// goes on disk — literals would have drifted silently the first time either
+/// the variant order or a `#[device(..)]` attribute changed, and every test
+/// compares via `op_name`, so nothing would have caught it.
+///
+/// An instruction with no encodable form — today just a runtime label, whose
+/// identifier is meaningless outside its parse — reports
+/// [`NO_ENCODABLE_FORM`] rather than colliding with a real opcode.
 pub fn packed_opcode(inst: &MachineInstruction) -> u16 {
-    let (device, code) = match inst {
-        MachineInstruction::Cpu(_) => (0u16, encode_cpu_opcode(inst)),
-        MachineInstruction::Lanes(i) => (1u16, OpCode::opcode(&encode_lanes(i))),
+    let Ok(encoded) = encode(inst) else {
+        return NO_ENCODABLE_FORM;
     };
-    (device << 8) | code as u16
+    let device = OpCode::opcode(&encoded) as u16;
+    let code = match &encoded {
+        BytecodeInstruction::Cpu(i) => OpCode::opcode(i),
+        BytecodeInstruction::Lanes(i) => OpCode::opcode(i),
+    } as u16;
+    (device << 8) | code
 }
 
-/// The nested opcode of a CPU instruction, or `0` for one with no encodable
-/// form (a runtime label).
-fn encode_cpu_opcode(inst: &MachineInstruction) -> u8 {
-    match inst {
-        MachineInstruction::Cpu(i) => encode_cpu(i).map(|e| OpCode::opcode(&e)).unwrap_or(0),
-        _ => 0,
-    }
-}
+/// Reported by [`packed_opcode`] for an instruction that cannot be encoded.
+///
+/// `0xFFFF` is outside the packed space — the device tag is a
+/// [`BytecodeInstruction`] variant index and the code an inner variant index,
+/// so neither half can reach `0xFF`. A plain `0` would have collided with the
+/// first CPU instruction's real opcode.
+pub const NO_ENCODABLE_FORM: u16 = 0xFFFF;
 
 /// Map a runtime instruction to its encodable mirror.
 pub fn encode(inst: &MachineInstruction) -> eyre::Result<BytecodeInstruction> {
@@ -372,11 +385,14 @@ fn decode_lanes(inst: BytecodeLanes) -> LanesInstruction {
     }
 }
 
+/// The exhaustive instruction list the tests walk.
+///
+/// It lives outside `mod tests` because `machine`'s renderer tests walk the
+/// same list: there is one place to keep exhaustive, not two that can drift
+/// apart while both look thorough.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_support {
     use super::*;
-    use vihaco::instruction::{FromBytes, WriteBytes};
-    use vihaco_parser::Ident;
 
     /// **Every** variant of both instruction sets.
     ///
@@ -384,7 +400,7 @@ mod tests {
     /// here is a variant whose encoding nothing checks. The only omission is
     /// `Label`, which carries a parse-local identifier and deliberately has no
     /// encodable form — `a_runtime_label_cannot_be_encoded` covers that.
-    fn samples() -> Vec<MachineInstruction> {
+    pub(crate) fn every_instruction() -> Vec<MachineInstruction> {
         // One instance of each typed op per type, so the Type mirror is covered
         // in both directions too.
         let tys = [
@@ -483,6 +499,14 @@ mod tests {
             .chain(lanes.into_iter().map(MachineInstruction::Lanes))
             .collect()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::every_instruction as samples;
+    use super::*;
+    use vihaco::instruction::{FromBytes, WriteBytes};
+    use vihaco_parser::Ident;
 
     #[test]
     fn every_instruction_round_trips_through_bytes() {
@@ -526,5 +550,60 @@ mod tests {
         let label = MachineInstruction::Cpu(CpuInstruction::Label(Ident("loop".into())));
         let err = encode(&label).unwrap_err().to_string();
         assert!(err.contains("cannot be encoded"), "got {err}");
+        // And it reports a code no real instruction can occupy, rather than
+        // colliding with the first CPU opcode.
+        assert_eq!(packed_opcode(&label), NO_ENCODABLE_FORM);
+    }
+
+    /// The opcode Python reports must be the bytes that went to disk.
+    ///
+    /// Nothing else checks this: every other test compares instructions via
+    /// `op_name`, so a `packed_opcode` that disagreed with the encoding would
+    /// stay green. The first two bytes of a word are the device tag and the
+    /// instruction's own code, which is exactly what the packing claims to be.
+    #[test]
+    fn the_packed_opcode_is_the_first_two_bytes_on_disk() {
+        for inst in samples() {
+            let mut buf = Vec::new();
+            encode(&inst).unwrap().write_bytes(&mut buf).unwrap();
+            assert_eq!(
+                packed_opcode(&inst),
+                ((buf[0] as u16) << 8) | buf[1] as u16,
+                "{inst:?}: packed opcode disagrees with its encoding {:02x?}",
+                &buf[..2]
+            );
+        }
+    }
+
+    /// Distinct instructions must get distinct opcodes — the defect the
+    /// packing exists to fix was every lanes op reporting the device tag.
+    #[test]
+    fn each_instruction_has_its_own_packed_opcode() {
+        let mut seen: std::collections::HashMap<u16, MachineInstruction> = Default::default();
+        for inst in samples() {
+            let code = packed_opcode(&inst);
+            // The type is an operand, not part of the opcode, so `add i64`
+            // and `add f64` — and all nine `const` spellings — legitimately
+            // share one. Key on the mnemonic, which is what an opcode names.
+            let mnemonic = |i: &MachineInstruction| {
+                super::super::machine::to_sst_text(i)
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            };
+            if let Some(other) = seen.insert(code, inst.clone()) {
+                assert_eq!(
+                    mnemonic(&other),
+                    mnemonic(&inst),
+                    "{inst:?} and {other:?} share opcode {code:#06x}"
+                );
+            }
+        }
+        // Sanity: the two devices land in different high bytes.
+        assert_ne!(
+            packed_opcode(&MachineInstruction::Cpu(CpuInstruction::Halt)) >> 8,
+            packed_opcode(&MachineInstruction::Lanes(LanesInstruction::Cz)) >> 8,
+        );
     }
 }

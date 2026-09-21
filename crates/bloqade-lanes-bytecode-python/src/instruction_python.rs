@@ -261,7 +261,7 @@ impl PyInstruction {
         bytecode::packed_opcode(&self.inner)
     }
 
-    fn op_name(&self) -> String {
+    fn op_name(&self) -> &'static str {
         machine::op_name(&self.inner)
     }
 

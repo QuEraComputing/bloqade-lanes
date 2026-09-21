@@ -377,24 +377,100 @@ pub fn device_of(inst: &MachineInstruction) -> &'static str {
 ///   single typed `const`, since the decoder pushes a different value type for
 ///   each and the mnemonic alone would not say which;
 /// - `return` keeps its spelling rather than vihaco-cpu's `ret`.
-pub fn op_name(inst: &MachineInstruction) -> String {
+///
+/// This is a `match` rather than the first token of [`to_sst_text`] because it
+/// runs once per instruction in the Python decoder's loop, and rendering to
+/// recover a name means formatting the operand that is then thrown away —
+/// `const_loc` cost a 20-character hex format of its `u64` plus two
+/// allocations, for one of about sixty fixed strings.
+/// `every_op_name_matches_its_mnemonic` keeps it in step with the renderer.
+pub fn op_name(inst: &MachineInstruction) -> &'static str {
     match inst {
-        MachineInstruction::Cpu(vihaco_cpu::RuntimeInstruction::Return(_)) => "return".into(),
-        MachineInstruction::Cpu(vihaco_cpu::RuntimeInstruction::Const(ty, _)) => match ty {
-            Type::F64 => "const_float".into(),
-            Type::I64 => "const_int".into(),
-            other => format!("const_{}", cpu_type_text(*other)),
+        MachineInstruction::Cpu(i) => cpu_op_name(i),
+        MachineInstruction::Lanes(i) => lanes_op_name(i),
+    }
+}
+
+fn cpu_op_name(inst: &vihaco_cpu::RuntimeInstruction) -> &'static str {
+    use vihaco_cpu::RuntimeInstruction as C;
+    match inst {
+        C::Span(..) => "span",
+        C::Label(_) => "label",
+        C::FunctionStart => "func_start",
+        C::FunctionEnd => "func_end",
+        C::Breakpoint => "breakpoint",
+        C::Branch(_) => "br",
+        C::ConditionalBranch(..) => "cond_br",
+        C::Return(_) => "return",
+        C::IndirectCall => "call_indirect",
+        C::Call(..) => "call",
+        C::Halt => "halt",
+        C::Print => "print",
+        C::Load(..) => "load",
+        C::Store(..) => "store",
+        C::Dup => "dup",
+        C::HeapAlloc(_) => "heap_alloc",
+        C::GetItem => "get_item",
+        C::HeapDealloc => "heap_dealloc",
+        C::Const(ty, _) => match ty {
+            Type::Undefined => "const_undef",
+            Type::String => "const_str",
+            Type::Bool => "const_bool",
+            Type::I64 => "const_int",
+            Type::U32 => "const_u32",
+            Type::U64 => "const_u64",
+            Type::F64 => "const_float",
+            Type::FunctionRef => "const_fn_ref",
+            Type::HeapRef => "const_heap_ref",
         },
-        MachineInstruction::Cpu(i) => cpu_text(i)
-            .split([' ', ','])
-            .next()
-            .unwrap_or_default()
-            .to_string(),
-        MachineInstruction::Lanes(i) => lanes_text(i)
-            .split_whitespace()
-            .next()
-            .unwrap_or_default()
-            .to_string(),
+        C::Add(_) => "add",
+        C::Sub(_) => "sub",
+        C::Mul(_) => "mul",
+        C::Div(_) => "div",
+        C::Rem(_) => "rem",
+        C::Neg(_) => "neg",
+        C::Shl(_) => "shl",
+        C::Shr(_) => "shr",
+        C::Rol(_) => "rol",
+        C::Ror(_) => "ror",
+        C::BitAnd(_) => "bitand",
+        C::BitOr(_) => "bitor",
+        C::BitXor(_) => "bitxor",
+        C::Not => "not",
+        C::And => "and",
+        C::Or => "or",
+        C::Xor => "xor",
+        C::Eq(_) => "eq",
+        C::Ne(_) => "ne",
+        C::Lt(_) => "lt",
+        C::Gt(_) => "gt",
+        C::Le(_) => "le",
+        C::Ge(_) => "ge",
+    }
+}
+
+fn lanes_op_name(inst: &LanesInstruction) -> &'static str {
+    use LanesInstruction as L;
+    match inst {
+        L::Pop => "pop",
+        L::Swap => "swap",
+        L::ConstLoc(_) => "const_loc",
+        L::ConstLane(_) => "const_lane",
+        L::ConstZone(_) => "const_zone",
+        L::InitialFill(_) => "initial_fill",
+        L::Fill(_) => "fill",
+        L::Move(_) => "move",
+        L::LocalRz(_) => "local_rz",
+        L::LocalR(_) => "local_r",
+        L::GlobalRz => "global_rz",
+        L::GlobalR => "global_r",
+        L::Cz => "cz",
+        L::Measure(_) => "measure",
+        L::AwaitMeasure => "await_measure",
+        L::NewArray(..) => "new_array",
+        L::GetItem(_) => "get_item",
+        L::SetDetector => "set_detector",
+        L::SetObservable => "set_observable",
     }
 }
 
@@ -413,10 +489,13 @@ pub fn lower(inst: MachineSurfaceInstruction) -> eyre::Result<MachineInstruction
 ///
 /// The surface form is lexical — `SurfaceValue` is a raw token and branch
 /// targets are identifiers — so this is where a constant becomes a typed
-/// [`Value`]. Symbolic control flow is rejected: resolving a label to an address
-/// needs a symbol table for the whole function, which a per-instruction lowering
-/// does not have. A lanes program has no control flow, so nothing we emit hits
-/// this path.
+/// [`Value`].
+///
+/// What this accepts is the counterpart of what [`to_sst_text`] emits: a
+/// decoded binary may hold any of vihaco's nine `const` types, so all nine
+/// parse back. The two rejections both need something a per-instruction
+/// lowering does not have — a symbol table, for symbolic control flow, and a
+/// string table, for a quoted literal.
 fn lower_cpu(inst: CpuSurfaceInstruction) -> eyre::Result<vihaco_cpu::RuntimeInstruction> {
     use CpuSurfaceInstruction as S;
     use vihaco_cpu::RuntimeInstruction as R;
@@ -437,22 +516,37 @@ fn lower_cpu(inst: CpuSurfaceInstruction) -> eyre::Result<vihaco_cpu::RuntimeIns
 
     Ok(match inst {
         S::Const(t, v) => {
+            let ty = ty(t);
+            // A quoted literal would have to be interned to become a
+            // `Value::String`, and interning needs the module's string table —
+            // which a per-instruction lowering does not have. `const str` takes
+            // the interner index instead, which is what the value holds and
+            // what `cpu_value_text` renders.
             let text = match &v {
                 vihaco_cpu::SurfaceValue::Bare(token) => token.0.clone(),
-                vihaco_cpu::SurfaceValue::Quoted(s) => s.0.clone(),
+                vihaco_cpu::SurfaceValue::Quoted(_) => {
+                    return Err(eyre::eyre!(
+                        "a quoted string literal needs the module's string table; \
+                         write the interner index instead"
+                    ));
+                }
             };
-            let ty = ty(t);
+            // Every type the renderer can emit must parse back, or
+            // `disassemble` produces text `assemble` rejects. The three
+            // reference types and `String` are interner/heap indices, so they
+            // read as plain integers.
             let value = match ty {
                 Type::F64 => Value::F64(text.parse()?),
                 Type::I64 => Value::I64(text.parse()?),
                 Type::U64 => Value::U64(text.parse()?),
                 Type::U32 => Value::U32(text.parse()?),
                 Type::Bool => Value::Bool(text.parse()?),
-                other => {
-                    return Err(eyre::eyre!(
-                        "const of type {} is not supported in a lanes program",
-                        cpu_type_text(other)
-                    ));
+                Type::String => Value::String(text.parse()?),
+                Type::FunctionRef => Value::FunctionRef(text.parse()?),
+                Type::HeapRef => Value::HeapRef(text.parse()?),
+                Type::Undefined if text == "undef" => Value::Undefined,
+                Type::Undefined => {
+                    return Err(eyre::eyre!("const undef takes no value but got '{text}'"));
                 }
             };
             R::Const(ty, value)
@@ -660,10 +754,26 @@ mod tests {
     /// the parser, we own the renderer, and its own `Display` emits text its
     /// parser rejects (`halt`, not `cpu.halt`) — so nothing but a test keeps the
     /// two in step across all 42 ops.
+    ///
+    /// `tys` covers all nine of vihaco's types on purpose. It used to list the
+    /// five the lanes compiler emits, which read as exhaustive but left the
+    /// four the lowering rejected — `undef`, `str`, `fn_ref`, `heap_ref` —
+    /// untested. A decoded binary can carry any of them, so `disassemble`
+    /// emitted text `assemble` refused.
     #[test]
     fn every_renderable_cpu_op_round_trips_through_text() {
         use vihaco_cpu::RuntimeInstruction as C;
-        let tys = [Type::Bool, Type::I64, Type::U32, Type::U64, Type::F64];
+        let tys = [
+            Type::Undefined,
+            Type::String,
+            Type::Bool,
+            Type::I64,
+            Type::U32,
+            Type::U64,
+            Type::F64,
+            Type::FunctionRef,
+            Type::HeapRef,
+        ];
         let mut samples = vec![
             C::Span(1, 2, 3),
             C::FunctionStart,
@@ -688,6 +798,14 @@ mod tests {
             C::Const(Type::U64, Value::U64(7)),
             C::Const(Type::U32, Value::U32(3)),
             C::Const(Type::Bool, Value::Bool(true)),
+            C::Const(Type::Bool, Value::Bool(false)),
+            // The four a decoded binary can carry but the lanes compiler never
+            // emits. `String`/`FunctionRef`/`HeapRef` hold interner and heap
+            // indices, not payloads, so they render and parse as integers.
+            C::Const(Type::Undefined, Value::Undefined),
+            C::Const(Type::String, Value::String(4)),
+            C::Const(Type::FunctionRef, Value::FunctionRef(2)),
+            C::Const(Type::HeapRef, Value::HeapRef(5)),
         ];
         for ty in tys {
             samples.extend([
@@ -724,6 +842,40 @@ mod tests {
                 .unwrap_or_else(|e| panic!("rendered {text:?} does not parse: {e:?}"));
             let back = lower(parsed).unwrap_or_else(|e| panic!("{text:?} will not lower: {e}"));
             assert_eq!(back, inst, "round-trip changed {text:?}");
+        }
+    }
+
+    /// `op_name` is a hand-written table, so nothing but this keeps it in step
+    /// with the renderer once an instruction is added or renamed.
+    ///
+    /// The three documented divergences are listed by name rather than waved
+    /// at, so adding a fourth has to be deliberate.
+    #[test]
+    fn every_op_name_matches_its_mnemonic() {
+        use crate::isa::bytecode::tests_support::every_instruction;
+        for inst in every_instruction() {
+            let mnemonic = to_sst_text(&inst)
+                .split([' ', ','])
+                .next()
+                .unwrap()
+                .rsplit('.')
+                .next()
+                .unwrap()
+                .to_owned();
+            let name = op_name(&inst);
+            let known_divergence = match (mnemonic.as_str(), name) {
+                // vihaco-cpu spells it `ret`; the decoder dispatches on
+                // `_visit_return` and predates the rename.
+                ("ret", "return") => true,
+                // `const` is one typed instruction, but the decoder pushes a
+                // different value type per type, so the name carries it.
+                ("const", n) => n.starts_with("const_"),
+                _ => false,
+            };
+            assert!(
+                mnemonic == name || known_divergence,
+                "op_name {name:?} does not match mnemonic {mnemonic:?} for {inst:?}"
+            );
         }
     }
 

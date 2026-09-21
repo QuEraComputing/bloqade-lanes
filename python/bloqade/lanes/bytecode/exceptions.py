@@ -77,6 +77,38 @@ class NewArrayInvalidTypeTagError(ValidationError):
         super().__init__(f"pc {pc}: invalid type tag 0x{type_tag:x}")
 
 
+class NewArrayTooManyElementsError(ValidationError):
+    """``new_array`` declares more elements than the validator will model.
+
+    ``dim0`` and ``dim1`` are read straight out of the instruction word, so
+    their product can reach 2^64; the bound keeps a malformed word from
+    driving an unbounded loop.
+    """
+
+    def __init__(self, pc: int, count: int, maximum: int):
+        self.pc = pc
+        self.count = count
+        self.maximum = maximum
+        super().__init__(
+            f"pc {pc}: new_array declares {count} elements, "
+            f"more than the maximum of {maximum}"
+        )
+
+
+class GetItemInvalidDimsError(ValidationError):
+    """``get_item`` takes an index count no array can have.
+
+    ``new_array`` carries exactly two dimension fields, so an array is at
+    most 2-D and one or two indices is the only well-formed shape.
+    """
+
+    def __init__(self, pc: int, ndims: int, maximum: int):
+        self.pc = pc
+        self.ndims = ndims
+        self.maximum = maximum
+        super().__init__(f"pc {pc}: get_item takes 1..={maximum} indices, got {ndims}")
+
+
 class InitialFillNotFirstError(ValidationError):
     def __init__(self, pc: int):
         self.pc = pc
