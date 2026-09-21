@@ -90,7 +90,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-quick-ref.html"><strong aria-hidden="true">3.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">4.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="bytecode/cli.html"><strong aria-hidden="true">5.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="migration/v0.11.html"><strong aria-hidden="true">6.</strong> Migrating to v0.11</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded "><a href="arch/interactive-visualization.html"><strong aria-hidden="true">3.</strong> Interactive Visualization and HTML Export</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-quick-ref.html"><strong aria-hidden="true">4.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">5.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="bytecode/cli.html"><strong aria-hidden="true">6.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="migration/v0.11.html"><strong aria-hidden="true">7.</strong> Migrating to v0.11</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -710,6 +710,66 @@ see <a href="arch/archspec.html">Architecture Specification</a> for encoding det
 ├── feed_forward: bool                     mid-circuit measurement + classical feedback
 └── atom_reloading: bool                   atom reload after initial fill
 </code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="interactive-visualization-and-html-export"><a class="header" href="#interactive-visualization-and-html-export">Interactive visualization and HTML export</a></h1>
+<p>Install <code>bloqade-lanes[visualization]</code> to display an architecture with bus
+selectors, site previews, and transport-path tooltips:</p>
+<pre><code class="language-python">from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.visualize.arch import ArchVisualizer
+
+figure = ArchVisualizer(get_arch_spec()).plot_interactive()
+figure.show()
+</code></pre>
+<h2 id="supported-html-export"><a class="header" href="#supported-html-export">Supported HTML export</a></h2>
+<p>Use the returned figure's <strong><code>to_html()</code></strong> method to generate HTML with the
+architecture controls installed:</p>
+<pre><code class="language-python">from pathlib import Path
+
+html = figure.to_html(full_html=True, include_plotlyjs=True)
+Path(&quot;architecture.html&quot;).write_text(html, encoding=&quot;utf-8&quot;)
+</code></pre>
+<p>The figure's <strong><code>write_html()</code></strong> method is also supported as a file-writing
+convenience:</p>
+<pre><code class="language-python">figure.write_html(&quot;architecture.html&quot;, include_plotlyjs=True)
+</code></pre>
+<p>Both methods preserve caller-supplied <code>config</code> and <code>post_script</code> options.
+The same export methods apply to debugger figures that include the interactive
+architecture layer. In the debugger, hovering over a site previews its available
+lanes, including when an atom occupies the site. Move the pointer away to clear
+the preview.</p>
+<p>Avoid the module-level <code>plotly.io.to_html(figure)</code> and
+<code>plotly.io.write_html(figure, ...)</code> functions for these figures. Those functions
+serialize Plotly data directly rather than invoking the custom figure methods,
+so they omit the additional JavaScript that creates the bus selectors and
+overlays. Converting the result to a plain <code>plotly.graph_objects.Figure</code> also
+loses those custom methods.</p>
+<h2 id="offline-use-and-javascript-versions"><a class="header" href="#offline-use-and-javascript-versions">Offline use and JavaScript versions</a></h2>
+<p>Notebook and browser display embed the Plotly.js bundle from the installed
+Plotly Python package. HTML export does the same by default
+(<code>include_plotlyjs=True</code>). This produces a larger document but does not need to
+download Plotly.js when opened.</p>
+<p>For smaller files, <code>include_plotlyjs=&quot;cdn&quot;</code> is an explicit opt-in requiring
+network access. Plotly generates a versioned CDN URL matching its bundled
+JavaScript version; it does not request an unversioned latest release.
+<code>include_plotlyjs=False</code> is only appropriate when the containing page already
+loads a compatible Plotly.js bundle.</p>
+<p>In this repository, <code>uv.lock</code> pins the Plotly Python distribution, including its
+bundled JavaScript. Use <code>uv sync --locked --extra visualization</code> to reproduce
+that version. The lockfile does not govern installations made by downstream
+users; those follow the version range in <code>pyproject.toml</code>.</p>
+<p>The interaction controller uses Plotly axis-conversion and SVG internals.
+Dependency upgrades still require browser checks of hovering, site previews,
+bus selection, pan/zoom, and debugger playback.</p>
+<h2 id="javascript-validation"><a class="header" href="#javascript-validation">JavaScript validation</a></h2>
+<p>Run the same syntax check used by CI:</p>
+<pre><code class="language-bash">just check-visualization-js
+</code></pre>
+<p>This requires Node.js; CI uses Node 22. A pre-commit hook also checks edits to
+the controller. The <code>{plot_id}</code> placeholder is inside a quoted JavaScript
+string, so the source can be checked before Plotly substitutes the figure ID.
+The command also executes controller regression tests with a minimal DOM/Plotly
+event fixture, covering lane previews over empty sites, occupied sites, and
+atoms. These tests do not replace browser integration checks of Plotly's real
+DOM internals.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-quick-reference"><a class="header" href="#instruction-quick-reference">Instruction Quick Reference</a></h1>
 <p>A compact summary of all 24 bytecode instructions. See the <a href="bytecode/inst-spec.html">Instruction Set</a> for full encoding details.</p>
 <h2 id="cpu-0x00"><a class="header" href="#cpu-0x00">Cpu (<code>0x00</code>)</a></h2>
