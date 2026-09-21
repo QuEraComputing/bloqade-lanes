@@ -13,6 +13,7 @@ from kirin.validation import ValidationSuite
 
 from bloqade.gemini.logical.group import kernel as logical_kernel
 
+from ...common.validation.const_address import ConstAddressValidation
 from ...common.validation.duplicate_address import DuplicateAddressValidation
 from ...logical.validation.clifford.analysis import GeminiLogicalValidation
 from ...logical.validation.measurement.analysis import (
@@ -40,6 +41,7 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
                 GeminiLogicalValidation,
                 GeminiTerminalMeasurementValidation,
                 FlatKernelNoCloningValidation,
+                ConstAddressValidation,
                 DuplicateAddressValidation,
             ]
         )
