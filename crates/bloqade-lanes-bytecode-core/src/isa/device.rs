@@ -169,9 +169,13 @@ pub enum LanesMessage {
     },
     /// Rotation angles only (`global_r`/`global_rz`).
     GlobalRotation { angles: Vec<f64> },
-    /// Array element count (`new_array`) or index count (`get_item`).
-    Arity(u32),
-    /// Raw stack values, in pop order (`swap`).
+    /// Raw stack values in **program order** — the order they were pushed, not
+    /// the reverse order they were popped in.
+    ///
+    /// This is what the ops the machine does not interpret consume, and the
+    /// only record of it: `swap`'s two values, `new_array`'s elements,
+    /// `get_item`'s array followed by its indices, and the single reference
+    /// taken by `await_measure` / `set_detector` / `set_observable`.
     Values(Vec<vihaco::Value>),
 }
 
@@ -198,11 +202,30 @@ pub enum LanesEffect {
     ///
     /// This is the extension point for simulating them: see
     /// <https://github.com/QuEraComputing/bloqade-lanes/issues/1022> for the
-    /// planned gate-recording and PPVM-tableau observers.
+    /// planned gate-recording and PPVM-tableau observers. `msg` carries the
+    /// operands the instruction consumed, so such an observer has the whole
+    /// request — which array `set_detector` referenced, which elements went
+    /// into a `new_array` — and not just the opcode.
     NotSimulated {
         inst: LanesInstruction,
         msg: LanesMessage,
     },
+}
+
+/// How many values an instruction leaves on the stack.
+///
+/// The ops that are reported rather than executed still have to keep the
+/// stack at the depth [`super::validate::simulate_stack`] predicts, or a
+/// program that validates would underflow the moment it ran. They push
+/// [`vihaco::Value::Undefined`] placeholders: the right *shape*, and a value
+/// that cannot be mistaken for a simulated result.
+fn result_count(inst: &LanesInstruction) -> u32 {
+    use LanesInstruction as I;
+    match inst {
+        I::Measure(n) => *n,
+        I::AwaitMeasure | I::NewArray(..) | I::GetItem(_) | I::SetDetector | I::SetObservable => 1,
+        _ => 0,
+    }
 }
 
 // ── Execution ─────────────────────────────────────────────────────────────────
@@ -217,12 +240,19 @@ impl Lanes {
         use LanesInstruction as I;
         match (&inst, &msg) {
             // ---- Stack ops: the machine popped for us; hand back what to push ----
-            // `pop` discards (nothing to push); `swap` pushes the two values
-            // back in pop order, which lands them swapped.
+            // `pop` discards (nothing to push); `swap` pushes its two values
+            // back in reverse program order, which lands them swapped.
             (I::Pop, _) => Ok(vihaco::Effects::none()),
-            (I::Swap, LanesMessage::Values(values)) if values.len() == 2 => Ok(
-                vihaco::Effects::many(values.iter().cloned().map(LanesEffect::Push).collect()),
-            ),
+            (I::Swap, LanesMessage::Values(values)) if values.len() == 2 => {
+                Ok(vihaco::Effects::many(
+                    values
+                        .iter()
+                        .rev()
+                        .cloned()
+                        .map(LanesEffect::Push)
+                        .collect(),
+                ))
+            }
             (I::Swap, _) => Err(eyre::eyre!("swap expects two stack values, got {msg:?}")),
 
             // ---- Address constants: hand the value back for the stack ----
@@ -264,10 +294,23 @@ impl Lanes {
             )),
 
             // ---- Everything else is reported, not interpreted ----
-            _ => Ok(vihaco::Effects::one(LanesEffect::NotSimulated {
-                inst,
-                msg,
-            })),
+            // The report comes first, then the placeholders that keep the
+            // stack at the depth the static simulator predicts.
+            _ => {
+                let pushes = result_count(&inst);
+                if pushes == 0 {
+                    return Ok(vihaco::Effects::one(LanesEffect::NotSimulated {
+                        inst,
+                        msg,
+                    }));
+                }
+                let mut effects = vec![LanesEffect::NotSimulated { inst, msg }];
+                effects.extend(
+                    std::iter::repeat_n(vihaco::Value::Undefined, pushes as usize)
+                        .map(LanesEffect::Push),
+                );
+                Ok(vihaco::Effects::many(effects.into()))
+            }
         }
     }
 }

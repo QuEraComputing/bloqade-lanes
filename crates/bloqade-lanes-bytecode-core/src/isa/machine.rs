@@ -16,14 +16,16 @@
 //! ## Who does what
 //!
 //! Instruction operands live on the CPU stack, so a device never reads them
-//! directly. [`LanesMachine::resolve_lanes`] pops them and packs them into a
-//! [`LanesMessage`]; the device executes; the machine then applies any
-//! [`LanesEffect::Push`] back onto the stack. That round trip is the reason
-//! address constants can stay lanes instructions while still behaving like
-//! stack pushes.
+//! directly. `resolve_lanes` pops them and packs them into a [`LanesMessage`];
+//! the device executes; the machine then applies any [`LanesEffect::Push`]
+//! back onto the stack. That round trip is the reason address constants can
+//! stay lanes instructions while still behaving like stack pushes.
 //!
-//! The pop rules here are the same ones [`super::validate::simulate_stack`]
-//! type-checks statically — that simulator is the static half of this.
+//! [`super::validate::simulate_stack`] is the static half of this: it models
+//! the same pops *and the same pushes*, so a program it accepts runs without
+//! underflowing. The ops the device does not interpret hold up their end by
+//! pushing [`Value::Undefined`] placeholders — the depth the simulator
+//! predicts, with a value nothing can mistake for a result.
 
 use vihaco::traits::StackMemory;
 use vihaco::{Effects, GeneratedComponent, ProgramImage, Type, Value, composite};
@@ -35,6 +37,7 @@ use crate::arch::types::ArchSpec;
 use super::container::LanesContext;
 use super::device::{Lanes, LanesEffect, LanesInstruction, LanesMessage};
 use super::program::LanesInfo;
+use super::validate::array_element_count;
 
 /// The combined instruction set: one variant per device.
 pub type MachineInstruction = lanes_machine::runtime::Instruction;
@@ -97,7 +100,7 @@ impl LanesMachine {
                 self.cpu.stack_pop()?;
                 LanesMessage::None
             }
-            I::Swap => LanesMessage::Values(vec![self.cpu.stack_pop()?, self.cpu.stack_pop()?]),
+            I::Swap => LanesMessage::Values(self.pop_values(2)?),
 
             I::InitialFill(n) | I::Fill(n) => LanesMessage::Locations(self.pop_locations(*n)?),
             I::Move(n) => LanesMessage::Lanes(self.pop_lanes(*n)?),
@@ -123,27 +126,40 @@ impl LanesMachine {
             I::Measure(n) => LanesMessage::Zones(self.pop_zones(*n)?),
 
             // `new_array` consumes dim0×dim1 elements (dim1 = 0 means 1-D);
-            // `get_item` consumes its indices plus the array reference. Both
-            // are reported rather than executed — see `LanesEffect::NotSimulated`.
+            // `get_item` consumes the array reference and then its indices.
+            // Both are reported rather than executed — see
+            // [`LanesEffect::NotSimulated`] — so the operands travel with the
+            // message rather than being dropped on the floor.
+            //
+            // Both counts are computed in `u64`: `dim0 * dim1` overflows `u32`
+            // for operands a decoded program is free to carry, and `n + 1`
+            // overflows for `get_item(u32::MAX)`.
             I::NewArray(_, dim0, dim1) => {
-                let count = dim0 * if *dim1 == 0 { 1 } else { *dim1 };
-                for _ in 0..count {
-                    self.cpu.stack_pop()?;
-                }
-                LanesMessage::Arity(count)
+                LanesMessage::Values(self.pop_values(array_element_count(*dim0, *dim1))?)
             }
-            I::GetItem(n) => {
-                for _ in 0..*n + 1 {
-                    self.cpu.stack_pop()?;
-                }
-                LanesMessage::Arity(*n)
-            }
+            I::GetItem(n) => LanesMessage::Values(self.pop_values(*n as u64 + 1)?),
 
             I::AwaitMeasure | I::SetDetector | I::SetObservable => {
-                self.cpu.stack_pop()?;
-                LanesMessage::None
+                LanesMessage::Values(self.pop_values(1)?)
             }
         })
+    }
+
+    /// Pop `n` values, restoring program order (the last pushed is popped
+    /// first).
+    ///
+    /// `n` comes straight out of an instruction word, so nothing is
+    /// pre-allocated against it: an implausible count runs out of stack within
+    /// a few pops and fails there. [`super::validate::validate_structure`]
+    /// rejects such a program up front; this makes the machine safe on its own
+    /// regardless.
+    fn pop_values(&mut self, n: u64) -> eyre::Result<Vec<Value>> {
+        let mut out = Vec::new();
+        for _ in 0..n {
+            out.push(self.cpu.stack_pop()?);
+        }
+        out.reverse();
+        Ok(out)
     }
 
     fn pop_u64(&mut self) -> eyre::Result<u64> {

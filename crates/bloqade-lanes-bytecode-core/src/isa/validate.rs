@@ -92,6 +92,10 @@ pub enum ValidationError {
     NewArrayZeroDim0 { pc: usize },
     /// `new_array` type_tag exceeds the maximum value tag.
     NewArrayInvalidTypeTag { pc: usize, type_tag: u32 },
+    /// `new_array` declares more elements than [`MAX_ARRAY_ELEMENTS`].
+    NewArrayTooManyElements { pc: usize, count: u64 },
+    /// `get_item` takes an index count outside `1..=`[`MAX_GET_ITEM_DIMS`].
+    GetItemInvalidDims { pc: usize, ndims: u32 },
     /// `initial_fill` is not the first non-constant instruction.
     InitialFillNotFirst { pc: usize },
     /// The program has no instructions (and therefore no terminator).
@@ -115,8 +119,33 @@ pub enum ValidationError {
     LaneGroupValidation { pc: usize, error: LaneGroupError },
 }
 
-/// Maximum valid `new_array` element type tag (`TAG_OBSERVABLE_REF = 0x8`).
-const MAX_TYPE_TAG: u32 = 0x8;
+/// Maximum valid `new_array` element type tag ([`tag::MEASUREMENT_RESULT`]).
+const MAX_TYPE_TAG: u32 = tag::MEASUREMENT_RESULT as u32;
+
+/// Maximum number of elements a `new_array` may declare.
+///
+/// `dim0` and `dim1` are attacker-controlled `u32`s read straight out of the
+/// instruction word, and their product drives a pop loop. Without a bound, a
+/// 28-byte program can make the validator pop four billion times, and the
+/// product itself overflows `u32`. An array holds one element per measured
+/// site, so a million is already orders of magnitude past any physical
+/// architecture — the bound exists to make a malformed word a diagnosis
+/// rather than a hang.
+const MAX_ARRAY_ELEMENTS: u64 = 1 << 20;
+
+/// Maximum number of indices a `get_item` may take.
+///
+/// `new_array` carries exactly two dimension fields, so an array is at most
+/// 2-D and one or two indices is the only well-formed shape. The Python
+/// `stack_move.GetItem` documents the same invariant and defers enforcement
+/// here.
+const MAX_GET_ITEM_DIMS: u32 = 2;
+
+/// Element count of a `new_array`, in `u64` so the product cannot overflow.
+/// `dim1 == 0` means a 1-D array.
+pub(crate) fn array_element_count(dim0: u32, dim1: u32) -> u64 {
+    dim0 as u64 * if dim1 == 0 { 1 } else { dim1 as u64 }
+}
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -150,6 +179,15 @@ impl fmt::Display for ValidationError {
             ValidationError::NewArrayInvalidTypeTag { pc, type_tag } => {
                 write!(f, "pc {pc}: invalid new_array type tag {type_tag}")
             }
+            ValidationError::NewArrayTooManyElements { pc, count } => write!(
+                f,
+                "pc {pc}: new_array declares {count} elements, more than the \
+                 maximum of {MAX_ARRAY_ELEMENTS}"
+            ),
+            ValidationError::GetItemInvalidDims { pc, ndims } => write!(
+                f,
+                "pc {pc}: get_item takes 1..={MAX_GET_ITEM_DIMS} indices, got {ndims}"
+            ),
             ValidationError::InitialFillNotFirst { pc } => write!(
                 f,
                 "pc {pc}: initial_fill must be the first non-constant instruction"
@@ -264,7 +302,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
-            M::Lanes(L::NewArray(type_tag, dim0, _dim1)) => {
+            M::Lanes(L::NewArray(type_tag, dim0, dim1)) => {
                 if *dim0 == 0 {
                     errors.push(ValidationError::NewArrayZeroDim0 { pc });
                 }
@@ -273,6 +311,19 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                         pc,
                         type_tag: *type_tag,
                     });
+                }
+                // Bound the element count here, where the operands are read,
+                // so neither the stack simulator nor the machine has to guard
+                // its own pop loop against a four-billion-element array.
+                let count = array_element_count(*dim0, *dim1);
+                if count > MAX_ARRAY_ELEMENTS {
+                    errors.push(ValidationError::NewArrayTooManyElements { pc, count });
+                }
+                seen_non_constant = true;
+            }
+            M::Lanes(L::GetItem(ndims)) => {
+                if *ndims == 0 || *ndims > MAX_GET_ITEM_DIMS {
+                    errors.push(ValidationError::GetItemInvalidDims { pc, ndims: *ndims });
                 }
                 seen_non_constant = true;
             }
@@ -346,10 +397,28 @@ impl<'a> StackSimulator<'a> {
         }
     }
 
-    fn pop_any(&mut self) {
-        if self.stack.pop().is_none() {
+    /// Record that a pop found the stack empty.
+    ///
+    /// `StackUnderflow` carries nothing but the `pc`, so a second one for the
+    /// same instruction is a literally identical value and says nothing new.
+    /// Group pops (`fill 40`, `new_array`) would otherwise emit one per
+    /// missing operand — a million lines of `pc 0: stack underflow` for a
+    /// single malformed word. All pops for one instruction are consecutive, so
+    /// checking the last error is enough.
+    fn underflow(&mut self) {
+        let already = matches!(
+            self.errors.last(),
+            Some(ValidationError::StackUnderflow { pc }) if *pc == self.pc
+        );
+        if !already {
             self.errors
                 .push(ValidationError::StackUnderflow { pc: self.pc });
+        }
+    }
+
+    fn pop_any(&mut self) {
+        if self.stack.pop().is_none() {
+            self.underflow();
         }
     }
 
@@ -363,9 +432,7 @@ impl<'a> StackSimulator<'a> {
                 })
             }
             Some(_) => {}
-            None => self
-                .errors
-                .push(ValidationError::StackUnderflow { pc: self.pc }),
+            None => self.underflow(),
         }
     }
 
@@ -389,8 +456,7 @@ impl<'a> StackSimulator<'a> {
                 None
             }
             None => {
-                self.errors
-                    .push(ValidationError::StackUnderflow { pc: self.pc });
+                self.underflow();
                 None
             }
         }
@@ -404,8 +470,7 @@ impl<'a> StackSimulator<'a> {
         if let Some(top) = self.stack.last().cloned() {
             self.stack.push(top);
         } else {
-            self.errors
-                .push(ValidationError::StackUnderflow { pc: self.pc });
+            self.underflow();
         }
     }
 
@@ -414,8 +479,7 @@ impl<'a> StackSimulator<'a> {
         if len >= 2 {
             self.stack.swap(len - 1, len - 2);
         } else {
-            self.errors
-                .push(ValidationError::StackUnderflow { pc: self.pc });
+            self.underflow();
         }
     }
 
@@ -526,21 +590,33 @@ impl<'a> StackSimulator<'a> {
                     self.push(tag::MEASURE_FUTURE, None);
                 }
             }
+            // `await_measure` yields an *array* of measurement results — the
+            // same value `set_detector`/`set_observable` consume, and the type
+            // `stack_move.AwaitMeasure` is declared to produce. The distinct
+            // `MEASUREMENT_RESULT` tag is that array's *element* type, which a
+            // one-tag-per-slot simulator cannot express; it exists so
+            // `new_array` can name the element type (#547). Giving the whole
+            // array that tag broke `measure -> await_measure -> set_detector`.
             M::Lanes(L::AwaitMeasure) => {
                 self.pop_typed(tag::MEASURE_FUTURE);
-                self.push(tag::MEASUREMENT_RESULT, None);
+                self.push(tag::ARRAY_REF, None);
             }
 
             // arrays
             M::Lanes(L::NewArray(_type_tag, dim0, dim1)) => {
-                let count = dim0 * if *dim1 == 0 { 1 } else { *dim1 };
+                // `validate_structure` rejects counts past the cap, so the
+                // clamp here only keeps a rejected program from also driving
+                // an unbounded loop before its diagnosis is reported.
+                let count = array_element_count(*dim0, *dim1).min(MAX_ARRAY_ELEMENTS);
                 for _ in 0..count {
                     self.pop_any();
                 }
                 self.push(tag::ARRAY_REF, None);
             }
             M::Lanes(L::GetItem(ndims)) => {
-                self.pop_typed_n(tag::INT, *ndims);
+                // Clamped for the same reason as `new_array`: an out-of-range
+                // index count is already reported by `validate_structure`.
+                self.pop_typed_n(tag::INT, (*ndims).min(MAX_GET_ITEM_DIMS));
                 self.pop_typed(tag::ARRAY_REF);
                 // Element type is not tracked; assume float.
                 self.push(tag::FLOAT, None);
@@ -982,23 +1058,147 @@ mod tests {
         );
     }
 
+    /// The whole measurement pipeline must type-check, not just its first half.
+    ///
+    /// The previous version of this test stopped at `await_measure` and only
+    /// asserted the tag's numeric value, so it stayed green while
+    /// `set_detector` could no longer consume what `await_measure` produced —
+    /// the state the canonical `stack_full_pipeline.sst` fixture shipped in.
     #[test]
-    fn await_measure_pushes_measurement_result() {
-        // const_zone, measure 1, await_measure — the awaited value carries the
-        // measurement-result tag, so a following set_detector (wants ARRAY_REF)
-        // now type-mismatches on MEASUREMENT_RESULT rather than silently matching.
+    fn measure_await_set_detector_type_checks_end_to_end() {
+        let p = program(vec![
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::AwaitMeasure),
+            M::Lanes(L::SetDetector),
+            M::Lanes(L::Pop),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    /// `MEASUREMENT_RESULT` is an array *element* type (#547), so it has to be
+    /// accepted where `new_array` names one.
+    #[test]
+    fn measurement_result_is_a_valid_new_array_element_tag() {
+        let p = program(vec![
+            M::Cpu(C::Const(Type::I64, Value::I64(1))),
+            M::Lanes(L::NewArray(tag::MEASUREMENT_RESULT as u32, 1, 0)),
+            M::Lanes(L::SetObservable),
+            M::Lanes(L::Pop),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    #[test]
+    fn await_measure_pushes_an_array_ref() {
         let p = program(vec![
             M::Lanes(L::ConstZone(0)),
             M::Lanes(L::Measure(1)),
             M::Lanes(L::AwaitMeasure),
         ]);
-        // await_measure must push the measurement-result tag.
-        assert_eq!(tag::MEASUREMENT_RESULT, 0x9);
-        // Sanity: simulate cleanly (no underflow/mismatch) for the measure→await chain.
-        assert!(simulate_stack(&p, None).iter().all(|e| !matches!(
-            e,
-            ValidationError::StackUnderflow { .. } | ValidationError::TypeMismatch { .. }
-        )));
+        // Pin the tag the awaited value carries, by observing what rejects it:
+        // `cz` wants a zone, and says what it got instead.
+        let p = program(p.code.iter().cloned().chain([M::Lanes(L::Cz)]).collect());
+        assert!(
+            simulate_stack(&p, None).contains(&ValidationError::TypeMismatch {
+                pc: 3,
+                expected: tag::ZONE,
+                got: tag::ARRAY_REF,
+            }),
+            "got {:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    #[test]
+    fn new_array_element_count_is_bounded() {
+        // dim0 * dim1 = 2^32, which wraps to 0 in `u32` — the operands are
+        // read straight out of the instruction word, so nothing stops a
+        // program from carrying them.
+        let p = program(vec![
+            M::Lanes(L::NewArray(0, 65536, 65536)),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
+                pc: 0,
+                count: 1 << 32,
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // And a count that does not wrap but would still drive a four-billion
+        // iteration pop loop.
+        let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
+                pc: 0,
+                count: u32::MAX as u64,
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+    }
+
+    /// Simulating a rejected program terminates promptly *and* says something
+    /// useful: the element count is clamped, and the group pop reports one
+    /// underflow rather than one per missing operand.
+    #[test]
+    fn simulating_an_oversized_new_array_reports_one_underflow() {
+        let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 0 }]
+        );
+    }
+
+    /// A group pop off an empty stack is one diagnosis, not `arity` of them.
+    #[test]
+    fn a_group_pop_reports_a_single_underflow() {
+        let p = program(vec![M::Lanes(L::InitialFill(40)), M::Cpu(C::Halt)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 0 }]
+        );
+
+        // Distinct instructions still report separately.
+        let p = program(vec![M::Lanes(L::Pop), M::Lanes(L::Pop), M::Cpu(C::Halt)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![
+                ValidationError::StackUnderflow { pc: 0 },
+                ValidationError::StackUnderflow { pc: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn get_item_index_count_is_bounded() {
+        // Arrays are at most 2-D, so three indices is structurally wrong —
+        // and `u32::MAX` indices would overflow the `n + 1` the machine pops.
+        for ndims in [0, 3, u32::MAX] {
+            let p = program(vec![M::Lanes(L::GetItem(ndims)), M::Cpu(C::Halt)]);
+            assert!(
+                validate_structure(&p)
+                    .contains(&ValidationError::GetItemInvalidDims { pc: 0, ndims }),
+                "ndims={ndims}: got {:?}",
+                validate_structure(&p)
+            );
+        }
+        // One or two indices are the well-formed shapes.
+        for ndims in [1, 2] {
+            let p = program(vec![M::Lanes(L::GetItem(ndims)), M::Cpu(C::Halt)]);
+            assert!(
+                !validate_structure(&p)
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::GetItemInvalidDims { .. })),
+                "ndims={ndims} should be accepted"
+            );
+        }
     }
 
     // ---- Display ----
