@@ -1,6 +1,9 @@
-.version 1
-; Invalid: initial_fill expects location, but stack has float
+version 1.0;
 
-const_float 1.0
-initial_fill 1
-halt
+// Invalid: initial_fill expects location, but stack has float
+
+fn @main() {
+  cpu.const_float 1.0
+  lanes.initial_fill 1
+  cpu.halt
+}

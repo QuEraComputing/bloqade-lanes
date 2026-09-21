@@ -134,14 +134,10 @@ class TestZoneAddress:
 
 # ── Instruction ──
 
-# New opcode packing: (instruction_code << 8) | device_code
-# Device codes: Cpu=0x00, LaneConst=0x0F, AtomArrangement=0x10,
-#   QuantumGate=0x11, Measurement=0x12, Array=0x13, DetectorObservable=0x14
-
 
 class TestInstruction:
-    # The vihaco-backed ISA assigns its own opcode bytes (no legacy packed
-    # (instr<<8)|device scheme), so these check instruction identity via the
+    # vihaco assigns opcode bytes by variant declaration order, so they shift
+    # whenever the ISA gains a variant. These check instruction identity via the
     # stable op_name() rather than a specific opcode value.
     def test_const_float(self):
         inst = Instruction.const_float(1.5)
@@ -402,9 +398,9 @@ class TestProgramConstruction:
         source = """\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  initial_fill 1
-  halt
+  lanes.const_loc 0x00000000
+  lanes.initial_fill 1
+  cpu.halt
 }
 """
         program = Program.from_text(source)
@@ -413,7 +409,7 @@ fn @main() {
 
     def test_from_text_invalid(self):
         with pytest.raises(MissingVersionError):
-            Program.from_text("fn @main() {\n  halt\n}\n")  # missing version header
+            Program.from_text("fn @main() {\n  cpu.halt\n}\n")  # missing version header
 
 
 class TestProgramSerialization:
@@ -421,10 +417,10 @@ class TestProgramSerialization:
         return Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  halt
+  lanes.const_loc 0x00000000
+  lanes.const_loc 0x00000001
+  lanes.initial_fill 2
+  cpu.halt
 }
 """)
 
@@ -433,8 +429,8 @@ fn @main() {
         text = program.to_text()
         assert "version 1.0" in text
         assert "fn @main()" in text
-        assert "initial_fill 2" in text
-        assert "halt" in text
+        assert "lanes.initial_fill 2" in text
+        assert "cpu.halt" in text
 
     def test_text_round_trip(self):
         program = self._sample_program()
@@ -485,9 +481,9 @@ class TestProgramValidation:
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  initial_fill 1
-  halt
+  lanes.const_loc 0x00000000
+  lanes.initial_fill 1
+  cpu.halt
 }
 """)
         program.validate()  # should not raise
@@ -496,9 +492,9 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  halt
-  const_loc 0x00000000
-  initial_fill 1
+  cpu.halt
+  lanes.const_loc 0x00000000
+  lanes.initial_fill 1
 }
 """)
         with pytest.raises(ValidationError) as exc_info:
@@ -511,7 +507,7 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  pop
+  cpu.pop
 }
 """)
         with pytest.raises(ValidationError) as exc_info:
@@ -522,8 +518,8 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const.f64 1.0
-  initial_fill 1
+  cpu.const_float 1.0
+  lanes.initial_fill 1
 }
 """)
         with pytest.raises(ValidationError) as exc_info:
@@ -543,7 +539,7 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const.i64 0
+  cpu.const_int 0
 }
 """)
         with pytest.raises(ValidationError) as exc_info:
@@ -554,8 +550,8 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  halt
-  const.i64 0
+  cpu.halt
+  cpu.const_int 0
 }
 """)
         with pytest.raises(ValidationError) as exc_info:
@@ -571,8 +567,8 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const.i64 0
-  return
+  cpu.const_int 0
+  cpu.return
 }
 """)
         program.validate()  # should not raise
@@ -581,7 +577,7 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  halt
+  cpu.halt
 }
 """)
         program.validate()  # should not raise
@@ -617,13 +613,13 @@ class TestCapabilityValidation:
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  return
+  lanes.const_loc 0x00000000
+  lanes.const_loc 0x00000001
+  lanes.initial_fill 2
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.await_measure
+  cpu.return
 }
 """)
         program.validate(arch=arch)  # should not raise
@@ -633,16 +629,16 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  return
+  lanes.const_loc 0x00000000
+  lanes.const_loc 0x00000001
+  lanes.initial_fill 2
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.await_measure
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.await_measure
+  cpu.return
 }
 """)
         with pytest.raises(ValidationError) as exc_info:
@@ -660,16 +656,16 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  return
+  lanes.const_loc 0x00000000
+  lanes.const_loc 0x00000001
+  lanes.initial_fill 2
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.await_measure
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.await_measure
+  cpu.return
 }
 """)
         program.validate(arch=arch)  # should not raise
@@ -679,12 +675,12 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_loc 0x00000000
-  fill 1
-  halt
+  lanes.const_loc 0x00000000
+  lanes.const_loc 0x00000001
+  lanes.initial_fill 2
+  lanes.const_loc 0x00000000
+  lanes.fill 1
+  cpu.halt
 }
 """)
         with pytest.raises(ValidationError) as exc_info:
@@ -702,12 +698,12 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_loc 0x00000000
-  fill 1
-  halt
+  lanes.const_loc 0x00000000
+  lanes.const_loc 0x00000001
+  lanes.initial_fill 2
+  lanes.const_loc 0x00000000
+  lanes.fill 1
+  cpu.halt
 }
 """)
         program.validate(arch=arch)  # should not raise
@@ -717,9 +713,9 @@ fn @main() {
         program = Program.from_text("""\
 version 1.0;
 fn @main() {
-  const_loc 0x00000000
-  initial_fill 1
-  halt
+  lanes.const_loc 0x00000000
+  lanes.initial_fill 1
+  cpu.halt
 }
 """)
         program.validate(arch=arch)  # should not raise
@@ -736,7 +732,7 @@ fn @main() {
 
 class TestProgramRepr:
     def test_repr(self):
-        program = Program.from_text("version 1.0;\nfn @main() {\n  halt\n}\n")
+        program = Program.from_text("version 1.0;\nfn @main() {\n  cpu.halt\n}\n")
         r = repr(program)
         assert "Program" in r
         assert "(1, 0)" in r

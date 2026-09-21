@@ -3,10 +3,10 @@
 //! A program is a [`Version`] plus a flat `Vec<`[`Instruction`]`>` — no
 //! functions, labels, or string interner (our programs are a single flat
 //! instruction list; see <https://github.com/QuEraComputing/bloqade-lanes/issues/769>).
-//! vihaco's [`vihaco::module::Module`] / [`vihaco::ProgramLoader`] carry that
-//! structured-language machinery, so we keep a thin container and delegate the
-//! per-instruction work to vihaco's derived codec ([`WriteBytes`]/[`FromBytes`])
-//! and text parser ([`vihaco_parser_core::Parse`]).
+//! vihaco's [`LocalModule`] / loader machinery carries that structured-language
+//! support, so we keep a thin container and delegate the per-instruction work to
+//! vihaco's derived codec ([`WriteBytes`]/[`FromBytes`]) and to the text parser
+//! in [`super::syntax`].
 //!
 //! ## Binary layout (native, breaking vs. legacy `BLQD`)
 //!
@@ -22,7 +22,7 @@
 use std::io::Cursor;
 
 use vihaco::instruction::{FromBytes, WriteBytes};
-use vihaco::module::Module;
+use vihaco::module::LocalModule;
 use vihaco::value::{Type, Value};
 
 use super::{INSTRUCTION_WIDTH, Instruction};
@@ -55,9 +55,9 @@ impl std::fmt::Display for LanesInfo {
     }
 }
 
-/// A Bloqade Lanes program: a vihaco `Module` specialised to our ISA. A single
-/// `@main` function's worth of flat code plus the version in `extra`.
-pub type Program = Module<Instruction, Value, Type, LanesInfo>;
+/// A Bloqade Lanes program: a vihaco `LocalModule` specialised to our ISA. A
+/// single `@main` function's worth of flat code plus the version in `extra`.
+pub type Program = LocalModule<Instruction, Value, Type, LanesInfo>;
 
 /// Build a `Program` from a version + flat instruction list. This is the ONE
 /// constructor used by both binary and text loading, so all `Program`s built
@@ -162,14 +162,12 @@ mod tests {
     use super::*;
 
     fn sample() -> Program {
-        use vihaco::value::Value;
-        use vihaco_cpu::Instruction as Cpu;
         from_code(
             Version::new(1, 2),
             vec![
-                Instruction::Cpu(Cpu::Const(Value::F64(1.5))),
-                Instruction::Cpu(Cpu::Const(Value::I64(-42))),
-                Instruction::Cpu(Cpu::Dup),
+                Instruction::ConstFloat(1.5),
+                Instruction::ConstInt(-42),
+                Instruction::Dup,
                 Instruction::ConstLoc(0x0000_0000_0100_0000),
                 Instruction::ConstLane(0x0000_0000_0000_0001),
                 Instruction::ConstZone(0x0000_0003),
@@ -184,7 +182,7 @@ mod tests {
                 Instruction::NewArray(2, 10, 20),
                 Instruction::GetItem(2),
                 Instruction::SetDetector,
-                Instruction::Cpu(Cpu::Halt),
+                Instruction::Halt,
                 Instruction::Return,
             ],
         )

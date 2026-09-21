@@ -1,4 +1,4 @@
-//! Text (`.sst`) codec for the vihaco-backed ISA — vihaco `ParsedModule` grammar.
+//! Text (`.sst`) codec for the vihaco-backed ISA.
 //!
 //! The grammar is:
 //! ```text
@@ -9,13 +9,22 @@
 //! }
 //! ```
 //!
-//! `LanesHeader` parses the `version <major>.<minor>` directive.
-//! `LanesResolver` lowers a `ParsedModule<Instruction, LanesHeader>` into a
-//! `Program` via [`super::program::from_code`].
+//! `version_header` parses the `version <major>.<minor>;` directive; the
+//! function body is vihaco's own grammar via
+//! [`ParsedFunction::parser`](vihaco::syntax::ParsedFunction), and `resolve`
+//! lowers the result into a `Program` via [`super::program::from_code`].
+//!
+//! ## Why not `ParsedModule`
+//!
+//! vihaco 0.4 reshaped `ParsedModule` around its multi-section `.sst`
+//! container: it no longer implements `Parse`, only `parse_section(SstSectionView)`,
+//! which requires adopting vihaco's section format wholesale. We keep our own
+//! single-section header and compose vihaco's *function* grammar underneath —
+//! adopting the vihaco container is tracked separately.
 
 use chumsky::prelude::*;
-use vihaco::syntax::{ParsedModule, Resolve};
-use vihaco_parser_core::Parse;
+use vihaco::syntax::ParsedFunction;
+use vihaco_parser::Parse;
 
 use super::Instruction;
 use super::program::{Program, from_code};
@@ -31,7 +40,7 @@ pub enum TextError {
     /// Retained for API stability and potential future use.
     InvalidVersion { line: usize, value: String },
     /// A line could not be parsed as an instruction. `line` is currently always
-    /// `0` for parse-level failures via the vihaco `ParsedModule` parser.
+    /// `0` for parse-level failures from the chumsky parser.
     BadInstruction { line: usize, text: String },
 }
 
@@ -88,51 +97,54 @@ impl<'src> Parse<'src> for LanesHeader {
     }
 }
 
-// ── LanesResolver ─────────────────────────────────────────────────────────────
+// ── NoType ────────────────────────────────────────────────────────────────────
 
-struct LanesResolver;
+/// Source-type syntax for [`ParsedFunction`]. A lanes `@main` takes no
+/// parameters and returns nothing, so no type ever appears in the grammar; this
+/// parser rejects everything, making `params` and `return_ty` unreachable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NoType {}
 
-impl Resolve<Instruction, LanesHeader> for LanesResolver {
-    type Module = Program;
-
-    fn resolve_module(
-        &mut self,
-        parsed: ParsedModule<Instruction, LanesHeader>,
-    ) -> eyre::Result<Program> {
-        // Exactly one `version M.N;` header. Additional headers almost always
-        // signal a mistake (conflicting versions), so reject them rather than
-        // silently taking the first.
-        let version = match parsed.headers.as_slice() {
-            [] => eyre::bail!("missing version header"),
-            [LanesHeader::Version(v)] => *v,
-            _ => eyre::bail!("multiple version headers"),
-        };
-
-        // Exactly one function, and it must be `@main`. The parser strips the
-        // leading `@`, so the resolved name is bare `"main"`.
-        let func = match parsed.functions.as_slice() {
-            [f] => f,
-            _ => eyre::bail!("expected exactly one function (@main)"),
-        };
-        if func.name != "main" {
-            eyre::bail!("expected function @main, found @{}", func.name);
-        }
-
-        // Default resolve_body: all lanes instructions are Direct; Raw is an error.
-        let code = self.resolve_body(func.body.clone())?;
-        Ok(from_code(version, code))
+impl<'src> Parse<'src> for NoType {
+    fn parser() -> impl chumsky::Parser<
+        'src,
+        &'src str,
+        Self,
+        chumsky::extra::Err<chumsky::error::Simple<'src, char>>,
+    > {
+        chumsky::primitive::empty().try_map(|(), span| Err(chumsky::error::Simple::new(None, span)))
     }
 }
 
-// ── map_resolve_err ───────────────────────────────────────────────────────────
+// ── resolve ───────────────────────────────────────────────────────────────────
 
-fn map_resolve_err(err: &eyre::Report) -> TextError {
-    let msg = err.to_string();
-    if msg.contains("missing version header") {
-        TextError::MissingVersion
-    } else {
-        TextError::BadInstruction { line: 0, text: msg }
+/// Lower the parsed header + functions into a [`Program`].
+fn resolve(
+    version: Version,
+    functions: Vec<ParsedFunction<Instruction, NoType>>,
+) -> Result<Program, TextError> {
+    // Exactly one function, and it must be `@main`. The parser strips the
+    // leading `@`, so the parsed name is bare `"main"`.
+    let func = match functions.as_slice() {
+        [f] => f,
+        _ => {
+            return Err(TextError::BadInstruction {
+                line: 0,
+                text: format!(
+                    "expected exactly one function (@main), found {}",
+                    functions.len()
+                ),
+            });
+        }
+    };
+    if func.name.as_str() != "main" {
+        return Err(TextError::BadInstruction {
+            line: 0,
+            text: format!("expected function @main, found @{}", func.name.as_str()),
+        });
     }
+
+    Ok(from_code(version, func.body.clone()))
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -149,23 +161,41 @@ fn map_resolve_err(err: &eyre::Report) -> TextError {
 /// ```
 ///
 /// Note: `TextError::BadInstruction` errors have `line: 0` for parse-level
-/// failures via vihaco `ParsedModule`; the underlying chumsky diagnostics are
-/// preserved in `text` even though a precise line number is not yet available.
+/// failures; the underlying chumsky diagnostics are preserved in `text` even
+/// though a precise line number is not yet available.
 pub fn parse_text(src: &str) -> Result<Program, TextError> {
-    let parsed = ParsedModule::<Instruction, LanesHeader>::parser()
-        .parse(src)
-        .into_result()
-        .map_err(|errs| TextError::BadInstruction {
-            line: 0,
-            text: errs
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("; "),
+    let skip = vihaco::syntax::skip;
+
+    let module = skip()
+        .ignore_then(LanesHeader::parser())
+        .then_ignore(skip())
+        .then_ignore(just(';'))
+        .then(
+            skip()
+                .ignore_then(ParsedFunction::<Instruction, NoType>::parser())
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(skip());
+
+    let (LanesHeader::Version(version), functions) =
+        module.parse(src).into_result().map_err(|errs| {
+            // Distinguish "no header at all" from a malformed one: the former
+            // is the common authoring mistake and gets its own error.
+            if !src.trim_start().starts_with("version") {
+                return TextError::MissingVersion;
+            }
+            TextError::BadInstruction {
+                line: 0,
+                text: errs
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            }
         })?;
-    LanesResolver
-        .resolve_module(parsed)
-        .map_err(|e| map_resolve_err(&e))
+
+    resolve(version, functions)
 }
 
 /// Emit the program as the vihaco `fn @main` grammar.
@@ -190,16 +220,14 @@ pub fn to_text(program: &Program) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vihaco::value::Value;
-    use vihaco_cpu::Instruction as Cpu;
 
     fn sample() -> Program {
         from_code(
             Version::new(1, 2),
             vec![
-                Instruction::Cpu(Cpu::Const(Value::F64(1.5))),
-                Instruction::Cpu(Cpu::Const(Value::I64(-42))),
-                Instruction::Cpu(Cpu::Dup),
+                Instruction::ConstFloat(1.5),
+                Instruction::ConstInt(-42),
+                Instruction::Dup,
                 Instruction::ConstLoc(0x0000_0000_0100_0000),
                 Instruction::ConstLane(0x0000_0000_0000_0001),
                 Instruction::ConstZone(0x0000_0003),
@@ -214,7 +242,7 @@ mod tests {
                 Instruction::NewArray(2, 10, 20),
                 Instruction::GetItem(2),
                 Instruction::SetDetector,
-                Instruction::Cpu(Cpu::Halt),
+                Instruction::Halt,
                 Instruction::Return,
             ],
         )
@@ -222,7 +250,7 @@ mod tests {
 
     #[test]
     fn text_round_trips_fn_main() {
-        let src = "version 1.2;\nfn @main() {\n  const_loc 0x0000000000000000\n  initial_fill 1\n  halt\n}\n";
+        let src = "version 1.2;\nfn @main() {\n  lanes.const_loc 0x0000000000000000\n  lanes.initial_fill 1\n  cpu.halt\n}\n";
         let p = parse_text(src).unwrap();
         assert_eq!(p.extra.version, Version::new(1, 2));
         assert_eq!(p.code.len(), 3);
@@ -246,9 +274,9 @@ mod tests {
 
     #[test]
     fn to_text_indents_instructions() {
-        let prog = from_code(Version::new(1, 0), vec![Instruction::Cpu(Cpu::Halt)]);
+        let prog = from_code(Version::new(1, 0), vec![Instruction::Halt]);
         let text = to_text(&prog);
-        assert!(text.contains("  halt\n"));
+        assert!(text.contains("  cpu.halt\n"));
     }
 
     #[test]
@@ -259,13 +287,13 @@ mod tests {
 
     #[test]
     fn missing_version_header_returns_error() {
-        let src = "fn @main() {\n  halt\n}\n";
+        let src = "fn @main() {\n  cpu.halt\n}\n";
         assert_eq!(parse_text(src), Err(TextError::MissingVersion));
     }
 
     #[test]
     fn bad_instruction_returns_error() {
-        let src = "version 1.0;\nfn @main() {\n  nope_nope\n}\n";
+        let src = "version 1.0;\nfn @main() {\n  lanes.nope_nope\n}\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })
@@ -309,7 +337,7 @@ mod tests {
     fn multiple_functions_rejected() {
         // The grammar admits several `fn` blocks, but a lanes program is a
         // single flat `@main`; the resolver rejects anything but exactly one.
-        let src = "version 1.0;\nfn @main() {\n  halt\n}\nfn @extra() {\n  halt\n}\n";
+        let src = "version 1.0;\nfn @main() {\n  cpu.halt\n}\nfn @extra() {\n  cpu.halt\n}\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })
@@ -320,7 +348,7 @@ mod tests {
     fn syntactically_broken_source_is_a_parse_error() {
         // An unterminated function body fails the `ParsedModule` parser itself
         // (before resolution), so `parse_text` maps it to `BadInstruction`.
-        let src = "version 1.0;\nfn @main() {\n  halt\n";
+        let src = "version 1.0;\nfn @main() {\n  cpu.halt\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })
@@ -332,7 +360,7 @@ mod tests {
         // Parse-level failures surface the underlying chumsky diagnostic rather
         // than a bare "parse error" placeholder, so CLI/Python errors are
         // debuggable.
-        let src = "version 1.0;\nfn @main() {\n  halt\n";
+        let src = "version 1.0;\nfn @main() {\n  cpu.halt\n";
         match parse_text(src) {
             Err(TextError::BadInstruction { text, .. }) => {
                 assert_ne!(text, "parse error");
@@ -346,7 +374,7 @@ mod tests {
     fn duplicate_version_headers_rejected() {
         // Two `version` directives are ambiguous; the resolver rejects them
         // rather than silently taking the first.
-        let src = "version 1.0;\nversion 2.0;\nfn @main() {\n  halt\n}\n";
+        let src = "version 1.0;\nversion 2.0;\nfn @main() {\n  cpu.halt\n}\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })
@@ -356,7 +384,7 @@ mod tests {
     #[test]
     fn non_main_function_rejected() {
         // The single function must be named `@main`.
-        let src = "version 1.0;\nfn @extra() {\n  halt\n}\n";
+        let src = "version 1.0;\nfn @extra() {\n  cpu.halt\n}\n";
         assert!(matches!(
             parse_text(src),
             Err(TextError::BadInstruction { .. })

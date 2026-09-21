@@ -45,27 +45,27 @@
 static const char *VALID_PROGRAM =
     "version 1.0;\n"
     "fn @main() {\n"
-    "  const_loc 0x0000000000000000\n"
-    "  const_loc 0x0000000001000000\n"
-    "  initial_fill 2\n"
-    "  halt\n"
+    "  lanes.const_loc 0x0000000000000000\n"
+    "  lanes.const_loc 0x0000000001000000\n"
+    "  lanes.initial_fill 2\n"
+    "  cpu.halt\n"
     "}\n";
 
 /* Program that triggers a structural error (initial_fill not first). */
 static const char *INVALID_STRUCTURE =
     "version 1.0;\n"
     "fn @main() {\n"
-    "  halt\n"
-    "  const_loc 0x0000000000000000\n"
-    "  initial_fill 1\n"
+    "  cpu.halt\n"
+    "  lanes.const_loc 0x0000000000000000\n"
+    "  lanes.initial_fill 1\n"
     "}\n";
 
 /* Program that triggers a stack underflow: `pop` on an empty stack. */
 static const char *STACK_UNDERFLOW =
     "version 1.0;\n"
     "fn @main() {\n"
-    "  pop\n"
-    "  halt\n"
+    "  cpu.pop\n"
+    "  cpu.halt\n"
     "}\n";
 
 /* Program with a type mismatch: `fill` expects a location but gets a float.
@@ -74,11 +74,11 @@ static const char *STACK_UNDERFLOW =
 static const char *TYPE_MISMATCH =
     "version 1.0;\n"
     "fn @main() {\n"
-    "  const_loc 0x0000000000000000\n"
-    "  initial_fill 1\n"
-    "  const.f64 3.14\n"
-    "  fill 1\n"
-    "  halt\n"
+    "  lanes.const_loc 0x0000000000000000\n"
+    "  lanes.initial_fill 1\n"
+    "  cpu.const_float 3.14\n"
+    "  lanes.fill 1\n"
+    "  cpu.halt\n"
     "}\n";
 
 int main(void) {
@@ -262,9 +262,9 @@ int main(void) {
         static const char *BAD_LANE_PROGRAM =
             "version 1.0;\n"
             "fn @main() {\n"
-            "  const_lane 0x0000000700000000\n"
-            "  move 1\n"
-            "  halt\n"
+            "  lanes.const_lane 0x0000000700000000\n"
+            "  lanes.move 1\n"
+            "  cpu.halt\n"
             "}\n";
 
         struct LANESArchSpec *arch = NULL;

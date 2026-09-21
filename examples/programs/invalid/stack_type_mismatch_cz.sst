@@ -1,6 +1,9 @@
-.version 1
-; Invalid: cz expects zone, but stack has float
+version 1.0;
 
-const_float 1.0
-cz
-halt
+// Invalid: cz expects zone, but stack has float
+
+fn @main() {
+  cpu.const_float 1.0
+  lanes.cz
+  cpu.halt
+}

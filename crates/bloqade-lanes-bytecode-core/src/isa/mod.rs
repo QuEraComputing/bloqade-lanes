@@ -4,42 +4,41 @@
 //! framework (the migration off the original hand-rolled format), per
 //! <https://github.com/QuEraComputing/bloqade-lanes/issues/769>.
 //!
-//! The instruction set is defined once as a `#[derive(Instruction, Parse)]`
-//! enum; vihaco's derive macros then generate:
+//! The instruction set is defined once in [`def`] as a `#[derive(Instruction)]`
+//! enum, which generates binary encode/decode
+//! ([`vihaco::instruction::WriteBytes`] / [`vihaco::instruction::FromBytes`]) —
+//! a 1-byte opcode followed by a little-endian payload, zero-padded to a fixed
+//! [`INSTRUCTION_WIDTH`]-byte word, so a program is simply N concatenated words.
 //!
-//! - binary encode/decode ([`vihaco::instruction::WriteBytes`] /
-//!   [`vihaco::instruction::FromBytes`]) — a 1-byte opcode followed by a
-//!   little-endian payload, zero-padded to a fixed [`INSTRUCTION_WIDTH`]-byte
-//!   word, so a program is simply N concatenated words;
-//! - a text (`.sst`) parser ([`vihaco_parser_core::Parse`]).
+//! Text (`.sst`) parsing lives in [`syntax`], which layers vihaco 0.4's pattern
+//! parser on top of the same enum.
 //!
 //! This adopts vihaco's **native** byte layout (the issue #769 decision); it is
 //! intentionally *not* compatible with the original `BLQD` container that the
 //! hand-rolled bytecode used.
 //!
-//! ## CPU ops are reused from `vihaco-cpu`
+//! ## Two dialects, one flat enum
 //!
-//! Rather than re-defining stack/const opcodes, the [`Instruction::Cpu`]
-//! variant nests the entire [`vihaco_cpu::Instruction`] set (a stack machine
-//! with `const.<type>`, `dup`, `halt`, arithmetic, …), with parsing
-//! `#[delegate]`d to vihaco-cpu's own parser and printing via its `Display`.
-//! Three stack ops stay lanes-native because vihaco-cpu can't round-trip them
-//! through text:
+//! In text, every instruction carries a dialect head: [`CPU_HEAD`] (`cpu.pop`,
+//! `cpu.halt`, `cpu.const_int 42`) for the stack ops and [`LANES_HEAD`]
+//! (`lanes.move 2`) for the device ops. In Rust they are one flat
+//! [`Instruction`] enum; [`syntax`] holds the per-dialect mirror enums that
+//! carry the text patterns and fold back into it.
 //!
-//! - `pop`, `swap` — vihaco-cpu has no such opcodes;
-//! - `return` — vihaco-cpu's `Return` is parser-deferred to an orchestrator
-//!   (`ret` does not parse standalone), and lanes needs a terminator that
-//!   round-trips.
-//!
-//! Consequence: CPU text syntax is now vihaco-cpu's (`const.i64 42`,
-//! `const.f64 1.5`, `dup`, `halt`), not the legacy `const_int` / `const_float`.
+//! The stack ops mirror vihaco-cpu's but are declared natively. vihaco-cpu 0.4
+//! is a runtime *component*: its instruction enums implement `Parse` and carry
+//! runtime values, but neither implements `WriteBytes`/`FromBytes`/`OpCode`, so
+//! nesting one in an encodable ISA is no longer possible. The `cpu.` head is
+//! kept to signal where the semantics come from.
 
 pub mod def;
 pub mod parse_helpers;
 pub mod program;
+pub mod syntax;
 pub mod text;
 pub mod validate;
 
 pub use def::{INSTRUCTION_WIDTH, Instruction};
 pub use program::{LanesInfo, Program, from_code};
+pub use syntax::{CPU_HEAD, LANES_HEAD};
 pub use text::{parse_text, to_text};

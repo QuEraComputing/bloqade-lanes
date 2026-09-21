@@ -1,20 +1,23 @@
-.version 1
-; Two measure instructions — requires feed_forward capability.
-; Should fail when arch spec has feed_forward = false (default).
-; LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
+version 1.0;
 
-const_loc 0x0000000000000000    ; zone 0, word 0, site 0
-const_loc 0x0000000001000000    ; zone 0, word 0, site 1
-initial_fill 2
+// Two measure instructions — requires feed_forward capability.
+// Should fail when arch spec has feed_forward = false (default).
+// LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
 
-const_zone 0x00000000
-measure 1
-await_measure
+fn @main() {
+  lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
+  lanes.initial_fill 2
 
-; Second measure is not allowed without feed_forward
-const_zone 0x00000000
-measure 1
-await_measure
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.await_measure
 
-return
-halt
+  // Second measure is not allowed without feed_forward
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.await_measure
+
+  cpu.return
+  cpu.halt
+}

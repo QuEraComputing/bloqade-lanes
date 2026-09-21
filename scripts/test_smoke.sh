@@ -2,7 +2,7 @@
 # Smoke tests for the bytecode CLI (vihaco-backed).
 #
 # Self-contained: programs are generated inline in the *native* text format
-# (const.i64/const.f64 etc.), so this does not depend on the legacy example
+# (cpu.const_int/cpu.const_float etc.), so this does not depend on the legacy example
 # .sst files. Covers assemble/disassemble round-trip plus validation:
 # structural checks, arch-dependent capability + address checks, and
 # stack-type simulation (--simulate-stack).
@@ -53,12 +53,12 @@ expect_fail() {
 prog valid <<'EOF'
 version 1.0;
 fn @main() {
-  const_loc 0x0000000000000000
-  const_loc 0x0000000001000000
-  initial_fill 2
-  const.f64 1.5708
-  global_rz
-  halt
+  lanes.const_loc 0x0000000000000000
+  lanes.const_loc 0x0000000001000000
+  lanes.initial_fill 2
+  cpu.const_float 1.5708
+  lanes.global_rz
+  cpu.halt
 }
 EOF
 
@@ -78,8 +78,8 @@ expect_pass "valid program" validate "$WORK/valid.sst"
 prog no_terminator <<'EOF'
 version 1.0;
 fn @main() {
-  const_loc 0x0000000000000000
-  initial_fill 1
+  lanes.const_loc 0x0000000000000000
+  lanes.initial_fill 1
 }
 EOF
 expect_fail "missing terminator" "return or halt" validate "$WORK/no_terminator.sst"
@@ -87,9 +87,9 @@ expect_fail "missing terminator" "return or halt" validate "$WORK/no_terminator.
 prog fill_not_first <<'EOF'
 version 1.0;
 fn @main() {
-  global_r
-  initial_fill 1
-  return
+  lanes.global_r
+  lanes.initial_fill 1
+  cpu.return
 }
 EOF
 expect_fail "initial_fill not first" "initial_fill" validate "$WORK/fill_not_first.sst"
@@ -99,13 +99,13 @@ echo "=== Category C: capability validation (--arch) ==="
 prog multi_measure <<'EOF'
 version 1.0;
 fn @main() {
-  const_loc 0x0000000000000000
-  initial_fill 1
-  const_zone 0x00000000
-  measure 1
-  const_zone 0x00000000
-  measure 1
-  return
+  lanes.const_loc 0x0000000000000000
+  lanes.initial_fill 1
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  lanes.const_zone 0x00000000
+  lanes.measure 1
+  cpu.return
 }
 EOF
 expect_fail "multiple measure (feed_forward=false)" "feed_forward" \
@@ -114,11 +114,11 @@ expect_fail "multiple measure (feed_forward=false)" "feed_forward" \
 prog fill_reload <<'EOF'
 version 1.0;
 fn @main() {
-  const_loc 0x0000000000000000
-  initial_fill 1
-  const_loc 0x0000000000000000
-  fill 1
-  return
+  lanes.const_loc 0x0000000000000000
+  lanes.initial_fill 1
+  lanes.const_loc 0x0000000000000000
+  lanes.fill 1
+  cpu.return
 }
 EOF
 expect_fail "fill without atom_reloading" "atom_reloading" \
@@ -136,11 +136,11 @@ expect_pass "valid addresses" validate "$WORK/valid.sst" --arch "$ARCH"
 prog bad_zone <<'EOF'
 version 1.0;
 fn @main() {
-  const_loc 0x0000000000000000
-  initial_fill 1
-  const_zone 0x00000005
-  measure 1
-  return
+  lanes.const_loc 0x0000000000000000
+  lanes.initial_fill 1
+  lanes.const_zone 0x00000005
+  lanes.measure 1
+  cpu.return
 }
 EOF
 expect_fail "invalid zone" "invalid zone" validate "$WORK/bad_zone.sst" --arch "$ARCH"
@@ -148,9 +148,9 @@ expect_fail "invalid zone" "invalid zone" validate "$WORK/bad_zone.sst" --arch "
 prog bad_site <<'EOF'
 version 1.0;
 fn @main() {
-  const_loc 0x0000000063000000
-  initial_fill 1
-  return
+  lanes.const_loc 0x0000000063000000
+  lanes.initial_fill 1
+  cpu.return
 }
 EOF
 expect_fail "invalid site" "invalid location" validate "$WORK/bad_site.sst" --arch "$ARCH"
@@ -162,10 +162,10 @@ echo "=== Category E: stack-type simulation (--simulate-stack) ==="
 prog typed_ok <<'EOF'
 version 1.0;
 fn @main() {
-  const_loc 0x0000000000000000
-  const_loc 0x0000000001000000
-  initial_fill 2
-  halt
+  lanes.const_loc 0x0000000000000000
+  lanes.const_loc 0x0000000001000000
+  lanes.initial_fill 2
+  cpu.halt
 }
 EOF
 expect_pass "well-typed program" validate "$WORK/typed_ok.sst" --simulate-stack
@@ -173,8 +173,8 @@ expect_pass "well-typed program" validate "$WORK/typed_ok.sst" --simulate-stack
 prog underflow <<'EOF'
 version 1.0;
 fn @main() {
-  pop
-  return
+  cpu.pop
+  cpu.return
 }
 EOF
 expect_fail "stack underflow" "underflow" validate "$WORK/underflow.sst" --simulate-stack
@@ -182,9 +182,9 @@ expect_fail "stack underflow" "underflow" validate "$WORK/underflow.sst" --simul
 prog mismatch <<'EOF'
 version 1.0;
 fn @main() {
-  const.f64 1.0
-  initial_fill 1
-  return
+  cpu.const_float 1.0
+  lanes.initial_fill 1
+  cpu.return
 }
 EOF
 expect_fail "type mismatch" "type mismatch" validate "$WORK/mismatch.sst" --simulate-stack

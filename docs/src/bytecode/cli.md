@@ -205,8 +205,8 @@ bloqade-bytecode arch validate gemini-logical.json
 
 | Extension | Format | Description |
 |-----------|--------|-------------|
-| `.sst` | Text | Human-readable bytecode (one instruction per line, `;` comments) |
-| `.bin` | Binary | Compact binary encoding (`BLQD` magic header, 16 bytes per instruction) |
+| `.sst` | Text | Human-readable bytecode (`version` directive + `fn @main`, `//` comments) |
+| `.bin` | Binary | Compact binary encoding (`LANES` magic header, 13 bytes per instruction) |
 | `.json` | JSON | Architecture specification |
 
 See also the [Instruction Quick Reference](inst-quick-ref.md) for a compact summary of all 24 instructions, or the full [Instruction Set](inst-spec.md) for encoding details.

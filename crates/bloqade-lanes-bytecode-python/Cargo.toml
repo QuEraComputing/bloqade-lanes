@@ -14,6 +14,5 @@ bloqade-lanes-search = { path = "../bloqade-lanes-search" }
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
 serde_json = "1"
 
-# vihaco-backed ISA types nested in the bindings (CPU ops via vihaco-cpu).
+# vihaco-backed ISA types surfaced through the bindings.
 vihaco = { workspace = true }
-vihaco-cpu = { workspace = true }

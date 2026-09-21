@@ -2,75 +2,79 @@
 
 A compact summary of all 24 bytecode instructions. See the [Instruction Set](inst-spec.md) for full encoding details.
 
-## Cpu (`0x00`)
+Instructions are spelled in `.sst` text under a **dialect head**: `cpu.` for the
+stack ops, `lanes.` for the device ops. The head is part of the syntax —
+`lanes.move 2` parses, a bare `move 2` does not.
 
-Stack manipulation, constants, and control flow (FLAIR-aligned).
+> **Opcodes shift.** vihaco assigns the opcode byte from the variant's position
+> in the `Instruction` enum, so adding an instruction anywhere but the end
+> renumbers everything after it. The values below are correct for this revision;
+> `Instruction::opcode()` is the authority.
 
-| Instruction | Opcode | Stack Effect | Description |
-|-------------|--------|--------------|-------------|
-| `const_int` | `0x0200` | `( -- int)` | Push 64-bit integer constant |
-| `const_float` | `0x0300` | `( -- float)` | Push 64-bit float constant |
-| `dup` | `0x0400` | `(a -- a a)` | Duplicate top of stack |
-| `pop` | `0x0500` | `(a -- )` | Discard top of stack |
-| `swap` | `0x0600` | `(a b -- b a)` | Swap top two elements |
-| `return` | `0x6400` | `( -- )` | Return from program |
-| `halt` | `0xFF00` | `( -- )` | Halt execution |
+## `cpu.*` — stack ops
 
-## LaneConstants (`0x0F`)
-
-Address constant instructions.
+Stack manipulation, constants, and termination. These mirror vihaco-cpu's stack
+ops but are declared natively (see [Instruction Set](inst-spec.md#stack-ops)).
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
-| `const_loc` | `0x000F` | `( -- loc)` | Push location address |
-| `const_lane` | `0x010F` | `( -- lane)` | Push lane address |
-| `const_zone` | `0x020F` | `( -- zone)` | Push zone address |
+| `cpu.pop` | `0x00` | `(a -- )` | Discard top of stack |
+| `cpu.swap` | `0x01` | `(a b -- b a)` | Swap top two elements |
+| `cpu.return` | `0x02` | `( -- )` | Return from program |
+| `cpu.dup` | `0x03` | `(a -- a a)` | Duplicate top of stack |
+| `cpu.halt` | `0x04` | `( -- )` | Halt execution |
+| `cpu.const_float` | `0x05` | `( -- float)` | Push 64-bit float constant |
+| `cpu.const_int` | `0x06` | `( -- int)` | Push 64-bit integer constant |
 
-## AtomArrangement (`0x10`)
+## `lanes.*` — address constants
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `lanes.const_loc` | `0x07` | `( -- loc)` | Push location address |
+| `lanes.const_lane` | `0x08` | `( -- lane)` | Push lane address |
+| `lanes.const_zone` | `0x09` | `( -- zone)` | Push zone address |
+
+## `lanes.*` — atom arrangement
 
 Atom filling and transport.
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
-| `initial_fill` | `0x0010` | `(loc₁..locₙ -- )` | Initial atom loading |
-| `fill` | `0x0110` | `(loc₁..locₙ -- )` | Atom refill |
-| `move` | `0x0210` | `(lane₁..laneₙ -- )` | Atom transport along lanes |
+| `lanes.initial_fill` | `0x0A` | `(loc₁..locₙ -- )` | Initial atom loading |
+| `lanes.fill` | `0x0B` | `(loc₁..locₙ -- )` | Atom refill |
+| `lanes.move` | `0x0C` | `(lane₁..laneₙ -- )` | Atom transport along lanes |
 
-## QuantumGate (`0x11`)
+## `lanes.*` — quantum gates
 
 Single- and multi-qubit gate operations.
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
-| `local_r` | `0x0011` | `(loc₁..locₙ θ φ -- )` | Local R rotation |
-| `local_rz` | `0x0111` | `(loc₁..locₙ θ -- )` | Local Rz rotation |
-| `global_r` | `0x0211` | `(θ φ -- )` | Global R rotation |
-| `global_rz` | `0x0311` | `(θ -- )` | Global Rz rotation |
-| `cz` | `0x0411` | `(zone -- )` | Controlled-Z gate on zone |
+| `lanes.local_rz` | `0x0D` | `(loc₁..locₙ θ -- )` | Local Rz rotation |
+| `lanes.local_r` | `0x0E` | `(loc₁..locₙ θ φ -- )` | Local R rotation |
+| `lanes.global_rz` | `0x0F` | `(θ -- )` | Global Rz rotation |
+| `lanes.global_r` | `0x10` | `(θ φ -- )` | Global R rotation |
+| `lanes.cz` | `0x11` | `(zone -- )` | Controlled-Z gate on zone |
 
-## Measurement (`0x12`)
-
-Qubit measurement.
+## `lanes.*` — measurement
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
-| `measure` | `0x0012` | `(zone₁..zoneₙ -- future₁..futureₙ)` | Initiate measurement |
-| `await_measure` | `0x0112` | `(future -- array_ref)` | Wait for measurement result |
+| `lanes.measure` | `0x12` | `(zone₁..zoneₙ -- future₁..futureₙ)` | Initiate measurement |
+| `lanes.await_measure` | `0x13` | `(future -- array_ref)` | Wait for measurement result |
 
-## Array (`0x13`)
+## `lanes.*` — arrays
 
 Array construction and indexing.
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
-| `new_array` | `0x0013` | `(elem₁..elemₙ -- array_ref)` | Construct array from stack |
-| `get_item` | `0x0113` | `(array_ref idx₁..idxₙ -- value)` | Index into array |
+| `lanes.new_array` | `0x14` | `(elem₁..elemₙ -- array_ref)` | Construct array from stack |
+| `lanes.get_item` | `0x15` | `(array_ref idx₁..idxₙ -- value)` | Index into array |
 
-## DetectorObservable (`0x14`)
-
-Detector and observable setup.
+## `lanes.*` — detectors and observables
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
-| `set_detector` | `0x0014` | `(array_ref -- detector_ref)` | Set detector |
-| `set_observable` | `0x0114` | `(array_ref -- observable_ref)` | Set observable |
+| `lanes.set_detector` | `0x16` | `(array_ref -- detector_ref)` | Set detector |
+| `lanes.set_observable` | `0x17` | `(array_ref -- observable_ref)` | Set observable |

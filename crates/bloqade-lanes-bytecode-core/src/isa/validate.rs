@@ -12,13 +12,14 @@
 //!
 //! ## Capability checks
 //!
-//! - **`feed_forward` → CPU control flow.** Without mid-circuit classical
-//!   feedback the hardware can only run straight-line code, so any nested
-//!   [`vihaco_cpu`] branch/call (`br`, `cond_br`, `call`, `call_indirect`) is
-//!   rejected. (This rule exists because the [`Cpu`](super::Instruction::Cpu)
-//!   variant makes those opcodes representable in a lanes program.)
-//! - **`feed_forward` → multiple measurements.** Without feed-forward at most
-//!   one `measure` may appear.
+//! - **`feed_forward` → multiple measurements.** Without mid-circuit classical
+//!   feedback the hardware can only run straight-line code, so at most one
+//!   `measure` may appear.
+//!
+//!   The companion rule against branch/call instructions
+//!   ([`ControlFlowRequiresFeedForward`](ValidationError::ControlFlowRequiresFeedForward))
+//!   is currently unreachable — the ISA has no such instructions to reject. See
+//!   that variant's docs.
 //! - **`atom_reloading` → `fill`.** Without atom reloading, refilling atoms
 //!   after the initial fill is unsupported.
 //!
@@ -32,9 +33,6 @@
 
 use std::collections::HashSet;
 use std::fmt;
-
-use vihaco::value::Value;
-use vihaco_cpu::Instruction as Cpu;
 
 use super::{Instruction, Program};
 use crate::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
@@ -60,7 +58,15 @@ pub mod tag {
 /// instruction's program counter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
-    /// A CPU control-flow instruction appears but `feed_forward` is disabled.
+    /// A control-flow instruction appears but `feed_forward` is disabled.
+    ///
+    /// Currently unreachable: the ISA has no branch/call instructions to
+    /// trigger it. It reached programs while the ISA nested vihaco-cpu's
+    /// instruction set wholesale, which brought `br`/`cond_br`/`call` along;
+    /// vihaco-cpu 0.4 dropped its binary codec and the nesting went with it.
+    /// Retained because `feed_forward` is a real capability and control flow is
+    /// expected back — and because it is mapped to a Python exception, so
+    /// removing it would be a breaking API change.
     ControlFlowRequiresFeedForward {
         pc: usize,
         /// The offending mnemonic (e.g. `"cond_br"`).
@@ -176,16 +182,6 @@ impl std::error::Error for ValidationError {}
 /// `Return` is deliberately excluded: it is a terminator, not a feed-forward
 /// branch (and lanes uses its own [`Return`](super::Instruction::Return)
 /// rather than the nested CPU one).
-fn control_flow_mnemonic(cpu: &Cpu) -> Option<&'static str> {
-    match cpu {
-        Cpu::Branch(_) => Some("br"),
-        Cpu::ConditionalBranch(_, _) => Some("cond_br"),
-        Cpu::Call(_, _) => Some("call"),
-        Cpu::IndirectCall => Some("call_indirect"),
-        _ => None,
-    }
-}
-
 /// Validate a program's arch-dependent constraints (capabilities + addresses).
 ///
 /// When `arch` is `None`, all checks are skipped and an empty list is returned.
@@ -202,11 +198,8 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
             // ---- capability checks ----
-            Instruction::Cpu(cpu) if !arch.feed_forward => {
-                if let Some(mnemonic) = control_flow_mnemonic(cpu) {
-                    errors.push(ValidationError::ControlFlowRequiresFeedForward { pc, mnemonic });
-                }
-            }
+            // No `ControlFlowRequiresFeedForward` arm: the ISA has no
+            // branch/call instructions to check for (see the variant's docs).
             Instruction::Measure(_) => {
                 measure_count += 1;
                 if !arch.feed_forward && measure_count > 1 {
@@ -243,7 +236,7 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
 
 /// True if `inst` terminates execution (`return` or `halt`).
 fn is_terminator(inst: &Instruction) -> bool {
-    matches!(inst, Instruction::Return | Instruction::Cpu(Cpu::Halt))
+    matches!(inst, Instruction::Return | Instruction::Halt)
 }
 
 /// True if `inst` only pushes a constant (and so may precede `initial_fill`).
@@ -253,7 +246,8 @@ fn is_constant_push(inst: &Instruction) -> bool {
         Instruction::ConstLoc(_)
             | Instruction::ConstLane(_)
             | Instruction::ConstZone(_)
-            | Instruction::Cpu(Cpu::Const(_))
+            | Instruction::ConstFloat(_)
+            | Instruction::ConstInt(_)
     )
 }
 
@@ -491,15 +485,15 @@ impl<'a> StackSimulator<'a> {
     fn dispatch(&mut self, inst: &Instruction) {
         match inst {
             // constants push a typed value
-            Instruction::Cpu(Cpu::Const(Value::F64(v))) => self.push(tag::FLOAT, Some(v.to_bits())),
-            Instruction::Cpu(Cpu::Const(Value::I64(v))) => self.push(tag::INT, Some(*v as u64)),
+            Instruction::ConstFloat(v) => self.push(tag::FLOAT, Some(v.to_bits())),
+            Instruction::ConstInt(v) => self.push(tag::INT, Some(*v as u64)),
             Instruction::ConstLoc(v) => self.push(tag::LOCATION, Some(*v)),
             Instruction::ConstLane(v) => self.push(tag::LANE, Some(*v)),
             Instruction::ConstZone(v) => self.push(tag::ZONE, Some(*v as u64)),
 
             // stack manipulation
             Instruction::Pop => self.pop_any(),
-            Instruction::Cpu(Cpu::Dup) => self.sim_dup(),
+            Instruction::Dup => self.sim_dup(),
             Instruction::Swap => self.sim_swap(),
 
             // atom arrangement
@@ -560,11 +554,7 @@ impl<'a> StackSimulator<'a> {
 
             // control
             Instruction::Return => self.pop_any(),
-            Instruction::Cpu(Cpu::Halt) => {}
-
-            // Other reused vihaco-cpu ops (arithmetic, etc.) are not emitted by
-            // the lanes pipeline and are not modeled here.
-            Instruction::Cpu(_) => {}
+            Instruction::Halt => {}
         }
     }
 
@@ -630,7 +620,6 @@ mod tests {
     #[test]
     fn no_arch_skips_all_checks() {
         let p = program(vec![
-            Instruction::Cpu(Cpu::ConditionalBranch(0, 1)),
             Instruction::Fill(1),
             Instruction::Measure(1),
             Instruction::Measure(1),
@@ -640,54 +629,17 @@ mod tests {
     }
 
     #[test]
-    fn branching_rejected_without_feed_forward() {
-        let p = program(vec![
-            Instruction::Cpu(Cpu::Branch(0)),
-            Instruction::Cpu(Cpu::ConditionalBranch(0, 1)),
-            Instruction::Cpu(Cpu::Call(1, 0)),
-            Instruction::Cpu(Cpu::IndirectCall),
-        ]);
-        let errors = validate(&p, Some(&caps_arch(false, false)));
-        assert_eq!(
-            errors,
-            vec![
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 0,
-                    mnemonic: "br"
-                },
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 1,
-                    mnemonic: "cond_br"
-                },
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 2,
-                    mnemonic: "call"
-                },
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 3,
-                    mnemonic: "call_indirect"
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn branching_allowed_with_feed_forward() {
-        let p = program(vec![
-            Instruction::Cpu(Cpu::ConditionalBranch(0, 1)),
-            Instruction::Measure(1),
-            Instruction::Measure(1),
-        ]);
+    fn repeated_measures_allowed_with_feed_forward() {
+        let p = program(vec![Instruction::Measure(1), Instruction::Measure(1)]);
         assert!(validate(&p, Some(&caps_arch(true, false))).is_empty());
     }
 
     #[test]
-    fn non_control_flow_cpu_ops_are_fine() {
-        use vihaco::value::Value;
+    fn stack_ops_need_no_capability() {
         let p = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(1))),
-            Instruction::Cpu(Cpu::Dup),
-            Instruction::Cpu(Cpu::Halt),
+            Instruction::ConstInt(1),
+            Instruction::Dup,
+            Instruction::Halt,
         ]);
         assert!(validate(&p, Some(&caps_arch(false, false))).is_empty());
     }
@@ -813,13 +765,13 @@ mod tests {
 
     #[test]
     fn halt_is_a_valid_terminator() {
-        let p = program(vec![Instruction::Cpu(Cpu::Halt)]);
+        let p = program(vec![Instruction::Halt]);
         assert!(validate_structure(&p).is_empty());
     }
 
     #[test]
     fn unreachable_after_terminator_rejected() {
-        let p = program(vec![Instruction::Return, Instruction::Cpu(Cpu::Halt)]);
+        let p = program(vec![Instruction::Return, Instruction::Halt]);
         assert_eq!(
             validate_structure(&p),
             vec![ValidationError::UnreachableInstruction { pc: 1 }]
@@ -879,34 +831,29 @@ mod tests {
     fn capability_and_address_errors_collected_together() {
         let arch = simple_arch(); // feed_forward = false, atom_reloading = false
         let p = program(vec![
-            Instruction::Cpu(Cpu::Branch(0)), // pc 0: control flow
-            Instruction::Fill(1),             // pc 1: reloading
-            Instruction::ConstZone(ZoneAddr { zone_id: 5 }.encode()), // pc 2: bad zone
+            Instruction::Fill(1),                                     // pc 0: reloading
+            Instruction::ConstZone(ZoneAddr { zone_id: 5 }.encode()), // pc 1: bad zone
         ]);
         let errors = validate(&p, Some(&arch));
         assert_eq!(
             errors.len(),
-            3,
+            2,
             "one error per violation, in pc order: {errors:?}"
         );
         assert!(matches!(
             errors[0],
-            ValidationError::ControlFlowRequiresFeedForward { pc: 0, .. }
+            ValidationError::FillRequiresAtomReloading { pc: 0 }
         ));
         assert!(matches!(
             errors[1],
-            ValidationError::FillRequiresAtomReloading { pc: 1 }
-        ));
-        assert!(matches!(
-            errors[2],
-            ValidationError::InvalidZone { pc: 2, .. }
+            ValidationError::InvalidZone { pc: 1, .. }
         ));
     }
 
     // ---- stack simulation ----
 
     fn cpu_float(v: f64) -> Instruction {
-        Instruction::Cpu(Cpu::Const(Value::F64(v)))
+        Instruction::ConstFloat(v)
     }
 
     #[test]
@@ -1157,10 +1104,7 @@ mod tests {
     #[test]
     fn stack_sim_int_const_and_pop() {
         // `const.i64` pushes an INT; `pop` discards it. Well typed.
-        let p = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(7))),
-            Instruction::Pop,
-        ]);
+        let p = program(vec![Instruction::ConstInt(7), Instruction::Pop]);
         assert!(simulate_stack(&p, None).is_empty());
     }
 
@@ -1183,7 +1127,7 @@ mod tests {
 
     #[test]
     fn stack_sim_dup_underflow_on_empty() {
-        let p = program(vec![Instruction::Cpu(Cpu::Dup)]);
+        let p = program(vec![Instruction::Dup]);
         assert_eq!(
             simulate_stack(&p, None),
             vec![ValidationError::StackUnderflow { pc: 0 }]
@@ -1196,7 +1140,7 @@ mod tests {
         // both leaves an empty, well-typed stack.
         let p = program(vec![
             Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::Cpu(Cpu::Dup),
+            Instruction::Dup,
             Instruction::Pop,
             Instruction::Pop,
         ]);
@@ -1248,10 +1192,10 @@ mod tests {
         // new_array pops `dim0` elements and pushes an ARRAY_REF; get_item pops
         // `ndims` INT indices plus the ARRAY_REF and pushes the element.
         let p = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(1))),
-            Instruction::Cpu(Cpu::Const(Value::I64(2))),
+            Instruction::ConstInt(1),
+            Instruction::ConstInt(2),
             Instruction::NewArray(tag::INT as u32, 2, 0),
-            Instruction::Cpu(Cpu::Const(Value::I64(0))),
+            Instruction::ConstInt(0),
             Instruction::GetItem(1),
         ]);
         assert!(
@@ -1265,7 +1209,7 @@ mod tests {
     fn stack_sim_set_detector_and_observable() {
         // Each consumes an ARRAY_REF (produced by a 1-element new_array).
         let det = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(0))),
+            Instruction::ConstInt(0),
             Instruction::NewArray(tag::INT as u32, 1, 0),
             Instruction::SetDetector,
         ]);
@@ -1276,7 +1220,7 @@ mod tests {
         );
 
         let obs = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(0))),
+            Instruction::ConstInt(0),
             Instruction::NewArray(tag::INT as u32, 1, 0),
             Instruction::SetObservable,
         ]);
@@ -1288,14 +1232,9 @@ mod tests {
     }
 
     #[test]
-    fn stack_sim_halt_and_other_cpu_ops_are_noops() {
-        // `halt` and any other reused vihaco-cpu op (here `print`, and a
-        // non-int/float `const`) are untracked no-ops in the type simulator.
-        let p = program(vec![
-            Instruction::Cpu(Cpu::Print),
-            Instruction::Cpu(Cpu::Const(Value::Bool(true))),
-            Instruction::Cpu(Cpu::Halt),
-        ]);
+    fn stack_sim_halt_is_a_noop() {
+        // `halt` neither pushes nor pops, so it cannot underflow an empty stack.
+        let p = program(vec![Instruction::Halt]);
         assert!(simulate_stack(&p, None).is_empty());
     }
 

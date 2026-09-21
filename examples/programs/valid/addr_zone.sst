@@ -1,6 +1,9 @@
-.version 1
-; Valid zone address
-; full.json has zone 0
+version 1.0;
 
-const_zone 0x00000000   ; zone 0
-halt
+// Valid zone address
+// full.json has zone 0
+
+fn @main() {
+  lanes.const_zone 0x00000000    // zone 0
+  cpu.halt
+}

@@ -11,9 +11,9 @@ fn cmd() -> Command {
 const SAMPLE_PROGRAM: &str = "\
 version 1.0;
 fn @main() {
-  const_loc 0x00000102
-  const_lane 0x0000000100030002
-  halt
+  lanes.const_loc 0x00000102
+  lanes.const_lane 0x0000000100030002
+  cpu.halt
 }
 ";
 
@@ -22,29 +22,29 @@ fn @main() {
 const ALL_INSTRUCTIONS_PROGRAM: &str = "\
 version 1.0;
 fn @main() {
-  const.f64 1.5
-  const.i64 42
-  const_loc 0x00010002
-  const_lane 0x8000000000010002
-  const_zone 0x00000003
-  initial_fill 3
-  pop
-  dup
-  swap
-  fill 2
-  move 1
-  local_r 4
-  local_rz 2
-  global_r
-  global_rz
-  cz
-  measure 1
-  await_measure
-  new_array 2 10 20
-  get_item 2
-  set_detector
-  set_observable
-  halt
+  cpu.const_float 1.5
+  cpu.const_int 42
+  lanes.const_loc 0x00010002
+  lanes.const_lane 0x8000000000010002
+  lanes.const_zone 0x00000003
+  lanes.initial_fill 3
+  cpu.pop
+  cpu.dup
+  cpu.swap
+  lanes.fill 2
+  lanes.move 1
+  lanes.local_r 4
+  lanes.local_rz 2
+  lanes.global_r
+  lanes.global_rz
+  lanes.cz
+  lanes.measure 1
+  lanes.await_measure
+  lanes.new_array 2 10 20
+  lanes.get_item 2
+  lanes.set_detector
+  lanes.set_observable
+  cpu.halt
 }
 ";
 
@@ -52,9 +52,9 @@ fn @main() {
 const ARCH_VALID_PROGRAM: &str = "\
 version 1.0;
 fn @main() {
-  const_loc 0x00000001
-  const_zone 0x00000000
-  halt
+  lanes.const_loc 0x00000001
+  lanes.const_zone 0x00000000
+  cpu.halt
 }
 ";
 
@@ -104,11 +104,11 @@ fn test_disassemble_to_stdout() {
         .args(["disassemble", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("const.f64 1.5"))
-        .stdout(predicate::str::contains("const.i64 42"))
-        .stdout(predicate::str::contains("const_loc"))
-        .stdout(predicate::str::contains("const_lane"))
-        .stdout(predicate::str::contains("const_zone"))
+        .stdout(predicate::str::contains("cpu.const_float 1.5"))
+        .stdout(predicate::str::contains("cpu.const_int 42"))
+        .stdout(predicate::str::contains("lanes.const_loc"))
+        .stdout(predicate::str::contains("lanes.const_lane"))
+        .stdout(predicate::str::contains("lanes.const_zone"))
         .stdout(predicate::str::contains("new_array 2 10 20"))
         .stdout(predicate::str::contains("halt"));
 }
@@ -143,30 +143,35 @@ fn test_disassemble_to_file() {
         .stderr(predicate::str::contains("disassembled 23 instructions"));
 
     let text = fs::read_to_string(&output_txt).unwrap();
-    // Spot-check all instruction categories are present
-    assert!(text.contains("const.f64"));
-    assert!(text.contains("const.i64"));
-    assert!(text.contains("const_loc"));
-    assert!(text.contains("const_lane"));
-    assert!(text.contains("const_zone"));
-    assert!(text.contains("pop"));
-    assert!(text.contains("dup"));
-    assert!(text.contains("swap"));
-    assert!(text.contains("initial_fill 3"));
-    assert!(text.contains("fill 2"));
-    assert!(text.contains("move 1"));
-    assert!(text.contains("local_r 4"));
-    assert!(text.contains("local_rz 2"));
-    assert!(text.contains("global_r"));
-    assert!(text.contains("global_rz"));
-    assert!(text.contains("cz"));
-    assert!(text.contains("measure 1"));
-    assert!(text.contains("await_measure"));
-    assert!(text.contains("new_array 2 10 20"));
-    assert!(text.contains("get_item 2"));
-    assert!(text.contains("set_detector"));
-    assert!(text.contains("set_observable"));
-    assert!(text.contains("halt"));
+    // Spot-check all instruction categories are present. Each is asserted with
+    // its dialect head, so the check also pins which dialect an op belongs to.
+    for expected in [
+        "cpu.const_float",
+        "cpu.const_int",
+        "lanes.const_loc",
+        "lanes.const_lane",
+        "lanes.const_zone",
+        "cpu.pop",
+        "cpu.dup",
+        "cpu.swap",
+        "lanes.initial_fill 3",
+        "lanes.fill 2",
+        "lanes.move 1",
+        "lanes.local_r 4",
+        "lanes.local_rz 2",
+        "lanes.global_r",
+        "lanes.global_rz",
+        "lanes.cz",
+        "lanes.measure 1",
+        "lanes.await_measure",
+        "lanes.new_array 2 10 20",
+        "lanes.get_item 2",
+        "lanes.set_detector",
+        "lanes.set_observable",
+        "cpu.halt",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
 }
 
 #[test]
@@ -521,7 +526,7 @@ fn test_round_trip_preserves_version() {
     let binary = dir.path().join("prog.bin");
     fs::write(
         &input,
-        "version 2.3;\nfn @main() {\n  const.i64 99\n  halt\n}\n",
+        "version 2.3;\nfn @main() {\n  cpu.const_int 99\n  cpu.halt\n}\n",
     )
     .unwrap();
 

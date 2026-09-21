@@ -1,5 +1,8 @@
-.version 1
-; Invalid: zone_id=5 does not exist (only zone 0)
+version 1.0;
 
-const_zone 0x00000005   ; zone 5
-halt
+// Invalid: zone_id=5 does not exist (only zone 0)
+
+fn @main() {
+  lanes.const_zone 0x00000005    // zone 5
+  cpu.halt
+}

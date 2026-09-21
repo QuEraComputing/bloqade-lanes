@@ -3,8 +3,6 @@ use pyo3::prelude::*;
 use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::isa::Instruction as VInst;
 use vihaco::instruction::OpCode;
-use vihaco::value::Value;
-use vihaco_cpu::Instruction as Cpu;
 
 use crate::arch_python::{PyDirection, PyLaneAddr, PyLocationAddr, PyMoveType, PyZoneAddr};
 use crate::validation::validate_field;
@@ -23,20 +21,18 @@ pub struct PyInstruction {
 #[pymethods]
 impl PyInstruction {
     // ── Constants ──
-    // CPU const pushes are reused from vihaco-cpu (a typed Value), so the
-    // legacy `const_float` / `const_int` factories map onto `Cpu(Const(..))`.
 
     #[staticmethod]
     fn const_float(value: f64) -> Self {
         Self {
-            inner: VInst::Cpu(Cpu::Const(Value::F64(value))),
+            inner: VInst::ConstFloat(value),
         }
     }
 
     #[staticmethod]
     fn const_int(value: i64) -> Self {
         Self {
-            inner: VInst::Cpu(Cpu::Const(Value::I64(value))),
+            inner: VInst::ConstInt(value),
         }
     }
 
@@ -92,7 +88,6 @@ impl PyInstruction {
     }
 
     // ── Stack manipulation ──
-    // `pop`/`swap` are lanes-native; `dup` is reused from vihaco-cpu.
 
     #[staticmethod]
     fn pop() -> Self {
@@ -101,9 +96,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn dup() -> Self {
-        Self {
-            inner: VInst::Cpu(Cpu::Dup),
-        }
+        Self { inner: VInst::Dup }
     }
 
     #[staticmethod]
@@ -244,15 +237,12 @@ impl PyInstruction {
 
     #[staticmethod]
     fn halt() -> Self {
-        Self {
-            inner: VInst::Cpu(Cpu::Halt),
-        }
+        Self { inner: VInst::Halt }
     }
 
     // ── Introspection ──
 
-    /// The vihaco opcode byte for this instruction (the outer enum's opcode;
-    /// for `Cpu(..)` this is the CPU device's opcode, not the nested one).
+    /// The vihaco opcode byte for this instruction.
     #[getter]
     fn opcode(&self) -> u16 {
         OpCode::opcode(&self.inner) as u16
@@ -264,7 +254,7 @@ impl PyInstruction {
 
     fn float_value(&self) -> PyResult<f64> {
         match &self.inner {
-            VInst::Cpu(Cpu::Const(Value::F64(f))) => Ok(*f),
+            VInst::ConstFloat(f) => Ok(*f),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "float_value() is only valid on const_float",
             )),
@@ -273,7 +263,7 @@ impl PyInstruction {
 
     fn int_value(&self) -> PyResult<i64> {
         match &self.inner {
-            VInst::Cpu(Cpu::Const(Value::I64(n))) => Ok(*n),
+            VInst::ConstInt(n) => Ok(*n),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "int_value() is only valid on const_int",
             )),
@@ -424,13 +414,9 @@ fn format_instruction(instr: &VInst) -> String {
         VInst::GetItem(ndims) => format!("Instruction.get_item({ndims})"),
         VInst::SetDetector => "Instruction.set_detector()".to_string(),
         VInst::SetObservable => "Instruction.set_observable()".to_string(),
-        VInst::Cpu(Cpu::Const(Value::F64(f))) => format!("Instruction.const_float({f})"),
-        VInst::Cpu(Cpu::Const(Value::I64(n))) => format!("Instruction.const_int({n})"),
-        VInst::Cpu(Cpu::Dup) => "Instruction.dup()".to_string(),
-        VInst::Cpu(Cpu::Halt) => "Instruction.halt()".to_string(),
-        // No Python factory exists for arbitrary nested vihaco-cpu ops, so emit
-        // a clearly non-evaluable marker rather than a fake `Instruction.cpu(...)`
-        // call that `repr()` would otherwise imply could be evaluated.
-        VInst::Cpu(other) => format!("<unsupported cpu op: {other:?}>"),
+        VInst::ConstFloat(f) => format!("Instruction.const_float({f})"),
+        VInst::ConstInt(n) => format!("Instruction.const_int({n})"),
+        VInst::Dup => "Instruction.dup()".to_string(),
+        VInst::Halt => "Instruction.halt()".to_string(),
     }
 }
