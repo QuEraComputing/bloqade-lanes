@@ -14,6 +14,7 @@ from kirin.validation import ValidationSuite
 from bloqade.gemini.logical.group import kernel as logical_kernel
 
 from ...common.validation.duplicate_address import DuplicateAddressValidation
+from ...logical.validation.arguments import GeminiLogicalArgumentValidation
 from ...logical.validation.clifford.analysis import GeminiLogicalValidation
 from ...logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
@@ -41,6 +42,10 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
                 GeminiTerminalMeasurementValidation,
                 FlatKernelNoCloningValidation,
                 DuplicateAddressValidation,
+                # NOTE: not redundant with the `@logical.kernel` decorator. A
+                # method can be built without it and handed straight to the
+                # device, so submission is its own enforcement point.
+                GeminiLogicalArgumentValidation,
             ]
         )
     )
