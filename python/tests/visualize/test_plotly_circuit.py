@@ -337,3 +337,52 @@ def test_cz_layers_draw_one_connector_per_pair_with_partner_hover(plotly) -> Non
     assert partner_text[2] == "CZ target, paired with qubit 0"
     assert partner_text[1] == "CZ control, paired with qubit 3"
     assert "%{customdata[4]}" in gates.hovertemplate
+
+
+def test_star_rz_is_labelled_apart_from_a_plain_rz() -> None:
+    """``StarRz`` shares ``local_rz``'s colour but not its label.
+
+    Both land in the same circuit row style, so the label is the only thing
+    telling a Steane star apart from an ordinary local Rz.
+    """
+    load = move.Load()
+    rotation_angle = py.Constant(value=ir.PyAttr(0.5))
+    star_rz = move.StarRz(
+        current_state=load.result,
+        rotation_angle=rotation_angle.result,
+        location_addresses=(LocationAddress(0, 0, 0),),
+        qubit_indices=(0, 1, 2),
+    )
+    local_rz = move.LocalRz(
+        current_state=load.result,
+        rotation_angle=rotation_angle.result,
+        location_addresses=(LocationAddress(0, 0, 0),),
+    )
+
+    assert plotly_circuit._gate_kind_and_label(star_rz) == ("local_rz", "Rz*")
+    assert plotly_circuit._gate_kind_and_label(local_rz) == ("local_rz", "Rz")
+    # A statement that is not a gate gets no column at all.
+    assert plotly_circuit._gate_kind_and_label(load) is None
+
+
+def test_circuit_gates_skip_qubits_without_a_wire(plotly) -> None:
+    """A column may name a qubit the diagram has no row for; it is dropped.
+
+    ``circuit_qubit_ids`` collects the qubits that occupy a site at some step,
+    so a column naming anything else -- a qubit that was never placed -- has
+    nowhere to draw and must not shift the rows of the qubits that were.
+    """
+    colors = plotly_debug._theme_colors("light")
+    column = CircuitColumn(
+        step_index=0,
+        kind="local_r",
+        label="R",
+        description="LocalR()",
+        qubit_ids=(0, 99),
+    )
+
+    _, _, gates = plotly_circuit.circuit_static_traces([column], [0], colors)
+
+    # Only qubit 0 has a wire, so only qubit 0 gets a marker.
+    assert len(cast(Any, gates).x) == 1
+    assert [data[3] for data in cast(Any, gates).customdata] == [0]

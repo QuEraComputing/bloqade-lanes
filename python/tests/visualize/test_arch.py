@@ -24,6 +24,7 @@ from bloqade.lanes.bytecode._native import (
 )
 from bloqade.lanes.bytecode.encoding import (
     Direction,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
 )
@@ -823,3 +824,186 @@ def test_cartoon_path_curves_lanes_that_cross_column_pairs() -> None:
     assert across_path[0] == (0.0, 0.0)
     assert across_path[-1] == (10.0, 0.0)
     assert max(abs(y) for _, y in across_path) > 1.0
+
+
+# ── Pure helpers and guard clauses ──
+
+
+@pytest.mark.parametrize(
+    ("move_type", "zone_id", "expected"),
+    [
+        (MoveType.SITE, 0, "Zone ID 0, Site bus 3"),
+        (MoveType.WORD, 2, "Zone ID 2, Word bus 3"),
+        # An inter-zone bus belongs to no single zone, so it is named without
+        # one -- the branch the debugger's move-path tooltip relies on.
+        (MoveType.ZONE, None, "Zone bus 3"),
+    ],
+)
+def test_bus_preview_label_names_every_bus_kind(
+    move_type: MoveType, zone_id: int | None, expected: str
+) -> None:
+    assert arch_visualization.bus_preview_label(move_type, zone_id, 3) == expected
+
+
+@pytest.fixture
+def siteless_arch_spec() -> ArchSpec:
+    """A spec whose only word has no sites, so no position is discoverable.
+
+    Exercises the fallbacks that keep a degenerate architecture plottable
+    instead of handing matplotlib or Plotly an empty range.
+    """
+    rust_zone = RustZone(
+        name="empty",
+        grid=RustGrid.from_positions([0.0], [0.0]),
+        site_buses=[],
+        word_buses=[],
+        words_with_site_buses=[],
+        sites_with_word_buses=[],
+        entangling_pairs=[],
+    )
+    rust_mode = RustMode(name="all", zones=[0], bitstring_order=[])
+    return ArchSpec.from_components(
+        words=(Word(sites=()),),
+        zones=(rust_zone,),
+        modes=[rust_mode],
+    )
+
+
+def test_bounds_fall_back_when_no_site_is_discoverable(
+    siteless_arch_spec: ArchSpec,
+) -> None:
+    viz = ArchVisualizer(siteless_arch_spec)
+
+    assert list(viz._iter_locations()) == []
+    assert viz.x_bounds == (-1.0, 1.0)
+    assert viz.y_bounds == (-1.0, 1.0)
+    assert viz._column_pair_spacing == 0.0
+
+
+def test_plot_interactive_survives_an_architecture_with_no_sites(
+    plotly, siteless_arch_spec: ArchSpec
+) -> None:
+    """The axis padding has nothing to pad, so it falls back to a unit range."""
+    figure = ArchVisualizer(siteless_arch_spec).plot_interactive()
+
+    assert list(figure.layout.meta["archVisualizerBusTraceIndices"]) == []
+    assert tuple(figure.layout.xaxis.range) == (-1.0, 1.0)
+    assert tuple(figure.layout.yaxis.range) == (-1.0, 1.0)
+
+
+def test_bus_path_iterators_skip_out_of_range_selections(
+    small_arch_spec: ArchSpec,
+) -> None:
+    """Asking for a bus the zone does not define yields nothing, not an error."""
+    viz = ArchVisualizer(small_arch_spec)
+
+    assert list(viz.iter_word_bus_paths([7])) == []
+    assert list(viz.iter_site_bus_paths([0], [7])) == []
+    # A word with no site buses is skipped even when its bus id is valid.
+    assert list(viz.iter_site_bus_paths([1], [0])) == []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"path_style": "squiggly"}, "path_style must be 'exact' or 'cartoon'"),
+        (
+            {"site_lane_preview": "tap"},
+            "site_lane_preview must be 'hover' or 'click'",
+        ),
+        ({"bus_line_style": "dotty"}, "bus_line_style must be 'by_type' or 'dashed'"),
+        ({"theme": "sepia"}, "theme must be 'light' or 'dark'"),
+    ],
+)
+def test_plot_interactive_rejects_unsupported_options(
+    plotly, small_arch_spec: ArchSpec, kwargs: dict[str, str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ArchVisualizer(small_arch_spec).plot_interactive(**cast(Any, kwargs))
+
+
+# ── Figure-mixin HTML and display plumbing ──
+
+
+def test_is_jupyter_kernel_prefers_the_real_ipykernel_class() -> None:
+    """When ipykernel is importable the check is a plain isinstance.
+
+    The MRO-name walk below it is the fallback for hosted kernels that do not
+    ship ipykernel as an importable dependency; this is the other branch.
+    """
+    zmqshell = pytest.importorskip("ipykernel.zmqshell")
+
+    class FakeZMQInteractiveShell:
+        pass
+
+    with patch.object(zmqshell, "ZMQInteractiveShell", FakeZMQInteractiveShell):
+        assert arch_visualization._is_jupyter_kernel(FakeZMQInteractiveShell())
+
+    assert arch_visualization._is_jupyter_kernel(None) is False
+    assert arch_visualization._is_jupyter_kernel(object()) is False
+
+
+def test_interactive_post_scripts_accepts_a_string_or_a_sequence() -> None:
+    """Caller scripts run after the controller, however they were passed."""
+    scripts = arch_visualization._InteractiveArchFigureMixin._interactive_post_scripts
+
+    controller_only = scripts(None)
+    assert len(controller_only) == 1
+
+    assert scripts("alert(1)") == [*controller_only, "alert(1)"]
+    assert scripts(["a()", "b()"]) == [*controller_only, "a()", "b()"]
+
+
+def test_repr_mimebundle_delegates_when_html_is_excluded(
+    plotly, small_arch_spec: ArchSpec
+) -> None:
+    """Asking for anything but HTML is Plotly's business, not the controller's."""
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    assert set(figure._repr_mimebundle_(include=["application/json"])) != {"text/html"}
+    assert set(figure._repr_mimebundle_(exclude=["text/html"])) != {"text/html"}
+
+
+def test_show_rejects_more_than_one_renderer_argument(
+    plotly, small_arch_spec: ArchSpec
+) -> None:
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    with pytest.raises(TypeError, match="at most one renderer argument"):
+        figure.show("browser", "png")
+    with pytest.raises(TypeError, match="at most one renderer argument"):
+        figure.show("browser", renderer="browser")
+
+
+def test_show_forwards_width_and_height_as_html_defaults(
+    plotly, small_arch_spec: ArchSpec
+) -> None:
+    """``show(width=..., height=...)`` maps onto Plotly's HTML sizing options."""
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+    zmq_shell = type("ZMQInteractiveShell", (), {})()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=zmq_shell),
+        patch.object(type(figure), "to_html", return_value="<div/>") as to_html,
+    ):
+        figure.show(width=911, height=457)
+
+    assert to_html.call_args.kwargs["default_width"] == 911
+    assert to_html.call_args.kwargs["default_height"] == 457
+
+
+def test_show_delegates_static_renderers_to_plotly(
+    plotly, small_arch_spec: ArchSpec
+) -> None:
+    """A PNG has no scripts to preserve, so the override steps out of the way."""
+    from plotly.basedatatypes import BaseFigure
+
+    figure = ArchVisualizer(small_arch_spec).plot_interactive()
+
+    with (
+        patch("IPython.core.getipython.get_ipython", return_value=None),
+        patch.object(BaseFigure, "show", return_value="delegated") as base_show,
+    ):
+        assert figure.show("png") == "delegated"
+
+    assert base_show.call_args.args == ("png",)

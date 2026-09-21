@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import sys
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from kirin import ir
@@ -514,3 +515,127 @@ def test_move_path_and_site_preview_name_a_bus_identically(
 
     assert baked, "fixture should contribute at least one lane preview"
     assert baked == derived
+
+
+def test_dark_theme_reaches_the_figure(
+    plotly, monkeypatch, small_arch_spec: ArchSpec
+) -> None:
+    """The debugger's own palette is separate from the architecture's.
+
+    ``plot_interactive`` themes the sites and buses; these colours theme the
+    atoms, gates and circuit panel layered on top, so both have to switch.
+    """
+    dark = plotly_debug._theme_colors("dark")
+    light = plotly_debug._theme_colors("light")
+
+    assert dark.keys() == light.keys()
+    assert dark["atom"] != light["atom"]
+
+    state, _ = _state_at(small_arch_spec, moved=False)
+    monkeypatch.setattr(
+        plotly_debug,
+        "collect_debug_steps",
+        lambda *_args: [DebugStep(move.Load(), state, "Step 1 / 1: Load()")],
+    )
+    figure = plotly_debug.build_plotly_debugger_figure(
+        MagicMock(),
+        small_arch_spec,
+        interactive=True,
+        pause_time=0.5,
+        atom_marker="o",
+        theme="dark",
+        height=600,
+    )
+
+    assert figure.layout.paper_bgcolor == "#0f172a"
+    assert cast(Any, figure.data[-1]).marker.color == dark["atom"]
+
+
+def test_zone_gate_bounds_are_absent_for_an_unoccupied_zone(
+    small_arch_spec: ArchSpec,
+) -> None:
+    """A zone with no locations has no region to shade, so the gate draws empty."""
+    assert plotly_debug._zone_gate_bounds({0}, small_arch_spec) is not None
+    assert plotly_debug._zone_gate_bounds({99}, small_arch_spec) is None
+
+
+def test_debugger_figure_without_steps_uses_placeholder_traces(
+    plotly, monkeypatch, small_arch_spec: ArchSpec
+) -> None:
+    """A kernel the interpreter yields no atom state for still builds a figure.
+
+    The placeholders keep the trace indices the frames address stable, so the
+    figure stays animatable if steps appear later.
+    """
+    monkeypatch.setattr(plotly_debug, "collect_debug_steps", lambda *_args: [])
+
+    figure = plotly_debug.build_plotly_debugger_figure(
+        MagicMock(),
+        small_arch_spec,
+        interactive=True,
+        pause_time=0.5,
+        atom_marker="o",
+        theme="light",
+        height=600,
+    )
+
+    assert figure.frames == ()
+    assert not figure.layout.sliders
+    assert figure.layout.title.text == "Plotly move debugger: no atom-state steps"
+    # Route, circuit-highlight, gate and atom placeholders: empty and hidden.
+    placeholders = cast(Any, figure.data)[-4:]
+    assert [trace.name for trace in placeholders] == [
+        "Move path",
+        "Circuit highlight",
+        "Gate highlight",
+        "Atoms",
+    ]
+    assert all(trace.visible is False for trace in placeholders)
+    assert all(list(trace.x) == [] for trace in placeholders)
+
+
+def test_in_jupyter_kernel_detects_the_shell_and_its_absence() -> None:
+    zmq_shell = type("ZMQInteractiveShell", (), {})()
+
+    with patch("IPython.core.getipython.get_ipython", return_value=zmq_shell):
+        assert plotly_debug._in_jupyter_kernel() is True
+    with patch("IPython.core.getipython.get_ipython", return_value=None):
+        assert plotly_debug._in_jupyter_kernel() is False
+    with patch("IPython.core.getipython.get_ipython", return_value=object()):
+        assert plotly_debug._in_jupyter_kernel() is False
+
+
+def test_in_jupyter_kernel_without_ipython_installed() -> None:
+    """IPython is optional, so its absence is a plain "not a notebook"."""
+    with patch.dict(sys.modules, {"IPython.core.getipython": None}):
+        assert plotly_debug._in_jupyter_kernel() is False
+
+
+def test_unsupported_theme_is_rejected(
+    plotly, monkeypatch, small_arch_spec: ArchSpec
+) -> None:
+    """An unknown theme is a hard error rather than a silent fallback.
+
+    Note the figure only rejects it after interpreting the kernel --
+    ``pause_time`` and ``circuit_window`` are checked up front, but the palette
+    is built after ``collect_debug_steps`` has already run.
+    """
+    with pytest.raises(ValueError, match="theme must be 'light' or 'dark'"):
+        plotly_debug._theme_colors(cast(Any, "sepia"))
+
+    state, _ = _state_at(small_arch_spec, moved=False)
+    monkeypatch.setattr(
+        plotly_debug,
+        "collect_debug_steps",
+        lambda *_args: [DebugStep(move.Load(), state, "Step 1 / 1: Load()")],
+    )
+    with pytest.raises(ValueError, match="theme must be 'light' or 'dark'"):
+        plotly_debug.build_plotly_debugger_figure(
+            MagicMock(),
+            small_arch_spec,
+            interactive=True,
+            pause_time=0.5,
+            atom_marker="o",
+            theme=cast(Any, "sepia"),
+            height=600,
+        )
