@@ -571,6 +571,54 @@ fn test_round_trip_preserves_version() {
         .stdout(predicate::str::contains("fn @main()"));
 }
 
+/// A malformed `new_array` is a diagnosis, not a denial of service.
+///
+/// `dim0` and `dim1` are read straight out of the instruction word, and their
+/// product drove a pop loop that emitted one `stack underflow` per missing
+/// element. This 28-byte program produced **5,000,001** lines in 8.5 s and
+/// 405 MB; the count is now bounded and the repeats collapsed, so it produces
+/// two. Asserting the error count is what pins that — the unit tests reach
+/// `simulate_stack` directly and never see the CLI's output.
+#[test]
+fn test_validate_bounds_an_oversized_new_array() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("bigarray.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.new_array 0 5000000 0\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["validate", input.to_str().unwrap(), "--simulate-stack"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "new_array declares 5000000 elements, more than the maximum of 1048576",
+        ))
+        .stderr(predicate::str::contains("error: 2 validation error(s)"));
+}
+
+/// The same operands one step further out: `65536 * 65536` is `2^32`, which
+/// wrapped to zero in the old `u32` arithmetic — so the CLI reported the
+/// program *valid* without examining an operand.
+#[test]
+fn test_validate_rejects_a_wrapping_new_array() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("wrap.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.new_array 0 65536 65536\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["validate", input.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("declares 4294967296 elements"));
+}
+
 // --- run ---
 
 /// A five-site word with one site bus, written to `dir` — the same shape the
