@@ -242,7 +242,13 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
         .into_iter()
         .map(bytecode::decode)
         .collect();
-    Ok(from_code(info.version, code))
+
+    // `from_code` declares a single `@main` spanning the code; the child
+    // sections then overwrite that with the program's real tables. A file
+    // carrying no table sections keeps the `@main` default and still loads.
+    let mut program = from_code(info.version, code);
+    super::container::read_tables(&root, &mut program).map_err(|e| classify(&e))?;
+    Ok(program)
 }
 
 #[cfg(test)]
@@ -298,7 +304,13 @@ mod tests {
             vihaco::BytecodeFile::<LanesContext>::from_bytes(to_binary(&program).unwrap()).unwrap();
         let root = file.root();
         assert!(root.path().is_root());
-        assert_eq!(root.children().count(), 0);
+        // The symbol tables ride along as named child sections.
+        let mut names: Vec<String> = root
+            .children()
+            .filter_map(|c| c.local_name().map(str::to_owned))
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, ["functions", "labels", "strings"]);
         assert_eq!(
             root.decode_instructions::<BytecodeInstruction>()
                 .unwrap()
@@ -310,6 +322,33 @@ mod tests {
         assert_eq!(
             root.decode_header::<LanesInfo>().unwrap().version,
             program.extra.version
+        );
+    }
+
+    #[test]
+    fn binary_preserves_functions_labels_and_names() {
+        // The point of the child sections: a program's symbol tables have to
+        // survive a binary round-trip, or function and label names are lost and
+        // the disassembly is unreadable.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
+                   .text(root):\n\
+                   fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.br @done\n  \
+                   lanes::lanes.cz\n  cpu::cpu.label @done\n  cpu::cpu.halt\n}\n\
+                   fn @helper() {\n  cpu::cpu.ret 0\n}\n\
+                   .text(root).\n.section(root).\n";
+        let original = crate::isa::text::parse_text(src).unwrap();
+        let restored = from_binary(&to_binary(&original).unwrap()).unwrap();
+
+        assert_eq!(restored, original);
+        assert_eq!(restored.functions.len(), 2);
+        assert_eq!(restored.labels.len(), 1);
+        assert_eq!(restored.strings, original.strings);
+        assert_eq!(restored.main_function, Some(0));
+
+        // And the names come back, so the text form is identical.
+        assert_eq!(
+            crate::isa::text::to_text(&restored),
+            crate::isa::text::to_text(&original)
         );
     }
 
@@ -367,28 +406,44 @@ mod tests {
     #[test]
     fn unaligned_code_rejected() {
         // Grow the bytecode region by one byte — and the section that holds it,
-        // so the container itself stays well-formed. The only thing wrong is
-        // that the region is no longer a whole number of instruction words.
+        // so the container stays well-formed. The only fault is that the region
+        // is no longer a whole number of instruction words.
         //
-        // Offsets follow the layout in `super::super::container`: section_len at
-        // 16, composite_header_len at 24, the 4-byte header at 32, bytecode_len
-        // at 36, bytecode from 44.
-        const SECTION_LEN: usize = 16;
-        const BYTECODE_LEN: usize = 36;
-        const BYTECODE: usize = 44;
-
+        // Offsets are read out of the file rather than hard-coded, so this keeps
+        // working when the layout around them changes.
         let mut bytes = to_binary(&from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)])).unwrap();
+
+        let read_u64 =
+            |b: &[u8], at: usize| u64::from_le_bytes(b[at..at + 8].try_into().unwrap()) as usize;
+        let context_len = read_u64(&bytes, 8);
+        let section = FILE_HEADER_LEN + context_len;
+        let composite_header_len = read_u64(&bytes, section + 8);
+        let bytecode_len_at = section + 16 + composite_header_len;
+        let bytecode_at = bytecode_len_at + 8;
+        let code_len = read_u64(&bytes, bytecode_len_at);
+
         let bump = |buf: &mut Vec<u8>, at: usize| {
-            let v = u64::from_le_bytes(buf[at..at + 8].try_into().unwrap()) + 1;
-            buf[at..at + 8].copy_from_slice(&v.to_le_bytes());
+            let v = read_u64(buf, at) + 1;
+            buf[at..at + 8].copy_from_slice(&(v as u64).to_le_bytes());
         };
-        bump(&mut bytes, SECTION_LEN);
-        bump(&mut bytes, BYTECODE_LEN);
-        bytes.insert(BYTECODE + bytecode::instruction_width() as usize, 0);
+        bump(&mut bytes, section); // section_len
+        bump(&mut bytes, bytecode_len_at);
+        bytes.insert(bytecode_at + code_len, 0);
+
+        // The inserted byte shifts everything after the code, so the child
+        // sections' recorded offsets move with it. Without this the container
+        // rejects the file for a structural reason and never reaches the
+        // alignment check.
+        let child_table = bytecode_at + code_len + 1;
+        let child_count =
+            u32::from_le_bytes(bytes[child_table..child_table + 4].try_into().unwrap()) as usize;
+        for i in 0..child_count {
+            bump(&mut bytes, child_table + 4 + i * 12 + 4);
+        }
 
         assert!(
             matches!(from_binary(&bytes), Err(BinaryError::UnalignedCode { len }) if len
-                == bytecode::instruction_width() as usize + 1),
+                == code_len + 1),
             "got {:?}",
             from_binary(&bytes)
         );
