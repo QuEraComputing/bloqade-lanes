@@ -492,6 +492,8 @@ mod tests {
     use super::*;
     use crate::arch::addr::LocationAddr;
     use crate::isa::device::LanesInstruction as I;
+    use chumsky::Parser as _;
+    use vihaco_parser::Parse;
 
     const SIMPLE_ARCH_JSON: &str = include_str!("../../../../examples/arch/simple.json");
 
@@ -560,6 +562,205 @@ mod tests {
                 msg: LanesMessage::Zones(_)
             })
         ));
+    }
+
+    #[test]
+    fn swap_exchanges_the_top_two_and_pop_discards() {
+        let mut m = machine();
+        m.step_lanes(I::ConstZone(1)).unwrap();
+        m.step_lanes(I::ConstZone(2)).unwrap();
+        m.step_lanes(I::Swap).unwrap();
+
+        // After the swap, `cz` consumes what was the *lower* of the two.
+        let effects = m.step_lanes(I::Cz).unwrap();
+        match effects {
+            Effects::One(LanesEffect::NotSimulated {
+                msg: LanesMessage::Zones(zones),
+                ..
+            }) => assert_eq!(zones[0].zone_id, 1),
+            other => panic!("expected a zone message, got {other:?}"),
+        }
+
+        // `pop` discards, so the remaining value is gone and `cz` underflows.
+        m.step_lanes(I::Pop).unwrap();
+        assert!(m.step_lanes(I::Cz).is_err());
+    }
+
+    #[test]
+    fn the_wrong_operand_type_is_reported_not_coerced() {
+        // A zone where an angle belongs, and an angle where a location belongs.
+        let mut m = machine();
+        m.step_lanes(I::ConstZone(0)).unwrap();
+        assert!(
+            m.step_lanes(I::GlobalRz)
+                .unwrap_err()
+                .to_string()
+                .contains("angle")
+        );
+
+        let mut m = machine();
+        m.cpu.stack_push(Value::F64(1.0));
+        assert!(
+            m.step_lanes(I::InitialFill(1))
+                .unwrap_err()
+                .to_string()
+                .contains("u64 address")
+        );
+    }
+
+    #[test]
+    fn device_and_op_name_identify_both_halves() {
+        use vihaco_cpu::RuntimeInstruction as C;
+        let cases = [
+            (MachineInstruction::Lanes(I::Move(1)), "lanes", "move"),
+            (MachineInstruction::Cpu(C::Halt), "cpu", "halt"),
+            (MachineInstruction::Cpu(C::Return(0)), "cpu", "return"),
+            (
+                MachineInstruction::Cpu(C::Const(Type::F64, Value::F64(1.0))),
+                "cpu",
+                "const_float",
+            ),
+            (
+                MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(1))),
+                "cpu",
+                "const_int",
+            ),
+            (
+                MachineInstruction::Cpu(C::Const(Type::U64, Value::U64(1))),
+                "cpu",
+                "const_u64",
+            ),
+            (MachineInstruction::Cpu(C::Add(Type::I64)), "cpu", "add"),
+        ];
+        for (inst, device, name) in cases {
+            assert_eq!(device_of(&inst), device, "device for {inst:?}");
+            assert_eq!(op_name(&inst), name, "op_name for {inst:?}");
+        }
+    }
+
+    /// Every CPU instruction we can render must re-parse to itself.
+    ///
+    /// This is the pairing that has no compiler-enforced link: vihaco-cpu owns
+    /// the parser, we own the renderer, and its own `Display` emits text its
+    /// parser rejects (`halt`, not `cpu.halt`) — so nothing but a test keeps the
+    /// two in step across all 42 ops.
+    #[test]
+    fn every_renderable_cpu_op_round_trips_through_text() {
+        use vihaco_cpu::RuntimeInstruction as C;
+        let tys = [Type::Bool, Type::I64, Type::U32, Type::U64, Type::F64];
+        let mut samples = vec![
+            C::Span(1, 2, 3),
+            C::FunctionStart,
+            C::FunctionEnd,
+            C::Breakpoint,
+            C::IndirectCall,
+            C::Return(0),
+            C::Return(3),
+            C::Halt,
+            C::Print,
+            C::Dup,
+            C::HeapAlloc(5),
+            C::GetItem,
+            C::HeapDealloc,
+            C::Not,
+            C::And,
+            C::Or,
+            C::Xor,
+            C::Const(Type::F64, Value::F64(1.5)),
+            C::Const(Type::F64, Value::F64(-0.0)),
+            C::Const(Type::I64, Value::I64(-42)),
+            C::Const(Type::U64, Value::U64(7)),
+            C::Const(Type::U32, Value::U32(3)),
+            C::Const(Type::Bool, Value::Bool(true)),
+        ];
+        for ty in tys {
+            samples.extend([
+                C::Load(ty, 7),
+                C::Store(ty, 9),
+                C::Add(ty),
+                C::Sub(ty),
+                C::Mul(ty),
+                C::Div(ty),
+                C::Rem(ty),
+                C::Neg(ty),
+                C::Shl(ty),
+                C::Shr(ty),
+                C::Rol(ty),
+                C::Ror(ty),
+                C::BitAnd(ty),
+                C::BitOr(ty),
+                C::BitXor(ty),
+                C::Eq(ty),
+                C::Ne(ty),
+                C::Lt(ty),
+                C::Gt(ty),
+                C::Le(ty),
+                C::Ge(ty),
+            ]);
+        }
+
+        for inst in samples {
+            let inst = MachineInstruction::Cpu(inst);
+            let text = to_sst_text(&inst);
+            let parsed = MachineSurfaceInstruction::parser()
+                .parse(text.as_str())
+                .into_result()
+                .unwrap_or_else(|e| panic!("rendered {text:?} does not parse: {e:?}"));
+            let back = lower(parsed).unwrap_or_else(|e| panic!("{text:?} will not lower: {e}"));
+            assert_eq!(back, inst, "round-trip changed {text:?}");
+        }
+    }
+
+    /// Symbolic control flow renders, but cannot be lowered without a label
+    /// table — the error says so rather than silently inventing an address.
+    #[test]
+    fn symbolic_control_flow_is_rejected_on_lowering() {
+        use vihaco_cpu::SurfaceInstruction as S;
+        for inst in [
+            S::Branch(vihaco_parser::Ident("loop".into())),
+            S::Label(vihaco_parser::Ident("loop".into())),
+        ] {
+            let err = lower(MachineSurfaceInstruction::Cpu(inst))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("label table"), "got {err}");
+        }
+    }
+
+    /// Every lanes instruction must likewise survive render -> parse.
+    #[test]
+    fn every_lanes_op_round_trips_through_text() {
+        use crate::isa::device::LanesInstruction as L;
+        let samples = [
+            L::Pop,
+            L::Swap,
+            L::ConstLoc(0x0100_0000),
+            L::ConstLane(0x8000_0000_0001_0002),
+            L::ConstZone(7),
+            L::InitialFill(3),
+            L::Fill(2),
+            L::Move(1),
+            L::LocalRz(2),
+            L::LocalR(4),
+            L::GlobalRz,
+            L::GlobalR,
+            L::Cz,
+            L::Measure(1),
+            L::AwaitMeasure,
+            L::NewArray(2, 10, 20),
+            L::GetItem(2),
+            L::SetDetector,
+            L::SetObservable,
+        ];
+        for inst in samples {
+            let inst = MachineInstruction::Lanes(inst);
+            let text = to_sst_text(&inst);
+            let parsed = MachineSurfaceInstruction::parser()
+                .parse(text.as_str())
+                .into_result()
+                .unwrap_or_else(|e| panic!("rendered {text:?} does not parse: {e:?}"));
+            assert_eq!(lower(parsed).unwrap(), inst, "round-trip changed {text:?}");
+        }
     }
 
     #[test]
