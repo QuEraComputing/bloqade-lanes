@@ -269,12 +269,27 @@ impl LanesMachine {
     /// rejects such a program up front; this makes the machine safe on its own
     /// regardless.
     fn pop_values(&mut self, n: u64) -> eyre::Result<Vec<Value>> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(self.pop_capacity(n));
         for _ in 0..n {
             out.push(self.cpu.stack_pop()?);
         }
         out.reverse();
         Ok(out)
+    }
+
+    /// Capacity to reserve for a pop of `n` values.
+    ///
+    /// `n` comes straight out of an instruction word, so it cannot be used as
+    /// a capacity: `initial_fill 4294967295` asks for 48 GiB of
+    /// `LocationAddr`. Linux's allocator refuses and Rust aborts the process
+    /// (SIGABRT, no unwinding, no test failure to catch); macOS commits
+    /// lazily and hands it back, which is why this only ever showed up in CI.
+    ///
+    /// A pop can never take more than the stack holds, so the stack depth is
+    /// both a safe bound and a sufficient one — every legitimate arity still
+    /// gets its single up-front allocation.
+    fn pop_capacity(&self, n: u64) -> usize {
+        n.min(self.cpu.stack().len() as u64) as usize
     }
 
     fn pop_u64(&mut self) -> eyre::Result<u64> {
@@ -285,7 +300,7 @@ impl LanesMachine {
     }
 
     fn pop_floats(&mut self, n: u32) -> eyre::Result<Vec<f64>> {
-        let mut out = Vec::with_capacity(n as usize);
+        let mut out = Vec::with_capacity(self.pop_capacity(n as u64));
         for _ in 0..n {
             match self.cpu.stack_pop()? {
                 Value::F64(v) => out.push(v),
@@ -297,7 +312,7 @@ impl LanesMachine {
     }
 
     fn pop_locations(&mut self, n: u32) -> eyre::Result<Vec<LocationAddr>> {
-        let mut out = Vec::with_capacity(n as usize);
+        let mut out = Vec::with_capacity(self.pop_capacity(n as u64));
         for _ in 0..n {
             out.push(LocationAddr::decode(self.pop_u64()?));
         }
@@ -306,7 +321,7 @@ impl LanesMachine {
     }
 
     fn pop_lanes(&mut self, n: u32) -> eyre::Result<Vec<LaneAddr>> {
-        let mut out = Vec::with_capacity(n as usize);
+        let mut out = Vec::with_capacity(self.pop_capacity(n as u64));
         for _ in 0..n {
             out.push(LaneAddr::decode_u64(self.pop_u64()?));
         }
@@ -315,7 +330,7 @@ impl LanesMachine {
     }
 
     fn pop_zones(&mut self, n: u32) -> eyre::Result<Vec<ZoneAddr>> {
-        let mut out = Vec::with_capacity(n as usize);
+        let mut out = Vec::with_capacity(self.pop_capacity(n as u64));
         for _ in 0..n {
             match self.cpu.stack_pop()? {
                 Value::U32(v) => out.push(ZoneAddr::decode(v)),
@@ -1012,10 +1027,16 @@ mod tests {
     ///
     /// `run` deliberately has no validation gate — `validate` is its own
     /// subcommand, and a program you have not validated is still one you may
-    /// want to execute. That is only safe because `pop_values` stops at the
-    /// first pop past the stack depth and pre-allocates nothing against `n`,
-    /// so the work is bounded by what the program actually pushed rather than
-    /// by what its instruction word claims. Nothing tested that until now.
+    /// want to execute. That is only safe if the pop path is bounded by what
+    /// the program actually pushed rather than by what its instruction word
+    /// claims.
+    ///
+    /// It was not. `pop_locations`/`pop_lanes`/`pop_zones`/`pop_floats`
+    /// reserved `n` up front, so `initial_fill 4294967295` asked for 48 GiB
+    /// and aborted the process on Linux. macOS commits lazily and returns the
+    /// reservation, so the first version of this test passed locally and
+    /// SIGABRTed in CI — hence the capacity assertion below, which fails on
+    /// either platform.
     #[test]
     fn an_absurd_operand_count_fails_without_doing_the_work() {
         use crate::isa::program::from_code;
@@ -1042,13 +1063,23 @@ mod tests {
                     MachineInstruction::Cpu(C::Halt),
                 ],
             );
-            let err = LanesMachine::new()
+            let mut machine = LanesMachine::new();
+            let err = machine
                 .run(&program, 100)
                 .expect_err("{inst:?} should not run")
                 .to_string();
             assert!(
                 err.contains("stack") || err.contains("expected"),
                 "{inst:?}: {err}"
+            );
+
+            // The reservation itself has to be bounded, not just the loop.
+            // A platform that commits lazily will run the unfixed code
+            // happily, so assert the bound rather than relying on the
+            // allocator to complain.
+            assert!(
+                machine.pop_capacity(u32::MAX as u64) <= 3,
+                "{inst:?}: capacity is not clamped to the stack depth"
             );
         }
     }
