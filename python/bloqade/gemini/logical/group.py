@@ -115,6 +115,7 @@ def kernel(self):
             from ..common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
+            from .validation.arguments import GeminiLogicalArgumentValidation
             from .validation.clifford.analysis import (
                 GeminiLogicalValidation,
             )
@@ -132,6 +133,7 @@ def kernel(self):
                     # better when both fire.
                     ConstAddressValidation,
                     DuplicateAddressValidation,
+                    GeminiLogicalArgumentValidation,
                 ]
             )
             origins.snapshot(mt)

@@ -1,8 +1,21 @@
-.version 1
-; Invalid: site_bus move on word 2, which is NOT in words_with_site_buses [0, 1]
-; Word 2 has no bus connections.
+sst v1
 
-const_lane 0x0000000000020000   ; fwd, site_bus, word 2, site 0, bus 0
-const_lane 0x0000000000020001   ; fwd, site_bus, word 2, site 1, bus 0
-move 2
-halt
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: full
+// expect: InvalidLane
+// expect: LaneGroupValidation
+// Invalid: site_bus move on word 2, which is NOT in words_with_site_buses [0, 1]
+// Word 2 has no bus connections.
+
+fn @main() {
+  lanes::lanes.const_lane 0x0000000000020000    // fwd, site_bus, word 2, site 0, bus 0
+  lanes::lanes.const_lane 0x0000000000020001    // fwd, site_bus, word 2, site 1, bus 0
+  lanes::lanes.move 2
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).

@@ -50,9 +50,10 @@ impl PyProgram {
         Ok(Self { inner: program })
     }
 
-    fn to_binary<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        let bytes = rs_prog::to_binary(&self.inner);
-        PyBytes::new(py, &bytes)
+    fn to_binary<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = rs_prog::to_binary(&self.inner)
+            .map_err(|e| crate::errors::program_error_to_py(py, &e))?;
+        Ok(PyBytes::new(py, &bytes))
     }
 
     /// Validate the program.

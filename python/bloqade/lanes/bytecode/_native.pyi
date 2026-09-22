@@ -2395,17 +2395,36 @@ class Instruction:
 
     @property
     def opcode(self) -> int:
-        """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
+        """Packed 16-bit opcode: ``(device_code << 8) | instruction_code``.
+
+        Device codes are ``0x00`` for the CPU and ``0x01`` for the lanes
+        device. Both halves are assigned by declaration order, so they shift
+        whenever either instruction set gains a variant — compare identity with
+        :meth:`op_name`, not with a literal opcode.
+        """
+        ...
+
+    def device(self) -> str:
+        """The device this instruction belongs to: ``"cpu"`` or ``"lanes"``.
+
+        The stack and arithmetic ops come from vihaco-cpu's CPU component; the
+        atom-movement, gate, measurement and array ops are the lanes device's.
+        In ``.sst`` text this is the prefix before ``::``.
+        """
         ...
 
     def op_name(self) -> str:
-        """Lowercase snake_case opcode name matching the bytecode text-format
-        parser's canonical names (see
-        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
+        """Lowercase snake_case opcode name, without the device prefix or
+        dialect head — ``"move"`` for ``lanes::lanes.move``.
 
         Factory methods use trailing underscores for Python-keyword conflicts
         (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
-        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
+        returns the bare names: ``"move"`` and ``"return"``.
+
+        Two names deliberately differ from the text mnemonic because the
+        decoder depends on them: the constants are ``"const_float"`` /
+        ``"const_int"`` rather than vihaco-cpu's single typed ``const``, and
+        ``"return"`` keeps its spelling rather than vihaco-cpu's ``ret``.
         """
         ...
 
@@ -2501,8 +2520,8 @@ class Instruction:
 class Program:
     """A bytecode program consisting of a version and instruction sequence.
 
-    Programs can be constructed directly, parsed from SST text assembly,
-    or deserialized from native LANES binary format.
+    Programs can be constructed directly, parsed from vihaco's ``sst v1``
+    text container, or deserialized from its ``VHBC`` binary container.
 
     Args:
         version (tuple[int, int]): Program version as ``(major, minor)``.
@@ -2537,10 +2556,10 @@ class Program:
 
     @staticmethod
     def from_binary(data: bytes) -> Program:
-        """Deserialize a program from native LANES binary format.
+        """Deserialize a program from vihaco's ``VHBC`` binary container.
 
         Args:
-            data (bytes): Raw native LANES binary data.
+            data (bytes): Raw ``VHBC`` container bytes.
 
         Returns:
             Program: The deserialized program.
@@ -2551,10 +2570,15 @@ class Program:
         ...
 
     def to_binary(self) -> bytes:
-        """Serialize the program to native LANES binary format.
+        """Serialize the program to vihaco's ``VHBC`` binary container.
 
         Returns:
-            bytes: The native LANES binary representation.
+            bytes: The ``VHBC`` container bytes.
+
+        Raises:
+            ProgramError: If an instruction has no encodable form. Today
+                that is only a runtime label, whose identifier means
+                nothing outside the parse that produced it.
         """
         ...
 

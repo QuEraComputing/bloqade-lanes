@@ -276,7 +276,11 @@ def test_multiple_errors():
 
     except ValidationErrorGroup as e:
         did_error = True
-        assert len(e.errors) == 5
+        # Six, not five: `main` allocates its own qubits, so it is a program,
+        # and a program taking `n` is reported alongside the rest rather than
+        # only after the others are fixed.
+        assert len(e.errors) == 6
+        assert any("must take no arguments" in m for m in map(str, e.errors))
 
     assert did_error
 

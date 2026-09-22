@@ -73,6 +73,10 @@ TYPE_TAG: dict[int, types.TypeAttribute] = {
     6: MeasurementFutureType,
     7: DetectorType,
     8: ObservableType,
+    # Tag 9 is an *element* type, not a value a slot can hold on its own:
+    # ``await_measure`` pushes an array ref (tag 2) whose elements are these.
+    # It exists so ``new_array`` can name that element type.
+    9: MeasurementResultType,
 }
 
 
