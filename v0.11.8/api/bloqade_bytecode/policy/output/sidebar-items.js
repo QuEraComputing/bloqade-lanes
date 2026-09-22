@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["print_human_move","print_human_target"],"struct":["EvalEnvelope","TargetEvalEnvelope"]};
