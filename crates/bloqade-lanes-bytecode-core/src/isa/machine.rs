@@ -1407,6 +1407,65 @@ mod tests {
         );
     }
 
+    /// Declaration order is not part of a module's meaning.
+    ///
+    /// The test above shows `@main` is *found* when it is not first. This is
+    /// the stronger property the entry-point symbol buys: the same two
+    /// functions in either order are the same program, so reordering a module
+    /// cannot change what it validates as or what it does.
+    ///
+    /// Worth pinning separately because the rules that could break it are not
+    /// all in the entry-point lookup. `initial_fill must be first` and the
+    /// reachability walk are per function only because `func_start` resets
+    /// them; had either stayed whole-program, a helper declared first would
+    /// have made `@main`'s own `initial_fill` illegal.
+    #[test]
+    fn declaration_order_changes_nothing() {
+        use crate::isa::text::parse_text;
+        use crate::isa::validate::{simulate_stack, validate, validate_structure};
+
+        const HELPER: &str = "fn @helper() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  \
+             lanes::lanes.pop\n  cpu::cpu.ret 0\n}\n";
+        const MAIN: &str = "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.initial_fill 1\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n";
+
+        let module = |body: String| {
+            parse_text(&format!(
+                "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n\
+                 .header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
+            ))
+            .expect("the module should parse")
+        };
+
+        let main_first = module(format!("{MAIN}\n{HELPER}"));
+        let helper_first = module(format!("{HELPER}\n{MAIN}"));
+
+        // The entry point moves; nothing that depends on it does.
+        assert_eq!(main_first.main_function, Some(0));
+        assert_eq!(helper_first.main_function, Some(1));
+
+        for (label, program) in [("main first", &main_first), ("helper first", &helper_first)] {
+            assert!(
+                validate_structure(program).is_empty()
+                    && validate(program, None).is_empty()
+                    && simulate_stack(program, None).is_empty(),
+                "{label}: should validate clean",
+            );
+        }
+
+        let run_of = |program| {
+            let mut m = machine();
+            let run = m.run(program, 100).expect("the program should run");
+            (run.stopped, run.steps, run.effects.len())
+        };
+        assert_eq!(
+            run_of(&main_first),
+            run_of(&helper_first),
+            "the same functions in either order should execute identically"
+        );
+    }
+
     /// `ret` at top level ends the program, which needs the entry frame:
     /// `op_return` pops a frame and errors when there is none.
     #[test]
