@@ -1261,7 +1261,10 @@ mod tests {
                 MachineInstruction::Lanes(I::ConstZone(0)),
                 MachineInstruction::Lanes(I::ConstZone(1)),
                 MachineInstruction::Lanes(I::ConstZone(2)),
-                MachineInstruction::Cpu(C::Call(0, 5)),
+                // Address 6: `from_code` prepends `@main`'s `func_start`, so
+                // the callee's first instruction sits one past where a bare
+                // instruction list would put it.
+                MachineInstruction::Cpu(C::Call(0, 6)),
                 MachineInstruction::Cpu(C::Halt),
                 // @drain: pops the caller's three values, then returns.
                 MachineInstruction::Lanes(I::Pop),

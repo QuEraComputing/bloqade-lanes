@@ -161,7 +161,17 @@ fn line_of(src: &str, needle: &str) -> usize {
 
 /// Emit the program as vihaco's `sst v1` container.
 ///
-/// The output is accepted by [`parse_text`] and round-trips losslessly.
+/// The output is accepted by [`parse_text`], and the *code* round-trips
+/// exactly. The label table may not: control flow is stored as addresses and
+/// written as symbols, so a branch to an address the binary never named is
+/// given a synthesised `L<addr>` and a defining `cpu::cpu.label` — the way a
+/// disassembler emits `.L1:`. Re-reading that text therefore produces a
+/// program with one more label than it started with, carrying the same code.
+///
+/// Targets that cannot be named at all — a branch past the end of the code, a
+/// call to an address that begins no function — are rejected by
+/// [`super::validate::validate_structure`] rather than rendered, since there
+/// is no text that would read back.
 pub fn to_text(program: &Program) -> String {
     use vihaco_cpu::RuntimeInstruction as C;
 

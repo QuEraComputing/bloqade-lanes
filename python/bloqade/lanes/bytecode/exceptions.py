@@ -95,6 +95,21 @@ class NewArrayTooManyElementsError(ValidationError):
         )
 
 
+class InvalidControlFlowTargetError(ValidationError):
+    """A branch or call names an address that is not what it should be.
+
+    ``br``/``cond_br`` targets are addresses in the code; ``call`` targets are
+    function entries, which since the ``func_start``/``func_end`` layout means
+    the address of a function's opening marker.
+    """
+
+    def __init__(self, pc: int, target: int, expected: str):
+        self.pc = pc
+        self.target = target
+        self.expected = expected
+        super().__init__(f"pc {pc}: control-flow target {target} is not {expected}")
+
+
 class GetItemInvalidDimsError(ValidationError):
     """``get_item`` takes an index count no array can have.
 

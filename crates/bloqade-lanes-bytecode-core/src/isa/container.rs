@@ -323,6 +323,28 @@ pub fn read_tables(
 /// composite carries a codec of its own. The symbol tables follow as child
 /// sections, whose offsets are relative to the start of the root section.
 pub fn to_binary(program: &Program) -> eyre::Result<Vec<u8>> {
+    // Three fields of `LocalModule` have no place in the container yet. None
+    // is ever populated — `resolve` and `from_code` leave all three empty —
+    // so nothing is lost today, and the round-trip tests pass *because* they
+    // are empty rather than because they are carried. Refusing to write a
+    // program that uses one turns a future silent drop into a loud failure:
+    // `FunctionInfo.signature` is the one to watch, since the moment the
+    // calling convention records parameters, `encode_functions` (which writes
+    // only name/local_count/start/end/file) would discard them.
+    if !program.constants.is_empty() {
+        eyre::bail!("the container cannot carry a constant pool yet");
+    }
+    if !program.source_symbols.is_empty() {
+        eyre::bail!("the container cannot carry source symbols yet");
+    }
+    if program
+        .functions
+        .iter()
+        .any(|f| !f.signature.params.is_empty() || !f.signature.ret.is_empty())
+    {
+        eyre::bail!("the container cannot carry function signatures yet");
+    }
+
     let context = LanesContext::with_tables();
     let context_bytes = context.to_bytes();
 
@@ -417,6 +439,64 @@ pub fn to_sst(info: &LanesInfo, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fields the container cannot carry are refused, not dropped.
+    ///
+    /// `constants`, `source_symbols` and `FunctionInfo.signature` are part of
+    /// `LocalModule`'s `PartialEq` surface but have no encoding here. Nothing
+    /// populates them today, so the round-trip tests pass because they are
+    /// empty — not because they survive. This makes the first program that
+    /// uses one fail loudly instead of losing it.
+    #[test]
+    fn a_field_the_container_cannot_carry_is_refused() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco::module::{Parameter, Signature, SourceSymbolInfo};
+        use vihaco::value::{Type, Value};
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let base = from_code(
+            Version::new(1, 0),
+            vec![crate::isa::machine::MachineInstruction::Cpu(C::Halt)],
+        );
+        assert!(to_binary(&base).is_ok(), "the baseline should still write");
+
+        let mut p = base.clone();
+        p.constants = vec![Value::I64(3)];
+        assert!(
+            to_binary(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("constant pool")
+        );
+
+        let mut p = base.clone();
+        p.source_symbols = vec![SourceSymbolInfo {
+            name: "x".into(),
+            index: 1,
+        }];
+        assert!(
+            to_binary(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("source symbols")
+        );
+
+        let mut p = base;
+        p.functions[0].signature = Signature {
+            params: vec![Parameter {
+                name: 0,
+                ty: Type::I64,
+            }],
+            ret: vec![],
+        };
+        assert!(
+            to_binary(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("signatures")
+        );
+    }
 
     /// A table's declared count cannot be trusted as a capacity.
     ///

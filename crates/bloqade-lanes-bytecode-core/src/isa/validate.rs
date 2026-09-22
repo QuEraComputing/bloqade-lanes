@@ -103,6 +103,15 @@ pub enum ValidationError {
         mnemonic: &'static str,
         index: u32,
     },
+    /// A `br`/`cond_br` names an address outside the code, or a `call` names
+    /// one that does not begin a function.
+    InvalidControlFlowTarget {
+        pc: usize,
+        target: u32,
+        /// What the target should have been: `"an address in the code"` or
+        /// `"a function entry"`.
+        expected: &'static str,
+    },
     /// `initial_fill` is not the first non-constant instruction.
     InitialFillNotFirst { pc: usize },
     /// The program has no instructions (and therefore no terminator).
@@ -169,6 +178,21 @@ pub const MAX_GET_ITEM_DIMS: u32 = 2;
 /// is nothing, while still being three orders of magnitude past any function
 /// the compiler will emit.
 pub const MAX_LOCAL_INDEX: u32 = 1023;
+/// Record a `br`/`cond_br` target that does not name an instruction.
+fn check_branch_target(
+    errors: &mut Vec<ValidationError>,
+    program: &Program,
+    pc: usize,
+    target: u32,
+) {
+    if target as usize >= program.code.len() {
+        errors.push(ValidationError::InvalidControlFlowTarget {
+            pc,
+            target,
+            expected: "an address in the code",
+        });
+    }
+}
 
 /// Element count of a `new_array`, in `u64` so the product cannot overflow.
 /// `dim1 == 0` means a 1-D array.
@@ -241,6 +265,11 @@ impl fmt::Display for ValidationError {
                 f,
                 "pc {pc}: {mnemonic} takes a local index 0..={MAX_LOCAL_INDEX}, got {index}"
             ),
+            ValidationError::InvalidControlFlowTarget {
+                pc,
+                target,
+                expected,
+            } => write!(f, "pc {pc}: control-flow target {target} is not {expected}"),
             ValidationError::InitialFillNotFirst { pc } => write!(
                 f,
                 "pc {pc}: initial_fill must be the first non-constant instruction"
@@ -400,6 +429,33 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
             M::Lanes(L::InitialFill(_)) => {
                 if seen_non_constant {
                     errors.push(ValidationError::InitialFillNotFirst { pc });
+                }
+                seen_non_constant = true;
+            }
+            // Branch and call targets are addresses, and nothing has checked
+            // them: a `br` past the end of the code, or a `call` to an address
+            // that begins no function, is a program the renderer cannot even
+            // name — it has to invent `@L9` / `@F1`, producing text that will
+            // not re-read.
+            M::Cpu(C::Branch(t)) => {
+                check_branch_target(&mut errors, program, pc, *t);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::ConditionalBranch(t, f)) => {
+                check_branch_target(&mut errors, program, pc, *t);
+                check_branch_target(&mut errors, program, pc, *f);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Call(_, target)) => {
+                if !matches!(
+                    program.code.get(*target as usize),
+                    Some(M::Cpu(C::FunctionStart))
+                ) {
+                    errors.push(ValidationError::InvalidControlFlowTarget {
+                        pc,
+                        target: *target,
+                        expected: "a function entry",
+                    });
                 }
                 seen_non_constant = true;
             }
@@ -1299,6 +1355,61 @@ mod tests {
         );
     }
 
+    /// Branch and call targets are addresses, and nothing checked them.
+    ///
+    /// An unnameable target is not just invalid, it is unrenderable: `to_text`
+    /// has to invent `@L9` / `@F1`, and the text it emits does not re-read.
+    /// Catching it here means the renderer is only ever asked to name targets
+    /// that have a name.
+    #[test]
+    fn control_flow_targets_are_checked() {
+        // A branch past the end of the code.
+        let p = program(vec![M::Cpu(C::Branch(99)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InvalidControlFlowTarget {
+                pc: 1,
+                target: 99,
+                expected: "an address in the code",
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // Both arms of a `cond_br`.
+        let p = program(vec![M::Cpu(C::ConditionalBranch(99, 98)), M::Cpu(C::Halt)]);
+        assert_eq!(
+            validate_structure(&p)
+                .iter()
+                .filter(|e| matches!(e, ValidationError::InvalidControlFlowTarget { .. }))
+                .count(),
+            2,
+            "both arms should be reported"
+        );
+
+        // A call to an address that begins no function. Address 1 is the
+        // `halt` inside `@main`, not a `func_start`.
+        let p = program(vec![M::Cpu(C::Call(0, 2)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InvalidControlFlowTarget {
+                pc: 1,
+                target: 2,
+                expected: "a function entry",
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // A branch to a real address is fine.
+        let p = program(vec![M::Cpu(C::Branch(2)), M::Cpu(C::Halt)]);
+        assert!(
+            !validate_structure(&p)
+                .iter()
+                .any(|e| matches!(e, ValidationError::InvalidControlFlowTarget { .. })),
+            "got {:?}",
+            validate_structure(&p)
+        );
+    }
+
     #[test]
     fn get_item_index_count_is_bounded() {
         // Arrays are at most 2-D, so three indices is structurally wrong —
@@ -1347,7 +1458,8 @@ mod tests {
             let p = program(vec![M::Cpu(inst.clone()), M::Cpu(C::Halt)]);
             assert!(
                 validate_structure(&p).contains(&ValidationError::LocalIndexOutOfRange {
-                    pc: 0,
+                    // Address 0 is `@main`'s `func_start`.
+                    pc: 1,
                     mnemonic,
                     index,
                 }),
@@ -1384,7 +1496,7 @@ mod tests {
             M::Cpu(C::Halt),
         ]);
         assert!(
-            validate_structure(&p).contains(&ValidationError::InitialFillNotFirst { pc: 1 }),
+            validate_structure(&p).contains(&ValidationError::InitialFillNotFirst { pc: 2 }),
             "got {:?}",
             validate_structure(&p)
         );
