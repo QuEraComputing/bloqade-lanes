@@ -12,6 +12,7 @@ from kirin import ir, rewrite, types as kirin_types
 from kirin.dialects import ilist, py
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
+from bloqade.gemini.logical.dialects.extensions import stmts as extensions
 from bloqade.gemini.logical.dialects.operations import stmts as operations
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz, EliminateRzError
 
@@ -500,8 +501,8 @@ REGISTERED_STATEMENTS = {
     "bloqade.decoders.dialects.annotate.stmts.SetDetector",
     "bloqade.decoders.dialects.annotate.stmts.SetObservable",
     "bloqade.gemini.common.dialects.qubit.stmts.NewAt",
+    "bloqade.gemini.logical.dialects.extensions.stmts.StarRz",
     "bloqade.gemini.logical.dialects.operations.stmts.Initialize",
-    "bloqade.gemini.logical.dialects.operations.stmts.StarRz",
     "bloqade.gemini.logical.dialects.operations.stmts.TerminalLogicalMeasurement",
     "bloqade.native.dialects.gate.stmts.CZ",
     "bloqade.native.dialects.gate.stmts.R",
@@ -693,7 +694,7 @@ def test_star_rz_is_left_alone_silently(recwarn):
     q = squin_qubit.stmts.New()
     reg = ilist.New(values=(q.result,), elem_type=QUBIT)
     theta = py.Constant(0.03)
-    star = operations.StarRz(theta.result, reg.result)
+    star = extensions.StarRz(theta.result, reg.result)
     block = ir.Block([q, reg, theta, star])
 
     rewrite.Walk(EliminateRz()).rewrite(block)

@@ -65,6 +65,7 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
+from bloqade.gemini.logical.dialects.extensions import stmts as extensions
 from bloqade.gemini.logical.dialects.operations import stmts as operations
 from bloqade.lanes.utils import constant_float
 
@@ -261,8 +262,8 @@ class EliminateRz(RewriteRule):
     # --- diagonal: commute with the frame exactly, so nothing to do ---
 
     @_rewrite.register(native_gate.stmts.CZ)
-    @_rewrite.register(operations.StarRz)
-    def _(self, stmt: native_gate.stmts.CZ | operations.StarRz) -> RewriteResult:
+    @_rewrite.register(extensions.StarRz)
+    def _(self, stmt: native_gate.stmts.CZ | extensions.StarRz) -> RewriteResult:
         # The frame commutes past a diagonal gate exactly, so there is nothing
         # to do. ``CZ`` is diagonal on each qubit independently, so the two
         # sides' frames need not agree. ``StarRz``'s own rotation survives into

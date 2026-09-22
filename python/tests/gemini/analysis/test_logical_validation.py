@@ -178,7 +178,7 @@ def test_star_rz_marks_qubit_as_acted_on_without_rejecting_mid_circuit_use():
     def valid():
         q = squin.qalloc(1)
         squin.h(q[0])
-        gemini.logical.star_rz(0.125, q[0])
+        gemini.logical.extensions.star_rz(0.125, q[0])
         gemini.logical.terminal_measure(q)
 
     validator = ValidationSuite([GeminiLogicalValidation])
@@ -189,7 +189,7 @@ def test_star_rz_marks_qubit_as_acted_on_without_rejecting_mid_circuit_use():
         @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
         def invalid():
             q = squin.qalloc(1)
-            gemini.logical.star_rz(0.125, q[0])
+            gemini.logical.extensions.star_rz(0.125, q[0])
             squin.u3(0.1, 0.2, 0.3, q[0])
 
 

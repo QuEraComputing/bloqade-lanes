@@ -46,7 +46,7 @@ THETA = math.pi / 16
 def star_on_plus_kernel():
     reg = squin.qalloc(1)
     squin.h(reg[0])
-    gemini_logical.star_rz(THETA, reg[0])
+    gemini_logical.extensions.star_rz(THETA, reg[0])
     return gemini_logical.terminal_measure(reg)
 
 
@@ -71,7 +71,7 @@ SHOTS = 10_000
 def star_on_plus_kernel_x():
     reg = squin.qalloc(2)
     squin.h(reg[0])
-    gemini_logical.star_rz(THETA, reg[0])
+    gemini_logical.extensions.star_rz(THETA, reg[0])
 
     squin.cx(reg[1], reg[0])
     squin.h(reg[1])
@@ -84,7 +84,7 @@ def star_on_plus_kernel_x():
 def star_on_plus_kernel_y():
     reg = squin.qalloc(2)
     squin.h(reg[0])
-    gemini_logical.star_rz(THETA, reg[0])
+    gemini_logical.extensions.star_rz(THETA, reg[0])
 
     squin.cx(reg[1], reg[0])
     squin.h(reg[1])
@@ -98,7 +98,7 @@ def star_on_plus_kernel_y():
 def star_on_plus_kernel_z():
     reg = squin.qalloc(2)
     squin.h(reg[0])
-    gemini_logical.star_rz(THETA, reg[0])
+    gemini_logical.extensions.star_rz(THETA, reg[0])
 
     squin.cx(reg[1], reg[0])
     squin.h(reg[1])

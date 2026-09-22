@@ -8,6 +8,7 @@ from kirin.dialects import ilist, py
 
 from bloqade import qubit
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
+from bloqade.gemini.logical.dialects.extensions import stmts as gemini_extension_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
 from bloqade.lanes.bytecode.encoding import LocationAddress
@@ -131,7 +132,7 @@ def test_star_rz():
         [
             qubits := ilist.New(values=(q0 := ir.TestValue(), q1 := ir.TestValue())),
             # TODO: why is this cast as Any? is there a better way to get around this pyright check failure?
-            cast(Any, gemini_stmts.StarRz)(
+            cast(Any, gemini_extension_stmts.StarRz)(
                 rotation_angle=rotation_angle,
                 qubits=qubits.result,
                 qubit_indices=(0, 2, 4),
