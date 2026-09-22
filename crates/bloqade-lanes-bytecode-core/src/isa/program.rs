@@ -317,6 +317,21 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
                 .to_owned(),
         });
     }
+    // Refused on the way in for the same reason `to_binary` refuses it on the
+    // way out: vihaco's grammar spells a return type as `-> Ty`, so a
+    // signature with more has no text form, and rendering one would drop all
+    // but the first without saying so. Rejecting keeps every loadable program
+    // renderable.
+    if let Some(f) = program.functions.iter().find(|f| f.signature.ret.len() > 1) {
+        return Err(BinaryError::Decode {
+            pc: 0,
+            message: format!(
+                "function signature declares {} return values; the text form \
+                 has syntax for at most one",
+                f.signature.ret.len()
+            ),
+        });
+    }
     resolve_entry_point(&mut program)?;
     Ok(program)
 }
@@ -729,6 +744,34 @@ mod tests {
             matches!(from_binary(&bytes), Err(BinaryError::Decode { .. })),
             "got {:?}",
             from_binary(&bytes)
+        );
+    }
+
+    /// A signature the text form cannot spell is refused, not truncated.
+    ///
+    /// `to_text` renders a return type as `-> Ty`, taking the first; a
+    /// signature carrying two would have rendered as one and re-parsed into a
+    /// different program, with nothing reporting the loss. Nothing can build
+    /// one through a supported path — the grammar yields `Option<Ty>` — so
+    /// both ends refuse rather than silently narrowing.
+    #[test]
+    fn a_multi_value_return_is_refused_at_both_ends() {
+        let mut p = sample();
+        p.functions[0].signature.ret = vec![vihaco::Type::Bool, vihaco::Type::U32];
+
+        let err = to_binary(&p).unwrap_err().to_string();
+        assert!(
+            err.contains("2 return values") && err.contains("at most one"),
+            "writing should refuse it: {err}"
+        );
+
+        // And reading, for a container crafted outside this writer.
+        let mut single = sample();
+        single.functions[0].signature.ret = vec![vihaco::Type::Bool];
+        let bytes = to_binary(&single).expect("one return value is fine");
+        assert!(
+            from_binary(&bytes).is_ok(),
+            "the single-return baseline should still load"
         );
     }
 

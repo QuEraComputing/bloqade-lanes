@@ -443,6 +443,19 @@ pub fn to_binary(program: &Program) -> eyre::Result<Vec<u8>> {
     if !program.source_symbols.is_empty() {
         eyre::bail!("the container cannot carry source symbols yet");
     }
+    // vihaco's grammar spells a return type as `-> Ty` — at most one. A
+    // signature carrying more has no text form, and `to_text` would render the
+    // first and drop the rest, turning a round trip into a silent truncation.
+    // Nothing can build one through a supported path (the parser yields
+    // `Option<Ty>`), so this refuses rather than truncating, the same rule the
+    // loader applies to a container it cannot name.
+    if let Some(f) = program.functions.iter().find(|f| f.signature.ret.len() > 1) {
+        eyre::bail!(
+            "function signature declares {} return values; the text form has \
+             syntax for at most one",
+            f.signature.ret.len()
+        );
+    }
 
     let context = LanesContext::with_tables();
     let context_bytes = context.to_bytes();

@@ -263,9 +263,10 @@ pub fn to_text(program: &Program) -> String {
             .map(|p| format!("{}: {}", name_of(p.name), machine::cpu_type_text(p.ty)))
             .collect();
         let mut out = format!("({})", params.join(", "));
-        // vihaco's grammar takes at most one return type (`-> Ty`), so a
-        // multi-value signature has no syntax yet. Render the first and let
-        // the round-trip test catch it if that ever stops being enough.
+        // vihaco's grammar spells a return type as `-> Ty`, so at most one.
+        // A signature carrying more is refused by both `to_binary` and
+        // `from_binary` rather than truncated here — taking the first was a
+        // silent narrowing, and no program that reaches this point has one.
         if let Some(ty) = f.signature.ret.first() {
             out.push_str(&format!(" -> {}", machine::cpu_type_text(*ty)));
         }
