@@ -876,97 +876,55 @@ mod tests {
     ///
     /// This is the pairing that has no compiler-enforced link: vihaco-cpu owns
     /// the parser, we own the renderer, and its own `Display` emits text its
-    /// parser rejects (`halt`, not `cpu.halt`) — so nothing but a test keeps the
-    /// two in step across all 42 ops.
+    /// parser rejects (`halt`, not `cpu.halt`) — so nothing but a test keeps
+    /// the two in step across all 42 ops.
     ///
-    /// `tys` covers all nine of vihaco's types on purpose. It used to list the
-    /// five the lanes compiler emits, which read as exhaustive but left the
-    /// four the lowering rejected — `undef`, `str`, `fn_ref`, `heap_ref` —
-    /// untested. A decoded binary can carry any of them, so `disassemble`
-    /// emitted text `assemble` refused.
+    /// The samples come from [`every_instruction`], the one exhaustive list,
+    /// rather than a second hand-written one. The list this replaced named
+    /// five of vihaco's nine types, which read as exhaustive but left the four
+    /// the lowering rejected — `undef`, `str`, `fn_ref`, `heap_ref` — untested,
+    /// and a decoded binary can carry any of them.
     #[test]
     fn every_renderable_cpu_op_round_trips_through_text() {
+        use crate::isa::bytecode::tests_support::every_instruction;
         use vihaco_cpu::RuntimeInstruction as C;
-        let tys = [
-            Type::Undefined,
-            Type::String,
-            Type::Bool,
-            Type::I64,
-            Type::U32,
-            Type::U64,
-            Type::F64,
-            Type::FunctionRef,
-            Type::HeapRef,
-        ];
-        let mut samples = vec![
-            C::Span(1, 2, 3),
-            C::FunctionStart,
-            C::FunctionEnd,
-            C::Breakpoint,
-            C::IndirectCall,
-            C::Return(0),
-            C::Return(3),
-            C::Halt,
-            C::Print,
-            C::Dup,
-            C::HeapAlloc(5),
-            C::GetItem,
-            C::HeapDealloc,
-            C::Not,
-            C::And,
-            C::Or,
-            C::Xor,
-            C::Const(Type::F64, Value::F64(1.5)),
-            C::Const(Type::F64, Value::F64(-0.0)),
-            C::Const(Type::I64, Value::I64(-42)),
-            C::Const(Type::U64, Value::U64(7)),
-            C::Const(Type::U32, Value::U32(3)),
-            C::Const(Type::Bool, Value::Bool(true)),
-            C::Const(Type::Bool, Value::Bool(false)),
-            // The four a decoded binary can carry but the lanes compiler never
-            // emits. `String`/`FunctionRef`/`HeapRef` hold interner and heap
-            // indices, not payloads, so they render and parse as integers.
-            C::Const(Type::Undefined, Value::Undefined),
-            C::Const(Type::String, Value::String(4)),
-            C::Const(Type::FunctionRef, Value::FunctionRef(2)),
-            C::Const(Type::HeapRef, Value::HeapRef(5)),
-        ];
-        for ty in tys {
-            samples.extend([
-                C::Load(ty, 7),
-                C::Store(ty, 9),
-                C::Add(ty),
-                C::Sub(ty),
-                C::Mul(ty),
-                C::Div(ty),
-                C::Rem(ty),
-                C::Neg(ty),
-                C::Shl(ty),
-                C::Shr(ty),
-                C::Rol(ty),
-                C::Ror(ty),
-                C::BitAnd(ty),
-                C::BitOr(ty),
-                C::BitXor(ty),
-                C::Eq(ty),
-                C::Ne(ty),
-                C::Lt(ty),
-                C::Gt(ty),
-                C::Le(ty),
-                C::Ge(ty),
-            ]);
-        }
 
-        for inst in samples {
-            let inst = MachineInstruction::Cpu(inst);
+        let mut checked = 0;
+        for inst in every_instruction() {
+            let MachineInstruction::Cpu(ref cpu) = inst else {
+                continue;
+            };
             let text = to_sst_text(&inst);
+
+            // TODO(#1025): `br`/`cond_br`/`call` render symbolically
+            // (`br @L4`) but `lower_cpu` refuses them, because resolving a
+            // label to an address needs a symbol table the per-instruction
+            // lowering does not have. So these three render and do not
+            // round-trip — a real asymmetry, asserted rather than skipped so
+            // it is visible here and fails loudly once #1025's module-level
+            // resolver closes it.
+            if matches!(cpu, C::Branch(_) | C::ConditionalBranch(..) | C::Call(..)) {
+                let parsed = MachineSurfaceInstruction::parser()
+                    .parse(text.as_str())
+                    .into_result()
+                    .unwrap_or_else(|e| panic!("rendered {text:?} does not parse: {e:?}"));
+                let err = lower(parsed)
+                    .expect_err("#1025 has landed: this should now round-trip")
+                    .to_string();
+                assert!(err.contains("symbolic control flow"), "{text:?}: {err}");
+                continue;
+            }
+
             let parsed = MachineSurfaceInstruction::parser()
                 .parse(text.as_str())
                 .into_result()
                 .unwrap_or_else(|e| panic!("rendered {text:?} does not parse: {e:?}"));
             let back = lower(parsed).unwrap_or_else(|e| panic!("{text:?} will not lower: {e}"));
             assert_eq!(back, inst, "round-trip changed {text:?}");
+            checked += 1;
         }
+        // A filter that silently matched nothing would make this vacuous.
+        assert!(checked > 200, "only {checked} CPU instructions checked");
     }
 
     /// `op_name` is a hand-written table, so nothing but this keeps it in step
@@ -1144,6 +1102,75 @@ mod tests {
         assert_eq!(run.stopped, Stopped::RanOff);
     }
 
+    /// The docs that name instructions, read at compile time so a rename
+    /// cannot leave them behind.
+    const DOCS: [(&str, &str); 3] = [
+        (
+            "docs/src/bytecode/inst-quick-ref.md",
+            include_str!("../../../../docs/src/bytecode/inst-quick-ref.md"),
+        ),
+        (
+            "docs/src/bytecode/inst-spec.md",
+            include_str!("../../../../docs/src/bytecode/inst-spec.md"),
+        ),
+        (
+            "docs/src/migration/migration_guide_0_12.md",
+            include_str!("../../../../docs/src/migration/migration_guide_0_12.md"),
+        ),
+    ];
+
+    /// Every text spelling the machine has, mapped to its packed opcode.
+    fn real_mnemonics() -> std::collections::BTreeMap<String, u16> {
+        use crate::isa::bytecode::{packed_opcode, tests_support::every_instruction};
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        // `label` is excluded from the exhaustive list because it has no
+        // encodable form, but it is still a spelling the docs may use.
+        every_instruction()
+            .iter()
+            .chain(std::iter::once(&MachineInstruction::Cpu(C::Label(
+                vihaco_parser::Ident("l".into()),
+            ))))
+            .map(|i| {
+                (
+                    to_sst_text(i).split([' ', ',']).next().unwrap().to_owned(),
+                    packed_opcode(i),
+                )
+            })
+            .collect()
+    }
+
+    /// A full text spelling is `<device>::<dialect>.<mnemonic>`. The narrower
+    /// `cpu::add` form also appears in the docs — it is how a `DecodingError`
+    /// names an instruction — but that is `op_name`, not a text mnemonic.
+    fn is_text_spelling(token: &str) -> bool {
+        token
+            .split_once("::")
+            .and_then(|(device, rest)| {
+                let (dialect, mnemonic) = rest.split_once('.')?;
+                Some(
+                    matches!(device, "cpu" | "lanes")
+                        && matches!(dialect, "cpu" | "lanes")
+                        && !mnemonic.is_empty(),
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    /// The first text spelling in `line`, if any.
+    fn mnemonic_in(line: &str) -> Option<&str> {
+        line.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':' || c == '.'))
+            .map(|t| t.trim_end_matches('.'))
+            .find(|t| is_text_spelling(t))
+    }
+
+    /// The first `0x`-prefixed hex literal in `line`, if any.
+    fn hex_in(line: &str) -> Option<u16> {
+        line.split(|c: char| !(c.is_alphanumeric() || c == 'x'))
+            .find_map(|t| t.strip_prefix("0x"))
+            .and_then(|t| u16::from_str_radix(t, 16).ok())
+    }
+
     /// Every `<device>::<dialect>.<mnemonic>` the docs print must be real.
     ///
     /// `inst-spec.md` documented `cpu::cpu.const_int`, `cpu::cpu.const_float`
@@ -1152,60 +1179,13 @@ mod tests {
     /// silently, so the docs are read here rather than trusted.
     #[test]
     fn every_documented_mnemonic_exists() {
-        use crate::isa::bytecode::tests_support::every_instruction;
-        use std::collections::BTreeSet;
-        use vihaco_cpu::RuntimeInstruction as C;
-
-        let docs = [
-            (
-                "docs/src/bytecode/inst-quick-ref.md",
-                include_str!("../../../../docs/src/bytecode/inst-quick-ref.md"),
-            ),
-            (
-                "docs/src/bytecode/inst-spec.md",
-                include_str!("../../../../docs/src/bytecode/inst-spec.md"),
-            ),
-            (
-                "docs/src/migration/migration_guide_0_12.md",
-                include_str!("../../../../docs/src/migration/migration_guide_0_12.md"),
-            ),
-        ];
-
-        // `label` is excluded from the exhaustive list because it has no
-        // encodable form, but it is still a spelling the docs may use.
-        let real: BTreeSet<String> = every_instruction()
-            .iter()
-            .chain(std::iter::once(&MachineInstruction::Cpu(C::Label(
-                vihaco_parser::Ident("l".into()),
-            ))))
-            .map(|i| to_sst_text(i).split([' ', ',']).next().unwrap().to_owned())
-            .collect();
-
-        // A full text spelling is `<device>::<dialect>.<mnemonic>`. The
-        // narrower `cpu::add` form also appears in the docs — it is how a
-        // `DecodingError` names an instruction — but that is `op_name`, not a
-        // text mnemonic, so it is not what this test is about.
-        let is_text_spelling = |token: &str| {
-            token
-                .split_once("::")
-                .and_then(|(device, rest)| {
-                    let (dialect, mnemonic) = rest.split_once('.')?;
-                    Some(
-                        matches!(device, "cpu" | "lanes")
-                            && matches!(dialect, "cpu" | "lanes")
-                            && !mnemonic.is_empty(),
-                    )
-                })
-                .unwrap_or(false)
-        };
-
         let mut bogus = Vec::new();
-        for (file, text) in docs {
+        for (file, text) in DOCS {
             let tokens =
                 text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':' || c == '.'));
             for token in tokens {
                 let token = token.trim_end_matches('.');
-                if is_text_spelling(token) && !real.contains(token) {
+                if is_text_spelling(token) && !real_mnemonics().contains_key(token) {
                     bogus.push(format!("  {file}: `{token}`"));
                 }
             }
@@ -1217,6 +1197,74 @@ mod tests {
             "the docs name {} mnemonic(s) the machine does not have:\n{}",
             bogus.len(),
             bogus.join("\n")
+        );
+    }
+
+    /// Every `Opcode` the docs tabulate must be the one the encoder produces.
+    ///
+    /// The spec prints a literal for each instruction, and nothing pinned
+    /// them: they are assigned by declaration order, so they renumber whenever
+    /// either instruction set gains a variant. The guide tells readers to
+    /// compare on `op_name()` for exactly that reason — but a *format spec*
+    /// that omits the byte values is not much of a format spec, so they stay
+    /// and are checked here instead.
+    #[test]
+    fn every_documented_opcode_matches_the_encoding() {
+        let real = real_mnemonics();
+        let mut wrong = Vec::new();
+        let mut checked = 0;
+
+        for (file, text) in DOCS {
+            // `inst-spec.md` puts the mnemonic in a `#### ` heading and the
+            // value in an `| Opcode | 0x.. |` row; `inst-quick-ref.md` puts
+            // both in one row. Track the heading so either shape resolves.
+            let mut heading: Option<&str> = None;
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("#### ") {
+                    heading = mnemonic_in(rest);
+                    continue;
+                }
+                if !line.starts_with('|') {
+                    continue;
+                }
+                let Some(documented) = hex_in(line) else {
+                    continue;
+                };
+                // Either the row names the instruction itself, or it is the
+                // `Opcode` row belonging to the heading above it. Anything
+                // else carrying a hex literal (the device-code table) is not
+                // an opcode claim.
+                let first_cell = line.split('|').nth(1).map(str::trim).unwrap_or("");
+                let Some(name) = mnemonic_in(line).or(if first_cell == "Opcode" {
+                    heading
+                } else {
+                    None
+                }) else {
+                    continue;
+                };
+
+                match real.get(name) {
+                    Some(actual) if *actual == documented => checked += 1,
+                    Some(actual) => wrong.push(format!(
+                        "  {file}: `{name}` documented as {documented:#06x}, encodes as {actual:#06x}"
+                    )),
+                    // The mnemonic test covers unknown names.
+                    None => {}
+                }
+            }
+        }
+
+        assert!(
+            wrong.is_empty(),
+            "{} documented opcode(s) disagree with the encoding:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
+        // A parser that silently matched nothing would make this vacuous:
+        // 24 rows in the quick reference plus 23 in the spec.
+        assert_eq!(
+            checked, 47,
+            "expected 47 documented opcodes, found {checked}"
         );
     }
 
@@ -1236,40 +1284,29 @@ mod tests {
         }
     }
 
-    /// Every lanes instruction must likewise survive render -> parse.
+    /// Every lanes instruction must likewise survive render -> parse, and
+    /// from the same exhaustive list as the CPU half.
     #[test]
     fn every_lanes_op_round_trips_through_text() {
-        use crate::isa::device::LanesInstruction as L;
-        let samples = [
-            L::Pop,
-            L::Swap,
-            L::ConstLoc(0x0100_0000),
-            L::ConstLane(0x8000_0000_0001_0002),
-            L::ConstZone(7),
-            L::InitialFill(3),
-            L::Fill(2),
-            L::Move(1),
-            L::LocalRz(2),
-            L::LocalR(4),
-            L::GlobalRz,
-            L::GlobalR,
-            L::Cz,
-            L::Measure(1),
-            L::AwaitMeasure,
-            L::NewArray(2, 10, 20),
-            L::GetItem(2),
-            L::SetDetector,
-            L::SetObservable,
-        ];
-        for inst in samples {
-            let inst = MachineInstruction::Lanes(inst);
+        use crate::isa::bytecode::tests_support::every_instruction;
+
+        let mut checked = 0;
+        for inst in every_instruction() {
+            if !matches!(inst, MachineInstruction::Lanes(_)) {
+                continue;
+            }
             let text = to_sst_text(&inst);
             let parsed = MachineSurfaceInstruction::parser()
                 .parse(text.as_str())
                 .into_result()
                 .unwrap_or_else(|e| panic!("rendered {text:?} does not parse: {e:?}"));
             assert_eq!(lower(parsed).unwrap(), inst, "round-trip changed {text:?}");
+            checked += 1;
         }
+        assert_eq!(
+            checked, 19,
+            "the lanes device has 19 instructions; every_instruction() yielded {checked}"
+        );
     }
 
     #[test]
