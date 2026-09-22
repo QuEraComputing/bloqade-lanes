@@ -23,13 +23,16 @@ pub struct PyProgram {
 #[pymethods]
 impl PyProgram {
     #[new]
-    fn new(version: (u16, u16), instructions: Vec<PyRef<'_, PyInstruction>>) -> Self {
-        Self {
-            inner: rs_prog::from_code(
-                Version::new(version.0, version.1),
-                instructions.iter().map(|i| i.inner.clone()).collect(),
-            ),
-        }
+    fn new(version: (u16, u16), instructions: Vec<PyRef<'_, PyInstruction>>) -> PyResult<Self> {
+        // `from_code` wraps the body in the function markers, so a list that
+        // already carries them would be wrapped twice. It says so rather than
+        // building a malformed program.
+        let inner = rs_prog::from_code(
+            Version::new(version.0, version.1),
+            instructions.iter().map(|i| i.inner.clone()).collect(),
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
     }
 
     #[staticmethod]
@@ -38,8 +41,15 @@ impl PyProgram {
         Ok(Self { inner: program })
     }
 
-    fn to_text(&self) -> String {
-        to_text(&self.inner)
+    fn to_text(&self, py: Python<'_>) -> PyResult<String> {
+        // Same gate as the CLI's `disassemble`: `to_text` must name every
+        // branch and call target, and a decoded program can carry ones with no
+        // name. Rendering them anyway produced text `from_text` rejects.
+        let errors = rs_val::validate_structure(&self.inner);
+        if !errors.is_empty() {
+            return Err(crate::errors::validation_errors_to_py(py, errors));
+        }
+        Ok(to_text(&self.inner))
     }
 
     #[staticmethod]

@@ -197,6 +197,22 @@ pub fn resolve(
                     ));
                 }
 
+                // The markers are emitted by this function, not written by
+                // hand. Lowering one through produced a nested span:
+                // `to_text` opened a second `fn` block with no closing brace,
+                // and `reconcile_function_spans` reattached the outer
+                // function's start to the inner marker, so the program ran
+                // from the wrong address.
+                MachineSurfaceInstruction::Cpu(
+                    CpuSurface::FunctionStart | CpuSurface::FunctionEnd,
+                ) => {
+                    return Err(ResolveError::Lowering {
+                        message: "func_start/func_end delimit a function and are emitted \
+                                  by the assembler; write `fn @name() { .. }` instead"
+                            .to_owned(),
+                    });
+                }
+
                 // Everything else lowers on its own.
                 other => code.push(machine::lower(other.clone()).map_err(|e| {
                     ResolveError::Lowering {

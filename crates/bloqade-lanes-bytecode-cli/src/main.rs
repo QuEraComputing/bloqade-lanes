@@ -206,6 +206,24 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
 fn cmd_disassemble(input: &PathBuf, output: Option<&std::path::Path>) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
     let program = from_binary(&bytes).map_err(|e| e.to_string())?;
+
+    // Structural validation before rendering, not after. `to_text` has to name
+    // every branch and call target, and a binary can carry ones that have no
+    // name — a branch past the end of the code, a call to an address that
+    // begins no function. Rendering those anyway emitted `@L99` / `@F1` with
+    // no defining label, so `disassemble` produced text `assemble` rejects.
+    // The checks are arch-independent, so they cost nothing here.
+    let errors = validate::validate_structure(&program);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("  {e}");
+        }
+        return Err(format!(
+            "{} structural error(s): this binary cannot be rendered as text",
+            errors.len()
+        ));
+    }
+
     let text_out = to_text(&program);
     match output {
         Some(path) => {

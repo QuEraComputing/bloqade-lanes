@@ -569,6 +569,26 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
         }
     }
 
+    // A label names a position in a function's *body*. One sitting on a
+    // `func_start` cannot be written down: the only spot before a function's
+    // first instruction is the header line, so `to_text` emits it as the first
+    // body label and it re-reads one address later — a different binary, no
+    // error. One on a `func_end`, or outside every function, has no
+    // instruction to mark at all.
+    for label in &program.labels {
+        let body = spans.iter().any(|span| {
+            let body_end = if span.closed { span.end - 1 } else { span.end };
+            (label.address as usize) > span.start && (label.address as usize) < body_end
+        });
+        if !body {
+            errors.push(ValidationError::InvalidControlFlowTarget {
+                pc: label.address as usize,
+                target: label.address,
+                expected: "an instruction inside a function body",
+            });
+        }
+    }
+
     // "Empty" means no *body*: a program that is nothing but markers has
     // nothing to run, however many functions it declares.
     if !program.code.iter().any(|i| !is_marker(i)) {
@@ -1057,7 +1077,7 @@ mod tests {
     }
 
     fn program(instructions: Vec<M>) -> Program {
-        crate::isa::program::from_code(Version::new(1, 0), instructions)
+        crate::isa::program::from_code(Version::new(1, 0), instructions).unwrap()
     }
 
     fn loc(zone_id: u32, word_id: u32, site_id: u32) -> u64 {

@@ -205,7 +205,9 @@ later.
   recorded in the label table, and re-emitted when the program is written back
   out.
 - The binary container gained three child sections — `functions`, `labels`,
-  `strings` — so these survive a round-trip. A file without them still loads.
+  `strings` — so these survive a round-trip. A file without them does not load:
+  it predates the function markers too, so there are no extents to name. This
+  is the same "replace, do not convert" rule as the text format above.
 
 **Stack validation stops at the first branch or call.** The type simulator walks
 straight through, so its state is only correct while control flow is linear;

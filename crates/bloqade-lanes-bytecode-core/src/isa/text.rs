@@ -161,6 +161,12 @@ fn line_of(src: &str, needle: &str) -> usize {
 
 /// Emit the program as vihaco's `sst v1` container.
 ///
+/// Expects a program that passes [`super::validate::validate_structure`] —
+/// both callers (`bloqade-bytecode disassemble` and `Program.to_text`) run it
+/// first. Rendering needs a name for every branch and call target, and a
+/// decoded program can carry ones that have none; the gate is what keeps this
+/// function from having to invent text that will not read back.
+///
 /// The output is accepted by [`parse_text`], and the *code* round-trips
 /// exactly. The label table may not: control flow is stored as addresses and
 /// written as symbols, so a branch to an address the binary never named is
@@ -200,9 +206,17 @@ pub fn to_text(program: &Program) -> String {
             _ => &[],
         };
         for target in targets {
-            if !label_names.iter().any(|(a, _)| a == target) {
-                label_names.push((*target, format!("L{target}")));
+            if label_names.iter().any(|(a, _)| a == target) {
+                continue;
             }
+            // Deduping by address alone let a synthesised `L3` collide with a
+            // *real* label named `L3` at a different address, so the text
+            // defined the same name twice and would not re-read.
+            let mut name = format!("L{target}");
+            while label_names.iter().any(|(_, n)| *n == name) {
+                name.push('_');
+            }
+            label_names.push((*target, name));
         }
     }
     let label_of = |address: u32| -> String {
@@ -263,14 +277,6 @@ pub fn to_text(program: &Program) -> String {
     };
 
     let mut body = String::new();
-    let has_markers = program
-        .code
-        .iter()
-        .any(|i| matches!(i, MachineInstruction::Cpu(C::FunctionStart)));
-
-    if !has_markers {
-        body.push_str(&format!("fn @{}() {{\n", name_at(0)));
-    }
     for (address, inst) in program.code.iter().enumerate() {
         let address = address as u32;
         match inst {
@@ -292,10 +298,6 @@ pub fn to_text(program: &Program) -> String {
         body.push_str("  ");
         body.push_str(&render(inst));
         body.push('\n');
-    }
-    if !has_markers {
-        emit_labels(&mut body, program.code.len() as u32);
-        body.push_str("}\n");
     }
 
     super::container::to_sst(&program.extra, &body)
@@ -347,6 +349,7 @@ mod tests {
                 M::Cpu(C::Return(0)),
             ],
         )
+        .unwrap()
     }
 
     #[test]
@@ -405,13 +408,13 @@ mod tests {
 
     #[test]
     fn to_text_indents_instructions() {
-        let prog = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]);
+        let prog = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]).unwrap();
         assert!(to_text(&prog).contains("  cpu::cpu.halt\n"));
     }
 
     #[test]
     fn empty_program_round_trips() {
-        let prog = from_code(Version::new(1, 0), vec![]);
+        let prog = from_code(Version::new(1, 0), vec![]).unwrap();
         assert_eq!(parse_text(&to_text(&prog)).unwrap(), prog);
     }
 
@@ -484,7 +487,7 @@ mod tests {
 
     #[test]
     fn version_preserved() {
-        let prog = from_code(Version::new(3, 7), vec![]);
+        let prog = from_code(Version::new(3, 7), vec![]).unwrap();
         let text = to_text(&prog);
         assert!(text.contains("version 3.7"));
         assert_eq!(parse_text(&text).unwrap().extra.version, Version::new(3, 7));

@@ -106,8 +106,9 @@ global context, the binary global context carries the section-name table. The
 text container has no child sections — functions and labels are written
 syntactically — so its `.global:` block stays empty.
 
-A file with no table sections still loads: a single `@main` spanning the code
-stands in.
+A file with no table sections does **not** load. Such a container predates the
+`func_start`/`func_end` markers as well, so it has no function extents to
+name — there is nothing to fall back to. Re-assemble it from source.
 
 Neither device's instruction enum carries a binary codec — vihaco-cpu's has none
 and `#[composite]` derives none — so encoding goes through a parallel mirror ISA

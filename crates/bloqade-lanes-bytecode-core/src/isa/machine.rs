@@ -1102,7 +1102,8 @@ mod tests {
                 MachineInstruction::Lanes(I::GlobalRz),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
 
         let mut m = machine();
         let run = m.run(&program, 100).unwrap();
@@ -1163,7 +1164,8 @@ mod tests {
                     inst.clone(),
                     MachineInstruction::Cpu(C::Halt),
                 ],
-            );
+            )
+            .unwrap();
             let mut machine = LanesMachine::new();
             let err = machine
                 .run(&program, 100)
@@ -1206,7 +1208,8 @@ mod tests {
                     MachineInstruction::Cpu(C::Store(Type::U64, index)),
                     MachineInstruction::Cpu(C::Halt),
                 ],
-            );
+            )
+            .unwrap();
             let mut m = LanesMachine::new();
             let err = match m.run(&program, 100) {
                 Ok(run) => panic!("index={index}: the store should have been refused, got {run:?}"),
@@ -1233,7 +1236,8 @@ mod tests {
                 MachineInstruction::Cpu(C::Load(Type::U64, MAX_LOCAL_INDEX)),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
         let mut m = LanesMachine::new();
         assert_eq!(m.run(&program, 100).unwrap().stopped, Stopped::Halted);
         assert_eq!(m.cpu.stack().last(), Some(&Value::U64(7)));
@@ -1272,7 +1276,8 @@ mod tests {
                 MachineInstruction::Lanes(I::Pop),
                 MachineInstruction::Cpu(C::Return(0)),
             ],
-        );
+        )
+        .unwrap();
         let err = LanesMachine::new()
             .run(&program, 100)
             .expect_err("the underflowing ret should be refused")
@@ -1299,7 +1304,8 @@ mod tests {
                 // @callee: hands its argument back.
                 MachineInstruction::Cpu(C::Return(1)),
             ],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted);
     }
@@ -1348,7 +1354,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Cpu(C::Return(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Returned);
     }
@@ -1373,7 +1380,8 @@ mod tests {
                 MachineInstruction::Lanes(I::Pop),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
         // The static half accepts it...
         assert_eq!(simulate_stack(&program, None), vec![]);
         // ...so running it must not underflow.
@@ -1409,7 +1417,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Cpu(C::Branch(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 50).unwrap();
         assert_eq!(run.stopped, Stopped::OutOfSteps);
         assert_eq!(run.steps, 50);
@@ -1426,7 +1435,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Lanes(I::ConstZone(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::RanOff);
     }

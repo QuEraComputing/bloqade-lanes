@@ -107,7 +107,30 @@ pub type Program = LocalModule<MachineInstruction, Value, Type, LanesInfo>;
 /// Programs with several functions or with labels come from
 /// [`super::resolve::resolve`] instead; this is the flat case.
 #[allow(clippy::field_reassign_with_default)] // `LocalModule` is a foreign type; struct-literal init is not possible
-pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> Program {
+pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> eyre::Result<Program> {
+    // The caller supplies a function *body*; the markers are this function's
+    // job to add. Accepting a list that already has them wrapped it twice —
+    // nested `fn` blocks with one closing brace, unparseable text, and a
+    // binary that does not compare equal to what produced it. The migration
+    // guide documents the markers as visible in `Program.instructions`, so
+    // `Program(v, list(p.instructions))` is the obvious thing to try; it now
+    // says what to do instead.
+    if code.iter().any(|i| {
+        matches!(
+            i,
+            MachineInstruction::Cpu(
+                vihaco_cpu::RuntimeInstruction::FunctionStart
+                    | vihaco_cpu::RuntimeInstruction::FunctionEnd
+            )
+        )
+    }) {
+        eyre::bail!(
+            "instruction list already carries func_start/func_end; these delimit a \
+             function and are added here. To copy a program, use from_binary/to_binary \
+             or from_text/to_text."
+        );
+    }
+
     // Wrap the body in the function markers, so a program built from a bare
     // instruction list is in the same shape as one resolved from text. The
     // format has one layout, not two: a reader can rely on `func_start`
@@ -140,7 +163,7 @@ pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> Program {
     }];
     m.main_function = Some(0);
     m.extra = LanesInfo { version };
-    m
+    Ok(m)
 }
 
 /// Error from binary (de)serialization.
@@ -272,6 +295,14 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
     };
     super::container::read_tables(&root, &mut program).map_err(|e| classify(&e))?;
     reconcile_function_spans(&mut program);
+    if program.functions.is_empty() {
+        return Err(BinaryError::Decode {
+            pc: 0,
+            message: "no func_start/func_end markers: this container predates the \
+                      function layout and cannot be loaded. Re-assemble it from source."
+                .to_owned(),
+        });
+    }
     resolve_entry_point(&mut program)?;
     Ok(program)
 }
@@ -309,20 +340,19 @@ fn reconcile_function_spans(program: &mut Program) {
     if let Some(start) = open {
         spans.push((start, program.code.len() as u32));
     }
-    if spans.is_empty() {
-        return;
-    }
 
-    // Names come from the table, matched positionally: the emitter writes the
-    // table in layout order, so entry *i* names span *i*. A table that is
-    // short or missing leaves the remaining functions unnamed rather than
-    // failing — `to_text` synthesises `F<addr>` for those.
+    // Names come from the table, matched on `start_address` — the field the
+    // emitter already writes and the one thing the table and the code agree
+    // about. Matching positionally assumed the table was in layout order:
+    // a well-formed table listing `[helper@3, main@0]` silently renamed both,
+    // and `LanesMachine::run` then entered the wrong function reporting
+    // success. A short table left `name: u32::MAX`, which renders as `fn @?()`
+    // and re-parses as a duplicate once two functions have it.
     let named = std::mem::take(&mut program.functions);
     program.functions = spans
         .into_iter()
-        .enumerate()
-        .map(|(i, (start_address, end_address))| {
-            let source = named.get(i);
+        .map(|(start_address, end_address)| {
+            let source = named.iter().find(|f| f.start_address == start_address);
             FunctionInfo {
                 name: source.map_or(u32::MAX, |f| f.name),
                 signature: Signature {
@@ -403,6 +433,7 @@ mod tests {
                 M::Cpu(C::Return(0)),
             ],
         )
+        .unwrap()
     }
 
     #[test]
@@ -477,6 +508,51 @@ mod tests {
     /// so `from_code`'s `Some(0)` default came back regardless of what the
     /// text declared — making the same program compare unequal across a
     /// round-trip, since `LocalModule`'s `PartialEq` covers the field.
+    /// The markers delimit a function; a caller supplies the body.
+    ///
+    /// The migration guide documents them as visible in
+    /// `Program.instructions`, so feeding that list back is the obvious thing
+    /// to try — and it used to wrap them twice, producing nested `fn` blocks.
+    #[test]
+    fn from_code_rejects_a_body_that_already_has_markers() {
+        let p = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]).unwrap();
+        let err = from_code(Version::new(1, 0), p.code.clone())
+            .expect_err("a wrapped body should be refused")
+            .to_string();
+        assert!(err.contains("already carries"), "got {err}");
+    }
+
+    /// Names are matched to spans by address, not by position.
+    ///
+    /// A well-formed table not in layout order used to rename every function,
+    /// and `run` then entered the wrong one reporting success.
+    #[test]
+    fn a_table_out_of_layout_order_still_names_the_right_spans() {
+        use crate::isa::text::parse_text;
+
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n                   fn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n";
+        let mut p = parse_text(src).unwrap();
+        p.functions.reverse();
+
+        let back = from_binary(&to_binary(&p).unwrap()).unwrap();
+        let name_of = |i: usize| back.strings[back.functions[i].name as usize].as_str();
+        assert_eq!((name_of(0), name_of(1)), ("helper", "main"));
+        assert_eq!(back.main_function, Some(1), "@main is the second span");
+    }
+
+    /// A container predating the function markers is refused, not guessed at.
+    #[test]
+    fn a_binary_without_markers_is_rejected() {
+        let mut p = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]).unwrap();
+        p.code
+            .retain(|i| !matches!(i, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd)));
+        let err = from_binary(&to_binary(&p).unwrap()).unwrap_err();
+        assert!(
+            matches!(&err, BinaryError::Decode { message, .. } if message.contains("predates")),
+            "got {err:?}"
+        );
+    }
+
     #[test]
     fn binary_preserves_the_entry_point() {
         use crate::isa::text::parse_text;
@@ -499,7 +575,7 @@ mod tests {
     /// wherever address 0 happened to land.
     #[test]
     fn a_binary_without_main_is_rejected() {
-        let mut program = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]);
+        let mut program = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]).unwrap();
         program.strings = vec!["helper".to_owned()];
 
         let err = from_binary(&to_binary(&program).unwrap()).unwrap_err();
@@ -520,7 +596,7 @@ mod tests {
 
     #[test]
     fn empty_program_round_trips() {
-        let program = from_code(Version::new(1, 0), vec![]);
+        let program = from_code(Version::new(1, 0), vec![]).unwrap();
         let bytes = to_binary(&program).unwrap();
         assert_eq!(from_binary(&bytes).unwrap(), program);
     }
@@ -568,7 +644,8 @@ mod tests {
         //
         // Offsets are read out of the file rather than hard-coded, so this keeps
         // working when the layout around them changes.
-        let mut bytes = to_binary(&from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)])).unwrap();
+        let mut bytes =
+            to_binary(&from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]).unwrap()).unwrap();
 
         let read_u64 =
             |b: &[u8], at: usize| u64::from_le_bytes(b[at..at + 8].try_into().unwrap()) as usize;
@@ -611,7 +688,8 @@ mod tests {
         // A well-formed container holding one aligned word whose opcode byte
         // (0xFF) names no instruction: every length check passes, so the
         // failure must come from per-word decoding.
-        let good = to_binary(&from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)])).unwrap();
+        let good =
+            to_binary(&from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]).unwrap()).unwrap();
         let mut bytes = good.clone();
         let last_word = bytes.len() - 4 - bytecode::instruction_width() as usize;
         bytes[last_word] = 0xFF;

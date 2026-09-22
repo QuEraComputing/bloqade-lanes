@@ -299,8 +299,10 @@ fn read_u32(bytes: &[u8], at: usize) -> eyre::Result<u32> {
 
 /// Read the symbol tables back out of a parsed file's child sections.
 ///
-/// A section that is absent leaves its table empty, so a program written before
-/// the tables existed still loads.
+/// An absent section leaves its table empty. That is not a compatibility
+/// path: a container predating the tables also predates the `func_start` /
+/// `func_end` markers, so it carries no functions to name and
+/// [`super::program::from_binary`] rejects it outright.
 pub fn read_tables(
     root: &vihaco::BytecodeSectionView<'_, LanesContext>,
     program: &mut Program,
@@ -458,7 +460,8 @@ mod tests {
         let base = from_code(
             Version::new(1, 0),
             vec![crate::isa::machine::MachineInstruction::Cpu(C::Halt)],
-        );
+        )
+        .unwrap();
         assert!(to_binary(&base).is_ok(), "the baseline should still write");
 
         let mut p = base.clone();
