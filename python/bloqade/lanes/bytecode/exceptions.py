@@ -95,6 +95,20 @@ class NewArrayTooManyElementsError(ValidationError):
         )
 
 
+class CodeOutsideFunctionError(ValidationError):
+    """An instruction sits outside every function's extent.
+
+    Functions are delimited by ``func_start``/``func_end`` in the code
+    stream. Anything after the last ``func_end`` belongs to no function: it
+    can never be entered, and the disassembler emits it after the closing
+    brace, producing text that will not re-read.
+    """
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(f"pc {pc}: instruction is outside any function")
+
+
 class InvalidControlFlowTargetError(ValidationError):
     """A branch or call names an address that is not what it should be.
 

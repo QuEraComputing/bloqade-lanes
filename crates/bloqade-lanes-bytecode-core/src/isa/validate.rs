@@ -101,6 +101,10 @@ pub enum ValidationError {
         mnemonic: &'static str,
         index: u32,
     },
+    /// An instruction sits outside every function's extent — after the last
+    /// `func_end`, or in a stream with no markers at all. Unreachable, and
+    /// unrenderable: [`super::text::to_text`] emits it after the closing brace.
+    CodeOutsideFunction { pc: usize },
     /// A `br`/`cond_br` names an address outside the code, or a `call` names
     /// one that does not begin a function.
     InvalidControlFlowTarget {
@@ -176,18 +180,29 @@ pub const MAX_GET_ITEM_DIMS: u32 = 2;
 /// is nothing, while still being three orders of magnitude past any function
 /// the compiler will emit.
 pub const MAX_LOCAL_INDEX: u32 = 1023;
-/// Record a `br`/`cond_br` target that does not name an instruction.
+/// Record a `br`/`cond_br` target that leaves the branch's own function.
+///
+/// Testing only `target < code.len()` let a branch land anywhere in the
+/// stream: a trailing `cpu::cpu.label` resolves to the function's own
+/// `func_end`, and a target past it enters the *next* function's body without
+/// a frame — the caller's locals still in place, no `ret` to come back to.
+/// A branch is intra-procedural; leaving the function is what `call` is for.
 fn check_branch_target(
     errors: &mut Vec<ValidationError>,
-    program: &Program,
+    owner: &[Option<usize>],
     pc: usize,
     target: u32,
 ) {
-    if target as usize >= program.code.len() {
+    let same_function = owner
+        .get(target as usize)
+        .copied()
+        .flatten()
+        .is_some_and(|t| owner.get(pc).copied().flatten() == Some(t));
+    if !same_function {
         errors.push(ValidationError::InvalidControlFlowTarget {
             pc,
             target,
-            expected: "an address in the code",
+            expected: "an address in the same function",
         });
     }
 }
@@ -263,6 +278,9 @@ impl fmt::Display for ValidationError {
                 f,
                 "pc {pc}: {mnemonic} takes a local index 0..={MAX_LOCAL_INDEX}, got {index}"
             ),
+            ValidationError::CodeOutsideFunction { pc } => {
+                write!(f, "pc {pc}: instruction is outside any function")
+            }
             ValidationError::InvalidControlFlowTarget {
                 pc,
                 target,
@@ -398,6 +416,16 @@ fn is_constant_push(inst: &M) -> bool {
 pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let mut seen_non_constant = false;
+    let spans = function_spans(&program.code);
+
+    // Which function owns each address, so a branch can be constrained to its
+    // own. `pc -> span index`; `None` for code outside every function.
+    let mut owner = vec![None; program.code.len()];
+    for (i, span) in spans.iter().enumerate() {
+        for slot in owner.iter_mut().take(span.end).skip(span.start) {
+            *slot = Some(i);
+        }
+    }
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
@@ -452,12 +480,12 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
             // name — it has to invent `@L9` / `@F1`, producing text that will
             // not re-read.
             M::Cpu(C::Branch(t)) => {
-                check_branch_target(&mut errors, program, pc, *t);
+                check_branch_target(&mut errors, &owner, pc, *t);
                 seen_non_constant = true;
             }
             M::Cpu(C::ConditionalBranch(t, f)) => {
-                check_branch_target(&mut errors, program, pc, *t);
-                check_branch_target(&mut errors, program, pc, *f);
+                check_branch_target(&mut errors, &owner, pc, *t);
+                check_branch_target(&mut errors, &owner, pc, *f);
                 seen_non_constant = true;
             }
             M::Cpu(C::Call(_, target)) => {
@@ -482,68 +510,154 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
         }
     }
 
-    // Reachability and terminators are per *function*, not per program.
+    // Reachability and terminators are per *function*, and reachability
+    // follows branches rather than latching on the first terminator.
     //
-    // These used to walk the whole code stream and latch on the first
-    // terminator, which was right while a program was one flat `@main`. With
-    // several functions laid out end to end it reported every instruction of
-    // every later function as unreachable — rejecting correct programs — and
-    // could not see a function that fell off its own end, because only the
-    // very last instruction of the stream was checked. The `func_start` /
-    // `func_end` markers give the boundaries.
-    // "Empty" now means no *body*: a program that is nothing but function
-    // markers has no instructions to run, however many functions it declares.
-    let has_body = program
-        .code
-        .iter()
-        .any(|i| !matches!(i, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd)));
-    if !has_body {
+    // The latch this replaces was right while a program was one flat `@main`.
+    // It condemned `cond_br`'s second arm — the `halt` ending the first arm
+    // set the latch — and it could not see code a `br` jumped over. Following
+    // the edges gets both right, and the edge extraction already exists for
+    // the target checks above.
+    let spans = function_spans(&program.code);
+
+    // An instruction outside every function is unreachable *and* unrenderable:
+    // `to_text` emits it after the last `}`, producing text that will not
+    // re-read.
+    let mut covered = vec![false; program.code.len()];
+    for span in &spans {
+        for slot in covered.iter_mut().take(span.end).skip(span.start) {
+            *slot = true;
+        }
+    }
+    for (pc, inside) in covered.iter().enumerate() {
+        if !inside {
+            errors.push(ValidationError::CodeOutsideFunction { pc });
+        }
+    }
+
+    // "Empty" means no *body*: a program that is nothing but markers has
+    // nothing to run, however many functions it declares.
+    if !program.code.iter().any(|i| !is_marker(i)) {
         errors.push(ValidationError::EmptyProgram);
         return errors;
     }
 
-    let mut unreachable = Vec::new();
-    let mut missing_terminator = Vec::new();
-    let mut found_terminator = false;
-    let mut body_len = 0usize;
-    let mut last_pc = 0usize;
-
-    for (pc, inst) in program.code.iter().enumerate() {
-        match inst {
-            M::Cpu(C::FunctionStart) => {
-                found_terminator = false;
-                body_len = 0;
-            }
-            M::Cpu(C::FunctionEnd) => {
-                // An empty function needs no terminator; a non-empty one that
-                // never reached a `ret`/`halt` falls through into whatever was
-                // laid out after it.
-                if body_len > 0 && !found_terminator {
-                    missing_terminator.push(ValidationError::MissingTerminator { pc: last_pc });
-                }
-            }
-            _ => {
-                if found_terminator {
-                    unreachable.push(ValidationError::UnreachableInstruction { pc });
-                }
-                if is_terminator(inst) {
-                    found_terminator = true;
-                }
-                body_len += 1;
-                last_pc = pc;
-            }
-        }
-    }
-
-    // Unreachable code explains a missing terminator, so reporting both would
-    // be redundant.
-    if unreachable.is_empty() {
-        errors.extend(missing_terminator);
-    } else {
-        errors.extend(unreachable);
+    for span in &spans {
+        walk_function(program, span, &mut errors);
     }
 
     errors
+}
+
+/// One function's extent in the code stream.
+struct Span {
+    /// Address of the `func_start`.
+    start: usize,
+    /// One past the last address the function owns.
+    end: usize,
+    /// Whether a `func_end` closed it. An unclosed final function still owns
+    /// the rest of the code, and falls off its own end.
+    closed: bool,
+}
+
+fn is_marker(inst: &M) -> bool {
+    matches!(inst, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd))
+}
+
+/// Split the code into function extents, delimited by the markers.
+fn function_spans(code: &[M]) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let mut open: Option<usize> = None;
+    for (pc, inst) in code.iter().enumerate() {
+        match inst {
+            M::Cpu(C::FunctionStart) => {
+                // A nested `func_start` closes nothing; the outer function
+                // runs up to it and `resolve` rejects the construct anyway.
+                if let Some(start) = open.replace(pc) {
+                    spans.push(Span {
+                        start,
+                        end: pc,
+                        closed: false,
+                    });
+                }
+            }
+            M::Cpu(C::FunctionEnd) => {
+                if let Some(start) = open.take() {
+                    spans.push(Span {
+                        start,
+                        end: pc + 1,
+                        closed: true,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(start) = open {
+        spans.push(Span {
+            start,
+            end: code.len(),
+            closed: false,
+        });
+    }
+    spans
+}
+
+/// Walk one function from its entry, following branch edges.
+///
+/// Reports every body address no path reaches, and a missing terminator when
+/// any path runs off the end instead of hitting `ret`/`halt`. Both are
+/// per-function: a second function's dead code no longer hides a first
+/// function's missing terminator, which the old single either/or gate did.
+fn walk_function(program: &Program, span: &Span, errors: &mut Vec<ValidationError>) {
+    let body_end = if span.closed { span.end - 1 } else { span.end };
+    let mut seen = vec![false; span.end - span.start];
+    let mut work = vec![span.start];
+    let mut falls_off = false;
+
+    while let Some(pc) = work.pop() {
+        // A target outside this function is reported by the target checks;
+        // following it would attribute the callee's code to the caller.
+        if pc < span.start || pc >= span.end || seen[pc - span.start] {
+            continue;
+        }
+        seen[pc - span.start] = true;
+
+        let inst = &program.code[pc];
+        let fall_through = |work: &mut Vec<usize>, falls_off: &mut bool| {
+            if pc + 1 >= body_end {
+                *falls_off = true;
+            }
+            if pc + 1 < span.end {
+                work.push(pc + 1);
+            }
+        };
+        match inst {
+            M::Cpu(C::FunctionEnd) => falls_off = true,
+            M::Cpu(C::Branch(t)) => work.push(*t as usize),
+            M::Cpu(C::ConditionalBranch(t, f)) => {
+                work.push(*t as usize);
+                work.push(*f as usize);
+            }
+            inst if is_terminator(inst) => {}
+            _ => fall_through(&mut work, &mut falls_off),
+        }
+    }
+
+    for pc in span.start + 1..body_end {
+        if !seen[pc - span.start] {
+            errors.push(ValidationError::UnreachableInstruction { pc });
+        }
+    }
+    if falls_off {
+        // Point at the last body instruction where there is one; an empty
+        // function has only its marker to name. An empty function is not
+        // exempt: `func_end` is a no-op, so falling off it runs whatever was
+        // laid out next rather than returning.
+        errors.push(ValidationError::MissingTerminator {
+            pc: body_end.saturating_sub(1).max(span.start),
+        });
+    }
 }
 
 // ── Stack-type simulation ──────────────────────────────────────────────────
@@ -1419,6 +1533,95 @@ mod tests {
     /// has to invent `@L9` / `@F1`, and the text it emits does not re-read.
     /// Catching it here means the renderer is only ever asked to name targets
     /// that have a name.
+    /// Reachability follows branches instead of latching on a terminator.
+    ///
+    /// The latch condemned `cond_br`'s second arm — the `halt` ending the
+    /// first arm set it — and could not see code a `br` jumped over.
+    #[test]
+    fn reachability_follows_branch_edges() {
+        // Both arms of a `cond_br` are reachable.
+        let p = program(vec![
+            M::Cpu(C::ConditionalBranch(2, 4)),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(
+            validate_structure(&p)
+                .iter()
+                .filter(|e| matches!(e, ValidationError::UnreachableInstruction { .. }))
+                .count(),
+            0,
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // And code a branch jumps over is still reported.
+        let p = program(vec![M::Cpu(C::Branch(3)), M::Lanes(L::Cz), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::UnreachableInstruction { pc: 2 }),
+            "the jumped-over cz should be reported: {:?}",
+            validate_structure(&p)
+        );
+    }
+
+    /// Every function must terminate, and one function's dead code must not
+    /// hide another's missing terminator.
+    #[test]
+    fn terminators_are_checked_per_function() {
+        use crate::isa::text::parse_text;
+
+        // @main has unreachable code; @helper has no terminator. The old
+        // either/or gate reported only the first.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.halt\n  lanes::lanes.cz\n}\n                   fn @helper() {\n  lanes::lanes.cz\n}\n.text(root).\n.section(root).\n";
+        let errors = validate_structure(&parse_text(src).unwrap());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UnreachableInstruction { .. })),
+            "got {errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingTerminator { .. })),
+            "got {errors:?}"
+        );
+
+        // An empty function is not exempt: `func_end` is a no-op, so falling
+        // off it runs whatever was laid out next rather than returning.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n                   fn @helper() {\n}\n.text(root).\n.section(root).\n";
+        assert!(
+            validate_structure(&parse_text(src).unwrap())
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingTerminator { .. })),
+            "an empty function still falls through"
+        );
+    }
+
+    /// A branch is intra-procedural; leaving the function is what `call` is
+    /// for. A trailing label resolves to the function's own `func_end`, and a
+    /// target past it enters the next function with no frame.
+    #[test]
+    fn a_branch_cannot_leave_its_function() {
+        use crate::isa::text::parse_text;
+
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.br @far\n  cpu::cpu.halt\n}\n                   fn @helper() {\n  cpu::cpu.label @far\n  cpu::cpu.halt\n}\n                   .text(root).\n.section(root).\n";
+        assert!(
+            validate_structure(&parse_text(src).unwrap())
+                .iter()
+                .any(|e| matches!(
+                    e,
+                    ValidationError::InvalidControlFlowTarget {
+                        expected: "an address in the same function",
+                        ..
+                    }
+                )),
+            "a cross-function branch should be rejected"
+        );
+    }
+
     #[test]
     fn control_flow_targets_are_checked() {
         // A branch past the end of the code.
@@ -1427,7 +1630,7 @@ mod tests {
             validate_structure(&p).contains(&ValidationError::InvalidControlFlowTarget {
                 pc: 1,
                 target: 99,
-                expected: "an address in the code",
+                expected: "an address in the same function",
             }),
             "got {:?}",
             validate_structure(&p)
@@ -1457,7 +1660,7 @@ mod tests {
             validate_structure(&p)
         );
 
-        // A branch to a real address is fine.
+        // A branch inside the same function is fine.
         let p = program(vec![M::Cpu(C::Branch(2)), M::Cpu(C::Halt)]);
         assert!(
             !validate_structure(&p)

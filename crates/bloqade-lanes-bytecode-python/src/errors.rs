@@ -286,6 +286,10 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("LocalIndexOutOfRangeError")?;
             cls.call1((*pc, *mnemonic, *index, validate::MAX_LOCAL_INDEX))?
         }
+        ValidationError::CodeOutsideFunction { pc } => {
+            let cls = module.getattr("CodeOutsideFunctionError")?;
+            cls.call1((*pc,))?
+        }
         ValidationError::InvalidControlFlowTarget {
             pc,
             target,
