@@ -214,7 +214,7 @@ class _MoveToValidationMethods(interp.MethodTable):
         ``(zone, row, col)`` resolution against ``ArchSpec.location_at`` is the
         in-range check for the coordinate addressing scheme.
         """
-        from bloqade.gemini.common.validation.new_at import _expect_const_int
+        from bloqade.gemini.common.validation.const_address import _expect_const_int
 
         zone = _expect_const_int(node.zone, "zone", node, _interp)
         row = _expect_const_int(node.row, "row", node, _interp)

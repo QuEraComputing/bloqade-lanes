@@ -106,6 +106,7 @@ def kernel(self):
 
         if verify:
             # stop circular import problems
+            from ..common.validation.const_address import ConstAddressValidation
             from ..common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
@@ -122,6 +123,10 @@ def kernel(self):
                     GeminiLogicalValidation,
                     GeminiTerminalMeasurementValidation,
                     FlatKernelNoCloningValidation,
+                    # Before DuplicateAddressValidation: it is that pass's
+                    # precondition, and reporting the precondition first reads
+                    # better when both fire.
+                    ConstAddressValidation,
                     DuplicateAddressValidation,
                     GeminiLogicalArgumentValidation,
                 ]
