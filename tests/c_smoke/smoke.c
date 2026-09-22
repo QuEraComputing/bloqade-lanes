@@ -111,8 +111,9 @@ int main(void) {
                   "parse valid program");
         ASSERT_TRUE(prog != NULL, "program handle is non-null");
 
+        /* Four instructions plus the func_start/func_end delimiting @main. */
         uint32_t count = lanes_program_instruction_count(prog);
-        ASSERT_EQ(count, 4, "instruction count");
+        ASSERT_EQ(count, 6, "instruction count");
 
         uint16_t major = 0, minor = 0;
         lanes_program_version(prog, &major, &minor);
