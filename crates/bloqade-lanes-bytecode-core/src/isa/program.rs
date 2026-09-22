@@ -145,8 +145,9 @@ impl std::fmt::Display for BinaryError {
 
 impl std::error::Error for BinaryError {}
 
-/// Length of vihaco's fixed file header: magic + version + flags + context_len.
-const FILE_HEADER_LEN: usize = 4 + 2 + 2 + 8;
+/// Length of vihaco's fixed file header, taken from the writer's own layout so
+/// the reader's truncation guard cannot drift away from what is emitted.
+use super::container::len::FILE_HEADER as FILE_HEADER_LEN;
 
 /// Sort a vihaco container/decode error into a [`BinaryError`].
 ///

@@ -104,8 +104,13 @@ impl vihaco::SstGlobalContext for LanesContext {
 
 /// Byte lengths of the fixed fields in vihaco's binary container. Named here so
 /// the emitter's arithmetic reads against the layout in the module docs.
-mod len {
+pub(super) mod len {
     /// `magic` + `version` + `flags` + `context_len`.
+    ///
+    /// The reader's truncation guard in [`super::super::program::from_binary`]
+    /// uses this too: a buffer shorter than the file header is the one
+    /// truncation we measure ourselves, and it has to agree with what the
+    /// writer lays down.
     pub const FILE_HEADER: usize = 4 + 2 + 2 + 8;
     /// `section_len` + `composite_header_len`.
     pub const SECTION_FRAME: usize = 8 + 8;

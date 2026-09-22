@@ -219,11 +219,6 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-/// If `cpu` is a control-flow instruction, return its canonical mnemonic.
-///
-/// `Return` is deliberately excluded: it is a terminator, not a feed-forward
-/// branch (and lanes uses its own [`Return`](super::M::Cpu(C::Return(_)))
-/// rather than the nested CPU one).
 /// Validate a program's arch-dependent constraints (capabilities + addresses).
 ///
 /// When `arch` is `None`, all checks are skipped and an empty list is returned.

@@ -103,14 +103,15 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
         text: e.to_string(),
     })?;
 
-    // Read the header before handing the section to vihaco. `parse_section`
-    // parses it too, but reports every failure as an `eyre` message wrapped
-    // around `LanesInfo::from_text`'s own — so telling a *missing* header from
-    // a *malformed* one downstream meant matching on prose, and got it wrong:
-    // `version 1` and `version abc` were both reported as missing, and
-    // `version 1.x` as an unparseable instruction. Here the distinction is
-    // still available.
-    parse_version_header(src, file.root().header_text())?;
+    // Read the header here rather than taking `parse_section`'s copy of it.
+    // `parse_section` parses it too, but reports every failure as an `eyre`
+    // message wrapped around `LanesInfo::from_text`'s own — so telling a
+    // *missing* header from a *malformed* one downstream meant matching on
+    // prose, and got it wrong: `version 1` and `version abc` were both
+    // reported as missing, and `version 1.x` as an unparseable instruction.
+    // Here the distinction is still available, so this is the value the
+    // program is built from.
+    let info = parse_version_header(src, file.root().header_text())?;
 
     let parsed =
         ParsedModule::<MachineSurfaceInstruction, NoType, LanesInfo>::parse_section(file.root())
@@ -153,7 +154,7 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
             text: e.to_string(),
         })?;
 
-    Ok(from_code(parsed.header.version, code))
+    Ok(from_code(info.version, code))
 }
 
 /// Read the root section's `version` directive.
