@@ -910,7 +910,8 @@ class TestLocalIndexBounds:
         ]
         assert errs and errs[0].index == 200_000_000
         assert errs[0].mnemonic == "store"
-        assert errs[0].pc == 1
+        # pc 2: address 0 is `@main`'s `func_start`, 1 is the `const`.
+        assert errs[0].pc == 2
 
     def test_load_local_index_is_bounded(self):
         program = Program.from_text(
