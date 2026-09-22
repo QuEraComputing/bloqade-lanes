@@ -3,6 +3,11 @@
 The pass is scoped to *programs* -- kernels that allocate their own qubits --
 because `gemini.logical.kernel` decorates sub-kernels too, and a sub-kernel
 taking arguments is a supported pattern. These pin both sides of that line.
+
+Programs here are decorated `aggressive_unroll=True`: on this branch it is not
+the pipeline default, and the rest of the suite -- `qalloc` plus indexing --
+needs the unrolled IR before `GeminiTerminalMeasurementValidation` can resolve
+its measurement ids.
 """
 
 import pytest
@@ -24,7 +29,7 @@ def _validate(method):
 def _program_taking_an_argument():
     """A program that would not survive decoration -- hence `verify=False`."""
 
-    @logical.kernel(verify=False)
+    @logical.kernel(aggressive_unroll=True, verify=False)
     def main(n: int):
         q = squin.qalloc(2)
         squin.h(q[0])
@@ -34,7 +39,7 @@ def _program_taking_an_argument():
 
 
 def _program_taking_nothing():
-    @logical.kernel
+    @logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(2)
         squin.h(q[0])
@@ -47,7 +52,7 @@ def _program_taking_nothing():
 
 
 def test_a_program_taking_no_arguments_is_valid():
-    @logical.kernel
+    @logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(2)
         squin.h(q[0])
@@ -60,7 +65,7 @@ def test_a_program_taking_an_argument_is_rejected_at_definition():
     """The group wiring: this raises out of the decorator, not at run time."""
     with pytest.raises(ValidationErrorGroup, match="must take no arguments"):
 
-        @logical.kernel
+        @logical.kernel(aggressive_unroll=True)
         def main(n: int):
             q = squin.qalloc(2)
             squin.h(q[0])
@@ -68,7 +73,7 @@ def test_a_program_taking_an_argument_is_rejected_at_definition():
 
 
 def test_the_message_names_the_offending_parameter():
-    @logical.kernel(verify=False)
+    @logical.kernel(aggressive_unroll=True, verify=False)
     def main(theta: float):
         q = squin.qalloc(2)
         squin.h(q[0])
@@ -115,7 +120,7 @@ def test_a_sub_kernel_that_allocates_is_treated_as_a_program():
     """Allocation is the line. A helper that allocates is a program by this
     suite's definition -- the same one that makes it owe a terminal measure."""
 
-    @logical.kernel(verify=False)
+    @logical.kernel(aggressive_unroll=True, verify=False)
     def allocates(n: int):
         q = squin.qalloc(2)
         squin.h(q[0])
