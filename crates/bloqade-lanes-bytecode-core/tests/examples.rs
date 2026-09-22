@@ -70,6 +70,8 @@ fn kind(error: &ValidationError) -> &'static str {
         E::GetItemInvalidDims { .. } => "GetItemInvalidDims",
         E::LocalIndexOutOfRange { .. } => "LocalIndexOutOfRange",
         E::InvalidControlFlowTarget { .. } => "InvalidControlFlowTarget",
+        E::CallArityMismatch { .. } => "CallArityMismatch",
+        E::ReturnCountMismatch { .. } => "ReturnCountMismatch",
         E::CodeOutsideFunction { .. } => "CodeOutsideFunction",
         E::InitialFillNotFirst { .. } => "InitialFillNotFirst",
         E::EmptyProgram => "EmptyProgram",

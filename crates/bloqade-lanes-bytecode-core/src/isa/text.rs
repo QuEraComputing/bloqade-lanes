@@ -12,11 +12,10 @@
 //! vihaco ships a reader for this container and no writer, so [`to_text`]
 //! emits it via [`super::container::to_sst`].
 
-use chumsky::prelude::*;
 use vihaco::SstFile;
 use vihaco::syntax::ParsedModule;
 use vihaco::traits::FromText as _;
-use vihaco_parser::Parse;
+use vihaco_cpu::SurfaceType;
 
 use super::container::LanesContext;
 use super::machine::{self, MachineInstruction, MachineSurfaceInstruction};
@@ -54,25 +53,6 @@ impl std::fmt::Display for TextError {
 }
 
 impl std::error::Error for TextError {}
-
-// ── NoType ────────────────────────────────────────────────────────────────────
-
-/// Source-type syntax for [`ParsedModule`]. A lanes `@main` takes no parameters
-/// and returns nothing, so no type ever appears in the grammar; this parser
-/// rejects everything, making `params` and `return_ty` unreachable.
-#[derive(Debug, Clone, PartialEq)]
-pub enum NoType {}
-
-impl<'src> Parse<'src> for NoType {
-    fn parser() -> impl chumsky::Parser<
-        'src,
-        &'src str,
-        Self,
-        chumsky::extra::Err<chumsky::error::Simple<'src, char>>,
-    > {
-        chumsky::primitive::empty().try_map(|(), span| Err(chumsky::error::Simple::new(None, span)))
-    }
-}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -114,12 +94,13 @@ pub fn parse_text(src: &str) -> Result<Program, TextError> {
     // program is built from.
     let info = parse_version_header(src, file.root().header_text())?;
 
-    let parsed =
-        ParsedModule::<MachineSurfaceInstruction, NoType, LanesInfo>::parse_section(file.root())
-            .map_err(|e| TextError::BadInstruction {
-                line: 0,
-                text: e.to_string(),
-            })?;
+    let parsed = ParsedModule::<MachineSurfaceInstruction, SurfaceType, LanesInfo>::parse_section(
+        file.root(),
+    )
+    .map_err(|e| TextError::BadInstruction {
+        line: 0,
+        text: e.to_string(),
+    })?;
 
     // Any number of functions, resolved together: symbolic branch and call
     // targets need the whole module in view. See `super::resolve`.
@@ -264,6 +245,33 @@ pub fn to_text(program: &Program) -> String {
             .unwrap_or_else(|| format!("F{address}"))
     };
 
+    // `fn @name(p: ty, ...) -> ty`. The declaration is what a `call`'s arity is
+    // checked against, so dropping it here would lose the only record of what
+    // the function takes — the code stream carries the boundary, not the shape.
+    let signature_at = |address: u32| -> String {
+        let Some(f) = program
+            .functions
+            .iter()
+            .find(|f| f.start_address == address)
+        else {
+            return "()".to_owned();
+        };
+        let params: Vec<String> = f
+            .signature
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", name_of(p.name), machine::cpu_type_text(p.ty)))
+            .collect();
+        let mut out = format!("({})", params.join(", "));
+        // vihaco's grammar takes at most one return type (`-> Ty`), so a
+        // multi-value signature has no syntax yet. Render the first and let
+        // the round-trip test catch it if that ever stops being enough.
+        if let Some(ty) = f.signature.ret.first() {
+            out.push_str(&format!(" -> {}", machine::cpu_type_text(*ty)));
+        }
+        out
+    };
+
     let render = |inst: &MachineInstruction| -> String {
         match inst {
             MachineInstruction::Cpu(C::Branch(t)) => {
@@ -303,7 +311,11 @@ pub fn to_text(program: &Program) -> String {
             // The markers are structure, not instructions: they open and close
             // the block rather than being rendered inside it.
             MachineInstruction::Cpu(C::FunctionStart) => {
-                body.push_str(&format!("fn @{}() {{\n", function_at(address)));
+                body.push_str(&format!(
+                    "fn @{}{} {{\n",
+                    function_at(address),
+                    signature_at(address)
+                ));
                 emit_labels(&mut body, address);
                 continue;
             }

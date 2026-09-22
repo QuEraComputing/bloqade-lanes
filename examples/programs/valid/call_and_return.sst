@@ -32,7 +32,11 @@ fn @main() {
   cpu::cpu.halt
 }
 
-fn @measure_zone() {
+// The return type is declared, so `ret 1` has something to be checked
+// against -- a `ret` that disagrees with its function's signature is now an
+// error. `heap_ref` is the closest of vihaco's types to an array reference,
+// and is what issue #776 will make it literally.
+fn @measure_zone() -> heap_ref {
   lanes::lanes.const_zone 0x00000000    // zone 0
   lanes::lanes.measure 1
   lanes::lanes.await_measure            // pops future, pushes array_ref

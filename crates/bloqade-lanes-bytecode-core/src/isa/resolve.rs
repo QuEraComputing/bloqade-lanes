@@ -39,13 +39,12 @@
 //! every span. With markers in the stream none of those is representable —
 //! the table indexes and names, the code delimits.
 
-use vihaco::module::{FunctionInfo, LabelInfo, Signature};
+use vihaco::module::{FunctionInfo, LabelInfo, Parameter, Signature};
 use vihaco::syntax::ParsedFunction;
-use vihaco_cpu::SurfaceInstruction as CpuSurface;
+use vihaco_cpu::{SurfaceInstruction as CpuSurface, SurfaceType};
 
 use super::machine::{self, MachineInstruction, MachineSurfaceInstruction};
 use super::program::{LanesInfo, Program};
-use super::text::NoType;
 
 /// A failure to resolve a parsed module.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,9 +114,29 @@ impl Interner {
     }
 }
 
+/// Lower a parsed source type into the runtime type the module records.
+///
+/// The two enums are the same set spelled twice — vihaco keeps the parsed form
+/// separate from the runtime one, the same split the instruction macros use
+/// with `SurfaceType => Type`.
+fn runtime_type(ty: SurfaceType) -> vihaco::Type {
+    use vihaco::Type as T;
+    match ty {
+        SurfaceType::Undefined => T::Undefined,
+        SurfaceType::String => T::String,
+        SurfaceType::Bool => T::Bool,
+        SurfaceType::I64 => T::I64,
+        SurfaceType::U32 => T::U32,
+        SurfaceType::U64 => T::U64,
+        SurfaceType::F64 => T::F64,
+        SurfaceType::FunctionRef => T::FunctionRef,
+        SurfaceType::HeapRef => T::HeapRef,
+    }
+}
+
 /// Lower parsed functions into a [`Program`].
 pub fn resolve(
-    functions: Vec<ParsedFunction<MachineSurfaceInstruction, NoType>>,
+    functions: Vec<ParsedFunction<MachineSurfaceInstruction, SurfaceType>>,
     extra: LanesInfo,
 ) -> Result<Program, ResolveError> {
     let mut interner = Interner::default();
@@ -227,10 +246,25 @@ pub fn resolve(
         ));
         function_infos.push(FunctionInfo {
             name: interner.intern(&name),
+            // Declared, not inferred. `call <arity>` sets the frame boundary
+            // from the *call site*, so without a declaration a function's
+            // arity is whatever its callers happen to pass — two sites could
+            // disagree and nothing would notice. The signature is what a
+            // caller is checked against; see `validate`.
             signature: Signature {
-                params: Vec::new(),
-                ret: Vec::new(),
+                params: func
+                    .params
+                    .iter()
+                    .map(|p| Parameter {
+                        name: interner.intern(p.name.as_str()),
+                        ty: runtime_type(p.ty),
+                    })
+                    .collect(),
+                ret: func.return_ty.iter().copied().map(runtime_type).collect(),
             },
+            // Still zero: locals alias the operand stack, so a function has no
+            // scratch to count until a prologue reserves some. See
+            // <https://github.com/QuEraComputing/bloqade-lanes/issues/1038>.
             local_count: 0,
             start_address,
             // One past `func_end`, so the span covers both markers and the

@@ -125,6 +125,25 @@ pub enum ValidationError {
         /// `"a function entry"`.
         expected: &'static str,
     },
+    /// A `call`'s arity operand disagrees with the callee's declared
+    /// parameter count.
+    ///
+    /// The operand is not a hint: it sets `base = stack.len() - arity`, so an
+    /// unchecked one redefines the callee's frame per call site.
+    CallArityMismatch {
+        pc: usize,
+        target: u32,
+        declared: u32,
+        got: u32,
+    },
+    /// A `ret`'s keep count disagrees with the enclosing function's declared
+    /// return count.
+    ///
+    /// Two `ret`s that disagree make the caller's post-call stack depth
+    /// path-dependent, which is the same defect as a branch whose arms leave
+    /// different depths. Checking both against the declaration catches it
+    /// without having to compare them to each other.
+    ReturnCountMismatch { pc: usize, declared: u32, got: u32 },
     /// `initial_fill` is not the first non-constant instruction.
     InitialFillNotFirst { pc: usize },
     /// The program has no instructions (and therefore no terminator).
@@ -299,6 +318,20 @@ impl fmt::Display for ValidationError {
                 target,
                 expected,
             } => write!(f, "pc {pc}: control-flow target {target} is not {expected}"),
+            ValidationError::CallArityMismatch {
+                pc,
+                target,
+                declared,
+                got,
+            } => write!(
+                f,
+                "pc {pc}: call passes {got} operand(s) but the function at {target} \
+                 declares {declared}"
+            ),
+            ValidationError::ReturnCountMismatch { pc, declared, got } => write!(
+                f,
+                "pc {pc}: ret keeps {got} value(s) but the function declares {declared}"
+            ),
             ValidationError::InitialFillNotFirst { pc } => write!(
                 f,
                 "pc {pc}: initial_fill must be the first non-constant instruction"
@@ -538,7 +571,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                 check_branch_target(&mut errors, &owner, pc, *f);
                 seen_non_constant = true;
             }
-            M::Cpu(C::Call(_, target)) => {
+            M::Cpu(C::Call(arity, target)) => {
                 if !matches!(
                     program.code.get(*target as usize),
                     Some(M::Cpu(C::FunctionStart))
@@ -547,6 +580,51 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                         pc,
                         target: *target,
                         expected: "a function entry",
+                    });
+                } else if let Some(callee) = program
+                    .functions
+                    .iter()
+                    .find(|f| f.start_address == *target)
+                {
+                    // `call <arity>` sets `base = stack.len() - arity`, so the
+                    // operand decides where the callee's frame begins. Checked
+                    // against the declaration, that is a claim about the
+                    // callee; unchecked, it silently *redefines* the callee's
+                    // shape per call site, and two sites could disagree with
+                    // nothing to notice.
+                    let declared = callee.signature.params.len() as u32;
+                    if *arity != declared {
+                        errors.push(ValidationError::CallArityMismatch {
+                            pc,
+                            target: *target,
+                            declared,
+                            got: *arity,
+                        });
+                    }
+                }
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Return(keep)) => {
+                // Checked against the enclosing function's declaration rather
+                // than against its other `ret`s. Same outcome when they
+                // disagree, but it names the offender: a `ret` that does not
+                // match what the function promised, rather than a pair that
+                // happens to differ.
+                if let Some(declared) = owner[pc]
+                    .and_then(|i| spans.get(i))
+                    .and_then(|span| {
+                        program
+                            .functions
+                            .iter()
+                            .find(|f| f.start_address == span.start as u32)
+                    })
+                    .map(|f| f.signature.ret.len() as u32)
+                    && *keep != declared
+                {
+                    errors.push(ValidationError::ReturnCountMismatch {
+                        pc,
+                        declared,
+                        got: *keep,
                     });
                 }
                 seen_non_constant = true;

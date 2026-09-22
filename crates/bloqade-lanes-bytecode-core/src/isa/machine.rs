@@ -448,7 +448,7 @@ fn collect(effects: Effects<LanesEffect>, into: &mut Vec<LanesEffect>) {
 /// vihaco-cpu's own `Display` emits bare mnemonics (`halt`, `const.f64 1.5`)
 /// that its *parser* does not accept, so rendering is written here against the
 /// surface grammar instead. The round-trip tests pin the two together.
-fn cpu_type_text(ty: Type) -> &'static str {
+pub(super) fn cpu_type_text(ty: Type) -> &'static str {
     match ty {
         Type::Undefined => "undef",
         Type::String => "str",

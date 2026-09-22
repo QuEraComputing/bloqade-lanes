@@ -214,6 +214,19 @@ fn encode_functions(program: &Program) -> Vec<u8> {
         out.extend_from_slice(&f.start_address.to_le_bytes());
         out.extend_from_slice(&f.end_address.to_le_bytes());
         out.extend_from_slice(&f.file.to_le_bytes());
+
+        // The signature follows, length-prefixed. A function's arity is
+        // declared here and nowhere else: `call <arity>` carries the caller's
+        // claim, and this is what that claim is checked against.
+        out.extend_from_slice(&(f.signature.params.len() as u32).to_le_bytes());
+        for p in &f.signature.params {
+            out.extend_from_slice(&p.name.to_le_bytes());
+            out.extend_from_slice(&type_code(p.ty).to_le_bytes());
+        }
+        out.extend_from_slice(&(f.signature.ret.len() as u32).to_le_bytes());
+        for ty in &f.signature.ret {
+            out.extend_from_slice(&type_code(*ty).to_le_bytes());
+        }
     }
     out
 }
@@ -234,25 +247,97 @@ fn table_capacity(bytes: &[u8], count: usize, record: usize) -> usize {
     count.min(bytes.len().saturating_sub(4) / record.max(1))
 }
 
+/// Smallest a function record can be: the five fixed words plus the two
+/// counts, with an empty signature. Only a *lower* bound now that records vary
+/// in length, which is all [`table_capacity`] needs it to be — it bounds the
+/// reservation, and the decode below still fails honestly on a short payload.
+const FUNCTION_RECORD_MIN: usize = 4 * 7;
+
 fn decode_functions(bytes: &[u8]) -> eyre::Result<Vec<vihaco::module::FunctionInfo<vihaco::Type>>> {
-    const RECORD: usize = 4 * 5;
     let count = read_u32(bytes, 0)? as usize;
-    let mut out = Vec::with_capacity(table_capacity(bytes, count, RECORD));
-    for i in 0..count {
-        let at = 4 + i * RECORD;
+    let mut out = Vec::with_capacity(table_capacity(bytes, count, FUNCTION_RECORD_MIN));
+
+    // A signature is variable-length, so records are walked with a cursor
+    // rather than indexed — `4 + i * RECORD` stopped being an address the
+    // moment a function could declare parameters.
+    let mut at = 4;
+    let next = |at: &mut usize| -> eyre::Result<u32> {
+        let v = read_u32(bytes, *at)?;
+        *at += 4;
+        Ok(v)
+    };
+
+    for _ in 0..count {
+        let name = next(&mut at)?;
+        let local_count = next(&mut at)?;
+        let start_address = next(&mut at)?;
+        let end_address = next(&mut at)?;
+        let file = next(&mut at)?;
+
+        let param_count = next(&mut at)? as usize;
+        let mut params = Vec::with_capacity(table_capacity(bytes, param_count, 4 * 2));
+        for _ in 0..param_count {
+            let name = next(&mut at)?;
+            params.push(vihaco::module::Parameter {
+                name,
+                ty: decode_type_code(next(&mut at)?)?,
+            });
+        }
+
+        let ret_count = next(&mut at)? as usize;
+        let mut ret = Vec::with_capacity(table_capacity(bytes, ret_count, 4));
+        for _ in 0..ret_count {
+            ret.push(decode_type_code(next(&mut at)?)?);
+        }
+
         out.push(vihaco::module::FunctionInfo {
-            name: read_u32(bytes, at)?,
-            signature: vihaco::module::Signature {
-                params: Vec::new(),
-                ret: Vec::new(),
-            },
-            local_count: read_u32(bytes, at + 4)?,
-            start_address: read_u32(bytes, at + 8)?,
-            end_address: read_u32(bytes, at + 12)?,
-            file: read_u32(bytes, at + 16)?,
+            name,
+            signature: vihaco::module::Signature { params, ret },
+            local_count,
+            start_address,
+            end_address,
+            file,
         });
     }
     Ok(out)
+}
+
+/// Stable wire codes for [`vihaco::Type`].
+///
+/// Spelled out rather than taken from the enum's declaration order, which is
+/// what the *instruction* opcodes do — those are allowed to shift when the
+/// instruction set gains a variant, and a type written into a file is not.
+/// The match is exhaustive, so a new vihaco type is a compile error here
+/// rather than a silently mis-encoded file.
+fn type_code(ty: vihaco::Type) -> u32 {
+    use vihaco::Type as T;
+    match ty {
+        T::Undefined => 0,
+        T::String => 1,
+        T::Bool => 2,
+        T::I64 => 3,
+        T::U32 => 4,
+        T::U64 => 5,
+        T::F64 => 6,
+        T::FunctionRef => 7,
+        T::HeapRef => 8,
+    }
+}
+
+fn decode_type_code(code: u32) -> eyre::Result<vihaco::Type> {
+    use vihaco::Type as T;
+    Ok(match code {
+        0 => T::Undefined,
+        1 => T::String,
+        2 => T::Bool,
+        3 => T::I64,
+        4 => T::U32,
+        5 => T::U64,
+        6 => T::F64,
+        7 => T::FunctionRef,
+        8 => T::HeapRef,
+        other => eyre::bail!("unknown type code {other} in a function signature"),
+    })
 }
 
 fn encode_labels(program: &Program) -> Vec<u8> {
@@ -343,26 +428,20 @@ pub fn read_tables(
 /// composite carries a codec of its own. The symbol tables follow as child
 /// sections, whose offsets are relative to the start of the root section.
 pub fn to_binary(program: &Program) -> eyre::Result<Vec<u8>> {
-    // Three fields of `LocalModule` have no place in the container yet. None
-    // is ever populated — `resolve` and `from_code` leave all three empty —
-    // so nothing is lost today, and the round-trip tests pass *because* they
-    // are empty rather than because they are carried. Refusing to write a
-    // program that uses one turns a future silent drop into a loud failure:
-    // `FunctionInfo.signature` is the one to watch, since the moment the
-    // calling convention records parameters, `encode_functions` (which writes
-    // only name/local_count/start/end/file) would discard them.
+    // Two fields of `LocalModule` still have no place in the container, and
+    // neither is ever populated. Refusing to write a program that uses one
+    // turns a future silent drop into a loud failure.
+    //
+    // `FunctionInfo.signature` used to be the third, with a note that it was
+    // "the one to watch, since the moment the calling convention records
+    // parameters, `encode_functions` would discard them". That moment came:
+    // signatures are now declared, encoded below, and read back — so the
+    // refusal is gone rather than the field being dropped.
     if !program.constants.is_empty() {
         eyre::bail!("the container cannot carry a constant pool yet");
     }
     if !program.source_symbols.is_empty() {
         eyre::bail!("the container cannot carry source symbols yet");
-    }
-    if program
-        .functions
-        .iter()
-        .any(|f| !f.signature.params.is_empty() || !f.signature.ret.is_empty())
-    {
-        eyre::bail!("the container cannot carry function signatures yet");
     }
 
     let context = LanesContext::with_tables();
@@ -503,19 +582,24 @@ mod tests {
                 .contains("source symbols")
         );
 
+        // `signature` used to be the third refusal, and was the one this test
+        // existed to guard: the comment on the bail called it "the one to
+        // watch, since the moment the calling convention records parameters,
+        // `encode_functions` would discard them". It now carries them, so the
+        // assertion is that the field survives rather than that it is refused.
         let mut p = base;
         p.functions[0].signature = Signature {
             params: vec![Parameter {
                 name: 0,
                 ty: Type::I64,
             }],
-            ret: vec![],
+            ret: vec![Type::Bool],
         };
-        assert!(
-            to_binary(&p)
-                .unwrap_err()
-                .to_string()
-                .contains("signatures")
+        let bytes = to_binary(&p).expect("a declared signature is written, not refused");
+        let back = crate::isa::program::from_binary(&bytes).expect("and read back");
+        assert_eq!(
+            back.functions[0].signature, p.functions[0].signature,
+            "the signature should survive the container"
         );
     }
 

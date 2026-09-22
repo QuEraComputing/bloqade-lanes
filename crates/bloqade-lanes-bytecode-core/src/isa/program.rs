@@ -369,10 +369,19 @@ fn reconcile_function_spans(program: &mut Program) {
             let source = named.iter().find(|f| f.start_address == start_address);
             FunctionInfo {
                 name: source.map_or(u32::MAX, |f| f.name),
-                signature: Signature {
-                    params: Vec::new(),
-                    ret: Vec::new(),
-                },
+                // Carried over, not rebuilt. The *spans* come from the code
+                // because the markers are authoritative about extent; a
+                // signature has no representation in the code stream at all,
+                // so the table is its only source. Hardcoding it empty here
+                // was invisible while nothing populated it, and became a
+                // silent drop the moment functions could declare parameters.
+                signature: source.map_or_else(
+                    || Signature {
+                        params: Vec::new(),
+                        ret: Vec::new(),
+                    },
+                    |f| f.signature.clone(),
+                ),
                 local_count: source.map_or(0, |f| f.local_count),
                 start_address,
                 end_address,

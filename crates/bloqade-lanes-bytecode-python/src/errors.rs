@@ -298,6 +298,19 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("InvalidControlFlowTargetError")?;
             cls.call1((*pc, *target, *expected))?
         }
+        ValidationError::CallArityMismatch {
+            pc,
+            target,
+            declared,
+            got,
+        } => {
+            let cls = module.getattr("CallArityMismatchError")?;
+            cls.call1((*pc, *target, *declared, *got))?
+        }
+        ValidationError::ReturnCountMismatch { pc, declared, got } => {
+            let cls = module.getattr("ReturnCountMismatchError")?;
+            cls.call1((*pc, *declared, *got))?
+        }
         ValidationError::InitialFillNotFirst { pc } => {
             let cls = module.getattr("InitialFillNotFirstError")?;
             cls.call1((*pc,))?
