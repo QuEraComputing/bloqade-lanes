@@ -62,15 +62,13 @@ pub mod tag {
 /// instruction's program counter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
-    /// A control-flow instruction appears but `feed_forward` is disabled.
+    /// A `br`, `cond_br`, `call` or `call_indirect` appears but
+    /// `feed_forward` is disabled.
     ///
-    /// Currently unreachable: the ISA has no branch/call instructions to
-    /// trigger it. It reached programs while the ISA nested vihaco-cpu's
-    /// instruction set wholesale, which brought `br`/`cond_br`/`call` along;
-    /// vihaco-cpu 0.4 dropped its binary codec and the nesting went with it.
-    /// Retained because `feed_forward` is a real capability and control flow is
-    /// expected back — and because it is mapped to a Python exception, so
-    /// removing it would be a breaking API change.
+    /// Without mid-circuit classical feedback the hardware can only run
+    /// straight-line code. This was documented as unreachable for as long as
+    /// the ISA had no control flow to reject; adopting the calling convention
+    /// brought it back.
     ControlFlowRequiresFeedForward {
         pc: usize,
         /// The offending mnemonic (e.g. `"cond_br"`).
@@ -317,9 +315,25 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
             // ---- capability checks ----
-            // No `ControlFlowRequiresFeedForward` arm: the ISA has no
-            // branch/call instructions to check for (see the variant's docs).
+            // Without mid-circuit classical feedback the hardware runs
+            // straight-line code only, so a branch or a call is unrunnable.
+            // This arm did not exist while the ISA had no such instructions;
+            // now that a program can declare functions and branch between
+            // them, its absence let every one of them through.
+            M::Cpu(C::Branch(_) | C::ConditionalBranch(..) | C::Call(..) | C::IndirectCall)
+                if !arch.feed_forward =>
+            {
+                errors.push(ValidationError::ControlFlowRequiresFeedForward {
+                    pc,
+                    mnemonic: super::machine::op_name(inst),
+                });
+            }
             M::Lanes(L::Measure(_)) => {
+                // A textual count over the code stream, which is exact only
+                // because the arm above rejects every branch and call when
+                // `feed_forward` is false: without control flow the code runs
+                // once, top to bottom. With `feed_forward` on, repeats are
+                // allowed anyway, so the count does not have to be exact.
                 measure_count += 1;
                 if !arch.feed_forward && measure_count > 1 {
                     errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
@@ -908,6 +922,50 @@ mod tests {
             M::Cpu(C::Halt),
         ]);
         assert!(validate(&p, Some(&caps_arch(false, false))).is_empty());
+    }
+
+    /// Control flow needs `feed_forward`, and the arm that says so exists.
+    ///
+    /// The variant was declared, formatted, mapped to a Python exception and
+    /// unit-tested — but never constructed, because it was written when the
+    /// ISA had no control flow. Adopting the calling convention made every
+    /// `br`/`cond_br`/`call` reachable from `.sst` with the gate wide open.
+    #[test]
+    fn control_flow_requires_feed_forward() {
+        use vihaco_parser::Ident;
+
+        for (inst, mnemonic) in [
+            (M::Cpu(C::Branch(1)), "br"),
+            (M::Cpu(C::ConditionalBranch(1, 1)), "cond_br"),
+            (M::Cpu(C::Call(0, 0)), "call"),
+            (M::Cpu(C::IndirectCall), "call_indirect"),
+        ] {
+            let p = program(vec![inst, M::Cpu(C::Halt)]);
+            assert!(
+                validate(&p, Some(&caps_arch(false, false)))
+                    .contains(&ValidationError::ControlFlowRequiresFeedForward { pc: 1, mnemonic }),
+                "{mnemonic}: got {:?}",
+                validate(&p, Some(&caps_arch(false, false)))
+            );
+            // With the capability, it is allowed.
+            assert!(
+                !validate(&p, Some(&caps_arch(true, false)))
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::ControlFlowRequiresFeedForward { .. })),
+                "{mnemonic} should pass with feed_forward"
+            );
+        }
+
+        // A label is not control flow, and neither is `ret`.
+        let p = program(vec![
+            M::Cpu(C::Label(Ident("x".into()))),
+            M::Cpu(C::Return(0)),
+        ]);
+        assert!(
+            !validate(&p, Some(&caps_arch(false, false)))
+                .iter()
+                .any(|e| matches!(e, ValidationError::ControlFlowRequiresFeedForward { .. }))
+        );
     }
 
     #[test]
