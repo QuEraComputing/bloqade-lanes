@@ -109,6 +109,26 @@ class GetItemInvalidDimsError(ValidationError):
         super().__init__(f"pc {pc}: get_item takes 1..={maximum} indices, got {ndims}")
 
 
+class LocalIndexOutOfRangeError(ValidationError):
+    """``load``/``store`` names a local index past the maximum.
+
+    The index is read straight out of the instruction word, and ``store``
+    grows the operand stack to reach it — writing every new slot, so the
+    memory is resident. A local index is a function's argument slot, so the
+    bound is far above any real one; it exists to keep a malformed operand
+    from becoming a multi-gigabyte allocation.
+    """
+
+    def __init__(self, pc: int, mnemonic: str, index: int, maximum: int):
+        self.pc = pc
+        self.mnemonic = mnemonic
+        self.index = index
+        self.maximum = maximum
+        super().__init__(
+            f"pc {pc}: {mnemonic} takes a local index 0..={maximum}, got {index}"
+        )
+
+
 class InitialFillNotFirstError(ValidationError):
     def __init__(self, pc: int):
         self.pc = pc

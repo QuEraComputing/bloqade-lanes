@@ -68,6 +68,7 @@ fn kind(error: &ValidationError) -> &'static str {
         E::NewArrayInvalidTypeTag { .. } => "NewArrayInvalidTypeTag",
         E::NewArrayTooManyElements { .. } => "NewArrayTooManyElements",
         E::GetItemInvalidDims { .. } => "GetItemInvalidDims",
+        E::LocalIndexOutOfRange { .. } => "LocalIndexOutOfRange",
         E::InitialFillNotFirst { .. } => "InitialFillNotFirst",
         E::EmptyProgram => "EmptyProgram",
         E::MissingTerminator { .. } => "MissingTerminator",

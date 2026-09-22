@@ -40,7 +40,7 @@ use super::container::LanesContext;
 use super::device::{Lanes, LanesEffect, LanesInstruction, LanesMessage};
 use super::program::LanesInfo;
 use super::program::Program;
-use super::validate::array_element_count;
+use super::validate::{MAX_LOCAL_INDEX, array_element_count};
 
 /// The combined instruction set: one variant per device.
 pub type MachineInstruction = lanes_machine::runtime::Instruction;
@@ -172,6 +172,7 @@ impl LanesMachine {
                     collect(self.step_lanes(inst.clone())?, &mut effects);
                 }
                 MachineInstruction::Cpu(inst) => {
+                    self.guard_cpu(inst)?;
                     match self.cpu.execute_instruction(inst.clone())? {
                         StepOutcome::Halt => break Stopped::Halted,
                         // `op_return` reports `Return` only when it pops the
@@ -196,6 +197,50 @@ impl LanesMachine {
             stopped,
             steps,
         })
+    }
+
+    /// Refuse the two CPU instructions whose operands reach an allocation or a
+    /// subtraction before vihaco-cpu 0.4.1 bounds-checks them.
+    ///
+    /// Both belong upstream, and both are caught here for the same reason
+    /// [`pop_capacity`](Self::pop_capacity) clamps its reservation: `run` has
+    /// no validation gate — `validate` is its own subcommand, and a program you
+    /// have not validated is still one you may want to execute — so the
+    /// execution path has to be safe on the operands alone.
+    ///
+    /// - `store` ([#1032]): `op_store` calls `get_local_mut`, which `resize`s
+    ///   the operand stack to `base + index + 1`. The bound is the validator's
+    ///   [`MAX_LOCAL_INDEX`], so a program the validator accepts still runs.
+    /// - `ret` ([#1033]): `op_return` computes `stack.len() - frame.base`
+    ///   before comparing it. `op_call` establishes `base <= len`, but a callee
+    ///   that pops more than it pushed breaks that and the subtraction
+    ///   underflows — a panic (debug) or an out-of-range `drain` (release)
+    ///   rather than the `Err` an embedder can handle.
+    ///
+    /// Both are one comparison against state this loop already reads, and both
+    /// can go when the `=0.4.1` pin moves past an upstream fix.
+    ///
+    /// [#1032]: https://github.com/QuEraComputing/bloqade-lanes/issues/1032
+    /// [#1033]: https://github.com/QuEraComputing/bloqade-lanes/issues/1033
+    fn guard_cpu(&self, inst: &vihaco_cpu::RuntimeInstruction) -> eyre::Result<()> {
+        use vihaco_cpu::RuntimeInstruction as C;
+        match inst {
+            C::Store(_, index) if *index > MAX_LOCAL_INDEX => Err(eyre::eyre!(
+                "store names local {index}, past the maximum index of {MAX_LOCAL_INDEX}"
+            )),
+            // A missing frame is upstream's own "no frame to pop", so only the
+            // case it gets wrong is intercepted.
+            C::Return(_) => match self.cpu.get_frame() {
+                Ok(frame) if self.cpu.stack().len() < frame.base => Err(eyre::eyre!(
+                    "ret with the stack {} deep, below its frame base {}: \
+                     the callee popped past its own frame",
+                    self.cpu.stack().len(),
+                    frame.base
+                )),
+                _ => Ok(()),
+            },
+            _ => Ok(()),
+        }
     }
 
     /// Pop the operands `inst` consumes and pack them into its message.
@@ -1082,6 +1127,122 @@ mod tests {
                 "{inst:?}: capacity is not clamped to the stack depth"
             );
         }
+    }
+
+    /// A `store` cannot grow the operand stack to reach its index.
+    ///
+    /// `op_store` resizes the stack to `base + index + 1` and *writes* every
+    /// new slot, so `store u64, 4294967295` makes ~68 GB resident — from a
+    /// 12-byte program, and with no allocation failure to notice on a platform
+    /// that commits lazily. `run` has no validation gate, so the assertion is
+    /// on the stack depth rather than on the allocator complaining. See #1032.
+    #[test]
+    fn a_store_cannot_grow_the_stack_to_reach_its_index() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        for index in [MAX_LOCAL_INDEX + 1, 2_000_000, u32::MAX] {
+            let program = from_code(
+                Version::new(1, 0),
+                vec![
+                    MachineInstruction::Cpu(C::Const(Type::U64, Value::U64(7))),
+                    MachineInstruction::Cpu(C::Store(Type::U64, index)),
+                    MachineInstruction::Cpu(C::Halt),
+                ],
+            );
+            let mut m = LanesMachine::new();
+            let err = match m.run(&program, 100) {
+                Ok(run) => panic!("index={index}: the store should have been refused, got {run:?}"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains("local"), "index={index}: {err}");
+
+            // The diagnosis is only worth anything if the allocation did not
+            // happen first: one `const` pushed one value, and the refused
+            // `store` must leave it at that.
+            assert!(
+                m.cpu.stack().len() <= 1,
+                "index={index}: the stack grew to {} entries",
+                m.cpu.stack().len()
+            );
+        }
+
+        // An index inside the bound still stores, and still reads back.
+        let program = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Const(Type::U64, Value::U64(7))),
+                MachineInstruction::Cpu(C::Store(Type::U64, MAX_LOCAL_INDEX)),
+                MachineInstruction::Cpu(C::Load(Type::U64, MAX_LOCAL_INDEX)),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        );
+        let mut m = LanesMachine::new();
+        assert_eq!(m.run(&program, 100).unwrap().stopped, Stopped::Halted);
+        assert_eq!(m.cpu.stack().last(), Some(&Value::U64(7)));
+    }
+
+    /// A callee that pops below its own frame base gets an error, not a panic.
+    ///
+    /// `op_call` establishes `base <= stack.len()`, and vihaco-cpu 0.4.1's
+    /// `op_return` computes `stack.len() - frame.base` assuming it stays that
+    /// way. A callee that pops more than it pushed breaks the assumption: debug
+    /// builds trap on the subtraction, release builds reach an out-of-range
+    /// `drain`. Either way the CLI dies with a backtrace instead of a
+    /// diagnosis, so `run` refuses the `ret` first. See #1033.
+    #[test]
+    fn a_callee_popping_below_its_frame_base_is_an_error_not_a_panic() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![
+                // @main: three values, then a zero-arity call — so the callee's
+                // frame base sits at 3 with nothing of its own beneath it.
+                MachineInstruction::Lanes(I::ConstZone(0)),
+                MachineInstruction::Lanes(I::ConstZone(1)),
+                MachineInstruction::Lanes(I::ConstZone(2)),
+                MachineInstruction::Cpu(C::Call(0, 5)),
+                MachineInstruction::Cpu(C::Halt),
+                // @drain: pops the caller's three values, then returns.
+                MachineInstruction::Lanes(I::Pop),
+                MachineInstruction::Lanes(I::Pop),
+                MachineInstruction::Lanes(I::Pop),
+                MachineInstruction::Cpu(C::Return(0)),
+            ],
+        );
+        let err = LanesMachine::new()
+            .run(&program, 100)
+            .expect_err("the underflowing ret should be refused")
+            .to_string();
+        assert!(err.contains("frame base"), "got {err}");
+    }
+
+    /// The guard must not change what a well-formed `call`/`ret` pair does —
+    /// the underflow check is the only case it intercepts.
+    #[test]
+    fn a_balanced_call_still_returns_to_its_caller() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(1))),
+                // One argument, so the callee's base is below it.
+                MachineInstruction::Cpu(C::Call(1, 4)),
+                MachineInstruction::Lanes(I::Pop),
+                MachineInstruction::Cpu(C::Halt),
+                // @callee: hands its argument back.
+                MachineInstruction::Cpu(C::Return(1)),
+            ],
+        );
+        let run = LanesMachine::new().run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Halted);
     }
 
     /// `ret` at top level ends the program, which needs the entry frame:
