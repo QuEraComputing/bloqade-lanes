@@ -48,7 +48,7 @@ def _kernel_b():
     return logical.terminal_measure(q)
 
 
-@logical.kernel(num_physical_qubits=1, aggressive_unroll=True)
+@logical.kernel(aggressive_unroll=True)
 def _kernel_with_postprocessing():
     q = squin.qalloc(2)
     measurements = logical.terminal_measure(q)
