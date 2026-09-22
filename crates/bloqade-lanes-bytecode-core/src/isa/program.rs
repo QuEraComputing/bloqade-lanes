@@ -317,7 +317,7 @@ fn reconcile_function_spans(program: &mut Program) {
     // table in layout order, so entry *i* names span *i*. A table that is
     // short or missing leaves the remaining functions unnamed rather than
     // failing — `to_text` synthesises `F<addr>` for those.
-    let named: Vec<_> = program.functions.drain(..).collect();
+    let named = std::mem::take(&mut program.functions);
     program.functions = spans
         .into_iter()
         .enumerate()
