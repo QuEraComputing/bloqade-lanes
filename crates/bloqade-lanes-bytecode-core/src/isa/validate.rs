@@ -329,6 +329,19 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
 
     let mut errors = Vec::new();
     let mut measure_count = 0u32;
+    let mut initial_fill_count = 0u32;
+
+    // The capability rules describe *the run*, so they are scoped to the code
+    // that runs. With `feed_forward` off the control-flow arm below rejects
+    // every `call`, so only the entry function can execute — counting within
+    // its span is exact wherever the measure rule is active, and stops an
+    // uncallable function's `measure` from condemning a program that measures
+    // once.
+    let entry = program
+        .main_function
+        .and_then(|i| program.functions.get(i as usize))
+        .map(|f| (f.start_address as usize, f.end_address as usize));
+    let runs = |pc: usize| entry.is_none_or(|(start, end)| pc >= start && pc < end);
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
@@ -352,13 +365,34 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
                 // `feed_forward` is false: without control flow the code runs
                 // once, top to bottom. With `feed_forward` on, repeats are
                 // allowed anyway, so the count does not have to be exact.
-                measure_count += 1;
-                if !arch.feed_forward && measure_count > 1 {
-                    errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
+                if runs(pc) {
+                    measure_count += 1;
+                    if !arch.feed_forward && measure_count > 1 {
+                        errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
+                    }
                 }
             }
             M::Lanes(L::Fill(_)) if !arch.atom_reloading => {
                 errors.push(ValidationError::FillRequiresAtomReloading { pc });
+            }
+            // A *second* `initial_fill` is a refill, whatever it is spelled.
+            // The whole-program "must be first" ordering rule used to make
+            // that unreachable; scoping it to a function did not, so a helper
+            // could reload atoms on hardware that cannot.
+            //
+            // Counted across the whole program, unlike `measure` above. The
+            // measure rule is only active when `feed_forward` is off, which
+            // bans `call` and leaves the entry function as the only code that
+            // runs — so entry-scoping is exact there. This rule is active with
+            // `feed_forward` *on*, where a called function does run, and
+            // deciding which functions are callable needs a call-graph walk.
+            // Counting all of them can only over-report, which is the right
+            // way for a capability gate to be wrong.
+            M::Lanes(L::InitialFill(_)) => {
+                initial_fill_count += 1;
+                if !arch.atom_reloading && initial_fill_count > 1 {
+                    errors.push(ValidationError::FillRequiresAtomReloading { pc });
+                }
             }
 
             // ---- address checks ----
@@ -926,7 +960,19 @@ impl<'a> StackSimulator<'a> {
             }
 
             // control
-            M::Cpu(C::Return(_)) => self.pop_any(),
+            // `ret <keep>` keeps the top `keep` values as the function's
+            // return values; it does not pop exactly one. Modelling it as one
+            // made `ret 0` — the spelling every function the compiler emits
+            // uses — report a spurious underflow on an empty stack.
+            //
+            // Bounded by the stack depth plus one: `keep` is an operand, and
+            // the extra pop is what records the single underflow when it
+            // exceeds what the function has.
+            M::Cpu(C::Return(keep)) => {
+                for _ in 0..(*keep as usize).min(self.stack.len() + 1) {
+                    self.pop_any();
+                }
+            }
             M::Cpu(C::Halt) => {}
 
             // Every other vihaco-cpu op — arithmetic, comparisons, control
@@ -939,23 +985,37 @@ impl<'a> StackSimulator<'a> {
     }
 
     fn run(mut self, program: &Program) -> Vec<ValidationError> {
-        for (pc, inst) in program.code.iter().enumerate() {
-            // The simulator walks straight through, so the stack state it
-            // carries is only correct while control flow is linear. At a branch
-            // or call the state at the next instruction depends on which edge
-            // was taken, and merging those needs a CFG walk this does not do.
-            //
-            // So it stops rather than reporting underflows and type mismatches
-            // derived from a state it cannot know. A lanes program emits no
-            // control flow today, so nothing we generate reaches this; it
-            // matters for hand-written and decoded programs. Full CFG-aware
-            // simulation is tracked in
-            // <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>.
-            if is_control_flow(inst) {
-                break;
+        // Simulate each function from an empty stack, independently.
+        //
+        // This used to walk the whole stream and `break` at the first control
+        // flow, which lost two things. A `call` is the *only* way to reach a
+        // second function, so breaking there meant every multi-function
+        // program went unchecked from its first call onwards — a callee's
+        // unconditional underflow, behind no branch at all, was never
+        // reported. And with no control flow anywhere the markers fell through
+        // as no-ops, so one function's leftover operands were still on the
+        // stack when the next began, and its errors surfaced an instruction
+        // late or not at all.
+        //
+        // A branch still stops the *containing* function: past it the stack
+        // state depends on which edge was taken, and merging those needs the
+        // CFG walk tracked in
+        // <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>. The
+        // linear prefix of every function is checked, which is all of every
+        // function the compiler emits today.
+        for span in function_spans(&program.code) {
+            self.stack.clear();
+            for (pc, inst) in program.code[span.start..span.end]
+                .iter()
+                .enumerate()
+                .map(|(i, inst)| (span.start + i, inst))
+            {
+                if is_control_flow(inst) {
+                    break;
+                }
+                self.pc = pc;
+                self.dispatch(inst);
             }
-            self.pc = pc;
-            self.dispatch(inst);
         }
         self.errors
     }
@@ -1537,6 +1597,62 @@ mod tests {
     ///
     /// The latch condemned `cond_br`'s second arm — the `halt` ending the
     /// first arm set it — and could not see code a `br` jumped over.
+    /// Each function is simulated from an empty stack, independently.
+    ///
+    /// Breaking at the first control flow lost every multi-function program's
+    /// tail — `call` is the only way to reach a second function — and with no
+    /// control flow at all, one function's leftover operands were still on the
+    /// stack when the next began.
+    #[test]
+    fn the_stack_is_simulated_per_function() {
+        use crate::isa::text::parse_text;
+
+        // (a) A callee's unconditional underflow, behind a `call`.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  lanes::lanes.const_zone 0x00000000\n                     cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n                   fn @helper() {\n  lanes::lanes.pop\n  cpu::cpu.ret 0\n}\n                   .text(root).\n.section(root).\n";
+        let p = parse_text(src).unwrap();
+        assert!(
+            simulate_stack(&p, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
+            "@helper's underflow should be reported: {:?}",
+            simulate_stack(&p, None)
+        );
+
+        // (b) One function must not consume what the previous left behind.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  lanes::lanes.const_zone 0x00000000\n                     cpu::cpu.halt\n}\n                   fn @helper() {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n                   .text(root).\n.section(root).\n";
+        let p = parse_text(src).unwrap();
+        assert!(
+            simulate_stack(&p, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
+            "@helper starts from an empty stack: {:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    /// `ret <keep>` keeps the top `keep` values; it does not pop exactly one.
+    ///
+    /// Modelling it as one made `ret 0` — what every function the compiler
+    /// emits uses — report a spurious underflow on an empty stack.
+    #[test]
+    fn ret_pops_its_keep_count() {
+        let p = program(vec![M::Cpu(C::Return(0))]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        let p = program(vec![M::Cpu(C::Return(1))]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+
+        // An implausible keep count is one diagnosis, not four billion.
+        let p = program(vec![M::Cpu(C::Return(u32::MAX))]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
     #[test]
     fn reachability_follows_branch_edges() {
         // Both arms of a `cond_br` are reachable.
