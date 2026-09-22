@@ -96,6 +96,13 @@ pub enum ValidationError {
     NewArrayTooManyElements { pc: usize, count: u64 },
     /// `get_item` takes an index count outside `1..=`[`MAX_GET_ITEM_DIMS`].
     GetItemInvalidDims { pc: usize, ndims: u32 },
+    /// `load`/`store` names a local past [`MAX_LOCAL_INDEX`].
+    LocalIndexOutOfRange {
+        pc: usize,
+        /// The offending mnemonic (`"load"` or `"store"`).
+        mnemonic: &'static str,
+        index: u32,
+    },
     /// `initial_fill` is not the first non-constant instruction.
     InitialFillNotFirst { pc: usize },
     /// The program has no instructions (and therefore no terminator).
@@ -141,10 +148,48 @@ pub const MAX_ARRAY_ELEMENTS: u64 = 1 << 20;
 /// here.
 pub const MAX_GET_ITEM_DIMS: u32 = 2;
 
+/// Highest local index a `load` or `store` may name, so a frame addresses at
+/// most 1024 locals.
+///
+/// vihaco's locals are a window into the operand stack starting at the current
+/// frame's base, and `store` *grows the stack to reach its index*: `op_store`
+/// calls `get_local_mut(index)`, which `resize`s to `base + index + 1` and
+/// writes `Undefined` into every new slot. The index is therefore a memory
+/// request read straight out of the instruction word — at the 16 bytes per slot
+/// measured in #1032, `store u64, 4294967295` touches about 68 GB from a
+/// 12-byte program. And because `resize` writes rather than reserves, the pages
+/// are resident on every platform, so this does not hide behind macOS's lazy
+/// commit the way the earlier `Vec::with_capacity` bounds did.
+///
+/// A lanes function's locals are its arguments, and the pipeline emits no
+/// `load`/`store` at all, so every legitimate index is a handful. The bound is
+/// set well above that rather than at it: its job is to keep a malformed
+/// operand from becoming an allocation, not to impose a calling convention on a
+/// hand-written program. The ceiling costs about 16 KB of operand stack, which
+/// is nothing, while still being three orders of magnitude past any function
+/// the compiler will emit.
+pub const MAX_LOCAL_INDEX: u32 = 1023;
+
 /// Element count of a `new_array`, in `u64` so the product cannot overflow.
 /// `dim1 == 0` means a 1-D array.
 pub(crate) fn array_element_count(dim0: u32, dim1: u32) -> u64 {
     dim0 as u64 * if dim1 == 0 { 1 } else { dim1 as u64 }
+}
+
+/// Record a `load`/`store` local index past [`MAX_LOCAL_INDEX`].
+fn check_local_index(
+    errors: &mut Vec<ValidationError>,
+    pc: usize,
+    mnemonic: &'static str,
+    index: u32,
+) {
+    if index > MAX_LOCAL_INDEX {
+        errors.push(ValidationError::LocalIndexOutOfRange {
+            pc,
+            mnemonic,
+            index,
+        });
+    }
 }
 
 impl fmt::Display for ValidationError {
@@ -187,6 +232,14 @@ impl fmt::Display for ValidationError {
             ValidationError::GetItemInvalidDims { pc, ndims } => write!(
                 f,
                 "pc {pc}: get_item takes 1..={MAX_GET_ITEM_DIMS} indices, got {ndims}"
+            ),
+            ValidationError::LocalIndexOutOfRange {
+                pc,
+                mnemonic,
+                index,
+            } => write!(
+                f,
+                "pc {pc}: {mnemonic} takes a local index 0..={MAX_LOCAL_INDEX}, got {index}"
             ),
             ValidationError::InitialFillNotFirst { pc } => write!(
                 f,
@@ -320,6 +373,20 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                 if *ndims == 0 || *ndims > MAX_GET_ITEM_DIMS {
                     errors.push(ValidationError::GetItemInvalidDims { pc, ndims: *ndims });
                 }
+                seen_non_constant = true;
+            }
+            // Bound the local index here, where the operand is read, so a
+            // `store` cannot turn a one-word instruction into a multi-gigabyte
+            // stack `resize` inside vihaco (see [`MAX_LOCAL_INDEX`]). `load`
+            // only reads, so it fails cleanly either way — it is checked too
+            // because a program naming a local that far out is malformed
+            // regardless of which end of it is reached first.
+            M::Cpu(C::Load(_, index)) => {
+                check_local_index(&mut errors, pc, "load", *index);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Store(_, index)) => {
+                check_local_index(&mut errors, pc, "store", *index);
                 seen_non_constant = true;
             }
             M::Lanes(L::InitialFill(_)) => {
@@ -1196,6 +1263,72 @@ mod tests {
         }
     }
 
+    /// A `store` index is a memory request, so it has to be bounded where it is
+    /// read rather than where it is spent.
+    ///
+    /// `op_store` resizes the operand stack to reach its index and writes every
+    /// new slot, so `store u64, 4294967295` touches ~68 GB from a three-
+    /// instruction program. The assertion is on the *bound* — that the
+    /// validator names the operand — and not on the allocator refusing, because
+    /// a `resize` this size succeeds on a lazily-committing platform and the
+    /// two earlier bounds of this class only failed on Linux CI.
+    #[test]
+    fn local_index_is_bounded() {
+        let over = MAX_LOCAL_INDEX + 1;
+        for (inst, mnemonic, index) in [
+            (C::Store(Type::U64, u32::MAX), "store", u32::MAX),
+            (C::Load(Type::U64, u32::MAX), "load", u32::MAX),
+            // The first index past the bound, so the boundary is pinned from
+            // both sides rather than only at an absurd operand.
+            (C::Store(Type::U64, over), "store", over),
+            (C::Load(Type::U64, over), "load", over),
+        ] {
+            let p = program(vec![M::Cpu(inst.clone()), M::Cpu(C::Halt)]);
+            assert!(
+                validate_structure(&p).contains(&ValidationError::LocalIndexOutOfRange {
+                    pc: 0,
+                    mnemonic,
+                    index,
+                }),
+                "{inst:?}: got {:?}",
+                validate_structure(&p)
+            );
+        }
+
+        // The ceiling itself, and the indices a real frame uses, are accepted.
+        for index in [0, 1, 7, MAX_LOCAL_INDEX] {
+            let p = program(vec![
+                M::Cpu(C::Store(Type::U64, index)),
+                M::Cpu(C::Load(Type::U64, index)),
+                M::Cpu(C::Halt),
+            ]);
+            assert!(
+                !validate_structure(&p)
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::LocalIndexOutOfRange { .. })),
+                "index={index} should be accepted, got {:?}",
+                validate_structure(&p)
+            );
+        }
+    }
+
+    /// `load`/`store` are ordinary instructions, so one still closes the window
+    /// in which `initial_fill` may appear. Adding their own match arms could
+    /// have dropped them out of the `_ => seen_non_constant = true` fallback.
+    #[test]
+    fn a_local_access_is_a_non_constant_instruction() {
+        let p = program(vec![
+            M::Cpu(C::Store(Type::U64, 0)),
+            M::Lanes(L::InitialFill(0)),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InitialFillNotFirst { pc: 1 }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+    }
+
     // ---- Display ----
 
     #[test]
@@ -1249,6 +1382,14 @@ mod tests {
                     type_tag: 99,
                 },
                 "pc 0: invalid new_array type tag 99".into(),
+            ),
+            (
+                ValidationError::LocalIndexOutOfRange {
+                    pc: 1,
+                    mnemonic: "store",
+                    index: 200_000_000,
+                },
+                "pc 1: store takes a local index 0..=1023, got 200000000".into(),
             ),
             (
                 ValidationError::InitialFillNotFirst { pc: 4 },

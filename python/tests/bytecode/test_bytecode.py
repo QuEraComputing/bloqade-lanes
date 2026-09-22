@@ -20,6 +20,7 @@ from bloqade.lanes.bytecode.exceptions import (
     FeedForwardNotSupportedError,
     GetItemInvalidDimsError,
     InitialFillNotFirstError,
+    LocalIndexOutOfRangeError,
     MissingTerminatorError,
     MissingVersionError,
     NewArrayTooManyElementsError,
@@ -866,6 +867,59 @@ class TestArrayOperandBounds:
             )
         )
         program.validate(stack=True)  # should not raise
+
+
+class TestLocalIndexBounds:
+    """``load``/``store`` take a local index straight out of the instruction
+    word, and ``store`` grows the operand stack to reach it — so the validator
+    bounds the index rather than letting it become an allocation."""
+
+    def test_store_local_index_is_bounded(self):
+        # 200_000_000 measured at 3.2 GB resident in issue #1032; u32::MAX
+        # would be ~68 GB. The assertion is on the operand the validator
+        # reports, not on the allocator noticing.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const u64, 7\n"
+                "  cpu::cpu.store u64, 200000000\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, LocalIndexOutOfRangeError)
+        ]
+        assert errs and errs[0].index == 200_000_000
+        assert errs[0].mnemonic == "store"
+        assert errs[0].pc == 1
+
+    def test_load_local_index_is_bounded(self):
+        program = Program.from_text(
+            _sst("fn @main() {\n  cpu::cpu.load u64, 4294967295\n  cpu::cpu.halt\n}\n")
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, LocalIndexOutOfRangeError)
+        ]
+        assert errs and errs[0].mnemonic == "load"
+
+    def test_an_ordinary_local_index_is_accepted(self):
+        # A function's locals are its arguments, so a small index is the
+        # whole legitimate range and must keep validating.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const u64, 7\n"
+                "  cpu::cpu.store u64, 0\n"
+                "  cpu::cpu.load u64, 0\n"
+                "  lanes::lanes.pop\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        program.validate()  # should not raise
 
 
 class TestMeasurementPipeline:
