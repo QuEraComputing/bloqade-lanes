@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_ARRAY_ELEMENTS","MAX_GET_ITEM_DIMS"],"enum":["ValidationError"],"fn":["simulate_stack","validate","validate_structure"],"mod":["tag"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_ARRAY_ELEMENTS","MAX_GET_ITEM_DIMS","MAX_LOCAL_INDEX"],"enum":["ValidationError"],"fn":["simulate_stack","validate","validate_structure"],"mod":["tag"]};
