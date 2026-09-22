@@ -30,6 +30,7 @@ def set_detector(
 
 @kernel(aggressive_unroll=True, verify=False)
 def set_observable(meas: ilist.IList[types.MeasurementResult, Any]) -> Observable:
+    """Helper kernel to add observable for the Steane code."""
     return squin.set_observable([meas[0], meas[1], meas[5]])
 
 
@@ -38,7 +39,16 @@ def default_post_processing(
     register: ilist.IList[types.Qubit, Any],
 ) -> tuple[ilist.IList[Detector, Any], ilist.IList[Observable, Any]]:
     """
-    Helper kernel to measure all of the qubits in a
+    Helper kernel to measure the input qubits, and additionally adds statements annotating the kernel with
+    detector and observables for the Steane code.
+
+    Args:
+        register (ilist.IList[types.Qubit, Any]): The list of qubits to measure. These should be logical qubits
+        in your program.
+
+    Returns:
+        tuple[ilist.IList[Detector, Any], ilist.IList[Observable, Any]]: A tuple of two IList's, where the first
+        IList is a flattened list of detectors and the second is a flattened list of observables.
     """
     measurements = operations.terminal_measure(register)
 
