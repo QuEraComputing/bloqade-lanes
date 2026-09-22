@@ -356,6 +356,16 @@ class BytecodeDecoder:
         array = self.frame.pop_value()
         self.frame.push(stack_move.SetObservable(array=array))
 
+    def _visit_cpu_func_start(self, idx: int, instr: Instruction) -> None:
+        # `func_start`/`func_end` delimit a function in the code stream — they
+        # are structure, not stack operations, and vihaco executes them as
+        # no-ops. The decoder lowers a single `@main` into one kernel, so they
+        # carry no information it needs; they are skipped rather than rejected.
+        return None
+
+    def _visit_cpu_func_end(self, idx: int, instr: Instruction) -> None:
+        return None
+
     def _visit_cpu_halt(self, idx: int, instr: Instruction) -> None:
         # The bytecode ``halt`` opcode has no stack_move counterpart —
         # it maps directly to a ``func.ConstantNone`` + ``func.Return``

@@ -25,11 +25,19 @@
 //! every instruction in `code` is encodable. [`super::text::to_text`] re-emits
 //! the labels from the table.
 //!
-//! One divergence worth naming: vihaco's `FunctionInfo::start_address` is
-//! documented as "corresponds to a label noop". Ours is simply the index of the
-//! function's first instruction, since we keep no label noops. Nothing in vihaco
-//! depends on this today — we drive execution ourselves rather than through its
-//! loader — but it would matter if that changed.
+//! ## Functions delimit themselves
+//!
+//! Each body is wrapped in vihaco-cpu's `func_start` / `func_end`, which the
+//! CPU executes as no-ops, and `FunctionInfo::start_address` points at the
+//! `func_start` — matching vihaco's own documented convention that it
+//! "corresponds to a label noop".
+//!
+//! This is what makes the layout self-describing rather than span-described.
+//! A span recorded beside the code can disagree with it: two empty functions
+//! become two zero-width spans at one address and stop being distinguishable,
+//! an `end_address` can run past the code, and instructions can fall outside
+//! every span. With markers in the stream none of those is representable —
+//! the table indexes and names, the code delimits.
 
 use vihaco::module::{FunctionInfo, LabelInfo, Signature};
 use vihaco::syntax::ParsedFunction;
@@ -127,7 +135,16 @@ pub fn resolve(
         if function_addresses.iter().any(|(n, _)| *n == name) {
             return Err(ResolveError::DuplicateFunction { name });
         }
+        // `func_start` *is* the function's first address: the body is
+        // delimited by instructions in the code stream, not by a span recorded
+        // beside it. vihaco executes the marker as a no-op, so entering at it
+        // simply falls through into the body — and two empty functions still
+        // occupy two distinct addresses, which a pair of zero-width spans
+        // could not.
         let start_address = code.len() as u32;
+        code.push(MachineInstruction::Cpu(
+            vihaco_cpu::RuntimeInstruction::FunctionStart,
+        ));
         function_addresses.push((name.clone(), start_address));
         if name == "main" {
             main_function = Some(function_infos.len() as u32);
@@ -189,6 +206,9 @@ pub fn resolve(
             }
         }
 
+        code.push(MachineInstruction::Cpu(
+            vihaco_cpu::RuntimeInstruction::FunctionEnd,
+        ));
         function_infos.push(FunctionInfo {
             name: interner.intern(&name),
             signature: Signature {
@@ -197,6 +217,8 @@ pub fn resolve(
             },
             local_count: 0,
             start_address,
+            // One past `func_end`, so the span covers both markers and the
+            // spans of adjacent functions abut without overlapping.
             end_address: code.len() as u32,
             file: 0,
         });

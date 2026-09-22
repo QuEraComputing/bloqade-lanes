@@ -229,34 +229,62 @@ pub fn to_text(program: &Program) -> String {
         }
     };
 
-    let mut body = String::new();
-    for (index, func) in program.functions.iter().enumerate() {
-        body.push_str(&format!("fn @{}() {{\n", name_of(func.name)));
-        let emit_labels = |body: &mut String, address: u32| {
-            for (_, name) in label_names.iter().filter(|(a, _)| *a == address) {
-                body.push_str(&format!("  cpu::cpu.label @{name}\n"));
-            }
-        };
-        for address in func.start_address..func.end_address {
-            emit_labels(&mut body, address);
-            body.push_str("  ");
-            body.push_str(&render(&program.code[address as usize]));
-            body.push('\n');
-        }
-        // A label on the function's end address marks the position after its
-        // last instruction — unless another function begins there, in which
-        // case the label belongs to *that* function and was already emitted
-        // above its first instruction. Emitting it at both made the output
-        // unparseable: functions are laid out contiguously, so every boundary
-        // label appeared twice and re-reading reported a duplicate.
-        let begins_another_function = program
+    // Walk the code stream, not the function table. `func_start`/`func_end`
+    // delimit each body, so the boundaries come from the instructions being
+    // rendered and cannot disagree with them. The table supplies only the
+    // name, looked up by the address of its `func_start`.
+    //
+    // A stream with no markers at all is one implicit `@main` spanning the
+    // whole program — the shape `from_code` builds for a caller that handed us
+    // a bare instruction list.
+    let name_at = |address: u32| -> String {
+        program
             .functions
             .iter()
-            .enumerate()
-            .any(|(other, f)| other != index && f.start_address == func.end_address);
-        if !begins_another_function {
-            emit_labels(&mut body, func.end_address);
+            .find(|f| f.start_address == address)
+            .map(|f| name_of(f.name).to_owned())
+            .unwrap_or_else(|| format!("F{address}"))
+    };
+
+    let emit_labels = |body: &mut String, address: u32| {
+        for (_, name) in label_names.iter().filter(|(a, _)| *a == address) {
+            body.push_str(&format!("  cpu::cpu.label @{name}\n"));
         }
+    };
+
+    let mut body = String::new();
+    let has_markers = program
+        .code
+        .iter()
+        .any(|i| matches!(i, MachineInstruction::Cpu(C::FunctionStart)));
+
+    if !has_markers {
+        body.push_str(&format!("fn @{}() {{\n", name_at(0)));
+    }
+    for (address, inst) in program.code.iter().enumerate() {
+        let address = address as u32;
+        match inst {
+            // The markers are structure, not instructions: they open and close
+            // the block rather than being rendered inside it.
+            MachineInstruction::Cpu(C::FunctionStart) => {
+                body.push_str(&format!("fn @{}() {{\n", name_at(address)));
+                emit_labels(&mut body, address);
+                continue;
+            }
+            MachineInstruction::Cpu(C::FunctionEnd) => {
+                emit_labels(&mut body, address);
+                body.push_str("}\n");
+                continue;
+            }
+            _ => {}
+        }
+        emit_labels(&mut body, address);
+        body.push_str("  ");
+        body.push_str(&render(inst));
+        body.push('\n');
+    }
+    if !has_markers {
+        emit_labels(&mut body, program.code.len() as u32);
         body.push_str("}\n");
     }
 
@@ -319,7 +347,8 @@ mod tests {
         );
         let p = parse_text(&src).unwrap();
         assert_eq!(p.extra.version, Version::new(1, 2));
-        assert_eq!(p.code.len(), 3);
+        // Three instructions wrapped in the function's `func_start`/`func_end`.
+        assert_eq!(p.code.len(), 5);
         assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
     }
 
@@ -486,12 +515,13 @@ mod tests {
 
         assert_eq!(p.functions.len(), 2);
         assert_eq!(p.main_function, Some(0));
-        // `@helper` starts right after main's two instructions, and the call
-        // was patched to that address.
-        assert_eq!(p.functions[1].start_address, 2);
+        // `@main` is `func_start, call, halt, func_end`, so `@helper`'s own
+        // `func_start` is at 4 — and that is where the call was patched to,
+        // since entering a function means entering at its marker.
+        assert_eq!(p.functions[1].start_address, 4);
         assert_eq!(
-            p.code[0],
-            M::Cpu(C::Call(0, 2)),
+            p.code[1],
+            M::Cpu(C::Call(0, 4)),
             "call target should be resolved to @helper's address"
         );
         assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
@@ -506,11 +536,12 @@ mod tests {
         );
         let p = parse_text(&src).unwrap();
 
-        // Three instructions: the label is metadata, not code.
-        assert_eq!(p.code.len(), 3);
+        // Three instructions plus the two function markers: the label is
+        // metadata, not code.
+        assert_eq!(p.code.len(), 5);
         assert_eq!(p.labels.len(), 1);
-        assert_eq!(p.labels[0].address, 2, "@done marks the halt");
-        assert_eq!(p.code[0], M::Cpu(C::Branch(2)));
+        assert_eq!(p.labels[0].address, 3, "@done marks the halt");
+        assert_eq!(p.code[1], M::Cpu(C::Branch(3)));
         assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
     }
 
@@ -523,7 +554,8 @@ mod tests {
              cpu::cpu.label @no\n  cpu::cpu.halt\n}\n",
         );
         let p = parse_text(&src).unwrap();
-        assert_eq!(p.code[0], M::Cpu(C::ConditionalBranch(1, 2)));
+        // Addresses account for the leading `func_start`.
+        assert_eq!(p.code[1], M::Cpu(C::ConditionalBranch(2, 3)));
         assert_eq!(parse_text(&to_text(&p)).unwrap(), p);
     }
 

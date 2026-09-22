@@ -403,33 +403,72 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                 }
                 seen_non_constant = true;
             }
+            // A function boundary resets the ordering rule: `initial_fill`
+            // must lead its own function, not the whole code stream.
+            M::Cpu(C::FunctionStart) => seen_non_constant = false,
+            M::Cpu(C::FunctionEnd) => {}
             inst if is_constant_push(inst) => {}
             _ => seen_non_constant = true,
         }
     }
 
-    // Any instruction after the first terminator is unreachable. If there are
-    // unreachable instructions they explain a non-terminal last instruction, so
-    // `MissingTerminator` would be a redundant second error.
-    let mut found_terminator = false;
+    // Reachability and terminators are per *function*, not per program.
+    //
+    // These used to walk the whole code stream and latch on the first
+    // terminator, which was right while a program was one flat `@main`. With
+    // several functions laid out end to end it reported every instruction of
+    // every later function as unreachable — rejecting correct programs — and
+    // could not see a function that fell off its own end, because only the
+    // very last instruction of the stream was checked. The `func_start` /
+    // `func_end` markers give the boundaries.
+    // "Empty" now means no *body*: a program that is nothing but function
+    // markers has no instructions to run, however many functions it declares.
+    let has_body = program
+        .code
+        .iter()
+        .any(|i| !matches!(i, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd)));
+    if !has_body {
+        errors.push(ValidationError::EmptyProgram);
+        return errors;
+    }
+
     let mut unreachable = Vec::new();
+    let mut missing_terminator = Vec::new();
+    let mut found_terminator = false;
+    let mut body_len = 0usize;
+    let mut last_pc = 0usize;
+
     for (pc, inst) in program.code.iter().enumerate() {
-        if found_terminator {
-            unreachable.push(ValidationError::UnreachableInstruction { pc });
-        }
-        if is_terminator(inst) {
-            found_terminator = true;
+        match inst {
+            M::Cpu(C::FunctionStart) => {
+                found_terminator = false;
+                body_len = 0;
+            }
+            M::Cpu(C::FunctionEnd) => {
+                // An empty function needs no terminator; a non-empty one that
+                // never reached a `ret`/`halt` falls through into whatever was
+                // laid out after it.
+                if body_len > 0 && !found_terminator {
+                    missing_terminator.push(ValidationError::MissingTerminator { pc: last_pc });
+                }
+            }
+            _ => {
+                if found_terminator {
+                    unreachable.push(ValidationError::UnreachableInstruction { pc });
+                }
+                if is_terminator(inst) {
+                    found_terminator = true;
+                }
+                body_len += 1;
+                last_pc = pc;
+            }
         }
     }
 
+    // Unreachable code explains a missing terminator, so reporting both would
+    // be redundant.
     if unreachable.is_empty() {
-        match program.code.last() {
-            None => errors.push(ValidationError::EmptyProgram),
-            Some(last) if !is_terminator(last) => errors.push(ValidationError::MissingTerminator {
-                pc: program.code.len() - 1,
-            }),
-            Some(_) => {}
-        }
+        errors.extend(missing_terminator);
     } else {
         errors.extend(unreachable);
     }
@@ -820,7 +859,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::Measure(1)), M::Lanes(L::Measure(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
-            vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 1 }]
+            vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 2 }]
         );
     }
 
@@ -829,7 +868,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::Fill(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
-            vec![ValidationError::FillRequiresAtomReloading { pc: 0 }]
+            vec![ValidationError::FillRequiresAtomReloading { pc: 1 }]
         );
         assert!(validate(&p, Some(&caps_arch(false, true))).is_empty());
     }
@@ -857,7 +896,7 @@ mod tests {
         assert!(
             matches!(
                 errors.as_slice(),
-                [ValidationError::InvalidLocation { pc: 0, .. }]
+                [ValidationError::InvalidLocation { pc: 1, .. }]
             ),
             "got {errors:?}"
         );
@@ -874,7 +913,7 @@ mod tests {
         assert!(
             matches!(
                 errors.as_slice(),
-                [ValidationError::InvalidZone { pc: 0, .. }]
+                [ValidationError::InvalidZone { pc: 1, .. }]
             ),
             "got {errors:?}"
         );
@@ -897,7 +936,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, ValidationError::InvalidLane { pc: 0, .. })),
+                .any(|e| matches!(e, ValidationError::InvalidLane { pc: 1, .. })),
             "got {errors:?}"
         );
     }
@@ -930,7 +969,7 @@ mod tests {
         ]);
         assert_eq!(
             validate_structure(&p),
-            vec![ValidationError::MissingTerminator { pc: 1 }]
+            vec![ValidationError::MissingTerminator { pc: 2 }]
         );
     }
 
@@ -945,7 +984,7 @@ mod tests {
         let p = program(vec![M::Cpu(C::Return(0)), M::Cpu(C::Halt)]);
         assert_eq!(
             validate_structure(&p),
-            vec![ValidationError::UnreachableInstruction { pc: 1 }]
+            vec![ValidationError::UnreachableInstruction { pc: 2 }]
         );
     }
 
@@ -964,16 +1003,16 @@ mod tests {
             M::Lanes(L::InitialFill(1)),
             M::Cpu(C::Return(0)),
         ]);
-        assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 1 }));
+        assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 2 }));
     }
 
     #[test]
     fn new_array_bounds_checked() {
         let p = program(vec![M::Lanes(L::NewArray(99, 0, 0)), M::Cpu(C::Return(0))]);
         let errors = validate_structure(&p);
-        assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 0 }));
+        assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 1 }));
         assert!(errors.contains(&ValidationError::NewArrayInvalidTypeTag {
-            pc: 0,
+            pc: 1,
             type_tag: 99
         }));
     }
@@ -990,7 +1029,7 @@ mod tests {
             .into_iter()
             .chain(validate(&p, Some(&arch)))
             .collect();
-        assert!(errors.contains(&ValidationError::MissingTerminator { pc: 0 }));
+        assert!(errors.contains(&ValidationError::MissingTerminator { pc: 1 }));
         assert!(
             errors
                 .iter()
@@ -1013,11 +1052,11 @@ mod tests {
         );
         assert!(matches!(
             errors[0],
-            ValidationError::FillRequiresAtomReloading { pc: 0 }
+            ValidationError::FillRequiresAtomReloading { pc: 1 }
         ));
         assert!(matches!(
             errors[1],
-            ValidationError::InvalidZone { pc: 1, .. }
+            ValidationError::InvalidZone { pc: 2, .. }
         ));
     }
 
@@ -1052,7 +1091,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::Pop)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1065,7 +1104,7 @@ mod tests {
             errors.iter().any(|e| matches!(
                 e,
                 ValidationError::TypeMismatch {
-                    pc: 1,
+                    pc: 2,
                     expected,
                     got
                 } if *expected == tag::LOCATION && *got == tag::FLOAT
@@ -1082,7 +1121,7 @@ mod tests {
         assert!(
             errors.iter().any(|e| matches!(
                 e,
-                ValidationError::TypeMismatch { pc: 1, expected, .. } if *expected == tag::MEASURE_FUTURE
+                ValidationError::TypeMismatch { pc: 2, expected, .. } if *expected == tag::MEASURE_FUTURE
             )),
             "got {errors:?}"
         );
@@ -1178,17 +1217,17 @@ mod tests {
 
     #[test]
     fn await_measure_pushes_an_array_ref() {
+        // Pin the tag the awaited value carries, by observing what rejects it:
+        // `cz` wants a zone, and says what it got instead.
         let p = program(vec![
             M::Lanes(L::ConstZone(0)),
             M::Lanes(L::Measure(1)),
             M::Lanes(L::AwaitMeasure),
+            M::Lanes(L::Cz),
         ]);
-        // Pin the tag the awaited value carries, by observing what rejects it:
-        // `cz` wants a zone, and says what it got instead.
-        let p = program(p.code.iter().cloned().chain([M::Lanes(L::Cz)]).collect());
         assert!(
             simulate_stack(&p, None).contains(&ValidationError::TypeMismatch {
-                pc: 3,
+                pc: 4,
                 expected: tag::ZONE,
                 got: tag::ARRAY_REF,
             }),
@@ -1208,7 +1247,7 @@ mod tests {
         ]);
         assert!(
             validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
-                pc: 0,
+                pc: 1,
                 count: 1 << 32,
             }),
             "got {:?}",
@@ -1220,7 +1259,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
         assert!(
             validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
-                pc: 0,
+                pc: 1,
                 count: u32::MAX as u64,
             }),
             "got {:?}",
@@ -1236,7 +1275,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1246,7 +1285,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::InitialFill(40)), M::Cpu(C::Halt)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
 
         // Distinct instructions still report separately.
@@ -1254,8 +1293,8 @@ mod tests {
         assert_eq!(
             simulate_stack(&p, None),
             vec![
-                ValidationError::StackUnderflow { pc: 0 },
                 ValidationError::StackUnderflow { pc: 1 },
+                ValidationError::StackUnderflow { pc: 2 },
             ]
         );
     }
@@ -1268,7 +1307,7 @@ mod tests {
             let p = program(vec![M::Lanes(L::GetItem(ndims)), M::Cpu(C::Halt)]);
             assert!(
                 validate_structure(&p)
-                    .contains(&ValidationError::GetItemInvalidDims { pc: 0, ndims }),
+                    .contains(&ValidationError::GetItemInvalidDims { pc: 1, ndims }),
                 "ndims={ndims}: got {:?}",
                 validate_structure(&p)
             );
@@ -1493,7 +1532,7 @@ mod tests {
         let bad = program(vec![M::Lanes(L::ConstLoc(loc(0, 0, 0))), M::Lanes(L::Swap)]);
         assert_eq!(
             simulate_stack(&bad, None),
-            vec![ValidationError::StackUnderflow { pc: 1 }]
+            vec![ValidationError::StackUnderflow { pc: 2 }]
         );
     }
 
@@ -1502,7 +1541,7 @@ mod tests {
         let p = program(vec![M::Cpu(C::Dup)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1550,12 +1589,12 @@ mod tests {
         // GlobalRz pops one float via `pop_typed`; empty stack -> underflow.
         assert_eq!(
             simulate_stack(&program(vec![M::Lanes(L::GlobalRz)]), None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
         // Move pops a lane via `pop_addr`; empty stack -> underflow.
         assert_eq!(
             simulate_stack(&program(vec![M::Lanes(L::Move(1))]), None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 

@@ -12,7 +12,8 @@
 //!
 //! A lanes program is a single flat `@main`, so both emitters write the minimal
 //! well-formed tree: an empty global context ([`vihaco::NoContext`]), one root
-//! section named `root`, no child sections. The [`LanesInfo`] version lives in
+//! section named `root`, plus the child sections carrying the symbol
+//! tables. The [`LanesInfo`] version lives in
 //! that section's header.
 //!
 //! ## Binary layout (vihaco `VHBC`)
@@ -21,14 +22,14 @@
 //! magic                : 4 bytes = b"VHBC"
 //! version              : u16 LE  = 1
 //! flags                : u16 LE  = 0
-//! context_len          : u64 LE  = 0        (empty global context)
+//! context_len          : u64 LE             (child-section name table)
 //! ── root section ──
 //! section_len          : u64 LE             (total, including this frame)
 //! composite_header_len : u64 LE
 //! composite header     : the LanesInfo header
 //! bytecode_len         : u64 LE
 //! bytecode             : N × INSTRUCTION_WIDTH bytes
-//! child_count          : u32 LE  = 0        (no child sections)
+//! child_count          : u32 LE             (functions, labels, strings)
 //! ```
 //!
 //! ## Text layout (vihaco `sst v1`)

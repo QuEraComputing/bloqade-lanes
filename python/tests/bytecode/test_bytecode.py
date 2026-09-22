@@ -414,8 +414,9 @@ class TestProgramConstruction:
             ],
         )
         assert program.version == (1, 0)
-        assert len(program) == 3
-        assert len(program.instructions) == 3
+        # Three instructions plus the `func_start`/`func_end` delimiting `@main`.
+        assert len(program) == 5
+        assert len(program.instructions) == 5
 
     def test_from_text(self):
         source = _sst("""\
@@ -427,7 +428,8 @@ fn @main() {
 """)
         program = Program.from_text(source)
         assert program.version == (1, 0)
-        assert len(program) == 3
+        # Three instructions plus `@main`'s two function markers.
+        assert len(program) == 5
 
     def test_from_text_invalid(self):
         # Well-formed container, no `.header(root)` section — spelled out
@@ -797,13 +799,14 @@ class TestDecoderDispatch:
         program = Program.from_text(
             _sst("fn @main() {\n  cpu::cpu.get_item\n  cpu::cpu.halt\n}\n")
         )
-        instr = program.instructions[0]
+        # Index 1: index 0 is `@main`'s `func_start`.
+        instr = program.instructions[1]
         assert (instr.device(), instr.op_name()) == ("cpu", "get_item")
 
         with pytest.raises(DecodingError) as exc_info:
             BytecodeDecoder().decode(program)
         assert "`cpu::get_item` has no stack_move representation" in str(exc_info.value)
-        assert exc_info.value.instruction_index == 0
+        assert exc_info.value.instruction_index == 1
 
     def test_lanes_get_item_still_decodes(self):
         # The other half of the pair must be unaffected.
@@ -818,7 +821,8 @@ class TestDecoderDispatch:
                 "  cpu::cpu.halt\n}\n"
             )
         )
-        instr = program.instructions[3]
+        # Index 4: the leading `func_start` shifts every body instruction.
+        instr = program.instructions[4]
         assert (instr.device(), instr.op_name()) == ("lanes", "get_item")
         BytecodeDecoder().decode(program)  # should not raise
 

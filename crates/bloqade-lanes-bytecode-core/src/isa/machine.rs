@@ -1107,7 +1107,8 @@ mod tests {
         let mut m = machine();
         let run = m.run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted);
-        assert_eq!(run.steps, 6);
+        // Six instructions plus the `func_start` the entry point lands on.
+        assert_eq!(run.steps, 7);
 
         // The atoms actually moved, and the gate was reported not simulated.
         assert_eq!(
@@ -1322,7 +1323,10 @@ mod tests {
         let mut m = machine();
         let run = m.run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted, "should reach @main's halt");
-        assert_eq!(run.steps, 3, "should run @main's three instructions");
+        assert_eq!(
+            run.steps, 4,
+            "should run @main's `func_start` and its three instructions"
+        );
         assert_eq!(
             m.atoms().get_qubit(&LocationAddr::decode(loc(0, 0, 0))),
             Some(0),

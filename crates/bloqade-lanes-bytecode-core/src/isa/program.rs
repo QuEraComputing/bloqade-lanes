@@ -1,6 +1,7 @@
 //! Flat program container for the vihaco-backed ISA.
 //!
-//! A program is a [`Version`] plus a flat `Vec<`[`MachineInstruction`]`>` —
+//! A program is a [`Version`] plus a `Vec<`[`MachineInstruction`]`>` whose
+//! functions delimit themselves with `func_start`/`func_end` —
 //! no functions, labels, or string interner (our programs are a single flat
 //! instruction list; see
 //! <https://github.com/QuEraComputing/bloqade-lanes/issues/769>). vihaco's
@@ -107,6 +108,21 @@ pub type Program = LocalModule<MachineInstruction, Value, Type, LanesInfo>;
 /// [`super::resolve::resolve`] instead; this is the flat case.
 #[allow(clippy::field_reassign_with_default)] // `LocalModule` is a foreign type; struct-literal init is not possible
 pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> Program {
+    // Wrap the body in the function markers, so a program built from a bare
+    // instruction list is in the same shape as one resolved from text. The
+    // format has one layout, not two: a reader can rely on `func_start`
+    // delimiting every function because there is no way to build a program
+    // without it.
+    let mut wrapped = Vec::with_capacity(code.len() + 2);
+    wrapped.push(MachineInstruction::Cpu(
+        vihaco_cpu::RuntimeInstruction::FunctionStart,
+    ));
+    wrapped.extend(code);
+    wrapped.push(MachineInstruction::Cpu(
+        vihaco_cpu::RuntimeInstruction::FunctionEnd,
+    ));
+    let code = wrapped;
+
     let end_address = code.len() as u32;
     let mut m = Program::default();
     m.code = code;
@@ -243,13 +259,83 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
         .map(bytecode::decode)
         .collect();
 
-    // `from_code` declares a single `@main` spanning the code; the child
-    // sections then overwrite that with the program's real tables. A file
-    // carrying no table sections keeps the `@main` default and still loads.
-    let mut program = from_code(info.version, code);
+    // Built directly rather than through `from_code`, which wraps its input
+    // in the function markers — the decoded stream already carries them.
+    // `reconcile_function_spans` then derives the table from those markers.
+    // `LocalModule` is a foreign type, so it is built field by field.
+    let mut program = Program {
+        code,
+        extra: LanesInfo {
+            version: info.version,
+        },
+        ..Default::default()
+    };
     super::container::read_tables(&root, &mut program).map_err(|e| classify(&e))?;
+    reconcile_function_spans(&mut program);
     resolve_entry_point(&mut program)?;
     Ok(program)
+}
+
+/// Re-derive every function's span from the `func_start`/`func_end` markers in
+/// the code, keeping only the names the table supplied.
+///
+/// The code stream is the authority on where a function begins and ends; the
+/// table is an index over it. Trusting the decoded spans instead let a
+/// well-formed container carry a table that disagreed with its own code — an
+/// `end_address` past the end of `code` panicked the disassembler, and a span
+/// that under-covered the code made instructions disappear from the rendered
+/// text with no error. Re-deriving makes both unrepresentable.
+///
+/// A stream with no markers is left alone: that is the flat single-`@main`
+/// shape [`from_code`] builds, and its span is derived from the code already.
+fn reconcile_function_spans(program: &mut Program) {
+    use super::machine::MachineInstruction as M;
+    use vihaco_cpu::RuntimeInstruction as C;
+
+    let mut spans: Vec<(u32, u32)> = Vec::new();
+    let mut open: Option<u32> = None;
+    for (address, inst) in program.code.iter().enumerate() {
+        match inst {
+            M::Cpu(C::FunctionStart) => open = Some(address as u32),
+            M::Cpu(C::FunctionEnd) => {
+                if let Some(start) = open.take() {
+                    spans.push((start, address as u32 + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    // An unterminated final function still owns the rest of the code.
+    if let Some(start) = open {
+        spans.push((start, program.code.len() as u32));
+    }
+    if spans.is_empty() {
+        return;
+    }
+
+    // Names come from the table, matched positionally: the emitter writes the
+    // table in layout order, so entry *i* names span *i*. A table that is
+    // short or missing leaves the remaining functions unnamed rather than
+    // failing — `to_text` synthesises `F<addr>` for those.
+    let named: Vec<_> = program.functions.drain(..).collect();
+    program.functions = spans
+        .into_iter()
+        .enumerate()
+        .map(|(i, (start_address, end_address))| {
+            let source = named.get(i);
+            FunctionInfo {
+                name: source.map_or(u32::MAX, |f| f.name),
+                signature: Signature {
+                    params: Vec::new(),
+                    ret: Vec::new(),
+                },
+                local_count: source.map_or(0, |f| f.local_count),
+                start_address,
+                end_address,
+                file: source.map_or(0, |f| f.file),
+            }
+        })
+        .collect();
 }
 
 /// Point `main_function` at the function actually named `main`.

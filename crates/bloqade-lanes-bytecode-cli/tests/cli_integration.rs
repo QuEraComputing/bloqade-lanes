@@ -21,7 +21,8 @@ fn @main() {
 ")
 }
 
-/// All 23 instructions exercised in a single program.
+/// All 23 distinct instructions exercised in a single program
+/// (25 code slots, counting `@main`'s two function markers).
 /// Ordered so that initial_fill comes right after constants (structurally valid).
 fn all_instructions_program() -> String {
     sst("\
@@ -80,7 +81,7 @@ fn test_assemble_creates_binary() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("assembled 23 instructions"));
+        .stderr(predicate::str::contains("assembled 25 instructions"));
 
     let bytes = fs::read(&output).unwrap();
     // Should start with vihaco's container magic
@@ -146,7 +147,7 @@ fn test_disassemble_to_file() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("disassembled 23 instructions"));
+        .stderr(predicate::str::contains("disassembled 25 instructions"));
 
     let text = fs::read_to_string(&output_txt).unwrap();
     // Spot-check all instruction categories are present. Each is asserted with
@@ -238,7 +239,7 @@ fn test_validate_text_file() {
         .args(["validate", input.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("valid (23 instructions)"));
+        .stderr(predicate::str::contains("valid (25 instructions)"));
 }
 
 #[test]
@@ -262,7 +263,7 @@ fn test_validate_binary_file() {
         .args(["validate", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("valid (23 instructions)"));
+        .stderr(predicate::str::contains("valid (25 instructions)"));
 }
 
 #[test]

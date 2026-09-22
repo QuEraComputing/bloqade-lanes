@@ -191,6 +191,13 @@ Nothing the lanes compiler emits uses this yet — it still produces a single fl
 `@main` — but the format and loader support it now rather than being retrofitted
 later.
 
+- **Each function body is wrapped in `cpu::cpu.func_start` / `cpu::cpu.func_end`.**
+  These are emitted by the assembler and executed as no-ops; you do not write
+  them. They make a function's extent part of the code stream rather than a
+  span recorded beside it, so an empty function still occupies an address and
+  a function table can never disagree with the code it indexes. They are real
+  instructions, so they appear in `Program.instructions` and count towards
+  `len(program)` — a three-instruction `@main` is five words.
 - `br` / `cond_br` name a **label** with `@`; `call` names a **function**
   without one (`call <arity>, <name>`).
 - Labels are module-global; duplicates are an error.
