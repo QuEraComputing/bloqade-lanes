@@ -1008,6 +1008,51 @@ mod tests {
         )));
     }
 
+    /// An absurd operand count fails fast instead of doing absurd work.
+    ///
+    /// `run` deliberately has no validation gate — `validate` is its own
+    /// subcommand, and a program you have not validated is still one you may
+    /// want to execute. That is only safe because `pop_values` stops at the
+    /// first pop past the stack depth and pre-allocates nothing against `n`,
+    /// so the work is bounded by what the program actually pushed rather than
+    /// by what its instruction word claims. Nothing tested that until now.
+    #[test]
+    fn an_absurd_operand_count_fails_without_doing_the_work() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        // dim0 * dim1 = u32::MAX^2, about 1.8e19 elements.
+        let cases = [
+            MachineInstruction::Lanes(I::NewArray(0, u32::MAX, u32::MAX)),
+            MachineInstruction::Lanes(I::GetItem(u32::MAX)),
+            MachineInstruction::Lanes(I::InitialFill(u32::MAX)),
+            MachineInstruction::Lanes(I::Measure(u32::MAX)),
+        ];
+        for inst in cases {
+            // Three values on the stack, so the pop loop has somewhere to
+            // start and must still stop at the fourth.
+            let program = from_code(
+                Version::new(1, 0),
+                vec![
+                    MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(1))),
+                    MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(2))),
+                    MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(3))),
+                    inst.clone(),
+                    MachineInstruction::Cpu(C::Halt),
+                ],
+            );
+            let err = LanesMachine::new()
+                .run(&program, 100)
+                .expect_err("{inst:?} should not run")
+                .to_string();
+            assert!(
+                err.contains("stack") || err.contains("expected"),
+                "{inst:?}: {err}"
+            );
+        }
+    }
+
     /// `ret` at top level ends the program, which needs the entry frame:
     /// `op_return` pops a frame and errors when there is none.
     #[test]

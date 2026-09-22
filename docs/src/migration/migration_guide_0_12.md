@@ -108,8 +108,23 @@ Point by point:
 - **The global context block is optional** and must be empty if present — a
   lanes program declares no child sections.
 
-The quickest way to migrate a file is to let the CLI do it: assemble with the
-old toolchain, then disassemble with the new one.
+**There is no conversion path, and no toolchain combination that provides
+one.** The old CLI writes the `LANES` container, which the new one rejects at
+the magic bytes; the new parser rejects the old text syntax. So neither
+direction of assemble/disassemble can bridge the two formats — an existing
+`.sst` or `.bin` has to be replaced, not converted.
+
+Two ways to do that:
+
+- **Regenerate from source.** Anything produced by the `bloqade.lanes`
+  compilation pipeline is reproducible: re-run the pipeline and it emits the
+  new format. This is the right answer for every `.bin` and for any `.sst` that
+  was generated rather than written.
+- **Rewrite a hand-written `.sst`.** Apply the point-by-point list above:
+  prefix each instruction, fold the constants into `cpu::cpu.const <type>,
+  <value>`, rename `return` to `ret <n>`, and wrap the whole thing in the
+  `sst v1` container. Then `bloqade-bytecode validate <file> --simulate-stack`
+  to confirm it took.
 
 ## Binary format
 
