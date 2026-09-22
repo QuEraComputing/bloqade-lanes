@@ -3,25 +3,11 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
+mod common;
+use common::{sst, sst_version};
+
 fn cmd() -> Command {
     assert_cmd::cargo_bin_cmd!("bloqade-bytecode")
-}
-
-/// Wrap a program body in vihaco's `sst v1` section container.
-///
-/// The framing is eleven lines that say nothing about the test, and it was
-/// pasted into every program below. Behind this helper a container change is
-/// one edit rather than five. `body` is the `.text(root)` payload — normally a
-/// whole `fn @main()` block, trailing newline included.
-fn sst(body: &str) -> String {
-    sst_version("1.0", body)
-}
-
-fn sst_version(version: &str, body: &str) -> String {
-    format!(
-        "sst v1\n\n.section(root):\n.header(root):\nversion {version}\n\
-         .header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
-    )
 }
 
 /// A small program for basic command tests.

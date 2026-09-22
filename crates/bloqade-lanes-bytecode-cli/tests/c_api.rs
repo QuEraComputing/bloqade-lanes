@@ -8,22 +8,8 @@ use bloqade_lanes_bytecode::ffi::memory::*;
 use bloqade_lanes_bytecode::ffi::program::*;
 use bloqade_lanes_bytecode::ffi::validate::*;
 
-/// Wrap a program body in vihaco's `sst v1` section container.
-///
-/// The framing is eleven lines that say nothing about the test, and it was
-/// pasted into all eight programs below. Behind this helper a container change
-/// is one edit rather than eight.
-fn sst(body: &str) -> String {
-    sst_version("1.0", body)
-}
-
-#[allow(dead_code)]
-fn sst_version(version: &str, body: &str) -> String {
-    format!(
-        "sst v1\n\n.section(root):\n.header(root):\nversion {version}\n\
-         .header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
-    )
-}
+mod common;
+use common::sst;
 
 // --- Program round-trip tests ---
 

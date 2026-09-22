@@ -21,31 +21,40 @@
 //! - `arch:` names a spec in `examples/arch/` (without the `.json`), or
 //!   `none` for a program that consults no architecture.
 //! - `expect:` names a [`ValidationError`] variant. Zero or more; the set must
-//!   match exactly, so a fixture cannot quietly acquire a second error.
+//!   match exactly, so a fixture cannot quietly acquire a second error — and a
+//!   misspelled name shows up as one the fixture declared but nothing
+//!   reported, which is why no list of valid names is maintained here.
 //!
 //! A `valid/` program declares no `expect:` and must validate clean.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+use bloqade_lanes_bytecode_core::isa::Program;
 use bloqade_lanes_bytecode_core::isa::text::parse_text;
 use bloqade_lanes_bytecode_core::isa::validate::{
     ValidationError, simulate_stack, validate, validate_structure,
 };
 
-fn repo_root() -> PathBuf {
+/// The workspace root, resolved once. Every fixture needs it to find its arch
+/// spec, and `canonicalize` hits the filesystem.
+static REPO_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .expect("workspace root should resolve")
-}
+});
 
 /// Which [`ValidationError`] this is, as the variant's own name.
 ///
 /// Spelled out rather than scraped from `{:?}`, so a rename is a compile
-/// error here and not a silently unmatched fixture directive.
+/// error here and not a silently unmatched fixture directive. There is no
+/// companion list of valid names: a directive naming something `kind` never
+/// returns simply shows up as a declared-but-not-reported entry when the sets
+/// are compared, which is the same failure and needs nothing to maintain.
 fn kind(error: &ValidationError) -> &'static str {
     use ValidationError as E;
     match error {
@@ -81,79 +90,53 @@ fn directive<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 }
 
 struct Fixture {
-    path: PathBuf,
     name: String,
     arch: Option<ArchSpec>,
-    expected: BTreeSet<&'static str>,
+    expected: BTreeSet<String>,
+    /// Parsed once, here: every test needs it, and parsing at load time is
+    /// also how "every fixture parses" is asserted.
+    program: Program,
 }
 
 /// Read a fixture and its directives, failing loudly on anything missing —
 /// an unannotated fixture is one this test would otherwise skip.
-fn load(path: &Path, known_kinds: &BTreeSet<&'static str>) -> Fixture {
+fn load(path: &Path) -> Fixture {
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
     let src = fs::read_to_string(path).unwrap_or_else(|e| panic!("{name}: {e}"));
 
     let arch_name = src
         .lines()
         .find_map(|l| directive(l, "arch"))
-        .unwrap_or_else(|| panic!("{name}: no `// arch: <spec>` directive"))
-        .to_owned();
+        .unwrap_or_else(|| panic!("{name}: no `// arch: <spec>` directive"));
     let arch = (arch_name != "none").then(|| {
         let json = fs::read_to_string(
-            repo_root()
+            REPO_ROOT
                 .join("examples/arch")
-                .join(&arch_name)
+                .join(arch_name)
                 .with_extension("json"),
         )
         .unwrap_or_else(|e| panic!("{name}: arch {arch_name}: {e}"));
         ArchSpec::from_json(&json).unwrap_or_else(|e| panic!("{name}: arch {arch_name}: {e:?}"))
     });
 
-    let expected: BTreeSet<&'static str> =
-        src.lines()
-            .filter_map(|l| directive(l, "expect"))
-            .map(|want| {
-                *known_kinds.iter().find(|k| **k == want).unwrap_or_else(|| {
-                    panic!("{name}: `// expect: {want}` names no ValidationError")
-                })
-            })
-            .collect();
+    let expected = src
+        .lines()
+        .filter_map(|l| directive(l, "expect"))
+        .map(str::to_owned)
+        .collect();
+
+    let program = parse_text(&src).unwrap_or_else(|e| panic!("{name}: {e}"));
 
     Fixture {
-        path: path.to_path_buf(),
         name,
         arch,
         expected,
+        program,
     }
 }
 
 fn fixtures(dir: &str) -> Vec<Fixture> {
-    // Every variant `kind` can return, so a directive naming something else is
-    // caught as a typo rather than silently never matching.
-    let known: BTreeSet<&'static str> = [
-        "ControlFlowRequiresFeedForward",
-        "MultipleMeasuresRequireFeedForward",
-        "FillRequiresAtomReloading",
-        "InvalidLocation",
-        "InvalidLane",
-        "InvalidZone",
-        "NewArrayZeroDim0",
-        "NewArrayInvalidTypeTag",
-        "NewArrayTooManyElements",
-        "GetItemInvalidDims",
-        "InitialFillNotFirst",
-        "EmptyProgram",
-        "MissingTerminator",
-        "UnreachableInstruction",
-        "StackUnderflow",
-        "TypeMismatch",
-        "LocationGroupValidation",
-        "LaneGroupValidation",
-    ]
-    .into_iter()
-    .collect();
-
-    let root = repo_root().join("examples/programs").join(dir);
+    let root = REPO_ROOT.join("examples/programs").join(dir);
     let mut paths: Vec<PathBuf> = fs::read_dir(&root)
         .unwrap_or_else(|e| panic!("{}: {e}", root.display()))
         .map(|e| e.unwrap().path())
@@ -161,17 +144,16 @@ fn fixtures(dir: &str) -> Vec<Fixture> {
         .collect();
     paths.sort();
     assert!(!paths.is_empty(), "no fixtures in {}", root.display());
-    paths.iter().map(|p| load(p, &known)).collect()
+    paths.iter().map(|p| load(p)).collect()
 }
 
 /// Every error a fixture provokes, from all three validation passes.
 fn all_errors(fixture: &Fixture) -> Vec<ValidationError> {
-    let src = fs::read_to_string(&fixture.path).unwrap();
-    let program = parse_text(&src).unwrap_or_else(|e| panic!("{}: {e}", fixture.name));
+    let program = &fixture.program;
     let arch = fixture.arch.as_ref();
-    let mut errors = validate_structure(&program);
-    errors.extend(validate(&program, arch));
-    errors.extend(simulate_stack(&program, arch));
+    let mut errors = validate_structure(program);
+    errors.extend(validate(program, arch));
+    errors.extend(simulate_stack(program, arch));
     errors
 }
 
@@ -221,7 +203,10 @@ fn every_invalid_example_reports_exactly_what_it_declares() {
             ));
             continue;
         }
-        let got: BTreeSet<&'static str> = all_errors(&fixture).iter().map(kind).collect();
+        let got: BTreeSet<String> = all_errors(&fixture)
+            .iter()
+            .map(|e| kind(e).to_owned())
+            .collect();
         if got != fixture.expected {
             bad.push(format!(
                 "  {}: declared {:?}, reports {:?}",
@@ -244,13 +229,11 @@ fn every_valid_example_runs_to_completion() {
 
     let mut bad = Vec::new();
     for fixture in fixtures("valid") {
-        let src = fs::read_to_string(&fixture.path).unwrap();
-        let program = parse_text(&src).unwrap();
         let mut machine = LanesMachine::new();
         if let Some(arch) = fixture.arch.clone() {
             machine = machine.with_arch(arch);
         }
-        match machine.run(&program, 10_000) {
+        match machine.run(&fixture.program, 10_000) {
             Err(e) => bad.push(format!("  {}: {e}", fixture.name)),
             Ok(run) if !matches!(run.stopped, Stopped::Halted | Stopped::Returned) => {
                 bad.push(format!("  {}: stopped as {:?}", fixture.name, run.stopped));
@@ -269,20 +252,19 @@ fn every_example_round_trips() {
     use bloqade_lanes_bytecode_core::isa::text::to_text;
 
     for fixture in fixtures("valid").into_iter().chain(fixtures("invalid")) {
-        let src = fs::read_to_string(&fixture.path).unwrap();
-        let program = parse_text(&src).unwrap_or_else(|e| panic!("{}: {e}", fixture.name));
+        let program = &fixture.program;
 
-        let bytes = to_binary(&program).unwrap_or_else(|e| panic!("{}: {e}", fixture.name));
+        let bytes = to_binary(program).unwrap_or_else(|e| panic!("{}: {e}", fixture.name));
         assert_eq!(
-            from_binary(&bytes).unwrap_or_else(|e| panic!("{}: {e}", fixture.name)),
+            &from_binary(&bytes).unwrap_or_else(|e| panic!("{}: {e}", fixture.name)),
             program,
             "{}: binary round-trip changed the program",
             fixture.name
         );
 
-        let rendered = to_text(&program);
+        let rendered = to_text(program);
         assert_eq!(
-            parse_text(&rendered).unwrap_or_else(|e| panic!("{}: re-parse: {e}", fixture.name)),
+            &parse_text(&rendered).unwrap_or_else(|e| panic!("{}: re-parse: {e}", fixture.name)),
             program,
             "{}: text round-trip changed the program",
             fixture.name
