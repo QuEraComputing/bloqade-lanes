@@ -17,7 +17,7 @@ from ...common.validation.const_address import ConstAddressValidation
 from ...common.validation.duplicate_address import DuplicateAddressValidation
 from ...logical.validation.arguments import GeminiLogicalArgumentValidation
 from ...logical.validation.clifford.analysis import GeminiLogicalValidation
-from ...logical.validation.extensions import NoLogicalExtensionsValidation
+from ...logical.validation.extensions.analysis import NoLogicalExtensionsValidation
 from ...logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )

@@ -60,12 +60,13 @@ def test_a_program_using_star_rz_is_rejected():
     assert not _validate(_program_using_star_rz()).is_valid
 
 
-def test_the_message_names_the_statement_and_the_kernel():
+def test_the_message_names_the_statement():
+    """The caret points into the stdlib wrapper the statement lives in, not at
+    the user's call site, so the message has to name it."""
     result = _validate(_program_using_star_rz())
     (error,) = result.errors["Gemini Logical Extensions Validation"]
 
     assert "gemini.logical.extensions.star_rz" in error.args[0]
-    assert "'main'" in error.args[0]
 
 
 def test_every_use_is_reported_rather_than_just_the_first():
@@ -84,8 +85,8 @@ def test_every_use_is_reported_rather_than_just_the_first():
 
 
 def test_a_use_inside_an_inlined_sub_kernel_is_caught():
-    """Decoration inlines the helper, so the statement is in `main`'s own region
-    by the time any suite runs -- there is no way to smuggle one in."""
+    """The usual shape: decoration unrolls the helper away, so the statement is
+    in `main`'s own region by the time any suite runs."""
 
     @logical.kernel
     def rotate(q: types.Qubit):
@@ -97,7 +98,88 @@ def test_a_use_inside_an_inlined_sub_kernel_is_caught():
         rotate(q[0])
         logical.terminal_measure(q)
 
+    result = _validate(main)
+    (error,) = result.errors["Gemini Logical Extensions Validation"]
+
+    assert "gemini.logical.extensions.star_rz" in error.args[0]
+
+
+# --- across the call graph ----------------------------------------------------
+#
+# In practice a Gemini kernel is aggressively unrolled and the cases above are
+# what a suite actually sees. A guard should not bank on that, so these pin the
+# un-inlined shapes too.
+
+
+def test_a_use_inside_an_un_inlined_callee_is_caught():
+    @logical.kernel
+    def rotate(q: types.Qubit):
+        logical.extensions.star_rz(THETA, q)
+
+    @logical.kernel(aggressive_unroll=False, inline=False, fold=False, verify=False)
+    def main():
+        q = squin.qalloc(1)
+        rotate(q[0])
+        logical.terminal_measure(q)
+
     assert not _validate(main).is_valid
+
+
+def test_a_use_two_hops_down_is_caught():
+    """The interpreter keeps descending, so depth is not a way out."""
+
+    @logical.kernel
+    def rotate(q: types.Qubit):
+        logical.extensions.star_rz(THETA, q)
+
+    @logical.kernel(aggressive_unroll=False, inline=False, fold=False, verify=False)
+    def middle(q: types.Qubit):
+        rotate(q)
+
+    @logical.kernel(aggressive_unroll=False, inline=False, fold=False, verify=False)
+    def main():
+        q = squin.qalloc(1)
+        middle(q[0])
+        logical.terminal_measure(q)
+
+    result = _validate(main)
+    (error,) = result.errors["Gemini Logical Extensions Validation"]
+
+    assert "gemini.logical.extensions.star_rz" in error.args[0]
+
+
+def test_a_clean_call_graph_is_valid():
+    """The traversal must not report a helper that is merely reachable."""
+
+    @logical.kernel
+    def flip(q: types.Qubit):
+        squin.x(q)
+
+    @logical.kernel(aggressive_unroll=False, inline=False, fold=False, verify=False)
+    def main():
+        q = squin.qalloc(1)
+        flip(q[0])
+        logical.terminal_measure(q)
+
+    assert _validate(main).is_valid
+
+
+def test_a_dynamic_call_does_not_crash_the_analysis():
+    """`impls.Func` brings a `func.Call` impl that dispatches to `run_lattice`;
+    without the override that is an `AttributeError`, not a clean result. The
+    callee is not descended into -- `NoStaticCallValidation`, in the same
+    suites, is what rejects an unresolved call."""
+
+    # Built with `squin.kernel`: the Gemini decorator rejects a call through a
+    # parameter outright (`NoOpaqueCallValidation`), so the shape only reaches
+    # this pass on a method that never ran that guard -- which is exactly the
+    # undecorated route the pass has to survive.
+    @squin.kernel
+    def main(gate):
+        q = squin.qalloc(1)
+        gate(q[0])
+
+    assert _validate(main).is_valid
 
 
 # --- the wiring ---------------------------------------------------------------
