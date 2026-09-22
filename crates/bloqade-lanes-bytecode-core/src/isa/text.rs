@@ -230,7 +230,7 @@ pub fn to_text(program: &Program) -> String {
     };
 
     let mut body = String::new();
-    for func in &program.functions {
+    for (index, func) in program.functions.iter().enumerate() {
         body.push_str(&format!("fn @{}() {{\n", name_of(func.name)));
         let emit_labels = |body: &mut String, address: u32| {
             for (_, name) in label_names.iter().filter(|(a, _)| *a == address) {
@@ -244,8 +244,19 @@ pub fn to_text(program: &Program) -> String {
             body.push('\n');
         }
         // A label on the function's end address marks the position after its
-        // last instruction.
-        emit_labels(&mut body, func.end_address);
+        // last instruction — unless another function begins there, in which
+        // case the label belongs to *that* function and was already emitted
+        // above its first instruction. Emitting it at both made the output
+        // unparseable: functions are laid out contiguously, so every boundary
+        // label appeared twice and re-reading reported a duplicate.
+        let begins_another_function = program
+            .functions
+            .iter()
+            .enumerate()
+            .any(|(other, f)| other != index && f.start_address == func.end_address);
+        if !begins_another_function {
+            emit_labels(&mut body, func.end_address);
+        }
         body.push_str("}\n");
     }
 
@@ -393,6 +404,34 @@ mod tests {
                 "version {value:?}"
             );
         }
+    }
+
+    /// A label at a function boundary is emitted once, not twice.
+    ///
+    /// Functions are laid out contiguously, so one function's `end_address`
+    /// *is* the next one's `start_address`. Emitting the trailing label and
+    /// the leading one both put it in both functions, and re-reading the
+    /// output failed with "duplicate label" — a round-trip break for any
+    /// module whose second function opens with a label.
+    #[test]
+    fn a_label_at_a_function_boundary_is_not_emitted_twice() {
+        let src = sst(
+            "1.0",
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n             fn @helper() {\n  cpu::cpu.label @entry\n  cpu::cpu.ret 0\n}\n",
+        );
+        let program = parse_text(&src).expect("the module should parse");
+
+        let rendered = to_text(&program);
+        assert_eq!(
+            rendered.matches("label @entry").count(),
+            1,
+            "the boundary label should appear once:\n{rendered}"
+        );
+        assert_eq!(
+            parse_text(&rendered).expect("the rendered text should re-parse"),
+            program,
+            "the round-trip should be lossless"
+        );
     }
 
     #[test]

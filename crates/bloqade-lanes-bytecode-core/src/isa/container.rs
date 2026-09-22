@@ -199,10 +199,26 @@ fn encode_functions(program: &Program) -> Vec<u8> {
     out
 }
 
+/// Capacity to reserve for a table of `count` records of `record` bytes each.
+///
+/// `count` is the first word of the payload, so it is whatever the file says —
+/// and a capacity taken straight from it is a denial of service: `u32::MAX`
+/// `FunctionInfo`s is 288 GiB, which Linux's allocator refuses and Rust turns
+/// into an abort rather than a decode error. (macOS commits lazily and hands
+/// the reservation back, so this only shows up on one platform.)
+///
+/// After the 4-byte count the payload can hold at most `(len - 4) / record`
+/// entries, which is both a safe bound and an exact one: a well-formed table
+/// still gets its single up-front allocation, and a malformed count is caught
+/// by the per-field reads that follow.
+fn table_capacity(bytes: &[u8], count: usize, record: usize) -> usize {
+    count.min(bytes.len().saturating_sub(4) / record.max(1))
+}
+
 fn decode_functions(bytes: &[u8]) -> eyre::Result<Vec<vihaco::module::FunctionInfo<vihaco::Type>>> {
     const RECORD: usize = 4 * 5;
     let count = read_u32(bytes, 0)? as usize;
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::with_capacity(table_capacity(bytes, count, RECORD));
     for i in 0..count {
         let at = 4 + i * RECORD;
         out.push(vihaco::module::FunctionInfo {
@@ -233,7 +249,7 @@ fn encode_labels(program: &Program) -> Vec<u8> {
 fn decode_labels(bytes: &[u8]) -> eyre::Result<Vec<vihaco::module::LabelInfo>> {
     const RECORD: usize = 4 * 2;
     let count = read_u32(bytes, 0)? as usize;
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::with_capacity(table_capacity(bytes, count, RECORD));
     for i in 0..count {
         let at = 4 + i * RECORD;
         out.push(vihaco::module::LabelInfo {
@@ -255,8 +271,10 @@ fn encode_strings(program: &Program) -> Vec<u8> {
 }
 
 fn decode_strings(bytes: &[u8]) -> eyre::Result<Vec<String>> {
+    // Entries are variable-length, but each carries a 4-byte length prefix,
+    // so four bytes is the smallest an entry can be.
     let count = read_u32(bytes, 0)? as usize;
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::with_capacity(table_capacity(bytes, count, 4));
     let mut at = 4;
     for _ in 0..count {
         let len = read_u32(bytes, at)? as usize;
@@ -393,4 +411,41 @@ pub fn to_sst(info: &LanesInfo, body: &str) -> String {
     out.push_str(&format!(".text({ROOT_SECTION}).\n"));
     out.push_str(&format!(".section({ROOT_SECTION}).\n"));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A table's declared count cannot be trusted as a capacity.
+    ///
+    /// It is the first word of the payload, so a malformed file can claim
+    /// `u32::MAX` records — 288 GiB of `FunctionInfo` — which Linux's
+    /// allocator refuses and Rust turns into a process abort rather than the
+    /// decode error the caller is waiting for. macOS commits lazily and hands
+    /// the reservation back, so the bound is asserted here rather than left to
+    /// an allocator to object on one platform and not the other.
+    #[test]
+    fn a_table_count_cannot_reserve_more_than_the_payload_holds() {
+        // A four-byte payload holding nothing but the count itself.
+        let mut bytes = u32::MAX.to_le_bytes().to_vec();
+        assert_eq!(table_capacity(&bytes, u32::MAX as usize, 20), 0);
+
+        // One complete 20-byte record: room for exactly one.
+        bytes.extend_from_slice(&[0u8; 20]);
+        assert_eq!(table_capacity(&bytes, u32::MAX as usize, 20), 1);
+
+        // A well-formed count still gets its exact capacity.
+        assert_eq!(table_capacity(&bytes, 1, 20), 1);
+    }
+
+    /// And the decoders reject the malformed count rather than allocating for
+    /// it — each reports the truncation the count implies.
+    #[test]
+    fn a_malformed_table_count_is_a_decode_error() {
+        let bytes = u32::MAX.to_le_bytes().to_vec();
+        assert!(decode_functions(&bytes).is_err());
+        assert!(decode_labels(&bytes).is_err());
+        assert!(decode_strings(&bytes).is_err());
+    }
 }
