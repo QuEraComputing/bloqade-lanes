@@ -15,6 +15,12 @@ permissions:
   contents: write
   id-token: write
 
+env:
+  # uv defaults to a 30s HTTP timeout, which is not enough for the large
+  # jaxlib wheels (~70 MB and growing) on a slow runner. setup-uv restores a
+  # pruned cache, so those wheels are re-downloaded on every run.
+  UV_HTTP_TIMEOUT: 300
+
 jobs:
   build:
     name: Build wheel (${{ matrix.target }} on ${{ matrix.os }})
