@@ -105,7 +105,7 @@ O(movers) lookups — far less than <a href="struct.AtomStateData.html#method.va
     arch_spec: &amp;<a class="struct" href="../arch/types/struct.ArchSpec.html" title="struct bloqade_lanes_bytecode_core::arch::types::ArchSpec">ArchSpec</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.98.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(<a class="struct" href="https://doc.rust-lang.org/1.98.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.98.1/std/primitive.u32.html">u32</a>&gt;, <a class="struct" href="https://doc.rust-lang.org/1.98.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.98.1/std/primitive.u32.html">u32</a>&gt;, <a class="struct" href="https://doc.rust-lang.org/1.98.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.98.1/std/primitive.u32.html">u32</a>&gt;)&gt;</h4></section></summary><div class="docblock"><p>Find CZ gate control/target qubit pairings within a zone.</p>
 <p>Iterates over all qubits whose current location is in the given zone
-and checks whether the CZ pair site (via [<code>ArchSpec::get_blockaded_location</code>])
+and checks whether the CZ pair site (via <a href="../arch/types/struct.ArchSpec.html#method.get_cz_partner" title="method bloqade_lanes_bytecode_core::arch::types::ArchSpec::get_cz_partner"><code>ArchSpec::get_cz_partner</code></a>)
 is also occupied. If both sites are occupied, the qubits form a
 control/target pair. If the pair site is empty or doesn’t exist, the
 qubit is unpaired.</p>

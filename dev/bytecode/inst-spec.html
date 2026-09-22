@@ -89,7 +89,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="../arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="../arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded "><a href="../arch/interactive-visualization.html"><strong aria-hidden="true">3.</strong> Interactive Visualization and HTML Export</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="../bytecode/inst-quick-ref.html"><strong aria-hidden="true">4.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="../bytecode/inst-spec.html" class="active"><strong aria-hidden="true">5.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="../bytecode/cli.html"><strong aria-hidden="true">6.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="../migration/v0.11.html"><strong aria-hidden="true">7.</strong> Migrating to v0.11</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="../arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="../arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded "><a href="../arch/interactive-visualization.html"><strong aria-hidden="true">3.</strong> Interactive Visualization and HTML Export</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="../bytecode/inst-quick-ref.html"><strong aria-hidden="true">4.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="../bytecode/inst-spec.html" class="active"><strong aria-hidden="true">5.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="../bytecode/cli.html"><strong aria-hidden="true">6.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="../migration/migration_guide_0_12.html"><strong aria-hidden="true">7.</strong> Migrating to v0.12</a></li><li class="chapter-item expanded "><a href="../migration/migration_guide_0_11.html"><strong aria-hidden="true">8.</strong> Migrating to v0.11</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -184,64 +184,125 @@
 <p>This document specifies the bytecode instruction set used by Bloqade Lanes to describe atom shuttling programs for neutral atom quantum processors. A bytecode program is a sequence of fixed-width instructions that drive the full lifecycle of a computation: loading atoms into an optical lattice, shuttling them between sites using AOD (Acousto-Optic Deflector) transport, applying quantum gates, and reading out measurement results.</p>
 <p>The instruction set is organized around the physical structure of the hardware. Atoms occupy <strong>sites</strong> within <strong>words</strong> (rows of trapping positions in the lattice). <strong>Buses</strong> define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A <strong>lane</strong> is a single atom trajectory along a bus — one source site to one destination site. A <strong>zone</strong> groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define locations where atoms are measured. These concepts map directly to the address types used in the bytecode: <code>LocationAddr</code> (word, site), <code>LaneAddr</code> (word, site, bus, direction), and <code>ZoneAddr</code> (zone).</p>
 <p>Programs execute on a stack machine. Address constants and numeric parameters are pushed onto the stack, then consumed by operation instructions (fills, moves, gates, measurements). The bytecode is designed to be validated offline against an architecture specification (<code>ArchSpec</code>) that captures the geometry, bus topology, and zone layout of a specific device.</p>
-<h2 id="instruction-format"><a class="header" href="#instruction-format">Instruction Format</a></h2>
-<p>Every instruction is a fixed <strong>16 bytes</strong>: a 32-bit opcode word followed by three 32-bit data words, all little-endian.</p>
-<pre><code>┌──────────────┬──────────────┬──────────────┬──────────────┐
-│ opcode (u32) │ data0 (u32)  │ data1 (u32)  │ data2 (u32)  │
-├──────────────┼──────────────┼──────────────┼──────────────┤
-│  bytes 0–3   │  bytes 4–7   │  bytes 8–11  │ bytes 12–15  │
-└──────────────┴──────────────┴──────────────┴──────────────┘
-</code></pre>
-<p>Instructions that take no operands ignore the data words (should be zero). Instructions with operands encode them in the data words as described per-instruction below.</p>
-<h2 id="opcode-packing"><a class="header" href="#opcode-packing">Opcode Packing</a></h2>
-<p>The opcode word is packed as a 1-byte <strong>instruction code</strong> and a 1-byte <strong>device code</strong> in the low 16 bits of the u32. The upper 16 bits are unused (must be zero). The device code occupies the least significant byte.</p>
-<pre><code>┌──────────────┬──────────────────┬──────────────────┐
-│   unused     │ instruction code │   device code    │
-│  (16 bits)   │    (8 bits)      │    (8 bits)      │
-└──────────────┴──────────────────┴──────────────────┘
-  bits 31–16       bits 15–8          bits 7–0
-</code></pre>
-<p>Full opcode = <code>(instruction_code &lt;&lt; 8) | device_code</code>.</p>
-<p>In little-endian memory layout:</p>
-<pre><code>byte[0] = device_code        (bits 7–0)
-byte[1] = instruction_code   (bits 15–8)
-byte[2] = 0x00               (unused)
-byte[3] = 0x00               (unused)
-</code></pre>
-<p>Instruction codes <strong>can overlap</strong> across different devices — the device code byte disambiguates.</p>
-<h2 id="device-codes"><a class="header" href="#device-codes">Device Codes</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Device Code</th><th>Name</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>0x00</code></td><td><code>Cpu</code></td><td>Stack manipulation, constants, control flow (FLAIR-aligned)</td></tr>
-<tr><td><code>0x0F</code></td><td><code>LaneConstants</code></td><td>Lane-specific constant instructions</td></tr>
-<tr><td><code>0x10</code></td><td><code>AtomArrangement</code></td><td>Atom filling and movement</td></tr>
-<tr><td><code>0x11</code></td><td><code>QuantumGate</code></td><td>Single- and multi-qubit gate operations</td></tr>
-<tr><td><code>0x12</code></td><td><code>Measurement</code></td><td>Qubit measurement</td></tr>
-<tr><td><code>0x13</code></td><td><code>Array</code></td><td>Array construction and indexing</td></tr>
-<tr><td><code>0x14</code></td><td><code>DetectorObservable</code></td><td>Detector and observable setup</td></tr>
+<h2 id="the-machine"><a class="header" href="#the-machine">The machine</a></h2>
+<p>A lanes program runs on a <strong>composite machine</strong> of two vihaco devices:</p>
+<div class="table-wrapper"><table><thead><tr><th>Device</th><th>Code</th><th>Supplies</th></tr></thead><tbody>
+<tr><td><code>cpu</code></td><td><code>0x00</code></td><td>vihaco-cpu's <code>CPU</code> component: the stack, constants, arithmetic, comparisons, control flow, the heap allocator</td></tr>
+<tr><td><code>lanes</code></td><td><code>0x01</code></td><td>atom movement, gates, measurement, arrays, and the <code>pop</code>/<code>swap</code> the CPU lacks</td></tr>
 </tbody></table>
 </div>
-<p>Device codes <code>0x01</code>–<code>0x0E</code> are reserved for future FLAIR device types.</p>
-<h2 id="address-encoding"><a class="header" href="#address-encoding">Address Encoding</a></h2>
-<p>All address field components are 16-bit, packed into the data words.</p>
-<h3 id="locationaddr"><a class="header" href="#locationaddr"><code>LocationAddr</code></a></h3>
-<p>Packed in a single data word (data0):</p>
-<pre><code>data0: [word_id:16][site_id:16]
-        bits 31–16   bits 15–0
+<p>Instructions are spelled <code>&lt;device&gt;::&lt;dialect&gt;.&lt;mnemonic&gt;</code>. The first half is the
+device; the second is that device's own dialect head.</p>
+<p>Only the atom-arrangement ops (<code>initial_fill</code>, <code>fill</code>, <code>move</code>) are executed by
+the machine — they advance the atom state and fault on an illegal move. The
+quantum ops are emitted as effects rather than simulated, and the array and
+measurement ops likewise, pending
+<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/776">#776</a>.</p>
+<h2 id="instruction-format"><a class="header" href="#instruction-format">Instruction Format</a></h2>
+<p>Every instruction is a fixed <strong>14-byte</strong> word: a 1-byte device opcode, a 1-byte
+instruction opcode, then the operands in declaration order, each little-endian,
+zero-padded out to the full width.</p>
+<pre><code>┌────────────┬────────────┬──────────────────────────────────┐
+│ device(u8) │ opcode(u8) │ operands (LE) ‖ zero padding      │
+├────────────┼────────────┼──────────────────────────────────┤
+│   byte 0   │   byte 1   │            bytes 2–13            │
+└────────────┴────────────┴──────────────────────────────────┘
 </code></pre>
-<p>Total: 32 bits (u32).</p>
-<h3 id="laneaddr"><a class="header" href="#laneaddr"><code>LaneAddr</code></a></h3>
-<p>Packed across two data words (data0 + data1):</p>
-<pre><code>data0: [word_id:16][site_id:16]
-        bits 31–16   bits 15–0
+<p>The width is not a chosen constant — vihaco derives it as the widest variant
+across both devices, and it changes if either gains a wider operand.</p>
+<p>Because every word is the same width, the code region is just N concatenated
+words and decodes without desync.</p>
+<h2 id="opcodes"><a class="header" href="#opcodes">Opcodes</a></h2>
+<p>vihaco assigns opcodes by <strong>declaration position</strong>. The Python API reports them
+packed as <code>(device_code &lt;&lt; 8) | instruction_code</code>.</p>
+<p>Both halves are positional, so adding an instruction to either device anywhere
+but the end renumbers everything after it — which changes the binary encoding of
+existing programs. The values in this document are correct for this revision;
+<code>Instruction.op_name()</code> is the stable identity.</p>
+<p>Bloqade Lanes programs are not binary-compatible with either earlier container
+(<code>BLQD</code>, <code>LANES</code>), nor with the FLAIR-aligned device/instruction-code scheme this
+specification previously described.</p>
+<h2 id="binary-container-vhbc"><a class="header" href="#binary-container-vhbc">Binary Container (<code>VHBC</code>)</a></h2>
+<p>The instruction words sit inside vihaco's <code>VHBC</code> section container, which
+mirrors the <code>sst v1</code> text structure: one root section, whose header is the
+version and whose bytecode is the code region.</p>
+<pre><code class="language-text">magic                : 4 bytes = b&quot;VHBC&quot;
+version              : u16 LE  = 1
+flags                : u16 LE  = 0
+context_len          : u64 LE  = 0        (empty global context)
+── root section ──
+section_len          : u64 LE             (total, including this frame)
+composite_header_len : u64 LE  = 4
+composite header     : u32 LE  = (major &lt;&lt; 16) | minor
+bytecode_len         : u64 LE
+bytecode             : N × instruction words
+child_count          : u32 LE  = 0        (no child sections)
+</code></pre>
+<p>vihaco ships readers for this container but no writers, so Bloqade Lanes owns
+the emitters (<code>isa::container</code>); the round-trip tests read everything back
+through vihaco's own parser to keep the two in step.</p>
+<p>Neither device's instruction enum carries a binary codec — vihaco-cpu's has none
+and <code>#[composite]</code> derives none — so encoding goes through a parallel mirror ISA
+(<code>isa::bytecode</code>) that does. PPVM solves this the same way.</p>
+<h2 id="text-format-sst"><a class="header" href="#text-format-sst">Text Format (<code>.sst</code>)</a></h2>
+<p>The text form is vihaco's <code>sst v1</code> section container. A lanes program is one
+root section: a header carrying the version, and a text body holding a single
+<code>@main</code> function.</p>
+<pre><code>sst v1
 
-data1: [dir:1][mt:1][pad:14][bus_id:16]
-       bit 31  bit 30  29–16  bits 15–0
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+fn @main() {
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.const_loc 0x0000000001000000
+  lanes::lanes.initial_fill 2
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).
+</code></pre>
+<p>Container rules:</p>
+<ul>
+<li><code>sst v1</code> must be the first significant line.</li>
+<li>The root section must be named <code>root</code>; a lanes program declares no child
+sections.</li>
+<li><code>.name(x):</code> opens a block and <code>.name(x).</code> closes it — note the trailing dot
+versus colon.</li>
+<li>The global context block (<code>.global:</code> … <code>.global.</code>) may be omitted, and must be
+empty if present: a lanes program has no child-section names to resolve.</li>
+<li>Only <code>.global:</code> or the root section may appear between <code>sst v1</code> and the first
+section, so file-level comments belong <strong>inside</strong> <code>.text(root):</code>.</li>
+</ul>
+<p>Instruction rules:</p>
+<ul>
+<li>Comments are <code>//</code> to end of line.</li>
+<li>Every instruction carries a <strong>device prefix and dialect head</strong>:
+<code>lanes::lanes.move 2</code>, <code>cpu::cpu.halt</code>. Both halves are required — a bare
+<code>move 2</code> does not parse, and neither does a mnemonic under the wrong device.</li>
+<li>Address operands are <code>0x</code>-prefixed hexadecimal; arities and array dimensions
+are decimal.</li>
+<li>Exactly one function is allowed and it must be named <code>@main</code>.</li>
+</ul>
+<p><code>to_text</code> emits this form and <code>parse_text</code> accepts it, round-tripping losslessly.</p>
+<h2 id="address-encoding"><a class="header" href="#address-encoding">Address Encoding</a></h2>
+<p>Addresses are bit-packed into a single integer operand, written little-endian.</p>
+<h3 id="locationaddr"><a class="header" href="#locationaddr"><code>LocationAddr</code></a></h3>
+<p>Packed into one <code>u64</code>:</p>
+<pre><code>[zone_id:8][word_id:16][site_id:16][pad:24]
+ bits 63–56  bits 55–40  bits 39–24  bits 23–0
+</code></pre>
+<h3 id="laneaddr"><a class="header" href="#laneaddr"><code>LaneAddr</code></a></h3>
+<p>Packed into one <code>u64</code>:</p>
+<pre><code>[dir:1][mt:2][zone_id:8][pad:5][bus_id:16][word_id:16][site_id:16]
+ bit 63  62–61  60–53     52–48   47–32      31–16       15–0
 </code></pre>
 <ul>
 <li><code>dir</code> — direction: 0 = Forward, 1 = Backward</li>
-<li><code>mt</code> — move type: 0 = SiteBus, 1 = WordBus</li>
+<li><code>mt</code> — move type: 0 = SiteBus, 1 = WordBus, 2 = ZoneBus</li>
 </ul>
-<p>Total: 64 bits across two u32 words. Note that data0 shares the same layout as <code>LocationAddr</code>.</p>
 <h4 id="lane-address-convention"><a class="header" href="#lane-address-convention">Lane address convention</a></h4>
 <p>The <code>word_id</code> and <code>site_id</code> fields in a <code>LaneAddr</code> always encode the <strong>forward-direction source</strong> — the position where the atom starts in a forward move. The <code>direction</code> field does <strong>not</strong> change which position is encoded; it only controls which endpoint is treated as source vs destination when the lane is resolved.</p>
 <p><strong>Endpoint resolution</strong> always starts by resolving the forward direction:</p>
@@ -272,150 +333,108 @@ data1: [dir:1][mt:1][pad:14][bus_id:16]
 </div>
 <p>Validation is always performed against the forward-direction source, regardless of the <code>direction</code> field.</p>
 <h3 id="zoneaddr"><a class="header" href="#zoneaddr"><code>ZoneAddr</code></a></h3>
-<p>Packed in a single data word (data0):</p>
-<pre><code>data0: [pad:16][zone_id:16]
-       bits 31–16  bits 15–0
+<p>Packed into one <code>u32</code>:</p>
+<pre><code>[pad:24][zone_id:8]
+ bits 31–8  bits 7–0
 </code></pre>
-<p>Total: 32 bits (u32).</p>
 <h2 id="instructions"><a class="header" href="#instructions">Instructions</a></h2>
-<h3 id="cpu-0x00--flair-aligned-shared-opcodes"><a class="header" href="#cpu-0x00--flair-aligned-shared-opcodes">Cpu (<code>0x00</code>) — FLAIR-aligned shared opcodes</a></h3>
-<p>These instruction codes are shared with the FLAIR VM/IR spec and use identical values.</p>
-<h4 id="const_int--push-integer-constant"><a class="header" href="#const_int--push-integer-constant"><code>const_int</code> — Push integer constant</a></h4>
+<h3 id="stack-ops"><a class="header" href="#stack-ops">Stack ops</a></h3>
+<p>These come from vihaco-cpu's <code>CPU</code> component, composed as the <code>cpu</code> device
+(see <a href="#the-machine">The machine</a>) — except <code>pop</code> and <code>swap</code>, which vihaco-cpu
+has neither of and which therefore live on the lanes device.</p>
+<h4 id="cpucpuconst-type-value--push-a-constant"><a class="header" href="#cpucpuconst-type-value--push-a-constant"><code>cpu::cpu.const &lt;type&gt;, &lt;value&gt;</code> — Push a constant</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0200</code></td></tr>
-<tr><td>data0</td><td><code>i64</code> LE low 32 bits</td></tr>
-<tr><td>data1</td><td><code>i64</code> LE high 32 bits</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
-<tr><td>Stack</td><td><code>( -- int)</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0011</code></td></tr>
+<tr><td>Operands</td><td>type tag (1 byte) + value tag (1 byte) + payload (up to 8 bytes)</td></tr>
+<tr><td>Stack</td><td><code>( -- value)</code></td></tr>
 </tbody></table>
 </div>
-<p>Pushes a signed 64-bit integer onto the stack. The value is stored as a little-endian i64 across data0 (low) and data1 (high).</p>
-<h4 id="const_float--push-float-constant"><a class="header" href="#const_float--push-float-constant"><code>const_float</code> — Push float constant</a></h4>
+<p>One typed instruction, not one per type — note the comma:
+<code>cpu::cpu.const i64, 42</code>, <code>cpu::cpu.const f64, 1.5</code>. All nine of vihaco's
+types encode, though the lanes compiler emits only <code>i64</code> and <code>f64</code>. The Python
+<code>op_name()</code> still reports <code>const_int</code> / <code>const_float</code>, because the decoder
+pushes a different value type for each and the mnemonic alone would not say
+which.</p>
+<h4 id="cpucpudup--duplicate-top-of-stack"><a class="header" href="#cpucpudup--duplicate-top-of-stack"><code>cpu::cpu.dup</code> — Duplicate top of stack</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x03</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0300</code></td></tr>
-<tr><td>data0</td><td><code>f64</code> LE low 32 bits</td></tr>
-<tr><td>data1</td><td><code>f64</code> LE high 32 bits</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
-<tr><td>Stack</td><td><code>( -- float)</code></td></tr>
-</tbody></table>
-</div>
-<p>Pushes a 64-bit float onto the stack. The value is stored as a little-endian f64 across data0 (low) and data1 (high).</p>
-<h4 id="dup--duplicate-top-of-stack"><a class="header" href="#dup--duplicate-top-of-stack"><code>dup</code> — Duplicate top of stack</a></h4>
-<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x04</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0400</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x000D</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(a -- a a)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="pop--discard-top-of-stack"><a class="header" href="#pop--discard-top-of-stack"><code>pop</code> — Discard top of stack</a></h4>
+<h4 id="laneslanespop--discard-top-of-stack"><a class="header" href="#laneslanespop--discard-top-of-stack"><code>lanes::lanes.pop</code> — Discard top of stack</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x05</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0500</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0100</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(a -- )</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="swap--swap-top-two-stack-elements"><a class="header" href="#swap--swap-top-two-stack-elements"><code>swap</code> — Swap top two stack elements</a></h4>
+<h4 id="laneslanesswap--swap-top-two-stack-elements"><a class="header" href="#laneslanesswap--swap-top-two-stack-elements"><code>lanes::lanes.swap</code> — Swap top two stack elements</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x06</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0600</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0101</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(a b -- b a)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="return--return-from-program"><a class="header" href="#return--return-from-program"><code>return</code> — Return from program</a></h4>
+<h4 id="cpucpuret-n--return-from-the-current-function"><a class="header" href="#cpucpuret-n--return-from-the-current-function"><code>cpu::cpu.ret &lt;n&gt;</code> — Return from the current function</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x64</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x6400</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0006</code></td></tr>
+<tr><td>Operands</td><td>keep count, <code>u32</code> LE (4 bytes)</td></tr>
+<tr><td>Stack</td><td><code>(a -- )</code></td></tr>
+</tbody></table>
+</div>
+<p><code>&lt;n&gt;</code> is how many values to keep as the return value. The Python <code>op_name()</code>
+reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</p>
+<h4 id="cpucpuhalt--halt-execution"><a class="header" href="#cpucpuhalt--halt-execution"><code>cpu::cpu.halt</code> — Halt execution</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Opcode</td><td><code>0x0009</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>( -- )</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="halt--halt-execution"><a class="header" href="#halt--halt-execution"><code>halt</code> — Halt execution</a></h4>
+<h3 id="address-constants"><a class="header" href="#address-constants">Address constants</a></h3>
+<h4 id="laneslanesconst_loc--push-location-address"><a class="header" href="#laneslanesconst_loc--push-location-address"><code>lanes::lanes.const_loc</code> — Push location address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0xFF</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0xFF00</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
-<tr><td>Stack</td><td><code>( -- )</code></td></tr>
-</tbody></table>
-</div>
-<h3 id="laneconstants-0x0f"><a class="header" href="#laneconstants-0x0f">LaneConstants (<code>0x0F</code>)</a></h3>
-<h4 id="const_loc--push-location-address"><a class="header" href="#const_loc--push-location-address"><code>const_loc</code> — Push location address</a></h4>
-<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x000F</code></td></tr>
-<tr><td>data0</td><td><code>LocationAddr</code> — <code>[word_id:16][site_id:16]</code></td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0102</code></td></tr>
+<tr><td>Operands</td><td><code>LocationAddr</code> as <code>u64</code> LE — <code>[zone_id:8][word_id:16][site_id:16][pad:24]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- loc)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="const_lane--push-lane-address"><a class="header" href="#const_lane--push-lane-address"><code>const_lane</code> — Push lane address</a></h4>
+<h4 id="laneslanesconst_lane--push-lane-address"><a class="header" href="#laneslanesconst_lane--push-lane-address"><code>lanes::lanes.const_lane</code> — Push lane address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x010F</code></td></tr>
-<tr><td>data0</td><td><code>[word_id:16][site_id:16]</code></td></tr>
-<tr><td>data1</td><td><code>[dir:1][mt:1][pad:14][bus_id:16]</code></td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0103</code></td></tr>
+<tr><td>Operands</td><td><code>LaneAddr</code> as <code>u64</code> LE — <code>[dir:1][mt:2][zone_id:8][pad:5][bus_id:16][word_id:16][site_id:16]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- lane)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="const_zone--push-zone-address"><a class="header" href="#const_zone--push-zone-address"><code>const_zone</code> — Push zone address</a></h4>
+<h4 id="laneslanesconst_zone--push-zone-address"><a class="header" href="#laneslanesconst_zone--push-zone-address"><code>lanes::lanes.const_zone</code> — Push zone address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x020F</code></td></tr>
-<tr><td>data0</td><td><code>ZoneAddr</code> — <code>[pad:16][zone_id:16]</code></td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0104</code></td></tr>
+<tr><td>Operands</td><td><code>ZoneAddr</code> as <code>u32</code> LE — <code>[pad:24][zone_id:8]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- zone)</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="atomarrangement-0x10"><a class="header" href="#atomarrangement-0x10">AtomArrangement (<code>0x10</code>)</a></h3>
-<h4 id="initial_fill--initial-atom-loading"><a class="header" href="#initial_fill--initial-atom-loading"><code>initial_fill</code> — Initial atom loading</a></h4>
+<h3 id="atom-arrangement"><a class="header" href="#atom-arrangement">Atom arrangement</a></h3>
+<h4 id="laneslanesinitial_fill--initial-atom-loading"><a class="header" href="#laneslanesinitial_fill--initial-atom-loading"><code>lanes::lanes.initial_fill</code> — Initial atom loading</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x10</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0010</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0105</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>n</code> location addresses and performs the initial atom fill at those sites.</p>
-<h4 id="fill--atom-refill"><a class="header" href="#fill--atom-refill"><code>fill</code> — Atom refill</a></h4>
+<h4 id="laneslanesfill--atom-refill"><a class="header" href="#laneslanesfill--atom-refill"><code>lanes::lanes.fill</code> — Atom refill</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x10</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0110</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0106</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>n</code> location addresses and refills atoms at those sites.</p>
-<h4 id="move--atom-transport"><a class="header" href="#move--atom-transport"><code>move</code> — Atom transport</a></h4>
+<h4 id="laneslanesmove--atom-transport"><a class="header" href="#laneslanesmove--atom-transport"><code>lanes::lanes.move</code> — Atom transport</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x10</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0210</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0107</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(lane₁ lane₂ … laneₙ -- )</code></td></tr>
 </tbody></table>
 </div>
@@ -435,150 +454,99 @@ data1: [dir:1][mt:1][pad:14][bus_id:16]
 <tr><td>Lane positions form a complete grid</td><td><code>AODConstraintViolation</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="quantumgate-0x11"><a class="header" href="#quantumgate-0x11">QuantumGate (<code>0x11</code>)</a></h3>
-<h4 id="local_r--local-r-rotation"><a class="header" href="#local_r--local-r-rotation"><code>local_r</code> — Local R rotation</a></h4>
+<h3 id="quantum-gates"><a class="header" href="#quantum-gates">Quantum gates</a></h3>
+<h4 id="laneslaneslocal_r--local-r-rotation"><a class="header" href="#laneslaneslocal_r--local-r-rotation"><code>lanes::lanes.local_r</code> — Local R rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0011</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0109</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ φ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 2 float parameters (φ = axis angle, θ = rotation angle) then <code>n</code> location addresses, and applies a local R rotation. The call convention matches the SSA IR: <code>local_r(%φ, %θ, %loc₁, …)</code> — first argument (φ) is pushed last and popped first.</p>
-<h4 id="local_rz--local-rz-rotation"><a class="header" href="#local_rz--local-rz-rotation"><code>local_rz</code> — Local Rz rotation</a></h4>
+<h4 id="laneslaneslocal_rz--local-rz-rotation"><a class="header" href="#laneslaneslocal_rz--local-rz-rotation"><code>lanes::lanes.local_rz</code> — Local Rz rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0111</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0108</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 1 float parameter (θ = rotation angle) then <code>n</code> location addresses, and applies a local Rz rotation. The call convention matches the SSA IR: <code>local_rz(%θ, %loc₁, …)</code>.</p>
-<h4 id="global_r--global-r-rotation"><a class="header" href="#global_r--global-r-rotation"><code>global_r</code> — Global R rotation</a></h4>
+<h4 id="laneslanesglobal_r--global-r-rotation"><a class="header" href="#laneslanesglobal_r--global-r-rotation"><code>lanes::lanes.global_r</code> — Global R rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0211</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010B</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(θ φ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 2 float parameters (φ = axis angle, θ = rotation angle), applies a global R rotation. The call convention matches the SSA IR: <code>global_r(%φ, %θ)</code>.</p>
-<h4 id="global_rz--global-rz-rotation"><a class="header" href="#global_rz--global-rz-rotation"><code>global_rz</code> — Global Rz rotation</a></h4>
+<h4 id="laneslanesglobal_rz--global-rz-rotation"><a class="header" href="#laneslanesglobal_rz--global-rz-rotation"><code>lanes::lanes.global_rz</code> — Global Rz rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x03</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0311</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010A</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(θ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 1 float parameter (θ = rotation angle), applies a global Rz rotation. Since there is only one parameter, it is both pushed last and popped first.</p>
-<h4 id="cz--controlled-z-gate"><a class="header" href="#cz--controlled-z-gate"><code>cz</code> — Controlled-Z gate</a></h4>
+<h4 id="laneslanescz--controlled-z-gate"><a class="header" href="#laneslanescz--controlled-z-gate"><code>lanes::lanes.cz</code> — Controlled-Z gate</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x04</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0411</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010C</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(zone -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops a zone address and applies a CZ gate across the zone.</p>
-<h3 id="measurement-0x12"><a class="header" href="#measurement-0x12">Measurement (<code>0x12</code>)</a></h3>
-<h4 id="measure--initiate-measurement"><a class="header" href="#measure--initiate-measurement"><code>measure</code> — Initiate measurement</a></h4>
+<h3 id="measurement"><a class="header" href="#measurement">Measurement</a></h3>
+<h4 id="laneslanesmeasure--initiate-measurement"><a class="header" href="#laneslanesmeasure--initiate-measurement"><code>lanes::lanes.measure</code> — Initiate measurement</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x12</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0012</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010D</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(zone₁ zone₂ … zoneₙ -- future₁ future₂ … futureₙ)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>n</code> zone addresses and pushes <code>n</code> measure futures.</p>
-<h4 id="await_measure--wait-for-measurement-result"><a class="header" href="#await_measure--wait-for-measurement-result"><code>await_measure</code> — Wait for measurement result</a></h4>
+<h4 id="laneslanesawait_measure--wait-for-measurement-result"><a class="header" href="#laneslanesawait_measure--wait-for-measurement-result"><code>lanes::lanes.await_measure</code> — Wait for measurement result</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x12</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0112</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010E</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(future -- array_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops a measure future and pushes an array reference containing the measurement results.</p>
-<h3 id="array-0x13"><a class="header" href="#array-0x13">Array (<code>0x13</code>)</a></h3>
-<h4 id="new_array--construct-array-from-stack"><a class="header" href="#new_array--construct-array-from-stack"><code>new_array</code> — Construct array from stack</a></h4>
+<h3 id="arrays"><a class="header" href="#arrays">Arrays</a></h3>
+<h4 id="laneslanesnew_array--construct-array-from-stack"><a class="header" href="#laneslanesnew_array--construct-array-from-stack"><code>lanes::lanes.new_array</code> — Construct array from stack</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x13</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0013</code></td></tr>
-<tr><td>data0</td><td><code>[type_tag:8][pad:8][dim0:16]</code></td></tr>
-<tr><td>data1</td><td><code>[pad:16][dim1:16]</code></td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010F</code></td></tr>
+<tr><td>Operands</td><td>three <code>u32</code> LE: <code>type_tag</code>, <code>dim0</code>, <code>dim1</code> (<code>dim1 = 0</code> for 1-D)</td></tr>
 <tr><td>Stack</td><td><code>(elem₁ elem₂ … elemₙ -- array_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Constructs an array of <code>dim0 × dim1</code> elements with element type <code>type_tag</code>. If <code>dim1</code> is 0, the array is 1-dimensional with <code>dim0</code> elements.</p>
-<h4 id="get_item--index-into-array"><a class="header" href="#get_item--index-into-array"><code>get_item</code> — Index into array</a></h4>
+<h4 id="laneslanesget_item--index-into-array"><a class="header" href="#laneslanesget_item--index-into-array"><code>lanes::lanes.get_item</code> — Index into array</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x13</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0113</code></td></tr>
-<tr><td>data0</td><td><code>u16</code> LE ndims (upper 16 bits unused)</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0110</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE ndims</td></tr>
 <tr><td>Stack</td><td><code>(array_ref idx₁ … idxₙ -- value)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>ndims</code> index values then the array reference, and pushes the indexed element.</p>
-<h3 id="detectorobservable-0x14"><a class="header" href="#detectorobservable-0x14">DetectorObservable (<code>0x14</code>)</a></h3>
-<h4 id="set_detector--set-detector"><a class="header" href="#set_detector--set-detector"><code>set_detector</code> — Set detector</a></h4>
+<h3 id="detectors-and-observables"><a class="header" href="#detectors-and-observables">Detectors and observables</a></h3>
+<h4 id="laneslanesset_detector--set-detector"><a class="header" href="#laneslanesset_detector--set-detector"><code>lanes::lanes.set_detector</code> — Set detector</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x14</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0014</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0111</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(array_ref -- detector_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops an array reference and pushes a detector reference.</p>
-<h4 id="set_observable--set-observable"><a class="header" href="#set_observable--set-observable"><code>set_observable</code> — Set observable</a></h4>
+<h4 id="laneslanesset_observable--set-observable"><a class="header" href="#laneslanesset_observable--set-observable"><code>lanes::lanes.set_observable</code> — Set observable</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x14</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0114</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0112</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(array_ref -- observable_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops an array reference and pushes an observable reference.</p>
-<h2 id="reserved-opcode-ranges"><a class="header" href="#reserved-opcode-ranges">Reserved Opcode Ranges</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Range</th><th>Owner</th></tr></thead><tbody>
-<tr><td>Device <code>0x00</code>, inst codes <code>0x00</code>–<code>0x8F</code></td><td>Reserved for FLAIR. This project uses only <code>0x02</code>–<code>0x06</code>, <code>0x64</code>, <code>0xFF</code>.</td></tr>
-<tr><td>Device codes <code>0x01</code>–<code>0x0E</code></td><td>Reserved for future FLAIR device types</td></tr>
-<tr><td>Device codes <code>0x0F</code>–<code>0xFF</code></td><td>Project-specific (currently <code>0x0F</code>–<code>0x14</code> allocated)</td></tr>
-</tbody></table>
-</div>
-<h3 id="known-flair-allocations-device-0x00"><a class="header" href="#known-flair-allocations-device-0x00">Known FLAIR allocations (device <code>0x00</code>)</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Instruction Code</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><code>0x01</code></td><td><code>const.bool</code></td></tr>
-<tr><td><code>0x10</code>–<code>0x17</code></td><td>Arithmetic (<code>arith.add_int</code>, <code>arith.add_float</code>, etc.)</td></tr>
-<tr><td><code>0x20</code>–<code>0x23</code></td><td>Comparison (<code>cmp.gt_int</code>, <code>cmp.eq_float</code>, etc.)</td></tr>
-<tr><td><code>0x28</code>–<code>0x2A</code></td><td>Boolean (<code>bool.not</code>, <code>bool.and</code>, <code>bool.or</code>)</td></tr>
-<tr><td><code>0x30</code>–<code>0x33</code></td><td>Waveform (<code>waveform.poly4</code>, <code>waveform.delay</code>, etc.)</td></tr>
-<tr><td><code>0x40</code>–<code>0x43</code></td><td>Channel (<code>channel.emit</code>, <code>channel.play</code>, etc.)</td></tr>
-<tr><td><code>0x50</code>–<code>0x52</code></td><td>Peer messaging</td></tr>
-<tr><td><code>0x60</code>–<code>0x63</code></td><td>Control flow (<code>cf.jump</code>, <code>cf.branch</code>, <code>cf.call</code>)</td></tr>
-<tr><td><code>0x80</code></td><td><code>debug.trace</code></td></tr>
-</tbody></table>
-</div>
+
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">

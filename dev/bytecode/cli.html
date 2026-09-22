@@ -89,7 +89,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="../arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="../arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded "><a href="../arch/interactive-visualization.html"><strong aria-hidden="true">3.</strong> Interactive Visualization and HTML Export</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="../bytecode/inst-quick-ref.html"><strong aria-hidden="true">4.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="../bytecode/inst-spec.html"><strong aria-hidden="true">5.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="../bytecode/cli.html" class="active"><strong aria-hidden="true">6.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="../migration/v0.11.html"><strong aria-hidden="true">7.</strong> Migrating to v0.11</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="../arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="../arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded "><a href="../arch/interactive-visualization.html"><strong aria-hidden="true">3.</strong> Interactive Visualization and HTML Export</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="../bytecode/inst-quick-ref.html"><strong aria-hidden="true">4.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="../bytecode/inst-spec.html"><strong aria-hidden="true">5.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="../bytecode/cli.html" class="active"><strong aria-hidden="true">6.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="../migration/migration_guide_0_12.html"><strong aria-hidden="true">7.</strong> Migrating to v0.12</a></li><li class="chapter-item expanded "><a href="../migration/migration_guide_0_11.html"><strong aria-hidden="true">8.</strong> Migrating to v0.11</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -276,6 +276,39 @@ bloqade-bytecode validate bad.sst --arch gemini-logical.json
 # error: 1 validation error(s)
 </code></pre>
 <hr />
+<h3 id="run"><a class="header" href="#run"><code>run</code></a></h3>
+<p>Execute a program on the composite machine. Accepts both text (<code>.sst</code>) and
+binary formats.</p>
+<pre><code>bloqade-bytecode run &lt;INPUT&gt; [--arch &lt;ARCH&gt;] [--max-steps &lt;N&gt;] [--effects]
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Argument</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>&lt;INPUT&gt;</code></td><td>Input file (<code>.sst</code> = text, otherwise binary)</td></tr>
+<tr><td><code>--arch &lt;ARCH&gt;</code></td><td>ArchSpec JSON file. <code>move</code> cannot resolve a lane into endpoints without one</td></tr>
+<tr><td><code>--max-steps &lt;N&gt;</code></td><td>Instruction budget before giving up (default 1,000,000)</td></tr>
+<tr><td><code>--effects</code></td><td>Print every effect the lanes device reported, in order</td></tr>
+</tbody></table>
+</div>
+<p><strong>What actually runs.</strong> The machine executes <em>atom movement</em>: <code>initial_fill</code>,
+<code>fill</code> and <code>move</code> advance the atom state and fail on an illegal move — which
+is a real check, and one validation cannot make, since the validator does not
+track which sites are occupied. The quantum, array and measurement ops are
+reported as <code>NotSimulated</code> effects carrying the operands they consumed, rather
+than interpreted; simulating them is
+<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1022">#1022</a>.</p>
+<p><strong>Examples:</strong></p>
+<pre><code class="language-bash">bloqade-bytecode run prog.sst --arch gemini-logical.json
+# halted after 50 instruction(s); 4 atom(s) placed
+
+# A move onto an occupied site fails, naming the instruction
+bloqade-bytecode run bad.sst --arch gemini-logical.json
+# error: Fill(2): Attempted to add atom to occupied location
+
+# See what the program asked the hardware to do
+bloqade-bytecode run prog.sst --arch gemini-logical.json --effects
+#   NotSimulated { inst: Cz, msg: Zones([ZoneAddr { zone_id: 0 }]) }
+#   ...
+</code></pre>
+<hr />
 <h3 id="arch"><a class="header" href="#arch"><code>arch</code></a></h3>
 <p>Pretty-print an architecture specification.</p>
 <pre><code>bloqade-bytecode arch &lt;INPUT&gt;
@@ -317,8 +350,8 @@ Capabilities:
 <hr />
 <h2 id="file-formats"><a class="header" href="#file-formats">File Formats</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Extension</th><th>Format</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>.sst</code></td><td>Text</td><td>Human-readable bytecode (one instruction per line, <code>;</code> comments)</td></tr>
-<tr><td><code>.bin</code></td><td>Binary</td><td>Compact binary encoding (<code>BLQD</code> magic header, 16 bytes per instruction)</td></tr>
+<tr><td><code>.sst</code></td><td>Text</td><td>Human-readable bytecode (vihaco <code>sst v1</code> container, <code>//</code> comments)</td></tr>
+<tr><td><code>.bin</code></td><td>Binary</td><td>Compact binary encoding (vihaco <code>VHBC</code> container, 14 bytes per instruction)</td></tr>
 <tr><td><code>.json</code></td><td>JSON</td><td>Architecture specification</td></tr>
 </tbody></table>
 </div>
@@ -332,7 +365,7 @@ Capabilities:
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../migration/v0.11.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../migration/migration_guide_0_12.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -346,7 +379,7 @@ Capabilities:
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../migration/v0.11.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../migration/migration_guide_0_12.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

@@ -90,7 +90,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded "><a href="arch/interactive-visualization.html"><strong aria-hidden="true">3.</strong> Interactive Visualization and HTML Export</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-quick-ref.html"><strong aria-hidden="true">4.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">5.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="bytecode/cli.html"><strong aria-hidden="true">6.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="migration/v0.11.html"><strong aria-hidden="true">7.</strong> Migrating to v0.11</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded "><a href="arch/interactive-visualization.html"><strong aria-hidden="true">3.</strong> Interactive Visualization and HTML Export</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-quick-ref.html"><strong aria-hidden="true">4.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">5.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="bytecode/cli.html"><strong aria-hidden="true">6.</strong> CLI Reference</a></li><li class="chapter-item expanded affix "><li class="part-title">Migration guides</li><li class="chapter-item expanded "><a href="migration/migration_guide_0_12.html"><strong aria-hidden="true">7.</strong> Migrating to v0.12</a></li><li class="chapter-item expanded "><a href="migration/migration_guide_0_11.html"><strong aria-hidden="true">8.</strong> Migrating to v0.11</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -771,127 +771,209 @@ event fixture, covering lane previews over empty sites, occupied sites, and
 atoms. These tests do not replace browser integration checks of Plotly's real
 DOM internals.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-quick-reference"><a class="header" href="#instruction-quick-reference">Instruction Quick Reference</a></h1>
-<p>A compact summary of all 24 bytecode instructions. See the <a href="bytecode/inst-spec.html">Instruction Set</a> for full encoding details.</p>
-<h2 id="cpu-0x00"><a class="header" href="#cpu-0x00">Cpu (<code>0x00</code>)</a></h2>
-<p>Stack manipulation, constants, and control flow (FLAIR-aligned).</p>
+<p>A compact summary of the Bloqade Lanes instruction set. See the <a href="bytecode/inst-spec.html">Instruction Set</a> for full encoding details.</p>
+<p>A lanes program runs on a <strong>composite machine</strong> of two devices: vihaco-cpu's
+<code>CPU</code>, which supplies the stack and arithmetic ops, and the lanes device, which
+supplies atom movement, gates, measurement and arrays. Each instruction is
+spelled <code>&lt;device&gt;::&lt;dialect&gt;.&lt;mnemonic&gt;</code> — <code>lanes::lanes.move 2</code>, <code>cpu::cpu.halt</code>.</p>
+<blockquote>
+<p><strong>Opcodes shift.</strong> The packed opcode is <code>(device_code &lt;&lt; 8) | instruction_code</code>,
+and both halves are assigned by declaration order — so they renumber whenever
+either instruction set gains a variant. The values below are correct for this
+revision; compare identity with <code>op_name()</code>, never a literal.</p>
+</blockquote>
+<h2 id="lanes-device-0x01--stack-ops-vihaco-cpu-lacks"><a class="header" href="#lanes-device-0x01--stack-ops-vihaco-cpu-lacks"><code>lanes</code> device (<code>0x01</code>) — stack ops vihaco-cpu lacks</a></h2>
+<p><code>pop</code> and <code>swap</code> live here because vihaco-cpu's CPU has neither. The machine
+does the stack work on the device's behalf.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>const_int</code></td><td><code>0x0200</code></td><td><code>( -- int)</code></td><td>Push 64-bit integer constant</td></tr>
-<tr><td><code>const_float</code></td><td><code>0x0300</code></td><td><code>( -- float)</code></td><td>Push 64-bit float constant</td></tr>
-<tr><td><code>dup</code></td><td><code>0x0400</code></td><td><code>(a -- a a)</code></td><td>Duplicate top of stack</td></tr>
-<tr><td><code>pop</code></td><td><code>0x0500</code></td><td><code>(a -- )</code></td><td>Discard top of stack</td></tr>
-<tr><td><code>swap</code></td><td><code>0x0600</code></td><td><code>(a b -- b a)</code></td><td>Swap top two elements</td></tr>
-<tr><td><code>return</code></td><td><code>0x6400</code></td><td><code>( -- )</code></td><td>Return from program</td></tr>
-<tr><td><code>halt</code></td><td><code>0xFF00</code></td><td><code>( -- )</code></td><td>Halt execution</td></tr>
+<tr><td><code>lanes::lanes.pop</code></td><td><code>0x0100</code></td><td><code>(a -- )</code></td><td>Discard top of stack</td></tr>
+<tr><td><code>lanes::lanes.swap</code></td><td><code>0x0101</code></td><td><code>(a b -- b a)</code></td><td>Swap top two elements</td></tr>
 </tbody></table>
 </div>
-<h2 id="laneconstants-0x0f"><a class="header" href="#laneconstants-0x0f">LaneConstants (<code>0x0F</code>)</a></h2>
-<p>Address constant instructions.</p>
+<h2 id="lanes-device-0x01--address-constants"><a class="header" href="#lanes-device-0x01--address-constants"><code>lanes</code> device (<code>0x01</code>) — address constants</a></h2>
+<p>Kept as lanes instructions, rather than plain <code>cpu::cpu.const u64</code>, so that
+validation can tell a location from a lane from a zone.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>const_loc</code></td><td><code>0x000F</code></td><td><code>( -- loc)</code></td><td>Push location address</td></tr>
-<tr><td><code>const_lane</code></td><td><code>0x010F</code></td><td><code>( -- lane)</code></td><td>Push lane address</td></tr>
-<tr><td><code>const_zone</code></td><td><code>0x020F</code></td><td><code>( -- zone)</code></td><td>Push zone address</td></tr>
+<tr><td><code>lanes::lanes.const_loc</code></td><td><code>0x0102</code></td><td><code>( -- loc)</code></td><td>Push location address</td></tr>
+<tr><td><code>lanes::lanes.const_lane</code></td><td><code>0x0103</code></td><td><code>( -- lane)</code></td><td>Push lane address</td></tr>
+<tr><td><code>lanes::lanes.const_zone</code></td><td><code>0x0104</code></td><td><code>( -- zone)</code></td><td>Push zone address</td></tr>
 </tbody></table>
 </div>
-<h2 id="atomarrangement-0x10"><a class="header" href="#atomarrangement-0x10">AtomArrangement (<code>0x10</code>)</a></h2>
-<p>Atom filling and transport.</p>
+<h2 id="lanes-device-0x01--atom-arrangement"><a class="header" href="#lanes-device-0x01--atom-arrangement"><code>lanes</code> device (<code>0x01</code>) — atom arrangement</a></h2>
+<p>The only ops the machine actually <strong>executes</strong>: they drive the atom state and
+fault on an illegal move.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>initial_fill</code></td><td><code>0x0010</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Initial atom loading</td></tr>
-<tr><td><code>fill</code></td><td><code>0x0110</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Atom refill</td></tr>
-<tr><td><code>move</code></td><td><code>0x0210</code></td><td><code>(lane₁..laneₙ -- )</code></td><td>Atom transport along lanes</td></tr>
+<tr><td><code>lanes::lanes.initial_fill</code></td><td><code>0x0105</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Initial atom loading</td></tr>
+<tr><td><code>lanes::lanes.fill</code></td><td><code>0x0106</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Atom refill</td></tr>
+<tr><td><code>lanes::lanes.move</code></td><td><code>0x0107</code></td><td><code>(lane₁..laneₙ -- )</code></td><td>Atom transport along lanes</td></tr>
 </tbody></table>
 </div>
-<h2 id="quantumgate-0x11"><a class="header" href="#quantumgate-0x11">QuantumGate (<code>0x11</code>)</a></h2>
-<p>Single- and multi-qubit gate operations.</p>
+<h2 id="lanes-device-0x01--quantum-gates"><a class="header" href="#lanes-device-0x01--quantum-gates"><code>lanes</code> device (<code>0x01</code>) — quantum gates</a></h2>
+<p>Not simulated — emitted as effects for hardware or a simulator downstream.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>local_r</code></td><td><code>0x0011</code></td><td><code>(loc₁..locₙ θ φ -- )</code></td><td>Local R rotation</td></tr>
-<tr><td><code>local_rz</code></td><td><code>0x0111</code></td><td><code>(loc₁..locₙ θ -- )</code></td><td>Local Rz rotation</td></tr>
-<tr><td><code>global_r</code></td><td><code>0x0211</code></td><td><code>(θ φ -- )</code></td><td>Global R rotation</td></tr>
-<tr><td><code>global_rz</code></td><td><code>0x0311</code></td><td><code>(θ -- )</code></td><td>Global Rz rotation</td></tr>
-<tr><td><code>cz</code></td><td><code>0x0411</code></td><td><code>(zone -- )</code></td><td>Controlled-Z gate on zone</td></tr>
+<tr><td><code>lanes::lanes.local_rz</code></td><td><code>0x0108</code></td><td><code>(loc₁..locₙ θ -- )</code></td><td>Local Rz rotation</td></tr>
+<tr><td><code>lanes::lanes.local_r</code></td><td><code>0x0109</code></td><td><code>(loc₁..locₙ θ φ -- )</code></td><td>Local R rotation</td></tr>
+<tr><td><code>lanes::lanes.global_rz</code></td><td><code>0x010A</code></td><td><code>(θ -- )</code></td><td>Global Rz rotation</td></tr>
+<tr><td><code>lanes::lanes.global_r</code></td><td><code>0x010B</code></td><td><code>(θ φ -- )</code></td><td>Global R rotation</td></tr>
+<tr><td><code>lanes::lanes.cz</code></td><td><code>0x010C</code></td><td><code>(zone -- )</code></td><td>Controlled-Z gate on zone</td></tr>
 </tbody></table>
 </div>
-<h2 id="measurement-0x12"><a class="header" href="#measurement-0x12">Measurement (<code>0x12</code>)</a></h2>
-<p>Qubit measurement.</p>
+<h2 id="lanes-device-0x01--measurement"><a class="header" href="#lanes-device-0x01--measurement"><code>lanes</code> device (<code>0x01</code>) — measurement</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>measure</code></td><td><code>0x0012</code></td><td><code>(zone₁..zoneₙ -- future₁..futureₙ)</code></td><td>Initiate measurement</td></tr>
-<tr><td><code>await_measure</code></td><td><code>0x0112</code></td><td><code>(future -- array_ref)</code></td><td>Wait for measurement result</td></tr>
+<tr><td><code>lanes::lanes.measure</code></td><td><code>0x010D</code></td><td><code>(zone₁..zoneₙ -- future₁..futureₙ)</code></td><td>Initiate measurement</td></tr>
+<tr><td><code>lanes::lanes.await_measure</code></td><td><code>0x010E</code></td><td><code>(future -- array_ref)</code></td><td>Wait for measurement result</td></tr>
 </tbody></table>
 </div>
-<h2 id="array-0x13"><a class="header" href="#array-0x13">Array (<code>0x13</code>)</a></h2>
-<p>Array construction and indexing.</p>
+<h2 id="lanes-device-0x01--arrays"><a class="header" href="#lanes-device-0x01--arrays"><code>lanes</code> device (<code>0x01</code>) — arrays</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>new_array</code></td><td><code>0x0013</code></td><td><code>(elem₁..elemₙ -- array_ref)</code></td><td>Construct array from stack</td></tr>
-<tr><td><code>get_item</code></td><td><code>0x0113</code></td><td><code>(array_ref idx₁..idxₙ -- value)</code></td><td>Index into array</td></tr>
+<tr><td><code>lanes::lanes.new_array</code></td><td><code>0x010F</code></td><td><code>(elem₁..elemₙ -- array_ref)</code></td><td>Construct array from stack</td></tr>
+<tr><td><code>lanes::lanes.get_item</code></td><td><code>0x0110</code></td><td><code>(array_ref idx₁..idxₙ -- value)</code></td><td>Index into array</td></tr>
 </tbody></table>
 </div>
-<h2 id="detectorobservable-0x14"><a class="header" href="#detectorobservable-0x14">DetectorObservable (<code>0x14</code>)</a></h2>
-<p>Detector and observable setup.</p>
+<h2 id="lanes-device-0x01--detectors-and-observables"><a class="header" href="#lanes-device-0x01--detectors-and-observables"><code>lanes</code> device (<code>0x01</code>) — detectors and observables</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>set_detector</code></td><td><code>0x0014</code></td><td><code>(array_ref -- detector_ref)</code></td><td>Set detector</td></tr>
-<tr><td><code>set_observable</code></td><td><code>0x0114</code></td><td><code>(array_ref -- observable_ref)</code></td><td>Set observable</td></tr>
+<tr><td><code>lanes::lanes.set_detector</code></td><td><code>0x0111</code></td><td><code>(array_ref -- detector_ref)</code></td><td>Set detector</td></tr>
+<tr><td><code>lanes::lanes.set_observable</code></td><td><code>0x0112</code></td><td><code>(array_ref -- observable_ref)</code></td><td>Set observable</td></tr>
 </tbody></table>
-</div><div style="break-before: page; page-break-before: always;"></div><h1 id="bloqade-lanes-bytecode-instruction-specification"><a class="header" href="#bloqade-lanes-bytecode-instruction-specification">Bloqade Lanes Bytecode Instruction Specification</a></h1>
+</div>
+<h2 id="cpu-device-0x00--vihaco-cpu"><a class="header" href="#cpu-device-0x00--vihaco-cpu"><code>cpu</code> device (<code>0x00</code>) — vihaco-cpu</a></h2>
+<p>The full vihaco-cpu instruction set is available (42 ops: arithmetic,
+comparison, bitwise, control flow, the heap allocator). The lanes compiler emits
+only these four; the rest decode and validate but are never generated.</p>
+<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>cpu::cpu.const f64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- float)</code></td><td>Push 64-bit float constant</td></tr>
+<tr><td><code>cpu::cpu.const i64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- int)</code></td><td>Push 64-bit integer constant</td></tr>
+<tr><td><code>cpu::cpu.dup</code></td><td><code>0x000D</code></td><td><code>(a -- a a)</code></td><td>Duplicate top of stack</td></tr>
+<tr><td><code>cpu::cpu.halt</code></td><td><code>0x0009</code></td><td><code>( -- )</code></td><td>Halt execution</td></tr>
+<tr><td><code>cpu::cpu.ret &lt;n&gt;</code></td><td><code>0x0006</code></td><td><code>( -- )</code></td><td>Return from program</td></tr>
+</tbody></table>
+</div>
+<p>Note that <code>const</code> is one typed instruction, so <code>const f64</code> and <code>const i64</code> share
+an opcode and differ in their operand. The Python <code>op_name()</code> still reports
+<code>const_float</code> / <code>const_int</code>, because the decoder needs the distinction.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="bloqade-lanes-bytecode-instruction-specification"><a class="header" href="#bloqade-lanes-bytecode-instruction-specification">Bloqade Lanes Bytecode Instruction Specification</a></h1>
 <p>This document specifies the bytecode instruction set used by Bloqade Lanes to describe atom shuttling programs for neutral atom quantum processors. A bytecode program is a sequence of fixed-width instructions that drive the full lifecycle of a computation: loading atoms into an optical lattice, shuttling them between sites using AOD (Acousto-Optic Deflector) transport, applying quantum gates, and reading out measurement results.</p>
 <p>The instruction set is organized around the physical structure of the hardware. Atoms occupy <strong>sites</strong> within <strong>words</strong> (rows of trapping positions in the lattice). <strong>Buses</strong> define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A <strong>lane</strong> is a single atom trajectory along a bus — one source site to one destination site. A <strong>zone</strong> groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define locations where atoms are measured. These concepts map directly to the address types used in the bytecode: <code>LocationAddr</code> (word, site), <code>LaneAddr</code> (word, site, bus, direction), and <code>ZoneAddr</code> (zone).</p>
 <p>Programs execute on a stack machine. Address constants and numeric parameters are pushed onto the stack, then consumed by operation instructions (fills, moves, gates, measurements). The bytecode is designed to be validated offline against an architecture specification (<code>ArchSpec</code>) that captures the geometry, bus topology, and zone layout of a specific device.</p>
-<h2 id="instruction-format"><a class="header" href="#instruction-format">Instruction Format</a></h2>
-<p>Every instruction is a fixed <strong>16 bytes</strong>: a 32-bit opcode word followed by three 32-bit data words, all little-endian.</p>
-<pre><code>┌──────────────┬──────────────┬──────────────┬──────────────┐
-│ opcode (u32) │ data0 (u32)  │ data1 (u32)  │ data2 (u32)  │
-├──────────────┼──────────────┼──────────────┼──────────────┤
-│  bytes 0–3   │  bytes 4–7   │  bytes 8–11  │ bytes 12–15  │
-└──────────────┴──────────────┴──────────────┴──────────────┘
-</code></pre>
-<p>Instructions that take no operands ignore the data words (should be zero). Instructions with operands encode them in the data words as described per-instruction below.</p>
-<h2 id="opcode-packing"><a class="header" href="#opcode-packing">Opcode Packing</a></h2>
-<p>The opcode word is packed as a 1-byte <strong>instruction code</strong> and a 1-byte <strong>device code</strong> in the low 16 bits of the u32. The upper 16 bits are unused (must be zero). The device code occupies the least significant byte.</p>
-<pre><code>┌──────────────┬──────────────────┬──────────────────┐
-│   unused     │ instruction code │   device code    │
-│  (16 bits)   │    (8 bits)      │    (8 bits)      │
-└──────────────┴──────────────────┴──────────────────┘
-  bits 31–16       bits 15–8          bits 7–0
-</code></pre>
-<p>Full opcode = <code>(instruction_code &lt;&lt; 8) | device_code</code>.</p>
-<p>In little-endian memory layout:</p>
-<pre><code>byte[0] = device_code        (bits 7–0)
-byte[1] = instruction_code   (bits 15–8)
-byte[2] = 0x00               (unused)
-byte[3] = 0x00               (unused)
-</code></pre>
-<p>Instruction codes <strong>can overlap</strong> across different devices — the device code byte disambiguates.</p>
-<h2 id="device-codes"><a class="header" href="#device-codes">Device Codes</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Device Code</th><th>Name</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>0x00</code></td><td><code>Cpu</code></td><td>Stack manipulation, constants, control flow (FLAIR-aligned)</td></tr>
-<tr><td><code>0x0F</code></td><td><code>LaneConstants</code></td><td>Lane-specific constant instructions</td></tr>
-<tr><td><code>0x10</code></td><td><code>AtomArrangement</code></td><td>Atom filling and movement</td></tr>
-<tr><td><code>0x11</code></td><td><code>QuantumGate</code></td><td>Single- and multi-qubit gate operations</td></tr>
-<tr><td><code>0x12</code></td><td><code>Measurement</code></td><td>Qubit measurement</td></tr>
-<tr><td><code>0x13</code></td><td><code>Array</code></td><td>Array construction and indexing</td></tr>
-<tr><td><code>0x14</code></td><td><code>DetectorObservable</code></td><td>Detector and observable setup</td></tr>
+<h2 id="the-machine"><a class="header" href="#the-machine">The machine</a></h2>
+<p>A lanes program runs on a <strong>composite machine</strong> of two vihaco devices:</p>
+<div class="table-wrapper"><table><thead><tr><th>Device</th><th>Code</th><th>Supplies</th></tr></thead><tbody>
+<tr><td><code>cpu</code></td><td><code>0x00</code></td><td>vihaco-cpu's <code>CPU</code> component: the stack, constants, arithmetic, comparisons, control flow, the heap allocator</td></tr>
+<tr><td><code>lanes</code></td><td><code>0x01</code></td><td>atom movement, gates, measurement, arrays, and the <code>pop</code>/<code>swap</code> the CPU lacks</td></tr>
 </tbody></table>
 </div>
-<p>Device codes <code>0x01</code>–<code>0x0E</code> are reserved for future FLAIR device types.</p>
-<h2 id="address-encoding-1"><a class="header" href="#address-encoding-1">Address Encoding</a></h2>
-<p>All address field components are 16-bit, packed into the data words.</p>
-<h3 id="locationaddr"><a class="header" href="#locationaddr"><code>LocationAddr</code></a></h3>
-<p>Packed in a single data word (data0):</p>
-<pre><code>data0: [word_id:16][site_id:16]
-        bits 31–16   bits 15–0
+<p>Instructions are spelled <code>&lt;device&gt;::&lt;dialect&gt;.&lt;mnemonic&gt;</code>. The first half is the
+device; the second is that device's own dialect head.</p>
+<p>Only the atom-arrangement ops (<code>initial_fill</code>, <code>fill</code>, <code>move</code>) are executed by
+the machine — they advance the atom state and fault on an illegal move. The
+quantum ops are emitted as effects rather than simulated, and the array and
+measurement ops likewise, pending
+<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/776">#776</a>.</p>
+<h2 id="instruction-format"><a class="header" href="#instruction-format">Instruction Format</a></h2>
+<p>Every instruction is a fixed <strong>14-byte</strong> word: a 1-byte device opcode, a 1-byte
+instruction opcode, then the operands in declaration order, each little-endian,
+zero-padded out to the full width.</p>
+<pre><code>┌────────────┬────────────┬──────────────────────────────────┐
+│ device(u8) │ opcode(u8) │ operands (LE) ‖ zero padding      │
+├────────────┼────────────┼──────────────────────────────────┤
+│   byte 0   │   byte 1   │            bytes 2–13            │
+└────────────┴────────────┴──────────────────────────────────┘
 </code></pre>
-<p>Total: 32 bits (u32).</p>
-<h3 id="laneaddr"><a class="header" href="#laneaddr"><code>LaneAddr</code></a></h3>
-<p>Packed across two data words (data0 + data1):</p>
-<pre><code>data0: [word_id:16][site_id:16]
-        bits 31–16   bits 15–0
+<p>The width is not a chosen constant — vihaco derives it as the widest variant
+across both devices, and it changes if either gains a wider operand.</p>
+<p>Because every word is the same width, the code region is just N concatenated
+words and decodes without desync.</p>
+<h2 id="opcodes"><a class="header" href="#opcodes">Opcodes</a></h2>
+<p>vihaco assigns opcodes by <strong>declaration position</strong>. The Python API reports them
+packed as <code>(device_code &lt;&lt; 8) | instruction_code</code>.</p>
+<p>Both halves are positional, so adding an instruction to either device anywhere
+but the end renumbers everything after it — which changes the binary encoding of
+existing programs. The values in this document are correct for this revision;
+<code>Instruction.op_name()</code> is the stable identity.</p>
+<p>Bloqade Lanes programs are not binary-compatible with either earlier container
+(<code>BLQD</code>, <code>LANES</code>), nor with the FLAIR-aligned device/instruction-code scheme this
+specification previously described.</p>
+<h2 id="binary-container-vhbc"><a class="header" href="#binary-container-vhbc">Binary Container (<code>VHBC</code>)</a></h2>
+<p>The instruction words sit inside vihaco's <code>VHBC</code> section container, which
+mirrors the <code>sst v1</code> text structure: one root section, whose header is the
+version and whose bytecode is the code region.</p>
+<pre><code class="language-text">magic                : 4 bytes = b&quot;VHBC&quot;
+version              : u16 LE  = 1
+flags                : u16 LE  = 0
+context_len          : u64 LE  = 0        (empty global context)
+── root section ──
+section_len          : u64 LE             (total, including this frame)
+composite_header_len : u64 LE  = 4
+composite header     : u32 LE  = (major &lt;&lt; 16) | minor
+bytecode_len         : u64 LE
+bytecode             : N × instruction words
+child_count          : u32 LE  = 0        (no child sections)
+</code></pre>
+<p>vihaco ships readers for this container but no writers, so Bloqade Lanes owns
+the emitters (<code>isa::container</code>); the round-trip tests read everything back
+through vihaco's own parser to keep the two in step.</p>
+<p>Neither device's instruction enum carries a binary codec — vihaco-cpu's has none
+and <code>#[composite]</code> derives none — so encoding goes through a parallel mirror ISA
+(<code>isa::bytecode</code>) that does. PPVM solves this the same way.</p>
+<h2 id="text-format-sst"><a class="header" href="#text-format-sst">Text Format (<code>.sst</code>)</a></h2>
+<p>The text form is vihaco's <code>sst v1</code> section container. A lanes program is one
+root section: a header carrying the version, and a text body holding a single
+<code>@main</code> function.</p>
+<pre><code>sst v1
 
-data1: [dir:1][mt:1][pad:14][bus_id:16]
-       bit 31  bit 30  29–16  bits 15–0
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+fn @main() {
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.const_loc 0x0000000001000000
+  lanes::lanes.initial_fill 2
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).
+</code></pre>
+<p>Container rules:</p>
+<ul>
+<li><code>sst v1</code> must be the first significant line.</li>
+<li>The root section must be named <code>root</code>; a lanes program declares no child
+sections.</li>
+<li><code>.name(x):</code> opens a block and <code>.name(x).</code> closes it — note the trailing dot
+versus colon.</li>
+<li>The global context block (<code>.global:</code> … <code>.global.</code>) may be omitted, and must be
+empty if present: a lanes program has no child-section names to resolve.</li>
+<li>Only <code>.global:</code> or the root section may appear between <code>sst v1</code> and the first
+section, so file-level comments belong <strong>inside</strong> <code>.text(root):</code>.</li>
+</ul>
+<p>Instruction rules:</p>
+<ul>
+<li>Comments are <code>//</code> to end of line.</li>
+<li>Every instruction carries a <strong>device prefix and dialect head</strong>:
+<code>lanes::lanes.move 2</code>, <code>cpu::cpu.halt</code>. Both halves are required — a bare
+<code>move 2</code> does not parse, and neither does a mnemonic under the wrong device.</li>
+<li>Address operands are <code>0x</code>-prefixed hexadecimal; arities and array dimensions
+are decimal.</li>
+<li>Exactly one function is allowed and it must be named <code>@main</code>.</li>
+</ul>
+<p><code>to_text</code> emits this form and <code>parse_text</code> accepts it, round-tripping losslessly.</p>
+<h2 id="address-encoding-1"><a class="header" href="#address-encoding-1">Address Encoding</a></h2>
+<p>Addresses are bit-packed into a single integer operand, written little-endian.</p>
+<h3 id="locationaddr"><a class="header" href="#locationaddr"><code>LocationAddr</code></a></h3>
+<p>Packed into one <code>u64</code>:</p>
+<pre><code>[zone_id:8][word_id:16][site_id:16][pad:24]
+ bits 63–56  bits 55–40  bits 39–24  bits 23–0
+</code></pre>
+<h3 id="laneaddr"><a class="header" href="#laneaddr"><code>LaneAddr</code></a></h3>
+<p>Packed into one <code>u64</code>:</p>
+<pre><code>[dir:1][mt:2][zone_id:8][pad:5][bus_id:16][word_id:16][site_id:16]
+ bit 63  62–61  60–53     52–48   47–32      31–16       15–0
 </code></pre>
 <ul>
 <li><code>dir</code> — direction: 0 = Forward, 1 = Backward</li>
-<li><code>mt</code> — move type: 0 = SiteBus, 1 = WordBus</li>
+<li><code>mt</code> — move type: 0 = SiteBus, 1 = WordBus, 2 = ZoneBus</li>
 </ul>
-<p>Total: 64 bits across two u32 words. Note that data0 shares the same layout as <code>LocationAddr</code>.</p>
 <h4 id="lane-address-convention"><a class="header" href="#lane-address-convention">Lane address convention</a></h4>
 <p>The <code>word_id</code> and <code>site_id</code> fields in a <code>LaneAddr</code> always encode the <strong>forward-direction source</strong> — the position where the atom starts in a forward move. The <code>direction</code> field does <strong>not</strong> change which position is encoded; it only controls which endpoint is treated as source vs destination when the lane is resolved.</p>
 <p><strong>Endpoint resolution</strong> always starts by resolving the forward direction:</p>
@@ -922,150 +1004,108 @@ data1: [dir:1][mt:1][pad:14][bus_id:16]
 </div>
 <p>Validation is always performed against the forward-direction source, regardless of the <code>direction</code> field.</p>
 <h3 id="zoneaddr"><a class="header" href="#zoneaddr"><code>ZoneAddr</code></a></h3>
-<p>Packed in a single data word (data0):</p>
-<pre><code>data0: [pad:16][zone_id:16]
-       bits 31–16  bits 15–0
+<p>Packed into one <code>u32</code>:</p>
+<pre><code>[pad:24][zone_id:8]
+ bits 31–8  bits 7–0
 </code></pre>
-<p>Total: 32 bits (u32).</p>
 <h2 id="instructions"><a class="header" href="#instructions">Instructions</a></h2>
-<h3 id="cpu-0x00--flair-aligned-shared-opcodes"><a class="header" href="#cpu-0x00--flair-aligned-shared-opcodes">Cpu (<code>0x00</code>) — FLAIR-aligned shared opcodes</a></h3>
-<p>These instruction codes are shared with the FLAIR VM/IR spec and use identical values.</p>
-<h4 id="const_int--push-integer-constant"><a class="header" href="#const_int--push-integer-constant"><code>const_int</code> — Push integer constant</a></h4>
+<h3 id="stack-ops"><a class="header" href="#stack-ops">Stack ops</a></h3>
+<p>These come from vihaco-cpu's <code>CPU</code> component, composed as the <code>cpu</code> device
+(see <a href="bytecode/inst-spec.html#the-machine">The machine</a>) — except <code>pop</code> and <code>swap</code>, which vihaco-cpu
+has neither of and which therefore live on the lanes device.</p>
+<h4 id="cpucpuconst-type-value--push-a-constant"><a class="header" href="#cpucpuconst-type-value--push-a-constant"><code>cpu::cpu.const &lt;type&gt;, &lt;value&gt;</code> — Push a constant</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0200</code></td></tr>
-<tr><td>data0</td><td><code>i64</code> LE low 32 bits</td></tr>
-<tr><td>data1</td><td><code>i64</code> LE high 32 bits</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
-<tr><td>Stack</td><td><code>( -- int)</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0011</code></td></tr>
+<tr><td>Operands</td><td>type tag (1 byte) + value tag (1 byte) + payload (up to 8 bytes)</td></tr>
+<tr><td>Stack</td><td><code>( -- value)</code></td></tr>
 </tbody></table>
 </div>
-<p>Pushes a signed 64-bit integer onto the stack. The value is stored as a little-endian i64 across data0 (low) and data1 (high).</p>
-<h4 id="const_float--push-float-constant"><a class="header" href="#const_float--push-float-constant"><code>const_float</code> — Push float constant</a></h4>
+<p>One typed instruction, not one per type — note the comma:
+<code>cpu::cpu.const i64, 42</code>, <code>cpu::cpu.const f64, 1.5</code>. All nine of vihaco's
+types encode, though the lanes compiler emits only <code>i64</code> and <code>f64</code>. The Python
+<code>op_name()</code> still reports <code>const_int</code> / <code>const_float</code>, because the decoder
+pushes a different value type for each and the mnemonic alone would not say
+which.</p>
+<h4 id="cpucpudup--duplicate-top-of-stack"><a class="header" href="#cpucpudup--duplicate-top-of-stack"><code>cpu::cpu.dup</code> — Duplicate top of stack</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x03</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0300</code></td></tr>
-<tr><td>data0</td><td><code>f64</code> LE low 32 bits</td></tr>
-<tr><td>data1</td><td><code>f64</code> LE high 32 bits</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
-<tr><td>Stack</td><td><code>( -- float)</code></td></tr>
-</tbody></table>
-</div>
-<p>Pushes a 64-bit float onto the stack. The value is stored as a little-endian f64 across data0 (low) and data1 (high).</p>
-<h4 id="dup--duplicate-top-of-stack"><a class="header" href="#dup--duplicate-top-of-stack"><code>dup</code> — Duplicate top of stack</a></h4>
-<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x04</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0400</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x000D</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(a -- a a)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="pop--discard-top-of-stack"><a class="header" href="#pop--discard-top-of-stack"><code>pop</code> — Discard top of stack</a></h4>
+<h4 id="laneslanespop--discard-top-of-stack"><a class="header" href="#laneslanespop--discard-top-of-stack"><code>lanes::lanes.pop</code> — Discard top of stack</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x05</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0500</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0100</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(a -- )</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="swap--swap-top-two-stack-elements"><a class="header" href="#swap--swap-top-two-stack-elements"><code>swap</code> — Swap top two stack elements</a></h4>
+<h4 id="laneslanesswap--swap-top-two-stack-elements"><a class="header" href="#laneslanesswap--swap-top-two-stack-elements"><code>lanes::lanes.swap</code> — Swap top two stack elements</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x06</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0600</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0101</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(a b -- b a)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="return--return-from-program"><a class="header" href="#return--return-from-program"><code>return</code> — Return from program</a></h4>
+<h4 id="cpucpuret-n--return-from-the-current-function"><a class="header" href="#cpucpuret-n--return-from-the-current-function"><code>cpu::cpu.ret &lt;n&gt;</code> — Return from the current function</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x64</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x6400</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0006</code></td></tr>
+<tr><td>Operands</td><td>keep count, <code>u32</code> LE (4 bytes)</td></tr>
+<tr><td>Stack</td><td><code>(a -- )</code></td></tr>
+</tbody></table>
+</div>
+<p><code>&lt;n&gt;</code> is how many values to keep as the return value. The Python <code>op_name()</code>
+reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</p>
+<h4 id="cpucpuhalt--halt-execution"><a class="header" href="#cpucpuhalt--halt-execution"><code>cpu::cpu.halt</code> — Halt execution</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Opcode</td><td><code>0x0009</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>( -- )</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="halt--halt-execution"><a class="header" href="#halt--halt-execution"><code>halt</code> — Halt execution</a></h4>
+<h3 id="address-constants"><a class="header" href="#address-constants">Address constants</a></h3>
+<h4 id="laneslanesconst_loc--push-location-address"><a class="header" href="#laneslanesconst_loc--push-location-address"><code>lanes::lanes.const_loc</code> — Push location address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x00</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0xFF</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0xFF00</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
-<tr><td>Stack</td><td><code>( -- )</code></td></tr>
-</tbody></table>
-</div>
-<h3 id="laneconstants-0x0f-1"><a class="header" href="#laneconstants-0x0f-1">LaneConstants (<code>0x0F</code>)</a></h3>
-<h4 id="const_loc--push-location-address"><a class="header" href="#const_loc--push-location-address"><code>const_loc</code> — Push location address</a></h4>
-<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x000F</code></td></tr>
-<tr><td>data0</td><td><code>LocationAddr</code> — <code>[word_id:16][site_id:16]</code></td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0102</code></td></tr>
+<tr><td>Operands</td><td><code>LocationAddr</code> as <code>u64</code> LE — <code>[zone_id:8][word_id:16][site_id:16][pad:24]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- loc)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="const_lane--push-lane-address"><a class="header" href="#const_lane--push-lane-address"><code>const_lane</code> — Push lane address</a></h4>
+<h4 id="laneslanesconst_lane--push-lane-address"><a class="header" href="#laneslanesconst_lane--push-lane-address"><code>lanes::lanes.const_lane</code> — Push lane address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x010F</code></td></tr>
-<tr><td>data0</td><td><code>[word_id:16][site_id:16]</code></td></tr>
-<tr><td>data1</td><td><code>[dir:1][mt:1][pad:14][bus_id:16]</code></td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0103</code></td></tr>
+<tr><td>Operands</td><td><code>LaneAddr</code> as <code>u64</code> LE — <code>[dir:1][mt:2][zone_id:8][pad:5][bus_id:16][word_id:16][site_id:16]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- lane)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="const_zone--push-zone-address"><a class="header" href="#const_zone--push-zone-address"><code>const_zone</code> — Push zone address</a></h4>
+<h4 id="laneslanesconst_zone--push-zone-address"><a class="header" href="#laneslanesconst_zone--push-zone-address"><code>lanes::lanes.const_zone</code> — Push zone address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x020F</code></td></tr>
-<tr><td>data0</td><td><code>ZoneAddr</code> — <code>[pad:16][zone_id:16]</code></td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0104</code></td></tr>
+<tr><td>Operands</td><td><code>ZoneAddr</code> as <code>u32</code> LE — <code>[pad:24][zone_id:8]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- zone)</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="atomarrangement-0x10-1"><a class="header" href="#atomarrangement-0x10-1">AtomArrangement (<code>0x10</code>)</a></h3>
-<h4 id="initial_fill--initial-atom-loading"><a class="header" href="#initial_fill--initial-atom-loading"><code>initial_fill</code> — Initial atom loading</a></h4>
+<h3 id="atom-arrangement"><a class="header" href="#atom-arrangement">Atom arrangement</a></h3>
+<h4 id="laneslanesinitial_fill--initial-atom-loading"><a class="header" href="#laneslanesinitial_fill--initial-atom-loading"><code>lanes::lanes.initial_fill</code> — Initial atom loading</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x10</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0010</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0105</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>n</code> location addresses and performs the initial atom fill at those sites.</p>
-<h4 id="fill--atom-refill"><a class="header" href="#fill--atom-refill"><code>fill</code> — Atom refill</a></h4>
+<h4 id="laneslanesfill--atom-refill"><a class="header" href="#laneslanesfill--atom-refill"><code>lanes::lanes.fill</code> — Atom refill</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x10</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0110</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0106</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>n</code> location addresses and refills atoms at those sites.</p>
-<h4 id="move--atom-transport"><a class="header" href="#move--atom-transport"><code>move</code> — Atom transport</a></h4>
+<h4 id="laneslanesmove--atom-transport"><a class="header" href="#laneslanesmove--atom-transport"><code>lanes::lanes.move</code> — Atom transport</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x10</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0210</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0107</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(lane₁ lane₂ … laneₙ -- )</code></td></tr>
 </tbody></table>
 </div>
@@ -1085,150 +1125,99 @@ data1: [dir:1][mt:1][pad:14][bus_id:16]
 <tr><td>Lane positions form a complete grid</td><td><code>AODConstraintViolation</code></td></tr>
 </tbody></table>
 </div>
-<h3 id="quantumgate-0x11-1"><a class="header" href="#quantumgate-0x11-1">QuantumGate (<code>0x11</code>)</a></h3>
-<h4 id="local_r--local-r-rotation"><a class="header" href="#local_r--local-r-rotation"><code>local_r</code> — Local R rotation</a></h4>
+<h3 id="quantum-gates"><a class="header" href="#quantum-gates">Quantum gates</a></h3>
+<h4 id="laneslaneslocal_r--local-r-rotation"><a class="header" href="#laneslaneslocal_r--local-r-rotation"><code>lanes::lanes.local_r</code> — Local R rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0011</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0109</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ φ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 2 float parameters (φ = axis angle, θ = rotation angle) then <code>n</code> location addresses, and applies a local R rotation. The call convention matches the SSA IR: <code>local_r(%φ, %θ, %loc₁, …)</code> — first argument (φ) is pushed last and popped first.</p>
-<h4 id="local_rz--local-rz-rotation"><a class="header" href="#local_rz--local-rz-rotation"><code>local_rz</code> — Local Rz rotation</a></h4>
+<h4 id="laneslaneslocal_rz--local-rz-rotation"><a class="header" href="#laneslaneslocal_rz--local-rz-rotation"><code>lanes::lanes.local_rz</code> — Local Rz rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0111</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0108</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 1 float parameter (θ = rotation angle) then <code>n</code> location addresses, and applies a local Rz rotation. The call convention matches the SSA IR: <code>local_rz(%θ, %loc₁, …)</code>.</p>
-<h4 id="global_r--global-r-rotation"><a class="header" href="#global_r--global-r-rotation"><code>global_r</code> — Global R rotation</a></h4>
+<h4 id="laneslanesglobal_r--global-r-rotation"><a class="header" href="#laneslanesglobal_r--global-r-rotation"><code>lanes::lanes.global_r</code> — Global R rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0211</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010B</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(θ φ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 2 float parameters (φ = axis angle, θ = rotation angle), applies a global R rotation. The call convention matches the SSA IR: <code>global_r(%φ, %θ)</code>.</p>
-<h4 id="global_rz--global-rz-rotation"><a class="header" href="#global_rz--global-rz-rotation"><code>global_rz</code> — Global Rz rotation</a></h4>
+<h4 id="laneslanesglobal_rz--global-rz-rotation"><a class="header" href="#laneslanesglobal_rz--global-rz-rotation"><code>lanes::lanes.global_rz</code> — Global Rz rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x03</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0311</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010A</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(θ -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops 1 float parameter (θ = rotation angle), applies a global Rz rotation. Since there is only one parameter, it is both pushed last and popped first.</p>
-<h4 id="cz--controlled-z-gate"><a class="header" href="#cz--controlled-z-gate"><code>cz</code> — Controlled-Z gate</a></h4>
+<h4 id="laneslanescz--controlled-z-gate"><a class="header" href="#laneslanescz--controlled-z-gate"><code>lanes::lanes.cz</code> — Controlled-Z gate</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x11</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x04</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0411</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010C</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(zone -- )</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops a zone address and applies a CZ gate across the zone.</p>
-<h3 id="measurement-0x12-1"><a class="header" href="#measurement-0x12-1">Measurement (<code>0x12</code>)</a></h3>
-<h4 id="measure--initiate-measurement"><a class="header" href="#measure--initiate-measurement"><code>measure</code> — Initiate measurement</a></h4>
+<h3 id="measurement"><a class="header" href="#measurement">Measurement</a></h3>
+<h4 id="laneslanesmeasure--initiate-measurement"><a class="header" href="#laneslanesmeasure--initiate-measurement"><code>lanes::lanes.measure</code> — Initiate measurement</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x12</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0012</code></td></tr>
-<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010D</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(zone₁ zone₂ … zoneₙ -- future₁ future₂ … futureₙ)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>n</code> zone addresses and pushes <code>n</code> measure futures.</p>
-<h4 id="await_measure--wait-for-measurement-result"><a class="header" href="#await_measure--wait-for-measurement-result"><code>await_measure</code> — Wait for measurement result</a></h4>
+<h4 id="laneslanesawait_measure--wait-for-measurement-result"><a class="header" href="#laneslanesawait_measure--wait-for-measurement-result"><code>lanes::lanes.await_measure</code> — Wait for measurement result</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x12</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0112</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010E</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(future -- array_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops a measure future and pushes an array reference containing the measurement results.</p>
-<h3 id="array-0x13-1"><a class="header" href="#array-0x13-1">Array (<code>0x13</code>)</a></h3>
-<h4 id="new_array--construct-array-from-stack"><a class="header" href="#new_array--construct-array-from-stack"><code>new_array</code> — Construct array from stack</a></h4>
+<h3 id="arrays"><a class="header" href="#arrays">Arrays</a></h3>
+<h4 id="laneslanesnew_array--construct-array-from-stack"><a class="header" href="#laneslanesnew_array--construct-array-from-stack"><code>lanes::lanes.new_array</code> — Construct array from stack</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x13</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0013</code></td></tr>
-<tr><td>data0</td><td><code>[type_tag:8][pad:8][dim0:16]</code></td></tr>
-<tr><td>data1</td><td><code>[pad:16][dim1:16]</code></td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x010F</code></td></tr>
+<tr><td>Operands</td><td>three <code>u32</code> LE: <code>type_tag</code>, <code>dim0</code>, <code>dim1</code> (<code>dim1 = 0</code> for 1-D)</td></tr>
 <tr><td>Stack</td><td><code>(elem₁ elem₂ … elemₙ -- array_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Constructs an array of <code>dim0 × dim1</code> elements with element type <code>type_tag</code>. If <code>dim1</code> is 0, the array is 1-dimensional with <code>dim0</code> elements.</p>
-<h4 id="get_item--index-into-array"><a class="header" href="#get_item--index-into-array"><code>get_item</code> — Index into array</a></h4>
+<h4 id="laneslanesget_item--index-into-array"><a class="header" href="#laneslanesget_item--index-into-array"><code>lanes::lanes.get_item</code> — Index into array</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x13</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0113</code></td></tr>
-<tr><td>data0</td><td><code>u16</code> LE ndims (upper 16 bits unused)</td></tr>
-<tr><td>data1</td><td>unused</td></tr>
-<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0110</code></td></tr>
+<tr><td>Operands</td><td><code>u32</code> LE ndims</td></tr>
 <tr><td>Stack</td><td><code>(array_ref idx₁ … idxₙ -- value)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops <code>ndims</code> index values then the array reference, and pushes the indexed element.</p>
-<h3 id="detectorobservable-0x14-1"><a class="header" href="#detectorobservable-0x14-1">DetectorObservable (<code>0x14</code>)</a></h3>
-<h4 id="set_detector--set-detector"><a class="header" href="#set_detector--set-detector"><code>set_detector</code> — Set detector</a></h4>
+<h3 id="detectors-and-observables"><a class="header" href="#detectors-and-observables">Detectors and observables</a></h3>
+<h4 id="laneslanesset_detector--set-detector"><a class="header" href="#laneslanesset_detector--set-detector"><code>lanes::lanes.set_detector</code> — Set detector</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x14</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0014</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0111</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(array_ref -- detector_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops an array reference and pushes a detector reference.</p>
-<h4 id="set_observable--set-observable"><a class="header" href="#set_observable--set-observable"><code>set_observable</code> — Set observable</a></h4>
+<h4 id="laneslanesset_observable--set-observable"><a class="header" href="#laneslanesset_observable--set-observable"><code>lanes::lanes.set_observable</code> — Set observable</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Device Code</td><td><code>0x14</code></td></tr>
-<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
-<tr><td>Full Opcode</td><td><code>0x0114</code></td></tr>
-<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Opcode</td><td><code>0x0112</code></td></tr>
+<tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(array_ref -- observable_ref)</code></td></tr>
 </tbody></table>
 </div>
 <p>Pops an array reference and pushes an observable reference.</p>
-<h2 id="reserved-opcode-ranges"><a class="header" href="#reserved-opcode-ranges">Reserved Opcode Ranges</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Range</th><th>Owner</th></tr></thead><tbody>
-<tr><td>Device <code>0x00</code>, inst codes <code>0x00</code>–<code>0x8F</code></td><td>Reserved for FLAIR. This project uses only <code>0x02</code>–<code>0x06</code>, <code>0x64</code>, <code>0xFF</code>.</td></tr>
-<tr><td>Device codes <code>0x01</code>–<code>0x0E</code></td><td>Reserved for future FLAIR device types</td></tr>
-<tr><td>Device codes <code>0x0F</code>–<code>0xFF</code></td><td>Project-specific (currently <code>0x0F</code>–<code>0x14</code> allocated)</td></tr>
-</tbody></table>
-</div>
-<h3 id="known-flair-allocations-device-0x00"><a class="header" href="#known-flair-allocations-device-0x00">Known FLAIR allocations (device <code>0x00</code>)</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Instruction Code</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><code>0x01</code></td><td><code>const.bool</code></td></tr>
-<tr><td><code>0x10</code>–<code>0x17</code></td><td>Arithmetic (<code>arith.add_int</code>, <code>arith.add_float</code>, etc.)</td></tr>
-<tr><td><code>0x20</code>–<code>0x23</code></td><td>Comparison (<code>cmp.gt_int</code>, <code>cmp.eq_float</code>, etc.)</td></tr>
-<tr><td><code>0x28</code>–<code>0x2A</code></td><td>Boolean (<code>bool.not</code>, <code>bool.and</code>, <code>bool.or</code>)</td></tr>
-<tr><td><code>0x30</code>–<code>0x33</code></td><td>Waveform (<code>waveform.poly4</code>, <code>waveform.delay</code>, etc.)</td></tr>
-<tr><td><code>0x40</code>–<code>0x43</code></td><td>Channel (<code>channel.emit</code>, <code>channel.play</code>, etc.)</td></tr>
-<tr><td><code>0x50</code>–<code>0x52</code></td><td>Peer messaging</td></tr>
-<tr><td><code>0x60</code>–<code>0x63</code></td><td>Control flow (<code>cf.jump</code>, <code>cf.branch</code>, <code>cf.call</code>)</td></tr>
-<tr><td><code>0x80</code></td><td><code>debug.trace</code></td></tr>
-</tbody></table>
-</div><div style="break-before: page; page-break-before: always;"></div><h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
 <p>The <code>bloqade-bytecode</code> CLI assembles, disassembles, and validates lane-move bytecode programs.</p>
 <pre><code>bloqade-bytecode &lt;COMMAND&gt;
 </code></pre>
@@ -1324,6 +1313,39 @@ bloqade-bytecode validate bad.sst --arch gemini-logical.json
 # error: 1 validation error(s)
 </code></pre>
 <hr />
+<h3 id="run"><a class="header" href="#run"><code>run</code></a></h3>
+<p>Execute a program on the composite machine. Accepts both text (<code>.sst</code>) and
+binary formats.</p>
+<pre><code>bloqade-bytecode run &lt;INPUT&gt; [--arch &lt;ARCH&gt;] [--max-steps &lt;N&gt;] [--effects]
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Argument</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>&lt;INPUT&gt;</code></td><td>Input file (<code>.sst</code> = text, otherwise binary)</td></tr>
+<tr><td><code>--arch &lt;ARCH&gt;</code></td><td>ArchSpec JSON file. <code>move</code> cannot resolve a lane into endpoints without one</td></tr>
+<tr><td><code>--max-steps &lt;N&gt;</code></td><td>Instruction budget before giving up (default 1,000,000)</td></tr>
+<tr><td><code>--effects</code></td><td>Print every effect the lanes device reported, in order</td></tr>
+</tbody></table>
+</div>
+<p><strong>What actually runs.</strong> The machine executes <em>atom movement</em>: <code>initial_fill</code>,
+<code>fill</code> and <code>move</code> advance the atom state and fail on an illegal move — which
+is a real check, and one validation cannot make, since the validator does not
+track which sites are occupied. The quantum, array and measurement ops are
+reported as <code>NotSimulated</code> effects carrying the operands they consumed, rather
+than interpreted; simulating them is
+<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1022">#1022</a>.</p>
+<p><strong>Examples:</strong></p>
+<pre><code class="language-bash">bloqade-bytecode run prog.sst --arch gemini-logical.json
+# halted after 50 instruction(s); 4 atom(s) placed
+
+# A move onto an occupied site fails, naming the instruction
+bloqade-bytecode run bad.sst --arch gemini-logical.json
+# error: Fill(2): Attempted to add atom to occupied location
+
+# See what the program asked the hardware to do
+bloqade-bytecode run prog.sst --arch gemini-logical.json --effects
+#   NotSimulated { inst: Cz, msg: Zones([ZoneAddr { zone_id: 0 }]) }
+#   ...
+</code></pre>
+<hr />
 <h3 id="arch"><a class="header" href="#arch"><code>arch</code></a></h3>
 <p>Pretty-print an architecture specification.</p>
 <pre><code>bloqade-bytecode arch &lt;INPUT&gt;
@@ -1365,13 +1387,468 @@ Capabilities:
 <hr />
 <h2 id="file-formats"><a class="header" href="#file-formats">File Formats</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Extension</th><th>Format</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>.sst</code></td><td>Text</td><td>Human-readable bytecode (one instruction per line, <code>;</code> comments)</td></tr>
-<tr><td><code>.bin</code></td><td>Binary</td><td>Compact binary encoding (<code>BLQD</code> magic header, 16 bytes per instruction)</td></tr>
+<tr><td><code>.sst</code></td><td>Text</td><td>Human-readable bytecode (vihaco <code>sst v1</code> container, <code>//</code> comments)</td></tr>
+<tr><td><code>.bin</code></td><td>Binary</td><td>Compact binary encoding (vihaco <code>VHBC</code> container, 14 bytes per instruction)</td></tr>
 <tr><td><code>.json</code></td><td>JSON</td><td>Architecture specification</td></tr>
 </tbody></table>
 </div>
 <p>See also the <a href="bytecode/inst-quick-ref.html">Instruction Quick Reference</a> for a compact summary of all 24 instructions, or the full <a href="bytecode/inst-spec.html">Instruction Set</a> for encoding details.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="migrating-to-v011"><a class="header" href="#migrating-to-v011">Migrating to v0.11</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="migrating-to-v012"><a class="header" href="#migrating-to-v012">Migrating to v0.12</a></h1>
+<p>This release upgrades the bytecode's underlying framework from vihaco 0.1 to
+0.4 and restructures the instruction set onto vihaco's composite-machine model.
+Both bytecode formats change. Nothing you previously assembled will load, and
+<code>.sst</code> files need rewriting.</p>
+<p>The Python <strong>factory API is unchanged</strong> — <code>Instruction.const_float(...)</code>,
+<code>Instruction.move_(...)</code>, <code>op_name()</code> and the decoder all behave as before. If
+you only build programs through <code>bloqade.lanes</code>, there is nothing to do. Two
+additions and one behaviour change are noted under
+<a href="migration/migration_guide_0_12.html#python">Python</a> below.</p>
+<h2 id="the-machine-1"><a class="header" href="#the-machine-1">The machine</a></h2>
+<p>A lanes program now runs on a composite of two vihaco devices rather than a
+single flat instruction set:</p>
+<div class="table-wrapper"><table><thead><tr><th>Device</th><th>Supplies</th></tr></thead><tbody>
+<tr><td><code>cpu</code></td><td>vihaco-cpu's <code>CPU</code> component — stack, constants, arithmetic, control flow, the heap allocator</td></tr>
+<tr><td><code>lanes</code></td><td>atom movement, gates, measurement, arrays, and the <code>pop</code>/<code>swap</code> the CPU lacks</td></tr>
+</tbody></table>
+</div>
+<p>This is the idiomatic vihaco composition (PPVM is built the same way), and it
+means a lanes program can now be <strong>executed</strong>, via the new <code>bloqade-bytecode run</code> subcommand:</p>
+<pre><code class="language-bash">bloqade-bytecode run prog.sst --arch gemini-logical.json
+# halted after 50 instruction(s); 4 atom(s) placed
+</code></pre>
+<p>What runs is the <em>atom movement</em>: <code>initial_fill</code>, <code>fill</code> and <code>move</code> advance
+the atom state and fail on an illegal move. That is a check validation cannot
+make — the validator does not track which sites are occupied — and it found a
+bug in this repository's own <code>stack_full_pipeline.sst</code> example, which
+validated clean while refilling the two sites its own <code>move</code> had just filled.</p>
+<p>The quantum, array and measurement ops are reported as effects rather than
+simulated. Each carries the operands it consumed, so an observer knows which
+array a <code>set_detector</code> referenced and not merely that one happened; see
+<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1022">#1022</a>. They
+still push placeholder values, so the stack stays at the depth validation
+predicts and a program that validates does not underflow when it runs.</p>
+<h2 id="text-format-sst-1"><a class="header" href="#text-format-sst-1">Text format (<code>.sst</code>)</a></h2>
+<p>Two changes stack: instructions gained a dialect head, and the whole program is
+now wrapped in vihaco's <code>sst v1</code> section container.</p>
+<p>Before:</p>
+<pre><code>version 1.0;
+fn @main() {
+  const_loc 0x0000000000000000
+  initial_fill 1
+  const.f64 1.5708
+  global_rz
+  halt
+}
+</code></pre>
+<p>After:</p>
+<pre><code>sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+fn @main() {
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.const f64, 1.5708
+  lanes::lanes.global_rz
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).
+</code></pre>
+<p>Point by point:</p>
+<ul>
+<li><strong>Every instruction needs a device prefix and a dialect head</strong>, written
+<code>&lt;device&gt;::&lt;dialect&gt;.&lt;mnemonic&gt;</code>. The device ops (addresses, fills, moves,
+gates, measurement, arrays, detectors) are <code>lanes::lanes.*</code>; the CPU ops are
+<code>cpu::cpu.*</code>. A bare <code>move 2</code> no longer parses, and neither does a mnemonic
+under the wrong device.</li>
+<li><strong><code>pop</code> and <code>swap</code> are lanes ops</strong>, not CPU ops: <code>lanes::lanes.pop</code>,
+<code>lanes::lanes.swap</code>. vihaco-cpu's CPU has neither.</li>
+<li><strong>The constants use vihaco-cpu's single typed <code>const</code>.</strong> <code>const.i64 42</code> →
+<code>cpu::cpu.const i64, 42</code>, and <code>const.f64 1.5</code> → <code>cpu::cpu.const f64, 1.5</code> —
+note the comma. The Python <code>op_name()</code> still reports <code>const_float</code> /
+<code>const_int</code>, because the decoder needs that distinction.</li>
+<li><strong><code>return</code> is now <code>ret</code> with a keep-count</strong>: <code>cpu::cpu.ret 0</code>. <code>op_name()</code>
+still reports <code>&quot;return&quot;</code>.</li>
+<li><strong>The version directive moves into a header section</strong> and loses its trailing
+semicolon: <code>version 1.0;</code> → a <code>.header(root):</code> block containing <code>version 1.0</code>.</li>
+<li><strong>The program body moves into <code>.text(root):</code></strong>, and the root section must be
+named <code>root</code>.</li>
+<li><strong>Comments must be inside <code>.text(root):</code>.</strong> vihaco's container grammar allows
+only <code>.global:</code> or the root section between <code>sst v1</code> and the first section, so
+a file-level comment above the section is a parse error. Comments are still
+<code>//</code> to end of line.</li>
+<li><strong>The global context block is optional</strong> and must be empty if present — a
+lanes program declares no child sections.</li>
+</ul>
+<p><strong>There is no conversion path, and no toolchain combination that provides
+one.</strong> The old CLI writes the <code>LANES</code> container, which the new one rejects at
+the magic bytes; the new parser rejects the old text syntax. So neither
+direction of assemble/disassemble can bridge the two formats — an existing
+<code>.sst</code> or <code>.bin</code> has to be replaced, not converted.</p>
+<p>Two ways to do that:</p>
+<ul>
+<li><strong>Regenerate from source.</strong> Anything produced by the <code>bloqade.lanes</code>
+compilation pipeline is reproducible: re-run the pipeline and it emits the
+new format. This is the right answer for every <code>.bin</code> and for any <code>.sst</code> that
+was generated rather than written.</li>
+<li><strong>Rewrite a hand-written <code>.sst</code>.</strong> Apply the point-by-point list above:
+prefix each instruction, fold the constants into <code>cpu::cpu.const &lt;type&gt;, &lt;value&gt;</code>, rename <code>return</code> to <code>ret &lt;n&gt;</code>, and wrap the whole thing in the
+<code>sst v1</code> container. Then <code>bloqade-bytecode validate &lt;file&gt; --simulate-stack</code>
+to confirm it took.</li>
+</ul>
+<h2 id="binary-format"><a class="header" href="#binary-format">Binary format</a></h2>
+<p>The container changes from the Bloqade-specific <code>LANES</code> header to vihaco's
+<code>VHBC</code> section container, and the instruction word narrows from 17 bytes to 14.</p>
+<ul>
+<li><strong>Magic is now <code>VHBC</code></strong>, not <code>LANES</code>. <code>BadMagicError</code>'s message changed to
+match.</li>
+<li><strong>Instruction words are 14 bytes</strong>, not 17: a device byte, an instruction
+byte, and up to 12 bytes of operand. The width is derived as the widest
+variant across both devices rather than chosen, so it moves again if either
+device gains a wider operand.</li>
+<li><strong>Opcodes are renumbered and repacked.</strong> <code>Instruction.opcode</code> is now
+<code>(device_code &lt;&lt; 8) | instruction_code</code> — <code>0x00</code> for the CPU, <code>0x01</code> for the
+lanes device. Both halves are assigned by declaration order, so they shift
+whenever either instruction set gains a variant. Compare instruction identity
+with <code>Instruction.op_name()</code>, never with a literal opcode value.</li>
+<li><strong>Structural container faults report differently.</strong> A file too short to hold
+the file header still raises <code>TruncatedError</code> with real byte counts; vihaco's
+other structural complaints (a section running past the end of the file, an
+out-of-bounds header) raise <code>DecodeErrorInProgram</code> carrying vihaco's own
+message, because they carry no byte counts to report.</li>
+</ul>
+<p>Re-assemble any persisted <code>.bin</code> from source.</p>
+<h2 id="python"><a class="header" href="#python">Python</a></h2>
+<ul>
+<li>
+<p><strong>New:</strong> <code>Instruction.device()</code> returns <code>&quot;cpu&quot;</code> or <code>&quot;lanes&quot;</code>.</p>
+</li>
+<li>
+<p><strong>Changed:</strong> <code>Instruction.opcode</code> is repacked (see above).</p>
+</li>
+<li>
+<p><strong>Behaviour:</strong> a decoded program can now contain any of vihaco-cpu's 42 ops,
+including arithmetic and control flow the lanes compiler never emits. Those
+load and validate fine, but the <code>stack_move</code> dialect has no statement for
+them, so <code>BytecodeDecoder.decode</code> raises <code>DecodingError</code> naming the
+instruction and its index:</p>
+<pre><code>DecodingError at instruction 2 (add): `cpu::add` has no stack_move
+representation [stack depth=2]
+</code></pre>
+<p>Previously every decodable instruction had a handler, so this path was
+unreachable from a valid program.</p>
+</li>
+</ul>
+<h2 id="why-the-cpu-instructions-changed"><a class="header" href="#why-the-cpu-instructions-changed">Why the CPU instructions changed</a></h2>
+<p>In vihaco 0.1 the instruction set nested vihaco-cpu's opcodes wholesale, which
+is where <code>const.i64</code> / <code>const.f64</code> came from. As of vihaco 0.4, vihaco-cpu is a
+runtime <em>component</em> rather than an opcode library: its instruction enums carry
+no binary codec, so they can no longer be nested in an encodable instruction
+set.</p>
+<p>Rather than reimplement those ops, the machine now <strong>composes vihaco-cpu's CPU
+as a device</strong>, which is how vihaco intends a VM to be built. The binary format
+still needs a codec neither device provides, so encoding goes through a parallel
+mirror instruction set — the same approach PPVM takes.</p>
+<p><code>pop</code> and <code>swap</code> are the exception: vihaco-cpu has neither, and the lanes
+compiler emits both, so they live on the lanes device.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="migration-guide-to-v011"><a class="header" href="#migration-guide-to-v011">Migration guide to v0.11</a></h1>
+<p>Version 0.11 refactors the Gemini simulator API around explicit simulator
+backends. Configure compilation and sampling when constructing a simulator,
+compile a kernel with <code>task()</code>, then execute the resulting task with <code>run()</code> or
+<code>run_async()</code>.</p>
+<p><code>PhysicalSimulator</code> remains an alias for <code>GeminiPhysicalSimulator</code>.</p>
+<p>Each v0.11 example imports the new public APIs it introduces. Variables such
+as <code>logical_kernel</code>, <code>physical_kernel</code>, <code>noise_model</code>, <code>arch_spec</code>, and
+<code>placement_strategy</code> represent the corresponding objects already defined by
+your application.</p>
+<h2 id="core-api-change-configure-the-simulator-give-task-a-prepared-kernel"><a class="header" href="#core-api-change-configure-the-simulator-give-task-a-prepared-kernel">Core API change: configure the simulator; give <code>task()</code> a prepared kernel</a></h2>
+<p>Previously, task creation mixed the kernel with backend, placement, and
+annotation options. In v0.11, both simulator types own their stable
+configuration and <code>task()</code> accepts only a kernel:</p>
+<ul>
+<li><code>GeminiLogicalSimulator</code> owns its backend configuration. Its task must be a
+logical SQuIN <code>ir.Method</code>; CUDA-Q conversion and detector/observable
+annotations happen before <code>task()</code>.</li>
+<li><code>GeminiPhysicalSimulator</code> owns backend, architecture, noise, and placement
+configuration. Its task must be a prepared physical SQuIN method containing
+its terminal measurement and any desired annotations.</li>
+</ul>
+<p>The remaining sections show the concrete old-to-new replacements.</p>
+<h2 id="choose-a-backend-object-instead-of-a-backend-name"><a class="header" href="#choose-a-backend-object-instead-of-a-backend-name">Choose a backend object instead of a backend name</a></h2>
+<p>Simulator constructors no longer accept backend-name strings such as <code>&quot;clifft&quot;</code>.
+Pass an explicit backend object instead.</p>
+<pre><code class="language-python"># v0.10
+simulator = GeminiLogicalSimulator(backend=&quot;clifft&quot;, seed=10)
+
+# v0.11
+from bloqade.gemini import CliffTSimulatorBackend, GeminiLogicalSimulator
+
+simulator = GeminiLogicalSimulator(backend=CliffTSimulatorBackend(seed=10))
+</code></pre>
+<p>Use <code>TsimSimulatorBackend()</code> for the default Tsim behavior explicitly when you
+need to configure it:</p>
+<pre><code class="language-python">from bloqade.gemini import GeminiLogicalSimulator, TsimSimulatorBackend
+
+simulator = GeminiLogicalSimulator(backend=TsimSimulatorBackend())
+</code></pre>
+<p>The same pattern applies to <code>GeminiPhysicalSimulator</code> / <code>PhysicalSimulator</code>.</p>
+<h2 id="move-simulator-configuration-out-of-task"><a class="header" href="#move-simulator-configuration-out-of-task">Move simulator configuration out of <code>task()</code></a></h2>
+<p><code>task()</code> now accepts only the kernel. Configure physical compilation options on
+the simulator itself.</p>
+<pre><code class="language-python"># v0.10
+simulator = PhysicalSimulator(noise_model=noise_model, arch_spec=arch_spec)
+task = simulator.task(
+    physical_kernel,
+    place_opt_type=ASAPPlacePass,
+    placement_strategy=placement_strategy,
+)
+
+# v0.11
+from bloqade.gemini import PhysicalSimulator
+from bloqade.lanes.passes import ASAPPlacePass
+
+simulator = PhysicalSimulator(
+    noise_model=noise_model,
+    arch_spec=arch_spec,
+    place_opt_type=ASAPPlacePass,
+    placement_strategy=placement_strategy,
+)
+task = simulator.task(physical_kernel)
+</code></pre>
+<p>This also applies to backend selection. A simulator's backend is shared by the
+tasks it creates, so construct a separate simulator when a workflow needs a
+different backend configuration.</p>
+<h2 id="convert-and-annotate-cuda-q-kernels-before-creating-a-logical-task"><a class="header" href="#convert-and-annotate-cuda-q-kernels-before-creating-a-logical-task">Convert and annotate CUDA-Q kernels before creating a logical task</a></h2>
+<p><code>GeminiLogicalSimulator.task()</code> now requires a SQuIN <code>ir.Method</code>; it no longer
+accepts CUDA-Q kernels or the <code>m2dets</code> and <code>m2obs</code> arguments. Convert CUDA-Q
+kernels and append the desired annotations explicitly.</p>
+<pre><code class="language-python"># v0.10
+task = GeminiLogicalSimulator().task(
+    main_cuda,
+    m2dets=m2dets,
+    m2obs=m2obs,
+)
+
+# v0.11
+from bloqade.gemini import GeminiLogicalSimulator
+from bloqade.gemini.compile import append_measurements_and_annotations
+from bloqade.gemini.cudaq import cudaq_to_squin
+
+prepared_squin = cudaq_to_squin(main_cuda)
+append_measurements_and_annotations(prepared_squin, m2dets, m2obs)
+task = GeminiLogicalSimulator().task(prepared_squin)
+</code></pre>
+<p><code>append_measurements_and_annotations</code> mutates the SQuIN method in place and
+requires at least one of <code>m2dets</code> or <code>m2obs</code>. If older CUDA-Q code relied on
+the default Steane annotations, supply those matrices explicitly before calling
+<code>task()</code>.</p>
+<p>The same change applies when the starting point is already a logical SQuIN
+kernel:</p>
+<pre><code class="language-python"># v0.10
+task = GeminiLogicalSimulator().task(
+    logical_kernel,
+    m2dets=m2dets,
+    m2obs=m2obs,
+)
+
+# v0.11
+from bloqade.gemini.compile import append_measurements_and_annotations
+
+prepared_squin = logical_kernel.similar()
+append_measurements_and_annotations(prepared_squin, m2dets, m2obs)
+task = GeminiLogicalSimulator().task(prepared_squin)
+</code></pre>
+<p>Physical tasks likewise no longer accept annotation matrices. Add terminal
+physical measurement and annotations before calling <code>task()</code>. The migration
+helper below preserves the old matrix-based workflow:</p>
+<pre><code class="language-python"># v0.10
+task = PhysicalSimulator().task(
+    physical_kernel,
+    m2dets=m2dets,
+    m2obs=m2obs,
+)
+
+# v0.11
+from bloqade.gemini import PhysicalSimulator
+from bloqade.gemini.device.physical_simulator import (
+    append_measurements_and_annotations_physical,
+)
+
+prepared_kernel = physical_kernel.similar()
+append_measurements_and_annotations_physical(
+    prepared_kernel,
+    m2dets,
+    m2obs,
+)
+task = PhysicalSimulator().task(prepared_kernel)
+</code></pre>
+<h2 id="configure-detector-sampling-on-tsimsimulatorbackend"><a class="header" href="#configure-detector-sampling-on-tsimsimulatorbackend">Configure detector sampling on <code>TsimSimulatorBackend</code></a></h2>
+<p><code>run_detectors</code> is no longer an argument to <code>run()</code> or <code>run_async()</code>. It is a
+Tsim-specific backend setting.</p>
+<pre><code class="language-python"># v0.10
+result = task.run(shots=1_000, run_detectors=True)
+
+# v0.11
+from bloqade.gemini import GeminiLogicalSimulator, TsimSimulatorBackend
+
+simulator = GeminiLogicalSimulator(
+    backend=TsimSimulatorBackend(run_detectors=True),
+)
+task = simulator.task(logical_kernel)
+result = task.run(shots=1_000)
+</code></pre>
+<p>With <code>run_detectors=True</code>, Tsim returns a <code>DetectorResult</code> containing detector
+and observable samples. Use <code>TsimSimulatorBackend(run_detectors=False)</code> for
+the raw-measurement path and its post-processing result.</p>
+<h2 id="seed-the-backend-not-the-simulator-or-an-individual-task-run"><a class="header" href="#seed-the-backend-not-the-simulator-or-an-individual-task-run">Seed the backend, not the simulator or an individual task run</a></h2>
+<p>The <code>seed</code> field was removed from <code>GeminiLogicalSimulator</code>, and the <code>seed</code>
+keyword was removed from <code>task.run()</code> and <code>task.run_async()</code>. Set a root seed
+when constructing a supported backend instead.</p>
+<pre><code class="language-python"># v0.10
+simulator = GeminiLogicalSimulator(backend=&quot;clifft&quot;, seed=1234)
+task = simulator.task(logical_kernel)
+result = task.run(shots=1_000, seed=1234)
+
+# v0.11
+from bloqade.gemini import GeminiLogicalSimulator, TsimSimulatorBackend
+
+simulator = GeminiLogicalSimulator(backend=TsimSimulatorBackend(seed=1234))
+result = simulator.task(logical_kernel).run(shots=1_000)
+</code></pre>
+<p><code>TsimSimulatorBackend</code> and <code>CliffTSimulatorBackend</code> derive a fresh native
+sampler seed for each sampling request from this root seed. To replay the same
+sequence, create a fresh backend with the same root seed; do not expect
+repeated calls on one task to reuse the same per-run seed.</p>
+<h2 id="create-a-task-before-running-visualizing-or-inspecting-a-circuit"><a class="header" href="#create-a-task-before-running-visualizing-or-inspecting-a-circuit">Create a task before running, visualizing, or inspecting a circuit</a></h2>
+<p>Convenience methods on simulator objects were removed. Create a task first,
+then use the corresponding task API.</p>
+<pre><code class="language-python"># v0.10
+result = simulator.run(kernel, shots=100)
+future = simulator.run_async(kernel, shots=100)
+simulator.visualize(kernel)
+circuit = simulator.tsim_circuit(kernel)
+bounds = simulator.fidelity_bounds(kernel)
+
+# v0.11
+task = simulator.task(kernel)
+result = task.run(shots=100)
+future = task.run_async(shots=100)
+task.visualize()
+circuit = task.tsim_circuit
+bounds = task.fidelity_bounds()
+</code></pre>
+<p><code>physical_squin_kernel</code>, <code>physical_move_kernel</code>, and
+<code>noiseless_tsim_circuit</code> are similarly accessed from the task.</p>
+<h2 id="do-not-depend-on-backend-implementation-details"><a class="header" href="#do-not-depend-on-backend-implementation-details">Do not depend on backend implementation details</a></h2>
+<p>The backend composition fields and backend DEM method are now private. Do not
+mechanically rename public API uses to their underscored counterparts:</p>
+<ul>
+<li><code>backend.tsim_backend</code> has no public replacement; a non-Tsim backend is not
+required to be composed from Tsim in future versions.</li>
+<li><code>backend.detector_error_model(kernel)</code> has no public replacement. Obtain the
+guaranteed DEM from the compiled task instead: <code>task.detector_error_model</code>.</li>
+<li><code>task.measurement_sampler</code>, <code>task.noiseless_measurement_sampler</code>,
+<code>task.detector_sampler</code>, and <code>task.noiseless_detector_sampler</code> were removed.
+Use <code>task.run()</code> / <code>task.run_async()</code> and configure detector sampling through
+<code>TsimSimulatorBackend(run_detectors=True)</code>. For an intentionally
+Tsim-specific integration, obtain the explicit circuit from
+<code>task.tsim_circuit</code> and use Tsim's API directly.</li>
+<li>Simulator tasks store their backend privately. Create tasks through
+<code>simulator.task(kernel)</code> instead of constructing task classes directly.</li>
+<li>The PyQrack backend implementation is private and is not a supported public
+backend-construction API in v0.11.</li>
+</ul>
+<h2 id="additional-v011-breaking-changes-outside-the-simulator-refactor"><a class="header" href="#additional-v011-breaking-changes-outside-the-simulator-refactor">Additional v0.11 breaking changes outside the simulator refactor</a></h2>
+<p>The simulator API changes above came from the simulator refactor. Version 0.11
+also contains the following release-wide migrations.</p>
+<h3 id="import-concrete-modules-instead-of-bloqadelanes-package-re-exports"><a class="header" href="#import-concrete-modules-instead-of-bloqadelanes-package-re-exports">Import concrete modules instead of <code>bloqade.lanes</code> package re-exports</a></h3>
+<p><code>bloqade.lanes</code> no longer re-exports simulator types, metrics, noise-model
+helpers, or Steane defaults. Import each symbol from its owning module.</p>
+<pre><code class="language-python"># v0.10
+from bloqade.lanes import (
+    GeminiLogicalSimulator,
+    Metrics,
+    generate_logical_noise_model,
+    steane7_m2dets,
+)
+
+# v0.11
+from bloqade.gemini import GeminiLogicalSimulator
+from bloqade.gemini.steane_defaults import steane7_m2dets
+from bloqade.lanes.metrics import Metrics
+from bloqade.lanes.noise_model import generate_logical_noise_model
+</code></pre>
+<p><code>NoiseModelABC</code> is available from
+<code>bloqade.lanes.rewrite.move2squin.noise</code>.</p>
+<h3 id="update-relocated-compiler-and-cuda-q-imports"><a class="header" href="#update-relocated-compiler-and-cuda-q-imports">Update relocated compiler and CUDA-Q imports</a></h3>
+<p>Several old <code>bloqade.lanes</code> modules were removed or relocated:</p>
+<div class="table-wrapper"><table><thead><tr><th>v0.10 import or API</th><th>v0.11 replacement</th></tr></thead><tbody>
+<tr><td><code>bloqade.lanes.cudaq_integration</code></td><td><code>bloqade.gemini.cudaq</code></td></tr>
+<tr><td><code>bloqade.lanes.steane_defaults</code></td><td><code>bloqade.gemini.steane_defaults</code></td></tr>
+<tr><td><code>bloqade.lanes.logical_mvp</code></td><td><code>bloqade.gemini.compile</code></td></tr>
+<tr><td><code>bloqade.lanes.pipeline</code></td><td><code>bloqade.lanes.transform</code></td></tr>
+<tr><td><code>bloqade.lanes.compile</code>, <code>bloqade.lanes.upstream</code></td><td>Compose the public transform stages in <code>bloqade.lanes.transform</code></td></tr>
+</tbody></table>
+</div>
+<p>In particular, the <code>compile_squin_to_move(...)</code> convenience wrappers were
+removed. Use a pipeline directly:</p>
+<pre><code class="language-python"># v0.10
+from bloqade.lanes.compile import compile_squin_to_move
+
+move_kernel = compile_squin_to_move(logical_kernel)
+
+# v0.11
+from bloqade.lanes.transform import LogicalPipeline
+
+move_kernel = LogicalPipeline(transversal_rewrite=True).emit(logical_kernel)
+</code></pre>
+<p>For physical compilation, use <code>PhysicalPipeline(...).emit(...)</code>; for a custom
+stage-by-stage flow, compose <code>NativeToPlace</code>, <code>PlaceToMove</code>, and a
+<code>MoveToSquin*</code> transform as appropriate.</p>
+<h3 id="replace-movesolver-with-the-typed-placement-api"><a class="header" href="#replace-movesolver-with-the-typed-placement-api">Replace <code>MoveSolver</code> with the typed placement API</a></h3>
+<p><code>MoveSolver</code> / <code>PyMoveSolver</code> were removed. Fixed-target routing now composes a
+shared <code>SearchEngine</code>, a <code>MoveSearch</code> configuration, and a <code>TargetSolver</code>:</p>
+<pre><code class="language-python"># v0.10
+from bloqade.lanes.bytecode import MoveSolver
+
+solver = MoveSolver.from_arch_spec(arch_spec)
+result = solver.solve(initial, target, blocked)
+
+# v0.11
+from bloqade.lanes.bytecode import SearchEngine, MoveSearch, TargetSolver
+
+engine = SearchEngine.from_arch_spec(arch_spec)
+search = MoveSearch.entropy()
+result = TargetSolver(engine, search).solve(initial, target, blocked)
+</code></pre>
+<p>For CZ placement, use the strategy-specific types:
+<code>SingleHeuristicCzPlacement</code>, <code>LooseGoalCzPlacement</code>,
+<code>RecedingHorizonCzPlacement</code>, or <code>NoHomeCzPlacement</code>. The legacy
+<code>MoveSolver.solve_with_generator()</code> and <code>MoveSolver.generate_candidates()</code>
+methods have no direct typed-surface equivalent.</p>
+<h3 id="update-bytecode-consumers-and-c-ffi-integrations"><a class="header" href="#update-bytecode-consumers-and-c-ffi-integrations">Update bytecode consumers and C FFI integrations</a></h3>
+<p>This section matters only if your application persists lane bytecode, parses
+or emits bytecode text, or links the native C library.</p>
+<ul>
+<li>The binary program container is incompatible: its magic changes from <code>BLQD</code>
+to <code>LANES</code>.</li>
+<li><code>Program.to_text()</code> and <code>Program.from_text()</code> use the new module/function
+grammar rather than the old flat <code>.version</code> format.</li>
+<li><code>Instruction.opcode</code> now exposes the Vihaco opcode byte, not the former
+packed opcode value. Prefer <code>Instruction.op_name()</code> when comparing opcode
+identities.</li>
+<li>Invalid, unaligned binary code is reported as <code>UnalignedCodeError</code> rather
+than <code>InvalidCodeSectionLengthError</code>.</li>
+<li>Every C API identifier was renamed: <code>blqd_*</code> becomes <code>lanes_*</code>, <code>BLQD*</code>
+becomes <code>LANES*</code>, and <code>BlqdStatus</code> becomes <code>LanesStatus</code>.</li>
+</ul>
+<p>The unused <code>bloqade.lanes.rewrite.split_static_placement</code> module was also
+removed. Migrate an explicit import of that module by removing the dependency;
+the current placement passes do not use it.</p>
 
                     </main>
 

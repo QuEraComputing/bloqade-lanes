@@ -1,0 +1,37 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Writers for vihaco’s section-based container formats."><title>bloqade_lanes_bytecode_core::isa::container - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="bloqade_lanes_bytecode_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.1 (48a229cea 2026-09-01)" data-channel="1.98.1" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module container</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../bloqade_lanes_bytecode_core/index.html">bloqade_<wbr>lanes_<wbr>bytecode_<wbr>core</a><span class="version">0.12.0-dev</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module container</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#shape-of-a-lanes-program" title="Shape of a lanes program">Shape of a lanes program</a></li><li><a href="#binary-layout-vihaco-vhbc" title="Binary layout (vihaco `VHBC`)">Binary layout (vihaco <code>VHBC</code>)</a></li><li><a href="#text-layout-vihaco-sst-v1" title="Text layout (vihaco `sst v1`)">Text layout (vihaco <code>sst v1</code>)</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In bloqade_<wbr>lanes_<wbr>bytecode_<wbr>core::<wbr>isa</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">bloqade_lanes_bytecode_core</a>::<wbr><a href="../index.html">isa</a></div><h1>Module <span>container</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/bloqade_lanes_bytecode_core/isa/container.rs.html#1-178">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Writers for vihaco’s section-based container formats.</p>
+<p>vihaco 0.4 ships <strong>readers only</strong> — [<code>vihaco::BytecodeFile::from_bytes</code>] and
+[<code>vihaco::SstFile::from_text</code>] parse its container, but nothing emits one. So
+we own the two emitters here, matching vihaco’s layout byte for byte.</p>
+<p>The round-trip tests are what keep these honest: everything written here is
+read back through vihaco’s own parser, so a layout mistake fails the build
+rather than producing a file only we can read.</p>
+<h3 id="shape-of-a-lanes-program"><a class="doc-anchor" href="#shape-of-a-lanes-program">§</a>Shape of a lanes program</h3>
+<p>A lanes program is a single flat <code>@main</code>, so both emitters write the minimal
+well-formed tree: an empty global context ([<code>vihaco::NoContext</code>]), one root
+section named <code>root</code>, no child sections. The <a href="../program/struct.LanesInfo.html" title="struct bloqade_lanes_bytecode_core::isa::program::LanesInfo"><code>LanesInfo</code></a> version lives in
+that section’s header.</p>
+<h3 id="binary-layout-vihaco-vhbc"><a class="doc-anchor" href="#binary-layout-vihaco-vhbc">§</a>Binary layout (vihaco <code>VHBC</code>)</h3><div class="example-wrap"><pre class="language-text"><code>magic                : 4 bytes = b&quot;VHBC&quot;
+version              : u16 LE  = 1
+flags                : u16 LE  = 0
+context_len          : u64 LE  = 0        (empty global context)
+── root section ──
+section_len          : u64 LE             (total, including this frame)
+composite_header_len : u64 LE
+composite header     : the LanesInfo header
+bytecode_len         : u64 LE
+bytecode             : N × INSTRUCTION_WIDTH bytes
+child_count          : u32 LE  = 0        (no child sections)</code></pre></div><h3 id="text-layout-vihaco-sst-v1"><a class="doc-anchor" href="#text-layout-vihaco-sst-v1">§</a>Text layout (vihaco <code>sst v1</code>)</h3><div class="example-wrap"><pre class="language-text"><code>sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+fn @main() {
+  …
+}
+.text(root).
+.section(root).</code></pre></div>
+<p>The global section is omitted entirely, which vihaco reads as an empty
+context.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.LanesContext.html" title="struct bloqade_lanes_bytecode_core::isa::container::LanesContext">Lanes<wbr>Context</a></dt><dd>The global context of a lanes file: empty.</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.ROOT_SECTION.html" title="constant bloqade_lanes_bytecode_core::isa::container::ROOT_SECTION">ROOT_<wbr>SECTION</a></dt><dd>The one section name vihaco accepts for a file’s root.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.to_binary.html" title="fn bloqade_lanes_bytecode_core::isa::container::to_binary">to_<wbr>binary</a></dt><dd>Serialize a program into vihaco’s <code>VHBC</code> container.</dd><dt><a class="fn" href="fn.to_sst.html" title="fn bloqade_lanes_bytecode_core::isa::container::to_sst">to_sst</a></dt><dd>Emit a program as vihaco’s <code>sst v1</code> text container.</dd></dl></section></div></main></body></html>
