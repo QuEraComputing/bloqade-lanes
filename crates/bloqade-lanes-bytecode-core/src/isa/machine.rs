@@ -1310,6 +1310,70 @@ mod tests {
         assert_eq!(run.stopped, Stopped::Halted);
     }
 
+    /// What a nonzero-arity `call` and a `ret <keep>` actually *do*.
+    ///
+    /// The test above pins only that a balanced pair does not crash. The three
+    /// behaviours the calling convention turns on go unobserved by it, and each
+    /// fails differently:
+    ///
+    /// - the caller's operands become the callee's locals (`call <arity>` sets
+    ///   `base = stack.len() - arity`, and locals index up from there);
+    /// - `ret <keep>` keeps the top `keep` values and drains the rest of the
+    ///   frame, so callee scratch goes and the return value survives;
+    /// - the caller resumes at the instruction after the `call`, not at the
+    ///   start of its own function.
+    ///
+    /// Each observable below is a distinct constant, so a failure names which
+    /// one broke rather than just reporting a different stack.
+    #[test]
+    fn a_call_passes_locals_and_a_ret_keeps_only_what_it_says() {
+        use crate::isa::text::parse_text;
+
+        // `@callee` is declared first to keep the entry-point lookup honest.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n\
+                   .header(root).\n.text(root):\n\
+                   fn @callee() {\n  \
+                     cpu::cpu.const i64, 777\n  \
+                     cpu::cpu.load i64, 0\n  \
+                     cpu::cpu.ret 1\n\
+                   }\n\n\
+                   fn @main() {\n  \
+                     cpu::cpu.const i64, 111\n  \
+                     cpu::cpu.const i64, 222\n  \
+                     cpu::cpu.call 1, callee\n  \
+                     cpu::cpu.const i64, 444\n  \
+                     cpu::cpu.halt\n\
+                   }\n\
+                   .text(root).\n.section(root).\n";
+        let program = parse_text(src).expect("the module should parse");
+
+        let mut machine = LanesMachine::new();
+        let run = machine.run(&program, 100).expect("the program should run");
+        assert_eq!(run.stopped, Stopped::Halted);
+
+        let stack = machine.cpu.stack();
+        assert!(
+            stack.contains(&Value::I64(222)),
+            "the argument should have reached the callee as local 0 and come \
+             back as its return value; stack: {stack:?}"
+        );
+        assert!(
+            !stack.contains(&Value::I64(777)),
+            "callee scratch below the kept value should be drained by `ret 1`; \
+             stack: {stack:?}"
+        );
+        assert!(
+            stack.contains(&Value::I64(444)),
+            "the caller should resume at the instruction after the `call`; \
+             stack: {stack:?}"
+        );
+        assert_eq!(
+            stack,
+            &[Value::I64(111), Value::I64(222), Value::I64(444)],
+            "the caller's own operand below the frame base should be untouched"
+        );
+    }
+
     /// Execution enters at `@main`, wherever it was laid out.
     ///
     /// A lanes program is an executable, so the entry point is a symbol, not
