@@ -209,6 +209,29 @@ later.
   it predates the function markers too, so there are no extents to name. This
   is the same "replace, do not convert" rule as the text format above.
 
+### Lowering to kirin is single-function only
+
+`BytecodeDecoder.decode` (and `load_program`) lower the instruction stream into
+one kirin block, so they accept a program declaring exactly one function and
+refuse anything else:
+
+```
+DecodingError at instruction 3 (func_start): program declares 2 functions;
+only a single-function program can be lowered to kirin [stack depth=0]
+```
+
+The format is ahead of the compiler here on purpose. Nothing in the pipeline
+emits multi-function bytecode or lowers it further, so there is no correct
+lowering for the decoder to fall back to — only a silently wrong one. It used
+to take that one: the bodies concatenated into a single block, and because the
+marker handlers skip `func_start` / `func_end` the seam left no trace. A
+`@helper` declared before `@main` produced a kernel whose *first* statement was
+the helper's `func.return`, carrying two terminators — which `method.verify()`
+accepted.
+
+Validation, execution, disassembly and the binary round-trip are unaffected;
+this restriction applies only to the kirin lowering.
+
 **Stack validation stops at the first branch or call.** The type simulator walks
 straight through, so its state is only correct while control flow is linear;
 past a branch it would report underflows and mismatches derived from a state it
