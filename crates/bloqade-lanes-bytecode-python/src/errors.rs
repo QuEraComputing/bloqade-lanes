@@ -432,6 +432,10 @@ pub fn program_error_to_py(py: Python<'_>, error: &BinaryError) -> PyErr {
                 let cls = module.getattr("DecodeErrorInProgram")?;
                 cls.call1((format!("pc {pc}: {message}"),))?
             }
+            BinaryError::Encode { message } => {
+                let cls = module.getattr("EncodeErrorInProgram")?;
+                cls.call1((message.clone(),))?
+            }
         };
         Ok(obj.into())
     })();

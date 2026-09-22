@@ -117,8 +117,10 @@ and `#[composite]` derives none — so encoding goes through a parallel mirror I
 ## Text Format (`.sst`)
 
 The text form is vihaco's `sst v1` section container. A lanes program is one
-root section: a header carrying the version, and a text body holding a single
-`@main` function.
+root section: a header carrying the version, and a text body holding the
+program's functions. The example below declares only `@main`; any number may
+appear, and `@main` is the entry point (see
+[Functions, labels and control flow](#functions-labels-and-control-flow)).
 
 ```
 sst v1

@@ -229,6 +229,89 @@ fn test_round_trip_assemble_disassemble() {
     assert_eq!(b1, b2, "round-trip binary mismatch");
 }
 
+/// The same round trip for a program with more than one function.
+///
+/// `test_round_trip_assemble_disassemble` above uses a single flat `@main`,
+/// which is what every CLI test used to do — so the whole symbol-table path
+/// (the `functions`, `labels` and `strings` child sections, the `call` target
+/// patched to an address and named back, the labels resolved and re-emitted)
+/// went through the CLI untested. Byte equality across the second assemble is
+/// what pins it: a name resolved to the wrong address, or a label dropped,
+/// diverges here even when both halves parse.
+#[test]
+fn test_round_trip_preserves_functions_and_labels() {
+    let dir = TempDir::new().unwrap();
+    let input_txt = dir.path().join("prog.sst");
+    let binary = dir.path().join("prog.bin");
+    let output_txt = dir.path().join("out.sst");
+    let binary2 = dir.path().join("prog2.bin");
+
+    fs::write(
+        &input_txt,
+        sst("fn @main() {\n  \
+             cpu::cpu.call 0, helper\n  \
+             cpu::cpu.halt\n\
+             }\n\n\
+             fn @helper() {\n  \
+             cpu::cpu.label @spin\n  \
+             cpu::cpu.br @spin\n\
+             }\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args([
+            "assemble",
+            input_txt.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    cmd()
+        .args([
+            "disassemble",
+            binary.to_str().unwrap(),
+            "-o",
+            output_txt.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    cmd()
+        .args([
+            "assemble",
+            output_txt.to_str().unwrap(),
+            "-o",
+            binary2.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Both function names survive the trip through binary, where they live in
+    // the `strings` table rather than in the text.
+    let rendered = fs::read_to_string(&output_txt).unwrap();
+    assert!(
+        rendered.contains("fn @main()") && rendered.contains("fn @helper()"),
+        "both functions should be named, not synthesised as F<address>:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("cpu::cpu.call 0, helper"),
+        "the call should name its callee:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("label @spin"),
+        "the label should survive:\n{rendered}"
+    );
+
+    assert_eq!(
+        fs::read(&binary).unwrap(),
+        fs::read(&binary2).unwrap(),
+        "round-trip binary mismatch for a multi-function program"
+    );
+}
+
 #[test]
 fn test_validate_text_file() {
     let dir = TempDir::new().unwrap();

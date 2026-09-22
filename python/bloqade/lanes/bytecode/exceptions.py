@@ -237,11 +237,15 @@ class EmptyProgramError(ValidationError):
 
 
 class MissingTerminatorError(ValidationError):
-    """Program does not end with a return or halt instruction."""
+    """A path through a function runs off its end without return or halt.
+
+    Per function, not per program: ``func_end`` is a no-op, so a function that
+    falls off it runs whatever was laid out next rather than returning.
+    """
 
     def __init__(self, pc: int):
         self.pc = pc
-        super().__init__(f"pc {pc}: program must end with return or halt")
+        super().__init__(f"pc {pc}: function must end with return or halt")
 
 
 class UnreachableInstructionError(ValidationError):
@@ -554,3 +558,16 @@ class DecodeErrorInProgram(ProgramError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(f"decode error: {message}")
+
+
+class EncodeErrorInProgram(ProgramError):
+    """A program uses something the binary container cannot carry.
+
+    Raised by ``Program.to_binary``, not by reading. The container has no
+    encoding for a constant pool, source symbols, or a non-empty function
+    signature, so it refuses to write one rather than dropping it silently.
+    """
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(f"cannot encode program: {message}")

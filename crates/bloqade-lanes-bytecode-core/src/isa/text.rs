@@ -251,6 +251,10 @@ pub fn to_text(program: &Program) -> String {
             .map(|(_, n)| n.clone())
             .unwrap_or_else(|| format!("L{address}"))
     };
+    // Both the `fn @name()` header and a `call`'s callee name the function
+    // starting at an address, so both resolve it the same way: by the address
+    // of its `func_start`, falling back to a synthesised `F<address>` for a
+    // function the table does not name.
     let function_at = |address: u32| -> String {
         program
             .functions
@@ -286,15 +290,6 @@ pub fn to_text(program: &Program) -> String {
     // A stream with no markers at all is one implicit `@main` spanning the
     // whole program — the shape `from_code` builds for a caller that handed us
     // a bare instruction list.
-    let name_at = |address: u32| -> String {
-        program
-            .functions
-            .iter()
-            .find(|f| f.start_address == address)
-            .map(|f| name_of(f.name).to_owned())
-            .unwrap_or_else(|| format!("F{address}"))
-    };
-
     let emit_labels = |body: &mut String, address: u32| {
         for (_, name) in label_names.iter().filter(|(a, _)| *a == address) {
             body.push_str(&format!("  cpu::cpu.label @{name}\n"));
@@ -308,7 +303,7 @@ pub fn to_text(program: &Program) -> String {
             // The markers are structure, not instructions: they open and close
             // the block rather than being rendered inside it.
             MachineInstruction::Cpu(C::FunctionStart) => {
-                body.push_str(&format!("fn @{}() {{\n", name_at(address)));
+                body.push_str(&format!("fn @{}() {{\n", function_at(address)));
                 emit_labels(&mut body, address);
                 continue;
             }
@@ -530,15 +525,26 @@ mod tests {
         }
     }
 
-    /// A label at a function boundary is emitted once, not twice.
+    /// A label opening a non-entry function lands inside that function's
+    /// braces and survives the round trip.
     ///
-    /// Functions are laid out contiguously, so one function's `end_address`
-    /// *is* the next one's `start_address`. Emitting the trailing label and
-    /// the leading one both put it in both functions, and re-reading the
-    /// output failed with "duplicate label" — a round-trip break for any
-    /// module whose second function opens with a label.
+    /// This began as `a_label_at_a_function_boundary_is_not_emitted_twice`,
+    /// guarding a bug from the span-recorded layout: functions were laid out
+    /// contiguously, so one function's `end_address` *was* the next one's
+    /// `start_address`, and a label there was emitted by both — re-reading the
+    /// output then failed with "duplicate label".
+    ///
+    /// The markers made that unrepresentable rather than merely fixed. A
+    /// function now starts at its own `func_start` and its body begins one
+    /// address later, so no label can share an address with a boundary, and
+    /// `to_text` visits each address exactly once across three mutually
+    /// exclusive arms. The count assertion below can no longer reach 2. It is
+    /// kept because the *placement* is still worth pinning — the label has to
+    /// render after `fn @helper() {`, not before it — and renamed because a
+    /// test named for a property nothing can violate reads like coverage it
+    /// does not provide.
     #[test]
-    fn a_label_at_a_function_boundary_is_not_emitted_twice() {
+    fn a_label_opening_a_non_entry_function_round_trips() {
         let src = sst(
             "1.0",
             "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n             fn @helper() {\n  cpu::cpu.label @entry\n  cpu::cpu.ret 0\n}\n",
@@ -549,7 +555,19 @@ mod tests {
         assert_eq!(
             rendered.matches("label @entry").count(),
             1,
-            "the boundary label should appear once:\n{rendered}"
+            "the label should appear once:\n{rendered}"
+        );
+        // The placement is the part still worth asserting: inside `@helper`'s
+        // braces, after its header, not hoisted above it into `@main`.
+        let header = rendered
+            .find("fn @helper()")
+            .expect("`@helper` should be rendered");
+        let label = rendered
+            .find("label @entry")
+            .expect("the label should be rendered");
+        assert!(
+            header < label,
+            "the label belongs inside `@helper`:\n{rendered}"
         );
         assert_eq!(
             parse_text(&rendered).expect("the rendered text should re-parse"),

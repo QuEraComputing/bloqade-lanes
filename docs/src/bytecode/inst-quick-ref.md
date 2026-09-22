@@ -80,8 +80,11 @@ Not simulated — emitted as effects for hardware or a simulator downstream.
 ## `cpu` device (`0x00`) — vihaco-cpu
 
 The full vihaco-cpu instruction set is available (42 ops: arithmetic,
-comparison, bitwise, control flow, the heap allocator). The lanes compiler emits
-only these four; the rest decode and validate but are never generated.
+comparison, bitwise, control flow, the heap allocator). The ones below are the
+ones a lanes program actually contains; the rest decode and validate but are
+never generated.
+
+### Values and termination
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
@@ -89,8 +92,39 @@ only these four; the rest decode and validate but are never generated.
 | `cpu::cpu.const i64, <v>` | `0x0011` | `( -- int)` | Push 64-bit integer constant |
 | `cpu::cpu.dup` | `0x000D` | `(a -- a a)` | Duplicate top of stack |
 | `cpu::cpu.halt` | `0x0009` | `( -- )` | Halt execution |
-| `cpu::cpu.ret <n>` | `0x0006` | `( -- )` | Return from program |
+| `cpu::cpu.ret <n>` | `0x0006` | `( -- )` | Return the top `n` values from the current function |
 
 Note that `const` is one typed instruction, so `const f64` and `const i64` share
 an opcode and differ in their operand. The Python `op_name()` still reports
 `const_float` / `const_int`, because the decoder needs the distinction.
+
+### Structure
+
+Emitted for **every** program, not only ones that declare several functions: the
+assembler wraps each `fn @name()` body in a marker pair, so even a lone `@main`
+is delimited. They are no-ops at runtime — they carry the layout, not an effect.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `cpu::cpu.func_start` | `0x0001` | `( -- )` | Opens a function body; its address is the function's entry |
+| `cpu::cpu.func_end` | `0x0002` | `( -- )` | Closes a function body |
+
+A `label` is not in this table because it is not an instruction: it names an
+address and occupies none. It is written syntactically and recorded in the
+`labels` table.
+
+### Control flow
+
+Emitted when the source declares them. All three require the architecture's
+`feed_forward` capability — without mid-circuit classical feedback the hardware
+runs straight-line code only, and validation rejects them.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `cpu::cpu.br @<label>` | `0x0004` | `( -- )` | Unconditional branch within the current function |
+| `cpu::cpu.cond_br @<t>, @<f>` | `0x0005` | `(bool -- )` | Branch on the top of stack |
+| `cpu::cpu.call <arity>, <fn>` | `0x0008` | `( -- )` | Call, making the top `arity` operands the callee's locals |
+
+See [Functions, labels and control flow](inst-spec.md#functions-labels-and-control-flow)
+for the calling convention — in particular that locals *alias* the operand
+stack, so `call` moves a frame boundary rather than copying arguments.

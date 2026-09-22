@@ -1,0 +1,44 @@
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: full
+// A program with more than one function, exercising `call` and `ret <keep>`.
+//
+// Until the calling convention landed, every fixture here was a single flat
+// `@main` — the whole corpus contained one control-flow instruction, a trailing
+// `ret 0`. Nothing executed a `call`, so nothing would have noticed the entry
+// point, the function markers, or the return path breaking.
+//
+// `@main` calls with arity 0, so `@helper` receives no operands and starts its
+// frame at the current top of stack. It pushes a zone, measures it, awaits the
+// result, and returns that one value with `ret 1` — everything below the kept
+// value is dropped, so the caller sees exactly the array_ref.
+
+fn @main() {
+  // Place two atoms so the program has a non-trivial arrangement.
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
+  lanes::lanes.initial_fill 2
+
+  // Jump to the helper; it leaves one value behind.
+  cpu::cpu.call 0, measure_zone
+
+  // Stack: [array_ref]. Discard it and stop.
+  lanes::lanes.pop
+  cpu::cpu.halt
+}
+
+fn @measure_zone() {
+  lanes::lanes.const_zone 0x00000000    // zone 0
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure            // pops future, pushes array_ref
+
+  // Keep the top value — the array_ref — and drain the rest of the frame.
+  cpu::cpu.ret 1
+}
+.text(root).
+.section(root).

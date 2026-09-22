@@ -10,11 +10,17 @@
 //!
 //! ## Shape of a lanes program
 //!
-//! A lanes program is a single flat `@main`, so both emitters write the minimal
-//! well-formed tree: an empty global context ([`vihaco::NoContext`]), one root
-//! section named `root`, plus the child sections carrying the symbol
-//! tables. The [`LanesInfo`] version lives in
-//! that section's header.
+//! Both emitters write one root section named `root`, whose header carries the
+//! [`LanesInfo`] version and whose body is the code stream. A program may
+//! declare any number of functions; they delimit themselves in that stream with
+//! `func_start`/`func_end`, so the root section needs no per-function framing.
+//!
+//! The two containers differ in how the symbol tables ride along. The binary
+//! form appends them as child sections ([`TABLE_SECTIONS`]), whose names resolve
+//! through the global context — which is why [`LanesContext`] is not empty and
+//! [`vihaco::NoContext`] will not do. The text form needs none of it: functions
+//! and labels are written syntactically (`fn @name`, `cpu::cpu.label @x`), so
+//! `.sst` has no child sections and an empty `.global:` block.
 //!
 //! ## Binary layout (vihaco `VHBC`)
 //!
@@ -60,9 +66,21 @@ use super::program::{LanesInfo, Program};
 /// The one section name vihaco accepts for a file's root.
 pub const ROOT_SECTION: &str = "root";
 
+/// Child section carrying [`Program::functions`].
+pub const FUNCTIONS_SECTION: &str = "functions";
+/// Child section carrying [`Program::labels`].
+pub const LABELS_SECTION: &str = "labels";
+/// Child section carrying [`Program::strings`].
+pub const STRINGS_SECTION: &str = "strings";
+
 /// Names of the child sections carrying a program's symbol tables, in the order
 /// they are emitted.
-pub const TABLE_SECTIONS: [&str; 3] = ["functions", "labels", "strings"];
+///
+/// The single source for all three uses — the context name table, the writer in
+/// [`to_binary`], and the reader in [`read_tables`] — so adding a table cannot
+/// leave one of them spelling a name the others do not know.
+/// `emitted_sections_are_exactly_the_declared_tables` pins that.
+pub const TABLE_SECTIONS: [&str; 3] = [FUNCTIONS_SECTION, LABELS_SECTION, STRINGS_SECTION];
 
 /// The global context of a lanes file: the child-section name table.
 ///
@@ -309,9 +327,9 @@ pub fn read_tables(
 ) -> eyre::Result<()> {
     for child in root.children() {
         match child.local_name() {
-            Some("functions") => program.functions = decode_functions(child.bytecode())?,
-            Some("labels") => program.labels = decode_labels(child.bytecode())?,
-            Some("strings") => program.strings = decode_strings(child.bytecode())?,
+            Some(FUNCTIONS_SECTION) => program.functions = decode_functions(child.bytecode())?,
+            Some(LABELS_SECTION) => program.labels = decode_labels(child.bytecode())?,
+            Some(STRINGS_SECTION) => program.strings = decode_strings(child.bytecode())?,
             Some(other) => return Err(eyre::eyre!("unknown child section `{other}`")),
             None => return Err(eyre::eyre!("child section has no name")),
         }
@@ -365,15 +383,15 @@ pub fn to_binary(program: &Program) -> eyre::Result<Vec<u8>> {
 
     let children = [
         ChildSection {
-            name: "functions",
+            name: FUNCTIONS_SECTION,
             payload: encode_functions(program),
         },
         ChildSection {
-            name: "labels",
+            name: LABELS_SECTION,
             payload: encode_labels(program),
         },
         ChildSection {
-            name: "strings",
+            name: STRINGS_SECTION,
             payload: encode_strings(program),
         },
     ];

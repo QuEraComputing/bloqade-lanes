@@ -1,13 +1,19 @@
 //! Flat program container for the vihaco-backed ISA.
 //!
 //! A program is a [`Version`] plus a `Vec<`[`MachineInstruction`]`>` whose
-//! functions delimit themselves with `func_start`/`func_end` —
-//! no functions, labels, or string interner (our programs are a single flat
-//! instruction list; see
-//! <https://github.com/QuEraComputing/bloqade-lanes/issues/769>). vihaco's
-//! [`LocalModule`] / loader machinery carries that structured-language
-//! support, so we keep a thin container and delegate the per-instruction
-//! work to the mirror ISA's derived codec ([`WriteBytes`]/[`FromBytes`], see
+//! functions delimit themselves with `func_start`/`func_end`, alongside the
+//! symbol tables those markers index: functions, labels, and the string
+//! interner they name each other through.
+//!
+//! The markers are what make the layout self-describing. A function's extent
+//! comes from the instructions being read rather than from a span recorded
+//! beside them, so the two cannot disagree: `from_binary` re-derives the whole
+//! function table from the code stream on load rather than trusting the extents
+//! the container carried.
+//!
+//! vihaco's [`LocalModule`] / loader machinery carries the structured-language
+//! support, so we keep a thin container and delegate the per-instruction work
+//! to the mirror ISA's derived codec ([`WriteBytes`]/[`FromBytes`], see
 //! [`super::bytecode`]) and to the text parser in [`super::text`].
 //!
 //! ## Container
@@ -183,6 +189,14 @@ pub enum BinaryError {
     /// A word held an opcode/payload vihaco could not decode, or the container
     /// was otherwise malformed.
     Decode { pc: usize, message: String },
+    /// The program could not be *written*: it uses something the container has
+    /// no encoding for (see [`super::container::to_binary`]'s refusals).
+    ///
+    /// Distinct from [`BinaryError::Decode`] because nothing was being decoded
+    /// and there is no instruction to blame — reporting these as a decode
+    /// failure at `pc 0` named a program counter that had nothing to do with
+    /// the problem.
+    Encode { message: String },
 }
 
 impl std::fmt::Display for BinaryError {
@@ -200,6 +214,7 @@ impl std::fmt::Display for BinaryError {
             BinaryError::Decode { pc, message } => {
                 write!(f, "decode error at instruction {pc}: {message}")
             }
+            BinaryError::Encode { message } => write!(f, "cannot encode program: {message}"),
         }
     }
 }
@@ -250,8 +265,7 @@ fn unaligned_len(msg: &str) -> Option<usize> {
 /// Fails only if an instruction has no encodable form — today just a runtime
 /// label, whose identifier is meaningless outside its parse.
 pub fn to_binary(program: &Program) -> Result<Vec<u8>, BinaryError> {
-    super::container::to_binary(program).map_err(|e| BinaryError::Decode {
-        pc: 0,
+    super::container::to_binary(program).map_err(|e| BinaryError::Encode {
         message: e.to_string(),
     })
 }
@@ -454,13 +468,22 @@ mod tests {
             vihaco::BytecodeFile::<LanesContext>::from_bytes(to_binary(&program).unwrap()).unwrap();
         let root = file.root();
         assert!(root.path().is_root());
-        // The symbol tables ride along as named child sections.
+        // The symbol tables ride along as named child sections — exactly the
+        // ones declared, checked against the constant rather than a fourth
+        // spelling of the same three strings. A table added to the writer but
+        // not to `TABLE_SECTIONS` (so absent from the context name table, and
+        // unknown to `read_tables`) fails here.
         let mut names: Vec<String> = root
             .children()
             .filter_map(|c| c.local_name().map(str::to_owned))
             .collect();
         names.sort_unstable();
-        assert_eq!(names, ["functions", "labels", "strings"]);
+        let mut declared: Vec<String> = super::super::container::TABLE_SECTIONS
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        declared.sort_unstable();
+        assert_eq!(names, declared);
         assert_eq!(
             root.decode_instructions::<BytecodeInstruction>()
                 .unwrap()
@@ -729,6 +752,35 @@ mod tests {
             .to_string(),
             "decode error at instruction 2: boom"
         );
+        assert_eq!(
+            BinaryError::Encode {
+                message: "boom".into()
+            }
+            .to_string(),
+            "cannot encode program: boom"
+        );
+    }
+
+    /// A refusal to *write* is an encode failure, not a decode one.
+    ///
+    /// These used to surface as `Decode { pc: 0, .. }` — a decode error naming
+    /// a program counter, for a program nothing was decoding and no
+    /// instruction was at fault.
+    #[test]
+    fn a_write_refusal_is_an_encode_error() {
+        use vihaco::value::Value;
+
+        let mut p = sample();
+        p.constants = vec![Value::I64(3)];
+        match to_binary(&p) {
+            Err(BinaryError::Encode { message }) => {
+                assert!(
+                    message.contains("constant pool"),
+                    "the refusal's own words should survive: {message}"
+                );
+            }
+            other => panic!("expected an encode error, got {other:?}"),
+        }
     }
 
     #[test]

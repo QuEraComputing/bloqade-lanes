@@ -1600,10 +1600,10 @@ mod tests {
             wrong.join("\n")
         );
         // A parser that silently matched nothing would make this vacuous:
-        // 24 rows in the quick reference plus 23 in the spec.
+        // 29 rows in the quick reference plus 23 in the spec.
         assert_eq!(
-            checked, 47,
-            "expected 47 documented opcodes, found {checked}"
+            checked, 52,
+            "expected 52 documented opcodes, found {checked}"
         );
     }
 

@@ -129,7 +129,9 @@ pub enum ValidationError {
     InitialFillNotFirst { pc: usize },
     /// The program has no instructions (and therefore no terminator).
     EmptyProgram,
-    /// The final instruction is neither `return` nor `halt`.
+    /// Some path through a function runs off its end instead of reaching
+    /// `return` or `halt`. Per function, not per program: `func_end` is a
+    /// no-op, so falling off it runs whatever was laid out next.
     MissingTerminator { pc: usize },
     /// An instruction follows a `return`/`halt` and is unreachable.
     UnreachableInstruction { pc: usize },
@@ -308,7 +310,7 @@ impl fmt::Display for ValidationError {
                 )
             }
             ValidationError::MissingTerminator { pc } => {
-                write!(f, "pc {pc}: program must end with return or halt")
+                write!(f, "pc {pc}: function must end with return or halt")
             }
             ValidationError::UnreachableInstruction { pc } => {
                 write!(f, "pc {pc}: unreachable instruction after return or halt")
@@ -362,9 +364,12 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
             // This arm did not exist while the ISA had no such instructions;
             // now that a program can declare functions and branch between
             // them, its absence let every one of them through.
-            M::Cpu(C::Branch(_) | C::ConditionalBranch(..) | C::Call(..) | C::IndirectCall)
-                if !arch.feed_forward =>
-            {
+            //
+            // Guarded on [`is_control_flow`] rather than re-listing the
+            // variants, so a new control-flow op is gated here the moment it
+            // joins that predicate, instead of silently passing the rule that
+            // exists to reject it.
+            inst if is_control_flow(inst) && !arch.feed_forward => {
                 errors.push(ValidationError::ControlFlowRequiresFeedForward {
                     pc,
                     mnemonic: super::machine::op_name(inst),
@@ -2098,7 +2103,7 @@ mod tests {
             ),
             (
                 ValidationError::MissingTerminator { pc: 7 },
-                "pc 7: program must end with return or halt".into(),
+                "pc 7: function must end with return or halt".into(),
             ),
             (
                 ValidationError::UnreachableInstruction { pc: 8 },
