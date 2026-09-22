@@ -209,6 +209,40 @@ later.
   it predates the function markers too, so there are no extents to name. This
   is the same "replace, do not convert" rule as the text format above.
 
+### Functions declare their signatures
+
+A function may declare parameters and a return type, and both survive the
+binary round trip:
+
+```
+fn @measure_zone(z: u32) -> heap_ref {
+  cpu::cpu.load u32, 0
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 1
+}
+```
+
+Types are vihaco's: `undef`, `str`, `bool`, `i64`, `u32`, `u64`, `f64`,
+`fn_ref`, `heap_ref`. `fn @name()` with no parameters and no return type parses
+exactly as before, so nothing hand-written needs updating unless it uses a
+`call` with a nonzero arity or a `ret` that keeps a value.
+
+The declaration is checked, not decorative. `call <arity>` is not a hint — it
+sets the callee's frame base to `stack.len() - arity`, so an unchecked operand
+would silently redefine the callee's shape at each call site:
+
+- **`CallArityMismatchError`** — a `call` passes a different number of operands
+  than the callee declares.
+- **`ReturnCountMismatchError`** — a `ret` keeps a different number of values
+  than its function declares returning. Two `ret`s that disagree make every
+  caller's post-call stack depth path-dependent; each is checked against the
+  declaration, which names the offender rather than reporting a pair that
+  happens to differ.
+
+So a function that returns something has to say so: `ret 1` in a function
+declaring no return type is now an error.
+
 ### Lowering to kirin is single-function only
 
 `BytecodeDecoder.decode` (and `load_program`) lower the instruction stream into
@@ -236,7 +270,7 @@ this restriction applies only to the kirin lowering.
 straight through, so its state is only correct while control flow is linear;
 past a branch it would report underflows and mismatches derived from a state it
 cannot know. The linear prefix is still checked. Full CFG-aware simulation is
-tracked in [#1026](https://github.com/QuEraComputing/bloqade-lanes/issues/1026).
+tracked in [#1042](https://github.com/QuEraComputing/bloqade-lanes/issues/1042).
 
 ## Why the CPU instructions changed
 

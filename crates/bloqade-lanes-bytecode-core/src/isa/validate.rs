@@ -32,7 +32,7 @@
 //! something it cannot justify from a state it does not have. Restoring that
 //! coverage needs a CFG walk that merges state at join points and models calls
 //! against the frame — see
-//! <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>.
+//! <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>.
 //!
 //! ## Address checks
 //!
@@ -1131,7 +1131,7 @@ impl<'a> StackSimulator<'a> {
         // A branch still stops the *containing* function: past it the stack
         // state depends on which edge was taken, and merging those needs the
         // CFG walk tracked in
-        // <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>. The
+        // <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>. The
         // linear prefix of every function is checked, which is all of every
         // function the compiler emits today.
         //
@@ -1145,7 +1145,7 @@ impl<'a> StackSimulator<'a> {
         // Skipping them trades coverage for correctness. Checking them properly
         // means modelling the frame rather than absolute depth — a callee owns
         // exactly `arity` values and popping below `base` corrupts its caller —
-        // which is the frame-aware walk in #1026, not something this linear
+        // which is the frame-aware walk in #1042, not something this linear
         // pass can express. This is a placeholder for that, not the end state.
         let takes_operands = callee_arities(&program.code);
         for span in function_spans(&program.code) {
@@ -1825,7 +1825,7 @@ mod tests {
     /// stack from there up. So the argument `@helper` consumes below is one
     /// `@main` legitimately passed, and reporting an underflow for it
     /// contradicts the machine, which runs this program to `Halted`. See
-    /// <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>.
+    /// <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>.
     #[test]
     fn a_callee_taking_operands_is_not_simulated() {
         let p = sst_module(
