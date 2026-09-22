@@ -159,11 +159,36 @@ fn line_of(src: &str, needle: &str) -> usize {
         .map_or(0, |i| i + 1)
 }
 
+/// The structural errors that stop a program being written as text.
+///
+/// Rendering needs a *name* for every branch and call target, and a place to
+/// put every instruction. Only two failures take those away, and everything
+/// else `validate_structure` reports renders fine — a program with dead code,
+/// a missing terminator or an out-of-range operand is exactly the kind you
+/// disassemble in order to look at, so refusing to render it would be
+/// backwards.
+pub fn render_blockers(program: &Program) -> Vec<super::validate::ValidationError> {
+    use super::validate::ValidationError as E;
+    super::validate::validate_structure(program)
+        .into_iter()
+        .filter(|e| {
+            matches!(
+                e,
+                // A target with no name: `to_text` would invent `@L99` / `@F1`
+                // and emit a use with no definition.
+                E::InvalidControlFlowTarget { .. }
+                    // An instruction with no function to sit in: `to_text`
+                    // would emit it after the closing brace.
+                    | E::CodeOutsideFunction { .. }
+            )
+        })
+        .collect()
+}
+
 /// Emit the program as vihaco's `sst v1` container.
 ///
-/// Expects a program that passes [`super::validate::validate_structure`] —
-/// both callers (`bloqade-bytecode disassemble` and `Program.to_text`) run it
-/// first. Rendering needs a name for every branch and call target, and a
+/// Expects a program with no [`render_blockers`] — both callers
+/// (`bloqade-bytecode disassemble` and `Program.to_text`) check first. Rendering needs a name for every branch and call target, and a
 /// decoded program can carry ones that have none; the gate is what keeps this
 /// function from having to invent text that will not read back.
 ///
@@ -444,6 +469,63 @@ mod tests {
                     value: value.to_owned(),
                 }),
                 "version {value:?}"
+            );
+        }
+    }
+
+    /// `render_blockers` is empty exactly when the rendered text re-parses.
+    ///
+    /// That is the whole contract, so it is tested as one: render every
+    /// program, try to read it back, and assert the predicate agreed. Gating
+    /// on all of `validate_structure` failed this — dead code and a missing
+    /// terminator render and re-parse perfectly well, and refusing them is
+    /// backwards, since those are the programs you disassemble to look at.
+    #[test]
+    fn rendering_is_blocked_exactly_when_the_text_would_not_re_parse() {
+        use crate::isa::program::from_code;
+        use crate::isa::validate::validate_structure;
+        use crate::version::Version;
+
+        let wrapped = |code: Vec<M>| from_code(Version::new(1, 0), code).unwrap();
+
+        // Programs the validator objects to, which nonetheless render and
+        // read back: dead code, no terminator, a bad operand, a wild local.
+        let renderable = vec![
+            wrapped(vec![M::Cpu(C::Halt), M::Lanes(L::Cz)]),
+            wrapped(vec![M::Lanes(L::Cz)]),
+            wrapped(vec![M::Lanes(L::NewArray(0, 0, 0)), M::Cpu(C::Halt)]),
+            wrapped(vec![M::Cpu(C::Store(Type::U64, 999_999)), M::Cpu(C::Halt)]),
+        ];
+
+        // A branch with no nameable target, and an instruction outside every
+        // function — the two the renderer cannot write down.
+        let mut orphan = wrapped(vec![M::Cpu(C::Halt)]);
+        orphan.code.push(M::Lanes(L::Cz));
+        let unrenderable = vec![
+            wrapped(vec![M::Cpu(C::Branch(99)), M::Cpu(C::Halt)]),
+            orphan,
+        ];
+
+        for p in renderable {
+            assert!(
+                !validate_structure(&p).is_empty(),
+                "this case is meant to fail validation: {:?}",
+                p.code
+            );
+            assert_eq!(render_blockers(&p), vec![], "should render: {:?}", p.code);
+            parse_text(&to_text(&p))
+                .unwrap_or_else(|e| panic!("rendered text should re-parse: {e}\n{:?}", p.code));
+        }
+        for p in unrenderable {
+            assert!(
+                !render_blockers(&p).is_empty(),
+                "should be blocked: {:?}",
+                p.code
+            );
+            assert!(
+                parse_text(&to_text(&p)).is_err(),
+                "the text really would not re-parse: {:?}",
+                p.code
             );
         }
     }

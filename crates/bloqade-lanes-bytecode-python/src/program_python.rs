@@ -45,7 +45,7 @@ impl PyProgram {
         // Same gate as the CLI's `disassemble`: `to_text` must name every
         // branch and call target, and a decoded program can carry ones with no
         // name. Rendering them anyway produced text `from_text` rejects.
-        let errors = rs_val::validate_structure(&self.inner);
+        let errors = bloqade_lanes_bytecode_core::isa::text::render_blockers(&self.inner);
         if !errors.is_empty() {
             return Err(crate::errors::validation_errors_to_py(py, errors));
         }

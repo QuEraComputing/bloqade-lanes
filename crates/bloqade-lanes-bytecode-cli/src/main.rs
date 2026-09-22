@@ -207,13 +207,12 @@ fn cmd_disassemble(input: &PathBuf, output: Option<&std::path::Path>) -> Result<
     let bytes = fs::read(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
     let program = from_binary(&bytes).map_err(|e| e.to_string())?;
 
-    // Structural validation before rendering, not after. `to_text` has to name
-    // every branch and call target, and a binary can carry ones that have no
-    // name — a branch past the end of the code, a call to an address that
-    // begins no function. Rendering those anyway emitted `@L99` / `@F1` with
-    // no defining label, so `disassemble` produced text `assemble` rejects.
-    // The checks are arch-independent, so they cost nothing here.
-    let errors = validate::validate_structure(&program);
+    // Only the failures that make the program *unwritable* — a target with no
+    // name, an instruction with no function to sit in. A program with dead
+    // code or a missing terminator renders fine, and is exactly the kind you
+    // disassemble in order to look at; `validate` is the subcommand for
+    // judging it.
+    let errors = bloqade_lanes_bytecode_core::isa::text::render_blockers(&program);
     if !errors.is_empty() {
         for e in &errors {
             eprintln!("  {e}");
