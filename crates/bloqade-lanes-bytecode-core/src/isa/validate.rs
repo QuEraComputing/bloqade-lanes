@@ -18,10 +18,21 @@
 //!
 //!   The companion rule against branch/call instructions
 //!   ([`ControlFlowRequiresFeedForward`](ValidationError::ControlFlowRequiresFeedForward))
-//!   is currently unreachable — the ISA has no such instructions to reject. See
-//!   that variant's docs.
+//!   rejects control flow for the same reason. It was unreachable for as long
+//!   as the ISA had no such instructions; adopting the calling convention
+//!   brought it back.
 //! - **`atom_reloading` → `fill`.** Without atom reloading, refilling atoms
 //!   after the initial fill is unsupported.
+//!
+//! ## What the stack simulation does not cover
+//!
+//! [`simulate_stack`] is a linear pass over each function from an empty stack,
+//! so it stops at the first branch or call and skips any function a `call`
+//! passes operands to. Both are conservative: it reports nothing rather than
+//! something it cannot justify from a state it does not have. Restoring that
+//! coverage needs a CFG walk that merges state at join points and models calls
+//! against the frame — see
+//! <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>.
 //!
 //! ## Address checks
 //!
@@ -618,6 +629,23 @@ fn is_marker(inst: &M) -> bool {
     matches!(inst, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd))
 }
 
+/// Entry addresses of every function some `call` passes operands to.
+///
+/// The arity lives at the call site, not on the callee — `resolve` records an
+/// empty [`vihaco::module::Signature`] for every function — so the only way to
+/// learn that a function receives operands is to read the calls that reach it.
+/// A function called from several sites with different arities appears here if
+/// *any* of them is nonzero, because one caller passing operands is enough to
+/// make the empty-stack simulation wrong.
+fn callee_arities(code: &[M]) -> HashSet<u32> {
+    code.iter()
+        .filter_map(|inst| match inst {
+            M::Cpu(C::Call(arity, target)) if *arity > 0 => Some(*target),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Split the code into function extents, delimited by the markers.
 fn function_spans(code: &[M]) -> Vec<Span> {
     let mut spans = Vec::new();
@@ -1023,7 +1051,24 @@ impl<'a> StackSimulator<'a> {
         // <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>. The
         // linear prefix of every function is checked, which is all of every
         // function the compiler emits today.
+        //
+        // Starting from empty is the part that is only right for a function
+        // nothing passes operands to. `call <arity>` does not clear the stack:
+        // it sets `base = stack.len() - arity`, and the callee's locals *alias*
+        // the operand stack from there up. So a callee with nonzero arity
+        // legitimately consumes values this simulation cannot see, and every
+        // such function reported a `StackUnderflow` that execution disproves.
+        //
+        // Skipping them trades coverage for correctness. Checking them properly
+        // means modelling the frame rather than absolute depth — a callee owns
+        // exactly `arity` values and popping below `base` corrupts its caller —
+        // which is the frame-aware walk in #1026, not something this linear
+        // pass can express. This is a placeholder for that, not the end state.
+        let takes_operands = callee_arities(&program.code);
         for span in function_spans(&program.code) {
+            if takes_operands.contains(&(span.start as u32)) {
+                continue;
+            }
             self.stack.clear();
             for (pc, inst) in program.code[span.start..span.end]
                 .iter()
@@ -1044,6 +1089,12 @@ impl<'a> StackSimulator<'a> {
 /// Run the type-level stack simulation over a program. Collects underflow and
 /// type-mismatch errors, plus lane/location group errors (validated against
 /// `arch` when provided, else duplicate-only).
+///
+/// Conservative around control flow: each function is simulated from an empty
+/// stack up to its first branch or call, and a function some `call` passes
+/// operands to is skipped entirely. An empty result therefore means "nothing
+/// this pass can see is wrong", not "the stack discipline is sound" — see the
+/// module docs.
 pub fn simulate_stack(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
     StackSimulator::new(arch).run(program)
 }
@@ -1670,6 +1721,82 @@ mod tests {
         assert_eq!(
             simulate_stack(&p, None),
             vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    /// Wrap a multi-function body in the `sst v1` container.
+    fn sst_module(body: &str) -> Program {
+        use crate::isa::text::parse_text;
+        parse_text(&format!(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
+             .text(root):\n{body}.text(root).\n.section(root).\n"
+        ))
+        .expect("the module should parse")
+    }
+
+    /// A callee that receives operands is not simulated, because this pass
+    /// starts every function from an empty stack.
+    ///
+    /// `call <arity>` does not clear the stack — it sets
+    /// `base = stack.len() - arity` and the callee's locals alias the operand
+    /// stack from there up. So the argument `@helper` consumes below is one
+    /// `@main` legitimately passed, and reporting an underflow for it
+    /// contradicts the machine, which runs this program to `Halted`. See
+    /// <https://github.com/QuEraComputing/bloqade-lanes/issues/1026>.
+    #[test]
+    fn a_callee_taking_operands_is_not_simulated() {
+        let p = sst_module(
+            "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 1, helper\n  lanes::lanes.pop\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  cpu::cpu.load u32, 0\n  lanes::lanes.measure 1\n  \
+             lanes::lanes.await_measure\n  cpu::cpu.ret 1\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![],
+            "a nonzero-arity callee must not report an underflow this pass cannot justify"
+        );
+
+        // The machine is the authority the assertion above defers to.
+        let mut machine = crate::isa::machine::LanesMachine::new();
+        let run = machine.run(&p, 10_000).expect("the program should run");
+        assert!(matches!(
+            run.stopped,
+            crate::isa::machine::Stopped::Halted | crate::isa::machine::Stopped::Returned
+        ));
+    }
+
+    /// Only callees that receive operands are skipped. A zero-arity callee is
+    /// still simulated, so the concession above cannot quietly widen into
+    /// "stop checking anything reachable by a call".
+    #[test]
+    fn a_zero_arity_callee_is_still_simulated() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.measure 1\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert!(
+            simulate_stack(&p, None).contains(&ValidationError::StackUnderflow { pc: 5 }),
+            "a zero-arity callee's underflow is real and must still be reported: {:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    /// One nonzero-arity call site is enough to skip the callee, even when
+    /// another site passes nothing — the arity lives on the call, not the
+    /// function, so the two disagree and the empty-stack model fits neither.
+    #[test]
+    fn one_operand_passing_call_site_is_enough_to_skip() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  \
+             lanes::lanes.const_zone 0x00000000\n  cpu::cpu.call 1, helper\n  \
+             cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.measure 1\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![],
+            "a callee reached at arity 0 and arity 1 is skipped"
         );
     }
 
