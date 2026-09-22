@@ -11,19 +11,41 @@ from bloqade.lanes.bytecode import (
     ValidationError,
     ZoneAddress,
 )
+from bloqade.lanes.bytecode.decode import BytecodeDecoder, DecodingError
 from bloqade.lanes.bytecode.exceptions import (
     AtomReloadingNotSupportedError,
+    BadInstructionError,
     BadMagicError,
     EmptyProgramError,
     FeedForwardNotSupportedError,
+    GetItemInvalidDimsError,
     InitialFillNotFirstError,
     MissingTerminatorError,
     MissingVersionError,
+    NewArrayTooManyElementsError,
     StackUnderflowError,
     TypeMismatchError,
     UnalignedCodeError,
     UnreachableInstructionError,
 )
+from bloqade.lanes.dialects import stack_move
+
+
+def _sst(body: str, version: str = "1.0") -> str:
+    """Wrap a program body in vihaco's ``sst v1`` section container.
+
+    The framing is eleven lines that say nothing about the test, and it was
+    pasted into every case that needed a program. Behind one helper, a
+    container change is one edit rather than twenty.
+
+    ``body`` is the ``.text(root)`` payload — normally a whole ``fn @main()``
+    block, trailing newline included.
+    """
+    return (
+        f"sst v1\n\n.section(root):\n.header(root):\nversion {version}\n"
+        f".header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
+    )
+
 
 # ── Address Types ──
 
@@ -134,14 +156,10 @@ class TestZoneAddress:
 
 # ── Instruction ──
 
-# New opcode packing: (instruction_code << 8) | device_code
-# Device codes: Cpu=0x00, LaneConst=0x0F, AtomArrangement=0x10,
-#   QuantumGate=0x11, Measurement=0x12, Array=0x13, DetectorObservable=0x14
-
 
 class TestInstruction:
-    # The vihaco-backed ISA assigns its own opcode bytes (no legacy packed
-    # (instr<<8)|device scheme), so these check instruction identity via the
+    # vihaco assigns opcode bytes by variant declaration order, so they shift
+    # whenever the ISA gains a variant. These check instruction identity via the
     # stable op_name() rather than a specific opcode value.
     def test_const_float(self):
         inst = Instruction.const_float(1.5)
@@ -399,42 +417,52 @@ class TestProgramConstruction:
         assert len(program.instructions) == 3
 
     def test_from_text(self):
-        source = """\
-version 1.0;
+        source = _sst("""\
 fn @main() {
-  const_loc 0x00000000
-  initial_fill 1
-  halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
 }
-"""
+""")
         program = Program.from_text(source)
         assert program.version == (1, 0)
         assert len(program) == 3
 
     def test_from_text_invalid(self):
+        # Well-formed container, no `.header(root)` section — spelled out
+        # rather than built with `_sst`, because the missing header is the
+        # thing under test.
         with pytest.raises(MissingVersionError):
-            Program.from_text("fn @main() {\n  halt\n}\n")  # missing version header
+            Program.from_text(
+                "sst v1\n\n.section(root):\n.text(root):\n"
+                "fn @main() {\n  cpu::cpu.halt\n}\n"
+                ".text(root).\n.section(root).\n"
+            )
+
+    def test_from_text_rejects_non_container(self):
+        # The bare `version 1.0;` + `fn @main` form is no longer accepted.
+        with pytest.raises(BadInstructionError):
+            Program.from_text("version 1.0;\nfn @main() {\n  cpu::cpu.halt\n}\n")
 
 
 class TestProgramSerialization:
     def _sample_program(self):
-        return Program.from_text("""\
-version 1.0;
+        return Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  cpu::cpu.halt
 }
-""")
+"""))
 
     def test_to_text(self):
         program = self._sample_program()
         text = program.to_text()
         assert "version 1.0" in text
         assert "fn @main()" in text
-        assert "initial_fill 2" in text
-        assert "halt" in text
+        assert "lanes::lanes.initial_fill 2" in text
+        assert "cpu::cpu.halt" in text
 
     def test_text_round_trip(self):
         program = self._sample_program()
@@ -446,7 +474,7 @@ fn @main() {
         program = self._sample_program()
         binary = program.to_binary()
         assert isinstance(binary, bytes)
-        assert binary[:5] == b"LANES"
+        assert binary[:4] == b"VHBC"
 
     def test_binary_round_trip(self):
         program = self._sample_program()
@@ -459,17 +487,29 @@ fn @main() {
         with pytest.raises(BadMagicError):
             Program.from_binary(b"XXXXX\x00\x00\x00\x00")
 
-    def test_bad_magic_message_mentions_lanes(self):
+    def test_bad_magic_message_mentions_vhbc(self):
         with pytest.raises(BadMagicError) as e:
             Program.from_binary(b"XXXXX\x00\x00\x00\x00")
-        assert "LANES" in str(e.value)
+        assert "VHBC" in str(e.value)
 
     def test_unaligned_binary_raises_unaligned_code_error(self):
-        # Append one stray byte so the code region is not a multiple of the
-        # 17-byte instruction word width.
-        valid = self._sample_program().to_binary()
+        # Grow the bytecode region by one byte, and the section holding it, so
+        # the container stays well-formed and the only fault is that the region
+        # is no longer a whole number of instruction words. Offsets follow the
+        # container layout: section_len at 16, bytecode_len at 36, bytecode at 44.
+        SECTION_LEN, BYTECODE_LEN, BYTECODE = 16, 36, 44
+        raw = bytearray(self._sample_program().to_binary())
+
+        def bump(at):
+            v = int.from_bytes(raw[at : at + 8], "little") + 1
+            raw[at : at + 8] = v.to_bytes(8, "little")
+
+        bump(SECTION_LEN)
+        bump(BYTECODE_LEN)
+        raw.insert(BYTECODE, 0)
+
         with pytest.raises(UnalignedCodeError):
-            Program.from_binary(valid + b"\x00")
+            Program.from_binary(bytes(raw))
 
     def test_text_binary_round_trip(self):
         program = self._sample_program()
@@ -482,25 +522,23 @@ fn @main() {
 
 class TestProgramValidation:
     def test_structural_valid(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  initial_fill 1
-  halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
 }
-""")
+"""))
         program.validate()  # should not raise
 
     def test_structural_invalid(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  halt
-  const_loc 0x00000000
-  initial_fill 1
+  cpu::cpu.halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
 }
-""")
+"""))
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
         assert any(
@@ -508,30 +546,28 @@ fn @main() {
         )
 
     def test_stack_validation(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  pop
+  lanes::lanes.pop
 }
-""")
+"""))
         with pytest.raises(ValidationError) as exc_info:
             program.validate(stack=True)
         assert any(isinstance(e, StackUnderflowError) for e in exc_info.value.errors)
 
     def test_stack_type_mismatch(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const.f64 1.0
-  initial_fill 1
+  cpu::cpu.const f64, 1.0
+  lanes::lanes.initial_fill 1
 }
-""")
+"""))
         with pytest.raises(ValidationError) as exc_info:
             program.validate(stack=True)
         assert any(isinstance(e, TypeMismatchError) for e in exc_info.value.errors)
 
     def test_empty_program_raises_empty_program_error(self):
-        program = Program.from_text("version 1.0;\nfn @main() {\n}\n")
+        program = Program.from_text(_sst("fn @main() {\n}\n"))
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
         assert any(isinstance(e, EmptyProgramError) for e in exc_info.value.errors)
@@ -540,24 +576,22 @@ fn @main() {
         )
 
     def test_missing_terminator_raises_missing_terminator_error(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const.i64 0
+  cpu::cpu.const i64, 0
 }
-""")
+"""))
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
         assert any(isinstance(e, MissingTerminatorError) for e in exc_info.value.errors)
 
     def test_unreachable_instruction_raises_unreachable_error(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  halt
-  const.i64 0
+  cpu::cpu.halt
+  cpu::cpu.const i64, 0
 }
-""")
+"""))
         with pytest.raises(ValidationError) as exc_info:
             program.validate()
         assert any(
@@ -568,22 +602,20 @@ fn @main() {
         )
 
     def test_valid_program_with_return_no_errors(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const.i64 0
-  return
+  cpu::cpu.const i64, 0
+  cpu::cpu.ret 0
 }
-""")
+"""))
         program.validate()  # should not raise
 
     def test_valid_program_with_halt_no_errors(self):
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  halt
+  cpu::cpu.halt
 }
-""")
+"""))
         program.validate()  # should not raise
 
 
@@ -614,37 +646,35 @@ MINIMAL_ARCH_JSON = """{
 class TestCapabilityValidation:
     def test_single_measure_allowed(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  return
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 0
 }
-""")
+"""))
         program.validate(arch=arch)  # should not raise
 
     def test_multiple_measure_rejected_without_feed_forward(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  return
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 0
 }
-""")
+"""))
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
         assert any(
@@ -657,36 +687,34 @@ fn @main() {
         data = json.loads(MINIMAL_ARCH_JSON)
         data["feed_forward"] = True
         arch = ArchSpec.from_json(json.dumps(data))
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  const_zone 0x00000000
-  measure 1
-  await_measure
-  return
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 0
 }
-""")
+"""))
         program.validate(arch=arch)  # should not raise
 
     def test_fill_rejected_without_atom_reloading(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_loc 0x00000000
-  fill 1
-  halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.fill 1
+  cpu::cpu.halt
 }
-""")
+"""))
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
         assert any(
@@ -699,29 +727,27 @@ fn @main() {
         data = json.loads(MINIMAL_ARCH_JSON)
         data["atom_reloading"] = True
         arch = ArchSpec.from_json(json.dumps(data))
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  const_loc 0x00000001
-  initial_fill 2
-  const_loc 0x00000000
-  fill 1
-  halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.initial_fill 2
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.fill 1
+  cpu::cpu.halt
 }
-""")
+"""))
         program.validate(arch=arch)  # should not raise
 
     def test_initial_fill_always_allowed(self):
         arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
-        program = Program.from_text("""\
-version 1.0;
+        program = Program.from_text(_sst("""\
 fn @main() {
-  const_loc 0x00000000
-  initial_fill 1
-  halt
+  lanes::lanes.const_loc 0x00000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
 }
-""")
+"""))
         program.validate(arch=arch)  # should not raise
 
     def test_error_attributes(self):
@@ -736,8 +762,146 @@ fn @main() {
 
 class TestProgramRepr:
     def test_repr(self):
-        program = Program.from_text("version 1.0;\nfn @main() {\n  halt\n}\n")
+        program = Program.from_text(_sst("fn @main() {\n  cpu::cpu.halt\n}\n"))
         r = repr(program)
         assert "Program" in r
         assert "(1, 0)" in r
         assert "1" in r  # instruction count
+
+
+class TestDecoderDispatch:
+    """The decoder keys handlers on ``(device, op_name)``.
+
+    A name alone is not unique across the machine's two devices: ``get_item``
+    is both vihaco-cpu's heap indexing and the lanes device's array indexing.
+    Dispatching on the name sent a CPU ``get_item`` to the lanes handler,
+    which failed on ``ndims()`` with a self-contradictory message rather than
+    reaching the purpose-built diagnostic below.
+    """
+
+    def test_cpu_get_item_reports_no_representation(self):
+        program = Program.from_text(
+            _sst("fn @main() {\n  cpu::cpu.get_item\n  cpu::cpu.halt\n}\n")
+        )
+        instr = program.instructions[0]
+        assert (instr.device(), instr.op_name()) == ("cpu", "get_item")
+
+        with pytest.raises(DecodingError) as exc_info:
+            BytecodeDecoder().decode(program)
+        assert "`cpu::get_item` has no stack_move representation" in str(exc_info.value)
+        assert exc_info.value.instruction_index == 0
+
+    def test_lanes_get_item_still_decodes(self):
+        # The other half of the pair must be unaffected.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const i64, 1\n"
+                "  lanes::lanes.new_array 1 1 0\n"
+                "  cpu::cpu.const i64, 0\n"
+                "  lanes::lanes.get_item 1\n"
+                "  lanes::lanes.pop\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        instr = program.instructions[3]
+        assert (instr.device(), instr.op_name()) == ("lanes", "get_item")
+        BytecodeDecoder().decode(program)  # should not raise
+
+    def test_arithmetic_reports_its_device(self):
+        program = Program.from_text(
+            _sst("fn @main() {\n  cpu::cpu.add i64\n  cpu::cpu.halt\n}\n")
+        )
+        with pytest.raises(DecodingError) as exc_info:
+            BytecodeDecoder().decode(program)
+        assert "`cpu::add` has no stack_move representation" in str(exc_info.value)
+
+
+class TestArrayOperandBounds:
+    """``new_array`` and ``get_item`` operands come straight out of the
+    instruction word, so the validator bounds them rather than looping on
+    whatever they say."""
+
+    def test_new_array_element_count_overflow_is_rejected(self):
+        # 65536 * 65536 == 2**32, which wrapped to zero in the old u32
+        # arithmetic — the program validated without examining an operand.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n  lanes::lanes.new_array 0 65536 65536\n  cpu::cpu.halt\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e
+            for e in exc_info.value.errors
+            if isinstance(e, NewArrayTooManyElementsError)
+        ]
+        assert errs and errs[0].count == 2**32
+
+    def test_get_item_index_count_is_bounded(self):
+        # Arrays are at most 2-D, so three indices is structurally wrong.
+        program = Program.from_text(
+            _sst("fn @main() {\n  lanes::lanes.get_item 3\n  cpu::cpu.halt\n}\n")
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, GetItemInvalidDimsError)
+        ]
+        assert errs and errs[0].ndims == 3
+
+    def test_two_indices_are_accepted(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const i64, 1\n"
+                "  cpu::cpu.const i64, 2\n"
+                "  lanes::lanes.new_array 1 1 2\n"
+                "  cpu::cpu.const i64, 0\n"
+                "  cpu::cpu.const i64, 0\n"
+                "  lanes::lanes.get_item 2\n"
+                "  lanes::lanes.pop\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        program.validate(stack=True)  # should not raise
+
+
+class TestMeasurementPipeline:
+    """``measure -> await_measure -> set_detector`` must type-check.
+
+    ``await_measure`` pushed a distinct measurement-result tag while
+    ``set_detector`` popped an array ref, so the canonical pipeline could
+    never validate.
+    """
+
+    def test_measure_await_set_detector_validates(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  lanes::lanes.const_zone 0x00000000\n"
+                "  lanes::lanes.measure 1\n"
+                "  lanes::lanes.await_measure\n"
+                "  lanes::lanes.set_detector\n"
+                "  lanes::lanes.pop\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        program.validate(stack=True)  # should not raise
+
+    def test_measurement_result_is_a_valid_element_tag(self):
+        # Tag 9 names the *element* type of a measurement-result array, which
+        # is what issue #547 asked for.
+        assert 9 in stack_move.TYPE_TAG
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const i64, 1\n"
+                "  lanes::lanes.new_array 9 1 0\n"
+                "  lanes::lanes.set_observable\n"
+                "  lanes::lanes.pop\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        program.validate(stack=True)  # should not raise

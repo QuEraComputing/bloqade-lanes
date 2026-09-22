@@ -1,10 +1,11 @@
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
-use bloqade_lanes_bytecode_core::isa::Instruction as VInst;
-use vihaco::instruction::OpCode;
-use vihaco::value::Value;
-use vihaco_cpu::Instruction as Cpu;
+use bloqade_lanes_bytecode_core::isa::bytecode;
+use bloqade_lanes_bytecode_core::isa::device::LanesInstruction as L;
+use bloqade_lanes_bytecode_core::isa::machine::{self, MachineInstruction as VInst};
+use vihaco::{Type, Value};
+use vihaco_cpu::RuntimeInstruction as C;
 
 use crate::arch_python::{PyDirection, PyLaneAddr, PyLocationAddr, PyMoveType, PyZoneAddr};
 use crate::validation::validate_field;
@@ -23,20 +24,18 @@ pub struct PyInstruction {
 #[pymethods]
 impl PyInstruction {
     // ── Constants ──
-    // CPU const pushes are reused from vihaco-cpu (a typed Value), so the
-    // legacy `const_float` / `const_int` factories map onto `Cpu(Const(..))`.
 
     #[staticmethod]
     fn const_float(value: f64) -> Self {
         Self {
-            inner: VInst::Cpu(Cpu::Const(Value::F64(value))),
+            inner: VInst::Cpu(C::Const(Type::F64, Value::F64(value))),
         }
     }
 
     #[staticmethod]
     fn const_int(value: i64) -> Self {
         Self {
-            inner: VInst::Cpu(Cpu::Const(Value::I64(value))),
+            inner: VInst::Cpu(C::Const(Type::I64, Value::I64(value))),
         }
     }
 
@@ -51,7 +50,7 @@ impl PyInstruction {
             site_id,
         };
         Ok(Self {
-            inner: VInst::ConstLoc(addr.encode()),
+            inner: VInst::Lanes(L::ConstLoc(addr.encode())),
         })
     }
 
@@ -78,7 +77,7 @@ impl PyInstruction {
             bus_id,
         };
         Ok(Self {
-            inner: VInst::ConstLane(addr.encode_u64()),
+            inner: VInst::Lanes(L::ConstLane(addr.encode_u64())),
         })
     }
 
@@ -87,28 +86,31 @@ impl PyInstruction {
         let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let addr = rs_addr::ZoneAddr { zone_id };
         Ok(Self {
-            inner: VInst::ConstZone(addr.encode()),
+            inner: VInst::Lanes(L::ConstZone(addr.encode())),
         })
     }
 
     // ── Stack manipulation ──
-    // `pop`/`swap` are lanes-native; `dup` is reused from vihaco-cpu.
 
     #[staticmethod]
     fn pop() -> Self {
-        Self { inner: VInst::Pop }
+        Self {
+            inner: VInst::Lanes(L::Pop),
+        }
     }
 
     #[staticmethod]
     fn dup() -> Self {
         Self {
-            inner: VInst::Cpu(Cpu::Dup),
+            inner: VInst::Cpu(C::Dup),
         }
     }
 
     #[staticmethod]
     fn swap() -> Self {
-        Self { inner: VInst::Swap }
+        Self {
+            inner: VInst::Lanes(L::Swap),
+        }
     }
 
     // ── Atom operations ──
@@ -117,7 +119,7 @@ impl PyInstruction {
     fn initial_fill(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: VInst::InitialFill(arity),
+            inner: VInst::Lanes(L::InitialFill(arity)),
         })
     }
 
@@ -125,7 +127,7 @@ impl PyInstruction {
     fn fill(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: VInst::Fill(arity),
+            inner: VInst::Lanes(L::Fill(arity)),
         })
     }
 
@@ -134,7 +136,7 @@ impl PyInstruction {
     fn move_instr(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: VInst::Move(arity),
+            inner: VInst::Lanes(L::Move(arity)),
         })
     }
 
@@ -144,7 +146,7 @@ impl PyInstruction {
     fn local_r(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: VInst::LocalR(arity),
+            inner: VInst::Lanes(L::LocalR(arity)),
         })
     }
 
@@ -152,27 +154,29 @@ impl PyInstruction {
     fn local_rz(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: VInst::LocalRz(arity),
+            inner: VInst::Lanes(L::LocalRz(arity)),
         })
     }
 
     #[staticmethod]
     fn global_r() -> Self {
         Self {
-            inner: VInst::GlobalR,
+            inner: VInst::Lanes(L::GlobalR),
         }
     }
 
     #[staticmethod]
     fn global_rz() -> Self {
         Self {
-            inner: VInst::GlobalRz,
+            inner: VInst::Lanes(L::GlobalRz),
         }
     }
 
     #[staticmethod]
     fn cz() -> Self {
-        Self { inner: VInst::Cz }
+        Self {
+            inner: VInst::Lanes(L::Cz),
+        }
     }
 
     // ── Measurement ──
@@ -181,14 +185,14 @@ impl PyInstruction {
     fn measure(arity: i64) -> PyResult<Self> {
         let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
-            inner: VInst::Measure(arity),
+            inner: VInst::Lanes(L::Measure(arity)),
         })
     }
 
     #[staticmethod]
     fn await_measure() -> Self {
         Self {
-            inner: VInst::AwaitMeasure,
+            inner: VInst::Lanes(L::AwaitMeasure),
         }
     }
 
@@ -203,7 +207,7 @@ impl PyInstruction {
         let dim0 = validate_field::<u16>("dim0", dim0)? as u32;
         let dim1 = validate_field::<u16>("dim1", dim1)? as u32;
         Ok(Self {
-            inner: VInst::NewArray(type_tag, dim0, dim1),
+            inner: VInst::Lanes(L::NewArray(type_tag, dim0, dim1)),
         })
     }
 
@@ -211,7 +215,7 @@ impl PyInstruction {
     fn get_item(ndims: i64) -> PyResult<Self> {
         let ndims = validate_field::<u16>("ndims", ndims)? as u32;
         Ok(Self {
-            inner: VInst::GetItem(ndims),
+            inner: VInst::Lanes(L::GetItem(ndims)),
         })
     }
 
@@ -220,14 +224,14 @@ impl PyInstruction {
     #[staticmethod]
     fn set_detector() -> Self {
         Self {
-            inner: VInst::SetDetector,
+            inner: VInst::Lanes(L::SetDetector),
         }
     }
 
     #[staticmethod]
     fn set_observable() -> Self {
         Self {
-            inner: VInst::SetObservable,
+            inner: VInst::Lanes(L::SetObservable),
         }
     }
 
@@ -238,33 +242,37 @@ impl PyInstruction {
     #[pyo3(name = "return_")]
     fn return_instr() -> Self {
         Self {
-            inner: VInst::Return,
+            inner: VInst::Cpu(C::Return(0)),
         }
     }
 
     #[staticmethod]
     fn halt() -> Self {
         Self {
-            inner: VInst::Cpu(Cpu::Halt),
+            inner: VInst::Cpu(C::Halt),
         }
     }
 
     // ── Introspection ──
 
-    /// The vihaco opcode byte for this instruction (the outer enum's opcode;
-    /// for `Cpu(..)` this is the CPU device's opcode, not the nested one).
+    /// The vihaco opcode byte for this instruction.
     #[getter]
     fn opcode(&self) -> u16 {
-        OpCode::opcode(&self.inner) as u16
+        bytecode::packed_opcode(&self.inner)
     }
 
     fn op_name(&self) -> &'static str {
-        self.inner.op_name()
+        machine::op_name(&self.inner)
+    }
+
+    /// The device this instruction belongs to: `"cpu"` or `"lanes"`.
+    fn device(&self) -> &'static str {
+        machine::device_of(&self.inner)
     }
 
     fn float_value(&self) -> PyResult<f64> {
         match &self.inner {
-            VInst::Cpu(Cpu::Const(Value::F64(f))) => Ok(*f),
+            VInst::Cpu(C::Const(Type::F64, Value::F64(f))) => Ok(*f),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "float_value() is only valid on const_float",
             )),
@@ -273,7 +281,7 @@ impl PyInstruction {
 
     fn int_value(&self) -> PyResult<i64> {
         match &self.inner {
-            VInst::Cpu(Cpu::Const(Value::I64(n))) => Ok(*n),
+            VInst::Cpu(C::Const(Type::I64, Value::I64(n))) => Ok(*n),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "int_value() is only valid on const_int",
             )),
@@ -282,7 +290,7 @@ impl PyInstruction {
 
     fn location_address(&self) -> PyResult<PyLocationAddr> {
         match &self.inner {
-            VInst::ConstLoc(bits) => Ok(PyLocationAddr {
+            VInst::Lanes(L::ConstLoc(bits)) => Ok(PyLocationAddr {
                 inner: rs_addr::LocationAddr::decode(*bits),
             }),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -293,7 +301,7 @@ impl PyInstruction {
 
     fn lane_address(&self) -> PyResult<PyLaneAddr> {
         match &self.inner {
-            VInst::ConstLane(bits) => Ok(PyLaneAddr {
+            VInst::Lanes(L::ConstLane(bits)) => Ok(PyLaneAddr {
                 inner: rs_addr::LaneAddr::decode_u64(*bits),
             }),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -304,7 +312,7 @@ impl PyInstruction {
 
     fn zone_address(&self) -> PyResult<PyZoneAddr> {
         match &self.inner {
-            VInst::ConstZone(bits) => Ok(PyZoneAddr {
+            VInst::Lanes(L::ConstZone(bits)) => Ok(PyZoneAddr {
                 inner: rs_addr::ZoneAddr::decode(*bits),
             }),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -315,7 +323,7 @@ impl PyInstruction {
 
     fn type_tag(&self) -> PyResult<u32> {
         match &self.inner {
-            VInst::NewArray(type_tag, ..) => Ok(*type_tag),
+            VInst::Lanes(L::NewArray(type_tag, ..)) => Ok(*type_tag),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "type_tag() is only valid on new_array",
             )),
@@ -324,7 +332,7 @@ impl PyInstruction {
 
     fn dim0(&self) -> PyResult<u32> {
         match &self.inner {
-            VInst::NewArray(_, dim0, _) => Ok(*dim0),
+            VInst::Lanes(L::NewArray(_, dim0, _)) => Ok(*dim0),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "dim0() is only valid on new_array",
             )),
@@ -333,7 +341,7 @@ impl PyInstruction {
 
     fn dim1(&self) -> PyResult<u32> {
         match &self.inner {
-            VInst::NewArray(_, _, dim1) => Ok(*dim1),
+            VInst::Lanes(L::NewArray(_, _, dim1)) => Ok(*dim1),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "dim1() is only valid on new_array",
             )),
@@ -342,7 +350,7 @@ impl PyInstruction {
 
     fn ndims(&self) -> PyResult<u32> {
         match &self.inner {
-            VInst::GetItem(ndims) => Ok(*ndims),
+            VInst::Lanes(L::GetItem(ndims)) => Ok(*ndims),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "ndims() is only valid on get_item",
             )),
@@ -351,12 +359,12 @@ impl PyInstruction {
 
     fn arity(&self) -> PyResult<u32> {
         match &self.inner {
-            VInst::InitialFill(arity)
-            | VInst::Fill(arity)
-            | VInst::Move(arity)
-            | VInst::LocalR(arity)
-            | VInst::LocalRz(arity)
-            | VInst::Measure(arity) => Ok(*arity),
+            VInst::Lanes(L::InitialFill(arity))
+            | VInst::Lanes(L::Fill(arity))
+            | VInst::Lanes(L::Move(arity))
+            | VInst::Lanes(L::LocalR(arity))
+            | VInst::Lanes(L::LocalRz(arity))
+            | VInst::Lanes(L::Measure(arity)) => Ok(*arity),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "arity() not applicable to this opcode",
             )),
@@ -374,17 +382,17 @@ impl PyInstruction {
 
 fn format_instruction(instr: &VInst) -> String {
     match instr {
-        VInst::Pop => "Instruction.pop()".to_string(),
-        VInst::Swap => "Instruction.swap()".to_string(),
-        VInst::Return => "Instruction.return_()".to_string(),
-        VInst::ConstLoc(bits) => {
+        VInst::Lanes(L::Pop) => "Instruction.pop()".to_string(),
+        VInst::Lanes(L::Swap) => "Instruction.swap()".to_string(),
+        VInst::Cpu(C::Return(0)) => "Instruction.return_()".to_string(),
+        VInst::Lanes(L::ConstLoc(bits)) => {
             let addr = rs_addr::LocationAddr::decode(*bits);
             format!(
                 "Instruction.const_loc(zone_id={}, word_id={}, site_id={})",
                 addr.zone_id, addr.word_id, addr.site_id
             )
         }
-        VInst::ConstLane(bits) => {
+        VInst::Lanes(L::ConstLane(bits)) => {
             let addr = rs_addr::LaneAddr::decode_u64(*bits);
             let dir = match addr.direction {
                 rs_addr::Direction::Forward => "Direction.FORWARD",
@@ -400,37 +408,39 @@ fn format_instruction(instr: &VInst) -> String {
                 mt, addr.zone_id, addr.word_id, addr.site_id, addr.bus_id, dir
             )
         }
-        VInst::ConstZone(bits) => {
+        VInst::Lanes(L::ConstZone(bits)) => {
             let addr = rs_addr::ZoneAddr::decode(*bits);
             format!("Instruction.const_zone(zone_id={})", addr.zone_id)
         }
-        VInst::InitialFill(arity) => format!("Instruction.initial_fill({arity})"),
-        VInst::Fill(arity) => format!("Instruction.fill({arity})"),
-        VInst::Move(arity) => format!("Instruction.move_({arity})"),
-        VInst::LocalR(arity) => format!("Instruction.local_r({arity})"),
-        VInst::LocalRz(arity) => format!("Instruction.local_rz({arity})"),
-        VInst::GlobalR => "Instruction.global_r()".to_string(),
-        VInst::GlobalRz => "Instruction.global_rz()".to_string(),
-        VInst::Cz => "Instruction.cz()".to_string(),
-        VInst::Measure(arity) => format!("Instruction.measure({arity})"),
-        VInst::AwaitMeasure => "Instruction.await_measure()".to_string(),
-        VInst::NewArray(type_tag, dim0, dim1) => {
+        VInst::Lanes(L::InitialFill(arity)) => format!("Instruction.initial_fill({arity})"),
+        VInst::Lanes(L::Fill(arity)) => format!("Instruction.fill({arity})"),
+        VInst::Lanes(L::Move(arity)) => format!("Instruction.move_({arity})"),
+        VInst::Lanes(L::LocalR(arity)) => format!("Instruction.local_r({arity})"),
+        VInst::Lanes(L::LocalRz(arity)) => format!("Instruction.local_rz({arity})"),
+        VInst::Lanes(L::GlobalR) => "Instruction.global_r()".to_string(),
+        VInst::Lanes(L::GlobalRz) => "Instruction.global_rz()".to_string(),
+        VInst::Lanes(L::Cz) => "Instruction.cz()".to_string(),
+        VInst::Lanes(L::Measure(arity)) => format!("Instruction.measure({arity})"),
+        VInst::Lanes(L::AwaitMeasure) => "Instruction.await_measure()".to_string(),
+        VInst::Lanes(L::NewArray(type_tag, dim0, dim1)) => {
             if *dim1 == 0 {
                 format!("Instruction.new_array({type_tag}, {dim0})")
             } else {
                 format!("Instruction.new_array({type_tag}, {dim0}, {dim1})")
             }
         }
-        VInst::GetItem(ndims) => format!("Instruction.get_item({ndims})"),
-        VInst::SetDetector => "Instruction.set_detector()".to_string(),
-        VInst::SetObservable => "Instruction.set_observable()".to_string(),
-        VInst::Cpu(Cpu::Const(Value::F64(f))) => format!("Instruction.const_float({f})"),
-        VInst::Cpu(Cpu::Const(Value::I64(n))) => format!("Instruction.const_int({n})"),
-        VInst::Cpu(Cpu::Dup) => "Instruction.dup()".to_string(),
-        VInst::Cpu(Cpu::Halt) => "Instruction.halt()".to_string(),
-        // No Python factory exists for arbitrary nested vihaco-cpu ops, so emit
-        // a clearly non-evaluable marker rather than a fake `Instruction.cpu(...)`
-        // call that `repr()` would otherwise imply could be evaluated.
-        VInst::Cpu(other) => format!("<unsupported cpu op: {other:?}>"),
+        VInst::Lanes(L::GetItem(ndims)) => format!("Instruction.get_item({ndims})"),
+        VInst::Lanes(L::SetDetector) => "Instruction.set_detector()".to_string(),
+        VInst::Lanes(L::SetObservable) => "Instruction.set_observable()".to_string(),
+        VInst::Cpu(C::Const(Type::F64, Value::F64(f))) => format!("Instruction.const_float({f})"),
+        VInst::Cpu(C::Const(Type::I64, Value::I64(n))) => format!("Instruction.const_int({n})"),
+        VInst::Cpu(C::Dup) => "Instruction.dup()".to_string(),
+        VInst::Cpu(C::Halt) => "Instruction.halt()".to_string(),
+        // A decoded program can contain any vihaco-cpu op, but only the handful
+        // above have Python factories. Emit the `.sst` spelling in a clearly
+        // non-evaluable marker rather than a fake constructor call that
+        // `repr()` would imply could be evaluated. Must come last: it matches
+        // every CPU instruction.
+        inst @ VInst::Cpu(_) => format!("<{}>", machine::to_sst_text(inst)),
     }
 }

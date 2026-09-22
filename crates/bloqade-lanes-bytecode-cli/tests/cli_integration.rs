@@ -3,67 +3,73 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
+mod common;
+use common::{sst, sst_version};
+
 fn cmd() -> Command {
     assert_cmd::cargo_bin_cmd!("bloqade-bytecode")
 }
 
 /// A small program for basic command tests.
-const SAMPLE_PROGRAM: &str = "\
-version 1.0;
+fn sample_program() -> String {
+    sst("\
 fn @main() {
-  const_loc 0x00000102
-  const_lane 0x0000000100030002
-  halt
+  lanes::lanes.const_loc 0x00000102
+  lanes::lanes.const_lane 0x0000000100030002
+  cpu::cpu.halt
 }
-";
+")
+}
 
 /// All 23 instructions exercised in a single program.
 /// Ordered so that initial_fill comes right after constants (structurally valid).
-const ALL_INSTRUCTIONS_PROGRAM: &str = "\
-version 1.0;
+fn all_instructions_program() -> String {
+    sst("\
 fn @main() {
-  const.f64 1.5
-  const.i64 42
-  const_loc 0x00010002
-  const_lane 0x8000000000010002
-  const_zone 0x00000003
-  initial_fill 3
-  pop
-  dup
-  swap
-  fill 2
-  move 1
-  local_r 4
-  local_rz 2
-  global_r
-  global_rz
-  cz
-  measure 1
-  await_measure
-  new_array 2 10 20
-  get_item 2
-  set_detector
-  set_observable
-  halt
+  cpu::cpu.const f64, 1.5
+  cpu::cpu.const i64, 42
+  lanes::lanes.const_loc 0x00010002
+  lanes::lanes.const_lane 0x8000000000010002
+  lanes::lanes.const_zone 0x00000003
+  lanes::lanes.initial_fill 3
+  lanes::lanes.pop
+  cpu::cpu.dup
+  lanes::lanes.swap
+  lanes::lanes.fill 2
+  lanes::lanes.move 1
+  lanes::lanes.local_r 4
+  lanes::lanes.local_rz 2
+  lanes::lanes.global_r
+  lanes::lanes.global_rz
+  lanes::lanes.cz
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  lanes::lanes.new_array 2 10 20
+  lanes::lanes.get_item 2
+  lanes::lanes.set_detector
+  lanes::lanes.set_observable
+  cpu::cpu.halt
 }
-";
+")
+}
 
 /// A program with addresses valid for the test arch spec (word_id=0, site_id in 0..5, bus_id=0).
-const ARCH_VALID_PROGRAM: &str = "\
-version 1.0;
+fn arch_valid_program() -> String {
+    sst("\
 fn @main() {
-  const_loc 0x00000001
-  const_zone 0x00000000
-  halt
+  lanes::lanes.const_loc 0x00000001
+  lanes::lanes.const_zone 0x00000000
+  cpu::cpu.halt
 }
-";
+")
+}
 
 #[test]
 fn test_assemble_creates_binary() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
     let output = dir.path().join("prog.bin");
-    fs::write(&input, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input, all_instructions_program()).unwrap();
 
     cmd()
         .args([
@@ -77,8 +83,8 @@ fn test_assemble_creates_binary() {
         .stderr(predicate::str::contains("assembled 23 instructions"));
 
     let bytes = fs::read(&output).unwrap();
-    // Should start with the native LANES magic bytes
-    assert_eq!(&bytes[..5], b"LANES");
+    // Should start with vihaco's container magic
+    assert_eq!(&bytes[..4], b"VHBC");
 }
 
 #[test]
@@ -86,7 +92,7 @@ fn test_disassemble_to_stdout() {
     let dir = TempDir::new().unwrap();
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     // First assemble
     cmd()
@@ -104,11 +110,11 @@ fn test_disassemble_to_stdout() {
         .args(["disassemble", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("const.f64 1.5"))
-        .stdout(predicate::str::contains("const.i64 42"))
-        .stdout(predicate::str::contains("const_loc"))
-        .stdout(predicate::str::contains("const_lane"))
-        .stdout(predicate::str::contains("const_zone"))
+        .stdout(predicate::str::contains("cpu::cpu.const f64, 1.5"))
+        .stdout(predicate::str::contains("cpu::cpu.const i64, 42"))
+        .stdout(predicate::str::contains("lanes::lanes.const_loc"))
+        .stdout(predicate::str::contains("lanes::lanes.const_lane"))
+        .stdout(predicate::str::contains("lanes::lanes.const_zone"))
         .stdout(predicate::str::contains("new_array 2 10 20"))
         .stdout(predicate::str::contains("halt"));
 }
@@ -119,7 +125,7 @@ fn test_disassemble_to_file() {
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
     let output_txt = dir.path().join("out.sst");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     cmd()
         .args([
@@ -143,30 +149,35 @@ fn test_disassemble_to_file() {
         .stderr(predicate::str::contains("disassembled 23 instructions"));
 
     let text = fs::read_to_string(&output_txt).unwrap();
-    // Spot-check all instruction categories are present
-    assert!(text.contains("const.f64"));
-    assert!(text.contains("const.i64"));
-    assert!(text.contains("const_loc"));
-    assert!(text.contains("const_lane"));
-    assert!(text.contains("const_zone"));
-    assert!(text.contains("pop"));
-    assert!(text.contains("dup"));
-    assert!(text.contains("swap"));
-    assert!(text.contains("initial_fill 3"));
-    assert!(text.contains("fill 2"));
-    assert!(text.contains("move 1"));
-    assert!(text.contains("local_r 4"));
-    assert!(text.contains("local_rz 2"));
-    assert!(text.contains("global_r"));
-    assert!(text.contains("global_rz"));
-    assert!(text.contains("cz"));
-    assert!(text.contains("measure 1"));
-    assert!(text.contains("await_measure"));
-    assert!(text.contains("new_array 2 10 20"));
-    assert!(text.contains("get_item 2"));
-    assert!(text.contains("set_detector"));
-    assert!(text.contains("set_observable"));
-    assert!(text.contains("halt"));
+    // Spot-check all instruction categories are present. Each is asserted with
+    // its dialect head, so the check also pins which dialect an op belongs to.
+    for expected in [
+        "cpu::cpu.const f64,",
+        "cpu::cpu.const i64,",
+        "lanes::lanes.const_loc",
+        "lanes::lanes.const_lane",
+        "lanes::lanes.const_zone",
+        "lanes::lanes.pop",
+        "cpu::cpu.dup",
+        "lanes::lanes.swap",
+        "lanes::lanes.initial_fill 3",
+        "lanes::lanes.fill 2",
+        "lanes::lanes.move 1",
+        "lanes::lanes.local_r 4",
+        "lanes::lanes.local_rz 2",
+        "lanes::lanes.global_r",
+        "lanes::lanes.global_rz",
+        "lanes::lanes.cz",
+        "lanes::lanes.measure 1",
+        "lanes::lanes.await_measure",
+        "lanes::lanes.new_array 2 10 20",
+        "lanes::lanes.get_item 2",
+        "lanes::lanes.set_detector",
+        "lanes::lanes.set_observable",
+        "cpu::cpu.halt",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
 }
 
 #[test]
@@ -175,7 +186,7 @@ fn test_round_trip_assemble_disassemble() {
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
     let output_txt = dir.path().join("out.sst");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     // Assemble
     cmd()
@@ -221,7 +232,7 @@ fn test_round_trip_assemble_disassemble() {
 fn test_validate_text_file() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
-    fs::write(&input, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input, all_instructions_program()).unwrap();
 
     cmd()
         .args(["validate", input.to_str().unwrap()])
@@ -235,7 +246,7 @@ fn test_validate_binary_file() {
     let dir = TempDir::new().unwrap();
     let input_txt = dir.path().join("prog.sst");
     let binary = dir.path().join("prog.bin");
-    fs::write(&input_txt, ALL_INSTRUCTIONS_PROGRAM).unwrap();
+    fs::write(&input_txt, all_instructions_program()).unwrap();
 
     cmd()
         .args([
@@ -258,7 +269,7 @@ fn test_validate_binary_file() {
 fn test_validate_with_arch_spec() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
-    fs::write(&input, ARCH_VALID_PROGRAM).unwrap();
+    fs::write(&input, arch_valid_program()).unwrap();
 
     let arch_json = r#"{
         "version": "2.0",
@@ -300,7 +311,7 @@ fn test_validate_with_arch_spec() {
 fn test_validate_with_simulate_stack() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("prog.sst");
-    fs::write(&input, SAMPLE_PROGRAM).unwrap();
+    fs::write(&input, sample_program()).unwrap();
 
     cmd()
         .args(["validate", input.to_str().unwrap(), "--simulate-stack"])
@@ -330,7 +341,7 @@ fn test_validate_detects_invalid_arch_addresses() {
     let dir = TempDir::new().unwrap();
     // This program references word_id=1, site_id=2 which doesn't exist in the arch
     let input = dir.path().join("prog.sst");
-    fs::write(&input, SAMPLE_PROGRAM).unwrap();
+    fs::write(&input, sample_program()).unwrap();
 
     let arch_json = r#"{
         "version": "2.0",
@@ -372,7 +383,7 @@ fn test_assemble_invalid_syntax() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("bad.sst");
     let output = dir.path().join("out.bin");
-    fs::write(&input, "version 1.0;\nfn @main() {\n  foobar_invalid\n}\n").unwrap();
+    fs::write(&input, sst("fn @main() {\n  foobar_invalid}\n")).unwrap();
 
     cmd()
         .args([
@@ -521,7 +532,10 @@ fn test_round_trip_preserves_version() {
     let binary = dir.path().join("prog.bin");
     fs::write(
         &input,
-        "version 2.3;\nfn @main() {\n  const.i64 99\n  halt\n}\n",
+        sst_version(
+            "2.3",
+            "fn @main() {\n  cpu::cpu.const i64, 99\n  cpu::cpu.halt}\n",
+        ),
     )
     .unwrap();
 
@@ -541,4 +555,210 @@ fn test_round_trip_preserves_version() {
         .success()
         .stdout(predicate::str::contains("version 2.3"))
         .stdout(predicate::str::contains("fn @main()"));
+}
+
+/// A malformed `new_array` is a diagnosis, not a denial of service.
+///
+/// `dim0` and `dim1` are read straight out of the instruction word, and their
+/// product drove a pop loop that emitted one `stack underflow` per missing
+/// element. This 28-byte program produced **5,000,001** lines in 8.5 s and
+/// 405 MB; the count is now bounded and the repeats collapsed, so it produces
+/// two. Asserting the error count is what pins that — the unit tests reach
+/// `simulate_stack` directly and never see the CLI's output.
+#[test]
+fn test_validate_bounds_an_oversized_new_array() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("bigarray.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.new_array 0 5000000 0\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["validate", input.to_str().unwrap(), "--simulate-stack"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "new_array declares 5000000 elements, more than the maximum of 1048576",
+        ))
+        .stderr(predicate::str::contains("error: 2 validation error(s)"));
+}
+
+/// The same operands one step further out: `65536 * 65536` is `2^32`, which
+/// wrapped to zero in the old `u32` arithmetic — so the CLI reported the
+/// program *valid* without examining an operand.
+#[test]
+fn test_validate_rejects_a_wrapping_new_array() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("wrap.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.new_array 0 65536 65536\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["validate", input.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("declares 4294967296 elements"));
+}
+
+// --- run ---
+
+/// A five-site word with one site bus, written to `dir` — the same shape the
+/// validate tests use, kept here so the run tests do not depend on the
+/// repository layout.
+fn test_arch(dir: &TempDir) -> std::path::PathBuf {
+    let path = dir.path().join("arch.json");
+    fs::write(
+        &path,
+        r#"{
+            "version": "2.0",
+            "words": [
+                { "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] }
+            ],
+            "zones": [
+                {
+                    "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [] },
+                    "site_buses": [ { "src": [0, 1], "dst": [3, 4] } ],
+                    "word_buses": [],
+                    "words_with_site_buses": [0],
+                    "sites_with_word_buses": []
+                }
+            ],
+            "zone_buses": [],
+            "modes": [ { "name": "default", "zones": [0], "bitstring_order": [] } ]
+        }"#,
+    )
+    .unwrap();
+    path
+}
+
+/// The execution layer had no caller before this: nothing in the CLI, the C
+/// FFI or the PyO3 bindings constructed a `LanesMachine`, so "lanes programs
+/// now run" was not something a user could do.
+#[test]
+fn test_run_places_atoms() {
+    let dir = TempDir::new().unwrap();
+    let arch = test_arch(&dir);
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst(
+            "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.const_loc 0x0000000001000000\n  \
+             lanes::lanes.initial_fill 2\n  cpu::cpu.halt\n}\n",
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .args(["--arch", arch.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("halted"))
+        .stderr(predicate::str::contains("2 atom(s) placed"));
+}
+
+/// A move drives the atom state, which is the part the machine really does
+/// simulate — and the reason it needs the architecture.
+#[test]
+fn test_run_moves_atoms() {
+    let dir = TempDir::new().unwrap();
+    let arch = test_arch(&dir);
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst(
+            "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.initial_fill 1\n  \
+             lanes::lanes.const_lane 0x0000000000000000\n  \
+             lanes::lanes.move 1\n  cpu::cpu.halt\n}\n",
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .args(["--arch", arch.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 atom(s) placed"));
+}
+
+/// `move` cannot resolve a lane into endpoints without an architecture, so
+/// the failure has to name that rather than something generic.
+#[test]
+fn test_run_without_arch_reports_why_move_failed() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst(
+            "fn @main() {\n  lanes::lanes.const_lane 0x0000000000000000\n  \
+             lanes::lanes.move 1\n  cpu::cpu.halt\n}\n",
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("arch spec"));
+}
+
+/// The budget turns a runaway program into a message rather than a hang.
+///
+/// A backward branch is the way to run forever, but this branch cannot lower
+/// symbolic control flow from text yet, so the budget itself is exercised by
+/// setting it below the program's length. `machine::tests` covers the actual
+/// loop, where a `Branch` can be constructed directly.
+#[test]
+fn test_run_bounds_execution_by_max_steps() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.cz\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .args(["--max-steps", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("budget"));
+
+    // The same program finishes when the budget allows it.
+    cmd()
+        .args(["run", input.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("halted"));
+}
+
+/// The ops the machine does not simulate are still reported, which is what
+/// `--effects` is for.
+#[test]
+fn test_run_effects_reports_unsimulated_ops() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("prog.sst");
+    fs::write(
+        &input,
+        sst("fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.cz\n  cpu::cpu.halt\n}\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["run", input.to_str().unwrap(), "--effects"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("NotSimulated"));
 }

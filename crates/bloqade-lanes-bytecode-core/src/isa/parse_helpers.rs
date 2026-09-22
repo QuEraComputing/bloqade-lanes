@@ -1,4 +1,5 @@
-//! Field-level `#[parse_with]` helpers for [`super::Instruction`].
+//! Hex-operand parsers backing the [`HexU64`](super::syntax::HexU64) /
+//! [`HexU32`](super::syntax::HexU32) surface types.
 //!
 //! The `.sst` text format writes location/lane/zone constants as `0x`-prefixed
 //! hexadecimal; vihaco's built-in integer parsers are decimal only, so these
