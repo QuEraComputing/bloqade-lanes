@@ -152,7 +152,7 @@ impl LanesMachine {
 
         let mut effects = Vec::new();
         let mut steps = 0u64;
-        let mut pc = 0usize;
+        let mut pc = Self::entry_point(program)?;
 
         let stopped = loop {
             let Some(inst) = program.code.get(pc) else {
@@ -241,6 +241,23 @@ impl LanesMachine {
             },
             _ => Ok(()),
         }
+    }
+
+    /// Where execution begins: the `@main` *symbol*, not byte zero.
+    ///
+    /// A lanes program is an executable, so it enters the way a linked binary
+    /// does — at a named entry the loader resolves, wherever it was laid out.
+    /// Starting at address 0 instead ran whichever function came first in the
+    /// source, so a module declaring `@helper` before `@main` executed the
+    /// wrong one and reported success.
+    fn entry_point(program: &Program) -> eyre::Result<usize> {
+        let index = program
+            .main_function
+            .ok_or_else(|| eyre::eyre!("program declares no entry point"))?;
+        let function = program.functions.get(index as usize).ok_or_else(|| {
+            eyre::eyre!("entry point names function {index}, which the table does not have")
+        })?;
+        Ok(function.start_address as usize)
     }
 
     /// Pop the operands `inst` consumes and pack them into its message.
@@ -1281,6 +1298,36 @@ mod tests {
         );
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted);
+    }
+
+    /// Execution enters at `@main`, wherever it was laid out.
+    ///
+    /// A lanes program is an executable, so the entry point is a symbol, not
+    /// an address. Starting at 0 ran whichever function came first: a module
+    /// declaring `@helper` before `@main` executed the helper's `ret` and
+    /// reported success without touching a single atom.
+    #[test]
+    fn execution_enters_at_main_not_at_address_zero() {
+        use crate::isa::text::parse_text;
+
+        let program = parse_text(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n             .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n             fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n               lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n             .text(root).\n.section(root).\n",
+        )
+        .expect("the module should parse");
+
+        // `@main` is the second function, so its code starts past address 0.
+        assert_eq!(program.main_function, Some(1));
+        assert!(program.functions[1].start_address > 0);
+
+        let mut m = machine();
+        let run = m.run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Halted, "should reach @main's halt");
+        assert_eq!(run.steps, 3, "should run @main's three instructions");
+        assert_eq!(
+            m.atoms().get_qubit(&LocationAddr::decode(loc(0, 0, 0))),
+            Some(0),
+            "@main's initial_fill should have run"
+        );
     }
 
     /// `ret` at top level ends the program, which needs the entry frame:

@@ -248,7 +248,40 @@ pub fn from_binary(bytes: &[u8]) -> Result<Program, BinaryError> {
     // carrying no table sections keeps the `@main` default and still loads.
     let mut program = from_code(info.version, code);
     super::container::read_tables(&root, &mut program).map_err(|e| classify(&e))?;
+    resolve_entry_point(&mut program)?;
     Ok(program)
+}
+
+/// Point `main_function` at the function actually named `main`.
+///
+/// The container records the function table but not which entry is the entry
+/// point, so `from_code`'s default of `Some(0)` survived `read_tables` and was
+/// right only when `@main` happened to be laid out first. A program whose text
+/// declared `@helper` before `@main` came back reporting function 0 as the
+/// entry — the same program, unequal across a round-trip.
+///
+/// Recovered by name rather than recorded as a new field: the name is already
+/// in the string table, `super::resolve` derives it the same way from text,
+/// and deriving it in both places is what makes the two agree. (PPVM does
+/// serialize the index, because a PPVM module may legitimately have no `main`;
+/// `resolve` makes ours mandatory, so there is no absent case to encode.)
+fn resolve_entry_point(program: &mut Program) -> Result<(), BinaryError> {
+    let main = program.functions.iter().position(|f| {
+        program
+            .strings
+            .get(f.name as usize)
+            .is_some_and(|name| name == "main")
+    });
+    match main {
+        Some(index) => {
+            program.main_function = Some(index as u32);
+            Ok(())
+        }
+        None => Err(BinaryError::Decode {
+            pc: 0,
+            message: "function table declares no @main".to_owned(),
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -349,6 +382,44 @@ mod tests {
         assert_eq!(
             crate::isa::text::to_text(&restored),
             crate::isa::text::to_text(&original)
+        );
+    }
+
+    /// The entry point survives the binary, which it did not.
+    ///
+    /// The container records the function table but not which entry is main,
+    /// so `from_code`'s `Some(0)` default came back regardless of what the
+    /// text declared — making the same program compare unequal across a
+    /// round-trip, since `LocalModule`'s `PartialEq` covers the field.
+    #[test]
+    fn binary_preserves_the_entry_point() {
+        use crate::isa::text::parse_text;
+
+        let from_text = parse_text(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n             .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n             fn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
+        )
+        .unwrap();
+        assert_eq!(from_text.main_function, Some(1), "@main is declared second");
+
+        let restored = from_binary(&to_binary(&from_text).unwrap()).unwrap();
+        assert_eq!(restored.main_function, Some(1));
+        assert_eq!(restored, from_text, "the round-trip should be lossless");
+    }
+
+    /// A function table with no `@main` is a malformed executable.
+    ///
+    /// `resolve` makes `@main` mandatory on the text path; a hand-crafted
+    /// container could otherwise load without one and be executed from
+    /// wherever address 0 happened to land.
+    #[test]
+    fn a_binary_without_main_is_rejected() {
+        let mut program = from_code(Version::new(1, 0), vec![M::Cpu(C::Halt)]);
+        program.strings = vec!["helper".to_owned()];
+
+        let err = from_binary(&to_binary(&program).unwrap()).unwrap_err();
+        assert!(
+            matches!(&err, BinaryError::Decode { message, .. } if message.contains("no @main")),
+            "got {err:?}"
         );
     }
 
