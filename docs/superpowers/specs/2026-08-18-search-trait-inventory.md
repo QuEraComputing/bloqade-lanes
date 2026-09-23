@@ -10,8 +10,8 @@ redesign is the next artifact, authored after this is reviewed.
 > **Re-verified 2026-09-23 against `main`**
 > ([critique §5](2026-08-20-search-redesign-critique.md#5-re-verification-against-main-2026-09-23)).
 > Citations below are as of `b823c308`. Corrections:
-> - `EntropyScorer` has **zero callers anywhere**, including PyO3. `PyEntropyScorer`
->   wraps `compute_moveset_metrics`.
+> - `EntropyScorer` has **no production callers anywhere**, including PyO3; only its
+>   own unit tests use it. `PyEntropyScorer` wraps `compute_moveset_metrics`.
 > - `run_search` has **two production callers**: `run_frontier` and RecedingHorizon's
 >   IDS fallback.
 > - `ExhaustiveGenerator` is still built only in tests; #1000 changed its constructor
@@ -20,7 +20,9 @@ redesign is the next artifact, authored after this is reviewed.
 >   `AodCapacity` (on `SearchContext` and `SolveOptions`), `bound_terminates`,
 >   `GroupKey`, `SeedPolicy` and `ExhaustivePrecondition`.
 >
-> No trait signature changed.
+> No public trait signature changed. The crate-private
+> `CzCoordination::boost_coordinated_pairs` now takes a `GroupKey`, which is the old
+> `TripletKey`, renamed and given a zone field.
 
 > **Citation convention.** Unless a path is given in full, every `file:line`
 > below is relative to `crates/bloqade-lanes-search/src/`. Citations into the

@@ -244,9 +244,13 @@ and `MeasurableGoal` are dropped.
 Between `b823c308` and `27db773e`, the search crate was touched by #1000 (exhaustive
 generator made exact; `Termination`, `SolveResult::{proven, termination}`,
 `bound_terminates`, `AodCapacity`), #1002 (entropy stops when the root can no longer
-generate), #937 (`MotionModel`), #978 (PyO3 `FromPyObject` annotations) and #947 (CI line
-endings). No trait signature changed; `traits.rs` gained only the documented objective
-contract C5.
+generate), #937 (`MotionModel`) and #947 (CI line endings). #978 (PyO3 `FromPyObject`
+annotations) touched only the PyO3 crate.
+
+No *public* trait signature changed; `traits.rs` gained only the documented objective
+contract C5. One crate-private trait did change: `CzCoordination::boost_coordinated_pairs`
+now takes a `GroupKey`, which is the old `pub(crate)` `TripletKey`, renamed, given a zone
+field and made public.
 
 ### Claims that still hold (current locations)
 
@@ -269,7 +273,7 @@ Paths relative to `crates/bloqade-lanes-search/src/`.
 | `HeuristicGenerator` mode branch + separate spectator handling | `generators/heuristic.rs:358-361`; spectators `386-421`, step 2b `503-521` |
 | `EntanglingConstraintGoal::is_goal` rejects spectator CZs | `goals.rs:110-139` |
 | P&R proof is blocked-relative; layer-count pricing | `push_rotate/solver.rs:45-48`, `159-162` |
-| Python compares status strings | `movement.py:454`, `move_synthesis.py:47`, `_no_return_base.py:290`, `policy_movement.py:75` |
+| Python compares status strings | `heuristics/physical/movement.py:454`, `heuristics/physical/_no_return_base.py:290`, `heuristics/move_synthesis.py:47` (under `python/bloqade/lanes/`). `policy_movement.py:75` compares PolicyRunner's `policy_status`, a separate label source (`policy_runner_python.rs:63`) |
 
 ### Corrections
 
@@ -285,8 +289,9 @@ Paths relative to `crates/bloqade-lanes-search/src/`.
   leg (`loose_goal.rs:310-327`) is replayed on its own in `extract`, and the layers are
   concatenated with `extend`. The chain as a whole is never replayed, and the cleanup
   leg's `proven`/`termination`/`bound_stats` are not merged.
-- **Inventory: `EntropyScorer` is not PyO3-consumed.** It has zero callers anywhere; the
-  Python-visible `PyEntropyScorer` wraps `compute_moveset_metrics`
+- **Inventory: `EntropyScorer` is not PyO3-consumed.** It has no production callers
+  anywhere, only its own unit tests (`scorers/entropy.rs:84, 116`). The Python-visible
+  `PyEntropyScorer` wraps `compute_moveset_metrics`
   (`bloqade-lanes-bytecode-python/src/search_python.rs:609-620`).
 - **Inventory: `run_search` has two production callers:** `run_frontier`
   (`restarts.rs:166`) and RH's IDS fallback (`receding_horizon.rs:590`).
@@ -305,18 +310,30 @@ Paths relative to `crates/bloqade-lanes-search/src/`.
   returned fallback reports `nodes_expanded = 0` and default `bound_stats`, so the search
   counters are lost.
 - **`AodCapacity`** adds two public fields, `SearchContext.capacity` and
-  `SolveOptions.aod_capacity`. Neither is exposed to Python (hard-coded `None`,
-  `search_python.rs:910`). The exhaustive generator also carries its own cap, combined
-  via `tighten`, so capacity now comes from two sources. PyO3 builds `SearchContext` with
-  a struct literal (`search_python.rs:729`), so every new context field breaks the
-  bindings.
+  `SolveOptions.aod_capacity`. Neither is exposed to Python: PyO3 hard-codes
+  `SolveOptions.aod_capacity` to `None` (`search_python.rs:910`) and
+  `SearchContext.capacity` to `None` (`:729`). The exhaustive generator also carries its
+  own cap, combined via `tighten`, so capacity now comes from two sources. PyO3 builds
+  `SearchContext` with a struct literal (starting at `search_python.rs:723`), so every new
+  context field breaks the bindings.
 - **`bound_terminates`** is documented as an A/B measurement knob but is threaded
   through core, PyO3 and the Python traversal dataclass.
-- **`EntropyTraceStep`** still carries the Python visualizer's format in core: a string
-  `event` and `(u8, u8, u32, u32, u32, u32)` moveset tuples (`drivers/entropy.rs:73-81`).
+- **`EntropyTraceStep`** still carries the Python visualizer's format in core
+  (`drivers/entropy.rs:73-91`): string `event` and `reason` fields,
+  `(u8, u8, u32, u32, u32, u32)` moveset tuples and `(u32, u32, u32, u32)` configuration
+  tuples.
   `BoundStats.bound_enabled` is *not* such a field. It records whether a real bound was
   active (`!B::TRIVIAL`) and is read by `optimality_gap()` (`bounds.rs:117`) and the
   cascade stats merge (`restarts.rs:406`). Python's empty-dict behaviour merely keys off
   it.
 - **Dangling API:** `SearchEngine::exhaustive_preconditions()` (`search/engine.rs:152-155`)
-  has no callers, and `ConfigError::UnsupportedArchitecture` is never constructed.
+  has no production callers (only tests, `generators/exhaustive.rs:1011-1014`), and
+  `ConfigError::UnsupportedArchitecture` is never constructed.
+- **Where the default pipeline actually runs** (2026-09-23 review):
+  - `pipeline_default` is `Palindrome(NoHomePlacementStrategy)` with
+    `backwards_search=True` (`python/bloqade/lanes/heuristics/physical/movement.py:528-594`).
+    Under palindrome it is a single fixed-target route with no candidate list.
+  - The `rust_*` rows run `Palindrome(PhysicalPlacementStrategy)`, whose candidate loop is
+    Python (`movement.py:430-465`).
+  - No benchmark row runs the loose-goal or RecedingHorizon paths, so the August claim
+    that the placement lift "moves the logical baseline" was already wrong.

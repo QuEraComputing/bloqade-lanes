@@ -40,6 +40,9 @@ refactor. It does not yet say how to move implementations behind these seams.
 - **§2, best-reached: dropped.** The best partial is found by a **lazy scan on the
   failure path** over the `SearchResult.graph` that both engines already return
   (critique F1), the same way `extract_best_leaf` works.
+  - The scan runs inside `extract`, the last point where the graph exists.
+  - Its result is carried on `SolveResult`, because the graph does not survive to the
+    fallback site.
   - It is keyed on the unresolved-atom count, tie-broken by `(unresolved, g, NodeId)`.
   - It is *not* keyed on `WeightedDistanceBound::estimate`, which can be 0 when the goal
     isn't met (an atom on a blocked site contributes 0).
@@ -76,12 +79,18 @@ refactor. It does not yet say how to move implementations behind these seams.
     `CzStage` struct (initial, pairs, blocked, future layers) and
     `CzPlacement::place(&self, &CzStage, budget) -> PlacementResult`, where
     `PlacementResult` generalizes `MultiSolveResult`.
-  - The reshape is scheduled in Epic 3A and is independent of the lift.
+  - The reshape is its own PR (Epic 3A.0) and is independent of the lift.
 - **§8.1:** resolved by the lazy scan. **§8.4:** moot while there is no public trait.
-  **§8.7:** `EntropyScorer` has zero callers, so delete it; `DistanceScorer` is the only
+  **§8.7:** `EntropyScorer` has no production callers, so delete it; `DistanceScorer` is the only
   live scorer.
 - **§9:** Epic 0 closes the P&R/cascade gate gap by adding benchmark rows.
 - **§10:** superseded by the revised epics plan.
+
+**New requirement (2026-09-23): the architecture boundary.** The search crate reads the
+architecture only through `LaneIndex`, and `ArchSpec` appears only where a `LaneIndex` /
+`SearchEngine` is built and in the PyO3 adapter. This lets the infrastructure serve
+different compilation stacks. It revives, in a lighter form, this note's Tier-1 aim of
+keeping arch data captured behind construction; see the epics plan's Rule 2 and Epic 2A.
 
 **New since this note was written** (critique §5):
 - `Termination` and `SolveResult::{proven, termination}` were added. `proven` merges an
