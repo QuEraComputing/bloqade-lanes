@@ -838,19 +838,46 @@ fault on an illegal move.</p>
 </div>
 <h2 id="cpu-device-0x00--vihaco-cpu"><a class="header" href="#cpu-device-0x00--vihaco-cpu"><code>cpu</code> device (<code>0x00</code>) — vihaco-cpu</a></h2>
 <p>The full vihaco-cpu instruction set is available (42 ops: arithmetic,
-comparison, bitwise, control flow, the heap allocator). The lanes compiler emits
-only these four; the rest decode and validate but are never generated.</p>
+comparison, bitwise, control flow, the heap allocator). The ones below are the
+ones a lanes program actually contains; the rest decode and validate but are
+never generated.</p>
+<h3 id="values-and-termination"><a class="header" href="#values-and-termination">Values and termination</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>cpu::cpu.const f64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- float)</code></td><td>Push 64-bit float constant</td></tr>
 <tr><td><code>cpu::cpu.const i64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- int)</code></td><td>Push 64-bit integer constant</td></tr>
 <tr><td><code>cpu::cpu.dup</code></td><td><code>0x000D</code></td><td><code>(a -- a a)</code></td><td>Duplicate top of stack</td></tr>
 <tr><td><code>cpu::cpu.halt</code></td><td><code>0x0009</code></td><td><code>( -- )</code></td><td>Halt execution</td></tr>
-<tr><td><code>cpu::cpu.ret &lt;n&gt;</code></td><td><code>0x0006</code></td><td><code>( -- )</code></td><td>Return from program</td></tr>
+<tr><td><code>cpu::cpu.ret &lt;n&gt;</code></td><td><code>0x0006</code></td><td><code>( -- )</code></td><td>Return the top <code>n</code> values from the current function</td></tr>
 </tbody></table>
 </div>
 <p>Note that <code>const</code> is one typed instruction, so <code>const f64</code> and <code>const i64</code> share
 an opcode and differ in their operand. The Python <code>op_name()</code> still reports
 <code>const_float</code> / <code>const_int</code>, because the decoder needs the distinction.</p>
+<h3 id="structure"><a class="header" href="#structure">Structure</a></h3>
+<p>Emitted for <strong>every</strong> program, not only ones that declare several functions: the
+assembler wraps each <code>fn @name()</code> body in a marker pair, so even a lone <code>@main</code>
+is delimited. They are no-ops at runtime — they carry the layout, not an effect.</p>
+<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>cpu::cpu.func_start</code></td><td><code>0x0001</code></td><td><code>( -- )</code></td><td>Opens a function body; its address is the function's entry</td></tr>
+<tr><td><code>cpu::cpu.func_end</code></td><td><code>0x0002</code></td><td><code>( -- )</code></td><td>Closes a function body</td></tr>
+</tbody></table>
+</div>
+<p>A <code>label</code> is not in this table because it is not an instruction: it names an
+address and occupies none. It is written syntactically and recorded in the
+<code>labels</code> table.</p>
+<h3 id="control-flow"><a class="header" href="#control-flow">Control flow</a></h3>
+<p>Emitted when the source declares them. All three require the architecture's
+<code>feed_forward</code> capability — without mid-circuit classical feedback the hardware
+runs straight-line code only, and validation rejects them.</p>
+<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>cpu::cpu.br @&lt;label&gt;</code></td><td><code>0x0004</code></td><td><code>( -- )</code></td><td>Unconditional branch within the current function</td></tr>
+<tr><td><code>cpu::cpu.cond_br @&lt;t&gt;, @&lt;f&gt;</code></td><td><code>0x0005</code></td><td><code>(bool -- )</code></td><td>Branch on the top of stack</td></tr>
+<tr><td><code>cpu::cpu.call &lt;arity&gt;, &lt;fn&gt;</code></td><td><code>0x0008</code></td><td><code>( -- )</code></td><td>Call, making the top <code>arity</code> operands the callee's locals</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="bytecode/inst-spec.html#functions-labels-and-control-flow">Functions, labels and control flow</a>
+for the calling convention — in particular that locals <em>alias</em> the operand
+stack, so <code>call</code> moves a frame boundary rather than copying arguments.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="bloqade-lanes-bytecode-instruction-specification"><a class="header" href="#bloqade-lanes-bytecode-instruction-specification">Bloqade Lanes Bytecode Instruction Specification</a></h1>
 <p>This document specifies the bytecode instruction set used by Bloqade Lanes to describe atom shuttling programs for neutral atom quantum processors. A bytecode program is a sequence of fixed-width instructions that drive the full lifecycle of a computation: loading atoms into an optical lattice, shuttling them between sites using AOD (Acousto-Optic Deflector) transport, applying quantum gates, and reading out measurement results.</p>
 <p>The instruction set is organized around the physical structure of the hardware. Atoms occupy <strong>sites</strong> within <strong>words</strong> (rows of trapping positions in the lattice). <strong>Buses</strong> define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A <strong>lane</strong> is a single atom trajectory along a bus — one source site to one destination site. A <strong>zone</strong> groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define locations where atoms are measured. These concepts map directly to the address types used in the bytecode: <code>LocationAddr</code> (word, site), <code>LaneAddr</code> (word, site, bus, direction), and <code>ZoneAddr</code> (zone).</p>
@@ -912,13 +939,38 @@ child_count          : u32 LE  = 0        (no child sections)
 <p>vihaco ships readers for this container but no writers, so Bloqade Lanes owns
 the emitters (<code>isa::container</code>); the round-trip tests read everything back
 through vihaco's own parser to keep the two in step.</p>
+<h3 id="symbol-tables"><a class="header" href="#symbol-tables">Symbol tables</a></h3>
+<p>The root section has one payload slot and the code occupies it, so a program's
+symbol tables are nested as child sections — <code>functions</code>, <code>labels</code> and
+<code>strings</code>. Each is a <code>u32</code> count followed by fixed-size little-endian records;
+strings are length-prefixed. Child offsets are relative to the start of the
+parent section, and the children live inside the parent's extent.</p>
+<div class="table-wrapper"><table><thead><tr><th>Section</th><th>Record</th></tr></thead><tbody>
+<tr><td><code>functions</code></td><td><code>name: u32</code> (string index), <code>local_count: u32</code>, <code>start_address: u32</code>, <code>end_address: u32</code>, <code>file: u32</code></td></tr>
+<tr><td><code>labels</code></td><td><code>address: u32</code>, <code>name: u32</code> (string index)</td></tr>
+<tr><td><code>strings</code></td><td><code>len: u32</code> followed by <code>len</code> bytes, per entry</td></tr>
+</tbody></table>
+</div>
+<p>Labels are recorded here rather than in the code stream. vihaco runs <code>Label</code> as
+a no-op and it carries a parse-local identifier with no encodable form, so the
+resolver stores the address it marks and drops the instruction. Addresses are
+computed after the drop, so they stay consistent.</p>
+<p>Because vihaco stores a child section's name as an index resolved through the
+global context, the binary global context carries the section-name table. The
+text container has no child sections — functions and labels are written
+syntactically — so its <code>.global:</code> block stays empty.</p>
+<p>A file with no table sections does <strong>not</strong> load. Such a container predates the
+<code>func_start</code>/<code>func_end</code> markers as well, so it has no function extents to
+name — there is nothing to fall back to. Re-assemble it from source.</p>
 <p>Neither device's instruction enum carries a binary codec — vihaco-cpu's has none
 and <code>#[composite]</code> derives none — so encoding goes through a parallel mirror ISA
 (<code>isa::bytecode</code>) that does. PPVM solves this the same way.</p>
 <h2 id="text-format-sst"><a class="header" href="#text-format-sst">Text Format (<code>.sst</code>)</a></h2>
 <p>The text form is vihaco's <code>sst v1</code> section container. A lanes program is one
-root section: a header carrying the version, and a text body holding a single
-<code>@main</code> function.</p>
+root section: a header carrying the version, and a text body holding the
+program's functions. The example below declares only <code>@main</code>; any number may
+appear, and <code>@main</code> is the entry point (see
+<a href="bytecode/inst-spec.html#functions-labels-and-control-flow">Functions, labels and control flow</a>).</p>
 <pre><code>sst v1
 
 .section(root):
@@ -955,8 +1007,42 @@ section, so file-level comments belong <strong>inside</strong> <code>.text(root)
 <code>move 2</code> does not parse, and neither does a mnemonic under the wrong device.</li>
 <li>Address operands are <code>0x</code>-prefixed hexadecimal; arities and array dimensions
 are decimal.</li>
-<li>Exactly one function is allowed and it must be named <code>@main</code>.</li>
+<li>Any number of functions may be declared; <code>@main</code> is the entry point and must
+be present.</li>
 </ul>
+<h3 id="functions-labels-and-control-flow"><a class="header" href="#functions-labels-and-control-flow">Functions, labels and control flow</a></h3>
+<p>Branch and call targets are written as symbols and resolved to addresses when
+the module is loaded, because a forward branch names something not yet placed.</p>
+<pre><code>fn @main() {
+  cpu::cpu.call 0, helper
+  cpu::cpu.br @done
+  lanes::lanes.cz
+  cpu::cpu.label @done
+  cpu::cpu.halt
+}
+
+fn @helper() {
+  cpu::cpu.ret 0
+}
+</code></pre>
+<ul>
+<li><code>br</code> and <code>cond_br</code> name a <strong>label</strong> with a leading <code>@</code>; <code>call</code> names a
+<strong>function</strong> without one (<code>call &lt;arity&gt;, &lt;name&gt;</code>), because vihaco-cpu's
+generated pattern for <code>call</code> carries no sigil.</li>
+<li>Labels are module-global — two with the same name is an error, not shadowing.</li>
+<li>A label is a position marker, not an instruction: it does not occupy an
+address, and it is not stored in the code stream. See
+<a href="bytecode/inst-spec.html#symbol-tables">Symbol tables</a>.</li>
+</ul>
+<h3 id="frames-and-locals"><a class="header" href="#frames-and-locals">Frames and locals</a></h3>
+<p><code>call &lt;arity&gt;, &lt;name&gt;</code> makes the top <code>arity</code> operands the callee's locals
+<code>0..arity-1</code> — that is how arguments are passed. <code>ret &lt;keep&gt;</code> returns the top
+<code>keep</code> values and discards the rest of the frame.</p>
+<p>A frame holds <strong>no storage of its own</strong>: locals are <code>stack[frame.base + index]</code>,
+a window into the same operand stack. So <code>load</code>/<code>store</code> address a function's
+arguments, not scratch registers, and a function with no parameters has no
+private locals. That is why <code>pop</code> and <code>swap</code> are lanes instructions rather than
+being expressed with <code>load</code>/<code>store</code>.</p>
 <p><code>to_text</code> emits this form and <code>parse_text</code> accepts it, round-tripping losslessly.</p>
 <h2 id="address-encoding-1"><a class="header" href="#address-encoding-1">Address Encoding</a></h2>
 <p>Addresses are bit-packed into a single integer operand, written little-endian.</p>
@@ -1543,6 +1629,93 @@ representation [stack depth=2]
 unreachable from a valid program.</p>
 </li>
 </ul>
+<h2 id="functions-and-control-flow"><a class="header" href="#functions-and-control-flow">Functions and control flow</a></h2>
+<p>Programs are no longer restricted to a single flat <code>@main</code>. Any number of
+functions may be declared, and branch and call targets are written as symbols:</p>
+<pre><code>fn @main() {
+  cpu::cpu.call 0, helper
+  cpu::cpu.br @done
+  lanes::lanes.cz
+  cpu::cpu.label @done
+  cpu::cpu.halt
+}
+
+fn @helper() {
+  cpu::cpu.ret 0
+}
+</code></pre>
+<p>Nothing the lanes compiler emits uses this yet — it still produces a single flat
+<code>@main</code> — but the format and loader support it now rather than being retrofitted
+later.</p>
+<ul>
+<li><strong>Each function body is wrapped in <code>cpu::cpu.func_start</code> / <code>cpu::cpu.func_end</code>.</strong>
+These are emitted by the assembler and executed as no-ops; you do not write
+them. They make a function's extent part of the code stream rather than a
+span recorded beside it, so an empty function still occupies an address and
+a function table can never disagree with the code it indexes. They are real
+instructions, so they appear in <code>Program.instructions</code> and count towards
+<code>len(program)</code> — a three-instruction <code>@main</code> is five words.</li>
+<li><code>br</code> / <code>cond_br</code> name a <strong>label</strong> with <code>@</code>; <code>call</code> names a <strong>function</strong>
+without one (<code>call &lt;arity&gt;, &lt;name&gt;</code>).</li>
+<li>Labels are module-global; duplicates are an error.</li>
+<li>A label occupies no address and is not stored in the code stream. It is
+recorded in the label table, and re-emitted when the program is written back
+out.</li>
+<li>The binary container gained three child sections — <code>functions</code>, <code>labels</code>,
+<code>strings</code> — so these survive a round-trip. A file without them does not load:
+it predates the function markers too, so there are no extents to name. This
+is the same &quot;replace, do not convert&quot; rule as the text format above.</li>
+</ul>
+<h3 id="functions-declare-their-signatures"><a class="header" href="#functions-declare-their-signatures">Functions declare their signatures</a></h3>
+<p>A function may declare parameters and a return type, and both survive the
+binary round trip:</p>
+<pre><code>fn @measure_zone(z: u32) -&gt; heap_ref {
+  cpu::cpu.load u32, 0
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 1
+}
+</code></pre>
+<p>Types are vihaco's: <code>undef</code>, <code>str</code>, <code>bool</code>, <code>i64</code>, <code>u32</code>, <code>u64</code>, <code>f64</code>,
+<code>fn_ref</code>, <code>heap_ref</code>. <code>fn @name()</code> with no parameters and no return type parses
+exactly as before, so nothing hand-written needs updating unless it uses a
+<code>call</code> with a nonzero arity or a <code>ret</code> that keeps a value.</p>
+<p>The declaration is checked, not decorative. <code>call &lt;arity&gt;</code> is not a hint — it
+sets the callee's frame base to <code>stack.len() - arity</code>, so an unchecked operand
+would silently redefine the callee's shape at each call site:</p>
+<ul>
+<li><strong><code>CallArityMismatchError</code></strong> — a <code>call</code> passes a different number of operands
+than the callee declares.</li>
+<li><strong><code>ReturnCountMismatchError</code></strong> — a <code>ret</code> keeps a different number of values
+than its function declares returning. Two <code>ret</code>s that disagree make every
+caller's post-call stack depth path-dependent; each is checked against the
+declaration, which names the offender rather than reporting a pair that
+happens to differ.</li>
+</ul>
+<p>So a function that returns something has to say so: <code>ret 1</code> in a function
+declaring no return type is now an error.</p>
+<h3 id="lowering-to-kirin-is-single-function-only"><a class="header" href="#lowering-to-kirin-is-single-function-only">Lowering to kirin is single-function only</a></h3>
+<p><code>BytecodeDecoder.decode</code> (and <code>load_program</code>) lower the instruction stream into
+one kirin block, so they accept a program declaring exactly one function and
+refuse anything else:</p>
+<pre><code>DecodingError at instruction 3 (func_start): program declares 2 functions;
+only a single-function program can be lowered to kirin [stack depth=0]
+</code></pre>
+<p>The format is ahead of the compiler here on purpose. Nothing in the pipeline
+emits multi-function bytecode or lowers it further, so there is no correct
+lowering for the decoder to fall back to — only a silently wrong one. It used
+to take that one: the bodies concatenated into a single block, and because the
+marker handlers skip <code>func_start</code> / <code>func_end</code> the seam left no trace. A
+<code>@helper</code> declared before <code>@main</code> produced a kernel whose <em>first</em> statement was
+the helper's <code>func.return</code>, carrying two terminators — which <code>method.verify()</code>
+accepted.</p>
+<p>Validation, execution, disassembly and the binary round-trip are unaffected;
+this restriction applies only to the kirin lowering.</p>
+<p><strong>Stack validation stops at the first branch or call.</strong> The type simulator walks
+straight through, so its state is only correct while control flow is linear;
+past a branch it would report underflows and mismatches derived from a state it
+cannot know. The linear prefix is still checked. Full CFG-aware simulation is
+tracked in <a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1042">#1042</a>.</p>
 <h2 id="why-the-cpu-instructions-changed"><a class="header" href="#why-the-cpu-instructions-changed">Why the CPU instructions changed</a></h2>
 <p>In vihaco 0.1 the instruction set nested vihaco-cpu's opcodes wholesale, which
 is where <code>const.i64</code> / <code>const.f64</code> came from. As of vihaco 0.4, vihaco-cpu is a

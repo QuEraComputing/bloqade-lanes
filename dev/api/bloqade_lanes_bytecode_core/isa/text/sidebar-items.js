@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["NoType","TextError"],"fn":["parse_text","to_text"]};
+window.SIDEBAR_ITEMS = {"enum":["TextError"],"fn":["parse_text","render_blockers","to_text"]};

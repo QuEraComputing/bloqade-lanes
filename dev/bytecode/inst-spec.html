@@ -241,13 +241,38 @@ child_count          : u32 LE  = 0        (no child sections)
 <p>vihaco ships readers for this container but no writers, so Bloqade Lanes owns
 the emitters (<code>isa::container</code>); the round-trip tests read everything back
 through vihaco's own parser to keep the two in step.</p>
+<h3 id="symbol-tables"><a class="header" href="#symbol-tables">Symbol tables</a></h3>
+<p>The root section has one payload slot and the code occupies it, so a program's
+symbol tables are nested as child sections — <code>functions</code>, <code>labels</code> and
+<code>strings</code>. Each is a <code>u32</code> count followed by fixed-size little-endian records;
+strings are length-prefixed. Child offsets are relative to the start of the
+parent section, and the children live inside the parent's extent.</p>
+<div class="table-wrapper"><table><thead><tr><th>Section</th><th>Record</th></tr></thead><tbody>
+<tr><td><code>functions</code></td><td><code>name: u32</code> (string index), <code>local_count: u32</code>, <code>start_address: u32</code>, <code>end_address: u32</code>, <code>file: u32</code></td></tr>
+<tr><td><code>labels</code></td><td><code>address: u32</code>, <code>name: u32</code> (string index)</td></tr>
+<tr><td><code>strings</code></td><td><code>len: u32</code> followed by <code>len</code> bytes, per entry</td></tr>
+</tbody></table>
+</div>
+<p>Labels are recorded here rather than in the code stream. vihaco runs <code>Label</code> as
+a no-op and it carries a parse-local identifier with no encodable form, so the
+resolver stores the address it marks and drops the instruction. Addresses are
+computed after the drop, so they stay consistent.</p>
+<p>Because vihaco stores a child section's name as an index resolved through the
+global context, the binary global context carries the section-name table. The
+text container has no child sections — functions and labels are written
+syntactically — so its <code>.global:</code> block stays empty.</p>
+<p>A file with no table sections does <strong>not</strong> load. Such a container predates the
+<code>func_start</code>/<code>func_end</code> markers as well, so it has no function extents to
+name — there is nothing to fall back to. Re-assemble it from source.</p>
 <p>Neither device's instruction enum carries a binary codec — vihaco-cpu's has none
 and <code>#[composite]</code> derives none — so encoding goes through a parallel mirror ISA
 (<code>isa::bytecode</code>) that does. PPVM solves this the same way.</p>
 <h2 id="text-format-sst"><a class="header" href="#text-format-sst">Text Format (<code>.sst</code>)</a></h2>
 <p>The text form is vihaco's <code>sst v1</code> section container. A lanes program is one
-root section: a header carrying the version, and a text body holding a single
-<code>@main</code> function.</p>
+root section: a header carrying the version, and a text body holding the
+program's functions. The example below declares only <code>@main</code>; any number may
+appear, and <code>@main</code> is the entry point (see
+<a href="#functions-labels-and-control-flow">Functions, labels and control flow</a>).</p>
 <pre><code>sst v1
 
 .section(root):
@@ -284,8 +309,42 @@ section, so file-level comments belong <strong>inside</strong> <code>.text(root)
 <code>move 2</code> does not parse, and neither does a mnemonic under the wrong device.</li>
 <li>Address operands are <code>0x</code>-prefixed hexadecimal; arities and array dimensions
 are decimal.</li>
-<li>Exactly one function is allowed and it must be named <code>@main</code>.</li>
+<li>Any number of functions may be declared; <code>@main</code> is the entry point and must
+be present.</li>
 </ul>
+<h3 id="functions-labels-and-control-flow"><a class="header" href="#functions-labels-and-control-flow">Functions, labels and control flow</a></h3>
+<p>Branch and call targets are written as symbols and resolved to addresses when
+the module is loaded, because a forward branch names something not yet placed.</p>
+<pre><code>fn @main() {
+  cpu::cpu.call 0, helper
+  cpu::cpu.br @done
+  lanes::lanes.cz
+  cpu::cpu.label @done
+  cpu::cpu.halt
+}
+
+fn @helper() {
+  cpu::cpu.ret 0
+}
+</code></pre>
+<ul>
+<li><code>br</code> and <code>cond_br</code> name a <strong>label</strong> with a leading <code>@</code>; <code>call</code> names a
+<strong>function</strong> without one (<code>call &lt;arity&gt;, &lt;name&gt;</code>), because vihaco-cpu's
+generated pattern for <code>call</code> carries no sigil.</li>
+<li>Labels are module-global — two with the same name is an error, not shadowing.</li>
+<li>A label is a position marker, not an instruction: it does not occupy an
+address, and it is not stored in the code stream. See
+<a href="#symbol-tables">Symbol tables</a>.</li>
+</ul>
+<h3 id="frames-and-locals"><a class="header" href="#frames-and-locals">Frames and locals</a></h3>
+<p><code>call &lt;arity&gt;, &lt;name&gt;</code> makes the top <code>arity</code> operands the callee's locals
+<code>0..arity-1</code> — that is how arguments are passed. <code>ret &lt;keep&gt;</code> returns the top
+<code>keep</code> values and discards the rest of the frame.</p>
+<p>A frame holds <strong>no storage of its own</strong>: locals are <code>stack[frame.base + index]</code>,
+a window into the same operand stack. So <code>load</code>/<code>store</code> address a function's
+arguments, not scratch registers, and a function with no parameters has no
+private locals. That is why <code>pop</code> and <code>swap</code> are lanes instructions rather than
+being expressed with <code>load</code>/<code>store</code>.</p>
 <p><code>to_text</code> emits this form and <code>parse_text</code> accepts it, round-tripping losslessly.</p>
 <h2 id="address-encoding"><a class="header" href="#address-encoding">Address Encoding</a></h2>
 <p>Addresses are bit-packed into a single integer operand, written little-endian.</p>

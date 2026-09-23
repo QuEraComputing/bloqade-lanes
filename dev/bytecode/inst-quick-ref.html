@@ -248,19 +248,46 @@ fault on an illegal move.</p>
 </div>
 <h2 id="cpu-device-0x00--vihaco-cpu"><a class="header" href="#cpu-device-0x00--vihaco-cpu"><code>cpu</code> device (<code>0x00</code>) — vihaco-cpu</a></h2>
 <p>The full vihaco-cpu instruction set is available (42 ops: arithmetic,
-comparison, bitwise, control flow, the heap allocator). The lanes compiler emits
-only these four; the rest decode and validate but are never generated.</p>
+comparison, bitwise, control flow, the heap allocator). The ones below are the
+ones a lanes program actually contains; the rest decode and validate but are
+never generated.</p>
+<h3 id="values-and-termination"><a class="header" href="#values-and-termination">Values and termination</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>cpu::cpu.const f64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- float)</code></td><td>Push 64-bit float constant</td></tr>
 <tr><td><code>cpu::cpu.const i64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- int)</code></td><td>Push 64-bit integer constant</td></tr>
 <tr><td><code>cpu::cpu.dup</code></td><td><code>0x000D</code></td><td><code>(a -- a a)</code></td><td>Duplicate top of stack</td></tr>
 <tr><td><code>cpu::cpu.halt</code></td><td><code>0x0009</code></td><td><code>( -- )</code></td><td>Halt execution</td></tr>
-<tr><td><code>cpu::cpu.ret &lt;n&gt;</code></td><td><code>0x0006</code></td><td><code>( -- )</code></td><td>Return from program</td></tr>
+<tr><td><code>cpu::cpu.ret &lt;n&gt;</code></td><td><code>0x0006</code></td><td><code>( -- )</code></td><td>Return the top <code>n</code> values from the current function</td></tr>
 </tbody></table>
 </div>
 <p>Note that <code>const</code> is one typed instruction, so <code>const f64</code> and <code>const i64</code> share
 an opcode and differ in their operand. The Python <code>op_name()</code> still reports
 <code>const_float</code> / <code>const_int</code>, because the decoder needs the distinction.</p>
+<h3 id="structure"><a class="header" href="#structure">Structure</a></h3>
+<p>Emitted for <strong>every</strong> program, not only ones that declare several functions: the
+assembler wraps each <code>fn @name()</code> body in a marker pair, so even a lone <code>@main</code>
+is delimited. They are no-ops at runtime — they carry the layout, not an effect.</p>
+<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>cpu::cpu.func_start</code></td><td><code>0x0001</code></td><td><code>( -- )</code></td><td>Opens a function body; its address is the function's entry</td></tr>
+<tr><td><code>cpu::cpu.func_end</code></td><td><code>0x0002</code></td><td><code>( -- )</code></td><td>Closes a function body</td></tr>
+</tbody></table>
+</div>
+<p>A <code>label</code> is not in this table because it is not an instruction: it names an
+address and occupies none. It is written syntactically and recorded in the
+<code>labels</code> table.</p>
+<h3 id="control-flow"><a class="header" href="#control-flow">Control flow</a></h3>
+<p>Emitted when the source declares them. All three require the architecture's
+<code>feed_forward</code> capability — without mid-circuit classical feedback the hardware
+runs straight-line code only, and validation rejects them.</p>
+<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>cpu::cpu.br @&lt;label&gt;</code></td><td><code>0x0004</code></td><td><code>( -- )</code></td><td>Unconditional branch within the current function</td></tr>
+<tr><td><code>cpu::cpu.cond_br @&lt;t&gt;, @&lt;f&gt;</code></td><td><code>0x0005</code></td><td><code>(bool -- )</code></td><td>Branch on the top of stack</td></tr>
+<tr><td><code>cpu::cpu.call &lt;arity&gt;, &lt;fn&gt;</code></td><td><code>0x0008</code></td><td><code>( -- )</code></td><td>Call, making the top <code>arity</code> operands the callee's locals</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="inst-spec.html#functions-labels-and-control-flow">Functions, labels and control flow</a>
+for the calling convention — in particular that locals <em>alias</em> the operand
+stack, so <code>call</code> moves a frame boundary rather than copying arguments.</p>
 
                     </main>
 

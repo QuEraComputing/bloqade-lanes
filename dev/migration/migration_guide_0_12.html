@@ -330,6 +330,93 @@ representation [stack depth=2]
 unreachable from a valid program.</p>
 </li>
 </ul>
+<h2 id="functions-and-control-flow"><a class="header" href="#functions-and-control-flow">Functions and control flow</a></h2>
+<p>Programs are no longer restricted to a single flat <code>@main</code>. Any number of
+functions may be declared, and branch and call targets are written as symbols:</p>
+<pre><code>fn @main() {
+  cpu::cpu.call 0, helper
+  cpu::cpu.br @done
+  lanes::lanes.cz
+  cpu::cpu.label @done
+  cpu::cpu.halt
+}
+
+fn @helper() {
+  cpu::cpu.ret 0
+}
+</code></pre>
+<p>Nothing the lanes compiler emits uses this yet — it still produces a single flat
+<code>@main</code> — but the format and loader support it now rather than being retrofitted
+later.</p>
+<ul>
+<li><strong>Each function body is wrapped in <code>cpu::cpu.func_start</code> / <code>cpu::cpu.func_end</code>.</strong>
+These are emitted by the assembler and executed as no-ops; you do not write
+them. They make a function's extent part of the code stream rather than a
+span recorded beside it, so an empty function still occupies an address and
+a function table can never disagree with the code it indexes. They are real
+instructions, so they appear in <code>Program.instructions</code> and count towards
+<code>len(program)</code> — a three-instruction <code>@main</code> is five words.</li>
+<li><code>br</code> / <code>cond_br</code> name a <strong>label</strong> with <code>@</code>; <code>call</code> names a <strong>function</strong>
+without one (<code>call &lt;arity&gt;, &lt;name&gt;</code>).</li>
+<li>Labels are module-global; duplicates are an error.</li>
+<li>A label occupies no address and is not stored in the code stream. It is
+recorded in the label table, and re-emitted when the program is written back
+out.</li>
+<li>The binary container gained three child sections — <code>functions</code>, <code>labels</code>,
+<code>strings</code> — so these survive a round-trip. A file without them does not load:
+it predates the function markers too, so there are no extents to name. This
+is the same &quot;replace, do not convert&quot; rule as the text format above.</li>
+</ul>
+<h3 id="functions-declare-their-signatures"><a class="header" href="#functions-declare-their-signatures">Functions declare their signatures</a></h3>
+<p>A function may declare parameters and a return type, and both survive the
+binary round trip:</p>
+<pre><code>fn @measure_zone(z: u32) -&gt; heap_ref {
+  cpu::cpu.load u32, 0
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 1
+}
+</code></pre>
+<p>Types are vihaco's: <code>undef</code>, <code>str</code>, <code>bool</code>, <code>i64</code>, <code>u32</code>, <code>u64</code>, <code>f64</code>,
+<code>fn_ref</code>, <code>heap_ref</code>. <code>fn @name()</code> with no parameters and no return type parses
+exactly as before, so nothing hand-written needs updating unless it uses a
+<code>call</code> with a nonzero arity or a <code>ret</code> that keeps a value.</p>
+<p>The declaration is checked, not decorative. <code>call &lt;arity&gt;</code> is not a hint — it
+sets the callee's frame base to <code>stack.len() - arity</code>, so an unchecked operand
+would silently redefine the callee's shape at each call site:</p>
+<ul>
+<li><strong><code>CallArityMismatchError</code></strong> — a <code>call</code> passes a different number of operands
+than the callee declares.</li>
+<li><strong><code>ReturnCountMismatchError</code></strong> — a <code>ret</code> keeps a different number of values
+than its function declares returning. Two <code>ret</code>s that disagree make every
+caller's post-call stack depth path-dependent; each is checked against the
+declaration, which names the offender rather than reporting a pair that
+happens to differ.</li>
+</ul>
+<p>So a function that returns something has to say so: <code>ret 1</code> in a function
+declaring no return type is now an error.</p>
+<h3 id="lowering-to-kirin-is-single-function-only"><a class="header" href="#lowering-to-kirin-is-single-function-only">Lowering to kirin is single-function only</a></h3>
+<p><code>BytecodeDecoder.decode</code> (and <code>load_program</code>) lower the instruction stream into
+one kirin block, so they accept a program declaring exactly one function and
+refuse anything else:</p>
+<pre><code>DecodingError at instruction 3 (func_start): program declares 2 functions;
+only a single-function program can be lowered to kirin [stack depth=0]
+</code></pre>
+<p>The format is ahead of the compiler here on purpose. Nothing in the pipeline
+emits multi-function bytecode or lowers it further, so there is no correct
+lowering for the decoder to fall back to — only a silently wrong one. It used
+to take that one: the bodies concatenated into a single block, and because the
+marker handlers skip <code>func_start</code> / <code>func_end</code> the seam left no trace. A
+<code>@helper</code> declared before <code>@main</code> produced a kernel whose <em>first</em> statement was
+the helper's <code>func.return</code>, carrying two terminators — which <code>method.verify()</code>
+accepted.</p>
+<p>Validation, execution, disassembly and the binary round-trip are unaffected;
+this restriction applies only to the kirin lowering.</p>
+<p><strong>Stack validation stops at the first branch or call.</strong> The type simulator walks
+straight through, so its state is only correct while control flow is linear;
+past a branch it would report underflows and mismatches derived from a state it
+cannot know. The linear prefix is still checked. Full CFG-aware simulation is
+tracked in <a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1042">#1042</a>.</p>
 <h2 id="why-the-cpu-instructions-changed"><a class="header" href="#why-the-cpu-instructions-changed">Why the CPU instructions changed</a></h2>
 <p>In vihaco 0.1 the instruction set nested vihaco-cpu's opcodes wholesale, which
 is where <code>const.i64</code> / <code>const.f64</code> came from. As of vihaco 0.4, vihaco-cpu is a
