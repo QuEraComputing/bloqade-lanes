@@ -1394,8 +1394,13 @@ impl<'a> StackSimulator<'a> {
                 self.stack
                     .extend(std::iter::repeat_n(Slot::Unknown, returns));
             }
-            // Target, arity and function reference. What the callee then does
-            // to the frame is unknowable; `transfer` gives up on the path.
+            // Target, arity and function reference, popped in that order.
+            // vihaco 0.4.1 can take the first two from a `FunctionInfo`
+            // message instead, but `LanesMachine` executes CPU ops without
+            // one, so all three come off the program's stack. (vihaco#110
+            // moves both into the message for good, leaving only the
+            // reference.) What the callee then does to the frame is
+            // unknowable; `transfer` gives up on the path.
             M::Cpu(C::IndirectCall) => self.pop_n(3),
             // The condition. Its type, `bool`, has no lanes tag, so only its
             // presence is checked.
@@ -2606,6 +2611,40 @@ mod tests {
         assert_eq!(
             simulate_stack(&p, None),
             vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    /// `call_indirect` takes three operands on this machine — function
+    /// reference, arity, target — not two. Pinned against execution, since
+    /// the count depends on how the machine dispatches the op: with two,
+    /// vihaco pops the function reference as the arity.
+    #[test]
+    fn a_call_indirect_takes_three_operands() {
+        const HELPER: &str = "fn @helper() {\n  cpu::cpu.ret 0\n}\n";
+        let three = sst_module(&format!(
+            "fn @main() {{\n  cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 0\n  \
+             cpu::cpu.const u32, 7\n  cpu::cpu.call_indirect\n  cpu::cpu.halt\n}}\n\n{HELPER}"
+        ));
+        assert_eq!(simulate_stack(&three, None), vec![]);
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&three, 100)
+            .expect("a three-operand call_indirect should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+
+        let two = sst_module(&format!(
+            "fn @main() {{\n  cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 0\n  \
+             cpu::cpu.call_indirect\n  cpu::cpu.halt\n}}\n\n{HELPER}"
+        ));
+        assert_eq!(
+            simulate_stack(&two, None),
+            vec![ValidationError::StackUnderflow { pc: 3 }]
+        );
+        let error = crate::isa::machine::LanesMachine::new()
+            .run(&two, 100)
+            .expect_err("two operands leave call_indirect short of one");
+        assert!(
+            error.to_string().contains("Cannot convert FunctionRef"),
+            "got: {error}"
         );
     }
 
