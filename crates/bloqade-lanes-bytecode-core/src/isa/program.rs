@@ -114,6 +114,33 @@ pub fn entry_function(program: &Program) -> eyre::Result<&FunctionInfo<Type>> {
     })
 }
 
+/// How many locals a function's frame reserves: its parameters, then every
+/// slot its body names.
+///
+/// This is vihaco#110's rule, `max(arity, every load/store index + 1)`. Reads,
+/// writes and unreachable instructions all count. The count is derived, never
+/// declared — there is no locals syntax, so the body is the only statement of
+/// what a function needs — and every constructor derives it the same way:
+/// [`from_code`], [`super::resolve::resolve`], and [`from_binary`], which
+/// recomputes it rather than trusting the table. A function table therefore
+/// cannot disagree with its own code.
+///
+/// Saturating, because an index of `u32::MAX` has no `+ 1`. Nothing that large
+/// is ever reserved: [`super::validate::validate_structure`] rejects an index
+/// past [`super::validate::MAX_LOCAL_INDEX`], and the machine refuses a frame
+/// past [`super::validate::MAX_LOCAL_COUNT`].
+pub fn local_count(arity: usize, body: &[MachineInstruction]) -> u32 {
+    use super::machine::MachineInstruction as M;
+    use vihaco_cpu::RuntimeInstruction as C;
+
+    body.iter()
+        .filter_map(|inst| match inst {
+            M::Cpu(C::Load(_, index) | C::Store(_, index)) => Some(index.saturating_add(1)),
+            _ => None,
+        })
+        .fold(u32::try_from(arity).unwrap_or(u32::MAX), u32::max)
+}
+
 /// Build a `Program` from a version + flat instruction list, wrapped in a
 /// single `@main`.
 ///
@@ -166,6 +193,7 @@ pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> eyre::Resul
     let code = wrapped;
 
     let end_address = code.len() as u32;
+    let local_count = local_count(0, &code);
     let mut m = Program::default();
     m.code = code;
     m.strings = vec!["main".to_owned()];
@@ -175,7 +203,7 @@ pub fn from_code(version: Version, code: Vec<MachineInstruction>) -> eyre::Resul
             params: Vec::new(),
             ret: Vec::new(),
         },
-        local_count: 0,
+        local_count,
         start_address: 0,
         end_address,
         file: 0,
@@ -395,22 +423,29 @@ fn reconcile_function_spans(program: &mut Program) {
         .into_iter()
         .map(|(start_address, end_address)| {
             let source = named.iter().find(|f| f.start_address == start_address);
+            // Carried over, not rebuilt. The *spans* come from the code
+            // because the markers are authoritative about extent; a
+            // signature has no representation in the code stream at all,
+            // so the table is its only source. Hardcoding it empty here
+            // was invisible while nothing populated it, and became a
+            // silent drop the moment functions could declare parameters.
+            let signature = source.map_or_else(
+                || Signature {
+                    params: Vec::new(),
+                    ret: Vec::new(),
+                },
+                |f| f.signature.clone(),
+            );
+            // Rebuilt, like the span: the body says how many locals it
+            // names, so the table's copy is redundant — and trusted, it
+            // could reserve fewer slots than the body indexes, or ask every
+            // call to reserve four billion.
+            let body = &program.code[start_address as usize..end_address as usize];
+            let local_count = local_count(signature.params.len(), body);
             FunctionInfo {
                 name: source.map_or(u32::MAX, |f| f.name),
-                // Carried over, not rebuilt. The *spans* come from the code
-                // because the markers are authoritative about extent; a
-                // signature has no representation in the code stream at all,
-                // so the table is its only source. Hardcoding it empty here
-                // was invisible while nothing populated it, and became a
-                // silent drop the moment functions could declare parameters.
-                signature: source.map_or_else(
-                    || Signature {
-                        params: Vec::new(),
-                        ret: Vec::new(),
-                    },
-                    |f| f.signature.clone(),
-                ),
-                local_count: source.map_or(0, |f| f.local_count),
+                signature,
+                local_count,
                 start_address,
                 end_address,
                 file: source.map_or(0, |f| f.file),

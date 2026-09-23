@@ -15,11 +15,11 @@ version 1.0
 // point, the function markers, or the return path breaking.
 //
 // `@main` passes one operand, a zone, with `call 1`. That sets `@measure_zone`'s
-// frame base one below the top of the stack, so the zone *is* its local 0 —
-// locals alias the operand stack, they are not copied. It loads the zone,
-// measures it, awaits the result, and returns that one value with `ret 1`:
-// everything else in the frame, the argument included, is dropped, so the
-// caller sees exactly the array_ref.
+// frame base one below the top of the stack, so the zone *is* its local 0 — the
+// argument is not copied, it becomes the first slot of the callee's locals, and
+// the callee starts with no operands. It loads the zone, measures it, awaits the
+// result, and returns that one value with `ret 1`: everything else in the frame,
+// the argument included, is dropped, so the caller sees exactly the array_ref.
 //
 // This was arity 0 until the stack simulation seeded each function's frame from
 // its declared parameters (#1042). Before that, a callee receiving operands
@@ -36,8 +36,9 @@ fn @main() {
   lanes::lanes.const_zone 0x00000000
   cpu::cpu.call 1, measure_zone
 
-  // Stack: [array_ref]. Discard it and stop.
-  lanes::lanes.pop
+  // Stack: [array_ref]. Park it in a scratch local — `@main` reserves one,
+  // because this `store` names it — and stop.
+  cpu::cpu.store heap_ref, 0
   cpu::cpu.halt
 }
 

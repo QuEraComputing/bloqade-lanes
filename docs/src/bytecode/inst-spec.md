@@ -13,7 +13,7 @@ A lanes program runs on a **composite machine** of two vihaco devices:
 | Device | Code | Supplies |
 |---|---|---|
 | `cpu` | `0x00` | vihaco-cpu's `CPU` component: the stack, constants, arithmetic, comparisons, control flow, the heap allocator |
-| `lanes` | `0x01` | atom movement, gates, measurement, arrays, and the `pop`/`swap` the CPU lacks |
+| `lanes` | `0x01` | atom movement, gates, measurement, arrays |
 
 Instructions are spelled `<device>::<dialect>.<mnemonic>`. The first half is the
 device; the second is that device's own dialect head.
@@ -192,15 +192,39 @@ fn @helper() {
 
 ### Frames and locals
 
-`call <arity>, <name>` makes the top `arity` operands the callee's locals
-`0..arity-1` — that is how arguments are passed. `ret <keep>` returns the top
-`keep` values and discards the rest of the frame.
+A frame is the frame of vihaco#110: its locals, then its operands above them.
 
-A frame holds **no storage of its own**: locals are `stack[frame.base + index]`,
-a window into the same operand stack. So `load`/`store` address a function's
-arguments, not scratch registers, and a function with no parameters has no
-private locals. That is why `pop` and `swap` are lanes instructions rather than
-being expressed with `load`/`store`.
+```text
+[caller's values][locals: parameters, then scratch][operands]
+                  ^ base                            ^ base + local_count
+```
+
+`call <arity>, <name>` makes the top `arity` operands the callee's locals
+`0..arity-1` — that is how arguments are passed — and reserves the rest of its
+locals above them before its first instruction. `ret <keep>` returns the top
+`keep` values and discards the rest of the frame, locals included.
+
+- **How many locals.** A function reserves `max(arity, every load/store index
+  + 1)` of them. The count is derived from the body, never declared: there is
+  no locals syntax, and the function table's `local_count` is recomputed from
+  the code whenever a program is loaded. An index is at most 1023.
+- **What they start as.** A local starts as the `Undefined` placeholder, and
+  a typed `load` of any local holding it reads as the zero of that type —
+  whether nothing wrote it or it holds a placeholder a lanes op pushed, stored
+  or passed as an argument. That is how vihaco#110's zero-filled frames of
+  untyped words will read. `load undef` reads the placeholder itself.
+- **What reaches them.** Only `load` (push a copy) and `store` (pop into the
+  slot). No operand op can consume a local, a parameter included — a function
+  uses its argument by loading it — and popping with no operands left is a
+  stack underflow even though the stack below is not empty.
+
+That is what `pop` and `swap` used to be for, and why they are gone:
+`store <ty>, 0` discards the top, `store 0; load 0; load 0` duplicates it, and
+`store 0; store 1; load 0; load 1` swaps the top two.
+
+The released vihaco 0.4.1 has none of this — its locals alias the operand
+stack from the frame base — so `LanesMachine` emulates the model until the
+dependency moves past it.
 
 `to_text` emits this form and `parse_text` accepts it, round-tripping losslessly.
 
@@ -279,8 +303,8 @@ Packed into one `u32`:
 ### Stack ops
 
 These come from vihaco-cpu's `CPU` component, composed as the `cpu` device
-(see [The machine](#the-machine)) — except `pop` and `swap`, which vihaco-cpu
-has neither of and which therefore live on the lanes device.
+(see [The machine](#the-machine)). There is no `pop` or `swap`; locals spell
+both — see [Frames and locals](#frames-and-locals).
 
 #### `cpu::cpu.const <type>, <value>` — Push a constant
 
@@ -305,21 +329,28 @@ which.
 | Operands | none |
 | Stack | `(a -- a a)` |
 
-#### `lanes::lanes.pop` — Discard top of stack
+#### `cpu::cpu.load <type>, <n>` — Push a copy of local `n`
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0100` |
-| Operands | none |
+| Opcode | `0x000B` |
+| Operands | type tag (1 byte) + local index, `u32` LE (4 bytes) |
+| Stack | `( -- a)` |
+
+The local must hold a value of `<type>`, or the `Undefined` placeholder —
+unwritten, or a lanes op's result stored there — which reads as that type's
+zero. `load undef` reads the placeholder itself, and refuses a concrete value.
+
+#### `cpu::cpu.store <type>, <n>` — Pop the top into local `n`
+
+| Field | Value |
+|---|---|
+| Opcode | `0x000C` |
+| Operands | type tag (1 byte) + local index, `u32` LE (4 bytes) |
 | Stack | `(a -- )` |
 
-#### `lanes::lanes.swap` — Swap top two stack elements
-
-| Field | Value |
-|---|---|
-| Opcode | `0x0101` |
-| Operands | none |
-| Stack | `(a b -- b a)` |
+The value must be a `<type>`, or a placeholder a lanes op pushed in place of a
+result it does not simulate.
 
 #### `cpu::cpu.ret <n>` — Return from the current function
 
@@ -346,7 +377,7 @@ reports `"return"`, which predates vihaco-cpu's spelling.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0102` |
+| Opcode | `0x0100` |
 | Operands | `LocationAddr` as `u64` LE — `[zone_id:8][word_id:16][site_id:16][pad:24]` |
 | Stack | `( -- loc)` |
 
@@ -354,7 +385,7 @@ reports `"return"`, which predates vihaco-cpu's spelling.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0103` |
+| Opcode | `0x0101` |
 | Operands | `LaneAddr` as `u64` LE — `[dir:1][mt:2][zone_id:8][pad:5][bus_id:16][word_id:16][site_id:16]` |
 | Stack | `( -- lane)` |
 
@@ -362,7 +393,7 @@ reports `"return"`, which predates vihaco-cpu's spelling.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0104` |
+| Opcode | `0x0102` |
 | Operands | `ZoneAddr` as `u32` LE — `[pad:24][zone_id:8]` |
 | Stack | `( -- zone)` |
 
@@ -372,7 +403,7 @@ reports `"return"`, which predates vihaco-cpu's spelling.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0105` |
+| Opcode | `0x0103` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ -- )` |
 
@@ -382,7 +413,7 @@ Pops `n` location addresses and performs the initial atom fill at those sites.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0106` |
+| Opcode | `0x0104` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ -- )` |
 
@@ -392,7 +423,7 @@ Pops `n` location addresses and refills atoms at those sites.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0107` |
+| Opcode | `0x0105` |
 | Operands | `u32` LE arity |
 | Stack | `(lane₁ lane₂ … laneₙ -- )` |
 
@@ -427,7 +458,7 @@ For example, if a move group contains lanes at positions `(0,0)`, `(0,1)`, `(1,0
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0109` |
+| Opcode | `0x0107` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ θ φ -- )` |
 
@@ -437,7 +468,7 @@ Pops 2 float parameters (φ = axis angle, θ = rotation angle) then `n` location
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0108` |
+| Opcode | `0x0106` |
 | Operands | `u32` LE arity |
 | Stack | `(loc₁ loc₂ … locₙ θ -- )` |
 
@@ -447,7 +478,7 @@ Pops 1 float parameter (θ = rotation angle) then `n` location addresses, and ap
 
 | Field | Value |
 |---|---|
-| Opcode | `0x010B` |
+| Opcode | `0x0109` |
 | Operands | none |
 | Stack | `(θ φ -- )` |
 
@@ -457,7 +488,7 @@ Pops 2 float parameters (φ = axis angle, θ = rotation angle), applies a global
 
 | Field | Value |
 |---|---|
-| Opcode | `0x010A` |
+| Opcode | `0x0108` |
 | Operands | none |
 | Stack | `(θ -- )` |
 
@@ -467,7 +498,7 @@ Pops 1 float parameter (θ = rotation angle), applies a global Rz rotation. Sinc
 
 | Field | Value |
 |---|---|
-| Opcode | `0x010C` |
+| Opcode | `0x010A` |
 | Operands | none |
 | Stack | `(zone -- )` |
 
@@ -479,7 +510,7 @@ Pops a zone address and applies a CZ gate across the zone.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x010D` |
+| Opcode | `0x010B` |
 | Operands | `u32` LE arity |
 | Stack | `(zone₁ zone₂ … zoneₙ -- future₁ future₂ … futureₙ)` |
 
@@ -489,7 +520,7 @@ Pops `n` zone addresses and pushes `n` measure futures.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x010E` |
+| Opcode | `0x010C` |
 | Operands | none |
 | Stack | `(future -- array_ref)` |
 
@@ -501,7 +532,7 @@ Pops a measure future and pushes an array reference containing the measurement r
 
 | Field | Value |
 |---|---|
-| Opcode | `0x010F` |
+| Opcode | `0x010D` |
 | Operands | three `u32` LE: `type_tag`, `dim0`, `dim1` (`dim1 = 0` for 1-D) |
 | Stack | `(elem₁ elem₂ … elemₙ -- array_ref)` |
 
@@ -511,7 +542,7 @@ Constructs an array of `dim0 × dim1` elements with element type `type_tag`. If 
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0110` |
+| Opcode | `0x010E` |
 | Operands | `u32` LE ndims |
 | Stack | `(array_ref idx₁ … idxₙ -- value)` |
 
@@ -523,7 +554,7 @@ Pops `ndims` index values then the array reference, and pushes the indexed eleme
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0111` |
+| Opcode | `0x010F` |
 | Operands | none |
 | Stack | `(array_ref -- detector_ref)` |
 
@@ -533,7 +564,7 @@ Pops an array reference and pushes a detector reference.
 
 | Field | Value |
 |---|---|
-| Opcode | `0x0112` |
+| Opcode | `0x0110` |
 | Operands | none |
 | Stack | `(array_ref -- observable_ref)` |
 

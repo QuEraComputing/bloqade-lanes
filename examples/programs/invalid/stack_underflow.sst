@@ -7,10 +7,10 @@ version 1.0
 .text(root):
 // arch: simple
 // expect: StackUnderflow
-// Invalid: pop on empty stack
+// Invalid: dup on empty stack
 
 fn @main() {
-  lanes::lanes.pop
+  cpu::cpu.dup
   cpu::cpu.halt
 }
 .text(root).

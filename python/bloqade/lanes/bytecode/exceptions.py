@@ -95,6 +95,24 @@ class NewArrayTooManyElementsError(ValidationError):
         )
 
 
+class TooManyParametersError(ValidationError):
+    """A function declares more parameters than a frame may hold locals.
+
+    Every parameter is a local, and a frame holds at most ``maximum`` of them,
+    so the machine refuses to enter the function and every call to it fails.
+    ``pc`` is the function's ``func_start``.
+    """
+
+    def __init__(self, pc: int, count: int, maximum: int):
+        self.pc = pc
+        self.count = count
+        self.maximum = maximum
+        super().__init__(
+            f"pc {pc}: function declares {count} parameters, more than the "
+            f"{maximum} locals a frame may hold"
+        )
+
+
 class CodeOutsideFunctionError(ValidationError):
     """An instruction sits outside every function's extent.
 
@@ -178,11 +196,11 @@ class GetItemInvalidDimsError(ValidationError):
 class LocalIndexOutOfRangeError(ValidationError):
     """``load``/``store`` names a local index past the maximum.
 
-    The index is read straight out of the instruction word, and ``store``
-    grows the operand stack to reach it — writing every new slot, so the
-    memory is resident. A local index is a function's argument slot, so the
-    bound is far above any real one; it exists to keep a malformed operand
-    from becoming a multi-gigabyte allocation.
+    The index is read straight out of the instruction word, and it sizes the
+    function's frame: every call reserves a slot for each local the body
+    names, up to the highest index. Unbounded, one instruction could make each
+    call reserve gigabytes. Compiled programs spill to as many locals as they
+    keep values live at once, which is well under the bound.
     """
 
     def __init__(self, pc: int, mnemonic: str, index: int, maximum: int):
@@ -210,19 +228,21 @@ class StackUnderflowError(ValidationError):
 
 
 class PopBelowFrameBaseError(StackUnderflowError):
-    """A function other than the entry popped below its frame base.
+    """A function other than the entry popped with no operands left.
 
-    The values below the base belong to the caller, so this is an error even
-    when the machine's stack is not empty. A subclass of
-    :class:`StackUnderflowError` because it is the same condition measured
-    from the frame: in the entry function, whose base is the bottom of the
-    stack, it is reported as a plain underflow.
+    Below its operands are its own locals, and below those the values its
+    caller owns; no operand op may reach either, so this is an error even when
+    the machine's stack is not empty. A subclass of
+    :class:`StackUnderflowError` because it is the same condition: in the
+    entry function, which has no caller, it is reported as a plain underflow.
     """
 
     def __init__(self, pc: int):
         self.pc = pc
         ValidationError.__init__(
-            self, f"pc {pc}: pops below its frame base, into its caller's values"
+            self,
+            f"pc {pc}: pops past its operands, into its locals and its caller's "
+            f"values",
         )
 
 
@@ -250,6 +270,26 @@ class TypeMismatchError(ValidationError):
         self.got = got
         super().__init__(
             f"pc {pc}: type mismatch: expected tag 0x{expected:x}, got 0x{got:x}"
+        )
+
+
+class LocalTypeMismatchError(ValidationError):
+    """A typed ``load``/``store`` names a type the value does not have.
+
+    ``store <ty>`` refuses a value of another type, and ``load <ty>`` a local
+    holding one. The placeholder a lanes op pushes for a result it does not
+    simulate — and that an unwritten local holds — passes either, except that
+    ``load undef`` refuses every concrete value. ``declared`` and ``got`` are
+    spelled as in the text format (``"u64"``, ``"undef"``, ...).
+    """
+
+    def __init__(self, pc: int, mnemonic: str, declared: str, got: str):
+        self.pc = pc
+        self.mnemonic = mnemonic
+        self.declared = declared
+        self.got = got
+        super().__init__(
+            f"pc {pc}: {mnemonic} names type {declared}, but the value is {got}"
         )
 
 

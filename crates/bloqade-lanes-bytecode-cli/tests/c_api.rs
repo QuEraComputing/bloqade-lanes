@@ -283,8 +283,8 @@ fn simulate_stack_valid() {
 
 #[test]
 fn simulate_stack_with_errors() {
-    // Pop on an empty stack underflows.
-    let source = CString::new(sst("fn @main() {\n  lanes::lanes.pop\n}\n")).unwrap();
+    // Dup on an empty stack underflows.
+    let source = CString::new(sst("fn @main() {\n  cpu::cpu.dup\n}\n")).unwrap();
     let mut prog: *mut LANESProgram = ptr::null_mut();
     unsafe { lanes_program_from_text(source.as_ptr(), &mut prog) };
 

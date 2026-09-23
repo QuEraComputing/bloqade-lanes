@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Optional, final
+from typing import Literal, Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -2053,6 +2053,11 @@ class AtomStateData:
 
 # ── Instruction ──
 
+ValueType = Literal[
+    "undef", "str", "bool", "i64", "u32", "u64", "f64", "fn_ref", "heap_ref"
+]
+"""vihaco's value types, spelled as the ``sst`` text format spells them."""
+
 @final
 class Instruction:
     """A single bytecode instruction.
@@ -2063,7 +2068,8 @@ class Instruction:
     Instruction categories:
 
     - **Constants**: Push typed values onto the stack.
-    - **Stack**: Manipulate the operand stack (pop, dup, swap).
+    - **Stack and locals**: Duplicate the top (dup), and park values in a
+      function's locals and bring them back (store, load).
     - **Atom ops**: Fill sites and move atoms (initial_fill, fill, move).
     - **Gates**: Quantum gate operations (local_r, local_rz, global_r, global_rz, cz).
     - **Measurement**: Measure atoms and await results.
@@ -2150,15 +2156,6 @@ class Instruction:
     # -- Stack manipulation --
 
     @staticmethod
-    def pop() -> Instruction:
-        """Pop and discard the top stack value.
-
-        Returns:
-            Instruction: The pop instruction.
-        """
-        ...
-
-    @staticmethod
     def dup() -> Instruction:
         """Duplicate the top stack value.
 
@@ -2166,13 +2163,52 @@ class Instruction:
             Instruction: The dup instruction.
         """
         ...
+    # -- Locals --
+    #
+    # There is no ``pop`` or ``swap``. A function's locals are slots of their
+    # own below its operands, so ``store`` parks a value out of their way and
+    # ``load`` brings a copy back: ``store(t, 0)`` discards the top, and
+    # ``store(t, 0), store(t, 1), load(t, 0), load(t, 1)`` swaps the top two.
 
     @staticmethod
-    def swap() -> Instruction:
-        """Swap the top two stack values.
+    def load(value_type: str, index: int) -> Instruction:
+        """Push a copy of local ``index``.
+
+        The local must hold a ``value_type``, or the ``Undefined``
+        placeholder — unwritten, or a lanes op's result stored there — which
+        reads as that type's zero. ``"undef"`` reads the placeholder back as
+        itself, and refuses a concrete value.
+
+        Args:
+            value_type: The type the local holds, spelled as in the text
+                format — one of the ``ValueType`` names.
+            index: Local slot, ``u32``.
 
         Returns:
-            Instruction: The swap instruction.
+            Instruction: The load instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
+        """
+        ...
+
+    @staticmethod
+    def store(value_type: str, index: int) -> Instruction:
+        """Pop the top of the stack into local ``index``.
+
+        Args:
+            value_type: The type of the value stored, spelled as in the text
+                format — one of the ``ValueType`` names. A placeholder a lanes
+                op pushed may be stored as any type.
+            index: Local slot, ``u32``.
+
+        Returns:
+            Instruction: The store instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
         """
         ...
     # -- Atom operations --
@@ -2511,6 +2547,23 @@ class Instruction:
         """
         ...
 
+    def local_index(self) -> int:
+        """Local slot a ``load`` or ``store`` instruction names.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def value_type(self) -> ValueType:
+        """Type a ``load`` or ``store`` instruction names, spelled as in the
+        text format.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
@@ -2606,6 +2659,12 @@ class Program:
     @property
     def version(self) -> tuple[int, int]:
         """Program version as ``(major, minor)``."""
+        ...
+
+    @property
+    def entry_parameters(self) -> list[ValueType]:
+        """The entry point's declared parameter types, spelled as in the text
+        format. Empty when it takes none, or the program has no entry point."""
         ...
 
     @property
