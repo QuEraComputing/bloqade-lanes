@@ -202,6 +202,71 @@ fn instances() -> Vec<Instance> {
             initial: placed(&[(0, loc(0, 0)), (1, loc(0, 6))]),
             target: placed(&[(0, loc(1, 5)), (1, loc(0, 1))]),
         },
+        // ── The sparse 2D two-zone grid (storage = zone 0, gate = zone 1) ──
+        // Storage row 0 site 1 to gate row 0 site 2: one site hop to an edge
+        // column, three row hops up it, the zone bus, two site hops: seven.
+        Instance {
+            name: "zoned_one_atom_up",
+            arch: Arch::TwoZoneGrid,
+            initial: placed(&[(0, zloc(0, 0, 1))]),
+            target: placed(&[(0, zloc(1, 4, 2))]),
+        },
+        // The same route back down.
+        Instance {
+            name: "zoned_one_atom_down",
+            arch: Arch::TwoZoneGrid,
+            initial: placed(&[(0, zloc(1, 4, 2))]),
+            target: placed(&[(0, zloc(0, 0, 1))]),
+        },
+        // Three atoms from storage row 0 to gate row 0, through the one bus.
+        Instance {
+            name: "zoned_three_up",
+            arch: Arch::TwoZoneGrid,
+            initial: placed(&[(0, zloc(0, 0, 0)), (1, zloc(0, 0, 1)), (2, zloc(0, 0, 2))]),
+            target: placed(&[(0, zloc(1, 4, 0)), (1, zloc(1, 4, 1)), (2, zloc(1, 4, 2))]),
+        },
+        // Six atoms from storage rows 0-1 to gate rows 0-1.
+        Instance {
+            name: "zoned_six_up",
+            arch: Arch::TwoZoneGrid,
+            initial: placed(&[
+                (0, zloc(0, 0, 0)),
+                (1, zloc(0, 0, 1)),
+                (2, zloc(0, 0, 2)),
+                (3, zloc(0, 1, 0)),
+                (4, zloc(0, 1, 1)),
+                (5, zloc(0, 1, 2)),
+            ]),
+            target: placed(&[
+                (0, zloc(1, 4, 0)),
+                (1, zloc(1, 4, 1)),
+                (2, zloc(1, 4, 2)),
+                (3, zloc(1, 5, 0)),
+                (4, zloc(1, 5, 1)),
+                (5, zloc(1, 5, 2)),
+            ]),
+        },
+        // Three atoms up and three down at once: counterflow through the bus.
+        Instance {
+            name: "zoned_six_counterflow",
+            arch: Arch::TwoZoneGrid,
+            initial: placed(&[
+                (0, zloc(0, 0, 0)),
+                (1, zloc(0, 0, 1)),
+                (2, zloc(0, 0, 2)),
+                (3, zloc(1, 4, 0)),
+                (4, zloc(1, 4, 1)),
+                (5, zloc(1, 4, 2)),
+            ]),
+            target: placed(&[
+                (0, zloc(1, 4, 1)),
+                (1, zloc(1, 4, 2)),
+                (2, zloc(1, 4, 3)),
+                (3, zloc(0, 0, 0)),
+                (4, zloc(0, 0, 1)),
+                (5, zloc(0, 0, 2)),
+            ]),
+        },
     ]
 }
 
@@ -269,6 +334,7 @@ pub fn all() -> Vec<Case> {
     cases.extend(bound_cases());
     cases.extend(edge_cases());
     cases.extend(knob_cases());
+    cases.extend(false_unsolvable_cases());
     cases.extend(cz_cases());
     cases.extend(big_cz_cases());
     cases.extend(anticipate_cases());
@@ -442,6 +508,38 @@ fn knob_cases() -> Vec<Case> {
     cases
 }
 
+/// A known-wrong verdict, pinned so that fixing it shows up as an intended
+/// golden change. `zoned_six_up` is solvable (Push and Rotate solves it, and
+/// so does entropy), yet the frontier drivers drain their frontier well under
+/// budget and report `unsolvable`: their move generator cannot reach every
+/// state this sparse topology needs. The verdict is not claimed as a proof,
+/// but it is still wrong. These goldens record that; they are not
+/// expectations.
+fn false_unsolvable_cases() -> Vec<Case> {
+    let six = instance("zoned_six_up");
+    let mut cases: Vec<Case> = [Strategy::AStar, Strategy::Dfs, Strategy::Ids]
+        .into_iter()
+        .map(|strategy| {
+            case(
+                format!("edge/false_unsolvable/zoned_six_up/{}", strategy.label()),
+                on(&six, strategy).budget(Some(5000)),
+            )
+        })
+        .collect();
+    // The witness that the instance is solvable.
+    cases.push(
+        case(
+            "edge/false_unsolvable/zoned_six_up/push_rotate_witness",
+            on(&six, Strategy::PushRotate),
+        )
+        .expect(Expect {
+            status: Some(Status::Solved),
+            ..Expect::default()
+        }),
+    );
+    cases
+}
+
 /// A CZ stage with the given atoms and pairs.
 fn stage(
     arch: Arch,
@@ -503,6 +601,21 @@ fn big_cz_cases() -> Vec<Case> {
     // never can.
     let example_pairable = [(0, loc(0, 0)), (1, loc(0, 5))];
     let example_unpairable = [(0, loc(0, 0)), (1, loc(0, 1))];
+    // Two and three pairs lined up in storage rows 0-1.
+    let zoned_two_pairs = [
+        (0, zloc(0, 0, 0)),
+        (1, zloc(0, 0, 1)),
+        (2, zloc(0, 0, 2)),
+        (3, zloc(0, 0, 3)),
+    ];
+    let zoned_three_pairs = [
+        (0, zloc(0, 0, 0)),
+        (1, zloc(0, 0, 1)),
+        (2, zloc(0, 0, 2)),
+        (3, zloc(0, 1, 0)),
+        (4, zloc(0, 1, 1)),
+        (5, zloc(0, 1, 2)),
+    ];
     let mut cases = Vec::new();
     for (name, placement, strategy) in placements {
         cases.push(case(
@@ -545,6 +658,34 @@ fn big_cz_cases() -> Vec<Case> {
                 &[(0, 1)],
             ),
         ));
+        // On the two-zone grid only the gate zone has CZ pairs, so every
+        // pair starting in storage has to cross the one zone bus to entangle.
+        //
+        // Known false success, pinned: NoHome reports these `solved` in zero
+        // layers with every atom still in storage. Its per-pair target rule
+        // skips a pair whose location has no CZ partner, so each qubit's
+        // target defaults to where it already is. On Gemini every location
+        // has a partner, so this never fires there.
+        cases.push(case(
+            format!("cz/{name}/zoned_two_pairs_from_storage"),
+            stage(
+                Arch::TwoZoneGrid,
+                placement.clone(),
+                strategy,
+                &zoned_two_pairs,
+                &[(0, 1), (2, 3)],
+            ),
+        ));
+        cases.push(case(
+            format!("cz/{name}/zoned_three_pairs_from_storage"),
+            stage(
+                Arch::TwoZoneGrid,
+                placement.clone(),
+                strategy,
+                &zoned_three_pairs,
+                &[(0, 1), (2, 3), (4, 5)],
+            ),
+        ));
     }
     cases
 }
@@ -584,6 +725,7 @@ fn hand_verified(instance: &str, strategy: Strategy) -> Option<Expect> {
         // Forward and backward site-bus moves need separate shots, then the
         // word-bus hop: three.
         "asymmetric_swap" => 3,
+        "zoned_one_atom_up" | "zoned_one_atom_down" => 7,
         _ => return None,
     };
     matches!(strategy, Strategy::AStar | Strategy::Bfs).then(|| solved_in(optimum))

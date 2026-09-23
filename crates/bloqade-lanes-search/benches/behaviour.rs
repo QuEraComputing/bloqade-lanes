@@ -47,11 +47,12 @@ fn main() {
 /// overhead rather than the search. `debug_only` cases are skipped: benches
 /// run in release.
 fn is_timed(name: &str) -> bool {
-    const HARD: [&str; 4] = [
+    const HARD: [&str; 5] = [
         "logical_cycle",
         "physical_site_cycle",
         "physical_congested",
         "four_pairs",
+        "zoned",
     ];
     HARD.iter().any(|h| name.contains(h)) || name.starts_with("anticipate/")
 }
@@ -109,7 +110,7 @@ fn anticipate(bencher: Bencher, name: &str) {
     time_case(bencher, name);
 }
 
-const ARCHES: [(&str, Arch); 8] = [
+const ARCHES: [(&str, Arch); 9] = [
     ("gemini_logical", Arch::GeminiLogical),
     ("gemini_physical", Arch::GeminiPhysical),
     ("example", Arch::Example),
@@ -118,6 +119,7 @@ const ARCHES: [(&str, Arch); 8] = [
     ("two_zone_bus", Arch::TwoZoneBus),
     ("two_zone_aligned_site_bus", Arch::TwoZoneAlignedSiteBus),
     ("asymmetric_duration", Arch::AsymmetricDuration),
+    ("two_zone_grid", Arch::TwoZoneGrid),
 ];
 
 /// Building an engine: parsing and validating the spec, and the lane index.

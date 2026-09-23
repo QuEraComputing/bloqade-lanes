@@ -51,6 +51,8 @@ const TWO_ZONE_ALIGNED_SITE_BUS: &str =
     include_str!("../fixtures/behaviour/arch/two_zone_aligned_site_bus.json");
 const ASYMMETRIC_DURATION: &str =
     include_str!("../fixtures/behaviour/arch/asymmetric_duration.json");
+// Hand-written for the behaviour net, not a unit-test snapshot.
+const TWO_ZONE_GRID: &str = include_str!("../fixtures/behaviour/arch/two_zone_grid.json");
 
 /// Run one case on a fresh engine. Never panics: a panic inside the crate
 /// becomes [`Outcome::Panicked`].
@@ -80,6 +82,7 @@ pub fn engine(arch: Arch) -> Result<Arc<SearchEngine>, String> {
         Arch::TwoZoneBus => TWO_ZONE_BUS,
         Arch::TwoZoneAlignedSiteBus => TWO_ZONE_ALIGNED_SITE_BUS,
         Arch::AsymmetricDuration => ASYMMETRIC_DURATION,
+        Arch::TwoZoneGrid => TWO_ZONE_GRID,
     };
     SearchEngine::from_json_validated(json)
         .map(Arc::new)

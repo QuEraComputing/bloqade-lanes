@@ -7,9 +7,10 @@
 
 use std::fmt::Write as _;
 
-/// Which architecture a case runs on. The Gemini specs are the bundled ones;
-/// the rest are snapshots of the crate's synthetic unit-test specs, kept in
-/// `tests/fixtures/behaviour/arch/`, covering topologies Gemini does not have.
+/// Which architecture a case runs on. The Gemini specs are the bundled ones.
+/// The rest live in `tests/fixtures/behaviour/arch/` and cover topologies
+/// Gemini does not have: snapshots of the crate's synthetic unit-test specs,
+/// plus `TwoZoneGrid`, written for this net.
 #[derive(Clone, Copy, Debug)]
 pub enum Arch {
     /// Gemini logical: 20 words of one site; word buses only; CZ pairs are
@@ -38,6 +39,14 @@ pub enum Arch {
     /// The example arch with transport paths that make a lane and its reverse
     /// take different times.
     AsymmetricDuration,
+    /// A small 2D two-zone arch with sparse connectivity: a storage zone
+    /// (words 0-3) and a gate zone (words 4-7), each a 4x4 grid of four
+    /// row-words. Along a row, sites form a path 0-1-2-3; between rows, words
+    /// form a path too, but only on the edge columns (sites 0 and 3). A single
+    /// zone bus joins storage's top row (word 3) to gate's bottom row
+    /// (word 4), and only the gate zone has CZ pairs (words 4 & 5, 6 & 7).
+    /// Every inter-zone move funnels through that one bus.
+    TwoZoneGrid,
 }
 
 /// A location. Zone 0 unless built with [`zloc`].
