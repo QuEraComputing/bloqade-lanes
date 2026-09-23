@@ -146,6 +146,57 @@ def test_load_redirects_uses_to_the_value_last_stored():
     assert [_constant(g.rotation_angle) for g in gates] == [1.0, 2.0]
 
 
+def _parked_array(value_type: str) -> list[ir.Statement]:
+    """A measurement array — a placeholder at run time — stored as
+    ``value_type`` in local 0 and loaded back the same way."""
+    cz = stack_move.ConstZone(value=EncodingZoneAddress(0))
+    measure = stack_move.Measure(zones=(cz.result,))
+    await_m = stack_move.AwaitMeasure(future=measure.results[0])
+    store = stack_move.StoreLocal(value=await_m.result, index=0, value_type=value_type)
+    load = stack_move.LoadLocal(index=0, value_type=value_type)
+    detector = stack_move.SetDetector(array=load.result)
+    return [cz, measure, await_m, store, load, detector]
+
+
+def test_a_placeholder_loaded_back_as_itself_is_the_value_stored():
+    block = _build_stack_move_block(_parked_array("undef"))
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+    assert not any(isinstance(s, stack_move.LoadLocal) for s in block.stmts)
+
+
+def test_a_typed_load_of_a_placeholder_is_refused():
+    """On the machine, `load f64` of a stored placeholder reads 0.0 — not the
+    array it stands for — so redirecting the load to the array would change
+    what the program does."""
+    block = _build_stack_move_block(_parked_array("f64"))
+    with pytest.raises(ValueError, match="reads as the zero of f64"):
+        Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+
+
+def test_a_mistyped_load_or_store_of_a_constant_is_refused():
+    """The machine refuses both, so there is no program to lower."""
+    loaded = stack_move.ConstFloat(value=1.0)
+    block = _build_stack_move_block(
+        [
+            loaded,
+            stack_move.StoreLocal(value=loaded.result, index=0, value_type="f64"),
+            stack_move.LoadLocal(index=0, value_type="i64"),
+        ]
+    )
+    with pytest.raises(ValueError, match="holds a f64, which the machine refuses"):
+        Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+
+    stored = stack_move.ConstInt(value=7)
+    block = _build_stack_move_block(
+        [
+            stored,
+            stack_move.StoreLocal(value=stored.result, index=0, value_type="undef"),
+        ]
+    )
+    with pytest.raises(ValueError, match="of a i64, which the machine refuses"):
+        Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+
+
 def test_a_load_of_an_unwritten_local_is_refused():
     load = stack_move.LoadLocal(index=3, value_type="i64")
     block = _build_stack_move_block([load])

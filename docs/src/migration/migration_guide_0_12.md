@@ -180,6 +180,11 @@ Re-assemble any persisted `.bin` from source.
   parameter types. `BytecodeDecoder.decode` raises `DecodingError` for an entry
   point that declares any: the kernel it builds takes no arguments, and a
   parameter would otherwise read as zero.
+- **Behaviour:** `RewriteStackMoveToMove` lowers a `load` to the value last
+  stored only when it reads that value back as itself: `load undef` of a lanes
+  op's placeholder, or `load <ty>` of a constant of that type. A typed load of
+  a placeholder, which the machine reads as that type's zero, and a mistyped
+  `load`/`store` of a constant, which it refuses, raise `ValueError`.
 - **Behaviour:** a decoded program can now contain any of vihaco-cpu's 42 ops,
   including arithmetic and control flow the lanes compiler never emits. Those
   load and validate fine, but the `stack_move` dialect has no statement for
