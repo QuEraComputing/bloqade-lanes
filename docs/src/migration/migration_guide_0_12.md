@@ -279,9 +279,11 @@ dependency moves past it.
   `local_count` — always 0 before — now carries that count. It is recomputed
   from the code whenever a program is loaded, so a table cannot disagree with
   its body.
-- **An unwritten local reads as zero** of whatever type loads it, so a counter
-  needs no initialising `store`. `load undef` reads the placeholder a lanes op
-  pushes in place of a result it does not simulate.
+- **A local holding the `Undefined` placeholder reads as zero** of whatever
+  type loads it: an unwritten one, so a counter needs no initialising `store`,
+  and one holding the placeholder a lanes op pushes in place of a result it
+  does not simulate. `load undef` reads that placeholder back as itself. A
+  local holding a concrete value of another type is still a type error.
 - **Only `load` and `store` reach a local.** No operand op consumes one, a
   parameter included: a callee that used to consume its argument directly now
   has to `load` it first, or it underflows. `store` no longer grows the stack
@@ -314,6 +316,14 @@ control-flow graph, starting from a frame that holds its declared parameters:
   subclasses `StackUnderflowError`, so existing `except` clauses still catch it.
   In `@main`, which has no caller, the same condition is still reported as a
   plain `StackUnderflowError`.
+- **`LocalTypeMismatchError`**: a typed `load`/`store` names a type the value
+  does not have, so the machine refuses it. A `store` checks the value it pops;
+  a `load` checks what the local holds. The placeholder a lanes op pushes for a
+  result it does not simulate passes under any type, except that `load undef`
+  refuses every concrete value. A call's result is checked by what the callee's
+  `ret` really keeps, not its declared return type, which nothing enforces.
+- **`TooManyParametersError`**: a function declares more parameters than the
+  1024 locals a frame may hold, so every call to it would fail.
 
 Everything after a `call_indirect` goes unchecked, because its target and
 arity are only known at run time. That includes any path that merges with it

@@ -208,9 +208,11 @@ locals above them before its first instruction. `ret <keep>` returns the top
   + 1)` of them. The count is derived from the body, never declared: there is
   no locals syntax, and the function table's `local_count` is recomputed from
   the code whenever a program is loaded. An index is at most 1023.
-- **What they start as.** An unwritten local reads as zero of whatever type
-  loads it, as vihaco#110's zero-filled frame does; `load undef` reads the
-  placeholder itself.
+- **What they start as.** A local starts as the `Undefined` placeholder, and
+  a typed `load` of any local holding it reads as the zero of that type —
+  whether nothing wrote it or it holds a placeholder a lanes op pushed, stored
+  or passed as an argument. That is how vihaco#110's zero-filled frames of
+  untyped words will read. `load undef` reads the placeholder itself.
 - **What reaches them.** Only `load` (push a copy) and `store` (pop into the
   slot). No operand op can consume a local, a parameter included — a function
   uses its argument by loading it — and popping with no operands left is a
@@ -335,8 +337,9 @@ which.
 | Operands | type tag (1 byte) + local index, `u32` LE (4 bytes) |
 | Stack | `( -- a)` |
 
-The local must hold a value of `<type>`, or be unwritten, which reads as that
-type's zero.
+The local must hold a value of `<type>`, or the `Undefined` placeholder —
+unwritten, or a lanes op's result stored there — which reads as that type's
+zero. `load undef` reads the placeholder itself, and refuses a concrete value.
 
 #### `cpu::cpu.store <type>, <n>` — Pop the top into local `n`
 

@@ -95,6 +95,24 @@ class NewArrayTooManyElementsError(ValidationError):
         )
 
 
+class TooManyParametersError(ValidationError):
+    """A function declares more parameters than a frame may hold locals.
+
+    Every parameter is a local, and a frame holds at most ``maximum`` of them,
+    so the machine refuses to enter the function and every call to it fails.
+    ``pc`` is the function's ``func_start``.
+    """
+
+    def __init__(self, pc: int, count: int, maximum: int):
+        self.pc = pc
+        self.count = count
+        self.maximum = maximum
+        super().__init__(
+            f"pc {pc}: function declares {count} parameters, more than the "
+            f"{maximum} locals a frame may hold"
+        )
+
+
 class CodeOutsideFunctionError(ValidationError):
     """An instruction sits outside every function's extent.
 
@@ -250,6 +268,26 @@ class TypeMismatchError(ValidationError):
         self.got = got
         super().__init__(
             f"pc {pc}: type mismatch: expected tag 0x{expected:x}, got 0x{got:x}"
+        )
+
+
+class LocalTypeMismatchError(ValidationError):
+    """A typed ``load``/``store`` names a type the value does not have.
+
+    ``store <ty>`` refuses a value of another type, and ``load <ty>`` a local
+    holding one. The placeholder a lanes op pushes for a result it does not
+    simulate — and that an unwritten local holds — passes either, except that
+    ``load undef`` refuses every concrete value. ``declared`` and ``got`` are
+    spelled as in the text format (``"u64"``, ``"undef"``, ...).
+    """
+
+    def __init__(self, pc: int, mnemonic: str, declared: str, got: str):
+        self.pc = pc
+        self.mnemonic = mnemonic
+        self.declared = declared
+        self.got = got
+        super().__init__(
+            f"pc {pc}: {mnemonic} names type {declared}, but the value is {got}"
         )
 
 

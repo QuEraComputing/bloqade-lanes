@@ -47,10 +47,16 @@
 //! the callee's [`local_count`](vihaco::module::FunctionInfo::local_count)
 //! slots past its arguments; every operand pop, CPU or lanes, is floored at
 //! the first operand; and `load`/`store` must name a reserved slot, so a
-//! `store` can no longer grow the stack. A reserved slot holds
-//! [`Value::Undefined`] and a typed `load` of one reads that type's zero —
-//! #110 zero-fills, and with vihaco#85's untyped words zero is the only
-//! value an unwritten slot can have.
+//! `store` can no longer grow the stack.
+//!
+//! A reserved slot starts as [`Value::Undefined`], and a typed `load` of any
+//! local holding `Undefined` reads that type's zero — whether nothing wrote
+//! it or it holds a placeholder a lanes op pushed, stored or passed in as an
+//! argument. That is what the bump will do: #110 zero-fills the frame, and
+//! under vihaco#85's untyped words a placeholder is a zero word too, and no
+//! `load` can fail on a type. A local holding a *concrete* value of another
+//! type is still 0.4.1's type error; `load undef` reads a placeholder as
+//! itself and refuses every concrete value.
 //!
 //! TODO(vihaco#110): the bump deletes this shim — `frame_locals`,
 //! [`reserve_locals`](LanesMachine::reserve_locals), the operand floor and
@@ -315,10 +321,11 @@ impl LanesMachine {
             );
         }
 
-        // A reserved slot nothing has written reads as zero, as #110's
-        // zero-filled frame does. 0.4.1 would fail the `load` instead: an
-        // `Undefined` is not the type it names. `load undef` still reads the
-        // placeholder itself.
+        // A local holding `Undefined` — unwritten, or a stored or passed
+        // placeholder — reads as the zero of the type that loads it, as the
+        // bump's untyped, zero-filled frames will (see the module docs).
+        // 0.4.1 would fail the `load` instead: an `Undefined` is not the type
+        // it names. `load undef` still reads the placeholder itself.
         if let C::Load(ty, index) = inst
             && *ty != Type::Undefined
             && self.local(*index) == Some(&Value::Undefined)
@@ -692,7 +699,8 @@ fn cpu_operands(inst: &vihaco_cpu::RuntimeInstruction, stack: &[Value]) -> usize
     }
 }
 
-/// What an unwritten local reads as when loaded as `ty`: the zero word.
+/// What a local holding `Undefined` reads as when loaded as `ty`: the zero
+/// word.
 ///
 /// The reference types get index 0 because that is what the word 0 *is*
 /// read as one; nothing here claims the index is live.
@@ -1265,8 +1273,8 @@ mod tests {
             ]
         );
 
-        // Once written, a local reads as what was written, and a mistyped
-        // `load` of it is still 0.4.1's type error.
+        // Once written with a *concrete* value, a local reads as that value,
+        // and a mistyped `load` of it is still 0.4.1's type error.
         let err = LanesMachine::new()
             .run(
                 &module(
@@ -1277,6 +1285,28 @@ mod tests {
             )
             .expect_err("a u64 does not load as an i64");
         assert!(format!("{err:#}").contains("type error"), "got {err:#}");
+    }
+
+    /// A placeholder parked in a local reads as a typed zero too: the
+    /// machine cannot tell it from an unwritten slot, and after the bump
+    /// neither can vihaco — both are the zero word. Only `load undef` reads
+    /// it back as the placeholder.
+    #[test]
+    fn a_stored_placeholder_reads_as_the_zero_of_a_typed_load() {
+        let stack = stack_after(
+            "  lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+             lanes::lanes.await_measure\n  cpu::cpu.store heap_ref, 0\n  \
+             cpu::cpu.load heap_ref, 0\n  cpu::cpu.load u32, 0\n  cpu::cpu.load undef, 0\n",
+        );
+        assert_eq!(
+            stack,
+            [
+                Value::Undefined,
+                Value::HeapRef(0),
+                Value::U32(0),
+                Value::Undefined
+            ]
+        );
     }
 
     #[test]

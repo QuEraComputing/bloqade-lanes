@@ -21,12 +21,14 @@ from bloqade.lanes.bytecode.exceptions import (
     GetItemInvalidDimsError,
     InitialFillNotFirstError,
     LocalIndexOutOfRangeError,
+    LocalTypeMismatchError,
     MissingTerminatorError,
     MissingVersionError,
     NewArrayTooManyElementsError,
     PopBelowFrameBaseError,
     StackDepthMismatchError,
     StackUnderflowError,
+    TooManyParametersError,
     TypeMismatchError,
     UnalignedCodeError,
     UnreachableInstructionError,
@@ -964,6 +966,56 @@ class TestLocalIndexBounds:
             )
         )
         program.validate()  # should not raise
+
+
+class TestTypedLocals:
+    """``load``/``store`` name a vihaco type, and validation checks it the way
+    the machine does."""
+
+    def test_a_store_of_another_type_is_reported(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n  cpu::cpu.const i64, 7\n  cpu::cpu.store undef, 0\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, LocalTypeMismatchError)
+        ]
+        assert len(errs) == 1
+        assert (errs[0].mnemonic, errs[0].declared, errs[0].got) == (
+            "store",
+            "undef",
+            "i64",
+        )
+
+    def test_a_placeholder_is_stored_under_any_type(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n"
+                "  lanes::lanes.measure 1\n  lanes::lanes.await_measure\n"
+                "  cpu::cpu.store f64, 0\n  cpu::cpu.halt\n}\n"
+            )
+        )
+        program.validate(stack=True)  # should not raise
+
+    def test_a_parameter_list_past_the_frame_bound_is_reported(self):
+        params = ", ".join(f"p{i}: u32" for i in range(1025))
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n  cpu::cpu.halt\n}\n\n"
+                f"fn @wide({params}) {{\n  cpu::cpu.ret 0\n}}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, TooManyParametersError)
+        ]
+        assert len(errs) == 1
+        assert (errs[0].count, errs[0].maximum) == (1025, 1024)
 
 
 class TestStackDataflow:

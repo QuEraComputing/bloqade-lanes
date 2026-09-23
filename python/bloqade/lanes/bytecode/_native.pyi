@@ -2173,9 +2173,10 @@ class Instruction:
     def load(value_type: str, index: int) -> Instruction:
         """Push a copy of local ``index``.
 
-        The local must hold a ``value_type``, or be unwritten, in which case
-        it reads as that type's zero. ``"undef"`` reads the placeholder a
-        lanes op pushes in place of a result it does not simulate.
+        The local must hold a ``value_type``, or the ``Undefined``
+        placeholder — unwritten, or a lanes op's result stored there — which
+        reads as that type's zero. ``"undef"`` reads the placeholder back as
+        itself, and refuses a concrete value.
 
         Args:
             value_type: The type the local holds, spelled as in the text

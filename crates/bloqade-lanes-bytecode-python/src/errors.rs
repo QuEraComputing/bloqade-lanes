@@ -286,6 +286,10 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("LocalIndexOutOfRangeError")?;
             cls.call1((*pc, *mnemonic, *index, validate::MAX_LOCAL_INDEX))?
         }
+        ValidationError::TooManyParameters { pc, count } => {
+            let cls = module.getattr("TooManyParametersError")?;
+            cls.call1((*pc, *count, validate::MAX_LOCAL_COUNT))?
+        }
         ValidationError::CodeOutsideFunction { pc } => {
             let cls = module.getattr("CodeOutsideFunctionError")?;
             cls.call1((*pc,))?
@@ -343,6 +347,15 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
         ValidationError::TypeMismatch { pc, expected, got } => {
             let cls = module.getattr("TypeMismatchError")?;
             cls.call1((*pc, *expected, *got))?
+        }
+        ValidationError::LocalTypeMismatch {
+            pc,
+            mnemonic,
+            declared,
+            got,
+        } => {
+            let cls = module.getattr("LocalTypeMismatchError")?;
+            cls.call1((*pc, *mnemonic, *declared, *got))?
         }
         ValidationError::LocationGroupValidation { pc, error } => {
             let inner = location_group_error_to_py(py, error)?;

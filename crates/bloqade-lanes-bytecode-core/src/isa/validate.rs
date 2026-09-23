@@ -138,6 +138,11 @@ pub enum ValidationError {
         mnemonic: &'static str,
         index: u32,
     },
+    /// A function declares more parameters than a frame may hold locals
+    /// ([`MAX_LOCAL_COUNT`]). Every parameter is a local, so the machine
+    /// refuses to enter it, and every call to it fails. `pc` is the function's
+    /// `func_start`.
+    TooManyParameters { pc: usize, count: usize },
     /// An instruction sits outside every function's extent — after the last
     /// `func_end`, or in a stream with no markers at all. Unreachable, and
     /// unrenderable: [`super::text::to_text`] emits it after the closing brace.
@@ -211,6 +216,23 @@ pub enum ValidationError {
     },
     /// A popped value had the wrong type tag (see [`tag`]).
     TypeMismatch { pc: usize, expected: u8, got: u8 },
+    /// A typed `load`/`store` names a vihaco type the value does not have, so
+    /// the machine refuses it.
+    ///
+    /// vihaco-cpu 0.4.1 checks both: `store <ty>` refuses a value of another
+    /// type, and `load <ty>` a local holding one. The placeholder a lanes op
+    /// pushes for a result it does not simulate — and that an unwritten local
+    /// holds — passes either, except that `load undef` refuses every concrete
+    /// value. Types are spelled as in the text format.
+    LocalTypeMismatch {
+        pc: usize,
+        /// `"load"` or `"store"`.
+        mnemonic: &'static str,
+        /// The type the instruction names.
+        declared: &'static str,
+        /// The type of the value it found.
+        got: &'static str,
+    },
     /// A `local_r`/`local_rz`/`fill`/`initial_fill` location group is invalid.
     LocationGroupValidation {
         pc: usize,
@@ -365,6 +387,11 @@ impl fmt::Display for ValidationError {
                 f,
                 "pc {pc}: {mnemonic} takes a local index 0..={MAX_LOCAL_INDEX}, got {index}"
             ),
+            ValidationError::TooManyParameters { pc, count } => write!(
+                f,
+                "pc {pc}: function declares {count} parameters, more than the \
+                 {MAX_LOCAL_COUNT} locals a frame may hold"
+            ),
             ValidationError::CodeOutsideFunction { pc } => {
                 write!(f, "pc {pc}: instruction is outside any function")
             }
@@ -416,6 +443,15 @@ impl fmt::Display for ValidationError {
             ValidationError::TypeMismatch { pc, expected, got } => write!(
                 f,
                 "pc {pc}: type mismatch: expected tag 0x{expected:x}, got 0x{got:x}"
+            ),
+            ValidationError::LocalTypeMismatch {
+                pc,
+                mnemonic,
+                declared,
+                got,
+            } => write!(
+                f,
+                "pc {pc}: {mnemonic} names type {declared}, but the value is {got}"
             ),
             ValidationError::LocationGroupValidation { pc, error } => {
                 write!(f, "pc {pc}: {error}")
@@ -741,6 +777,21 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
         }
     }
 
+    // Every parameter is a local, so a parameter list past the frame bound
+    // is a function the machine refuses to enter. An index past the bound is
+    // reported where it is named; this is the one way to exceed it without
+    // naming an index at all.
+    for span in &spans {
+        if let Some(f) = functions.get(&span.start)
+            && f.signature.params.len() > MAX_LOCAL_COUNT as usize
+        {
+            errors.push(ValidationError::TooManyParameters {
+                pc: span.start,
+                count: f.signature.params.len(),
+            });
+        }
+    }
+
     // "Empty" means no *body*: a program that is nothing but markers has
     // nothing to run, however many functions it declares.
     if !program.code.iter().any(|i| !is_marker(i)) {
@@ -1031,29 +1082,97 @@ fn walk_function(program: &Program, span: &Span, errors: &mut Vec<ValidationErro
 
 // ── Stack-type simulation ──────────────────────────────────────────────────
 
-/// One slot of the abstract operand stack.
-#[derive(Debug, Clone, PartialEq)]
-enum Slot {
-    /// A value of known type (see [`tag`]), and its bits where every path
-    /// agrees on them — the lane and location group checks need the address.
-    Known { tag: u8, value: Option<u64> },
-    /// A value of unknown type. Earned, not invented: a declared parameter, a
-    /// call's result, an untagged vihaco-cpu value, or two paths disagreeing.
+/// One slot of the abstract stack: an operand or a local.
+///
+/// Two independent facts. `tag` is what the value *means* to the lanes
+/// device — a location, a zone, an array — which is what the operand checks
+/// read. `rep` is what the machine actually *holds*, which is what vihaco-cpu's
+/// typed `load`/`store` check, and the tag does not determine it: `FLOAT` is
+/// both a `const f64` (an `F64`) and a `get_item` result (a placeholder).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Slot {
+    /// The lanes type (see [`tag`]); `None` where none is known. Earned, not
+    /// invented: a declared parameter, a call's result, an untagged vihaco-cpu
+    /// value and two paths disagreeing all leave it `None`.
+    tag: Option<u8>,
+    /// The bits, where the tag is known and every path agrees on them — the
+    /// lane and location group checks need the address.
+    value: Option<u64>,
+    rep: Rep,
+}
+
+/// What a slot holds at run time, as far as a typed `load`/`store` cares.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Rep {
+    /// A value of this type: a constant, an address, a host argument.
+    Concrete(Type),
+    /// `Undefined`: the placeholder a lanes op pushes for a result it does not
+    /// simulate, or a local nothing has written. A typed `store` accepts it
+    /// under any type, and a typed `load` of it reads that type's zero.
+    Placeholder,
+    /// Either: a call's result, a callee's argument, two paths disagreeing.
     Unknown,
 }
 
 impl Slot {
-    /// The least slot both `self` and `other` refine. Finite height — bits,
-    /// then tag, then nothing — so a fixpoint over these terminates.
-    fn join(&self, other: &Slot) -> Slot {
-        match (self, other) {
-            (a, b) if a == b => a.clone(),
-            (Slot::Known { tag: a, .. }, Slot::Known { tag: b, .. }) if a == b => Slot::Known {
-                tag: *a,
-                value: None,
-            },
-            _ => Slot::Unknown,
+    /// Nothing known.
+    const UNKNOWN: Slot = Slot {
+        tag: None,
+        value: None,
+        rep: Rep::Unknown,
+    };
+
+    /// A value of vihaco type `ty`, meaning `tag` to the lanes device.
+    fn concrete(tag: Option<u8>, value: Option<u64>, ty: Type) -> Slot {
+        Slot {
+            tag,
+            value,
+            rep: Rep::Concrete(ty),
         }
+    }
+
+    /// A lanes op's result that the machine does not simulate.
+    fn placeholder(tag: u8) -> Slot {
+        Slot {
+            tag: Some(tag),
+            value: None,
+            rep: Rep::Placeholder,
+        }
+    }
+
+    /// The least slot both `self` and `other` refine. Finite height — bits,
+    /// then tag, then nothing; a representation, then unknown — so a fixpoint
+    /// over these terminates.
+    fn join(&self, other: &Slot) -> Slot {
+        let tag = if self.tag == other.tag {
+            self.tag
+        } else {
+            None
+        };
+        Slot {
+            tag,
+            value: if tag.is_some() && self.value == other.value {
+                self.value
+            } else {
+                None
+            },
+            rep: if self.rep == other.rep {
+                self.rep
+            } else {
+                Rep::Unknown
+            },
+        }
+    }
+}
+
+/// The lanes tag a value of vihaco type `ty` is known to have, where there is
+/// one. Only the two numeric types imply one; a `u32` is what a zone is at run
+/// time, so guessing one would be wrong in both directions.
+fn tag_of(ty: Type) -> Option<u8> {
+    match ty {
+        Type::F64 => Some(tag::FLOAT),
+        Type::I64 => Some(tag::INT),
+        _ => None,
     }
 }
 
@@ -1117,6 +1236,17 @@ struct StackSimulator<'a> {
     /// [`ValidationError::PopBelowFrameBase`].
     entry: bool,
     pc: usize,
+    /// What each function's `ret` hands back, by `func_start` — the join, over
+    /// every `ret` its walk reaches, of the slots it keeps. A `call` pushes
+    /// these rather than unknown slots, because a typed `store` of the result
+    /// is checked against what the callee really returns: the declared return
+    /// type is not enforced at run time, so a `-> i64` function can return
+    /// the placeholder a lanes op pushed, or an `i64` the caller then stores
+    /// as `undef`. Filled callees first by [`Self::summarise_returns`];
+    /// a function absent here (recursion) returns unknown slots.
+    returns: HashMap<usize, Vec<Slot>>,
+    /// The join of what the `ret`s of the function being walked keep.
+    kept: Option<Vec<Slot>>,
 }
 
 impl<'a> StackSimulator<'a> {
@@ -1130,6 +1260,8 @@ impl<'a> StackSimulator<'a> {
             locals: Vec::new(),
             errors: Vec::new(),
             mismatches: BTreeMap::new(),
+            returns: HashMap::new(),
+            kept: None,
             entry: false,
             pc: 0,
         }
@@ -1187,9 +1319,10 @@ impl<'a> StackSimulator<'a> {
     /// bits when the type matches and every path agrees on them. An unknown
     /// slot passes: nothing justifies rejecting it.
     fn pop_addr(&mut self, expected: u8) -> Option<u64> {
-        match self.pop()? {
-            Slot::Known { tag, value } if tag == expected => value,
-            Slot::Known { tag, .. } => {
+        let slot = self.pop()?;
+        match slot.tag {
+            Some(tag) if tag == expected => slot.value,
+            Some(tag) => {
                 self.errors.push(ValidationError::TypeMismatch {
                     pc: self.pc,
                     expected,
@@ -1197,16 +1330,64 @@ impl<'a> StackSimulator<'a> {
                 });
                 None
             }
-            Slot::Unknown => None,
+            None => None,
         }
     }
 
-    fn push(&mut self, tag: u8, value: Option<u64>) {
-        self.stack.push(Slot::Known { tag, value });
+    /// Push a constant: a value of vihaco type `ty`, meaning `tag`.
+    fn push_constant(&mut self, tag: u8, value: u64, ty: Type) {
+        self.stack.push(Slot::concrete(Some(tag), Some(value), ty));
+    }
+
+    /// Push the placeholder a lanes op leaves for a result it does not
+    /// simulate.
+    fn push_placeholder(&mut self, tag: u8) {
+        self.stack.push(Slot::placeholder(tag));
+    }
+
+    /// Report a typed `load`/`store` the machine would refuse.
+    fn local_type_mismatch(&mut self, mnemonic: &'static str, declared: Type, got: Type) {
+        self.errors.push(ValidationError::LocalTypeMismatch {
+            pc: self.pc,
+            mnemonic,
+            declared: super::machine::cpu_type_text(declared),
+            got: super::machine::cpu_type_text(got),
+        });
+    }
+
+    /// What `load <ty>` pushes from a local holding `slot`, reporting a load
+    /// the machine would refuse.
+    ///
+    /// The machine's rule, exactly: a local holding the placeholder reads as
+    /// `ty`'s zero (see [`super::machine`]), a concrete value of `ty` reads as
+    /// itself, and a concrete value of another type is 0.4.1's type error.
+    /// `load undef` is the one that reads a placeholder as itself, and refuses
+    /// every concrete value.
+    fn sim_load(&mut self, ty: Type, slot: Slot) -> Slot {
+        let zero = Slot::concrete(tag_of(ty), None, ty);
+        match (ty, slot.rep) {
+            (Type::Undefined, Rep::Concrete(got)) => {
+                self.local_type_mismatch("load", ty, got);
+                Slot::UNKNOWN
+            }
+            (Type::Undefined, _) => slot,
+            (_, Rep::Placeholder) => zero,
+            (_, Rep::Concrete(got)) if got == ty => slot,
+            (_, Rep::Concrete(got)) => {
+                self.local_type_mismatch("load", ty, got);
+                zero
+            }
+            // Itself or the zero, whichever it holds: a `ty` either way.
+            (_, Rep::Unknown) => Slot {
+                rep: Rep::Concrete(ty),
+                ..slot
+            }
+            .join(&zero),
+        }
     }
 
     fn sim_dup(&mut self) {
-        if let Some(top) = self.stack.last().cloned() {
+        if let Some(top) = self.stack.last().copied() {
             self.stack.push(top);
         } else {
             self.underflow();
@@ -1289,15 +1470,24 @@ impl<'a> StackSimulator<'a> {
     fn dispatch(&mut self, inst: &M) {
         match inst {
             // constants push a typed value
-            M::Cpu(C::Const(Type::F64, Value::F64(v))) => self.push(tag::FLOAT, Some(v.to_bits())),
-            M::Cpu(C::Const(Type::I64, Value::I64(v))) => self.push(tag::INT, Some(*v as u64)),
+            M::Cpu(C::Const(Type::F64, Value::F64(v))) => {
+                self.push_constant(tag::FLOAT, v.to_bits(), Type::F64)
+            }
+            M::Cpu(C::Const(Type::I64, Value::I64(v))) => {
+                self.push_constant(tag::INT, *v as u64, Type::I64)
+            }
             // Every other constant — `bool`, `u32`, `str`, … — has no lanes
             // tag. A `u32` is what a zone is at run time, so guessing one
-            // would be wrong in both directions.
-            M::Cpu(C::Const(..)) => self.stack.push(Slot::Unknown),
-            M::Lanes(L::ConstLoc(v)) => self.push(tag::LOCATION, Some(*v)),
-            M::Lanes(L::ConstLane(v)) => self.push(tag::LANE, Some(*v)),
-            M::Lanes(L::ConstZone(v)) => self.push(tag::ZONE, Some(*v as u64)),
+            // would be wrong in both directions. Its vihaco type is certain,
+            // though, and `const undef` is the placeholder itself.
+            M::Cpu(C::Const(Type::Undefined, _)) => self.stack.push(Slot {
+                rep: Rep::Placeholder,
+                ..Slot::UNKNOWN
+            }),
+            M::Cpu(C::Const(ty, _)) => self.stack.push(Slot::concrete(None, None, *ty)),
+            M::Lanes(L::ConstLoc(v)) => self.push_constant(tag::LOCATION, *v, Type::U64),
+            M::Lanes(L::ConstLane(v)) => self.push_constant(tag::LANE, *v, Type::U64),
+            M::Lanes(L::ConstZone(v)) => self.push_constant(tag::ZONE, *v as u64, Type::U32),
 
             // stack manipulation
             M::Cpu(C::Dup) => self.sim_dup(),
@@ -1311,16 +1501,26 @@ impl<'a> StackSimulator<'a> {
             // table's count covers every index its body names, so that only
             // happens past [`MAX_LOCAL_INDEX`], which `validate_structure`
             // reports; here it only has to leave the depth right.
-            M::Cpu(C::Load(_, index)) => {
+            //
+            // Both are typed, and checked the way vihaco-cpu checks them:
+            // see [`Self::sim_load`], and a `store` refuses a concrete value
+            // of another type while taking a placeholder under any.
+            M::Cpu(C::Load(ty, index)) => {
                 let slot = self
                     .locals
                     .get(*index as usize)
-                    .cloned()
-                    .unwrap_or(Slot::Unknown);
-                self.stack.push(slot);
+                    .copied()
+                    .unwrap_or(Slot::UNKNOWN);
+                let loaded = self.sim_load(*ty, slot);
+                self.stack.push(loaded);
             }
-            M::Cpu(C::Store(_, index)) => {
-                let value = self.pop().unwrap_or(Slot::Unknown);
+            M::Cpu(C::Store(ty, index)) => {
+                let value = self.pop().unwrap_or(Slot::UNKNOWN);
+                if let Rep::Concrete(got) = value.rep
+                    && got != *ty
+                {
+                    self.local_type_mismatch("store", *ty, got);
+                }
                 if let Some(slot) = self.locals.get_mut(*index as usize) {
                     *slot = value;
                 }
@@ -1349,7 +1549,7 @@ impl<'a> StackSimulator<'a> {
             M::Lanes(L::Measure(arity)) => {
                 self.pop_typed_n(tag::ZONE, *arity);
                 for _ in 0..*arity {
-                    self.push(tag::MEASURE_FUTURE, None);
+                    self.push_placeholder(tag::MEASURE_FUTURE);
                 }
             }
             // `await_measure` yields an *array* of measurement results — the
@@ -1361,7 +1561,7 @@ impl<'a> StackSimulator<'a> {
             // array that tag broke `measure -> await_measure -> set_detector`.
             M::Lanes(L::AwaitMeasure) => {
                 self.pop_typed(tag::MEASURE_FUTURE);
-                self.push(tag::ARRAY_REF, None);
+                self.push_placeholder(tag::ARRAY_REF);
             }
 
             // arrays
@@ -1373,7 +1573,7 @@ impl<'a> StackSimulator<'a> {
                 for _ in 0..count {
                     self.pop();
                 }
-                self.push(tag::ARRAY_REF, None);
+                self.push_placeholder(tag::ARRAY_REF);
             }
             M::Lanes(L::GetItem(ndims)) => {
                 // Clamped for the same reason as `new_array`: an out-of-range
@@ -1381,17 +1581,17 @@ impl<'a> StackSimulator<'a> {
                 self.pop_typed_n(tag::INT, (*ndims).min(MAX_GET_ITEM_DIMS));
                 self.pop_typed(tag::ARRAY_REF);
                 // Element type is not tracked; assume float.
-                self.push(tag::FLOAT, None);
+                self.push_placeholder(tag::FLOAT);
             }
 
             // detectors / observables
             M::Lanes(L::SetDetector) => {
                 self.pop_typed(tag::ARRAY_REF);
-                self.push(tag::DETECTOR_REF, None);
+                self.push_placeholder(tag::DETECTOR_REF);
             }
             M::Lanes(L::SetObservable) => {
                 self.pop_typed(tag::ARRAY_REF);
-                self.push(tag::OBSERVABLE_REF, None);
+                self.push_placeholder(tag::OBSERVABLE_REF);
             }
 
             // control
@@ -1400,19 +1600,38 @@ impl<'a> StackSimulator<'a> {
             // exactly one. Modelling it as one made `ret 0` — the spelling
             // every function the compiler emits uses — report a spurious
             // underflow on an empty stack.
-            M::Cpu(C::Return(keep)) => self.pop_n(*keep),
+            M::Cpu(C::Return(keep)) => {
+                let keep = *keep as usize;
+                if let Some(top) = self.stack.len().checked_sub(keep) {
+                    let kept = &self.stack[top..];
+                    self.kept = Some(match self.kept.take() {
+                        Some(before) if before.len() == keep => {
+                            before.iter().zip(kept).map(|(a, b)| a.join(b)).collect()
+                        }
+                        _ => kept.to_vec(),
+                    });
+                }
+                self.pop_n(keep as u32);
+            }
             // A call is a pure stack effect. Arguments come off by the
             // operand, as `op_call` takes them; results come back by the
-            // callee's declaration, which its every `ret` is checked against.
-            // The callee is never descended into — its own walk checks it.
+            // callee's declaration, which its every `ret` is checked against,
+            // with what its `ret`s were seen to keep where that is known. The
+            // callee is never descended into — its own walk checks it.
             M::Cpu(C::Call(arity, target)) => {
                 self.pop_n(*arity);
-                let returns = self
+                let declared = self
                     .functions
                     .get(&(*target as usize))
                     .map_or(0, |f| f.signature.ret.len());
-                self.stack
-                    .extend(std::iter::repeat_n(Slot::Unknown, returns));
+                match self.returns.get(&(*target as usize)) {
+                    Some(slots) if slots.len() == declared => {
+                        self.stack.extend(slots.iter().copied())
+                    }
+                    _ => self
+                        .stack
+                        .extend(std::iter::repeat_n(Slot::UNKNOWN, declared)),
+                }
             }
             // Target, arity and function reference, popped in that order.
             // vihaco 0.4.1 can take the first two from a `FunctionInfo`
@@ -1451,11 +1670,11 @@ impl<'a> StackSimulator<'a> {
             }
             M::Cpu(C::HeapAlloc(n)) => {
                 self.pop_n(*n);
-                self.stack.push(Slot::Unknown);
+                self.stack.push(Slot::UNKNOWN);
             }
             M::Cpu(C::Neg(_) | C::Not) => {
                 self.pop();
-                self.stack.push(Slot::Unknown);
+                self.stack.push(Slot::UNKNOWN);
             }
             M::Cpu(
                 C::GetItem
@@ -1482,8 +1701,85 @@ impl<'a> StackSimulator<'a> {
                 | C::Ge(_),
             ) => {
                 self.pop_n(2);
-                self.stack.push(Slot::Unknown);
+                self.stack.push(Slot::UNKNOWN);
             }
+        }
+    }
+
+    /// The state `span` is entered with: its locals, and no operands.
+    ///
+    /// The locals are what the machine reserves: the declared parameters,
+    /// which every `call` is checked against (`CallArityMismatch`), then the
+    /// scratch slots the body names. A scratch slot starts as the placeholder,
+    /// and the host's arguments to an uncalled entry point (`self.entry`) are
+    /// checked against their declared types (`LanesMachine::run_with_args`).
+    /// A callee's arguments are whatever its caller passed — nothing checks
+    /// them against the declaration — so they are unknown.
+    ///
+    /// Clamped, so a table claiming more than any frame may reserve is not
+    /// also an allocation here: every slot past the clamp is named by an index,
+    /// or declared by a parameter list, that `validate_structure` rejects.
+    fn entry_state(&self, span: &Span) -> AbstractStack {
+        let locals = self.functions.get(&span.start).map_or_else(Vec::new, |f| {
+            let params = &f.signature.params;
+            let count = (f.local_count as usize)
+                .max(params.len())
+                .min(MAX_LOCAL_COUNT as usize);
+            (0..count)
+                .map(|i| match params.get(i) {
+                    Some(param) if self.entry && param.ty != Type::Undefined => {
+                        Slot::concrete(None, None, param.ty)
+                    }
+                    Some(_) if !self.entry => Slot::UNKNOWN,
+                    _ => Slot {
+                        rep: Rep::Placeholder,
+                        ..Slot::UNKNOWN
+                    },
+                })
+                .collect()
+        });
+        AbstractStack::Known(AbstractFrame {
+            locals,
+            operands: Vec::new(),
+        })
+    }
+
+    /// Fill [`Self::returns`] for the function at `start`, after every
+    /// function it calls: each callee is summarised first, so its caller's
+    /// walk sees what it returns. A callee already in progress is a cycle, and
+    /// is left out — its calls push unknown slots.
+    fn summarise_returns(
+        &mut self,
+        start: usize,
+        spans: &HashMap<usize, &Span>,
+        entry_point: &dyn Fn(usize) -> bool,
+        started: &mut HashSet<usize>,
+    ) {
+        let Some(&span) = spans.get(&start) else {
+            return;
+        };
+        if !started.insert(start) {
+            return;
+        }
+        let program = self.program;
+        for inst in &program.code[span.start..span.end] {
+            if let M::Cpu(C::Call(_, target)) = inst {
+                self.summarise_returns(*target as usize, spans, entry_point, started);
+            }
+        }
+
+        // Silently: its errors are reported by its own walk in `run`.
+        self.entry = entry_point(start);
+        let entry = self.entry_state(span);
+        let reported = self.errors.len();
+        self.reporting = false;
+        self.kept = None;
+        walk(program, span, entry, self);
+        self.errors.truncate(reported);
+        self.mismatches.clear();
+        self.reporting = true;
+        if let Some(kept) = self.kept.take() {
+            self.returns.insert(start, kept);
         }
     }
 
@@ -1501,28 +1797,18 @@ impl<'a> StackSimulator<'a> {
                 _ => None,
             })
             .collect();
+        let entry_point = |start: usize| main == Some(start) && !called.contains(&start);
 
-        for span in function_spans(&program.code) {
-            // The locals the machine reserves: the declared parameters, which
-            // every `call` is checked against (`CallArityMismatch`) and the
-            // host's arguments too (`LanesMachine::run_with_args`), then the
-            // scratch slots the body names. Nothing can be said about any of
-            // their types — an argument is whatever the caller passed, and a
-            // scratch slot reads as the zero of whatever type loads it.
-            //
-            // Clamped, so a table claiming more than any frame may reserve is
-            // not also an allocation here: every slot past the clamp is named
-            // by an index `validate_structure` rejects.
-            let locals = self.functions.get(&span.start).map_or(0, |f| {
-                (f.local_count as usize)
-                    .max(f.signature.params.len())
-                    .min(MAX_LOCAL_COUNT as usize)
-            });
-            let entry = AbstractStack::Known(AbstractFrame {
-                locals: vec![Slot::Unknown; locals],
-                operands: Vec::new(),
-            });
-            self.entry = main == Some(span.start) && !called.contains(&span.start);
+        let spans = function_spans(&program.code);
+        let by_start: HashMap<usize, &Span> = spans.iter().map(|s| (s.start, s)).collect();
+        let mut started = HashSet::new();
+        for span in &spans {
+            self.summarise_returns(span.start, &by_start, &entry_point, &mut started);
+        }
+
+        for span in &spans {
+            self.entry = entry_point(span.start);
+            let entry = self.entry_state(span);
 
             // Reach the fixpoint first, discarding what intermediate states
             // report: a block is transferred once per change to its input,
@@ -1532,7 +1818,7 @@ impl<'a> StackSimulator<'a> {
             self.reporting = false;
             let Walk {
                 leaders, states, ..
-            } = walk(program, &span, entry, &mut self);
+            } = walk(program, span, entry, &mut self);
             self.errors.truncate(reported);
             self.reporting = true;
 
@@ -1548,7 +1834,7 @@ impl<'a> StackSimulator<'a> {
                 }
                 run_block(
                     program,
-                    &span,
+                    span,
                     &leaders,
                     pc,
                     &mut state,
@@ -2355,8 +2641,8 @@ mod tests {
     fn a_call_pushes_its_callees_declared_results() {
         // `@helper` declares one result, so `@main` has exactly one to pop.
         let p = sst_module(
-            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.store undef, 0\n  \
-             cpu::cpu.store undef, 0\n  cpu::cpu.halt\n}\n\n\
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.store i64, 0\n  \
+             cpu::cpu.store i64, 0\n  cpu::cpu.halt\n}\n\n\
              fn @helper() -> i64 {\n  cpu::cpu.const i64, 7\n  cpu::cpu.ret 1\n}\n",
         );
         assert_eq!(
@@ -2390,47 +2676,42 @@ mod tests {
 
     #[test]
     fn slot_join_widens_to_what_both_paths_agree_on() {
-        let loc_a = Slot::Known {
-            tag: tag::LOCATION,
-            value: Some(1),
-        };
-        let loc_b = Slot::Known {
-            tag: tag::LOCATION,
-            value: Some(2),
-        };
-        let zone = Slot::Known {
-            tag: tag::ZONE,
-            value: Some(0),
-        };
+        let loc_a = Slot::concrete(Some(tag::LOCATION), Some(1), Type::U64);
+        let loc_b = Slot::concrete(Some(tag::LOCATION), Some(2), Type::U64);
+        let zone = Slot::concrete(Some(tag::ZONE), Some(0), Type::U32);
         assert_eq!(loc_a.join(&loc_a), loc_a, "agreement keeps the bits");
         assert_eq!(
             loc_a.join(&loc_b),
-            Slot::Known {
-                tag: tag::LOCATION,
-                value: None
-            },
+            Slot::concrete(Some(tag::LOCATION), None, Type::U64),
             "same type, different bits: keep the type"
         );
-        assert_eq!(loc_a.join(&zone), Slot::Unknown);
-        assert_eq!(zone.join(&Slot::Unknown), Slot::Unknown);
+        assert_eq!(loc_a.join(&zone), Slot::UNKNOWN);
+        assert_eq!(zone.join(&Slot::UNKNOWN), Slot::UNKNOWN);
+
+        // The tag and the representation widen independently: a `const f64`
+        // and a `get_item` result are both floats, only one of them an `F64`.
+        let constant = Slot::concrete(Some(tag::FLOAT), Some(0), Type::F64);
+        let element = Slot::placeholder(tag::FLOAT);
+        assert_eq!(
+            constant.join(&element),
+            Slot {
+                tag: Some(tag::FLOAT),
+                value: None,
+                rep: Rep::Unknown
+            }
+        );
     }
 
     #[test]
     fn stack_join_rejects_differing_depths_and_widens_slots() {
         let p = program(vec![M::Cpu(C::Halt)]);
         let mut sim = StackSimulator::new(&p, None);
-        let loc = |v| Slot::Known {
-            tag: tag::LOCATION,
-            value: Some(v),
-        };
+        let loc = |v| Slot::concrete(Some(tag::LOCATION), Some(v), Type::U64);
 
         let frame = |locals: Vec<Slot>, operands: Vec<Slot>| {
             AbstractStack::Known(AbstractFrame { locals, operands })
         };
-        let any_loc = Slot::Known {
-            tag: tag::LOCATION,
-            value: None,
-        };
+        let any_loc = Slot::concrete(Some(tag::LOCATION), None, Type::U64);
 
         // Equal states: no change, nothing to requeue.
         let mut have = frame(vec![loc(5)], vec![loc(1)]);
@@ -2439,9 +2720,9 @@ mod tests {
         // A disagreeing slot widens, which is a change — an operand or a
         // local alike.
         assert!(sim.join(9, &mut have, &frame(vec![loc(5)], vec![loc(2)])));
-        assert_eq!(have, frame(vec![loc(5)], vec![any_loc.clone()]));
+        assert_eq!(have, frame(vec![loc(5)], vec![any_loc]));
         assert!(sim.join(9, &mut have, &frame(vec![loc(6)], vec![loc(2)])));
-        assert_eq!(have, frame(vec![any_loc.clone()], vec![any_loc]));
+        assert_eq!(have, frame(vec![any_loc], vec![any_loc]));
 
         // A differing depth is recorded, once, and leaves the state alone.
         let before = have.clone();
@@ -2565,7 +2846,7 @@ mod tests {
             M::Lanes(L::ConstLoc(loc(0, 0, 0))),        // 1
             cpu_bool(true),                             // 2: loop header
             M::Cpu(C::ConditionalBranch(4, 9)),         // 3
-            M::Cpu(C::Store(Type::Undefined, 0)),       // 4
+            M::Cpu(C::Store(Type::U64, 0)),             // 4
             M::Lanes(L::ConstLoc(loc(0, 0, 1))),        // 5
             M::Cpu(C::Const(Type::I64, Value::I64(0))), // 6
             M::Lanes(L::Cz),                            // 7: wrong type, every time
@@ -3069,12 +3350,159 @@ mod tests {
 
     // ---- stack simulation: dispatch coverage ----
 
+    /// Every parameter is a local, so a parameter list past what a frame may
+    /// hold is a function the machine refuses to enter — reported here, where
+    /// the stack simulation would otherwise clamp the frame and pass it.
+    #[test]
+    fn a_parameter_list_past_the_frame_bound_is_reported() {
+        let params = |n: usize| {
+            (0..n)
+                .map(|i| format!("p{i}: u32"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let module = |n: usize| {
+            sst_module(&format!(
+                "fn @main() {{\n  cpu::cpu.halt\n}}\n\nfn @wide({}) {{\n  cpu::cpu.ret 0\n}}\n",
+                params(n)
+            ))
+        };
+        let at_the_bound = module(MAX_LOCAL_COUNT as usize);
+        assert_eq!(validate_structure(&at_the_bound), vec![]);
+
+        let past_it = module(MAX_LOCAL_COUNT as usize + 1);
+        assert_eq!(
+            validate_structure(&past_it),
+            vec![ValidationError::TooManyParameters {
+                pc: past_it.functions[1].start_address as usize,
+                count: MAX_LOCAL_COUNT as usize + 1,
+            }]
+        );
+    }
+
+    /// Typed locals are checked the way the machine checks them, so every
+    /// program here validates clean exactly when it runs.
+    ///
+    /// vihaco-cpu 0.4.1 refuses a `store` of a concrete value of another type
+    /// and a `load` of one, while a placeholder — a lanes result it does not
+    /// simulate, or an unwritten local — passes under any type and reads as
+    /// that type's zero. `load undef` refuses every concrete value. Before the
+    /// simulator modelled any of this, `const i64 7; store undef, 0` validated
+    /// clean and failed at `run`.
+    #[test]
+    fn typed_locals_are_checked_as_the_machine_runs_them() {
+        use crate::isa::machine::LanesMachine;
+
+        // (what it is, body of `@main` plus any helper, validates and runs)
+        let cases = [
+            (
+                "an i64 stored as undef",
+                "cpu::cpu.const i64, 7\n  cpu::cpu.store undef, 0",
+                false,
+            ),
+            (
+                "a zone stored as f64",
+                "lanes::lanes.const_zone 0x00000000\n  cpu::cpu.store f64, 0",
+                false,
+            ),
+            (
+                "a location stored as undef, via dup",
+                "lanes::lanes.const_loc 0x0000000000000000\n  cpu::cpu.dup\n  \
+                 cpu::cpu.store undef, 0\n  cpu::cpu.store undef, 0",
+                false,
+            ),
+            (
+                "a stored zone loaded as undef",
+                "lanes::lanes.const_zone 0x00000000\n  cpu::cpu.store u32, 0\n  \
+                 cpu::cpu.load undef, 0\n  lanes::lanes.cz",
+                false,
+            ),
+            (
+                "a stored zone loaded as itself",
+                "lanes::lanes.const_zone 0x00000000\n  cpu::cpu.store u32, 0\n  \
+                 cpu::cpu.load u32, 0\n  lanes::lanes.cz",
+                true,
+            ),
+            (
+                "an unwritten local loaded as f64 is a zero float, not a zone",
+                "cpu::cpu.load f64, 0\n  lanes::lanes.cz",
+                false,
+            ),
+            (
+                "a future stored as u64 and loaded as f64",
+                "lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+                 cpu::cpu.store u64, 0\n  cpu::cpu.load f64, 0\n  lanes::lanes.cz",
+                false,
+            ),
+            (
+                "a placeholder stored under any type",
+                "lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+                 lanes::lanes.await_measure\n  cpu::cpu.store f64, 0",
+                true,
+            ),
+            (
+                "a placeholder loaded back as itself",
+                "lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+                 lanes::lanes.await_measure\n  cpu::cpu.store undef, 0\n  \
+                 cpu::cpu.load undef, 0\n  lanes::lanes.set_detector\n  \
+                 cpu::cpu.store undef, 0",
+                true,
+            ),
+            (
+                "a callee's concrete result stored as undef",
+                "cpu::cpu.call 0, helper\n  cpu::cpu.store undef, 0",
+                false,
+            ),
+            (
+                "a callee's placeholder result stored as its declared type",
+                "cpu::cpu.call 0, placeholder\n  cpu::cpu.store heap_ref, 0",
+                true,
+            ),
+        ];
+        // What the calls above reach. The declared return types are not
+        // enforced at run time; what each `ret` keeps is what matters.
+        const CALLEES: &str = "fn @helper() -> i64 {\n  cpu::cpu.const i64, 7\n  \
+             cpu::cpu.ret 1\n}\n\n\
+             fn @placeholder() -> heap_ref {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  cpu::cpu.ret 1\n}\n";
+        for (what, body, ok) in cases {
+            let program = sst_module(&format!(
+                "fn @main() {{\n  {body}\n  cpu::cpu.halt\n}}\n\n{CALLEES}"
+            ));
+            let mut errors = validate_structure(&program);
+            errors.extend(simulate_stack(&program, None));
+            let ran = LanesMachine::new().run(&program, 1_000);
+            assert_eq!(errors.is_empty(), ok, "{what}: validated as {errors:?}");
+            assert_eq!(
+                ran.is_ok(),
+                ok,
+                "{what}: ran as {:?}",
+                ran.map(|r| r.stopped).map_err(|e| format!("{e:#}"))
+            );
+        }
+
+        // And the mismatch is named for what it is.
+        let program = sst_module(
+            "fn @main() {\n  cpu::cpu.const i64, 7\n  cpu::cpu.store undef, 0\n  \
+             cpu::cpu.halt\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&program, None),
+            vec![ValidationError::LocalTypeMismatch {
+                pc: 2,
+                mnemonic: "store",
+                declared: "undef",
+                got: "i64",
+            }]
+        );
+    }
+
     #[test]
     fn stack_sim_int_const_and_store() {
         // `cpu::cpu.const i64` pushes an INT; `store` parks it. Well typed.
         let p = program(vec![
             M::Cpu(C::Const(Type::I64, Value::I64(7))),
-            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Store(Type::I64, 0)),
         ]);
         assert!(simulate_stack(&p, None).is_empty());
     }
@@ -3172,8 +3600,8 @@ mod tests {
         let p = program(vec![
             M::Lanes(L::ConstLoc(loc(0, 0, 0))),
             M::Cpu(C::Dup),
-            M::Cpu(C::Store(Type::Undefined, 0)),
-            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Store(Type::U64, 0)),
+            M::Cpu(C::Store(Type::U64, 0)),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
