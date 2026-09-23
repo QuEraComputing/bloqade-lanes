@@ -79,17 +79,23 @@ use super::program::LanesInfo;
 use super::program::Program;
 use super::validate::{MAX_LOCAL_COUNT, array_element_count};
 
-/// Most values the stack may hold once a frame's locals are reserved.
+/// Most values the stack may hold after any instruction.
 ///
 /// A frame reserves at most [`MAX_LOCAL_COUNT`] locals, but recursion reserves
-/// a frame per level, so the whole stack needs a bound of its own: 2²⁰ values
-/// is 16 MB, room for a thousand levels of the largest frame or a million of
-/// the smallest. Checked when a frame is reserved; the step budget already
-/// bounds what plain pushes can add.
+/// a frame per level, and a loop that only pushes grows the stack without
+/// reserving anything. The step budget bounds both only as loosely as the
+/// caller chose it, so the stack has a bound of its own: 2²⁰ values is 16 MB,
+/// room for a thousand levels of the largest frame or a million of the
+/// smallest.
+///
+/// Checked once per step, in [`run_with_args`](LanesMachine::run_with_args).
+/// That covers every way the stack grows — CPU pushes, lanes effects, and
+/// reserved locals — because no instruction grows it by more than one value
+/// except a `call`, which reserves at most [`MAX_LOCAL_COUNT`]; so the stack
+/// never overshoots the bound by more than one frame.
 ///
 /// TODO(vihaco#110): the bump keeps this. #110's `call` still resizes the
-/// stack to reserve the callee's locals, so the check moves in front of the
-/// `FunctionInfo` message it sends.
+/// stack to reserve the callee's locals.
 pub const MAX_STACK_SLOTS: usize = 1 << 20;
 
 /// The combined instruction set: one variant per device.
@@ -272,6 +278,14 @@ impl LanesMachine {
                 }
             }
 
+            let depth = self.cpu.stack().len();
+            if depth > MAX_STACK_SLOTS {
+                eyre::bail!(
+                    "the stack holds {depth} values, past the maximum of {MAX_STACK_SLOTS}: \
+                     unbounded recursion, or a loop that only pushes?"
+                );
+            }
+
             // A branch or call leaves its destination here; anything else
             // falls through to the next instruction.
             pc = match self.cpu.take_pending_pc() {
@@ -403,28 +417,20 @@ impl LanesMachine {
     /// - below its arity, as #110's `call` does;
     /// - past [`MAX_LOCAL_COUNT`]. The count is the table's, and a program
     ///   that was never validated could otherwise ask every call to reserve
-    ///   four billion slots, which is #1032 again by another road;
-    /// - past [`MAX_STACK_SLOTS`] in all. A frame is bounded, but a recursive
-    ///   call reserves one per level: without this, a function that calls
-    ///   itself before its one `load u64, 1023` reserved 16 KB a level and
-    ///   passed 1.5 GB within 200,000 steps.
+    ///   four billion slots, which is #1032 again by another road.
+    ///
+    /// How many frames recursion stacks up is [`MAX_STACK_SLOTS`]'s job,
+    /// checked once per step with every other way the stack grows.
     fn check_frame(&self, local_count: u32, arity: usize) -> eyre::Result<()> {
         if local_count > MAX_LOCAL_COUNT {
             eyre::bail!(
                 "the frame reserves {local_count} locals, past the maximum of {MAX_LOCAL_COUNT}"
             );
         }
-        let Some(extra) = (local_count as usize).checked_sub(arity) else {
+        if (local_count as usize) < arity {
             eyre::bail!(
                 "the frame receives {arity} argument(s) but reserves only {local_count} \
                  local(s), which must include them"
-            );
-        };
-        let depth = self.cpu.stack().len();
-        if depth + extra > MAX_STACK_SLOTS {
-            eyre::bail!(
-                "reserving {local_count} locals would take the stack from {depth} values past \
-                 the maximum of {MAX_STACK_SLOTS}: unbounded recursion?"
             );
         }
         Ok(())
@@ -1785,7 +1791,7 @@ mod tests {
     /// sizes its frame at 1024 locals and never runs — so each level reserved
     /// 16 KB, and the CLI's default step budget reached gigabytes.
     #[test]
-    fn recursion_cannot_reserve_past_the_stack_budget() {
+    fn recursion_cannot_grow_the_stack_past_its_bound() {
         let mut m = LanesMachine::new();
         let err = m
             .run(
@@ -1798,10 +1804,32 @@ mod tests {
             )
             .expect_err("the recursion has no base case");
         assert!(err.to_string().contains("unbounded recursion"), "got {err}");
-        assert!(m.cpu.stack().len() <= MAX_STACK_SLOTS);
-        // A frame per level, each of 1024 locals: the budget, not the step
-        // count, is what stopped it.
-        assert_eq!(m.frame_locals.len(), MAX_STACK_SLOTS / 1024 + 1);
+        // At most one frame over: the bound, not the step count, stopped it.
+        assert!(m.cpu.stack().len() <= MAX_STACK_SLOTS + MAX_LOCAL_COUNT as usize);
+        assert!(m.frame_locals.len() > MAX_STACK_SLOTS / MAX_LOCAL_COUNT as usize);
+    }
+
+    /// A loop that only pushes reserves no frame at all, and the step budget
+    /// is the caller's to choose: with an unlimited one, only the stack's own
+    /// bound stops it. The validator rejects this loop — its back edge
+    /// changes the depth — but `run` has no validation gate.
+    #[test]
+    fn a_loop_that_only_pushes_cannot_grow_the_stack_past_its_bound() {
+        let mut m = LanesMachine::new();
+        let err = m
+            .run(
+                &module(
+                    "fn @main() {\n  cpu::cpu.label @top\n  cpu::cpu.const u64, 0\n  \
+                     cpu::cpu.br @top\n}\n",
+                ),
+                u64::MAX,
+            )
+            .expect_err("the loop never ends");
+        assert!(
+            err.to_string().contains("a loop that only pushes"),
+            "got {err}"
+        );
+        assert_eq!(m.cpu.stack().len(), MAX_STACK_SLOTS + 1);
     }
 
     /// A refused call is refused before the CPU pushes its frame, so the
