@@ -312,7 +312,11 @@ Paths relative to `crates/bloqade-lanes-search/src/`.
   bindings.
 - **`bound_terminates`** is documented as an A/B measurement knob but is threaded
   through core, PyO3 and the Python traversal dataclass.
-- **`BoundStats.bound_enabled`** exists to drive the Python "empty dict when disabled"
-  behaviour. It is confirmed as a Python-facing field carried in core.
+- **`EntropyTraceStep`** still carries the Python visualizer's format in core: a string
+  `event` and `(u8, u8, u32, u32, u32, u32)` moveset tuples (`drivers/entropy.rs:73-81`).
+  `BoundStats.bound_enabled` is *not* such a field. It records whether a real bound was
+  active (`!B::TRIVIAL`) and is read by `optimality_gap()` (`bounds.rs:117`) and the
+  cascade stats merge (`restarts.rs:406`). Python's empty-dict behaviour merely keys off
+  it.
 - **Dangling API:** `SearchEngine::exhaustive_preconditions()` (`search/engine.rs:152-155`)
   has no callers, and `ConfigError::UnsupportedArchitecture` is never constructed.

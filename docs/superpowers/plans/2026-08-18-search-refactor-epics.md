@@ -47,7 +47,8 @@ loose-goal path, which the candidate-ranking work does not need.
 This is what the August trait redesign was trying to enforce structurally. Binding-first
 enforces it by convention and review, plus the thin adapter from Epic 3. Recent code
 shows the pattern it is meant to stop:
-- `BoundStats.bound_enabled` exists only to drive Python's empty-dict behaviour.
+- `EntropyTraceStep` carries the Python visualizer's format in core: a string `event`
+  and movesets as `(u8, u8, u32, u32, u32, u32)` tuples.
 - `bound_terminates`, an A/B measurement knob, is threaded through core, PyO3 and the
   Python dataclass.
 - PyO3 builds `SearchContext` with a struct literal, so adding `capacity` broke the
@@ -155,17 +156,21 @@ unchanged throughout this epic.
   - Collapse the `entropy_search` → `_with_objective` → `_with_bound` delegation chain:
     the head is bench-only and each link has one caller.
   - Relocate `tests/public_bound_api.rs` to in-crate access, so `MaxBound`,
-    `WeightedDuration`, `as_heuristic` and the chain can be demoted to `pub(crate)` or
-    deleted.
+    `WeightedDuration` and the chain can be demoted to `pub(crate)` or deleted.
+    `as_heuristic` is a default method on `CompletionBound`, so it can only be kept or
+    removed from the trait; it has no production caller.
   - Decide on the dangling `SearchEngine::exhaustive_preconditions()` and
     `ConfigError::UnsupportedArchitecture`: wire them up or delete them.
 - **`proven` becomes a method** derived from `termination`, not a stored copy. The PyO3
   getter keeps its output.
 - **Constructors for what PyO3 builds today with struct literals**, starting with
   `SearchContext`. This is groundwork for the boundary rule; PyO3 output is unchanged.
-- **Move Python-facing fields out of core, output identical.**
-  - `BoundStats.bound_enabled` moves into the adapter.
-  - The `entropy_trace` tuple shape is produced by the adapter from domain values.
+- **Move Python-facing shapes out of core, output identical.** `EntropyTraceStep`'s
+  string `event` becomes an enum, and its tuple movesets become domain values
+  (`MoveSet`). The adapter produces today's tuple format for the visualizer.
+  `BoundStats.bound_enabled` **stays**: it records whether a real bound was active, which
+  `optimality_gap()` and the cascade stats merge (`restarts.rs:406`) read, and the
+  adapter can't reconstruct it from the options.
 - **Lazy best-partial helper, additive and unused.**
   - `best_partial(&SearchResult, target) -> Option<NodeId>` returns the node with the
     fewest unresolved atoms over `result.graph`, tie-broken by `(unresolved, g, NodeId)`.
