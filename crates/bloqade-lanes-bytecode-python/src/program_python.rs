@@ -101,6 +101,22 @@ impl PyProgram {
         )
     }
 
+    /// The entry point's declared parameter types, spelled as in the text
+    /// format; empty when it takes none, or the program has no entry point.
+    #[getter]
+    fn entry_parameters(&self) -> Vec<&'static str> {
+        rs_prog::entry_function(&self.inner).map_or_else(
+            |_| Vec::new(),
+            |f| {
+                f.signature
+                    .params
+                    .iter()
+                    .map(|p| bloqade_lanes_bytecode_core::isa::machine::cpu_type_text(p.ty))
+                    .collect()
+            },
+        )
+    }
+
     #[getter]
     fn instructions(&self) -> Vec<PyInstruction> {
         self.inner

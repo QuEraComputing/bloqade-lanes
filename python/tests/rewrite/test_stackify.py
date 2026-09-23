@@ -2,6 +2,7 @@
 
 from typing import cast
 
+import pytest
 from kirin import ir, types
 from kirin.dialects import func
 
@@ -9,7 +10,7 @@ from bloqade.lanes.bytecode.decode import load_program
 from bloqade.lanes.bytecode.encode import dump_program
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import stack_move as sm
-from bloqade.lanes.rewrite.stackify import stackify
+from bloqade.lanes.rewrite.stackify import _MAX_LOCAL_INDEX, _stack_order, stackify
 
 
 def _make_method(*stmts) -> ir.Method:
@@ -413,13 +414,48 @@ def _locals_ops(stmts: list[ir.Statement]) -> list[tuple[str, int]]:
     ]
 
 
-def _validates(method: ir.Method) -> None:
-    """Encode ``method`` and run the Rust validator's stack simulation over it.
+def _check_stack_discipline(method: ir.Method) -> None:
+    """Walk the stackified block with a stack of SSA *identities*, and assert
+    every statement pops exactly its own operands, in stack order.
 
-    The spill schedule is only right if every operand is where its consumer
-    pops it, with the right tag — which is exactly what the simulation checks,
-    locals included.
+    A ``LoadLocal`` stands for whatever was last stored in its slot. This is
+    what tells two values of one tag apart — two measurement results in a
+    swapped ``new_array`` look identical to the Rust validator.
     """
+    stack: list[ir.SSAValue] = []
+    slots: dict[int, ir.SSAValue] = {}
+    alias: dict[ir.SSAValue, ir.SSAValue] = {}
+    for stmt in method.callable_region.blocks[0].stmts:
+        if isinstance(stmt, sm.LoadLocal):
+            assert stmt.index in slots, f"load of unwritten local {stmt.index}"
+            alias[stmt.result] = slots[stmt.index]
+            stack.append(slots[stmt.index])
+            continue
+        expected = [alias.get(stmt.args[i], stmt.args[i]) for i in _stack_order(stmt)]
+        top = stack[len(stack) - len(expected) :] if expected else []
+        assert len(top) == len(expected) and all(
+            a is b for a, b in zip(top, expected)
+        ), f"{stmt.name} pops {expected}, but the top of the stack is {top}"
+        del stack[len(stack) - len(expected) :]
+        if isinstance(stmt, sm.StoreLocal):
+            slots[stmt.index] = expected[0]
+        elif isinstance(stmt, func.Return):
+            break
+        else:
+            stack.extend(reversed(stmt.results))
+
+
+def _validates(method: ir.Method) -> None:
+    """Check the spill schedule twice over.
+
+    The symbolic walk above checks every operand is the right *value*. The
+    Rust validator's stack simulation checks what the machine would: each
+    operand has the right tag, every typed ``load``/``store`` is one the
+    machine accepts, and nothing reaches past a frame's locals. Neither alone
+    is enough: the validator cannot tell two values of one tag apart, and the
+    walk knows nothing of types.
+    """
+    _check_stack_discipline(method)
     dump_program(method).validate(stack=True)
 
 
@@ -529,16 +565,18 @@ def test_stackify_reuses_a_slot_once_its_value_is_dead():
 
 
 def test_stackify_reloads_every_argument_of_a_consumer_that_takes_a_spilled_one():
-    """A measurement shared by two detectors is spilled — and so is its
-    neighbour in the first, or its reload would land on top of it and the
-    elements would come out reversed."""
+    """A measurement shared by two detectors, *below* its neighbour in the
+    first. The neighbour is used once and in order, so nothing else would
+    spill it — but the shared one's reload lands on top of whatever is on the
+    stack, and the two elements would come out swapped. So it is spilled too,
+    and both are reloaded deepest first."""
     cz, measure, await_m = _measure_await_chain()
     idx0 = sm.ConstInt(value=0)
     gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
     idx1 = sm.ConstInt(value=1)
     gi1 = sm.GetItem(array=await_m.result, indices=(idx1.result,))
-    # gi1 appears in both detectors; gi0 only in the first, below gi1.
-    na0 = sm.NewArray(values=(gi0.result, gi1.result), type_tag=1, dim0=2, dim1=0)
+    # gi1 appears in both detectors; in the first it is the deepest element.
+    na0 = sm.NewArray(values=(gi1.result, gi0.result), type_tag=1, dim0=2, dim1=0)
     na1 = sm.NewArray(values=(gi1.result,), type_tag=1, dim0=1, dim1=0)
     ci = sm.ConstInt(value=0)
     ret = func.Return(ci.result)
@@ -549,13 +587,166 @@ def test_stackify_reloads_every_argument_of_a_consumer_that_takes_a_spilled_one(
     na0_i = stmts.index(na0)
     below = stmts[na0_i - 2 : na0_i]
     assert all(isinstance(s, sm.LoadLocal) for s in below)
-    # Deepest first: gi0's reload, then gi1's.
     assert [s.results[0] for s in below] == list(na0.values)
     stores = {s.value: s.index for s in stmts if isinstance(s, sm.StoreLocal)}
     assert [cast(sm.LoadLocal, s).index for s in below] == [
-        stores[gi0.result],
         stores[gi1.result],
+        stores[gi0.result],
     ]
+    _validates(method)
+
+
+def test_stackify_rejects_a_decoded_dup():
+    """``dup`` copies the top without popping it, which Pass 3 does not model
+    (#1050): its operand would be spilled and the reload left behind."""
+    from bloqade.lanes.bytecode import Instruction, Program
+
+    method = load_program(
+        Program(
+            version=(1, 0),
+            instructions=[
+                Instruction.const_zone(0),
+                Instruction.dup(),
+                Instruction.cz(),
+                Instruction.cz(),
+                Instruction.halt(),
+            ],
+        )
+    )
+    with pytest.raises(ValueError, match="decoded dup"):
+        stackify(method)
+
+
+@pytest.mark.parametrize(
+    "instructions",
+    [
+        # A constant element beneath a measurement array.
+        lambda I: [
+            I.const_int(7),
+            I.const_zone(0),
+            I.measure(1),
+            I.await_measure(),
+            I.new_array(1, 2),
+            I.halt(),
+        ],
+        # A constant location beneath a `local_r` whose rotation is computed.
+        lambda I: [
+            I.const_loc(0, 0, 0),
+            I.initial_fill(1),
+            I.const_loc(0, 0, 0),
+            I.const_float(0.5),
+            I.new_array(0, 1),
+            I.const_int(0),
+            I.get_item(1),
+            I.const_float(1.0),
+            I.local_r(1),
+            I.halt(),
+        ],
+    ],
+    ids=["new_array", "local_r"],
+)
+def test_stackify_rejects_a_constant_below_a_non_constant_operand(instructions):
+    """Pass 1 hoists every constant above a consumer's other operands, so one
+    that belongs below them would move (#1050)."""
+    from bloqade.lanes.bytecode import Instruction, Program
+
+    method = load_program(
+        Program(version=(1, 0), instructions=instructions(Instruction))
+    )
+    with pytest.raises(ValueError, match="constant operand below a non-constant"):
+        stackify(method)
+
+
+def _fifo_detectors(count: int) -> ir.Method:
+    """``count`` measurement results read, then a detector array built for
+    each in the order they were read: every one but the last has something on
+    top of it, so all ``count`` are spilled and live at once."""
+    cz, measure, await_m = _measure_await_chain()
+    stmts: list[ir.Statement] = [cz, measure, await_m]
+    items = []
+    for n in range(count):
+        idx = sm.ConstInt(value=n)
+        gi = sm.GetItem(array=await_m.result, indices=(idx.result,))
+        stmts += [idx, gi]
+        items.append(gi)
+    for gi in items:
+        stmts.append(sm.NewArray(values=(gi.result,), type_tag=1, dim0=1, dim1=0))
+    ci = sm.ConstInt(value=0)
+    return _make_method(*stmts, ci, func.Return(ci.result))
+
+
+def test_stackify_refuses_to_spill_past_the_frame_bound():
+    """Slots scale with how many values are live at once, so a program can
+    need more than a frame holds. That is refused here, rather than emitted
+    as bytecode the validator then rejects.
+
+    Exactly a frame's worth fits: the array's slot is free again after its
+    last reload, just in time for the last result to take it.
+    """
+    frame = _MAX_LOCAL_INDEX + 1
+    fits = _fifo_detectors(frame)
+    stackify(fits)
+    assert (
+        max(
+            s.index
+            for s in fits.callable_region.blocks[0].stmts
+            if isinstance(s, sm.StoreLocal)
+        )
+        == _MAX_LOCAL_INDEX
+    )
+    _validates(fits)
+
+    with pytest.raises(ValueError, match="past the 1024 a frame may hold"):
+        stackify(_fifo_detectors(frame + 1))
+
+
+def test_the_spill_bound_is_the_validators():
+    """``_MAX_LOCAL_INDEX`` restates the Rust validator's bound; pin them."""
+    from bloqade.lanes.bytecode import Instruction, Program, ValidationError
+
+    def storing_at(index: int) -> Program:
+        return Program(
+            version=(1, 0),
+            instructions=[
+                Instruction.const_int(0),
+                Instruction.store("i64", index),
+                Instruction.halt(),
+            ],
+        )
+
+    storing_at(_MAX_LOCAL_INDEX).validate(stack=True)
+    with pytest.raises(ValidationError):
+        storing_at(_MAX_LOCAL_INDEX + 1).validate()
+
+
+def test_stackify_spills_past_the_programs_own_locals():
+    """IR that already uses local 0 keeps it: spill slots start past every
+    index the block names, where they used to start at 0 and overwrite it."""
+    own = sm.ConstZone(value=ZoneAddress(0))
+    keep = sm.StoreLocal(value=own.result, index=0, value_type="u32")
+    cz, measure, await_m = _measure_await_chain()
+    idx0 = sm.ConstInt(value=0)
+    gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
+    idx1 = sm.ConstInt(value=1)
+    gi1 = sm.GetItem(array=await_m.result, indices=(idx1.result,))
+    # Built before either is set: both are spilled.
+    d0 = sm.NewArray(values=(gi0.result,), type_tag=1, dim0=1, dim1=0)
+    d1 = sm.NewArray(values=(gi1.result,), type_tag=1, dim0=1, dim1=0)
+    det0 = sm.SetDetector(array=d0.result)
+    det1 = sm.SetDetector(array=d1.result)
+    both = sm.NewArray(values=(det0.result, det1.result), type_tag=7, dim0=2, dim1=0)
+    back = sm.LoadLocal(index=0, value_type="u32")
+    use = sm.CZ(zone=back.result)
+    ci = sm.ConstInt(value=0)
+    method = _make_method(
+        own, keep, cz, measure, await_m, idx0, gi0, idx1, gi1,
+        d0, d1, det0, det1, both, back, use, ci, func.Return(ci.result),
+    )  # fmt: skip
+
+    stmts = _stackify(method)
+
+    spills = [s for s in stmts if isinstance(s, sm.StoreLocal) and s is not keep]
+    assert spills and all(s.index > 0 for s in spills)
     _validates(method)
 
 

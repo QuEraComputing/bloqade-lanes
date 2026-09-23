@@ -167,6 +167,7 @@ class BytecodeDecoder:
 
     def decode(self, program: Program, kernel_name: str = "main") -> ir.Method:
         self._require_single_function(program)
+        self._require_no_parameters(program)
         for idx, instr in enumerate(program.instructions):
             self._visit(idx, instr)
         return self._finalize(kernel_name)
@@ -205,6 +206,27 @@ class BytecodeDecoder:
                 (),
                 f"program declares {len(starts)} functions; only a single-function "
                 f"program can be lowered to kirin",
+            )
+
+    @staticmethod
+    def _require_no_parameters(program: Program) -> None:
+        """Reject an entry point that declares parameters.
+
+        The kernel this builds takes no arguments (``_finalize``), so a
+        parameter would simply vanish. It used to be an underflow the first
+        time the body touched one; since a parameter is a local, reached with
+        ``load``, the body decodes fine and the kernel reads zero instead. Say
+        so rather than lower a different program.
+        """
+        params = program.entry_parameters
+        if params:
+            raise DecodingError(
+                0,
+                "func_start",
+                (),
+                f"the entry point declares {len(params)} parameter(s) "
+                f"({', '.join(params)}); a kernel with arguments cannot be "
+                f"lowered to kirin",
             )
 
     def _visit(self, idx: int, instr: Instruction) -> None:

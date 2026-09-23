@@ -61,6 +61,7 @@ Pass 3 — spill to locals
 from __future__ import annotations
 
 import heapq
+import itertools
 from collections.abc import Callable
 
 from kirin import ir
@@ -87,18 +88,23 @@ class CloneConstants(RewriteRule):
     """
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        args = list(node.args)
         changed = False
         for i in _stack_order(node):
-            arg = node.args[i]
+            arg = args[i]
             if not isinstance(arg, ir.ResultValue):
                 continue
             owner = arg.owner
             if not owner.has_trait(ir.ConstantLike):
                 continue
             clone = owner.from_stmt(owner)
-            node.args[i] = clone.results[0]
+            args[i] = clone.results[0]
             clone.insert_before(node)
             changed = True
+        # Once, not per argument: kirin rebuilds the whole tuple on each
+        # assignment, which made a wide `new_array` quadratic.
+        if changed:
+            node.args = args
         return RewriteResult(has_done_something=changed)
 
 
@@ -109,15 +115,19 @@ def stackify(method: ir.Method) -> None:
     DCE, spilling to locals) so that ``dump_program`` can walk the block in
     statement order and emit correct bytecode.
 
-    Raises ``ValueError`` if the method contains more than one block.  All IR
-    produced by the current compiler pipeline is single-block; call this
-    function after ``RewriteMoveToStackMove`` and before ``dump_program``.
+    Raises ``ValueError`` if the method contains more than one block, if it
+    has one of the two shapes below, or if it keeps more values spilled at
+    once than a frame has locals. All IR produced by the current compiler
+    pipeline is single-block and has neither shape; call this function after
+    ``RewriteMoveToStackMove`` and before ``dump_program``.
     """
     blocks = method.callable_region.blocks
     if len(blocks) != 1:
         raise ValueError(
             f"stackify only supports single-block methods; got {len(blocks)} blocks"
         )
+    # Before Pass 1, which hoists constants and so erases the second shape.
+    _reject_unsupported(list(blocks[0].stmts))
 
     # Pass 1 + 2: clone constants into correct stack-depth order, then DCE.
     Walk(CloneConstants()).rewrite(method.code)
@@ -127,14 +137,46 @@ def stackify(method: ir.Method) -> None:
     _spill_to_locals(blocks[0])
 
 
-# What each constant pushes, spelled as the text format spells vihaco's types.
-_CONSTANT_TYPES: dict[type[ir.Statement], str] = {
-    stack_move.ConstFloat: "f64",
-    stack_move.ConstInt: "i64",
-    stack_move.ConstLoc: "u64",
-    stack_move.ConstLane: "u64",
-    stack_move.ConstZone: "u32",
-}
+# Highest local index a frame may name: the Rust validator's
+# ``MAX_LOCAL_INDEX``, which ``test_stackify`` pins this against.
+_MAX_LOCAL_INDEX = 1023
+
+
+def _is_constant(value: ir.SSAValue) -> bool:
+    return isinstance(value, ir.ResultValue) and value.owner.has_trait(ir.ConstantLike)
+
+
+def _reject_unsupported(stmts: list[ir.Statement]) -> None:
+    """Refuse the two shapes Pass 3 would silently get wrong.
+
+    Only decoded bytecode has either; supporting them is #1050.
+
+    - A ``Dup``. Pass 3 models every statement as popping its operands, but
+      ``dup`` only copies the top, so its operand would be spilled and the
+      reload left behind on the stack.
+    - A constant operand below a non-constant one. Pass 1 hoists every
+      constant above the consumer's other operands, and the reloads go
+      beneath those constants, so the operands would come out reordered.
+    """
+    dup = next((stmt for stmt in stmts if isinstance(stmt, stack_move.Dup)), None)
+    if dup is not None:
+        raise ValueError(
+            f"stackify does not support a decoded dup ({dup}): it copies the "
+            f"top without popping it, which Pass 3 cannot express yet (#1050)"
+        )
+    for stmt in stmts:
+        order = [stmt.args[i] for i in _stack_order(stmt)]
+        first_constant = next(
+            (depth for depth, arg in enumerate(order) if _is_constant(arg)), None
+        )
+        if first_constant is not None and any(
+            not _is_constant(arg) for arg in order[first_constant:]
+        ):
+            raise ValueError(
+                f"stackify does not support a constant operand below a "
+                f"non-constant one ({stmt}): constants are placed above every "
+                f"other operand, which would reorder them (#1050)"
+            )
 
 
 def _value_type(value: ir.SSAValue) -> str:
@@ -144,17 +186,13 @@ def _value_type(value: ir.SSAValue) -> str:
     a lanes op returns without simulating it — a measurement future, an array,
     an element of one, a detector — is an ``Undefined`` placeholder on the
     machine, whatever it stands for, until #776 decides what those values
-    are. Only the constants push real values, and ``Dup`` and ``LoadLocal``
-    copy whatever they were given.
+    are. Constants are cloned rather than spilled, so the one other producer
+    of a spilled value is a decoded program's own ``LoadLocal``, which says.
     """
-    while isinstance(value, ir.ResultValue):
-        owner = value.owner
-        if isinstance(owner, stack_move.Dup):
-            value = owner.value
-            continue
-        if isinstance(owner, stack_move.LoadLocal):
-            return owner.value_type
-        return _CONSTANT_TYPES.get(type(owner), "undef")
+    if isinstance(value, ir.ResultValue) and isinstance(
+        value.owner, stack_move.LoadLocal
+    ):
+        return value.owner.value_type
     return "undef"
 
 
@@ -205,7 +243,9 @@ def _values_to_spill(
         if any(arg in shared for arg in stmt.args):
             spilled.update(arg for arg in stmt.args if spillable(arg))
 
-    stack: list[ir.SSAValue] = []
+    # Insertion-ordered, so the last key is the top — and a value parked for
+    # being out of place comes out wherever it is without rebuilding the rest.
+    stack: dict[ir.SSAValue, None] = {}
     for stmt in stmts:
         # A constant is cloned in front of its one consumer, above the rest
         # of its arguments; it never waits on the stack.
@@ -213,19 +253,22 @@ def _values_to_spill(
             continue
         order = (stmt.args[i] for i in _stack_order(stmt))
         need = [arg for arg in order if spillable(arg) and arg not in spilled]
-        if need and stack[-len(need) :] == need:
-            del stack[-len(need) :]
+        top = list(itertools.islice(reversed(stack), len(need)))[::-1]
+        if need and top == need:
+            for _ in need:
+                stack.popitem()
         elif need:
             spilled.update(need)
-            stack = [value for value in stack if value not in spilled]
+            for arg in need:
+                stack.pop(arg, None)
         # Results pushed deepest first; the first declared ends up on top.
-        stack.extend(r for r in reversed(stmt.results) if r not in spilled)
+        stack.update((r, None) for r in reversed(stmt.results) if r not in spilled)
     return spilled
 
 
 def _spill_to_locals(block: ir.Block) -> None:
-    """Pass 3: park every multi-consumer value in a local and reload it for
-    each consumer (see the module docs)."""
+    """Pass 3: park every value that cannot wait on the stack for its
+    consumers in a local, and reload it for each (see the module docs)."""
     stmts: list[ir.Statement] = list(block.stmts)
 
     def spillable(arg: ir.SSAValue) -> bool:
@@ -248,12 +291,27 @@ def _spill_to_locals(block: ir.Block) -> None:
     uses_left = {value: len(value.uses) for value in spilled}
     slots: dict[ir.SSAValue, int] = {}
     free: list[int] = []
-    next_slot = 0
+    # Past every local the block already names: a decoded program has its own,
+    # and handing one of those out would overwrite it.
+    next_slot = 1 + max(
+        (
+            stmt.index
+            for stmt in stmts
+            if isinstance(stmt, (stack_move.StoreLocal, stack_move.LoadLocal))
+        ),
+        default=-1,
+    )
 
     def take() -> int:
         nonlocal next_slot
         if free:
             return heapq.heappop(free)
+        if next_slot > _MAX_LOCAL_INDEX:
+            raise ValueError(
+                f"stackify needs local {next_slot}, past the {_MAX_LOCAL_INDEX + 1} "
+                f"a frame may hold: more values are spilled at once than a "
+                f"function can keep"
+            )
         next_slot += 1
         return next_slot - 1
 
@@ -262,25 +320,32 @@ def _spill_to_locals(block: ir.Block) -> None:
         load.result.type = value.type
         return load
 
-    # Deferred, because inserting while walking would shift ``stmts``:
-    # (new statement, the statement it goes before), applied in order, so two
-    # planned before one anchor keep the order they were planned in.
+    # (new statement, the statement it goes before), applied in plan order:
+    # statements planned before one anchor land in the order they were
+    # planned.
     plan: list[tuple[ir.Statement, ir.Statement]] = []
 
     for idx, stmt in enumerate(stmts):
         # Reloads, deepest first, below the consumer's constants. A value's
         # slot is free again after its last one.
         anchor = stmts[const_run_start[idx]]
+        args = list(stmt.args)
+        reloaded = False
         for i in _stack_order(stmt):
-            arg = stmt.args[i]
+            arg = args[i]
             if arg not in spilled:
                 continue
             load = reload(arg, slots[arg])
             plan.append((load, anchor))
-            stmt.args[i] = load.result
+            args[i] = load.result
+            reloaded = True
             uses_left[arg] -= 1
             if uses_left[arg] == 0:
                 heapq.heappush(free, slots.pop(arg))
+        # Once per consumer: kirin rebuilds the argument tuple on every
+        # assignment, which made this quadratic in a consumer's width.
+        if reloaded:
+            stmt.args = args
 
         # Spills, right after the producer. Its results are on top, the first
         # declared highest, so they come off in declaration order down to the
@@ -292,8 +357,7 @@ def _spill_to_locals(block: ir.Block) -> None:
         )
         if deepest is None:
             continue
-        if idx + 1 == len(stmts):
-            raise ValueError(f"{stmt.name} is last, but its results are consumed")
+        # A spilled result has a consumer, so something follows its producer.
         after = stmts[idx + 1]
         parked: list[tuple[ir.ResultValue, int, stack_move.StoreLocal]] = []
         for result in stmt.results[: deepest + 1]:

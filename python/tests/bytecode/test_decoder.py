@@ -309,3 +309,27 @@ def test_single_function_program_still_decodes():
     terminators = [s for s in block.stmts if isinstance(s, func.Return)]
     assert len(terminators) == 1, f"expected one terminator, got {len(terminators)}"
     assert any(isinstance(s, stack_move.InitialFill) for s in block.stmts)
+
+
+def test_decode_refuses_an_entry_point_with_parameters():
+    """The kernel takes no arguments, so a parameter would vanish: the body
+    still decodes — a parameter is a local, reached with `load` — and the
+    kernel would read zero. Refused instead, naming the parameters."""
+    import pytest
+
+    from bloqade.lanes.bytecode import Program
+    from bloqade.lanes.bytecode.decode import DecodingError
+
+    program = Program.from_text(
+        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n"
+        ".text(root):\nfn @main(z: u32) {\n  cpu::cpu.load u32, 0\n  lanes::lanes.cz\n"
+        "  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n"
+    )
+    assert program.entry_parameters == ["u32"]
+    with pytest.raises(DecodingError, match=r"declares 1 parameter\(s\) \(u32\)"):
+        load_program(program)
+
+
+def test_a_program_without_parameters_reports_none():
+    program = Program(version=(1, 0), instructions=[Instruction.halt()])
+    assert program.entry_parameters == []

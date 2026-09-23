@@ -170,7 +170,16 @@ Re-assemble any persisted `.bin` from source.
   Compiled programs therefore contain `cpu::cpu.store undef, 0` /
   `cpu::cpu.load undef, 0` where they used to contain `dup` and `swap`:
   `undef`, because the value is the placeholder a lanes op pushes in place of a
-  result it does not simulate.
+  result it does not simulate. Slots scale with how many values are live at
+  once, and `stackify` raises `ValueError` rather than need more than the 1024
+  a frame may hold. It also raises on two shapes only decoded bytecode has — a
+  `stack_move.Dup`, and a constant operand below a non-constant one — which it
+  would otherwise reorder
+  ([#1050](https://github.com/QuEraComputing/bloqade-lanes/issues/1050)).
+- **New:** `Program.entry_parameters` lists the entry point's declared
+  parameter types. `BytecodeDecoder.decode` raises `DecodingError` for an entry
+  point that declares any: the kernel it builds takes no arguments, and a
+  parameter would otherwise read as zero.
 - **Behaviour:** a decoded program can now contain any of vihaco-cpu's 42 ops,
   including arithmetic and control flow the lanes compiler never emits. Those
   load and validate fine, but the `stack_move` dialect has no statement for

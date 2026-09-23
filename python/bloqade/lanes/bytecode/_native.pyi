@@ -2068,7 +2068,8 @@ class Instruction:
     Instruction categories:
 
     - **Constants**: Push typed values onto the stack.
-    - **Stack**: Manipulate the operand stack (pop, dup, swap).
+    - **Stack and locals**: Duplicate the top (dup), and park values in a
+      function's locals and bring them back (store, load).
     - **Atom ops**: Fill sites and move atoms (initial_fill, fill, move).
     - **Gates**: Quantum gate operations (local_r, local_rz, global_r, global_rz, cz).
     - **Measurement**: Measure atoms and await results.
@@ -2187,8 +2188,8 @@ class Instruction:
             Instruction: The load instruction.
 
         Raises:
-            ValueError: If ``value_type`` is not one of vihaco's types.
-            OverflowError: If ``index`` does not fit in a ``u32``.
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
         """
         ...
 
@@ -2206,8 +2207,8 @@ class Instruction:
             Instruction: The store instruction.
 
         Raises:
-            ValueError: If ``value_type`` is not one of vihaco's types.
-            OverflowError: If ``index`` does not fit in a ``u32``.
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
         """
         ...
     # -- Atom operations --
@@ -2658,6 +2659,12 @@ class Program:
     @property
     def version(self) -> tuple[int, int]:
         """Program version as ``(major, minor)``."""
+        ...
+
+    @property
+    def entry_parameters(self) -> list[ValueType]:
+        """The entry point's declared parameter types, spelled as in the text
+        format. Empty when it takes none, or the program has no entry point."""
         ...
 
     @property
