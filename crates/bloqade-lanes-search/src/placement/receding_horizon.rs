@@ -163,6 +163,11 @@ pub fn default_weight_grid() -> Vec<(f64, f64)> {
 /// Tier-2 (failed to reach depth x) is represented by `None` from
 /// [`classify_into_tier`] — dropped branches are not stored.
 ///
+/// Node counts are not stored here either: they belong to the rollout, not
+/// to the branch it produced, so the stage loop reads them from the
+/// [`RolloutOutcome`] before classifying. A dropped rollout's work must
+/// still count toward the budget.
+///
 /// Tier-1's leaf-Hungarian cost (`c_prime`) is **not** stored here — it's
 /// only consulted when ranking against other tier-1 branches in the
 /// absence of any tier-0 winner. When at least one tier-0 exists, all
@@ -175,7 +180,6 @@ pub(crate) enum BranchResult {
         depth: u32,
         path: Vec<MoveSet>,
         leaf_config: Config,
-        nodes_expanded: u32,
     },
     /// Rollout completed exactly `rollout_horizon` layers without reaching
     /// the goal. The leaf Hungarian cost is computed lazily in
@@ -183,17 +187,10 @@ pub(crate) enum BranchResult {
     Tier1 {
         path: Vec<MoveSet>,
         leaf_config: Config,
-        nodes_expanded: u32,
     },
 }
 
 impl BranchResult {
-    fn nodes_expanded(&self) -> u32 {
-        match self {
-            BranchResult::Tier0 { nodes_expanded, .. }
-            | BranchResult::Tier1 { nodes_expanded, .. } => *nodes_expanded,
-        }
-    }
     fn is_tier0(&self) -> bool {
         matches!(self, BranchResult::Tier0 { .. })
     }
@@ -534,6 +531,10 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     //
     // Greedy is ~50× cheaper per rollout when it succeeds; the gate
     // adds two h-score evaluations per gated rollout — negligible.
+    //
+    // The beam's expansions are real work even when its result is thrown
+    // away, so a rollout that falls through to IDS reports both.
+    let mut beam_nodes: u32 = 0;
     if greedy_first {
         let greedy_outcome = beam_rollout(
             root.clone(),
@@ -569,6 +570,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
                 // defensive and fall through to IDS.
             }
         }
+        beam_nodes = greedy_outcome.nodes_expanded;
     }
 
     // ── Phase 2: greedy got stuck; fall back to full IDS ───────────────
@@ -609,7 +611,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
         graph: result.graph,
         goal_node: result.goal,
         max_depth_reached: result.max_depth_reached,
-        nodes_expanded: result.nodes_expanded,
+        nodes_expanded: beam_nodes.saturating_add(result.nodes_expanded),
     }
 }
 
@@ -710,7 +712,7 @@ pub(crate) fn classify_into_tier(
         graph,
         goal_node,
         max_depth_reached,
-        nodes_expanded,
+        nodes_expanded: _,
     } = outcome;
 
     // Tier-0: rollout reached the constraint goal.
@@ -722,7 +724,6 @@ pub(crate) fn classify_into_tier(
             depth,
             path,
             leaf_config,
-            nodes_expanded,
         });
     }
 
@@ -739,11 +740,7 @@ pub(crate) fn classify_into_tier(
     let leaf_config = graph.config(leaf).clone();
     // Note: c_prime (Hungarian cost at leaf) is computed lazily in
     // pick_best_branch, only when needed (i.e., when no tier-0 branch exists).
-    Some(BranchResult::Tier1 {
-        path,
-        leaf_config,
-        nodes_expanded,
-    })
+    Some(BranchResult::Tier1 { path, leaf_config })
 }
 
 /// Pick the lowest-score branch. Tier-0 always beats tier-1.
@@ -912,7 +909,7 @@ pub fn solve_entangling_rh_single(
         }
 
         // (b) Run rollouts (optionally parallel).
-        let rollout = |targets: Vec<(u32, u64)>| -> Option<BranchResult> {
+        let rollout = |targets: Vec<(u32, u64)>| -> (u32, Option<BranchResult>) {
             let outcome = run_inner_rollout(
                 state.clone(),
                 targets,
@@ -933,16 +930,24 @@ pub fn solve_entangling_rh_single(
                 rh_opts.inner_beam_width,
                 opts.aod_capacity,
             );
-            classify_into_tier(outcome, x, heuristic)
+            (
+                outcome.nodes_expanded,
+                classify_into_tier(outcome, x, heuristic),
+            )
         };
 
-        let branches: Vec<BranchResult> = if rh_opts.branch_parallel {
-            candidates.into_par_iter().filter_map(rollout).collect()
+        let outcomes: Vec<(u32, Option<BranchResult>)> = if rh_opts.branch_parallel {
+            candidates.into_par_iter().map(rollout).collect()
         } else {
-            candidates.into_iter().filter_map(rollout).collect()
+            candidates.into_iter().map(rollout).collect()
         };
-        total_expansions = total_expansions
-            .saturating_add(branches.iter().map(|b| b.nodes_expanded()).sum::<u32>());
+        // Charge every rollout, including the ones that drop (tier-2). An
+        // all-drop batch is retried below at a shorter horizon, so counting
+        // only the surviving branches let each retry run a whole batch
+        // outside `max_expansions` and left it out of `nodes_expanded`.
+        total_expansions =
+            total_expansions.saturating_add(outcomes.iter().map(|(nodes, _)| *nodes).sum::<u32>());
+        let branches: Vec<BranchResult> = outcomes.into_iter().filter_map(|(_, b)| b).collect();
 
         // (c) All-drop fallback.
         if branches.is_empty() {
@@ -1798,6 +1803,47 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.status, SolveStatus::Solved);
+    }
+
+    /// Rollouts that drop (tier-2) still spend budget.
+    ///
+    /// The pair needs two layers, and with a one-node rollout budget and no
+    /// beam pre-pass no rollout gets that deep, so every batch drops and is
+    /// retried at a shorter horizon. Each batch costs two nodes here, so a
+    /// three-node cap must stop the solve after the second batch with
+    /// nothing committed. Previously a dropped batch cost nothing: all five
+    /// batches ran, the loose-goal fallback solved the pair, and the result
+    /// reported two nodes for the whole solve.
+    #[test]
+    fn dropped_rollouts_count_toward_the_budget() {
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let result = solve_receding_horizon(
+            &engine,
+            &SolveOptions {
+                strategy: Strategy::Ids,
+                restarts: 1,
+                ..SolveOptions::default()
+            },
+            &EntanglingOptions::default(),
+            &RecedingHorizonOptions {
+                k_candidates: 3,
+                rollout_horizon: 5,
+                commit_depth: 1,
+                branch_parallel: false,
+                max_expansions_per_rollout: 1,
+                greedy_first: false,
+                ..RecedingHorizonOptions::default()
+            },
+            [(0, loc(0, 5)), (1, loc(0, 0))],
+            &[(0, 1)],
+            std::iter::empty(),
+            Some(3),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(result.status, SolveStatus::BudgetExceeded);
+        assert!(result.move_layers.is_empty());
+        assert!(result.nodes_expanded >= 3);
     }
 
     /// End-to-end: `RecedingHorizonCzPlacement::solve_pairs` drives qubits
