@@ -1,7 +1,7 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** in progress. Epic 0 is done; the rest has not started.
+**Status:** in progress. Epics 0 and 1 are done; the rest has not started.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
 branch that is **not merged into `main`**.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
@@ -167,9 +167,46 @@ plan identity, resume semantics or proof provenance.
 
 ---
 
-## Epic 1 — Behaviour test net with a decoupled interface layer
+## Epic 1 — Behaviour test net with a decoupled interface layer — DONE 2026-09-23
 
-Unchanged in substance from the August plan.
+**Landed.**
+- **The net:** `crates/bloqade-lanes-search/tests/behaviour/`, split into `spec.rs`
+  (test-domain types), `cases.rs` (the data-only corpus), `interface.rs` (the only crate
+  importer, holding the contract doc) and `main.rs` (the runner).
+- **Four tests:**
+  - unique case names;
+  - the hand-verified semantic expectations;
+  - the golden comparison against `tests/fixtures/behaviour/golden.txt`, regenerated with
+    `BEHAVIOUR_BLESS=1`, with a unified diff printed on mismatch;
+  - a guard that fails if any module other than `interface.rs` names the crate in code.
+- **The corpus: 122 cases, about 3 s in a debug build.**
+  - Every strategy runs on 7 fixed-target instances, including three where the
+    strategies genuinely disagree: `logical_cycle`, `physical_site_cycle`,
+    `physical_congested`.
+  - It also covers the fallback, mirroring, bounds and edge cases, all four placements,
+    and the anticipatory goldens.
+- **Determinism:** the golden is identical across repeated runs and with
+  `RAYON_NUM_THREADS=1` and `2`. It is recorded in a debug build; the three
+  `debug_assert!`-dependent cases and the golden comparison are skipped under
+  `--release`. LF is already pinned repo-wide by `.gitattributes`.
+- **The Python candidate-order test:**
+  `test_first_solved_candidate_wins_even_when_a_later_one_is_cheaper`, in
+  `python/tests/heuristics/test_physical_placement.py`.
+
+**Findings.**
+- **The loose-goal accidental-CZ cleanup leg is dead code.** In `solve_loose_goal` it
+  runs only on a `Solved` result and calls `find_accidental_cz`. That checks exactly the
+  predicate `EntanglingConstraintGoal::is_goal` already rejects — two spectators on
+  partner sites — and against the same partner map, since the goal is built from
+  `cache.ent_set`. So it can never find anything. Instrumenting it confirmed that no case
+  reaches it, including three stages built to provoke it. The coverage item "the two-leg
+  cleanup path" therefore can't be met; Epic 2A deletes the leg instead.
+- **The partial-target panic is live and now pinned** (`edge/partial_target/push_rotate`).
+
+**Deviations from the scope below.**
+- The cleanup-leg item is replaced by the deletion.
+- The memory golden records `nodes_expanded` and gains `nodes_generated` in Epic 2A, as
+  planned.
 
 **Goal.** A Rust suite that detects *any* behaviour change in `bloqade-lanes-search`,
 with a **single point of failure** when the API changes.
@@ -268,6 +305,12 @@ Python-facing PyO3 surface stays unchanged throughout this epic.
   - Decide on the dangling `SearchEngine::exhaustive_preconditions()` and
     `ConfigError::UnsupportedArchitecture`, which have no production caller or producer:
     wire them up or delete them.
+  - Delete the accidental-CZ cleanup leg in `solve_loose_goal`
+    (`placement/loose_goal.rs:283-334`), which is unreachable (Epic 1 finding). It is the
+    only production caller of `ops::entangling::find_accidental_cz`; the function's other
+    callers are its own unit tests, and PyO3, the CLI and Python never call it. So the
+    function and its tests go too. Zero-drift by construction, and the Epic-1 golden
+    confirms it.
 - **The architecture boundary (Rule 2).** `LaneIndex` becomes the only architecture
   interface.
   - Replace every `.arch_spec().x()` call with a `LaneIndex` method that delegates, e.g.
