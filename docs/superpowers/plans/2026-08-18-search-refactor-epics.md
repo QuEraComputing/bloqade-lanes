@@ -1,7 +1,16 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** DRAFT / not started. Planning artifact.
+**Status:** in progress; no epic has landed yet.
+**Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
+branch that is **not merged into `main`**.
+- Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
+  separate PRs. Each phase therefore gets its own review and its own CI run: `ci.yml` and
+  `lint.yml` run on every pull request, whatever its base, including the benchmark gate.
+- Because each PR is a single phase, squash-merging it into the branch keeps the
+  zero-drift checkpoint between phases.
+- Changes on `main` come in by merging `main` into the branch. When `main` moves the
+  benchmark baselines, regenerate them on the branch.
 **Pairs with:**
 - [`specs/2026-08-18-search-trait-redesign-design.md`](../specs/2026-08-18-search-trait-redesign-design.md):
   the target trait design. Now **partially superseded**; see its §0.
