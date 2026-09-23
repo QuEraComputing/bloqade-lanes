@@ -62,7 +62,15 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
         exercised).
     max_expansions
         Optional cap on **total** node expansions across all stages of one
-        restart's trajectory.
+        restart's trajectory. It is checked only *between* stages, and one
+        stage can spend up to ``k_candidates * max_expansions_per_rollout``
+        nodes, so a cap below that lets the trajectory run little more
+        than a single stage: whatever that stage left unfinished is
+        reported as ``budget_exceeded``, and the loose-goal fallback is
+        not tried. Default 5000 — well above one worst-case stage (1500
+        with the defaults here), and the budget every Rust
+        receding-horizon test runs with. Keep it finite: nothing else
+        stops a trajectory whose tier-1 commits never reach the goal.
     restarts
         Number of parallel restart trajectories. Each restart runs its own
         independent receding-horizon solve with a distinct seed; the
@@ -119,6 +127,11 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
         ``RecedingHorizonOptions`` doc for details.
     """
 
+    # The base default of 100 is sized for one loose-goal search, and is
+    # smaller than even a single rollout's budget
+    # (`max_expansions_per_rollout`) here, so it cut trajectories off after
+    # their first stage. See the `max_expansions` entry above.
+    max_expansions: int | None = 5000
     top_c: int | None = 3
     congestion_weight: float = 0.0
     occupancy_penalty: float = 1.0
