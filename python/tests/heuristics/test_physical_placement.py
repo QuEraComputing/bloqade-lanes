@@ -304,6 +304,47 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
     assert budgets_seen == [10, 6]
 
 
+def test_first_solved_candidate_wins_even_when_a_later_one_is_cheaper():
+    """Characterizes the candidate loop's first-solve-wins rule.
+
+    The plugin offers one costly candidate: both atoms travel to the distant
+    word pair (8, 9). The strategy appends the default candidate after it,
+    where one atom steps to its partner. Both are solvable, and the loop keeps
+    the first that solves, so the costly candidate wins at four move layers
+    over the default's two.
+
+    Candidate ranking (Epic 4 of the search-crate refactor) is meant to change
+    this rule. When it lands, update this test on purpose; until then a change
+    here is a regression. The Rust `SingleHeuristicCzPlacement` loop has the
+    same rule and is pinned by the Rust behaviour net
+    (`anticipate/candidate_order/*`).
+    """
+    arch_spec = logical.get_arch_spec()
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    far = {0: LocationAddress(8, 0), 1: LocationAddress(9, 0)}
+
+    def place(candidates):
+        strategy = PhysicalPlacementStrategy(
+            arch_spec=arch_spec,
+            traversal=RustPlacementTraversal(strategy="astar"),
+            target_generator=lambda ctx: candidates,
+        )
+        result = strategy.cz_placements(state, controls=(0,), targets=(1,))
+        assert isinstance(result, ExecuteCZ)
+        return result
+
+    costly_first = place([far])
+    default_only = place([])
+
+    assert costly_first.layout == (LocationAddress(8, 0), LocationAddress(9, 0))
+    assert len(costly_first.move_layers) == 4
+    assert len(default_only.move_layers) == 2
+
+
 def test_rust_path_cz_counter_increments():
     """Parity fix: _cz_counter must increment on the Rust path too."""
     strategy = PhysicalPlacementStrategy(
