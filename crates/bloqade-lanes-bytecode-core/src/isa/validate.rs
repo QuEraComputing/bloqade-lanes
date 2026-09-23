@@ -1376,7 +1376,9 @@ impl<'a> StackSimulator<'a> {
         for span in function_spans(&program.code) {
             // Declared, not inferred: every `call` is checked against this
             // (`CallArityMismatch`), so the frame a caller builds is exactly
-            // this many values deep.
+            // this many values deep. The entry point is no exception — its
+            // caller is the host, and `LanesMachine::run_with_args` refuses
+            // arguments that disagree with the declaration.
             let params = function_at(program, span.start).map_or(0, |f| f.signature.params.len());
             let entry = AbstractStack::Known(vec![Slot::Unknown; params]);
             self.entry = main == Some(span.start);

@@ -243,6 +243,13 @@ would silently redefine the callee's shape at each call site:
 So a function that returns something has to say so: `ret 1` in a function
 declaring no return type is now an error.
 
+`@main` may declare parameters too. Its caller is the host, which passes the
+arguments with `LanesMachine::run_with_args`. They are checked against the
+declaration's count and types, and they sit at the bottom of the entry frame
+as locals `0..n`, where a `call` would put them. `run` enters with no
+arguments, so it refuses a `@main` that declares any. The CLI's `run`
+subcommand has no way to pass arguments yet.
+
 ### Stack validation follows control flow
 
 `validate(stack=True)` (the CLI's `--simulate-stack`, the C API's
