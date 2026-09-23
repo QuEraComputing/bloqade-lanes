@@ -110,12 +110,12 @@ def test_receding_horizon_defaults_budget_allows_more_than_one_stage():
     """Default construction solves a layer that needs two stages.
 
     This is the fifth CZ layer of the ``adder_4`` physical benchmark. Its
-    first stage costs 243 expansions (two of the five rollouts fall back to
-    IDS) and commits three tier-1 layers without reaching the goal; the
-    second stage finishes in six more. The budget is checked between stages,
-    so the ``max_expansions=100`` the strategy used to inherit from
-    ``NoReturnStrategyBase`` returned ``budget_exceeded`` just before that
-    second stage, and the benchmark failed.
+    first stage costs 261 expansions (two of the five rollouts fall back from
+    the beam to IDS) and commits three tier-1 layers without reaching the
+    goal; the second stage finishes in six more. The budget is checked
+    between stages, so the ``max_expansions=100`` the strategy used to inherit
+    from ``NoReturnStrategyBase`` returned ``budget_exceeded`` just before
+    that second stage, and the benchmark failed.
     """
     strategy = RecedingHorizonNoReturnPlacementStrategy(
         arch_spec=physical.get_arch_spec(),

@@ -72,9 +72,10 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
         little more than a single stage: whatever that stage left
         unfinished is reported as ``budget_exceeded``, and the loose-goal
         fallback is not tried. When the fallback does run, it spends only
-        what is left of the cap. Default 5000, the budget
-        every Rust receding-horizon test runs with. Keep it finite: nothing
-        else stops a trajectory whose tier-1 commits never reach the goal.
+        what is left of the cap. Default 5000: room for several batches,
+        so a layer that needs a few stages is not cut off after the first.
+        Keep it finite: nothing else stops a trajectory whose tier-1
+        commits never reach the goal.
     restarts
         Number of parallel restart trajectories. Each restart runs its own
         independent receding-horizon solve with a distinct seed; the

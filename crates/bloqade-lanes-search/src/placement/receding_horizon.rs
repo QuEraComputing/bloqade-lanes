@@ -15,7 +15,7 @@
 //!      tier-1 winner; advance the state and re-plan.
 //!
 //! [`solve_receding_horizon`] (the public entry) wraps a parallel restart
-//! loop around [`solve_entangling_rh_single`].
+//! loop around [`solve_entangling_rh_single_budgeted`].
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -826,11 +826,51 @@ pub(crate) fn pick_best_branch<'a>(
 /// [`solve_receding_horizon`]'s rayon wrapper).
 ///
 /// `fallback` finishes a trajectory the stage loop cannot, from the state
-/// it stopped in. Its second argument is the budget it may spend: whatever
-/// `max_expansions` has left, so the fallback shares the trajectory's cap
-/// rather than adding a fresh one on top.
+/// it stopped in, and chooses its own budget. To have it share the
+/// trajectory's `max_expansions` instead, use
+/// [`solve_entangling_rh_single_budgeted`], which this forwards to.
 #[allow(clippy::too_many_arguments)]
 pub fn solve_entangling_rh_single(
+    root: Config,
+    cz_pairs: &[(u32, u32)],
+    blocked: HashSet<u64>,
+    arch: Arc<ArchSpec>,
+    index: Arc<LaneIndex>,
+    dist_table: Arc<DistanceTable>,
+    goal: &EntanglingConstraintGoal,
+    heuristic: &PairDistanceHeuristic,
+    opts: &SolveOptions,
+    ent_opts: &EntanglingOptions,
+    rh_opts: &RecedingHorizonOptions,
+    future_layers: &[Vec<(u32, u32)>],
+    max_expansions: Option<u32>,
+    restart_seed: u64,
+    fallback: impl Fn(&Config) -> SolveResult + Sync,
+) -> SolveResult {
+    solve_entangling_rh_single_budgeted(
+        root,
+        cz_pairs,
+        blocked,
+        arch,
+        index,
+        dist_table,
+        goal,
+        heuristic,
+        opts,
+        ent_opts,
+        rh_opts,
+        future_layers,
+        max_expansions,
+        restart_seed,
+        |state: &Config, _remaining: Option<u32>| fallback(state),
+    )
+}
+
+/// [`solve_entangling_rh_single`], with a `fallback` that is handed the
+/// budget it may spend: whatever `max_expansions` has left, so the fallback
+/// shares the trajectory's cap rather than adding a fresh one on top.
+#[allow(clippy::too_many_arguments)]
+pub fn solve_entangling_rh_single_budgeted(
     root: Config,
     cz_pairs: &[(u32, u32)],
     blocked: HashSet<u64>,
@@ -1165,7 +1205,7 @@ use crate::search::move_search::MoveSearch;
 /// MPC-style loose-goal CZ placement.
 ///
 /// Composes `Arc<SearchEngine> + MoveSearch + EntanglingOptions +
-/// RecedingHorizonOptions`. Drives [`solve_entangling_rh_single`]
+/// RecedingHorizonOptions`. Drives [`solve_entangling_rh_single_budgeted`]
 /// across restarts in parallel via Rayon; falls back to
 /// [`LooseGoalCzPlacement`](crate::placement::loose_goal::LooseGoalCzPlacement)'s
 /// shared impl when the receding-horizon branches all drop at
@@ -1332,7 +1372,7 @@ pub(crate) fn solve_receding_horizon(
     };
 
     let results: Vec<SolveResult> = if restarts <= 1 {
-        vec![solve_entangling_rh_single(
+        vec![solve_entangling_rh_single_budgeted(
             root.clone(),
             &cz_pairs_owned,
             blocked_encoded.clone(),
@@ -1353,7 +1393,7 @@ pub(crate) fn solve_receding_horizon(
         (0..restarts)
             .into_par_iter()
             .map(|i| {
-                solve_entangling_rh_single(
+                solve_entangling_rh_single_budgeted(
                     root.clone(),
                     &cz_pairs_owned,
                     blocked_encoded.clone(),
@@ -1812,6 +1852,74 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.status, SolveStatus::Solved);
+    }
+
+    /// A rollout whose beam pre-pass falls through to IDS reports both
+    /// phases' expansions.
+    ///
+    /// Here the beam dead-ends before the horizon, so the rollout hands over
+    /// to IDS, which then runs exactly as it would with `greedy_first =
+    /// false`. The outcome must be the IDS-only one, with the beam's
+    /// expansions counted on top. Previously they were dropped and the two
+    /// counts came out equal.
+    #[test]
+    fn a_beam_that_falls_through_to_ids_reports_both_phases() {
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let cache = engine.entangling_cache();
+        let arch = Arc::new(engine.index().arch_spec().clone());
+        let index = Arc::new(engine.index().clone());
+        let blocked: HashSet<u64> = HashSet::new();
+        let pairs = vec![(0, 1), (2, 3)];
+        let root = Config::new([
+            (0, loc(0, 5)),
+            (1, loc(0, 0)),
+            (2, loc(0, 6)),
+            (3, loc(0, 1)),
+        ])
+        .unwrap();
+        let targets: Vec<(u32, u64)> = [
+            (0, loc(0, 5)),
+            (1, loc(1, 5)),
+            (2, loc(1, 1)),
+            (3, loc(0, 1)),
+        ]
+        .iter()
+        .map(|&(q, l)| (q, l.encode()))
+        .collect();
+        let goal = EntanglingConstraintGoal::new(&pairs, cache.ent_set.clone());
+        let heuristic = PairDistanceHeuristic::new(&pairs, &cache.wpd);
+        let h_sum = |c: &Config| heuristic.estimate_sum(c);
+        let rollout = |greedy_first: bool| {
+            run_inner_rollout(
+                root.clone(),
+                targets.clone(),
+                pairs.clone(),
+                arch.clone(),
+                index.clone(),
+                cache.dist_table.clone(),
+                &blocked,
+                &goal,
+                h_sum,
+                5,   // max_depth
+                300, // max_expansions
+                DeadlockPolicy::MoveBlockers,
+                true, // inner_lookahead
+                3,    // top_c
+                0,    // restart_seed
+                greedy_first,
+                2, // inner_beam_width
+                None,
+            )
+        };
+
+        let ids_only = rollout(false);
+        let beam_then_ids = rollout(true);
+        // The IDS phase ran and its result was kept...
+        assert_eq!(beam_then_ids.goal_node, ids_only.goal_node);
+        assert_eq!(beam_then_ids.max_depth_reached, ids_only.max_depth_reached);
+        assert_eq!(beam_then_ids.graph.len(), ids_only.graph.len());
+        // ...and the beam's expansions are counted on top of it.
+        assert!(beam_then_ids.nodes_expanded > ids_only.nodes_expanded);
     }
 
     /// A pair that needs two layers, solved with a one-node rollout budget
