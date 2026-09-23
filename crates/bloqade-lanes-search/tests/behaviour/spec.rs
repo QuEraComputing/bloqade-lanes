@@ -7,7 +7,9 @@
 
 use std::fmt::Write as _;
 
-/// Which bundled architecture a case runs on.
+/// Which architecture a case runs on. The Gemini specs are the bundled ones;
+/// the rest are snapshots of the crate's synthetic unit-test specs, kept in
+/// `tests/fixtures/behaviour/arch/`, covering topologies Gemini does not have.
 #[derive(Clone, Copy, Debug)]
 pub enum Arch {
     /// Gemini logical: 20 words of one site; word buses only; CZ pairs are
@@ -16,17 +18,54 @@ pub enum Arch {
     /// Gemini physical: 20 words of eight sites; site buses on odd words,
     /// word buses on every site; CZ pairs as for logical.
     GeminiPhysical,
+    /// Two words of ten sites. A site bus lifts sites 0-4 onto 5-9, a word
+    /// bus joins the words on sites 5-9, and words 0 and 1 are CZ partners.
+    /// An atom keeps its site index modulo 5.
+    Example,
+    /// The example arch with site bus 0 rewired as a conveyor chain
+    /// 0 -> 1 -> 2 -> 3 -> 4. The only kind of spec on which the chain
+    /// assembly paths are reachable.
+    Chain,
+    /// Two words of three sites, a chain site bus 0 -> 1 -> 2 in each, and a
+    /// word bus joining them at every site: a chain whose head can be blocked.
+    ChainWithSiding,
+    /// Zone 0 holds word 0 and zone 1 word 1, each of one site, joined only by
+    /// a zone bus from zone 1 to zone 0.
+    TwoZoneBus,
+    /// Two zones, one word each, each with a site bus lifting sites 0, 1 onto
+    /// 2, 3. The buses share an id, so a shot could wrongly mix the zones.
+    TwoZoneAlignedSiteBus,
+    /// The example arch with transport paths that make a lane and its reverse
+    /// take different times.
+    AsymmetricDuration,
 }
 
-/// A location in zone 0, the only zone the bundled specs have.
+/// A location. Zone 0 unless built with [`zloc`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Loc {
+    pub zone: u32,
     pub word: u32,
     pub site: u32,
 }
 
 pub const fn loc(word: u32, site: u32) -> Loc {
-    Loc { word, site }
+    Loc {
+        zone: 0,
+        word,
+        site,
+    }
+}
+
+pub const fn zloc(zone: u32, word: u32, site: u32) -> Loc {
+    Loc { zone, word, site }
+}
+
+/// How the heuristic generator handles a deadlocked configuration.
+#[derive(Clone, Copy, Debug)]
+pub enum Deadlock {
+    Skip,
+    MoveBlockers,
+    AllMoves,
 }
 
 /// The routing strategy, one per crate strategy.
@@ -86,6 +125,13 @@ pub struct Knobs {
     /// Request the weighted-distance completion bound.
     pub completion_bound: bool,
     pub bound_terminates: Option<bool>,
+    pub deadlock_policy: Option<Deadlock>,
+    pub lookahead: bool,
+    pub top_c: Option<usize>,
+    /// AOD tone limit per shot as (source columns, source rows).
+    pub aod_capacity: Option<(usize, usize)>,
+    /// Weight of lane duration against hop count in the entropy heuristic.
+    pub w_t: Option<f64>,
 }
 
 /// Which CZ-stage placement a [`Problem::CzStage`] runs through.
@@ -274,7 +320,12 @@ impl Outcome {
                 let placement: Vec<String> = run
                     .final_placement
                     .iter()
-                    .map(|(q, l)| format!("{q}@{}.{}", l.word, l.site))
+                    // Zone 0 renders as `word.site`, so single-zone goldens
+                    // stay as they were; other zones as `zone:word.site`.
+                    .map(|(q, l)| match l.zone {
+                        0 => format!("{q}@{}.{}", l.word, l.site),
+                        z => format!("{q}@{z}:{}.{}", l.word, l.site),
+                    })
                     .collect();
                 let _ = writeln!(out, "final: {}", placement.join(" "));
                 let _ = writeln!(out, "plan: {:016x}", run.plan_digest);

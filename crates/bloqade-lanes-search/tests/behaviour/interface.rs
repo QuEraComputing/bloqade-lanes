@@ -26,21 +26,31 @@ use bloqade_lanes_search::placement::nohome::NoHomeOptions;
 use bloqade_lanes_search::search::options::{BoundKind, EntanglingOptions, EntropyOptions};
 use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use bloqade_lanes_search::{
-    CzPlacement, DefaultTargetGenerator, InnerStrategy, LooseGoalCzPlacement, MoveSearch,
-    MultiSolveResult, NoHomeCzPlacement, RecedingHorizonCzPlacement, RecedingHorizonOptions,
-    SearchEngine, SingleHeuristicCzPlacement, SolveOptions, Strategy as CrateStrategy,
-    TargetContext, TargetGenerator, TargetSolver, Termination as CrateTermination,
+    AodCapacity, CzPlacement, DeadlockPolicy, DefaultTargetGenerator, InnerStrategy,
+    LooseGoalCzPlacement, MoveSearch, MultiSolveResult, NoHomeCzPlacement,
+    RecedingHorizonCzPlacement, RecedingHorizonOptions, SearchEngine, SingleHeuristicCzPlacement,
+    SolveOptions, Strategy as CrateStrategy, TargetContext, TargetGenerator, TargetSolver,
+    Termination as CrateTermination,
 };
 
 use crate::spec::{
-    Arch, Attempt, AttemptLog, BoundSummary, Knobs, Loc, Outcome, Placement, Problem, ProblemSpec,
-    Run, Status, Strategy, Termination,
+    Arch, Attempt, AttemptLog, BoundSummary, Deadlock, Knobs, Loc, Outcome, Placement, Problem,
+    ProblemSpec, Run, Status, Strategy, Termination,
 };
 
 const GEMINI_LOGICAL: &str =
     include_str!("../../../../python/bloqade/lanes/arch/gemini/logical/_logical_spec.json");
 const GEMINI_PHYSICAL: &str =
     include_str!("../../../../python/bloqade/lanes/arch/gemini/physical/_physical_spec.json");
+// Snapshots of the crate's synthetic unit-test specs (`src/test_utils.rs`).
+const EXAMPLE: &str = include_str!("../fixtures/behaviour/arch/example.json");
+const CHAIN: &str = include_str!("../fixtures/behaviour/arch/chain.json");
+const CHAIN_WITH_SIDING: &str = include_str!("../fixtures/behaviour/arch/chain_with_siding.json");
+const TWO_ZONE_BUS: &str = include_str!("../fixtures/behaviour/arch/two_zone_bus.json");
+const TWO_ZONE_ALIGNED_SITE_BUS: &str =
+    include_str!("../fixtures/behaviour/arch/two_zone_aligned_site_bus.json");
+const ASYMMETRIC_DURATION: &str =
+    include_str!("../fixtures/behaviour/arch/asymmetric_duration.json");
 
 /// Run one case. Never panics: a panic inside the crate becomes
 /// [`Outcome::Panicked`].
@@ -57,6 +67,12 @@ fn run_inner(spec: &ProblemSpec) -> Result<Run, String> {
     let json = match spec.arch {
         Arch::GeminiLogical => GEMINI_LOGICAL,
         Arch::GeminiPhysical => GEMINI_PHYSICAL,
+        Arch::Example => EXAMPLE,
+        Arch::Chain => CHAIN,
+        Arch::ChainWithSiding => CHAIN_WITH_SIDING,
+        Arch::TwoZoneBus => TWO_ZONE_BUS,
+        Arch::TwoZoneAlignedSiteBus => TWO_ZONE_ALIGNED_SITE_BUS,
+        Arch::AsymmetricDuration => ASYMMETRIC_DURATION,
     };
     let engine = Arc::new(SearchEngine::from_json_validated(json).map_err(|e| e.to_string())?);
     let search = move_search(spec.strategy, &spec.knobs);
@@ -234,7 +250,21 @@ fn move_search(strategy: Strategy, knobs: &Knobs) -> MoveSearch {
         restarts: knobs.restarts.unwrap_or(solve_defaults.restarts),
         fallback_push_rotate: knobs.fallback_push_rotate,
         backwards_search: knobs.backwards_search,
-        ..solve_defaults
+        deadlock_policy: match knobs.deadlock_policy {
+            None => solve_defaults.deadlock_policy,
+            Some(Deadlock::Skip) => DeadlockPolicy::Skip,
+            Some(Deadlock::MoveBlockers) => DeadlockPolicy::MoveBlockers,
+            Some(Deadlock::AllMoves) => DeadlockPolicy::AllMoves,
+        },
+        lookahead: knobs.lookahead,
+        top_c: knobs.top_c.or(solve_defaults.top_c),
+        aod_capacity: match knobs.aod_capacity {
+            None => solve_defaults.aod_capacity,
+            Some((x, y)) => Some(AodCapacity::new(x, y).expect("a capacity has no zero axis")),
+        },
+        // Every field is named on purpose, with no `..` fill: a new
+        // `SolveOptions` field then fails to compile here, which is where it
+        // has to be mapped.
     };
     let entropy_defaults = EntropyOptions::default();
     let entropy = EntropyOptions {
@@ -248,6 +278,7 @@ fn move_search(strategy: Strategy, knobs: &Knobs) -> MoveSearch {
         bound_terminates: knobs
             .bound_terminates
             .unwrap_or(entropy_defaults.bound_terminates),
+        w_t: knobs.w_t.unwrap_or(entropy_defaults.w_t),
         ..entropy_defaults
     };
     MoveSearch::new(options, entropy)
@@ -349,15 +380,15 @@ fn locs(list: &[Loc]) -> impl Iterator<Item = LocationAddr> + '_ {
 
 fn to_addr(l: Loc) -> LocationAddr {
     LocationAddr {
-        zone_id: 0,
+        zone_id: l.zone,
         word_id: l.word,
         site_id: l.site,
     }
 }
 
 fn to_loc(addr: LocationAddr) -> Loc {
-    assert_eq!(addr.zone_id, 0, "the bundled specs have a single zone");
     Loc {
+        zone: addr.zone_id,
         word: addr.word_id,
         site: addr.site_id,
     }

@@ -352,6 +352,506 @@ status: solved | layers: 35 | lanes: 38 | cost: 35 | expanded: 0 | deadlocks: 0 
 final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
 plan: b826abfd4a216a12
 
+== route/example_site_then_word/astar
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/dfs
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/bfs
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/greedy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/ids
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/cascade_ids
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/cascade_dfs
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/cascade_entropy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/entropy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_site_then_word/push_rotate
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5
+plan: bb41b02c86fd9120
+
+== route/example_pair_in_parallel/astar
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/dfs
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/bfs
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/greedy
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/ids
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/cascade_ids
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/cascade_dfs
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/cascade_entropy
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/entropy
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/example_pair_in_parallel/push_rotate
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+
+== route/chain_single_atom/astar
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/dfs
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/bfs
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/greedy
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/ids
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/cascade_ids
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/cascade_dfs
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/cascade_entropy
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/entropy
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_single_atom/push_rotate
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.4
+plan: 3a232748dbead825
+
+== route/chain_row_shift/astar
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/dfs
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/bfs
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/greedy
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/ids
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/cascade_ids
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/cascade_dfs
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/cascade_entropy
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/entropy
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+
+== route/chain_row_shift/push_rotate
+status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.0 1@0.1 2@0.2 3@0.3
+plan: cbf29ce484222325
+
+== route/chain_blocked_head/astar
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/dfs
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/bfs
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/greedy
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/ids
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/cascade_ids
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/cascade_dfs
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/cascade_entropy
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/entropy
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+
+== route/chain_blocked_head/push_rotate
+status: solved | layers: 10 | lanes: 11 | cost: 10 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@1.2
+plan: 05bd5dcaae3e5645
+
+== route/zone_bus_forward/astar
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/dfs
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/bfs
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/greedy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/ids
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/cascade_ids
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/cascade_dfs
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/cascade_entropy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/entropy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0
+plan: 16256e243c38e43d
+
+== route/zone_bus_forward/push_rotate
+status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: budget
+final: 0@1:1.0
+plan: cbf29ce484222325
+
+== route/zone_bus_backward/astar
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/dfs
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/bfs
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/greedy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/ids
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/cascade_ids
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/cascade_dfs
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/cascade_entropy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/entropy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+
+== route/zone_bus_backward/push_rotate
+status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.0
+plan: cbf29ce484222325
+
+== route/two_zone_lift_both/astar
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+
+== route/two_zone_lift_both/dfs
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@1:1.2
+plan: 9827c33896b5f67c
+
+== route/two_zone_lift_both/bfs
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+
+== route/two_zone_lift_both/greedy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+
+== route/two_zone_lift_both/ids
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+
+== route/two_zone_lift_both/cascade_ids
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+
+== route/two_zone_lift_both/cascade_dfs
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@1:1.2
+plan: 9827c33896b5f67c
+
+== route/two_zone_lift_both/cascade_entropy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 3 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+
+== route/two_zone_lift_both/entropy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 3 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+
+== route/two_zone_lift_both/push_rotate
+status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.0 1@1:1.0
+plan: cbf29ce484222325
+
+== route/two_zone_lift_one_zone/astar
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/dfs
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/bfs
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/greedy
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/ids
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/cascade_ids
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/cascade_dfs
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/cascade_entropy
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 2 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/entropy
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 2 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+
+== route/two_zone_lift_one_zone/push_rotate
+status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.0 1@0.1
+plan: cbf29ce484222325
+
+== route/asymmetric_swap/astar
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 3 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== route/asymmetric_swap/dfs
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 3 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: a13ec5b1acc3c100
+
+== route/asymmetric_swap/bfs
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== route/asymmetric_swap/greedy
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 3 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== route/asymmetric_swap/ids
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 3 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== route/asymmetric_swap/cascade_ids
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 3 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== route/asymmetric_swap/cascade_dfs
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 3 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: a13ec5b1acc3c100
+
+== route/asymmetric_swap/cascade_entropy
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== route/asymmetric_swap/entropy
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== route/asymmetric_swap/push_rotate
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.5 1@0.1
+plan: 7ecb09ce1e8aea00
+
 == fallback/off_budget_exhausted
 status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 1 | deadlocks: 0 | proven: false | termination: budget
 final: 0@0.0
@@ -461,6 +961,126 @@ final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
 plan: a3d6fac9c3012032
 bound: cuts_g=0 cuts_h=46 cuts_inf=0 root_lb=5 incumbent=13
 
+== bound/example_site_then_word/entropy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: true | termination: exhausted_proof
+final: 0@1.5
+plan: bb41b02c86fd9120
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=2 incumbent=2
+
+== bound/example_site_then_word/entropy_no_terminate
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: budget
+final: 0@1.5
+plan: bb41b02c86fd9120
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=2 incumbent=2
+
+== bound/example_pair_in_parallel/entropy
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: true | termination: exhausted_proof
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=2 incumbent=2
+
+== bound/example_pair_in_parallel/entropy_no_terminate
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: budget
+final: 0@1.5 1@1.6
+plan: 3f84c15e1c5b9b27
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=2 incumbent=2
+
+== bound/chain_single_atom/entropy
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: true | termination: exhausted_proof
+final: 0@0.4
+plan: 3a232748dbead825
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=4 incumbent=4
+
+== bound/chain_single_atom/entropy_no_terminate
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.4
+plan: 3a232748dbead825
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=4 incumbent=4
+
+== bound/chain_row_shift/entropy
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: true | termination: exhausted_proof
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/chain_row_shift/entropy_no_terminate
+status: solved | layers: 1 | lanes: 4 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: 1ec0362e837cedc1
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/chain_blocked_head/entropy
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 3 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=2
+
+== bound/chain_blocked_head/entropy_no_terminate
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 3 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.1 1@0.2 2@1.2
+plan: 98759ffcb3541265
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=2
+
+== bound/zone_bus_forward/entropy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: true | termination: exhausted_proof
+final: 0@0.0
+plan: 16256e243c38e43d
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/zone_bus_forward/entropy_no_terminate
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.0
+plan: 16256e243c38e43d
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/zone_bus_backward/entropy
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: true | termination: exhausted_proof
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/zone_bus_backward/entropy_no_terminate
+status: solved | layers: 1 | lanes: 1 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: budget
+final: 0@1:1.0
+plan: 1625ee243c39bdbd
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/two_zone_lift_both/entropy
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 3 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=2
+
+== bound/two_zone_lift_both/entropy_no_terminate
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 3 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.2 1@1:1.2
+plan: 79fdcf26d0146c4c
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=2
+
+== bound/two_zone_lift_one_zone/entropy
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: true | termination: exhausted_proof
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/two_zone_lift_one_zone/entropy_no_terminate
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.2 1@0.3
+plan: b026cb457020ada6
+bound: cuts_g=0 cuts_h=1 cuts_inf=0 root_lb=1 incumbent=1
+
+== bound/asymmetric_swap/entropy
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+bound: cuts_g=0 cuts_h=2 cuts_inf=0 root_lb=2 incumbent=3
+
+== bound/asymmetric_swap/entropy_no_terminate
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+bound: cuts_g=0 cuts_h=2 cuts_inf=0 root_lb=2 incumbent=3
+
 == edge/already_at_goal
 status: solved | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@0.0
@@ -484,6 +1104,146 @@ plan: fe80b9eeff023d6b
 
 == edge/partial_target/push_rotate
 panicked: solver produced an invalid plan (this is a bug in the move generator, not in the request): replaying the plan does not reproduce the reported goal placement:
+
+== knobs/aod_1x1/physical_two_atoms/astar
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.0 1@1.1
+plan: 12154b5e4dc18804
+
+== knobs/aod_1x1/chain_row_shift/astar
+status: solved | layers: 4 | lanes: 4 | cost: 4 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.1 1@0.2 2@0.3 3@0.4
+plan: a22c9148522d1825
+
+== knobs/aod_1x1/physical_two_atoms/push_rotate
+status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1.0 1@1.1
+plan: 42dbff92dcc1b4e6
+
+== knobs/aod_2x1/physical_congested/entropy
+status: solved | layers: 18 | lanes: 24 | cost: 18 | expanded: 127 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 64f675c40425d0d2
+
+== knobs/aod_2x1/physical_congested/dfs
+status: solved | layers: 20 | lanes: 24 | cost: 20 | expanded: 20 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 46e3a7c9365766ba
+
+== knobs/weight_2/physical_congested/astar
+status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 300 | deadlocks: 1 | proven: false | termination: budget
+final: 0@0.0 1@0.1 2@0.2 3@2.0 4@2.1 5@2.2
+plan: cbf29ce484222325
+
+== knobs/weight_2/logical_cycle/astar
+status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 13 | deadlocks: 1 | proven: false | termination: stopped
+final: 0@2.0 1@4.0 2@0.0
+plan: 08a7466065eec7a9
+
+== knobs/seed_7/physical_congested/entropy
+status: solved | layers: 15 | lanes: 28 | cost: 15 | expanded: 62 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: f71597c1830656b0
+
+== knobs/seed_7_restarts_3/physical_congested/entropy
+status: solved | layers: 14 | lanes: 28 | cost: 14 | expanded: 219 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 7e1a39bce2de9532
+
+== knobs/goal_candidates_1/logical_cycle/entropy
+status: solved | layers: 7 | lanes: 8 | cost: 7 | expanded: 7 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.0 1@4.0 2@0.0
+plan: 9469596aecb2d373
+
+== knobs/goal_candidates_10/logical_cycle/entropy
+status: solved | layers: 7 | lanes: 8 | cost: 7 | expanded: 165 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.0 1@4.0 2@0.0
+plan: 9469596aecb2d373
+
+== knobs/restarts_4/physical_congested/entropy
+status: solved | layers: 11 | lanes: 34 | cost: 11 | expanded: 55 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 8d2aadd862dc1b42
+
+== knobs/restarts_4/physical_congested/ids
+status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 22 | deadlocks: 3 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 558ddf4c13b964f6
+
+== knobs/restarts_4/physical_congested/dfs
+status: solved | layers: 15 | lanes: 24 | cost: 15 | expanded: 17 | deadlocks: 1 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: d713e553fccd8dd7
+
+== knobs/deadlock_skip/physical_congested/dfs
+status: solved | layers: 17 | lanes: 32 | cost: 17 | expanded: 17 | deadlocks: 1 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: ade0bff28fb731c0
+
+== knobs/deadlock_skip/physical_congested/greedy
+status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 49 | deadlocks: 13 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 38219d0c64b38b63
+
+== knobs/deadlock_move_blockers/physical_congested/dfs
+status: solved | layers: 16 | lanes: 32 | cost: 16 | expanded: 16 | deadlocks: 1 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 704b124abc4c078a
+
+== knobs/deadlock_move_blockers/physical_congested/greedy
+status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 49 | deadlocks: 13 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 38219d0c64b38b63
+
+== knobs/deadlock_all_moves/physical_congested/dfs
+status: solved | layers: 16 | lanes: 32 | cost: 16 | expanded: 24 | deadlocks: 1 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 9fd11bcee347a5ca
+
+== knobs/deadlock_all_moves/physical_congested/greedy
+status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 143 | deadlocks: 13 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 38219d0c64b38b63
+
+== knobs/lookahead/physical_congested/astar
+status: budget_exceeded | layers: 0 | lanes: 0 | cost: 0 | expanded: 300 | deadlocks: 0 | proven: false | termination: budget
+final: 0@0.0 1@0.1 2@0.2 3@2.0 4@2.1 5@2.2
+plan: cbf29ce484222325
+
+== knobs/lookahead/physical_congested/entropy
+status: solved | layers: 11 | lanes: 26 | cost: 11 | expanded: 44 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 4ce36ef53c0dae52
+
+== knobs/top_c_2/physical_congested/greedy
+status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 49 | deadlocks: 13 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 38219d0c64b38b63
+
+== knobs/top_c_2/physical_congested/dfs
+status: solved | layers: 17 | lanes: 32 | cost: 17 | expanded: 17 | deadlocks: 1 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 57898a24980ef4e0
+
+== knobs/w_t_0/asymmetric_swap/entropy
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== knobs/w_t_0/physical_congested/entropy
+status: solved | layers: 15 | lanes: 28 | cost: 15 | expanded: 54 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: a9f3bc92a73982cb
+
+== knobs/w_t_1/asymmetric_swap/entropy
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 5 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@1.5 1@0.1
+plan: a6a19c475bc1cdc0
+
+== knobs/w_t_1/physical_congested/entropy
+status: solved | layers: 16 | lanes: 32 | cost: 16 | expanded: 66 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: a9375481beaf81e2
 
 == cz/single_heuristic/logical
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
@@ -586,6 +1346,90 @@ plan: 7b01094b79ce1f44
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@4.0 3@5.0
 plan: c4217fa55cc6a885
+
+== cz/single_heuristic/logical_four_pairs
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@3.0 1@2.0 2@7.0 3@6.0 4@11.0 5@10.0 6@15.0 7@14.0
+plan: 01d4bc695b3b9025
+attempts: chosen=0 total=2 [0:solved/2]
+
+== cz/single_heuristic/physical_four_pairs_spectators
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@3.0 1@2.0 2@3.1 3@2.1 4@7.0 5@6.0 6@7.1 7@6.1 8@0.2 9@2.2
+plan: 28885fb6cb7bd685
+attempts: chosen=0 total=2 [0:solved/2]
+
+== cz/single_heuristic/example_pairable
+status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 1 | deadlocks: 1 | proven: false | termination: exhausted
+final: 0@0.0 1@0.5
+plan: cbf29ce484222325
+attempts: chosen=none total=1 [0:unsolvable/1]
+
+== cz/single_heuristic/example_unpairable
+status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 1 | deadlocks: 1 | proven: false | termination: exhausted
+final: 0@0.0 1@0.1
+plan: cbf29ce484222325
+attempts: chosen=none total=1 [0:unsolvable/1]
+
+== cz/loose_goal/logical_four_pairs
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0 2@4.0 3@5.0 4@8.0 5@9.0 6@12.0 7@13.0
+plan: 8171b1e16dc631d5
+
+== cz/loose_goal/physical_four_pairs_spectators
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0 2@0.1 3@1.1 4@4.0 5@5.0 6@4.1 7@5.1 8@0.2 9@2.2
+plan: 766d4d243c89b805
+
+== cz/loose_goal/example_pairable
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0
+plan: 45e1b13bb22bfc19
+
+== cz/loose_goal/example_unpairable
+status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0 1@0.1
+plan: cbf29ce484222325
+
+== cz/nohome/logical_four_pairs
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 40 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0 1@1.0 2@4.0 3@5.0 4@8.0 5@9.0 6@12.0 7@13.0
+plan: 8171b1e16dc631d5
+
+== cz/nohome/physical_four_pairs_spectators
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 24 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0 1@1.0 2@0.1 3@1.1 4@4.0 5@5.0 6@4.1 7@5.1 8@0.2 9@2.2
+plan: 766d4d243c89b805
+
+== cz/nohome/example_pairable
+status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0 1@0.5
+plan: cbf29ce484222325
+
+== cz/nohome/example_unpairable
+status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0 1@0.1
+plan: cbf29ce484222325
+
+== cz/receding_horizon/logical_four_pairs
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 30 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0 2@4.0 3@5.0 4@8.0 5@9.0 6@12.0 7@13.0
+plan: 8171b1e16dc631d5
+
+== cz/receding_horizon/physical_four_pairs_spectators
+status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 36 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0 2@0.1 3@1.1 4@4.0 5@5.0 6@4.1 7@5.1 8@0.2 9@2.2
+plan: 766d4d243c89b805
+
+== cz/receding_horizon/example_pairable
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 4 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0
+plan: 45e1b13bb22bfc19
+
+== cz/receding_horizon/example_unpairable
+status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 1 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@0.0 1@0.1
+plan: cbf29ce484222325
 
 == anticipate/cascade_memory/ids
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 171 | deadlocks: 4 | proven: false | termination: stopped
