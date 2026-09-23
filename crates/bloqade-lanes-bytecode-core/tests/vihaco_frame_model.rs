@@ -3,18 +3,18 @@
 //! vihaco#110 ("Update CPU frame model", merged 2026-09-22, after the v0.4.1
 //! tag) gives each function a locals region below its operands:
 //! `local_count` slots, parameters first, zero-filled at entry. `store` no
-//! longer grows the stack, and operand ops cannot consume locals. Every
-//! release after 0.4.1 is cut from a history that contains it.
+//! longer grows the stack, and operand ops cannot consume locals.
 //!
-//! Each test states what that model makes true, and the version of
-//! vihaco-cpu in `Cargo.lock` decides what is asserted:
+//! Each test states what that model makes true, and a probe of the linked
+//! vihaco decides what is asserted — see [`HAS_FRAME_MODEL`]:
 //!
-//! - **0.4.1**: today's failure, exactly — the validation errors and the
-//!   run-time error. Strict, so a change in behaviour on the pinned version is
-//!   noticed rather than absorbed.
-//! - **Anything later**: the program validates clean and runs to `halt`.
+//! - **Without the frame model** (vihaco 0.4.1): today's failure, exactly —
+//!   the validation errors and the run-time error. Strict, so a change in
+//!   behaviour on the pinned version is noticed rather than absorbed.
+//! - **With it**: the program validates clean and runs to `halt`.
 //!
-//! Nothing needs flipping at the bump: moving the pin moves the expectation.
+//! Nothing needs flipping at the bump: the expectation follows the vihaco
+//! that is linked.
 //! What the bump does need before these pass:
 //!
 //! - `resolve` computing `local_count` as `max(arity, every load/store index
@@ -26,8 +26,6 @@
 //!   `cpu::cpu.load u64, 0` is spelled `cpu::cpu.load_u64 0`. Until then they
 //!   fail to parse — loudly, and not as the failure pinned below.
 
-use std::fs;
-use std::path::Path;
 use std::sync::LazyLock;
 
 use bloqade_lanes_bytecode_core::isa::Program;
@@ -37,42 +35,24 @@ use bloqade_lanes_bytecode_core::isa::validate::{
     ValidationError, simulate_stack, tag, validate_structure,
 };
 
-/// The last vihaco-cpu release without the frame model.
-const LAST_WITHOUT_FRAME_MODEL: (u64, u64, u64) = (0, 4, 1);
-
-/// Whether the vihaco-cpu this workspace builds has vihaco#110's frame model.
+/// Whether the linked vihaco has vihaco#110's frame model.
 ///
-/// Read from `Cargo.lock` — what is actually built — rather than from the
-/// workspace's version requirement.
+/// Probed, not read off a version number: a version would assume every
+/// release after 0.4.1 contains #110, and a patch cut from a maintenance
+/// branch need not. The probe `store`s past the top of the frame and then
+/// `pop`s. On 0.4.1 the `store` grows the stack to reach its slot, so the
+/// `pop` finds the value; under the frame model it writes a reserved local,
+/// and the operands are empty. Only the old model runs it to `halt`.
 static HAS_FRAME_MODEL: LazyLock<bool> = LazyLock::new(|| {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock");
-    let lock = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let versions: Vec<&str> = lock
-        .split("[[package]]")
-        .filter(|entry| entry.lines().any(|l| l.trim() == r#"name = "vihaco-cpu""#))
-        .filter_map(|entry| {
-            entry
-                .lines()
-                .find_map(|l| l.trim().strip_prefix("version = \"")?.strip_suffix('"'))
-        })
-        .collect();
-    let [version] = versions.as_slice() else {
-        panic!("expected exactly one vihaco-cpu in Cargo.lock, found {versions:?}");
-    };
-    release(version) > LAST_WITHOUT_FRAME_MODEL
+    let probe = module(
+        "fn @main() {\n  cpu::cpu.const u64, 7\n  cpu::cpu.store u64, 1\n  \
+         lanes::lanes.pop\n  cpu::cpu.halt\n}\n",
+    );
+    !matches!(
+        LanesMachine::new().run(&probe, 100),
+        Ok(run) if run.stopped == Stopped::Halted
+    )
 });
-
-/// `major.minor.patch`, ignoring any pre-release or build suffix: a
-/// `0.5.0-rc.1` is still cut after 0.4.1.
-fn release(version: &str) -> (u64, u64, u64) {
-    let core = version.split(['-', '+']).next().unwrap_or(version);
-    let mut parts = core.split('.').map(|part| {
-        part.parse::<u64>()
-            .unwrap_or_else(|e| panic!("vihaco-cpu version {version:?}: {e}"))
-    });
-    let mut next = || parts.next().unwrap_or(0);
-    (next(), next(), next())
-}
 
 /// What a program does on vihaco 0.4.1.
 struct Today {
@@ -198,14 +178,4 @@ fn a_counter_in_a_scratch_local_keeps_the_loop_balanced() {
             run_error: "local index out of bounds",
         },
     );
-}
-
-/// The gate orders releases numerically, not as strings, and a pre-release
-/// counts as cut after 0.4.1.
-#[test]
-fn releases_are_ordered_numerically() {
-    assert!(release("0.4.2") > LAST_WITHOUT_FRAME_MODEL);
-    assert!(release("0.5.0-rc.1") > LAST_WITHOUT_FRAME_MODEL);
-    assert!(release("0.10.0") > LAST_WITHOUT_FRAME_MODEL);
-    assert!(release("0.4.1") <= LAST_WITHOUT_FRAME_MODEL);
 }

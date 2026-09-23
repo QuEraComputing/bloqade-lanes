@@ -44,7 +44,10 @@
 //! What it still cannot see: `call_indirect` takes its target and arity off
 //! the stack, so everything after one on that path goes unchecked, and a
 //! branch condition's type (`bool` has no lanes [`tag`]) is not checked, only
-//! its presence.
+//! its presence. And a join keeps only what every incoming path agrees on:
+//! two paths pushing different locations leave a location of unknown address,
+//! so a group check that would fail on only one of those paths — a duplicate
+//! in one arm's `fill` — is not reported.
 //!
 //! ## Address checks
 //!
@@ -54,12 +57,12 @@
 //! [`check_zone`](ArchSpec::check_zone) — invalid zones, words, sites, lanes,
 //! and AOD constraints are reported with the arch layer's own message.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use super::device::LanesInstruction as L;
 use super::machine::MachineInstruction as M;
-use super::program::Program;
+use super::program::{Program, entry_function};
 use crate::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
 use crate::arch::query::{LaneGroupError, LocationGroupError};
 use crate::arch::types::ArchSpec;
@@ -179,7 +182,8 @@ pub enum ValidationError {
     /// the stack simulation intraprocedural — without it a caller could not
     /// know its own post-call depth without descending into the callee. The
     /// entry function's base is the bottom of the stack, so the same condition
-    /// there is a plain [`StackUnderflow`](Self::StackUnderflow).
+    /// there is a plain [`StackUnderflow`](Self::StackUnderflow) — unless
+    /// something also calls it, which puts a caller below its base too.
     PopBelowFrameBase { pc: usize },
     /// Two paths reach `pc` with different stack depths.
     ///
@@ -426,9 +430,8 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     // its span is exact wherever the measure rule is active, and stops an
     // uncallable function's `measure` from condemning a program that measures
     // once.
-    let entry = program
-        .main_function
-        .and_then(|i| program.functions.get(i as usize))
+    let entry = entry_function(program)
+        .ok()
         .map(|f| (f.start_address as usize, f.end_address as usize));
     let runs = |pc: usize| entry.is_none_or(|(start, end)| pc >= start && pc < end);
 
@@ -511,7 +514,9 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     errors
 }
 
-/// True if `inst` transfers control somewhere the linear walk cannot follow.
+/// True if `inst` transfers control elsewhere: a branch or a call. Without
+/// `feed_forward` the hardware runs straight-line code only, so the capability
+/// rule rejects every one.
 fn is_control_flow(inst: &M) -> bool {
     matches!(
         inst,
@@ -554,10 +559,11 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     }
 
     // The declaration of the function owning each address, where it has one.
+    let functions = functions_by_start(program);
     let declared = |pc: usize| {
         owner[pc]
             .and_then(|i| spans.get(i))
-            .and_then(|span| function_at(program, span.start))
+            .and_then(|span| functions.get(&span.start).copied())
     };
 
     for (pc, inst) in program.code.iter().enumerate() {
@@ -631,7 +637,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                         target: *target,
                         expected: "a function entry",
                     });
-                } else if let Some(callee) = function_at(program, *target as usize) {
+                } else if let Some(callee) = functions.get(&(*target as usize)).copied() {
                     // `call <arity>` sets `base = stack.len() - arity`, so the
                     // operand decides where the callee's frame begins. Checked
                     // against the declaration, that is a claim about the
@@ -757,12 +763,15 @@ fn is_marker(inst: &M) -> bool {
     matches!(inst, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd))
 }
 
-/// The function whose `func_start` sits at `start`, if the table declares one.
-fn function_at(program: &Program, start: usize) -> Option<&FunctionInfo<Type>> {
-    program
-        .functions
-        .iter()
-        .find(|f| f.start_address as usize == start)
+/// Every declared function, by the address of its `func_start`. Built once per
+/// pass, so a lookup per `call` and `ret` is not a scan of the table; where
+/// two entries claim one address, the first wins, as a scan would have it.
+fn functions_by_start(program: &Program) -> HashMap<usize, &FunctionInfo<Type>> {
+    let mut functions = HashMap::new();
+    for f in &program.functions {
+        functions.entry(f.start_address as usize).or_insert(f);
+    }
+    functions
 }
 
 /// Split the code into function extents, delimited by the markers.
@@ -833,9 +842,14 @@ trait Dataflow {
 
 /// What [`walk`] learned about one function.
 struct Walk<S> {
-    /// The state on entry to each address of the span, indexed from
-    /// `span.start`; `None` where no path reaches.
+    /// Which addresses of the span begin a basic block — see [`leaders`].
+    leaders: Vec<bool>,
+    /// The converged state on entry to each leader, indexed from
+    /// `span.start`; `None` at every other address, and at leaders no path
+    /// reaches.
     states: Vec<Option<S>>,
+    /// Which addresses of the span some path reaches.
+    reached: Vec<bool>,
     /// Whether some path runs off the end of the function.
     falls_off: bool,
 }
@@ -863,6 +877,55 @@ fn successors(inst: &M, pc: usize, span: &Span) -> ([Option<usize>; 2], bool) {
     }
 }
 
+/// The addresses of `span` that begin a basic block: its entry, and every
+/// branch target inside it.
+///
+/// Every other address has at most one predecessor, the one before it, so its
+/// state is that predecessor's after one transfer and is never stored. Every
+/// merge point is a leader, so joins happen only there. That is what keeps a
+/// straight-line function at one stored state rather than one per
+/// instruction — each of which is a copy of the stack.
+fn leaders(program: &Program, span: &Span) -> Vec<bool> {
+    let mut leaders = vec![false; span.end - span.start];
+    leaders[0] = true;
+    for pc in span.start..span.end {
+        let inst = &program.code[pc];
+        if matches!(inst, M::Cpu(C::Branch(_) | C::ConditionalBranch(..))) {
+            for target in successors(inst, pc, span).0.into_iter().flatten() {
+                leaders[target - span.start] = true;
+            }
+        }
+    }
+    leaders
+}
+
+/// Transfer `state` through the basic block that begins at `leader`, marking
+/// each address reached. Returns where control leaves the block — each
+/// successor is a leader — and whether it runs off the function on the way.
+fn run_block<D: Dataflow>(
+    program: &Program,
+    span: &Span,
+    leaders: &[bool],
+    leader: usize,
+    state: &mut D::State,
+    flow: &mut D,
+    reached: &mut [bool],
+) -> ([Option<usize>; 2], bool) {
+    let mut pc = leader;
+    let mut falls_off = false;
+    loop {
+        reached[pc - span.start] = true;
+        let inst = &program.code[pc];
+        flow.transfer(pc, inst, state);
+        let (next, off) = successors(inst, pc, span);
+        falls_off |= off;
+        match next {
+            [Some(n), None] if !leaders[n - span.start] => pc = n,
+            _ => return (next, falls_off),
+        }
+    }
+}
+
 /// Run `flow` over one function to a fixpoint, from `entry` at its
 /// `func_start`.
 fn walk<D: Dataflow>(
@@ -871,19 +934,26 @@ fn walk<D: Dataflow>(
     entry: D::State,
     flow: &mut D,
 ) -> Walk<D::State> {
+    let leaders = leaders(program, span);
     let mut states: Vec<Option<D::State>> = vec![None; span.end - span.start];
+    let mut reached = vec![false; span.end - span.start];
     states[0] = Some(entry);
     let mut work = vec![span.start];
     let mut falls_off = false;
 
-    while let Some(pc) = work.pop() {
-        let inst = &program.code[pc];
-        let mut state = states[pc - span.start]
+    while let Some(leader) = work.pop() {
+        let mut state = states[leader - span.start]
             .clone()
             .expect("queued only once a state exists");
-        flow.transfer(pc, inst, &mut state);
-
-        let (next, off) = successors(inst, pc, span);
+        let (next, off) = run_block(
+            program,
+            span,
+            &leaders,
+            leader,
+            &mut state,
+            flow,
+            &mut reached,
+        );
         falls_off |= off;
         for succ in next.into_iter().flatten() {
             let slot = &mut states[succ - span.start];
@@ -898,7 +968,12 @@ fn walk<D: Dataflow>(
         }
     }
 
-    Walk { states, falls_off }
+    Walk {
+        leaders,
+        states,
+        reached,
+        falls_off,
+    }
 }
 
 /// The dataflow that tracks nothing: walking it is reachability.
@@ -925,7 +1000,7 @@ fn walk_function(program: &Program, span: &Span, errors: &mut Vec<ValidationErro
     let walked = walk(program, span, (), &mut Reachability);
 
     for pc in span.start + 1..body_end {
-        if walked.states[pc - span.start].is_none() {
+        if !walked.reached[pc - span.start] {
             errors.push(ValidationError::UnreachableInstruction { pc });
         }
     }
@@ -988,6 +1063,12 @@ enum AbstractStack {
 struct StackSimulator<'a> {
     program: &'a Program,
     arch: Option<&'a ArchSpec>,
+    /// The function table by entry address, for a `call`'s declared results.
+    functions: HashMap<usize, &'a FunctionInfo<Type>>,
+    /// Whether to run the group checks. Off during the fixpoint, whose
+    /// errors are discarded: a group check never changes a state, and the
+    /// arch's is the costliest thing a transfer does.
+    reporting: bool,
     /// The frame being transferred. [`Dataflow::transfer`] moves each state's
     /// slots in here and back out, so the per-instruction effects stay
     /// methods on one stack rather than threading it through every helper.
@@ -997,8 +1078,9 @@ struct StackSimulator<'a> {
     /// apart from `errors` because they are found during the fixpoint, whose
     /// other errors are discarded.
     mismatches: BTreeMap<usize, (usize, usize)>,
-    /// Whether the function being walked is the entry, whose frame base is
-    /// the bottom of the stack — see [`ValidationError::PopBelowFrameBase`].
+    /// Whether the function being walked is the entry and nothing calls it,
+    /// so its frame base is the bottom of the stack — see
+    /// [`ValidationError::PopBelowFrameBase`].
     entry: bool,
     pc: usize,
 }
@@ -1008,6 +1090,8 @@ impl<'a> StackSimulator<'a> {
         Self {
             program,
             arch,
+            functions: functions_by_start(program),
+            reporting: true,
             stack: Vec::new(),
             errors: Vec::new(),
             mismatches: BTreeMap::new(),
@@ -1137,6 +1221,9 @@ impl<'a> StackSimulator<'a> {
     /// Pop `arity` locations and validate them as a group.
     fn pop_and_validate_locations(&mut self, arity: u32) {
         let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LOCATION)).collect();
+        if !self.reporting {
+            return;
+        }
         let locations: Vec<LocationAddr> = bits
             .iter()
             .filter_map(|v| v.map(LocationAddr::decode))
@@ -1155,6 +1242,9 @@ impl<'a> StackSimulator<'a> {
     /// Pop `arity` lanes and validate them as a group.
     fn sim_move(&mut self, arity: u32) {
         let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LANE)).collect();
+        if !self.reporting {
+            return;
+        }
         let lanes: Vec<LaneAddr> = bits
             .iter()
             .filter_map(|v| v.map(LaneAddr::decode_u64))
@@ -1297,7 +1387,9 @@ impl<'a> StackSimulator<'a> {
             // The callee is never descended into — its own walk checks it.
             M::Cpu(C::Call(arity, target)) => {
                 self.pop_n(*arity);
-                let returns = function_at(self.program, *target as usize)
+                let returns = self
+                    .functions
+                    .get(&(*target as usize))
                     .map_or(0, |f| f.signature.ret.len());
                 self.stack
                     .extend(std::iter::repeat_n(Slot::Unknown, returns));
@@ -1368,10 +1460,18 @@ impl<'a> StackSimulator<'a> {
 
     fn run(mut self) -> Vec<ValidationError> {
         let program = self.program;
-        let main = program
-            .main_function
-            .and_then(|i| program.functions.get(i as usize))
+        let main = entry_function(program)
+            .ok()
             .map(|f| f.start_address as usize);
+        // A `call` gives the callee a caller below its base, `@main` included.
+        let called: HashSet<usize> = program
+            .code
+            .iter()
+            .filter_map(|inst| match inst {
+                M::Cpu(C::Call(_, target)) => Some(*target as usize),
+                _ => None,
+            })
+            .collect();
 
         for span in function_spans(&program.code) {
             // Declared, not inferred: every `call` is checked against this
@@ -1379,27 +1479,44 @@ impl<'a> StackSimulator<'a> {
             // this many values deep. The entry point is no exception — its
             // caller is the host, and `LanesMachine::run_with_args` refuses
             // arguments that disagree with the declaration.
-            let params = function_at(program, span.start).map_or(0, |f| f.signature.params.len());
+            let params = self
+                .functions
+                .get(&span.start)
+                .map_or(0, |f| f.signature.params.len());
             let entry = AbstractStack::Known(vec![Slot::Unknown; params]);
-            self.entry = main == Some(span.start);
+            self.entry = main == Some(span.start) && !called.contains(&span.start);
 
             // Reach the fixpoint first, discarding what intermediate states
-            // report: an instruction is transferred once per change to its
-            // input, and all but the last of those see a state that has not
+            // report: a block is transferred once per change to its input,
+            // and all but the last of those see a state that has not
             // converged yet.
             let reported = self.errors.len();
-            let walked = walk(program, &span, entry, &mut self);
+            self.reporting = false;
+            let Walk {
+                leaders, states, ..
+            } = walk(program, &span, entry, &mut self);
             self.errors.truncate(reported);
+            self.reporting = true;
 
-            // Then report once, in address order, against the final states.
-            for (offset, state) in walked.states.into_iter().enumerate() {
+            // Then report once, in address order, against the final states:
+            // each block replayed from its leader's, in leader order.
+            let mut reached = vec![false; span.end - span.start];
+            for (offset, state) in states.into_iter().enumerate() {
                 let Some(mut state) = state else { continue };
                 let pc = span.start + offset;
                 if let Some(&(expected, got)) = self.mismatches.get(&pc) {
                     self.errors
                         .push(ValidationError::StackDepthMismatch { pc, expected, got });
                 }
-                self.transfer(pc, &program.code[pc], &mut state);
+                run_block(
+                    program,
+                    &span,
+                    &leaders,
+                    pc,
+                    &mut state,
+                    &mut self,
+                    &mut reached,
+                );
             }
             self.mismatches.clear();
         }
@@ -2165,6 +2282,22 @@ mod tests {
                 .run(&p, 10_000)
                 .is_err(),
             "the machine's `ret` guard catches the same frame late"
+        );
+    }
+
+    /// `@main`'s base is the bottom of the stack only when nothing calls it.
+    /// Reached by a `call`, it has a caller below it like any other function,
+    /// and an over-pop takes that caller's value rather than underflowing.
+    #[test]
+    fn a_called_entry_point_pops_below_its_frame_base() {
+        let p = sst_module(
+            "fn @main() {\n  lanes::lanes.pop\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 0, main\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::PopBelowFrameBase { pc: 1 }]
         );
     }
 

@@ -22,8 +22,9 @@
 //! stay lanes instructions while still behaving like stack pushes.
 //!
 //! [`super::validate::simulate_stack`] is the static half of this: it models
-//! the same pops *and the same pushes*, so a program it accepts runs without
-//! underflowing. The ops the device does not interpret hold up their end by
+//! the same pops *and the same pushes*, so a program it accepts does not
+//! underflow on any path it checks — which is every path except those past a
+//! `call_indirect`, whose arity only the run knows. The ops the device does not interpret hold up their end by
 //! pushing [`Value::Undefined`] placeholders — the depth the simulator
 //! predicts, with a value nothing can mistake for a result.
 
@@ -110,6 +111,17 @@ pub struct Run {
     pub steps: u64,
 }
 
+/// The frame `@main` runs in: based at the bottom of the stack, returning
+/// nowhere.
+fn entry_frame() -> Frame {
+    Frame {
+        base: 0,
+        span: (0, 0, 0),
+        function: None,
+        ret_pc: 0,
+    }
+}
+
 impl LanesMachine {
     /// A machine ready to run, with the entry frame already pushed.
     ///
@@ -119,12 +131,7 @@ impl LanesMachine {
     /// entered without one, so the machine establishes it.
     pub fn new() -> Self {
         let mut machine = Self::default();
-        machine.cpu.push_frame(Frame {
-            base: 0,
-            span: (0, 0, 0),
-            function: None,
-            ret_pc: 0,
-        });
+        machine.cpu.push_frame(entry_frame());
         machine
     }
 
@@ -277,13 +284,13 @@ impl LanesMachine {
     ///
     /// Pushes the entry point's arguments, checked against its declared
     /// parameters, and returns the address to start at.
+    ///
+    /// Every run starts from a reset CPU holding only the entry frame, so the
+    /// arguments land at locals `0..n` however the machine was last left: a
+    /// halt mid-callee leaves frames and operands behind, and a `ret` from
+    /// `@main` pops the entry frame outright.
     fn enter(&mut self, program: &Program, args: &[Value]) -> eyre::Result<usize> {
-        let index = program
-            .main_function
-            .ok_or_else(|| eyre::eyre!("program declares no entry point"))?;
-        let function = program.functions.get(index as usize).ok_or_else(|| {
-            eyre::eyre!("entry point names function {index}, which the table does not have")
-        })?;
+        let function = super::program::entry_function(program)?;
 
         let params = &function.signature.params;
         if args.len() != params.len() {
@@ -302,6 +309,8 @@ impl LanesMachine {
                 );
             }
         }
+        vihaco::Reset::reset(&mut self.cpu);
+        self.cpu.push_frame(entry_frame());
         for arg in args {
             self.cpu.stack_push(*arg);
         }
@@ -1586,6 +1595,40 @@ mod tests {
             error.to_string().contains("entry argument 0 is I64"),
             "got: {error}"
         );
+    }
+
+    /// A machine can be run again, and every run starts from the entry frame
+    /// alone. Otherwise the arguments land above whatever the last run left:
+    /// an `i64` still on the stack after `halt`, which `load u32, 0` would read
+    /// instead of the argument, or no entry frame at all after `ret`.
+    #[test]
+    fn a_reused_machine_places_entry_arguments_afresh() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let leaves_a_value = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(9))),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        )
+        .unwrap();
+        let pops_the_entry_frame = from_code(
+            Version::new(1, 0),
+            vec![MachineInstruction::Cpu(C::Return(0))],
+        )
+        .unwrap();
+
+        for first in [&leaves_a_value, &pops_the_entry_frame] {
+            let mut m = machine();
+            m.run(first, 100).expect("the first program should run");
+            let run = m
+                .run_with_args(&parameterised_main(), &[Value::U32(0)], 100)
+                .expect("the second program should run");
+            assert_eq!(run.stopped, Stopped::Halted);
+        }
     }
 
     /// `ret` at top level ends the program, which needs the entry frame:
