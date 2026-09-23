@@ -7,6 +7,21 @@ an interface-first redesign of the crate's public surface.
 **Status:** inventory only. No API is proposed here; no code was changed. The
 redesign is the next artifact, authored after this is reviewed.
 
+> **Re-verified 2026-09-23 against `main`**
+> ([critique §5](2026-08-20-search-redesign-critique.md#5-re-verification-against-main-2026-09-23)).
+> Citations below are as of `b823c308`. Corrections:
+> - `EntropyScorer` has **zero callers anywhere**, including PyO3. `PyEntropyScorer`
+>   wraps `compute_moveset_metrics`.
+> - `run_search` has **two production callers**: `run_frontier` and RecedingHorizon's
+>   IDS fallback.
+> - `ExhaustiveGenerator` is still built only in tests; #1000 changed its constructor
+>   to `for_solve(&SearchContext, SeedPolicy, Option<AodCapacity>)`.
+> - New public surface since then: `Termination`, `SolveResult::{proven, termination}`,
+>   `AodCapacity` (on `SearchContext` and `SolveOptions`), `bound_terminates`,
+>   `GroupKey`, `SeedPolicy` and `ExhaustivePrecondition`.
+>
+> No trait signature changed.
+
 > **Citation convention.** Unless a path is given in full, every `file:line`
 > below is relative to `crates/bloqade-lanes-search/src/`. Citations into the
 > PyO3 crate are written `bloqade-lanes-bytecode-python/src/…`; into the CLI

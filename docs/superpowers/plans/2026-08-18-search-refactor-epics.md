@@ -1,254 +1,333 @@
 # Search-crate refactor — epic breakdown
 
-**Date:** 2026-08-18
+**Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
 **Status:** DRAFT / not started. Planning artifact.
 **Pairs with:**
-[`specs/2026-08-18-search-trait-redesign-design.md`](../specs/2026-08-18-search-trait-redesign-design.md)
-(target design + sequencing §10 + safety-net gaps §9) and
-[`specs/2026-08-18-search-trait-inventory.md`](../specs/2026-08-18-search-trait-inventory.md)
-(current-state evidence). Read those for the *what*; this is the *how, in what order*.
+- [`specs/2026-08-18-search-trait-redesign-design.md`](../specs/2026-08-18-search-trait-redesign-design.md):
+  the target trait design. Now **partially superseded**; see its §0.
+- [`specs/2026-08-20-search-redesign-critique.md`](../specs/2026-08-20-search-redesign-critique.md):
+  the independent critique, plus the 2026-09-23 re-verification against `main`, with
+  current file:line locations.
+- [`specs/2026-08-18-search-trait-inventory.md`](../specs/2026-08-18-search-trait-inventory.md):
+  current-state evidence as of `b823c308`.
 
-Overall size (independent review): **L–XL, ~8–16 person-weeks, bimodal** — a cheap,
-compiler-guarded core and an expensive, weakly-guarded behavioural tail. These
-epics sequence that so the safe work lands first behind a test net, and the risky
-work lands last with the net in place.
+## What changed in this revision
 
-**Structuring principle — two phases per epic, not a separate behavioural epic.**
-Each epic does its **structural** work first (interface reshape, *zero behaviour
-drift*, verified against benchmarks + the Epic-1 golden and landed as its own
-commit/PR), then — only after that checkpoint is green — the **behavioural payoff**
-the new structure enables, as a *separately-gated* sub-phase (new tests first, then
-land, then regenerate baselines under review). This folds the behavioural work into
-the epic that provides its enabling interface, while preserving the one thing that
-justified isolating it: the **zero-drift diagnostic** survives as a checkpoint
-*inside* each epic rather than a wall between epics. The discipline that keeps it
-honest: **Phase A and Phase B are distinct commits/PRs with the zero-drift
-verification between them** — never blur them, or "any drift = bug" is lost.
+The August plan was organised around the trait redesign: a new `SearchCore` substrate,
+a push-time `best_reached` fold, a resumable `TargetSolver` trait with `RouteOutcome`,
+a capability-trait split and the placement lift. Three things have since changed it:
+
+1. **The critique deflated the new machinery.** `best_reached` becomes a lazy
+   failure-path scan over the `SearchResult.graph` the engines already return;
+   `MeasurableGoal` and the dyn tier are dropped; and two of the sketched engine
+   signatures do not fit the real drivers.
+2. **Binding-first.** Once the new machinery is gone, most of "the API problem" is on the
+   Python side: string status labels, dict-shaped stats and struct-literal construction.
+   A rebuilt, typed PyO3 layer fixes that. The behavioural payoffs need only targeted
+   Rust changes, not the trait overhaul.
+3. **The direction moved to placement.** The branch-and-bound driver was abandoned on
+   2026-09-07 (PR #1004 closed); the guidance is that better results will come from a
+   better placement algorithm. The candidate-ranking measurement (`aae13ab9` on
+   `phil/class-completion-bound`) found that the choice of target dwarfs every search
+   change measured, and that ranking candidates by a cheap Push-and-Rotate plan captures
+   52–94% of the available win. That becomes **Epic 4**.
+
+The placement lift (§7 of the design) leaves the critical path; it only concerns the
+loose-goal path, which the candidate-ranking work does not need.
+
+---
+
+## The boundary rule (every epic enforces it)
+
+> **Core types never grow fields, string labels or shapes for Python's benefit.** The
+> PyO3 layer owns its own DTOs and all conversion. Core exposes domain facts through
+> constructors and accessors; the bindings never build core structs with struct
+> literals.
+
+This is what the August trait redesign was trying to enforce structurally. Binding-first
+enforces it by convention and review, plus the thin adapter from Epic 3. Recent code
+shows the pattern it is meant to stop:
+- `BoundStats.bound_enabled` exists only to drive Python's empty-dict behaviour.
+- `bound_terminates`, an A/B measurement knob, is threaded through core, PyO3 and the
+  Python dataclass.
+- PyO3 builds `SearchContext` with a struct literal, so adding `capacity` broke the
+  bindings.
+
+## Structuring principle: Phase A, checkpoint, Phase B
+
+Each epic does its **structural** work first. That work is zero-drift, is verified
+against the benchmarks and the Epic-1 golden, and lands as its own commit/PR. Only after
+that checkpoint does its **behavioural** payoff land, as a separately gated Phase B:
+new tests first, then land, then regenerate baselines under review. Phase A and Phase B
+are always distinct commits/PRs, with zero drift verified between them. Otherwise the
+"any drift = bug" signal is lost.
+
+---
+
+## Epic 0 — Close the benchmark gate gap (quick win)
+
+**Goal.** Put Push-and-Rotate and cascade under the zero-diff CI gate now, before any
+code moves. Today they appear in neither baseline and are guarded only by unit tests
+(design §9).
+
+**Scope.**
+- Add rows to the registry (`python/benchmarks/harness/matrix.py`). At minimum:
+  `rust_push_rotate`, `rust_cascade`, and one fallback row (`astar` with
+  `fallback_push_rotate=True`).
+- Regenerate both baselines. **Only new rows may appear; every existing row must be
+  byte-identical** in the deterministic columns.
+
+**Acceptance.** New rows are present and deterministic across two runs; existing rows
+show zero diff; `success` is recorded for the new rows. Some large-case failures are
+expected and pinned.
+
+**Dependencies:** none. It strengthens Epic 1 but doesn't replace it: the CSV can't see
+plan identity, resume semantics or proof provenance.
 
 ---
 
 ## Epic 1 — Behaviour test net with a decoupled interface layer
 
-**Goal.** Before any code moves, build a Rust suite that detects *any* behaviour
-change in `bloqade-lanes-search`, structured so it survives the API churn of
-Epics 2–3 with a **single point of failure** for diagnosis.
+Unchanged in substance from the August plan.
 
-**Why first.** It is the safety net Epics 2–3 lean on, and it fills the gap the
-review flagged: the benchmark zero-diff gate covers only the frontier + entropy
-strategies — **push-and-rotate and cascade are in neither baseline** (design §9),
-so today they ride on ~15 unit tests. Epic 1 closes that.
+**Goal.** A Rust suite that detects *any* behaviour change in `bloqade-lanes-search`,
+with a **single point of failure** when the API changes.
 
 **Architecture (three layers, strictly separated):**
+1. **Cases: pure data, no crate types.**
+   - Each case is `{ name, input: ProblemSpec, expected: Outcome, tags }`, using
+     test-domain types.
+   - `Outcome` carries `status`, `move_layer_count`, `cost`, `nodes_expanded`,
+     `deadlocks`, `final_placement`, a `plan_digest` (a stable hash of the move sequence),
+     the proof/termination verdict, and `bound_stats` for bounded runs.
+2. **Interface layer: the only importer of the crate API.**
+   - `fn run(spec: &ProblemSpec) -> Outcome`. The module doc states: *"API changed? Fix
+     THIS module, not the cases. A compile/map failure means re-map here; an assertion
+     failure means a behaviour regression."*
+   - It binds through the **outer solver surface** (`TargetSolver`, the `CzPlacement`
+     implementations), so Epic 2's demotions can't break it.
+3. **Runner.** Semantic cases use hand-verified expectations; characterization cases
+   compare against goldens.
 
-1. **Cases — pure data, no crate types.** Each case = `{ name, input: ProblemSpec,
-   expected: Outcome, tags }`, where `ProblemSpec` / `Outcome` are **test-domain**
-   types defined in the test crate, not `bloqade_lanes_search` types.
-   - `ProblemSpec`: arch fixture, initial placement, target / CZ-pairs, blocked,
-     strategy + option knobs, budget, seed.
-   - `Outcome` (the behaviour signal): `status`, `move_layer_count`, `cost`,
-     `nodes_expanded`, `deadlocks`, `final_placement`, a **`plan_digest`** (stable
-     hash of the move sequence, so plan changes are caught, not just metrics), and
-     `bound_stats` for bounded runs.
-2. **Interface layer — the single point of failure.** One module, the *only* place
-   that imports the crate API: `fn run(spec: &ProblemSpec) -> Outcome`. It builds
-   the crate types (`SearchEngine`, `MoveSearch`, `SolveOptions`, goals, …), calls
-   the API, and maps the result into `Outcome`. **Module doc states the contract:**
-   *"This module is the sole binding between the behaviour cases and the
-   bloqade-lanes-search API. If a crate-level interface changes, fix THIS module —
-   do not edit case data. A failing compile/map = an API change to re-map here; a
-   failing assertion = a behaviour regression to investigate in the crate change."*
-   Bind through the **outer solver surface** (`TargetSolver` / the `CzPlacement`
-   peers), not the inner `run_search`/`entropy_search_*` entry points — Epic 2's
-   step 1 demotes those to `pub(crate)`, and the net must survive that untouched.
-3. **Runner.** Iterates cases, calls the interface, asserts `Outcome == expected`
-   (semantic cases) or golden-compares (characterization cases).
+**Coverage (must-haves):**
+- **Strategies:** every one, including push-rotate and cascade.
+- **Placement paths:**
+  - fixed-target;
+  - loose-goal, including the two-leg accidental-CZ cleanup path;
+  - `NoHome`;
+  - RecedingHorizon;
+  - single-heuristic with multiple candidates.
+- **Fallback and mirroring:**
+  - the fallback, including proof promotion (`fallback.proven`) and the lost search
+    counters;
+  - mirror success and mirror failure (`backwards_search`).
+- **Bounds and edge cases:**
+  - bounded vs unbounded, including the root-certificate stop (`bound_terminates`);
+  - unsolvable, already-at-goal, blocked destination, malformed target;
+  - partial targets: the known push-rotate panic corner (inventory audit F1).
+- **Anticipatory goldens**, recording current behaviour, for each later Phase B:
+  - the §5 bounded-cascade memory;
+  - P&R resume vs restart;
+  - **candidate-order dependence of `solve_single_heuristic`**, which returns on the
+    first solved candidate, so Epic 4 will change it.
 
-**Two kinds of case:**
-- **Semantic** — hand-verified expected outcomes (e.g. "1 atom site 0→5 ⇒ solved,
-  1 move, cost 1.0"). Robust to internal change; assert correctness.
-- **Characterization / golden** — record current outputs (esp. `plan_digest`,
-  `nodes_expanded`) to trip on *any* drift. The fine-grained refactor tripwire.
+**Where it lives.** `crates/bloqade-lanes-search/tests/`, run by `just test-rust`.
 
-**Coverage (must-haves, driven by the §9 gaps):**
-- Every strategy incl. **push-rotate and cascade** (the un-gated gap), plus
-  astar / bfs / dfs / ids / greedy / entropy{1,5,10,20} / entropy-bounded.
-- Fixed-target (`TargetSolver`), loose-goal (`LooseGoal` / `NoHome` /
-  `RecedingHorizon`), single-heuristic multi-candidate.
-- Fallback / resume path (`fallback_push_rotate`) and mirroring
-  (`backwards_search`).
-- Bounded vs unbounded; edge cases (unsolvable, already-at-goal, blocked dest,
-  malformed target).
-- Deterministic (seed-fixed) so drift = real change.
-- **Anticipate the Phase-B behavioural changes.** Author the cases that will
-  characterize the later behavioural payoffs — bounded-frontier pruning (§5),
-  P&R-resume vs restart (§6), the loose-goal placement path (§7) — up front,
-  capturing *current* behaviour as their golden. Each behavioural sub-phase then
-  updates *only those specific goldens* under review, so the change is visible as a
-  small, intentional golden diff rather than hiding among refactor noise.
+**Acceptance.** The interface layer is a single documented module; cases are data-only;
+the coverage above is met; the suite is deterministic in CI; the golden baseline is
+captured.
 
-**Where it lives.** `crates/bloqade-lanes-search/tests/` (Rust integration), run by
-`just test-rust`. Complements the Python benchmark harness: Rust-level, per-case,
-covers *all* strategies (incl. un-gated), and captures the actual plan — a finer,
-faster signal than the 6-column CSV.
-
-**Deliverables:** the three-layer harness; the case corpus above; recorded golden
-baseline for characterization cases; the interface-layer contract doc.
-
-**Acceptance:** interface layer is a single documented module; cases are data-only;
-coverage includes P&R + cascade + loose-goal + fallback + mirror + bounded; runs
-deterministically in CI; golden baseline captured for Epics 2–3 to diff against.
-
-**Dependencies:** none. Blocks Epics 2 and 3.
+**Dependencies:** none; it can run in parallel with Epic 0. It blocks Epics 2–4.
 
 ---
 
-## Epic 2 — Internal refactor, Python-boundary API preserved
+## Epic 2 — Targeted Rust changes (shrunk)
 
-**Goal.** Reshape the crate internals (and its *Rust* public surface) to the target
-design **without changing the Python-facing PyO3 surface or any behaviour.** The
-PyO3 adapter absorbs Rust-side renames so Python sees nothing.
+**Goal.** Remove dead and misplaced surface, and land the two behavioural payoffs, with
+targeted edits rather than a trait overhaul. The Python-facing PyO3 surface stays
+unchanged throughout this epic.
 
-**Scope (design §10 steps 1–5, + 9):** all *behaviour-preserving* work.
-- **Step 1 — dead-code + re-export hygiene.** Delete `MaxHopHeuristic` /
-  `SumHopHeuristic`; relocate `tests/public_bound_api.rs` to in-crate access so
-  `run_search` / `entropy_search_*` / `MaxBound` / `WeightedDuration` can be
-  demoted. (Rust-API change only; not Python-facing.)
-- **Step 2 — trait renames + capability split**, keeping the **runtime**
-  `match goal.exact_targets()` bound gate (defer the compile-time `PointGoal`
-  enforcement — see design §3 caveat). Add `MeasurableGoal` impls (unused yet).
-- **Step 3 — `SearchCore` extraction + scope `Frontier`** as pure code-motion.
-- **Step 4 — `best_reached` as an additive, opt-in `SearchResult` field.**
-- **Step 5 — `RouteOutcome` / resumable `TargetSolver` as an *internal* type**:
-  `route()` returns best-partial, but `extract()` still maps back to today's
-  `SolveResult` and the PyO3 surface is unchanged (isolates the DTO reshape from
-  the ABI — the reshape *ships* in Epic 3).
-- **Step 9 (optional) — two-tier `DynBound`.** Consumer-less; may be dropped from
-  scope.
+### Phase 2A — structural, zero-drift
 
-The above is **Phase 2A — structural, zero-drift.** Regression tracking: benchmarks
-(**zero diff**) **and** the Epic-1 suite (**zero golden drift**). Because every step
-is a pure refactor, *any* drift in either is a refactor bug, not an expected change.
-The Epic-1 interface layer stays pointed at the current API shape (its `Outcome`
-mapping barely changes since `SolveResult` is preserved). **Land 2A as its own
-commit/PR and verify the checkpoint before starting 2B.**
+- **Dead-code hygiene.** Current caller counts are in critique §5.
+  - Delete `MaxHopHeuristic`, `SumHopHeuristic` and `EntropyScorer`, all with zero
+    callers.
+  - Collapse the `entropy_search` → `_with_objective` → `_with_bound` delegation chain:
+    the head is bench-only and each link has one caller.
+  - Relocate `tests/public_bound_api.rs` to in-crate access, so `MaxBound`,
+    `WeightedDuration`, `as_heuristic` and the chain can be demoted to `pub(crate)` or
+    deleted.
+  - Decide on the dangling `SearchEngine::exhaustive_preconditions()` and
+    `ConfigError::UnsupportedArchitecture`: wire them up or delete them.
+- **`proven` becomes a method** derived from `termination`, not a stored copy. The PyO3
+  getter keeps its output.
+- **Constructors for what PyO3 builds today with struct literals**, starting with
+  `SearchContext`. This is groundwork for the boundary rule; PyO3 output is unchanged.
+- **Move Python-facing fields out of core, output identical.**
+  - `BoundStats.bound_enabled` moves into the adapter.
+  - The `entropy_trace` tuple shape is produced by the adapter from domain values.
+- **Lazy best-partial helper, additive and unused.**
+  - `best_partial(&SearchResult, target) -> Option<NodeId>` returns the node with the
+    fewest unresolved atoms over `result.graph`, tie-broken by `(unresolved, g, NodeId)`.
+  - It is *not* keyed on `WeightedDistanceBound`, which can be 0 when the goal isn't met.
+  - It is only defined for point goals.
 
-**Phase 2B — behavioural payoff (the parts that move outputs), gated separately:**
-- **§5 — wire `CompletionBound` into the frontier** (push-time `g + h` prune) — the
-  memory/perf win the `SearchCore` + bound plumbing from 2A enables. **Moves gated
-  baselines** (`nodes_explored`, possibly which optimal-cost plan is returned on
-  astar/ids/cascade) → new bound-behaviour tests, then regenerate + inspect both
-  baselines, confirm `success` unchanged.
-- **§6 — P&R-resume behaviour** (fallback resumes from `best_reached` instead of
-  restarting; later top-k / race). Enabled by 2A's `best_reached` + internal
-  `RouteOutcome`. **Un-gated by benchmarks** (P&R/cascade absent) → relies entirely
-  on the Epic-1 P&R + resume cases; write/settle those first.
+**Acceptance (2A).** Benchmarks show zero diff; the Epic-1 golden shows zero drift; the
+PyO3 Python-facing surface diff is empty; clippy is clean.
 
-**Acceptance.** *2A:* `cargo build` green; PyO3 Python-facing surface diff = none;
-benchmarks zero-diff; Epic-1 golden zero-drift. *2B:* new behavioural tests green;
-only the anticipated §5/§6 goldens change, reviewed; baselines regenerated with
-`success` unchanged; PyO3 surface still unchanged.
+### Phase 2B — behavioural payoffs, each gated separately
 
-**Dependencies:** Epic 1 (2B additionally needs the §5/§6 cases authored in Epic 1).
+1. **P&R resumes from the best partial** inside `solve_with_engine`'s fallback branch
+   (`target_solver.rs:328`).
+   - Pass `best_partial`'s config as P&R's `initial`, concatenate the layers and replay
+     the *whole* chain.
+   - Keep the search's counters on the returned result.
+   - **The mirror path never resumes.** A failed mirror yields a suffix, not a prefix
+     (critique F2), so it keeps today's restart behaviour.
+   - The proof policy is an open decision (below).
+   - Tests: resume vs restart, and chained-plan replay, *before* landing.
+2. **Frontier bound gate, scoped per critique F7.** This is a push-time `g + h ≥ C` prune
+   in the cascade refinement, which is the fixed-target memory fix, plus the `h = ∞`
+   infeasibility cut.
+   - Loose-goal solves are unaffected: set-valued goals are never bounded.
+   - Expect `nodes_explored` to shift on cascade, and possibly on astar/ids through the
+     infeasibility cut. Regenerate and inspect both baselines; `success` must be
+     unchanged.
 
----
-
-## Epic 3 — Public API refactor + Python-binding migration
-
-**Goal.** Change the **Python-facing** interfaces to the target shape and migrate
-the bindings + Python layer.
-
-**Scope:**
-- Ship the `SolveResult` → `RouteOutcome` reshape *at the boundary*; replace the
-  transport-only coupling (the `status.as_label()` string ABI, the `bound_stats` /
-  `attempts` `PyDict` shapes) with the new surface, or preserve equivalents
-  deliberately.
-- Expose the new `TargetSolver` (resumable) / placement (`StagePlacement`) surface
-  to Python; migrate `crates/bloqade-lanes-bytecode-python/src/*` and
-  `python/bloqade/lanes/heuristics/physical/*`.
-- Any remaining public-API changes that actually reach Python.
-
-**This is where the Epic-1 decoupling pays off.** When the crate API changes, you
-update **only the Epic-1 interface layer** to the new API; the case data and
-expected `Outcome`s stay fixed. If the golden outcomes still match, behaviour was
-preserved *across* the API change — a single, well-lit migration point, exactly as
-designed.
-
-The scope above is **Phase 3A — structural, behaviour-preserving** (API/ABI reshape
-+ Python migration). Regression tracking: the Epic-1 suite (interface layer
-re-pointed, cases and goldens unchanged) + Python integration tests (the ABI is
-**not** Rust-gated, so this is the only automated check on the string/dict → typed
-reshape) + benchmarks (zero-diff). Land and verify it before 3B.
-
-**Phase 3B — behavioural payoff, gated separately:**
-- **§7 — placement lift** (lift `cz_pairs` / `CzCoordination` and loose-goal target
-  assignment *up* out of the routing generators, so the generator is goal-agnostic
-  and `SearchContext.cz_pairs` disappears). This reshapes the generator/placement
-  interface **and** changes candidate scoring/selection on the loose-goal path, so
-  it **moves the logical baseline** — the highest behaviour risk in the whole
-  refactor. Do it last, on top of the stable 3A interfaces; new/updated loose-goal
-  cases first; budget several baseline regen/inspect cycles.
-
-**Acceptance.** *3A:* Python layer migrated + green; Epic-1 interface layer updated
-to the new API with cases/goldens unchanged (or intentionally-updated under review);
-benchmarks zero-diff. *3B:* loose-goal behavioural cases green; only the anticipated
-§7 goldens change, reviewed; logical baseline regenerated with `success` unchanged.
-
-**Dependencies:** Epics 1 and 2.
+**Dependencies:** Epics 0 and 1 (2B needs the anticipatory goldens).
 
 ---
 
-## Behavioural payoffs — folded into each epic as Phase B (not a separate epic)
+## Epic 3 — Typed PyO3 adapter + Python migration (the main epic)
 
-The design's baseline-moving work is **not** a parallel "Epic 4"; each payoff lives
-as the **Phase B** of the epic that provides its enabling interface, so it lands on
-stable, already-verified structure:
+**Goal.** Rebuild `crates/bloqade-lanes-bytecode-python/src/search_python.rs` as a thin
+typed adapter under the boundary rule, and migrate `python/bloqade/lanes/heuristics/physical/*`.
 
-- **§5 — frontier bound-wiring** → **Phase 2B** (needs 2A's `SearchCore` + bound
-  plumbing). Moves gated baselines.
-- **§6 — P&R-resume behaviour** → **Phase 2B** (needs 2A's `best_reached` + internal
-  `RouteOutcome`). Un-gated → relies on Epic-1's P&R/resume cases.
-- **§7 — placement lift** → **Phase 3B** (needs 3A's stable interfaces). Moves the
-  logical baseline; highest risk; last.
+### Phase 3A — structural, behaviour-preserving
 
-The isolation that a separate epic gave is preserved by the **Phase A → checkpoint →
-Phase B** discipline (each phase a distinct commit/PR; zero-drift verified between):
-the refactor still gets its "any drift = bug" signal, and each behavioural change
-shows up as a small, intentional golden/baseline diff rather than hiding in refactor
-noise.
+- **A typed status enum replaces the string ABI.**
+  - The four Python comparison sites to migrate: `movement.py:454`,
+    `move_synthesis.py:47`, `_no_return_base.py:290`, `policy_movement.py:75`.
+  - The `as_label` sites in `search_python.rs` go away.
+- **Distinct proof outcomes.** "Plan proven optimal" and "proven that no plan exists"
+  become separate typed outcomes.
+  - This fixes `rust_proven_total` counting both, and the `"exhausted_proof"` docstring
+    that calls it "optimal".
+  - `MultiSolveResult` exposes proof and termination, which it lacks today.
+- **Typed `BoundStats` and `attempts`** instead of `PyDict` / lists of dicts.
+- **Options through constructors only.** Decide deliberately whether Python should see:
+  - `aod_capacity`, which is core-only today and hard-coded to `None` in PyO3;
+  - `bound_terminates`, which is documented as an A/B knob.
+- **Typed exceptions** per `ConfigError` variant, instead of `ValueError(to_string())`.
+- **Expose the "pick a target, then route" pieces Epic 4 needs:**
+  - multi-candidate solve with per-candidate attempts;
+  - a Push-and-Rotate solve per candidate;
+  - the P&R plan cost.
+
+**Regression tracking.** The Epic-1 suite, with its interface layer re-pointed and
+cases/goldens unchanged. Also the Python integration tests, the only automated check on
+the string/dict-to-typed change. Benchmarks must show zero diff.
+
+There is no Phase 3B: the placement lift moved to Epic 5.
+
+**Dependencies:** Epics 1 and 2A. It can run alongside 2B.
 
 ---
 
-## Ordering & dependencies
+## Epic 4 — Candidate-ranking exploration (placement is the lever)
+
+**Goal.** Find out whether, and how, choosing among candidate target placements with a
+cheap upper-bound router improves real compilations. If it does, build it into the
+placement layer.
+
+**Starting evidence.** `examples/candidate_ranking.rs` at `aae13ab9` on
+`phil/class-completion-bound` (unmerged). It used 8 candidates per start, from
+equal-length random walks.
+- The mean candidate is 30–45% worse than the best.
+- At logical k=16 the mean is more than 2× the best.
+- Picking the P&R-cheapest candidate captures 52–94% of the available win.
+- P&R costs about 0.6 ms per solve, against about 57 ms for entropy.
+
+**Phases.**
+1. **Re-measure with real candidate sets (go/no-go).**
+   - The random-walk candidates may overstate the spread. Rerun against the Python
+     generators (`CongestionAwareTargetGenerator`, `AODClusterTargetGenerator`,
+     `LookaheadCongestionAwareTargetGenerator` in
+     `python/bloqade/lanes/heuristics/physical/target_generator.py`).
+   - Decide on regret and captured win, not rank correlation.
+   - Needs no other epic; it can start now.
+2. **Remove the two blockers.**
+   - `RustPlacementTraversal.target_generator` defaults to `None`, which makes
+     `DefaultTargetGenerator` emit exactly **one** candidate, so the default pipeline has
+     nothing to rank.
+   - `solve_single_heuristic` returns on the **first** solved candidate
+     (`placement/single_heuristic.rs:177`), so candidate order alone decides the output.
+3. **A ranking policy in the placement layer.** Route each candidate with P&R (an upper
+   bound), pick the cheapest, then route the winner with search. Optional extensions:
+   - **Seed incumbent:** use the P&R plan as the search's starting incumbent.
+   - **Lower-bound pruning over the candidate list:** discard any candidate whose class
+     lower bound (also on `phil/class-completion-bound`) exceeds the best upper bound
+     found.
+
+**Behavioural by design.** This moves the `pipeline_default` benchmark row, which is
+that row's purpose. Update the candidate-order goldens from Epic 1 under review.
+
+**Dependencies.** Phase 1: none. Phases 2–3: Epic 1, and Epic 3A if the policy is
+driven from Python. It follows Epic 2A and runs alongside Epic 3.
+
+---
+
+## Epic 5 — Placement lift for the loose-goal path (optional, deferred)
+
+The design's §7 is softened per critique F6. Pair coordination (`cz_pairs`,
+`CzCoordination`, loose-goal target assignment) is lifted out of `HeuristicGenerator`.
+Spectator handling (accidental-CZ detection, escape moves) stays unless separately
+justified. RecedingHorizon keeps reaching into the search engines directly (critique F5).
+
+**Trigger:** the loose-goal path next needs real work. This epic moves the logical
+baseline and carries the highest behaviour risk; budget several regenerate-and-inspect
+cycles.
+
+---
+
+## Parked
+
+- **Stable Rust extension surface for a private downstream crate** (discussed
+  2026-09-23). A private crate that implements this crate's traits would be the first
+  real Rust-level consumer. That would bring back the trait renames and the capability
+  split (design §3) as stability work rather than cleanup. Revisit after Epic 2A, once
+  the surface has been pruned. Direction discussed so far:
+  - a curated stable surface, with everything else behind an `unstable` feature;
+  - `#[non_exhaustive]` plus constructors;
+  - `cargo-semver-checks`;
+  - PyO3 built against the stable surface only.
+- **Dropped:** the dyn-dispatch tier (`DynBound`/`ErasedBound`), `MeasurableGoal`, the
+  push-time `best_reached` fold, a public `RouteOutcome` / `TargetSolver` trait, and the
+  `SearchCore` extraction.
+
+## Ordering
 
 ```
-Epic 1 (test net)
-   │  (must include the un-gated P&R + cascade + loose-goal + resume cases)
-   ▼
-Epic 2 : 2A internal refactor (API frozen, zero-drift) ─▶ ✔checkpoint─▶ 2B §5 bound-wiring + §6 P&R-resume
-   ▼
-Epic 3 : 3A public API + Python migration (zero-drift) ─▶ ✔checkpoint─▶ 3B §7 placement lift
+Epic 0 (gate rows) ─┐
+Epic 1 (test net) ──┴─▶ Epic 2A ─▶ ✔ ─▶ Epic 2B (P&R resume; cascade bound gate)
+                            │
+                            ├─▶ Epic 3A (typed adapter + Python migration)
+                            │
+                            └─▶ Epic 4 phases 2–3 (candidate ranking)
+Epic 4 phase 1 (re-measure) — any time
+Epic 5 (placement lift) — deferred, on demand
 ```
-
-- **Epic 1 blocks everything** — the net must exist first, and must include the
-  currently-un-gated P&R + cascade + loose-goal + resume cases *and* the anticipatory
-  §5/§6/§7 goldens.
-- **Phase A of each epic is the low-risk bulk** — guarded twice (benchmarks +
-  Epic-1 golden), zero intended drift, landed and verified before Phase B.
-- **Phase B is the only intentionally-behaviour-changing work** — separate commit,
-  new tests first, baselines regenerated under review.
-- **Epic 3's Phase A exercises the interface-layer seam** — the one place that
-  changes when the crate API changes.
 
 ## Open decisions
 
-1. **Are the Phase-B payoffs in scope now, or deferred?** Phase A of each epic (the
-   structural refactor) is the committed backbone; the Phase-B payoffs (§5/§6/§7) are
-   separable and can be deferred until the A-phases land, unless the memory win (§5)
-   or P&R-resume is a near-term priority. (Deferring = stop each epic at its
-   checkpoint.)
-2. **Golden format for Epic 1** — inline expected `Outcome`s in the case files, or
-   a committed golden file (like the benchmark CSVs)? Inline is more legible;
-   a file is easier to regenerate wholesale.
-3. **Does the Epic-1 suite capture at the `SolveResult` level, the `TargetSolver`
-   level, or both?** Capturing at the level Epic 2 preserves (`SolveResult`) gives
-   the cleanest zero-drift signal; capturing lower catches more but churns more.
+1. **P&R-resume proof policy.** A resumed P&R `Unsolvable` is a proof about the partial
+   config, not the caller's `initial`. Either follow RecedingHorizon's
+   `merge_fallback`, which downgrades the proof after a committed prefix, or argue that it
+   carries over (invertible prefix plus an identical blocked set) and assert that
+   precondition.
+2. **Where candidate ranking lives:** a Rust placement type (a new `CzPlacement`
+   implementation, or an option on `SingleHeuristicCzPlacement`) or Python orchestration
+   over the Epic-3A surface.
+3. **Python exposure of `aod_capacity` and `bound_terminates`** (Epic 3A).
+4. **Golden format for Epic 1:** inline expected `Outcome`s or a committed golden file.
+5. **Epic 1 capture level:** `SolveResult`, `TargetSolver`, or both.

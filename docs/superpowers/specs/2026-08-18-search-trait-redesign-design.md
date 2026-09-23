@@ -11,6 +11,82 @@ no migration plan yet. Open questions are collected at the end.
 This note is the "target interfaces" half of the interface-first, incremental
 refactor. It does not yet say how to move implementations behind these seams.
 
+> **Status update (2026-09-23): PARTIALLY SUPERSEDED.** An independent critique
+> ([`2026-08-20-search-redesign-critique.md`](2026-08-20-search-redesign-critique.md))
+> found the layering sound but the middle of the design over-built. The plan then
+> moved to **binding-first**
+> ([`../plans/2026-08-18-search-refactor-epics.md`](../plans/2026-08-18-search-refactor-epics.md),
+> revised 2026-09-23). §0 lists what still stands and what doesn't. The body below is
+> kept as written, and its `file:line` citations are as of `b823c308`; current locations
+> are in critique §5.
+
+---
+
+## 0. Amendments (2026-09-23)
+
+**Still stands:**
+- The three-layer picture, with `Goal` as the seam between placement and routing.
+- No universal `Traversal` trait; each engine is a static specialization with its own
+  loop.
+- The §4 split between ordering and pruning.
+- The §5 cascade non-prune diagnosis (re-verified on current `main`).
+- The §8.2 finding that the P&R handoff is just a `Config`.
+
+**Amended or dropped, by section:**
+
+- **§1:** placements may reach past `TargetSolver` into the engines. RecedingHorizon
+  calls `run_search` directly, runs its own `beam_rollout`, and scans the returned graph
+  (critique F5).
+- **§2, best-reached: dropped.** The best partial is found by a **lazy scan on the
+  failure path** over the `SearchResult.graph` that both engines already return
+  (critique F1), the same way `extract_best_leaf` works.
+  - It is keyed on the unresolved-atom count, tie-broken by `(unresolved, g, NodeId)`.
+  - It is *not* keyed on `WeightedDistanceBound::estimate`, which can be 0 when the goal
+    isn't met (an atom on a blocked site contributes 0).
+  - No push-time fold, and no new plumbing in the entropy loop.
+- **§2, engine signatures:** `entropy_search` takes no `G: MoveGenerator`; entropy
+  generates its own moves from state held in its loop (critique F3). It needs
+  `O: LaneAdditive` rather than `CostModel`, because its loop calls `min_shot_cost()`
+  (critique F4). A `SearchCore` extraction is **no longer planned**.
+- **§2, two-tier dispatch:** the dyn fallback (`DynBound` / `ErasedBound`) is
+  **dropped**. It has no consumer, and `ErasedBound::TRIVIAL = false` would misreport
+  stats (critique F8).
+- **§3:** `MeasurableGoal` is **dropped**. `LaneAdditive` and `PointGoal` keep their
+  shape but become *optional* under binding-first. They may return if a private
+  downstream crate needs a stable trait surface (epics plan, "Parked"). If they do,
+  choose one target encoding: today's `exact_targets` is `&[(u32, u64)]`, not
+  `LocationAddr`.
+- **§5, scope narrowed (critique F7).** The `g + h ≥ C` prune only fires with an
+  incumbent, which means the cascade refinement; the `h = ∞` infeasibility cut is
+  separate. Set-valued goals are never bounded. The loose-goal path runs the *caller's*
+  strategy (default A*), so its memory blow-up applies only when cascade is selected.
+  This is Epic 2B, item 2.
+- **§6:** no public `RouteOutcome` or `TargetSolver` trait for now.
+  - **P&R resume** is a targeted change in the fallback branch of `solve_with_engine`
+    (Epic 2B, item 1).
+  - **The mirror path never resumes:** a failed mirror yields a suffix of the plan, not
+    a prefix (critique F2).
+  - **Proof transfer is an open decision.** RecedingHorizon's `merge_fallback` already
+    downgrades a fallback proof after a committed prefix.
+  - **Budget:** `max_expansions` is per restart, and a cascade can spend
+    (restarts + 1) × that.
+- **§7:** moved to the optional Epic 5 and softened (critique F6). Pair coordination
+  lifts out of `HeuristicGenerator`; spectator handling stays.
+- **§8.1:** resolved by the lazy scan. **§8.4:** moot while there is no public trait.
+  **§8.7:** `EntropyScorer` has zero callers, so delete it; `DistanceScorer` is the only
+  live scorer.
+- **§9:** Epic 0 closes the P&R/cascade gate gap by adding benchmark rows.
+- **§10:** superseded by the revised epics plan.
+
+**New since this note was written** (critique §5):
+- `Termination` and `SolveResult::{proven, termination}` were added. `proven` merges an
+  optimality proof with an unsolvability proof.
+- `AodCapacity` was added as public fields on `SearchContext` and `SolveOptions`.
+- `bound_terminates` was added.
+
+These feed Epic 2A (`proven` becomes a method, constructors) and Epic 3A (distinct typed
+proof outcomes).
+
 ---
 
 ## 1. The three layers
@@ -114,7 +190,7 @@ Static specialization is what the type-level constraints already force anyway:
 away because the loop is monomorphized. The **only** runtime-polymorphic seam is
 `TargetSolver` (§6) — one coarse dispatch per solve, never inside a hot loop.
 
-#### Best-reached — an optional field on `SearchResult` (feeds the resumable handoff, §6)
+#### Best-reached — an optional field on `SearchResult` (feeds the resumable handoff, §6) — *SUPERSEDED: lazy failure-path scan, see §0*
 
 `best_reached` is **result data, not a trait method**: an optional field on the
 driver's `SearchResult` (a `NodeId` in the result graph, exactly like `goal`),
@@ -181,7 +257,7 @@ There is deliberately **no** single `search<…, T: Traversal>(…)`. The engine
 share `SearchCore` and the Tier-1 traits; they do **not** share a loop body. They
 are unified only at the `TargetSolver` face (§6) — the one polymorphic boundary.
 
-### Two-tier dispatch — monomorphized fast path + a `dyn` fallback
+### Two-tier dispatch — monomorphized fast path + a `dyn` fallback — *dyn fallback DROPPED, see §0*
 
 Two requirements: (a) adding a new bound / objective / cost config should be
 cheap, and (b) experimental, non-enumerated configs should be possible without
@@ -239,7 +315,7 @@ accidentally pays the vtable cost.
 
 ---
 
-## 3. Capability sub-traits — keeping the base traits minimal
+## 3. Capability sub-traits — keeping the base traits minimal — *amended: `MeasurableGoal` dropped, split optional, see §0*
 
 Capabilities that only *some* consumers need drop out of the base traits into
 sub-traits the consumer requires. Two motivations so far:
@@ -317,7 +393,7 @@ one-way weakening from bound → heuristic.**
 
 ---
 
-## 5. Frontier vs branch-and-bound — and the cascade non-pruning finding
+## 5. Frontier vs branch-and-bound — and the cascade non-pruning finding — *amended: scope narrowed, see §0*
 
 Formally the two drivers are the **same abstract search**, differing only on two
 axes: (a) open-list discipline (materialized vs implicit/backtracking) and
@@ -348,7 +424,7 @@ consume it. Wiring it in is the single highest-leverage unification, and it is a
 
 ---
 
-## 6. Tier 2 — the `TargetSolver` contract (resumable / composable)
+## 6. Tier 2 — the `TargetSolver` contract (resumable / composable) — *not adopted as public API; resume is a targeted change, see §0*
 
 `TargetSolver` is the **outer routing-solver contract**, deliberately independent
 of the search-core traits. Both the search engine and push-and-rotate implement
@@ -423,7 +499,7 @@ a capability so a caller can ask "can you take a set goal?" at runtime?
 
 ---
 
-## 7. Tier 3 — the placement layer (`CzPlacement` / `StagePlacement`)
+## 7. Tier 3 — the placement layer (`CzPlacement` / `StagePlacement`) — *lift moved to optional Epic 5, softened, see §0*
 
 Placement sits *above* routing and is not modeled by the routing traits. Its job:
 turn a CZ-stage spec into a goal (+ guidance), orchestrate routing, pick best.
@@ -583,7 +659,7 @@ change:**
 - **Compiler-guarded (correctness only, no behaviour signal — fine):** trait
   renames, the capability split, dead-code removal.
 
-## 10. Implementation sequencing (independent review, 2026-08-18)
+## 10. Implementation sequencing (independent review, 2026-08-18) — *SUPERSEDED by the revised epics plan*
 
 Overall size (independent review): **L–XL, ~8–16 person-weeks, bimodal** — steps
 1–5 are the cheap, safe ~40% (compiler-guarded, zero baseline move); steps 6–8
