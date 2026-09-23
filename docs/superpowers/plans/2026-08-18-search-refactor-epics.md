@@ -124,11 +124,13 @@ are always distinct commits/PRs, with zero drift verified between them. Otherwis
   row is identical in the deterministic columns, and the new rows are identical across two
   independent runs. The rows add about 2.3 min and at most 454 MB to the physical suite,
   so they sit in the default matrix rather than behind a flag.
-- **Seven new physical failures are pinned**, all "place.CZ statements remain":
+- **Five new physical failures are pinned**, all "place.CZ statements remain":
   - cascade-ids on `steane_physical_35`;
-  - loose-goal on `adder_64` and `trotter_rand_35`;
-  - receding-horizon on those three plus `adder_4`, where it runs out of budget on the
-    fifth CZ layer under its defaults (under separate investigation).
+  - loose-goal and receding-horizon, each on `adder_64` and `trotter_rand_35`.
+- **After #1049** (the receding-horizon budget fix), receding-horizon now solves `adder_4`
+  (19 events / 24 lanes) and `steane_physical_35`. Its other rows keep identical plans
+  and report more `nodes_explored`, because dropped rollouts are now counted. No other
+  row moved.
 - **The A* fallback row solves the three cases plain A* fails.**
 
 **Goal.** Put Push-and-Rotate, cascade and the loose-goal paths under the zero-diff CI
