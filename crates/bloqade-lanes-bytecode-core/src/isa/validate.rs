@@ -42,8 +42,11 @@
 //! post-call depth never depends on what the callee does.
 //!
 //! What it still cannot see: `call_indirect` takes its target and arity off
-//! the stack, so everything after one on that path goes unchecked, and a
-//! branch condition's type (`bool` has no lanes [`tag`]) is not checked, only
+//! the stack, so the frame after one is unknowable. That state wins every
+//! join, so it never reports a false error — but everything downstream goes
+//! unchecked, including errors on *other* paths that merge with it: a `pop`
+//! that underflows on the arm without the call is not reported. A branch
+//! condition's type (`bool` has no lanes [`tag`]) is not checked either, only
 //! its presence. And a join keeps only what every incoming path agrees on:
 //! two paths pushing different locations leave a location of unknown address,
 //! so a group check that would fail on only one of those paths — a duplicate
@@ -1052,7 +1055,13 @@ enum AbstractStack {
     /// The frame's slots, bottom (local 0) first.
     Known(Vec<Slot>),
     /// Past a `call_indirect`, whose arity comes off the stack: the depth
-    /// cannot be known, so nothing downstream on this path is checked.
+    /// cannot be known, so nothing downstream is checked. It absorbs every
+    /// join, so a path merging with this one goes unchecked too.
+    ///
+    /// TODO(vihaco#110): once the port resolves each `fn_ref` to its
+    /// `FunctionInfo`, give `call_indirect` a declared signature (a WASM-style
+    /// type operand, proposed upstream) and model it as a direct call, so this
+    /// state is no longer needed.
     Unknown,
 }
 
@@ -1401,6 +1410,10 @@ impl<'a> StackSimulator<'a> {
             // moves both into the message for good, leaving only the
             // reference.) What the callee then does to the frame is
             // unknowable; `transfer` gives up on the path.
+            //
+            // TODO(vihaco#110): at the port this becomes one fixed operand,
+            // the reference, with the arguments and results taken from a
+            // declared signature — see `AbstractStack::Unknown`.
             M::Cpu(C::IndirectCall) => self.pop_n(3),
             // The condition. Its type, `bool`, has no lanes tag, so only its
             // presence is checked.

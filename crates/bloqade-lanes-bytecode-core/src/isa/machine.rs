@@ -23,10 +23,12 @@
 //!
 //! [`super::validate::simulate_stack`] is the static half of this: it models
 //! the same pops *and the same pushes*, so a program it accepts does not
-//! underflow on any path it checks — which is every path except those past a
-//! `call_indirect`, whose arity only the run knows. The ops the device does not interpret hold up their end by
-//! pushing [`Value::Undefined`] placeholders — the depth the simulator
-//! predicts, with a value nothing can mistake for a result.
+//! underflow on any path it checks. That is every path except those past a
+//! `call_indirect`, whose arity only the run knows, and any path merging with
+//! one (TODO(vihaco#110): close with a declared signature on `call_indirect`).
+//! The ops the device does not interpret hold up their end by pushing
+//! [`Value::Undefined`] placeholders — the depth the simulator predicts, with
+//! a value nothing can mistake for a result.
 
 use vihaco::frame::Frame;
 use vihaco::machine::StackFrame;

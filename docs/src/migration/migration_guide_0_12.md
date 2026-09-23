@@ -273,9 +273,10 @@ control-flow graph, starting from a frame that holds its declared parameters:
   In `@main`, whose frame starts at the bottom of the stack, the same condition
   is still reported as a plain `StackUnderflowError`.
 
-Everything after a `call_indirect` on the same path goes unchecked, because
-its target and arity are only known at run time. A branch condition's type is
-not checked either, only that one is present.
+Everything after a `call_indirect` goes unchecked, because its target and
+arity are only known at run time. That includes any path that merges with it
+afterwards: an error on the arm without the call is not reported. A branch
+condition's type is not checked either, only that one is present.
 
 ### Lowering to kirin is single-function only
 
