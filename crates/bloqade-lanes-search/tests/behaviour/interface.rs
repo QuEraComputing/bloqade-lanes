@@ -52,19 +52,26 @@ const TWO_ZONE_ALIGNED_SITE_BUS: &str =
 const ASYMMETRIC_DURATION: &str =
     include_str!("../fixtures/behaviour/arch/asymmetric_duration.json");
 
-/// Run one case. Never panics: a panic inside the crate becomes
-/// [`Outcome::Panicked`].
+/// Run one case on a fresh engine. Never panics: a panic inside the crate
+/// becomes [`Outcome::Panicked`].
+///
+/// A fresh engine per case means no case sees another's lazily built caches,
+/// which is what the golden wants.
 pub fn run(spec: &ProblemSpec) -> Outcome {
-    match catch_unwind(AssertUnwindSafe(|| run_inner(spec))) {
-        Ok(Ok(run)) => Outcome::Ran(run),
-        Ok(Err(message)) => Outcome::Error(message),
-        Err(payload) => Outcome::Panicked(panic_message(payload)),
-    }
+    guarded(|| run_on(spec, engine(spec.arch)?))
 }
 
-fn run_inner(spec: &ProblemSpec) -> Result<Run, String> {
-    // A fresh engine per case, so no case sees another's lazily built caches.
-    let json = match spec.arch {
+/// Run one case on an engine the caller built with [`engine`]. The benches use
+/// this to keep engine construction out of the timed loop, the way production
+/// builds an engine once per architecture.
+#[allow(dead_code)] // used by benches/behaviour.rs, not by the test runner
+pub fn run_with(spec: &ProblemSpec, engine: &Arc<SearchEngine>) -> Outcome {
+    guarded(|| run_on(spec, Arc::clone(engine)))
+}
+
+/// Build the engine for an architecture.
+pub fn engine(arch: Arch) -> Result<Arc<SearchEngine>, String> {
+    let json = match arch {
         Arch::GeminiLogical => GEMINI_LOGICAL,
         Arch::GeminiPhysical => GEMINI_PHYSICAL,
         Arch::Example => EXAMPLE,
@@ -74,7 +81,20 @@ fn run_inner(spec: &ProblemSpec) -> Result<Run, String> {
         Arch::TwoZoneAlignedSiteBus => TWO_ZONE_ALIGNED_SITE_BUS,
         Arch::AsymmetricDuration => ASYMMETRIC_DURATION,
     };
-    let engine = Arc::new(SearchEngine::from_json_validated(json).map_err(|e| e.to_string())?);
+    SearchEngine::from_json_validated(json)
+        .map(Arc::new)
+        .map_err(|e| e.to_string())
+}
+
+fn guarded(f: impl FnOnce() -> Result<Run, String>) -> Outcome {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(Ok(run)) => Outcome::Ran(run),
+        Ok(Err(message)) => Outcome::Error(message),
+        Err(payload) => Outcome::Panicked(panic_message(payload)),
+    }
+}
+
+fn run_on(spec: &ProblemSpec, engine: Arc<SearchEngine>) -> Result<Run, String> {
     let search = move_search(spec.strategy, &spec.knobs);
 
     match &spec.problem {

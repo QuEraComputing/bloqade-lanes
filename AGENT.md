@@ -175,6 +175,13 @@ with a diff.
 - **Debug only.** The golden is recorded in a debug build. A few cases depend on
   `debug_assert!`, so under `--release` they, and the golden comparison, are
   skipped.
+- **Micro-benchmarks.** `just bench-search [filter]` (`benches/behaviour.rs`, divan)
+  times the corpus's search-heavy cases in a release build: the hard instances,
+  the four-pair CZ stages and the anticipatory cases, about 7 s in all. It reports
+  expansions per second where a case expands nodes, and times engine construction
+  per architecture separately. It includes the net's own files, so every timed
+  case is also pinned by the golden. Use it to compare before and after on one
+  machine; it is not a CI gate, because wall time varies.
 
 ## Move Policy DSL
 
