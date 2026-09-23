@@ -78,6 +78,8 @@ fn kind(error: &ValidationError) -> &'static str {
         E::MissingTerminator { .. } => "MissingTerminator",
         E::UnreachableInstruction { .. } => "UnreachableInstruction",
         E::StackUnderflow { .. } => "StackUnderflow",
+        E::PopBelowFrameBase { .. } => "PopBelowFrameBase",
+        E::StackDepthMismatch { .. } => "StackDepthMismatch",
         E::TypeMismatch { .. } => "TypeMismatch",
         E::LocationGroupValidation { .. } => "LocationGroupValidation",
         E::LaneGroupValidation { .. } => "LaneGroupValidation",

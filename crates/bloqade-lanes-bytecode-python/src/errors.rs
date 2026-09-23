@@ -332,6 +332,14 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("StackUnderflowError")?;
             cls.call1((*pc,))?
         }
+        ValidationError::PopBelowFrameBase { pc } => {
+            let cls = module.getattr("PopBelowFrameBaseError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::StackDepthMismatch { pc, expected, got } => {
+            let cls = module.getattr("StackDepthMismatchError")?;
+            cls.call1((*pc, *expected, *got))?
+        }
         ValidationError::TypeMismatch { pc, expected, got } => {
             let cls = module.getattr("TypeMismatchError")?;
             cls.call1((*pc, *expected, *got))?

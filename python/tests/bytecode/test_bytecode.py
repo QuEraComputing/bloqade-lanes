@@ -24,6 +24,8 @@ from bloqade.lanes.bytecode.exceptions import (
     MissingTerminatorError,
     MissingVersionError,
     NewArrayTooManyElementsError,
+    PopBelowFrameBaseError,
+    StackDepthMismatchError,
     StackUnderflowError,
     TypeMismatchError,
     UnalignedCodeError,
@@ -938,6 +940,74 @@ class TestLocalIndexBounds:
             )
         )
         program.validate()  # should not raise
+
+
+class TestStackDataflow:
+    """The stack simulation walks each function's control-flow graph, from a
+    frame seeded by its declared parameters (#1042)."""
+
+    def test_a_callee_consuming_its_parameter_validates(self):
+        # Simulated from an empty stack, the argument looked like an underflow.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  lanes::lanes.const_zone 0x00000000\n"
+                "  cpu::cpu.call 1, helper\n"
+                "  lanes::lanes.pop\n"
+                "  cpu::cpu.halt\n}\n\n"
+                "fn @helper(z: u32) -> heap_ref {\n"
+                "  cpu::cpu.load u32, 0\n"
+                "  lanes::lanes.measure 1\n"
+                "  lanes::lanes.await_measure\n"
+                "  cpu::cpu.ret 1\n}\n"
+            )
+        )
+        program.validate(stack=True)  # should not raise
+
+    def test_popping_a_callers_value_is_a_frame_underflow(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  lanes::lanes.const_zone 0x00000000\n"
+                "  cpu::cpu.call 0, helper\n"
+                "  lanes::lanes.cz\n"
+                "  cpu::cpu.halt\n}\n\n"
+                "fn @helper() {\n"
+                "  lanes::lanes.cz\n"
+                "  cpu::cpu.ret 0\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, PopBelowFrameBaseError)
+        ]
+        assert [e.pc for e in errs] == [7]
+        # Still catchable as the underflow it is.
+        assert isinstance(errs[0], StackUnderflowError)
+
+    def test_arms_leaving_different_depths_are_rejected(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const bool, true\n"
+                "  cpu::cpu.cond_br @one, @zero\n"
+                "  cpu::cpu.label @one\n"
+                "  lanes::lanes.const_zone 0x00000000\n"
+                "  cpu::cpu.br @done\n"
+                "  cpu::cpu.label @zero\n"
+                "  cpu::cpu.br @done\n"
+                "  cpu::cpu.label @done\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, StackDepthMismatchError)
+        ]
+        assert len(errs) == 1
+        assert (errs[0].expected, errs[0].got) in {(0, 1), (1, 0)}
 
 
 class TestMeasurementPipeline:

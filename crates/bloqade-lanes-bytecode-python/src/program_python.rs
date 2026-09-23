@@ -71,7 +71,8 @@ impl PyProgram {
     /// With no arguments, runs structural validation only.
     /// With `arch=spec`, also validates addresses and device-capability
     /// constraints against the architecture.
-    /// With `stack=True`, also runs stack-type simulation (underflow, type
+    /// With `stack=True`, also runs the stack-type simulation over every
+    /// function's control flow (underflow, frame and depth errors, type
     /// mismatches, and lane/location group checks).
     #[pyo3(signature = (arch=None, stack=false))]
     fn validate(&self, py: Python<'_>, arch: Option<&PyArchSpec>, stack: bool) -> PyResult<()> {
