@@ -824,6 +824,11 @@ pub(crate) fn pick_best_branch<'a>(
 ///
 /// The caller is responsible for parallelism (see
 /// [`solve_receding_horizon`]'s rayon wrapper).
+///
+/// `fallback` finishes a trajectory the stage loop cannot, from the state
+/// it stopped in. Its second argument is the budget it may spend: whatever
+/// `max_expansions` has left, so the fallback shares the trajectory's cap
+/// rather than adding a fresh one on top.
 #[allow(clippy::too_many_arguments)]
 pub fn solve_entangling_rh_single(
     root: Config,
@@ -840,7 +845,7 @@ pub fn solve_entangling_rh_single(
     future_layers: &[Vec<(u32, u32)>],
     max_expansions: Option<u32>,
     restart_seed: u64,
-    fallback: impl Fn(&Config) -> SolveResult + Sync,
+    fallback: impl Fn(&Config, Option<u32>) -> SolveResult + Sync,
 ) -> SolveResult {
     let mut state = root;
     let mut committed_layers: Vec<MoveSet> = Vec::new();
@@ -857,6 +862,9 @@ pub fn solve_entangling_rh_single(
 
     let mut stage_iter: u32 = 0;
     let stage_budget_cap: u32 = max_expansions.unwrap_or(u32::MAX);
+    // What is left of the cap after `spent` expansions (`None` stays
+    // unbounded). A batch can overshoot the cap, so this saturates at zero.
+    let remaining = |spent: u32| max_expansions.map(|cap| cap.saturating_sub(spent));
 
     while !goal.is_goal(&state) {
         if total_expansions >= stage_budget_cap {
@@ -904,7 +912,7 @@ pub fn solve_entangling_rh_single(
 
         if candidates.is_empty() {
             // No assignment possible from this state — fall back.
-            let fb = fallback(&state);
+            let fb = fallback(&state, remaining(total_expansions));
             return merge_fallback(committed_layers, fb, total_expansions);
         }
 
@@ -955,7 +963,7 @@ pub fn solve_entangling_rh_single(
                 x = x.saturating_sub(rh_opts.fallback_x_decrement.max(1));
                 continue;
             }
-            let fb = fallback(&state);
+            let fb = fallback(&state, remaining(total_expansions));
             return merge_fallback(committed_layers, fb, total_expansions);
         }
 
@@ -973,7 +981,7 @@ pub fn solve_entangling_rh_single(
         ) {
             Some(b) => b,
             None => {
-                let fb = fallback(&state);
+                let fb = fallback(&state, remaining(total_expansions));
                 return merge_fallback(committed_layers, fb, total_expansions);
             }
         };
@@ -986,7 +994,7 @@ pub fn solve_entangling_rh_single(
         };
         if commit_count == 0 {
             // Nothing to commit (shouldn't happen — guards against infinite loop).
-            let fb = fallback(&state);
+            let fb = fallback(&state, remaining(total_expansions));
             return merge_fallback(committed_layers, fb, total_expansions);
         }
         // Advance state. If the partial-commit replay fails (would only
@@ -1161,7 +1169,8 @@ use crate::search::move_search::MoveSearch;
 /// across restarts in parallel via Rayon; falls back to
 /// [`LooseGoalCzPlacement`](crate::placement::loose_goal::LooseGoalCzPlacement)'s
 /// shared impl when the receding-horizon branches all drop at
-/// horizon = 1.
+/// horizon = 1. The fallback runs on what is left of `max_expansions`, so
+/// the cap bounds the whole solve.
 pub struct RecedingHorizonCzPlacement {
     engine: Arc<SearchEngine>,
     search: MoveSearch,
@@ -1301,13 +1310,13 @@ pub(crate) fn solve_receding_horizon(
     let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
 
     // Fallback when receding-horizon drops at horizon=1: run a single-shot
-    // loose-goal solve from the current state. Use restarts=1 to avoid
-    // nested rayon parallelism.
+    // loose-goal solve from the current state, on whatever budget the
+    // trajectory has left. Use restarts=1 to avoid nested rayon parallelism.
     let single_opts = SolveOptions {
         restarts: 1,
         ..opts.clone()
     };
-    let make_fallback = |state: &Config| -> SolveResult {
+    let make_fallback = |state: &Config, budget: Option<u32>| -> SolveResult {
         let initial: Vec<(u32, LocationAddr)> = state.iter().collect();
         solve_loose_goal(
             engine,
@@ -1316,7 +1325,7 @@ pub(crate) fn solve_receding_horizon(
             initial,
             cz_pairs,
             blocked_locs.iter().copied(),
-            max_expansions,
+            budget,
             future_cz_layers,
         )
         .unwrap_or_else(|_| SolveResult::unsolvable(state.clone()))
@@ -1805,19 +1814,14 @@ mod tests {
         assert_eq!(result.status, SolveStatus::Solved);
     }
 
-    /// Rollouts that drop (tier-2) still spend budget.
-    ///
-    /// The pair needs two layers, and with a one-node rollout budget and no
-    /// beam pre-pass no rollout gets that deep, so every batch drops and is
-    /// retried at a shorter horizon. Each batch costs two nodes here, so a
-    /// three-node cap must stop the solve after the second batch with
-    /// nothing committed. Previously a dropped batch cost nothing: all five
-    /// batches ran, the loose-goal fallback solved the pair, and the result
-    /// reported two nodes for the whole solve.
-    #[test]
-    fn dropped_rollouts_count_toward_the_budget() {
+    /// A pair that needs two layers, solved with a one-node rollout budget
+    /// and no beam pre-pass, so no rollout ever gets deep enough to be kept.
+    /// Every batch drops and is retried at a shorter horizon: five batches
+    /// (`x = 5` down to `1`) of two nodes each, after which the loose-goal
+    /// fallback, which needs two nodes, finishes the pair.
+    fn solve_with_every_rollout_dropping(max_expansions: u32) -> SolveResult {
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
-        let result = solve_receding_horizon(
+        solve_receding_horizon(
             &engine,
             &SolveOptions {
                 strategy: Strategy::Ids,
@@ -1837,13 +1841,41 @@ mod tests {
             [(0, loc(0, 5)), (1, loc(0, 0))],
             &[(0, 1)],
             std::iter::empty(),
-            Some(3),
+            Some(max_expansions),
             &[],
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    /// Rollouts that drop (tier-2) still spend budget.
+    ///
+    /// A three-node cap must stop the solve after the second batch with
+    /// nothing committed. Previously a dropped batch cost nothing: all five
+    /// batches ran, the fallback solved the pair, and the result reported
+    /// two nodes for the whole solve.
+    #[test]
+    fn dropped_rollouts_count_toward_the_budget() {
+        let result = solve_with_every_rollout_dropping(3);
         assert_eq!(result.status, SolveStatus::BudgetExceeded);
         assert!(result.move_layers.is_empty());
         assert!(result.nodes_expanded >= 3);
+    }
+
+    /// The fallback spends what is left of the cap, not a fresh one.
+    ///
+    /// The five batches use ten nodes. An eleven-node cap leaves the fallback
+    /// one node, too few to finish, so the solve gives up within the cap;
+    /// previously the fallback got all eleven and the solve spent twelve.
+    /// A twelve-node cap leaves exactly the two nodes it needs.
+    #[test]
+    fn the_fallback_spends_only_what_is_left_of_the_budget() {
+        let short = solve_with_every_rollout_dropping(11);
+        assert_eq!(short.status, SolveStatus::BudgetExceeded);
+        assert!(short.nodes_expanded <= 11);
+
+        let enough = solve_with_every_rollout_dropping(12);
+        assert_eq!(enough.status, SolveStatus::Solved);
+        assert!(enough.nodes_expanded <= 12);
     }
 
     /// End-to-end: `RecedingHorizonCzPlacement::solve_pairs` drives qubits

@@ -71,8 +71,8 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
         defaults here). A cap below one batch lets the trajectory run
         little more than a single stage: whatever that stage left
         unfinished is reported as ``budget_exceeded``, and the loose-goal
-        fallback is not tried. When the fallback does run, it gets a
-        budget of its own ``max_expansions``. Default 5000, the budget
+        fallback is not tried. When the fallback does run, it spends only
+        what is left of the cap. Default 5000, the budget
         every Rust receding-horizon test runs with. Keep it finite: nothing
         else stops a trajectory whose tier-1 commits never reach the goal.
     restarts
