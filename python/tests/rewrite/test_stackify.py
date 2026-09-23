@@ -179,6 +179,87 @@ def test_clone_constants_skips_non_pure_arg():
 # ── Round-trip integration ─────────────────────────────────────────────────────
 
 
+def _stackify_round_trip(instructions) -> tuple[list[str], list[str]]:
+    """Decode ``instructions``, stackify, re-encode; return both as reprs."""
+    from bloqade.lanes.bytecode import Program
+
+    program = Program(version=(1, 0), instructions=instructions)
+    method = load_program(program)
+    stackify(method)
+    return (
+        [repr(i) for i in program.instructions],
+        [repr(i) for i in dump_program(method).instructions],
+    )
+
+
+def test_clone_constants_keeps_operand_groups_in_order():
+    """decode → stackify → encode is the identity on constant operand groups.
+
+    The decoder builds a group bottom-to-top — ``locations[0]`` is the deepest
+    slot — and cloning from the highest ``args`` index down reversed every
+    group of two or more: ``initial_fill 2`` handed qubit 0 to site 1.
+    """
+    from bloqade.lanes.bytecode import Instruction
+
+    before, after = _stackify_round_trip(
+        [
+            Instruction.const_loc(0, 0, 0),
+            Instruction.const_loc(0, 0, 1),
+            Instruction.initial_fill(2),
+            Instruction.const_float(1.0),
+            Instruction.const_float(2.0),
+            Instruction.const_float(3.0),
+            Instruction.new_array(0, 3),
+            Instruction.halt(),
+        ]
+    )
+    assert after == before
+
+
+def test_clone_constants_keeps_every_operand_layout():
+    """The same identity for every op with a constant operand group, and for
+    the rotations, whose angles sit above their locations."""
+    from bloqade.lanes.bytecode import Instruction, MoveType
+
+    locs = [Instruction.const_loc(0, 0, 0), Instruction.const_loc(0, 0, 1)]
+    before, after = _stackify_round_trip(
+        [
+            *locs,
+            Instruction.initial_fill(2),
+            *locs,
+            Instruction.fill(2),
+            Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0),
+            Instruction.const_lane(MoveType.SITE, 0, 0, 1, 0),
+            Instruction.move_(2),
+            *locs,
+            Instruction.const_float(0.1),  # rotation
+            Instruction.const_float(0.2),  # axis, on top
+            Instruction.local_r(2),
+            *locs,
+            Instruction.const_float(0.3),
+            Instruction.local_rz(2),
+            Instruction.const_float(0.4),  # rotation
+            Instruction.const_float(0.5),  # axis, on top
+            Instruction.global_r(),
+            Instruction.const_zone(0),
+            Instruction.const_zone(1),
+            Instruction.measure(2),
+            Instruction.const_float(1.0),
+            Instruction.const_float(2.0),
+            Instruction.const_float(3.0),
+            Instruction.const_float(4.0),
+            Instruction.new_array(0, 2, 2),
+            Instruction.const_int(1),
+            Instruction.const_int(0),
+            Instruction.get_item(2),
+            # Returned rather than halted on: `GetItem` is pure, and DCE would
+            # take the indices with it.
+            Instruction.return_(),
+        ]
+    )
+    assert after == before
+
+
 def test_stackify_then_encode_local_r():
     """After stackify, LocalR IR encodes to correct bytecode."""
     from bloqade.lanes.bytecode import Instruction, Program

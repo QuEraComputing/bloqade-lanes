@@ -14,10 +14,10 @@ Three sub-passes run in sequence:
 Pass 1 — ``CloneConstants`` (``RewriteRule`` via ``Walk``)
     For each consuming statement, clones every ``ConstantLike`` (``Const*``)
     argument and inserts the clone immediately before the consumer in
-    stack-depth order: deepest arg first (highest ``stmt.args`` index),
-    top-of-stack arg last (index 0).  The arg reference on the consumer
-    is updated to the clone in-place; the original becomes dead and is
-    removed by Pass 2.
+    stack-depth order: deepest arg first, top-of-stack arg last, by the
+    layout ``_stack_order`` reads off the decoder.  The arg reference on the
+    consumer is updated to the clone in-place; the original becomes dead and
+    is removed by Pass 2.
 
 Pass 2 — DCE
     Removes the now-dead original constant definitions left behind by
@@ -74,17 +74,21 @@ from bloqade.lanes.dialects import stack_move
 class CloneConstants(RewriteRule):
     """Clone ``ConstantLike`` (``Const*``) args to be immediately before their consumer.
 
-    Stack discipline: for a consumer with args ``[a0, ..., aN]`` where index 0
-    is the top of the stack and index N is the deepest, the defining statement
-    of ``aN`` must be emitted first and ``a0`` last.  This rule iterates args
-    from highest index to lowest; each ``insert_before(node)`` call places the
-    new clone right before the consumer, so successive insertions build up:
-    ``[clone_N, ..., clone_0, consumer]``.
+    Stack discipline: the defining statement of the deepest operand must be
+    emitted first and the top-of-stack one last. This rule visits args in
+    ``_stack_order`` — deepest first — and each ``insert_before(node)`` places
+    the new clone right before the consumer, so successive insertions build
+    up ``[clone_deepest, ..., clone_top, consumer]``.
+
+    Iterating from the highest ``args`` index down, as this once did, gets
+    the scalars of ``LocalR``/``GlobalR`` right but reverses every operand
+    group of two or more — ``initial_fill``'s locations, ``new_array``'s
+    elements — which the decoder builds bottom-to-top.
     """
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         changed = False
-        for i in range(len(node.args) - 1, -1, -1):
+        for i in _stack_order(node):
             arg = node.args[i]
             if not isinstance(arg, ir.ResultValue):
                 continue
