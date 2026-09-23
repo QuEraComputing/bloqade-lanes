@@ -51,6 +51,10 @@ class RewriteStackMoveToMove(RewriteRule):
       explicit mapping. The value type is Any because the lifted values
       span heterogeneous scalar and address types.
     - state: the current StateType SSA value in the target IR.
+    - local_values: local index → the SSA value the last StoreLocal to it
+      wrote, so each LoadLocal can be resolved to the value it copies. The
+      walk is in block order and a block is straight-line, so "last" is
+      exact.
 
     For SSA-valued outputs (arrays, futures, detectors, observables,
     constants that emit py.Constant), we use the Kirin idiom
@@ -62,8 +66,10 @@ class RewriteStackMoveToMove(RewriteRule):
     arch_spec: ArchSpec
     ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
     state: ir.SSAValue | None = None
+    local_values: dict[int, ir.SSAValue] = field(default_factory=dict)
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
+        self.local_values = {}
         # Insert the initial move.Load at block start.
         load = move.Load()
         first = next(iter(node.stmts), None)
@@ -140,13 +146,6 @@ class RewriteStackMoveToMove(RewriteRule):
         self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
-    @_rewrite.register(stack_move.Pop)
-    def _(self, stmt: stack_move.Pop, to_delete: list[ir.Statement]) -> None:
-        # Pop collapses — no target emission. The popped SSA value remains
-        # on its definition; if nothing else references it, it becomes
-        # dead and a later DCE pass cleans it up.
-        to_delete.append(stmt)
-
     @_rewrite.register(stack_move.Dup)
     def _(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
         # Dup is a semantic identity — redirect all uses of the result to
@@ -154,11 +153,28 @@ class RewriteStackMoveToMove(RewriteRule):
         stmt.result.replace_by(stmt.value)
         to_delete.append(stmt)
 
-    @_rewrite.register(stack_move.Swap)
-    def _(self, stmt: stack_move.Swap, to_delete: list[ir.Statement]) -> None:
-        # Swap is a permutation — out_top ≡ in_bot, out_bot ≡ in_top.
-        stmt.out_top.replace_by(stmt.in_bot)
-        stmt.out_bot.replace_by(stmt.in_top)
+    @_rewrite.register(stack_move.StoreLocal)
+    def _(self, stmt: stack_move.StoreLocal, to_delete: list[ir.Statement]) -> None:
+        # A store collapses — no target emission. It only records which SSA
+        # value the local now holds; a value nothing loads back becomes dead
+        # and a later DCE pass cleans it up.
+        self.local_values[stmt.index] = stmt.value
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.LoadLocal)
+    def _(self, stmt: stack_move.LoadLocal, to_delete: list[ir.Statement]) -> None:
+        # A load is a semantic identity with the value last stored at its
+        # index — redirect all uses of the result to that value in place.
+        #
+        # A local nothing stored reads as zero on the machine, but there is no
+        # value to redirect to, and none of the compiler's code reads one.
+        stored = self.local_values.get(stmt.index)
+        if stored is None:
+            raise ValueError(
+                f"load of local {stmt.index}, which nothing has stored to: "
+                f"an unwritten local has no value to lower to"
+            )
+        stmt.result.replace_by(stored)
         to_delete.append(stmt)
 
     # ── Attribute lifting ─────────────────────────────────────────────

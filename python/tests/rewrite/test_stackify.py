@@ -312,19 +312,38 @@ def test_stackify_then_encode_global_r_same_value():
     assert "global_r" in ops
 
 
-# ── Dup/Swap insertion ────────────────────────────────────────────────────────
+# ── Spilling to locals ────────────────────────────────────────────────────────
 
 
 def _measure_await_chain() -> tuple:
-    """Return (cz, measure, await_m) for use in Dup/Swap tests."""
+    """Return (cz, measure, await_m) for use in the spill tests."""
     cz = sm.ConstZone(value=ZoneAddress(0))
     measure = sm.Measure(zones=(cz.result,))
     await_m = sm.AwaitMeasure(future=measure.results[0])
     return cz, measure, await_m
 
 
-def test_stackify_dups_noop_single_consumer():
-    """Single GetItem with AwaitMeasure: no Dup or Swap is inserted."""
+def _locals_ops(stmts: list[ir.Statement]) -> list[tuple[str, int]]:
+    """The spill schedule: each StoreLocal/LoadLocal and the slot it names."""
+    return [
+        ("store" if isinstance(s, sm.StoreLocal) else "load", s.index)
+        for s in stmts
+        if isinstance(s, (sm.StoreLocal, sm.LoadLocal))
+    ]
+
+
+def _validates(method: ir.Method) -> None:
+    """Encode ``method`` and run the Rust validator's stack simulation over it.
+
+    The spill schedule is only right if every operand is where its consumer
+    pops it, with the right tag — which is exactly what the simulation checks,
+    locals included.
+    """
+    dump_program(method).validate(stack=True)
+
+
+def test_stackify_spills_nothing_for_a_single_consumer():
+    """A value consumed once stays on the stack: no locals are used."""
     cz, measure, await_m = _measure_await_chain()
     idx0 = sm.ConstInt(value=0)
     gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
@@ -333,14 +352,14 @@ def test_stackify_dups_noop_single_consumer():
     method = _make_method(cz, measure, await_m, idx0, gi0, ci, ret)
 
     stmts = _stackify(method)
-    types_seq = [type(s) for s in stmts]
 
-    assert sm.Dup not in types_seq
-    assert sm.Swap not in types_seq
+    assert _locals_ops(stmts) == []
+    assert sm.Dup not in [type(s) for s in stmts]
 
 
-def test_stackify_dups_two_consumers():
-    """Two GetItems sharing an AwaitMeasure result get exactly one Dup and one Swap."""
+def test_stackify_spills_a_value_with_two_consumers():
+    """The array is stored once, right after it is produced, and reloaded
+    below each consumer's constant index."""
     cz, measure, await_m = _measure_await_chain()
     idx0 = sm.ConstInt(value=0)
     gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
@@ -352,29 +371,24 @@ def test_stackify_dups_two_consumers():
     method = _make_method(cz, measure, await_m, idx0, gi0, idx1, gi1, na, ci, ret)
 
     stmts = _stackify(method)
-    types_seq = [type(s) for s in stmts]
 
-    assert types_seq.count(sm.Dup) == 1
-    assert types_seq.count(sm.Swap) == 1
-
-    dup_i = next(i for i, s in enumerate(stmts) if isinstance(s, sm.Dup))
-    gi0_i = next(i for i, s in enumerate(stmts) if isinstance(s, sm.GetItem))
-    gi1_i = next(
-        i for i, s in enumerate(stmts) if isinstance(s, sm.GetItem) and i > gi0_i
-    )
-    swap_i = next(i for i, s in enumerate(stmts) if isinstance(s, sm.Swap))
-
-    # Dup before first GetItem; Swap between the two GetItems
-    assert dup_i < gi0_i
-    assert gi0_i < swap_i < gi1_i
-
-    # SSA references updated correctly
-    assert cast(sm.GetItem, stmts[gi0_i]).array is stmts[dup_i].results[0]
-    assert cast(sm.GetItem, stmts[gi1_i]).array is cast(sm.Swap, stmts[swap_i]).out_top
+    assert _locals_ops(stmts) == [("store", 0), ("load", 0), ("load", 0)]
+    await_i = stmts.index(await_m)
+    store = stmts[await_i + 1]
+    assert isinstance(store, sm.StoreLocal) and store.value is await_m.result
+    # Each GetItem reads its own reload, which sits just below its index.
+    for gi in (gi0, gi1):
+        gi_i = stmts.index(gi)
+        load = stmts[gi_i - 2]
+        assert isinstance(load, sm.LoadLocal) and gi.array is load.result
+        assert isinstance(stmts[gi_i - 1], sm.ConstInt)
+    # A placeholder at run time, so the local is typed `undef`.
+    assert store.value_type == "undef"
+    _validates(method)
 
 
-def test_stackify_dups_three_consumers():
-    """Three GetItems sharing an AwaitMeasure: two Dup/Swap pairs, last uses swap chain."""
+def test_stackify_spills_a_value_with_three_consumers():
+    """One store and a reload per consumer, all through one slot."""
     cz, measure, await_m = _measure_await_chain()
     idx0 = sm.ConstInt(value=0)
     gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
@@ -392,25 +406,148 @@ def test_stackify_dups_three_consumers():
     )
 
     stmts = _stackify(method)
-    types_seq = [type(s) for s in stmts]
 
-    assert types_seq.count(sm.Dup) == 2
-    assert types_seq.count(sm.Swap) == 2
+    assert _locals_ops(stmts) == [("store", 0)] + [("load", 0)] * 3
+    loads = [s for s in stmts if isinstance(s, sm.LoadLocal)]
+    assert [gi.array for gi in (gi0, gi1, gi2)] == [load.result for load in loads]
+    _validates(method)
 
-    gi_stmts = [s for s in stmts if isinstance(s, sm.GetItem)]
-    dup_stmts = [s for s in stmts if isinstance(s, sm.Dup)]
-    swap_stmts = [s for s in stmts if isinstance(s, sm.Swap)]
 
-    assert gi_stmts[0].array is dup_stmts[0].results[0]
-    assert gi_stmts[1].array is dup_stmts[1].results[0]
-    assert gi_stmts[2].array is swap_stmts[1].out_top
+def test_stackify_reuses_a_slot_once_its_value_is_dead():
+    """Two arrays read one after the other share slot 0; read interleaved,
+    they need two."""
+
+    def two_arrays(interleaved: bool) -> ir.Method:
+        cz_a, measure_a, await_a = _measure_await_chain()
+        cz_b, measure_b, await_b = _measure_await_chain()
+        reads = [await_a, await_a, await_b, await_b]
+        if interleaved:
+            reads = [await_a, await_b, await_a, await_b]
+        stmts: list[ir.Statement] = [cz_a, measure_a, await_a]
+        if interleaved:
+            stmts += [cz_b, measure_b, await_b]
+        items = []
+        for n, source in enumerate(reads):
+            if not interleaved and n == 2:
+                stmts += [cz_b, measure_b, await_b]
+            idx = sm.ConstInt(value=n)
+            gi = sm.GetItem(array=source.result, indices=(idx.result,))
+            stmts += [idx, gi]
+            items.append(gi.result)
+        na = sm.NewArray(values=tuple(items), type_tag=1, dim0=4, dim1=0)
+        ci = sm.ConstInt(value=0)
+        return _make_method(*stmts, na, ci, func.Return(ci.result))
+
+    sequential = two_arrays(interleaved=False)
+    assert {i for _, i in _locals_ops(_stackify(sequential))} == {0}
+    _validates(sequential)
+
+    interleaved = two_arrays(interleaved=True)
+    assert {i for _, i in _locals_ops(_stackify(interleaved))} == {0, 1}
+    _validates(interleaved)
+
+
+def test_stackify_reloads_every_argument_of_a_consumer_that_takes_a_spilled_one():
+    """A measurement shared by two detectors is spilled — and so is its
+    neighbour in the first, or its reload would land on top of it and the
+    elements would come out reversed."""
+    cz, measure, await_m = _measure_await_chain()
+    idx0 = sm.ConstInt(value=0)
+    gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
+    idx1 = sm.ConstInt(value=1)
+    gi1 = sm.GetItem(array=await_m.result, indices=(idx1.result,))
+    # gi1 appears in both detectors; gi0 only in the first, below gi1.
+    na0 = sm.NewArray(values=(gi0.result, gi1.result), type_tag=1, dim0=2, dim1=0)
+    na1 = sm.NewArray(values=(gi1.result,), type_tag=1, dim0=1, dim1=0)
+    ci = sm.ConstInt(value=0)
+    ret = func.Return(ci.result)
+    method = _make_method(cz, measure, await_m, idx0, gi0, idx1, gi1, na0, na1, ci, ret)
+
+    stmts = _stackify(method)
+
+    na0_i = stmts.index(na0)
+    below = stmts[na0_i - 2 : na0_i]
+    assert all(isinstance(s, sm.LoadLocal) for s in below)
+    # Deepest first: gi0's reload, then gi1's.
+    assert [s.results[0] for s in below] == list(na0.values)
+    stores = {s.value: s.index for s in stmts if isinstance(s, sm.StoreLocal)}
+    assert [cast(sm.LoadLocal, s).index for s in below] == [
+        stores[gi0.result],
+        stores[gi1.result],
+    ]
+    _validates(method)
+
+
+def test_stackify_takes_out_of_order_arguments_from_locals():
+    """Two detector arrays built before either is set. Each is used once, but
+    the first ``SetDetector`` would find the second array on top, so both are
+    parked and each is reloaded for the detector that reads it."""
+    cz, measure, await_m = _measure_await_chain()
+    idx0 = sm.ConstInt(value=0)
+    gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
+    idx1 = sm.ConstInt(value=1)
+    gi1 = sm.GetItem(array=await_m.result, indices=(idx1.result,))
+    d0 = sm.NewArray(values=(gi0.result,), type_tag=1, dim0=1, dim1=0)
+    d1 = sm.NewArray(values=(gi1.result,), type_tag=1, dim0=1, dim1=0)
+    det0 = sm.SetDetector(array=d0.result)
+    det1 = sm.SetDetector(array=d1.result)
+    both = sm.NewArray(values=(det0.result, det1.result), type_tag=7, dim0=2, dim1=0)
+    ci = sm.ConstInt(value=0)
+    ret = func.Return(ci.result)
+    method = _make_method(
+        cz, measure, await_m, idx0, gi0, idx1, gi1, d0, d1, det0, det1, both, ci, ret
+    )
+
+    stmts = _stackify(method)
+
+    for array, detector in ((d0, det0), (d1, det1)):
+        load = stmts[stmts.index(detector) - 1]
+        assert isinstance(load, sm.LoadLocal) and detector.array is load.result
+        store = stmts[stmts.index(array) + 1]
+        assert isinstance(store, sm.StoreLocal) and store.value is array.result
+        assert store.index == load.index
+    # The detector refs are consumed in order, so they stay on the stack.
+    assert [a.owner for a in both.values] == [det0, det1]
+    _validates(method)
+
+
+def test_stackify_parks_the_results_above_a_spilled_one():
+    """``measure 2`` leaves its first future on top. Spilling the second means
+    taking the first off the stack on the way down and putting it back."""
+    cz0 = sm.ConstZone(value=ZoneAddress(0))
+    cz1 = sm.ConstZone(value=ZoneAddress(1))
+    measure = sm.Measure(zones=(cz0.result, cz1.result))
+    top, below = measure.results
+    await_top = sm.AwaitMeasure(future=top)
+    await_below_a = sm.AwaitMeasure(future=below)
+    await_below_b = sm.AwaitMeasure(future=below)
+    ci = sm.ConstInt(value=0)
+    ret = func.Return(ci.result)
+    method = _make_method(
+        cz0, cz1, measure, await_top, await_below_a, await_below_b, ci, ret
+    )
+
+    stmts = _stackify(method)
+
+    assert _locals_ops(stmts) == [
+        ("store", 0),  # the top future, parked
+        ("store", 1),  # the one that is spilled
+        ("load", 0),  # the top future, put back
+        ("load", 1),
+        ("load", 1),
+    ]
+    assert (
+        await_top.future is cast(sm.LoadLocal, stmts[stmts.index(await_top) - 1]).result
+    )
+    _validates(method)
 
 
 # ── Integration: encode after stackify ────────────────────────────────────────
 
 
 def test_stackify_encode_two_consumers():
-    """After stackify, two-GetItem IR encodes to bytecode with dup + swap."""
+    """After stackify, two-GetItem IR encodes to bytecode that parks the array
+    in a local and reloads it for each read."""
     from bloqade.lanes.bytecode import Instruction, Program
 
     cz, measure, await_m = _measure_await_chain()
@@ -429,10 +566,11 @@ def test_stackify_encode_two_consumers():
         Instruction.const_zone(0),
         Instruction.measure(1),
         Instruction.await_measure(),
-        Instruction.dup(),
+        Instruction.store("undef", 0),
+        Instruction.load("undef", 0),
         Instruction.const_int(0),
         Instruction.get_item(1),
-        Instruction.swap(),
+        Instruction.load("undef", 0),
         Instruction.const_int(1),
         Instruction.get_item(1),
         Instruction.new_array(type_tag=1, dim0=2),

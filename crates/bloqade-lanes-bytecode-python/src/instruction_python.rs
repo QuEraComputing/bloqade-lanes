@@ -93,24 +93,35 @@ impl PyInstruction {
     // ── Stack manipulation ──
 
     #[staticmethod]
-    fn pop() -> Self {
-        Self {
-            inner: VInst::Lanes(L::Pop),
-        }
-    }
-
-    #[staticmethod]
     fn dup() -> Self {
         Self {
             inner: VInst::Cpu(C::Dup),
         }
     }
 
+    // ── Locals ──
+    // There is no `pop` or `swap`: a function's locals are slots of their own
+    // below its operands, so `store` parks a value out of their way and `load`
+    // brings a copy back.
+
+    /// Push a copy of local `index`, which holds a `value_type`.
     #[staticmethod]
-    fn swap() -> Self {
-        Self {
-            inner: VInst::Lanes(L::Swap),
-        }
+    fn load(value_type: &str, index: i64) -> PyResult<Self> {
+        let ty = parse_value_type(value_type)?;
+        let index = validate_field::<u32>("index", index)?;
+        Ok(Self {
+            inner: VInst::Cpu(C::Load(ty, index)),
+        })
+    }
+
+    /// Pop the top of the stack, a `value_type`, into local `index`.
+    #[staticmethod]
+    fn store(value_type: &str, index: i64) -> PyResult<Self> {
+        let ty = parse_value_type(value_type)?;
+        let index = validate_field::<u32>("index", index)?;
+        Ok(Self {
+            inner: VInst::Cpu(C::Store(ty, index)),
+        })
     }
 
     // ── Atom operations ──
@@ -357,6 +368,25 @@ impl PyInstruction {
         }
     }
 
+    fn local_index(&self) -> PyResult<u32> {
+        match &self.inner {
+            VInst::Cpu(C::Load(_, index) | C::Store(_, index)) => Ok(*index),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "local_index() is only valid on load and store",
+            )),
+        }
+    }
+
+    /// The type a `load`/`store` names, spelled as in the text format.
+    fn value_type(&self) -> PyResult<&'static str> {
+        match &self.inner {
+            VInst::Cpu(C::Load(ty, _) | C::Store(ty, _)) => Ok(machine::cpu_type_text(*ty)),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "value_type() is only valid on load and store",
+            )),
+        }
+    }
+
     fn arity(&self) -> PyResult<u32> {
         match &self.inner {
             VInst::Lanes(L::InitialFill(arity))
@@ -380,10 +410,39 @@ impl PyInstruction {
     }
 }
 
+/// Every vihaco value type, in declaration order.
+const VALUE_TYPES: [Type; 9] = [
+    Type::Undefined,
+    Type::String,
+    Type::Bool,
+    Type::I64,
+    Type::U32,
+    Type::U64,
+    Type::F64,
+    Type::FunctionRef,
+    Type::HeapRef,
+];
+
+/// A value type from its text-format spelling (`"u64"`, `"undef"`, …), so
+/// Python spells a `load` the way the `.sst` it renders to does.
+fn parse_value_type(name: &str) -> PyResult<Type> {
+    VALUE_TYPES
+        .into_iter()
+        .find(|&ty| machine::cpu_type_text(ty) == name)
+        .ok_or_else(|| {
+            let names: Vec<&str> = VALUE_TYPES
+                .into_iter()
+                .map(machine::cpu_type_text)
+                .collect();
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown value type {name:?}; expected one of {}",
+                names.join(", ")
+            ))
+        })
+}
+
 fn format_instruction(instr: &VInst) -> String {
     match instr {
-        VInst::Lanes(L::Pop) => "Instruction.pop()".to_string(),
-        VInst::Lanes(L::Swap) => "Instruction.swap()".to_string(),
         VInst::Cpu(C::Return(0)) => "Instruction.return_()".to_string(),
         VInst::Lanes(L::ConstLoc(bits)) => {
             let addr = rs_addr::LocationAddr::decode(*bits);
@@ -435,6 +494,14 @@ fn format_instruction(instr: &VInst) -> String {
         VInst::Cpu(C::Const(Type::F64, Value::F64(f))) => format!("Instruction.const_float({f})"),
         VInst::Cpu(C::Const(Type::I64, Value::I64(n))) => format!("Instruction.const_int({n})"),
         VInst::Cpu(C::Dup) => "Instruction.dup()".to_string(),
+        VInst::Cpu(C::Load(ty, index)) => format!(
+            "Instruction.load({:?}, {index})",
+            machine::cpu_type_text(*ty)
+        ),
+        VInst::Cpu(C::Store(ty, index)) => format!(
+            "Instruction.store({:?}, {index})",
+            machine::cpu_type_text(*ty)
+        ),
         VInst::Cpu(C::Halt) => "Instruction.halt()".to_string(),
         // A decoded program can contain any vihaco-cpu op, but only the handful
         // above have Python factories. Emit the `.sst` spelling in a clearly

@@ -191,9 +191,31 @@ class TestInstruction:
         assert Instruction.const_zone(zone_id=0).op_name() == "const_zone"
 
     def test_stack_ops(self):
-        assert Instruction.pop().op_name() == "pop"
         assert Instruction.dup().op_name() == "dup"
-        assert Instruction.swap().op_name() == "swap"
+        assert Instruction.load("u64", 0).op_name() == "load"
+        assert Instruction.store("u64", 0).op_name() == "store"
+
+    def test_there_is_no_pop_or_swap(self):
+        """Locals spell both: see ``Instruction.load``/``store``."""
+        assert not hasattr(Instruction, "pop")
+        assert not hasattr(Instruction, "swap")
+
+    def test_load_and_store_carry_their_type_and_index(self):
+        for factory, op in ((Instruction.load, "load"), (Instruction.store, "store")):
+            instr = factory("heap_ref", 7)
+            assert (instr.value_type(), instr.local_index()) == ("heap_ref", 7)
+            assert repr(instr) == f'Instruction.{op}("heap_ref", 7)'
+            assert instr.device() == "cpu"
+        with pytest.raises(RuntimeError):
+            Instruction.halt().local_index()
+        with pytest.raises(RuntimeError):
+            Instruction.halt().value_type()
+
+    def test_load_and_store_refuse_what_is_not_a_type_or_an_index(self):
+        with pytest.raises(ValueError, match="unknown value type"):
+            Instruction.load("float", 0)
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.store("u64", -1)
 
     def test_atom_ops(self):
         assert Instruction.initial_fill(2).op_name() == "initial_fill"
@@ -227,9 +249,11 @@ class TestInstruction:
     def test_equality(self):
         a = Instruction.halt()
         b = Instruction.halt()
-        c = Instruction.pop()
+        c = Instruction.dup()
         assert a == b
         assert a != c
+        assert Instruction.load("u64", 0) != Instruction.load("u64", 1)
+        assert Instruction.load("u64", 0) != Instruction.load("i64", 0)
 
 
 class TestInstructionAccessors:
@@ -241,9 +265,9 @@ class TestInstructionAccessors:
             (Instruction.const_loc(0, 0, 0), "const_loc"),
             (Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0), "const_lane"),
             (Instruction.const_zone(0), "const_zone"),
-            (Instruction.pop(), "pop"),
             (Instruction.dup(), "dup"),
-            (Instruction.swap(), "swap"),
+            (Instruction.load("u64", 0), "load"),
+            (Instruction.store("u64", 0), "store"),
             (Instruction.initial_fill(1), "initial_fill"),
             (Instruction.fill(1), "fill"),
             (Instruction.move_(1), "move"),
@@ -276,7 +300,7 @@ class TestInstructionAccessors:
         with pytest.raises(RuntimeError):
             Instruction.const_float(0.0).arity()
         with pytest.raises(RuntimeError):
-            Instruction.pop().arity()
+            Instruction.dup().arity()
         with pytest.raises(RuntimeError):
             Instruction.cz().arity()
 
@@ -314,12 +338,12 @@ class TestInstructionAccessors:
         assert instr.dim0() == 4
         assert instr.dim1() == 2
         with pytest.raises(RuntimeError):
-            Instruction.pop().type_tag()
+            Instruction.dup().type_tag()
 
     def test_get_item_ndims(self):
         assert Instruction.get_item(3).ndims() == 3
         with pytest.raises(RuntimeError):
-            Instruction.pop().ndims()
+            Instruction.dup().ndims()
 
 
 class TestInstructionAddressValidation:
@@ -566,7 +590,7 @@ fn @main() {
     def test_stack_validation(self):
         program = Program.from_text(_sst("""\
 fn @main() {
-  lanes::lanes.pop
+  cpu::cpu.dup
 }
 """))
         with pytest.raises(ValidationError) as exc_info:
@@ -819,7 +843,7 @@ class TestDecoderDispatch:
                 "  lanes::lanes.new_array 1 1 0\n"
                 "  cpu::cpu.const i64, 0\n"
                 "  lanes::lanes.get_item 1\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )
@@ -881,7 +905,7 @@ class TestArrayOperandBounds:
                 "  cpu::cpu.const i64, 0\n"
                 "  cpu::cpu.const i64, 0\n"
                 "  lanes::lanes.get_item 2\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )
@@ -927,7 +951,7 @@ class TestLocalIndexBounds:
         assert errs and errs[0].mnemonic == "load"
 
     def test_an_ordinary_local_index_is_accepted(self):
-        # A function's locals are its arguments, so a small index is the
+        # The compiler spills to a handful of slots, so a small index is the
         # whole legitimate range and must keep validating.
         program = Program.from_text(
             _sst(
@@ -935,7 +959,7 @@ class TestLocalIndexBounds:
                 "  cpu::cpu.const u64, 7\n"
                 "  cpu::cpu.store u64, 0\n"
                 "  cpu::cpu.load u64, 0\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store u64, 1\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )
@@ -953,7 +977,7 @@ class TestStackDataflow:
                 "fn @main() {\n"
                 "  lanes::lanes.const_zone 0x00000000\n"
                 "  cpu::cpu.call 1, helper\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store heap_ref, 0\n"
                 "  cpu::cpu.halt\n}\n\n"
                 "fn @helper(z: u32) -> heap_ref {\n"
                 "  cpu::cpu.load u32, 0\n"
@@ -1026,7 +1050,7 @@ class TestMeasurementPipeline:
                 "  lanes::lanes.measure 1\n"
                 "  lanes::lanes.await_measure\n"
                 "  lanes::lanes.set_detector\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )
@@ -1042,7 +1066,7 @@ class TestMeasurementPipeline:
                 "  cpu::cpu.const i64, 1\n"
                 "  lanes::lanes.new_array 9 1 0\n"
                 "  lanes::lanes.set_observable\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )

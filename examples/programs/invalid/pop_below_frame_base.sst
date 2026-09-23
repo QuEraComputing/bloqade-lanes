@@ -11,10 +11,10 @@ version 1.0
 //
 // `@main` calls with arity 0, so `@entangle`'s frame begins at the current top
 // of the stack and the zone below it is `@main`'s. The machine's stack is not
-// empty when `@entangle` pops — nothing underflows — but the callee has reached
-// into its caller's frame. Rejecting that is what lets each function be checked
-// on its own: a caller's depth after a call depends only on the callee's
-// declaration, never on what its body does.
+// empty when `@entangle` pops, but its frame is: the callee has reached into its
+// caller's. Rejecting that is what lets each function be checked on its own: a
+// caller's depth after a call depends only on the callee's declaration, never on
+// what its body does.
 
 fn @main() {
   lanes::lanes.const_zone 0x00000000

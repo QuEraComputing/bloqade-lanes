@@ -1,3 +1,4 @@
+import pytest
 from kirin import ir
 from kirin.dialects import py
 from kirin.rewrite import Walk
@@ -83,39 +84,73 @@ def test_const_loc_is_left_untouched_for_dce():
     assert rule._try_lift(cl.result, LocationAddress) == addr
 
 
-def test_pop_is_dropped():
+def _constant(value: ir.SSAValue) -> object:
+    """The Python value behind an SSA value a ``py.Constant`` produced."""
+    assert isinstance(value, ir.ResultValue)
+    owner = value.owner
+    assert isinstance(owner, py.Constant)
+    return owner.value.unwrap()
+
+
+def test_store_is_dropped():
     cf = stack_move.ConstFloat(value=1.0)
-    pop = stack_move.Pop(value=cf.result)
-    block = _build_stack_move_block([cf, pop])
+    store = stack_move.StoreLocal(value=cf.result, index=0, value_type="f64")
+    block = _build_stack_move_block([cf, store])
     Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
-    # No target statement for Pop, and the original stack_move.Pop is gone.
-    assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
+    # No target statement for StoreLocal, and the original is gone.
+    assert not any(isinstance(s, stack_move.StoreLocal) for s in block.stmts)
 
 
 def test_dup_redirects_uses_to_input():
     cf = stack_move.ConstFloat(value=1.0)
     dup = stack_move.Dup(value=cf.result)
     # Downstream consumer that references Dup's result.
-    consumer = stack_move.Pop(value=dup.result)
+    consumer = stack_move.GlobalRz(rotation_angle=dup.result)
     block = _build_stack_move_block([cf, dup, consumer])
     Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
-    # Dup is gone; Pop is also lowered away.
+    # Dup is gone, and the gate reads the constant straight through it.
     assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
-    assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
+    gate = next(s for s in block.stmts if isinstance(s, move.GlobalRz))
+    assert _constant(gate.rotation_angle) == 1.0
 
 
-def test_swap_permutes_uses():
-    a = stack_move.ConstInt(value=1)
-    b = stack_move.ConstInt(value=2)
-    sw = stack_move.Swap(in_top=b.result, in_bot=a.result)
-    # Consumers that read Swap's outputs; pop them so the test has
-    # something observable.
-    p_top = stack_move.Pop(value=sw.out_top)
-    p_bot = stack_move.Pop(value=sw.out_bot)
-    block = _build_stack_move_block([a, b, sw, p_top, p_bot])
+def test_load_redirects_uses_to_the_value_last_stored():
+    """A load is the value the last store to its index wrote: two stores to
+    one slot, and each load reads the one before it."""
+    first = stack_move.ConstFloat(value=1.0)
+    second = stack_move.ConstFloat(value=2.0)
+    store_first = stack_move.StoreLocal(value=first.result, index=0, value_type="f64")
+    load_first = stack_move.LoadLocal(index=0, value_type="f64")
+    gate_first = stack_move.GlobalRz(rotation_angle=load_first.result)
+    store_second = stack_move.StoreLocal(value=second.result, index=0, value_type="f64")
+    load_second = stack_move.LoadLocal(index=0, value_type="f64")
+    gate_second = stack_move.GlobalRz(rotation_angle=load_second.result)
+    block = _build_stack_move_block(
+        [
+            first,
+            second,
+            store_first,
+            load_first,
+            gate_first,
+            store_second,
+            load_second,
+            gate_second,
+        ]
+    )
     Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
-    # Swap is gone.
-    assert not any(isinstance(s, stack_move.Swap) for s in block.stmts)
+    assert not any(
+        isinstance(s, (stack_move.StoreLocal, stack_move.LoadLocal))
+        for s in block.stmts
+    )
+    gates = [s for s in block.stmts if isinstance(s, move.GlobalRz)]
+    assert [_constant(g.rotation_angle) for g in gates] == [1.0, 2.0]
+
+
+def test_a_load_of_an_unwritten_local_is_refused():
+    load = stack_move.LoadLocal(index=3, value_type="i64")
+    block = _build_stack_move_block([load])
+    with pytest.raises(ValueError, match="local 3, which nothing has stored"):
+        Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
 
 
 def test_fill_lowers_to_move_fill_with_attribute_locations():
