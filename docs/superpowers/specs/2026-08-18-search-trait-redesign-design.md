@@ -72,6 +72,11 @@ refactor. It does not yet say how to move implementations behind these seams.
     (restarts + 1) × that.
 - **§7:** moved to the optional Epic 5 and softened (critique F6). Pair coordination
   lifts out of `HeuristicGenerator`; spectator handling stays.
+  - The `StagePlacement` sketch is replaced by the shape agreed on 2026-09-23: a
+    `CzStage` struct (initial, pairs, blocked, future layers) and
+    `CzPlacement::place(&self, &CzStage, budget) -> PlacementResult`, where
+    `PlacementResult` generalizes `MultiSolveResult`.
+  - The reshape is scheduled in Epic 3A and is independent of the lift.
 - **§8.1:** resolved by the lazy scan. **§8.4:** moot while there is no public trait.
   **§8.7:** `EntropyScorer` has zero callers, so delete it; `DistanceScorer` is the only
   live scorer.

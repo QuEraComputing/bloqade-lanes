@@ -224,6 +224,47 @@ typed adapter under the boundary rule, and migrate `python/bloqade/lanes/heurist
   - `aod_capacity`, which is core-only today and hard-coded to `None` in PyO3;
   - `bound_terminates`, which is documented as an A/B knob.
 - **Typed exceptions** per `ConfigError` variant, instead of `ValueError(to_string())`.
+- **Reshape `CzPlacement` to the shape its implementations already use** (agreed
+  2026-09-23). This is core Rust, but it belongs here so that Python sees the new shape
+  once, when the bindings are rebuilt.
+  - Today's trait method, `solve(initial, controls, targets, blocked, max_expansions) ->
+    SolveResult`, is a lowest common denominator. Nothing dispatches through it in
+    production: its only `dyn CzPlacement` uses are two tests.
+  - Every implementation has a richer entry point of its own. `LooseGoal`, `NoHome` and
+    `RecedingHorizon` have `solve_pairs(..., cz_pairs, ..., future_cz_layers)`;
+    `SingleHeuristic` has `solve_with_attempts(...) -> MultiSolveResult`.
+  - The target shape folds those entry points into the trait:
+
+    ```rust
+    pub struct CzStage<'a> {
+        pub initial: &'a [(u32, LocationAddr)],
+        pub pairs: &'a [(u32, u32)],
+        pub blocked: &'a [LocationAddr],
+        pub future_layers: &'a [Vec<(u32, u32)>],
+    }
+
+    pub trait CzPlacement {
+        fn place(&self, stage: &CzStage<'_>, budget: Option<u32>)
+            -> Result<PlacementResult, ConfigError>;
+    }
+    ```
+
+    `PlacementResult` generalizes `MultiSolveResult`. It holds the routed `SolveResult`
+    (its `goal_config` is the chosen placement), the chosen candidate, per-candidate
+    attempts, and total expansions. Placements that don't enumerate candidates leave the
+    attempt log empty.
+  - The trait stays coarse, one call per CZ stage. Generate → evaluate → select stays an
+    internal pattern, not a trait-level decomposition: RecedingHorizon's
+    commit-and-replan loop, the loose-goal set-valued goal and NoHome's single Hungarian
+    assignment don't fit one pipeline. If ranking and RecedingHorizon both need a
+    shared "score a candidate placement" helper, extract it then.
+  - This change is caught by the compiler and moves no behaviour: the inherent
+    `solve_pairs` / `solve_with_attempts` methods and the parallel-slices `solve` go
+    away, and the parallel-slice precondition (`controls.len() == targets.len()`)
+    disappears with it.
+  - It is also the natural seam for a placement algorithm from a private downstream
+    crate (see "Parked"). If that seam is stabilized, `CzStage` and `PlacementResult`
+    need `#[non_exhaustive]` plus constructors.
 - **Expose the "pick a target, then route" pieces Epic 4 needs:**
   - multi-candidate solve with per-candidate attempts;
   - a Push-and-Rotate solve per candidate;
@@ -268,7 +309,10 @@ equal-length random walks.
    - `solve_single_heuristic` returns on the **first** solved candidate
      (`placement/single_heuristic.rs:177`), so candidate order alone decides the output.
 3. **A ranking policy in the placement layer.** Route each candidate with P&R (an upper
-   bound), pick the cheapest, then route the winner with search. Optional extensions:
+   bound), pick the cheapest, then route the winner with search. In Rust it is a
+   `CzPlacement` implementation (or an option on `SingleHeuristicCzPlacement`) whose
+   `PlacementResult` attempt log records each candidate's evaluator score. Optional
+   extensions:
    - **Seed incumbent:** use the P&R plan as the search's starting incumbent.
    - **Lower-bound pruning over the candidate list:** discard any candidate whose class
      lower bound (also on `phil/class-completion-bound`) exceeds the best upper bound
@@ -336,3 +380,7 @@ Epic 5 (placement lift) — deferred, on demand
 3. **Python exposure of `aod_capacity` and `bound_terminates`** (Epic 3A).
 4. **Golden format for Epic 1:** inline expected `Outcome`s or a committed golden file.
 5. **Epic 1 capture level:** `SolveResult`, `TargetSolver`, or both.
+6. **The unit of a placement budget.** `CzPlacement::place` takes `budget: Option<u32>`,
+   which today counts search expansions. Candidate ranking spends most of its effort on
+   P&R evaluations, which expansions don't measure. Decide whether the budget stays in
+   expansions, with evaluations uncounted, or becomes a richer per-placement budget.
