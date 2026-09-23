@@ -1,7 +1,7 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** in progress; no epic has landed yet.
+**Status:** in progress. Epic 0 is done; the rest has not started.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
 branch that is **not merged into `main`**.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
@@ -113,7 +113,25 @@ are always distinct commits/PRs, with zero drift verified between them. Otherwis
 
 ---
 
-## Epic 0 — Close the benchmark gate gap (quick win)
+## Epic 0 — Close the benchmark gate gap (quick win) — DONE 2026-09-23
+
+**Landed.**
+- **Rows:** `RustPlacementTraversal.fallback_push_rotate`, plus five rows —
+  `rust_push_rotate`, `rust_cascade_ids`, `rust_astar_fallback`, `rust_loose_goal` and
+  `rust_receding_horizon`. `rust_cascade_ids` names the variant explicitly rather than
+  using the `"cascade"` alias; `rust_cascade_entropy` was not added.
+- **Baselines:** only rows were added (physical 90 → 135, logical 33 → 48). Every existing
+  row is identical in the deterministic columns, and the new rows are identical across two
+  independent runs. The rows add about 2.3 min and at most 454 MB to the physical suite,
+  so they sit in the default matrix rather than behind a flag.
+- **Five new physical failures are pinned**, all "place.CZ statements remain":
+  - cascade-ids on `steane_physical_35`;
+  - loose-goal and receding-horizon, each on `adder_64` and `trotter_rand_35`.
+- **After #1049** (the receding-horizon budget fix), receding-horizon now solves `adder_4`
+  (19 events / 24 lanes) and `steane_physical_35`. Its other rows keep identical plans
+  and report more `nodes_explored`, because dropped rollouts are now counted. No other
+  row moved.
+- **The A* fallback row solves the three cases plain A* fails.**
 
 **Goal.** Put Push-and-Rotate, cascade and the loose-goal paths under the zero-diff CI
 gate before any search code moves. Today the committed baselines contain only two kinds
@@ -127,7 +145,7 @@ guarded only by unit tests.
 **Scope.**
 - **Registry-only rows** (`python/benchmarks/harness/matrix.py`):
   - `rust_push_rotate` (strategy `"push-rotate"`);
-  - `rust_cascade` (`"cascade"`, i.e. cascade-ids);
+  - `rust_cascade_ids` (`"cascade-ids"`);
   - optionally `rust_cascade_entropy`.
 - **A fallback row needs one Python change first.** `RustPlacementTraversal` has no
   `fallback_push_rotate` field, and `_move_search_from_traversal`

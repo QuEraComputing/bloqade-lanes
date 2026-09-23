@@ -758,6 +758,34 @@ def test_bound_terminates_is_forwarded_to_the_native_entropy_options(monkeypatch
     assert seen == [False, True]
 
 
+def test_fallback_push_rotate_is_forwarded_to_the_native_solve_options():
+    """`RustPlacementTraversal.fallback_push_rotate` must reach `SolveOptions`.
+
+    On the logical arch an atom keeps its site and changes word, and word 0 to
+    word 2 takes three layers. A one-expansion budget cannot finish that, so
+    A* alone reports an exhausted budget; with the fallback on, Push and Rotate
+    finishes the route. The verdict flips only if the flag gets through.
+    """
+    from bloqade.lanes.bytecode import _native
+    from bloqade.lanes.heuristics.physical import movement
+
+    engine = _native.SearchEngine.from_arch_spec(logical.get_arch_spec()._inner)
+
+    def solve(fallback: bool):
+        search = movement._move_search_from_traversal(
+            RustPlacementTraversal(strategy="astar", fallback_push_rotate=fallback)
+        )
+        return _native.TargetSolver(engine, search).solve(
+            {0: LocationAddress(0, 0)._inner}, {0: LocationAddress(2, 0)._inner}, [], 1
+        )
+
+    assert RustPlacementTraversal().fallback_push_rotate is False
+    assert solve(fallback=False).status == "budget_exceeded"
+    rescued = solve(fallback=True)
+    assert rescued.status == "solved"
+    assert len(rescued.move_layers) == 3
+
+
 def test_native_entropy_options_round_trip_bound_terminates():
     """The native default is on, and an explicit `False` survives the
     constructor -- the half of the thread that lives in Rust."""

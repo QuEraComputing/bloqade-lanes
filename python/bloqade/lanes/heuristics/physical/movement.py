@@ -115,6 +115,15 @@ class RustPlacementTraversal:
     (sometimes increase) move counts (e.g. DFS may relocate a spectator to
     shorten a participant's path); the search-effort reduction is not always
     move-count-free."""
+    fallback_push_rotate: bool = False
+    """Route with Push and Rotate when the search fails.
+
+    Off by default. When ``True``, a solve the search does not finish is handed
+    to Push and Rotate, a complete rule-based router: it either returns a
+    schedule or proves that none exists. Only the failure path pays for it.
+    Push and Rotate restarts from the solve's original placement rather than
+    from wherever the search got to, and it does not honour an AOD capacity.
+    """
 
 
 def _move_search_from_traversal(
@@ -131,6 +140,7 @@ def _move_search_from_traversal(
         strategy=_STRATEGY_MAP[traversal.strategy],
         restarts=traversal.restarts,
         lookahead=traversal.lookahead,
+        fallback_push_rotate=traversal.fallback_push_rotate,
     )
     entropy_opts = _native.EntropyOptions(
         max_movesets_per_group=traversal.max_movesets_per_group,
