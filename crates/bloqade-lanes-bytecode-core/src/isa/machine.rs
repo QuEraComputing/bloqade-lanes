@@ -22,10 +22,13 @@
 //! stay lanes instructions while still behaving like stack pushes.
 //!
 //! [`super::validate::simulate_stack`] is the static half of this: it models
-//! the same pops *and the same pushes*, so a program it accepts runs without
-//! underflowing. The ops the device does not interpret hold up their end by
-//! pushing [`Value::Undefined`] placeholders — the depth the simulator
-//! predicts, with a value nothing can mistake for a result.
+//! the same pops *and the same pushes*, so a program it accepts does not
+//! underflow on any path it checks. That is every path except those past a
+//! `call_indirect`, whose arity only the run knows, and any path merging with
+//! one (TODO(vihaco#110): close with a declared signature on `call_indirect`).
+//! The ops the device does not interpret hold up their end by pushing
+//! [`Value::Undefined`] placeholders — the depth the simulator predicts, with
+//! a value nothing can mistake for a result.
 
 use vihaco::frame::Frame;
 use vihaco::machine::StackFrame;
@@ -110,6 +113,17 @@ pub struct Run {
     pub steps: u64,
 }
 
+/// The frame `@main` runs in: based at the bottom of the stack, returning
+/// nowhere.
+fn entry_frame() -> Frame {
+    Frame {
+        base: 0,
+        span: (0, 0, 0),
+        function: None,
+        ret_pc: 0,
+    }
+}
+
 impl LanesMachine {
     /// A machine ready to run, with the entry frame already pushed.
     ///
@@ -119,12 +133,7 @@ impl LanesMachine {
     /// entered without one, so the machine establishes it.
     pub fn new() -> Self {
         let mut machine = Self::default();
-        machine.cpu.push_frame(Frame {
-            base: 0,
-            span: (0, 0, 0),
-            function: None,
-            ret_pc: 0,
-        });
+        machine.cpu.push_frame(entry_frame());
         machine
     }
 
@@ -147,12 +156,36 @@ impl LanesMachine {
     /// forever, and the ISA carries vihaco-cpu's control flow whether or not
     /// the lanes compiler emits it, so the budget is a parameter rather than
     /// an assumption.
+    ///
+    /// The entry point is entered with no arguments; one that declares
+    /// parameters needs [`run_with_args`](Self::run_with_args).
     pub fn run(&mut self, program: &Program, max_steps: u64) -> eyre::Result<Run> {
+        self.run_with_args(program, &[], max_steps)
+    }
+
+    /// [`run`](Self::run) an entry point that takes arguments.
+    ///
+    /// `args` are pushed before the first instruction, in declaration order,
+    /// so they sit at the bottom of the entry frame as locals `0..args.len()`
+    /// — where a `call` leaves a callee's. That is the frame `simulate_stack`
+    /// assumes for every function, the entry included.
+    ///
+    /// They are checked against the entry point's declaration, count and
+    /// type, the way `validate` checks a `call` against its callee's. The host
+    /// is the entry point's only caller, and without the check a missing
+    /// argument surfaces mid-run as an out-of-bounds `load`, far from its
+    /// cause.
+    pub fn run_with_args(
+        &mut self,
+        program: &Program,
+        args: &[Value],
+        max_steps: u64,
+    ) -> eyre::Result<Run> {
         use vihaco_cpu::StepOutcome;
 
         let mut effects = Vec::new();
         let mut steps = 0u64;
-        let mut pc = Self::entry_point(program)?;
+        let mut pc = self.enter(program, args)?;
 
         let stopped = loop {
             let Some(inst) = program.code.get(pc) else {
@@ -250,13 +283,40 @@ impl LanesMachine {
     /// Starting at address 0 instead ran whichever function came first in the
     /// source, so a module declaring `@helper` before `@main` executed the
     /// wrong one and reported success.
-    fn entry_point(program: &Program) -> eyre::Result<usize> {
-        let index = program
-            .main_function
-            .ok_or_else(|| eyre::eyre!("program declares no entry point"))?;
-        let function = program.functions.get(index as usize).ok_or_else(|| {
-            eyre::eyre!("entry point names function {index}, which the table does not have")
-        })?;
+    ///
+    /// Pushes the entry point's arguments, checked against its declared
+    /// parameters, and returns the address to start at.
+    ///
+    /// Every run starts from a reset CPU holding only the entry frame, so the
+    /// arguments land at locals `0..n` however the machine was last left: a
+    /// halt mid-callee leaves frames and operands behind, and a `ret` from
+    /// `@main` pops the entry frame outright.
+    fn enter(&mut self, program: &Program, args: &[Value]) -> eyre::Result<usize> {
+        let function = super::program::entry_function(program)?;
+
+        let params = &function.signature.params;
+        if args.len() != params.len() {
+            eyre::bail!(
+                "the entry point declares {} parameter(s), but {} argument(s) were supplied",
+                params.len(),
+                args.len()
+            );
+        }
+        for (i, (arg, param)) in args.iter().zip(params).enumerate() {
+            if arg.type_of() != param.ty {
+                eyre::bail!(
+                    "entry argument {i} is {:?}, but the entry point declares {:?}",
+                    arg.type_of(),
+                    param.ty
+                );
+            }
+        }
+        vihaco::Reset::reset(&mut self.cpu);
+        self.cpu.push_frame(entry_frame());
+        for arg in args {
+            self.cpu.stack_push(*arg);
+        }
+
         Ok(function.start_address as usize)
     }
 
@@ -1464,6 +1524,113 @@ mod tests {
             run_of(&helper_first),
             "the same functions in either order should execute identically"
         );
+    }
+
+    /// An entry point that takes one `u32`, reads it, and measures it.
+    fn parameterised_main() -> Program {
+        crate::isa::text::parse_text(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
+             .text(root):\nfn @main(z: u32) {\n  cpu::cpu.load u32, 0\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  lanes::lanes.pop\n  \
+             lanes::lanes.pop\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n",
+        )
+        .expect("the module should parse")
+    }
+
+    /// The host is the entry point's caller. Its arguments land at the bottom
+    /// of the entry frame, where `load` finds them — and where
+    /// `simulate_stack` seeds every function's declared parameters, the entry
+    /// included.
+    #[test]
+    fn an_entry_point_receives_its_arguments() {
+        use crate::isa::validate::{simulate_stack, validate_structure};
+
+        let program = parameterised_main();
+        assert_eq!(validate_structure(&program), vec![]);
+        assert_eq!(simulate_stack(&program, None), vec![]);
+
+        let run = machine()
+            .run_with_args(&program, &[Value::U32(0)], 100)
+            .expect("the program should run");
+        assert_eq!(run.stopped, Stopped::Halted);
+    }
+
+    /// A missing argument is refused at entry, naming the cause, rather than
+    /// surfacing mid-run as an out-of-bounds `load`.
+    #[test]
+    fn a_missing_entry_argument_is_refused_at_entry() {
+        let error = machine()
+            .run(&parameterised_main(), 100)
+            .expect_err("@main declares a parameter nothing supplied");
+        assert!(
+            error
+                .to_string()
+                .contains("declares 1 parameter(s), but 0 argument(s) were supplied"),
+            "got: {error}"
+        );
+
+        // And the other way: arguments for an entry point that takes none.
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+        let program =
+            from_code(Version::new(1, 0), vec![MachineInstruction::Cpu(C::Halt)]).unwrap();
+        let error = machine()
+            .run_with_args(&program, &[Value::U32(0)], 100)
+            .expect_err("@main takes no arguments");
+        assert!(
+            error
+                .to_string()
+                .contains("declares 0 parameter(s), but 1 argument(s) were supplied"),
+            "got: {error}"
+        );
+    }
+
+    /// Arguments are checked against the declared types, as `load` would
+    /// check them later — but here, at the boundary that supplied them.
+    #[test]
+    fn a_mistyped_entry_argument_is_refused_at_entry() {
+        let error = machine()
+            .run_with_args(&parameterised_main(), &[Value::I64(0)], 100)
+            .expect_err("the argument is not the declared u32");
+        assert!(
+            error.to_string().contains("entry argument 0 is I64"),
+            "got: {error}"
+        );
+    }
+
+    /// A machine can be run again, and every run starts from the entry frame
+    /// alone. Otherwise the arguments land above whatever the last run left:
+    /// an `i64` still on the stack after `halt`, which `load u32, 0` would read
+    /// instead of the argument, or no entry frame at all after `ret`.
+    #[test]
+    fn a_reused_machine_places_entry_arguments_afresh() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let leaves_a_value = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(9))),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        )
+        .unwrap();
+        let pops_the_entry_frame = from_code(
+            Version::new(1, 0),
+            vec![MachineInstruction::Cpu(C::Return(0))],
+        )
+        .unwrap();
+
+        for first in [&leaves_a_value, &pops_the_entry_frame] {
+            let mut m = machine();
+            m.run(first, 100).expect("the first program should run");
+            let run = m
+                .run_with_args(&parameterised_main(), &[Value::U32(0)], 100)
+                .expect("the second program should run");
+            assert_eq!(run.stopped, Stopped::Halted);
+        }
     }
 
     /// `ret` at top level ends the program, which needs the entry frame:

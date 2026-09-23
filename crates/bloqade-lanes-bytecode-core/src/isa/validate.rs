@@ -24,15 +24,33 @@
 //! - **`atom_reloading` → `fill`.** Without atom reloading, refilling atoms
 //!   after the initial fill is unsupported.
 //!
-//! ## What the stack simulation does not cover
+//! ## The stack simulation is a dataflow over each function
 //!
-//! [`simulate_stack`] is a linear pass over each function from an empty stack,
-//! so it stops at the first branch or call and skips any function a `call`
-//! passes operands to. Both are conservative: it reports nothing rather than
-//! something it cannot justify from a state it does not have. Restoring that
-//! coverage needs a CFG walk that merges state at join points and models calls
-//! against the frame — see
-//! <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>.
+//! [`simulate_stack`] is abstract interpretation over the operand stack, the
+//! way WASM validation and JVM bytecode verification work. Each function is
+//! walked over its control-flow graph from an entry state seeded by its
+//! declared parameters. Where edges merge, the incoming states are joined: a
+//! slot the paths disagree on widens to "unknown", and differing *depths* are
+//! an error ([`StackDepthMismatch`](ValidationError::StackDepthMismatch)), so a
+//! loop whose body changes the depth is rejected at its back edge.
+//!
+//! The analysis is intraprocedural. A `call` is a pure stack effect read off
+//! the callee's declaration — pop its parameters, push its results — and the
+//! callee is never descended into; its own walk checks it. What makes that
+//! sound is the frame rule: a function may not pop below its frame base
+//! ([`PopBelowFrameBase`](ValidationError::PopBelowFrameBase)), so a caller's
+//! post-call depth never depends on what the callee does.
+//!
+//! What it still cannot see: `call_indirect` takes its target and arity off
+//! the stack, so the frame after one is unknowable. That state wins every
+//! join, so it never reports a false error — but everything downstream goes
+//! unchecked, including errors on *other* paths that merge with it: a `pop`
+//! that underflows on the arm without the call is not reported. A branch
+//! condition's type (`bool` has no lanes [`tag`]) is not checked either, only
+//! its presence. And a join keeps only what every incoming path agrees on:
+//! two paths pushing different locations leave a location of unknown address,
+//! so a group check that would fail on only one of those paths — a duplicate
+//! in one arm's `fill` — is not reported.
 //!
 //! ## Address checks
 //!
@@ -42,15 +60,16 @@
 //! [`check_zone`](ArchSpec::check_zone) — invalid zones, words, sites, lanes,
 //! and AOD constraints are reported with the arch layer's own message.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use super::device::LanesInstruction as L;
 use super::machine::MachineInstruction as M;
-use super::program::Program;
+use super::program::{Program, entry_function};
 use crate::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
 use crate::arch::query::{LaneGroupError, LocationGroupError};
 use crate::arch::types::ArchSpec;
+use vihaco::module::FunctionInfo;
 use vihaco::{Type, Value};
 use vihaco_cpu::RuntimeInstruction as C;
 
@@ -156,8 +175,30 @@ pub enum ValidationError {
     UnreachableInstruction { pc: usize },
 
     // ---- stack-type simulation (only via `simulate_stack`) ----
-    /// An instruction popped from an empty stack.
+    /// The entry function popped from an empty stack.
     StackUnderflow { pc: usize },
+    /// A function other than the entry popped below its frame base, into
+    /// values its caller owns.
+    ///
+    /// An error even when the machine's stack is not empty: the callee is
+    /// corrupting its caller rather than underflowing. It is also what keeps
+    /// the stack simulation intraprocedural — without it a caller could not
+    /// know its own post-call depth without descending into the callee. The
+    /// entry function's base is the bottom of the stack, so the same condition
+    /// there is a plain [`StackUnderflow`](Self::StackUnderflow) — unless
+    /// something also calls it, which puts a caller below its base too.
+    PopBelowFrameBase { pc: usize },
+    /// Two paths reach `pc` with different stack depths.
+    ///
+    /// The depth after a merge would depend on which edge was taken. `expected`
+    /// is the depth the first path to reach `pc` arrived with, `got` the depth
+    /// of the one that disagrees. A loop whose body changes the depth reports
+    /// this at its header.
+    StackDepthMismatch {
+        pc: usize,
+        expected: usize,
+        got: usize,
+    },
     /// A popped value had the wrong type tag (see [`tag`]).
     TypeMismatch { pc: usize, expected: u8, got: u8 },
     /// A `local_r`/`local_rz`/`fill`/`initial_fill` location group is invalid.
@@ -349,6 +390,15 @@ impl fmt::Display for ValidationError {
                 write!(f, "pc {pc}: unreachable instruction after return or halt")
             }
             ValidationError::StackUnderflow { pc } => write!(f, "pc {pc}: stack underflow"),
+            ValidationError::PopBelowFrameBase { pc } => write!(
+                f,
+                "pc {pc}: pops below its frame base, into its caller's values"
+            ),
+            ValidationError::StackDepthMismatch { pc, expected, got } => write!(
+                f,
+                "pc {pc}: paths reach this instruction with different stack depths \
+                 ({expected} and {got})"
+            ),
             ValidationError::TypeMismatch { pc, expected, got } => write!(
                 f,
                 "pc {pc}: type mismatch: expected tag 0x{expected:x}, got 0x{got:x}"
@@ -383,9 +433,8 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     // its span is exact wherever the measure rule is active, and stops an
     // uncallable function's `measure` from condemning a program that measures
     // once.
-    let entry = program
-        .main_function
-        .and_then(|i| program.functions.get(i as usize))
+    let entry = entry_function(program)
+        .ok()
         .map(|f| (f.start_address as usize, f.end_address as usize));
     let runs = |pc: usize| entry.is_none_or(|(start, end)| pc >= start && pc < end);
 
@@ -468,7 +517,9 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     errors
 }
 
-/// True if `inst` transfers control somewhere the linear walk cannot follow.
+/// True if `inst` transfers control elsewhere: a branch or a call. Without
+/// `feed_forward` the hardware runs straight-line code only, so the capability
+/// rule rejects every one.
 fn is_control_flow(inst: &M) -> bool {
     matches!(
         inst,
@@ -509,6 +560,14 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
             *slot = Some(i);
         }
     }
+
+    // The declaration of the function owning each address, where it has one.
+    let functions = functions_by_start(program);
+    let declared = |pc: usize| {
+        owner[pc]
+            .and_then(|i| spans.get(i))
+            .and_then(|span| functions.get(&span.start).copied())
+    };
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
@@ -581,11 +640,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                         target: *target,
                         expected: "a function entry",
                     });
-                } else if let Some(callee) = program
-                    .functions
-                    .iter()
-                    .find(|f| f.start_address == *target)
-                {
+                } else if let Some(callee) = functions.get(&(*target as usize)).copied() {
                     // `call <arity>` sets `base = stack.len() - arity`, so the
                     // operand decides where the callee's frame begins. Checked
                     // against the declaration, that is a claim about the
@@ -610,15 +665,7 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                 // disagree, but it names the offender: a `ret` that does not
                 // match what the function promised, rather than a pair that
                 // happens to differ.
-                if let Some(declared) = owner[pc]
-                    .and_then(|i| spans.get(i))
-                    .and_then(|span| {
-                        program
-                            .functions
-                            .iter()
-                            .find(|f| f.start_address == span.start as u32)
-                    })
-                    .map(|f| f.signature.ret.len() as u32)
+                if let Some(declared) = declared(pc).map(|f| f.signature.ret.len() as u32)
                     && *keep != declared
                 {
                     errors.push(ValidationError::ReturnCountMismatch {
@@ -708,25 +755,26 @@ struct Span {
     closed: bool,
 }
 
+impl Span {
+    /// One past the last *body* address: the `func_end`, where there is one.
+    fn body_end(&self) -> usize {
+        if self.closed { self.end - 1 } else { self.end }
+    }
+}
+
 fn is_marker(inst: &M) -> bool {
     matches!(inst, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd))
 }
 
-/// Entry addresses of every function some `call` passes operands to.
-///
-/// The arity lives at the call site, not on the callee — `resolve` records an
-/// empty [`vihaco::module::Signature`] for every function — so the only way to
-/// learn that a function receives operands is to read the calls that reach it.
-/// A function called from several sites with different arities appears here if
-/// *any* of them is nonzero, because one caller passing operands is enough to
-/// make the empty-stack simulation wrong.
-fn callee_arities(code: &[M]) -> HashSet<u32> {
-    code.iter()
-        .filter_map(|inst| match inst {
-            M::Cpu(C::Call(arity, target)) if *arity > 0 => Some(*target),
-            _ => None,
-        })
-        .collect()
+/// Every declared function, by the address of its `func_start`. Built once per
+/// pass, so a lookup per `call` and `ret` is not a scan of the table; where
+/// two entries claim one address, the first wins, as a scan would have it.
+fn functions_by_start(program: &Program) -> HashMap<usize, &FunctionInfo<Type>> {
+    let mut functions = HashMap::new();
+    for f in &program.functions {
+        functions.entry(f.start_address as usize).or_insert(f);
+    }
+    functions
 }
 
 /// Split the code into function extents, delimited by the markers.
@@ -768,53 +816,198 @@ fn function_spans(code: &[M]) -> Vec<Span> {
     spans
 }
 
-/// Walk one function from its entry, following branch edges.
+// ── Per-function dataflow ──────────────────────────────────────────────────
+
+/// A forward analysis over one function's control-flow graph.
+///
+/// [`walk`] owns the traversal — successors, the worklist, the fixpoint — and
+/// an implementation supplies only what it tracks per address. The structural
+/// pass tracks nothing, so for it the walk is reachability; the stack
+/// simulation tracks an [`AbstractStack`]. One walker serves both, so the two
+/// cannot disagree about which code runs.
+///
+/// Nothing here is lanes-specific except the implementations, which is the
+/// seam #1042 proposes upstreaming to vihaco behind.
+trait Dataflow {
+    type State: Clone + PartialEq;
+
+    /// Apply the effect of `inst`, at `pc`, to `state`.
+    fn transfer(&mut self, pc: usize, inst: &M, state: &mut Self::State);
+
+    /// Merge `incoming` into `existing`, the state already recorded at the
+    /// merge point `pc`, and report whether `existing` changed.
+    ///
+    /// Only a strict change requeues `pc`. That is what terminates the
+    /// fixpoint, and what a plain `seen` flag gets wrong at exactly the joins
+    /// this exists for.
+    fn join(&mut self, pc: usize, existing: &mut Self::State, incoming: &Self::State) -> bool;
+}
+
+/// What [`walk`] learned about one function.
+struct Walk<S> {
+    /// Which addresses of the span begin a basic block — see [`leaders`].
+    leaders: Vec<bool>,
+    /// The converged state on entry to each leader, indexed from
+    /// `span.start`; `None` at every other address, and at leaders no path
+    /// reaches.
+    states: Vec<Option<S>>,
+    /// Which addresses of the span some path reaches.
+    reached: Vec<bool>,
+    /// Whether some path runs off the end of the function.
+    falls_off: bool,
+}
+
+/// Where control can go after `inst` at `pc`, and whether it runs off the
+/// end of `span` instead.
+///
+/// A target outside the span is not followed: the control-flow target checks
+/// report it, and following it would attribute another function's code to
+/// this one. A `call` falls through — the callee's code is its own.
+fn successors(inst: &M, pc: usize, span: &Span) -> ([Option<usize>; 2], bool) {
+    let inside = |target: u32| Some(target as usize).filter(|t| (span.start..span.end).contains(t));
+    match inst {
+        M::Cpu(C::FunctionEnd) => ([None, None], true),
+        M::Cpu(C::Branch(t)) => ([inside(*t), None], false),
+        M::Cpu(C::ConditionalBranch(t, f)) => ([inside(*t), inside(*f)], false),
+        inst if is_terminator(inst) => ([None, None], false),
+        _ => {
+            let next = pc + 1;
+            (
+                [Some(next).filter(|&n| n < span.end), None],
+                next >= span.body_end(),
+            )
+        }
+    }
+}
+
+/// The addresses of `span` that begin a basic block: its entry, and every
+/// branch target inside it.
+///
+/// Every other address has at most one predecessor, the one before it, so its
+/// state is that predecessor's after one transfer and is never stored. Every
+/// merge point is a leader, so joins happen only there. That is what keeps a
+/// straight-line function at one stored state rather than one per
+/// instruction — each of which is a copy of the stack.
+fn leaders(program: &Program, span: &Span) -> Vec<bool> {
+    let mut leaders = vec![false; span.end - span.start];
+    leaders[0] = true;
+    for pc in span.start..span.end {
+        let inst = &program.code[pc];
+        if matches!(inst, M::Cpu(C::Branch(_) | C::ConditionalBranch(..))) {
+            for target in successors(inst, pc, span).0.into_iter().flatten() {
+                leaders[target - span.start] = true;
+            }
+        }
+    }
+    leaders
+}
+
+/// Transfer `state` through the basic block that begins at `leader`, marking
+/// each address reached. Returns where control leaves the block — each
+/// successor is a leader — and whether it runs off the function on the way.
+fn run_block<D: Dataflow>(
+    program: &Program,
+    span: &Span,
+    leaders: &[bool],
+    leader: usize,
+    state: &mut D::State,
+    flow: &mut D,
+    reached: &mut [bool],
+) -> ([Option<usize>; 2], bool) {
+    let mut pc = leader;
+    let mut falls_off = false;
+    loop {
+        reached[pc - span.start] = true;
+        let inst = &program.code[pc];
+        flow.transfer(pc, inst, state);
+        let (next, off) = successors(inst, pc, span);
+        falls_off |= off;
+        match next {
+            [Some(n), None] if !leaders[n - span.start] => pc = n,
+            _ => return (next, falls_off),
+        }
+    }
+}
+
+/// Run `flow` over one function to a fixpoint, from `entry` at its
+/// `func_start`.
+fn walk<D: Dataflow>(
+    program: &Program,
+    span: &Span,
+    entry: D::State,
+    flow: &mut D,
+) -> Walk<D::State> {
+    let leaders = leaders(program, span);
+    let mut states: Vec<Option<D::State>> = vec![None; span.end - span.start];
+    let mut reached = vec![false; span.end - span.start];
+    states[0] = Some(entry);
+    let mut work = vec![span.start];
+    let mut falls_off = false;
+
+    while let Some(leader) = work.pop() {
+        let mut state = states[leader - span.start]
+            .clone()
+            .expect("queued only once a state exists");
+        let (next, off) = run_block(
+            program,
+            span,
+            &leaders,
+            leader,
+            &mut state,
+            flow,
+            &mut reached,
+        );
+        falls_off |= off;
+        for succ in next.into_iter().flatten() {
+            let slot = &mut states[succ - span.start];
+            if let Some(existing) = slot {
+                if flow.join(succ, existing, &state) {
+                    work.push(succ);
+                }
+            } else {
+                *slot = Some(state.clone());
+                work.push(succ);
+            }
+        }
+    }
+
+    Walk {
+        leaders,
+        states,
+        reached,
+        falls_off,
+    }
+}
+
+/// The dataflow that tracks nothing: walking it is reachability.
+struct Reachability;
+
+impl Dataflow for Reachability {
+    type State = ();
+
+    fn transfer(&mut self, _pc: usize, _inst: &M, _state: &mut ()) {}
+
+    fn join(&mut self, _pc: usize, _existing: &mut (), _incoming: &()) -> bool {
+        false
+    }
+}
+
+/// Check one function's reachability and termination.
 ///
 /// Reports every body address no path reaches, and a missing terminator when
 /// any path runs off the end instead of hitting `ret`/`halt`. Both are
 /// per-function: a second function's dead code no longer hides a first
 /// function's missing terminator, which the old single either/or gate did.
 fn walk_function(program: &Program, span: &Span, errors: &mut Vec<ValidationError>) {
-    let body_end = if span.closed { span.end - 1 } else { span.end };
-    let mut seen = vec![false; span.end - span.start];
-    let mut work = vec![span.start];
-    let mut falls_off = false;
-
-    while let Some(pc) = work.pop() {
-        // A target outside this function is reported by the target checks;
-        // following it would attribute the callee's code to the caller.
-        if pc < span.start || pc >= span.end || seen[pc - span.start] {
-            continue;
-        }
-        seen[pc - span.start] = true;
-
-        let inst = &program.code[pc];
-        let fall_through = |work: &mut Vec<usize>, falls_off: &mut bool| {
-            if pc + 1 >= body_end {
-                *falls_off = true;
-            }
-            if pc + 1 < span.end {
-                work.push(pc + 1);
-            }
-        };
-        match inst {
-            M::Cpu(C::FunctionEnd) => falls_off = true,
-            M::Cpu(C::Branch(t)) => work.push(*t as usize),
-            M::Cpu(C::ConditionalBranch(t, f)) => {
-                work.push(*t as usize);
-                work.push(*f as usize);
-            }
-            inst if is_terminator(inst) => {}
-            _ => fall_through(&mut work, &mut falls_off),
-        }
-    }
+    let body_end = span.body_end();
+    let walked = walk(program, span, (), &mut Reachability);
 
     for pc in span.start + 1..body_end {
-        if !seen[pc - span.start] {
+        if !walked.reached[pc - span.start] {
             errors.push(ValidationError::UnreachableInstruction { pc });
         }
     }
-    if falls_off {
+    if walked.falls_off {
         // Point at the last body instruction where there is one; an empty
         // function has only its marker to name. An empty function is not
         // exempt: `func_end` is a no-op, so falling off it runs whatever was
@@ -827,71 +1020,135 @@ fn walk_function(program: &Program, span: &Span, errors: &mut Vec<ValidationErro
 
 // ── Stack-type simulation ──────────────────────────────────────────────────
 
-/// One tracked stack value: its type tag and (when known) concrete bits.
-#[derive(Debug, Clone)]
-struct SimEntry {
-    tag: u8,
-    value: Option<u64>,
+/// One slot of the abstract operand stack.
+#[derive(Debug, Clone, PartialEq)]
+enum Slot {
+    /// A value of known type (see [`tag`]), and its bits where every path
+    /// agrees on them — the lane and location group checks need the address.
+    Known { tag: u8, value: Option<u64> },
+    /// A value of unknown type. Earned, not invented: a declared parameter, a
+    /// call's result, an untagged vihaco-cpu value, or two paths disagreeing.
+    Unknown,
 }
 
-/// Type-level stack simulator: walks the instruction stream tracking value
-/// types, reporting underflow and type mismatches, and — when given an
-/// [`ArchSpec`] — validating `move` lane groups and `fill`/`local_*` location
-/// groups (duplicates only without an arch).
+impl Slot {
+    /// The least slot both `self` and `other` refine. Finite height — bits,
+    /// then tag, then nothing — so a fixpoint over these terminates.
+    fn join(&self, other: &Slot) -> Slot {
+        match (self, other) {
+            (a, b) if a == b => a.clone(),
+            (Slot::Known { tag: a, .. }, Slot::Known { tag: b, .. }) if a == b => Slot::Known {
+                tag: *a,
+                value: None,
+            },
+            _ => Slot::Unknown,
+        }
+    }
+}
+
+/// One function's frame, as the stack simulation sees it.
+///
+/// Depth is measured from the frame base, which is what makes the analysis
+/// intraprocedural: nothing below the base is this function's to read.
+#[derive(Debug, Clone, PartialEq)]
+enum AbstractStack {
+    /// The frame's slots, bottom (local 0) first.
+    Known(Vec<Slot>),
+    /// Past a `call_indirect`, whose arity comes off the stack: the depth
+    /// cannot be known, so nothing downstream is checked. It absorbs every
+    /// join, so a path merging with this one goes unchecked too.
+    ///
+    /// TODO(vihaco#110): once the port resolves each `fn_ref` to its
+    /// `FunctionInfo`, give `call_indirect` a declared signature (a WASM-style
+    /// type operand, proposed upstream) and model it as a direct call, so this
+    /// state is no longer needed.
+    Unknown,
+}
+
+/// Type-level stack simulator: runs the [`Dataflow`] over each function,
+/// tracking value types, reporting underflow and type mismatches, and — when
+/// given an [`ArchSpec`] — validating `move` lane groups and
+/// `fill`/`local_*` location groups (duplicates only without an arch).
 struct StackSimulator<'a> {
-    stack: Vec<SimEntry>,
-    errors: Vec<ValidationError>,
+    program: &'a Program,
     arch: Option<&'a ArchSpec>,
+    /// The function table by entry address, for a `call`'s declared results.
+    functions: HashMap<usize, &'a FunctionInfo<Type>>,
+    /// Whether to run the group checks. Off during the fixpoint, whose
+    /// errors are discarded: a group check never changes a state, and the
+    /// arch's is the costliest thing a transfer does.
+    reporting: bool,
+    /// The frame being transferred. [`Dataflow::transfer`] moves each state's
+    /// slots in here and back out, so the per-instruction effects stay
+    /// methods on one stack rather than threading it through every helper.
+    stack: Vec<Slot>,
+    errors: Vec<ValidationError>,
+    /// Depth mismatches found at merge points, by `pc`, first one wins. Kept
+    /// apart from `errors` because they are found during the fixpoint, whose
+    /// other errors are discarded.
+    mismatches: BTreeMap<usize, (usize, usize)>,
+    /// Whether the function being walked is the entry and nothing calls it,
+    /// so its frame base is the bottom of the stack — see
+    /// [`ValidationError::PopBelowFrameBase`].
+    entry: bool,
     pc: usize,
 }
 
 impl<'a> StackSimulator<'a> {
-    fn new(arch: Option<&'a ArchSpec>) -> Self {
+    fn new(program: &'a Program, arch: Option<&'a ArchSpec>) -> Self {
         Self {
+            program,
+            arch,
+            functions: functions_by_start(program),
+            reporting: true,
             stack: Vec::new(),
             errors: Vec::new(),
-            arch,
+            mismatches: BTreeMap::new(),
+            entry: false,
             pc: 0,
         }
     }
 
-    /// Record that a pop found the stack empty.
+    /// Record that a pop found the frame empty.
     ///
-    /// `StackUnderflow` carries nothing but the `pc`, so a second one for the
-    /// same instruction is a literally identical value and says nothing new.
-    /// Group pops (`fill 40`, `new_array`) would otherwise emit one per
-    /// missing operand — a million lines of `pc 0: stack underflow` for a
-    /// single malformed word. All pops for one instruction are consecutive, so
+    /// The error carries nothing but the `pc`, so a second one for the same
+    /// instruction is a literally identical value and says nothing new. Group
+    /// pops (`fill 40`, `new_array`) would otherwise emit one per missing
+    /// operand — a million lines of `pc 0: stack underflow` for a single
+    /// malformed word. All pops for one instruction are consecutive, so
     /// checking the last error is enough.
     fn underflow(&mut self) {
-        let already = matches!(
-            self.errors.last(),
-            Some(ValidationError::StackUnderflow { pc }) if *pc == self.pc
-        );
-        if !already {
-            self.errors
-                .push(ValidationError::StackUnderflow { pc: self.pc });
+        let pc = self.pc;
+        let error = if self.entry {
+            ValidationError::StackUnderflow { pc }
+        } else {
+            ValidationError::PopBelowFrameBase { pc }
+        };
+        if self.errors.last() != Some(&error) {
+            self.errors.push(error);
         }
     }
 
-    fn pop_any(&mut self) {
-        if self.stack.pop().is_none() {
+    fn pop(&mut self) -> Option<Slot> {
+        let slot = self.stack.pop();
+        if slot.is_none() {
             self.underflow();
+        }
+        slot
+    }
+
+    /// Pop `count` values of any type.
+    ///
+    /// Bounded by the depth plus one: `count` is an operand, and the extra pop
+    /// is what records the single underflow when it exceeds the frame.
+    fn pop_n(&mut self, count: u32) {
+        for _ in 0..(count as usize).min(self.stack.len() + 1) {
+            self.pop();
         }
     }
 
     fn pop_typed(&mut self, expected: u8) {
-        match self.stack.pop() {
-            Some(entry) if entry.tag != expected => {
-                self.errors.push(ValidationError::TypeMismatch {
-                    pc: self.pc,
-                    expected,
-                    got: entry.tag,
-                })
-            }
-            Some(_) => {}
-            None => self.underflow(),
-        }
+        self.pop_addr(expected);
     }
 
     fn pop_typed_n(&mut self, expected: u8, count: u32) {
@@ -901,27 +1158,25 @@ impl<'a> StackSimulator<'a> {
     }
 
     /// Pop one value expected to have `expected` tag, returning its concrete
-    /// bits when the type matches.
+    /// bits when the type matches and every path agrees on them. An unknown
+    /// slot passes: nothing justifies rejecting it.
     fn pop_addr(&mut self, expected: u8) -> Option<u64> {
-        match self.stack.pop() {
-            Some(entry) if entry.tag == expected => entry.value,
-            Some(entry) => {
+        match self.pop()? {
+            Slot::Known { tag, value } if tag == expected => value,
+            Slot::Known { tag, .. } => {
                 self.errors.push(ValidationError::TypeMismatch {
                     pc: self.pc,
                     expected,
-                    got: entry.tag,
+                    got: tag,
                 });
                 None
             }
-            None => {
-                self.underflow();
-                None
-            }
+            Slot::Unknown => None,
         }
     }
 
     fn push(&mut self, tag: u8, value: Option<u64>) {
-        self.stack.push(SimEntry { tag, value });
+        self.stack.push(Slot::Known { tag, value });
     }
 
     fn sim_dup(&mut self) {
@@ -975,6 +1230,9 @@ impl<'a> StackSimulator<'a> {
     /// Pop `arity` locations and validate them as a group.
     fn pop_and_validate_locations(&mut self, arity: u32) {
         let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LOCATION)).collect();
+        if !self.reporting {
+            return;
+        }
         let locations: Vec<LocationAddr> = bits
             .iter()
             .filter_map(|v| v.map(LocationAddr::decode))
@@ -993,6 +1251,9 @@ impl<'a> StackSimulator<'a> {
     /// Pop `arity` lanes and validate them as a group.
     fn sim_move(&mut self, arity: u32) {
         let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LANE)).collect();
+        if !self.reporting {
+            return;
+        }
         let lanes: Vec<LaneAddr> = bits
             .iter()
             .filter_map(|v| v.map(LaneAddr::decode_u64))
@@ -1013,14 +1274,46 @@ impl<'a> StackSimulator<'a> {
             // constants push a typed value
             M::Cpu(C::Const(Type::F64, Value::F64(v))) => self.push(tag::FLOAT, Some(v.to_bits())),
             M::Cpu(C::Const(Type::I64, Value::I64(v))) => self.push(tag::INT, Some(*v as u64)),
+            // Every other constant — `bool`, `u32`, `str`, … — has no lanes
+            // tag. A `u32` is what a zone is at run time, so guessing one
+            // would be wrong in both directions.
+            M::Cpu(C::Const(..)) => self.stack.push(Slot::Unknown),
             M::Lanes(L::ConstLoc(v)) => self.push(tag::LOCATION, Some(*v)),
             M::Lanes(L::ConstLane(v)) => self.push(tag::LANE, Some(*v)),
             M::Lanes(L::ConstZone(v)) => self.push(tag::ZONE, Some(*v as u64)),
 
             // stack manipulation
-            M::Lanes(L::Pop) => self.pop_any(),
+            M::Lanes(L::Pop) => {
+                self.pop();
+            }
             M::Cpu(C::Dup) => self.sim_dup(),
             M::Lanes(L::Swap) => self.sim_swap(),
+
+            // Locals alias the frame from its base, so local `n` *is* slot
+            // `n`. A `load` from a slot the frame does not have fails at run
+            // time; here it only has to leave the depth right.
+            M::Cpu(C::Load(_, index)) => {
+                let slot = self
+                    .stack
+                    .get(*index as usize)
+                    .cloned()
+                    .unwrap_or(Slot::Unknown);
+                self.stack.push(slot);
+            }
+            M::Cpu(C::Store(_, index)) => {
+                let value = self.pop().unwrap_or(Slot::Unknown);
+                let index = *index as usize;
+                // `op_store` grows the stack to reach its index, so a store
+                // past the top changes the depth as well as the slot. Past the
+                // ceiling it is already rejected, and modelling it would be
+                // the very allocation the ceiling exists to prevent.
+                if index <= MAX_LOCAL_INDEX as usize {
+                    if index >= self.stack.len() {
+                        self.stack.resize(index + 1, Slot::Unknown);
+                    }
+                    self.stack[index] = value;
+                }
+            }
 
             // atom arrangement
             M::Lanes(L::InitialFill(arity)) | M::Lanes(L::Fill(arity)) => {
@@ -1067,7 +1360,7 @@ impl<'a> StackSimulator<'a> {
                 // an unbounded loop before its diagnosis is reported.
                 let count = array_element_count(*dim0, *dim1).min(MAX_ARRAY_ELEMENTS);
                 for _ in 0..count {
-                    self.pop_any();
+                    self.pop();
                 }
                 self.push(tag::ARRAY_REF, None);
             }
@@ -1092,94 +1385,217 @@ impl<'a> StackSimulator<'a> {
 
             // control
             // `ret <keep>` keeps the top `keep` values as the function's
-            // return values; it does not pop exactly one. Modelling it as one
-            // made `ret 0` — the spelling every function the compiler emits
-            // uses — report a spurious underflow on an empty stack.
-            //
-            // Bounded by the stack depth plus one: `keep` is an operand, and
-            // the extra pop is what records the single underflow when it
-            // exceeds what the function has.
-            M::Cpu(C::Return(keep)) => {
-                for _ in 0..(*keep as usize).min(self.stack.len() + 1) {
-                    self.pop_any();
-                }
+            // return values and drains the rest of the frame; it does not pop
+            // exactly one. Modelling it as one made `ret 0` — the spelling
+            // every function the compiler emits uses — report a spurious
+            // underflow on an empty stack.
+            M::Cpu(C::Return(keep)) => self.pop_n(*keep),
+            // A call is a pure stack effect. Arguments come off by the
+            // operand, as `op_call` takes them; results come back by the
+            // callee's declaration, which its every `ret` is checked against.
+            // The callee is never descended into — its own walk checks it.
+            M::Cpu(C::Call(arity, target)) => {
+                self.pop_n(*arity);
+                let returns = self
+                    .functions
+                    .get(&(*target as usize))
+                    .map_or(0, |f| f.signature.ret.len());
+                self.stack
+                    .extend(std::iter::repeat_n(Slot::Unknown, returns));
             }
-            M::Cpu(C::Halt) => {}
+            // Target, arity and function reference, popped in that order.
+            // vihaco 0.4.1 can take the first two from a `FunctionInfo`
+            // message instead, but `LanesMachine` executes CPU ops without
+            // one, so all three come off the program's stack. (vihaco#110
+            // moves both into the message for good, leaving only the
+            // reference.) What the callee then does to the frame is
+            // unknowable; `transfer` gives up on the path.
+            //
+            // TODO(vihaco#110): at the port this becomes one fixed operand,
+            // the reference, with the arguments and results taken from a
+            // declared signature — see `AbstractStack::Unknown`.
+            M::Cpu(C::IndirectCall) => self.pop_n(3),
+            // The condition. Its type, `bool`, has no lanes tag, so only its
+            // presence is checked.
+            M::Cpu(C::ConditionalBranch(..)) => {
+                self.pop();
+            }
+            M::Cpu(
+                C::Branch(_)
+                | C::Halt
+                | C::Label(_)
+                | C::Span(..)
+                | C::Breakpoint
+                | C::FunctionStart
+                | C::FunctionEnd,
+            ) => {}
 
-            // Every other vihaco-cpu op — arithmetic, comparisons, control
-            // flow, the heap ops — is reachable in a decoded program but is
-            // never emitted by the lanes pipeline, so its stack effect is not
-            // modelled here. Treating it as a no-op means the simulator does
-            // not invent underflows for code it does not understand.
-            M::Cpu(_) => {}
+            // The rest of vihaco-cpu is never emitted by the lanes pipeline,
+            // but it is reachable in a decoded program and, past control flow,
+            // its depth matters: a comparison feeding a `cond_br` left as a
+            // no-op would make every such branch look unbalanced. So each has
+            // its real arity, with an untyped result.
+            M::Cpu(C::Print | C::HeapDealloc) => {
+                self.pop();
+            }
+            M::Cpu(C::HeapAlloc(n)) => {
+                self.pop_n(*n);
+                self.stack.push(Slot::Unknown);
+            }
+            M::Cpu(C::Neg(_) | C::Not) => {
+                self.pop();
+                self.stack.push(Slot::Unknown);
+            }
+            M::Cpu(
+                C::GetItem
+                | C::Add(_)
+                | C::Sub(_)
+                | C::Mul(_)
+                | C::Div(_)
+                | C::Rem(_)
+                | C::Shl(_)
+                | C::Shr(_)
+                | C::Rol(_)
+                | C::Ror(_)
+                | C::BitAnd(_)
+                | C::BitOr(_)
+                | C::BitXor(_)
+                | C::And
+                | C::Or
+                | C::Xor
+                | C::Eq(_)
+                | C::Ne(_)
+                | C::Lt(_)
+                | C::Gt(_)
+                | C::Le(_)
+                | C::Ge(_),
+            ) => {
+                self.pop_n(2);
+                self.stack.push(Slot::Unknown);
+            }
         }
     }
 
-    fn run(mut self, program: &Program) -> Vec<ValidationError> {
-        // Simulate each function from an empty stack, independently.
-        //
-        // This used to walk the whole stream and `break` at the first control
-        // flow, which lost two things. A `call` is the *only* way to reach a
-        // second function, so breaking there meant every multi-function
-        // program went unchecked from its first call onwards — a callee's
-        // unconditional underflow, behind no branch at all, was never
-        // reported. And with no control flow anywhere the markers fell through
-        // as no-ops, so one function's leftover operands were still on the
-        // stack when the next began, and its errors surfaced an instruction
-        // late or not at all.
-        //
-        // A branch still stops the *containing* function: past it the stack
-        // state depends on which edge was taken, and merging those needs the
-        // CFG walk tracked in
-        // <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>. The
-        // linear prefix of every function is checked, which is all of every
-        // function the compiler emits today.
-        //
-        // Starting from empty is the part that is only right for a function
-        // nothing passes operands to. `call <arity>` does not clear the stack:
-        // it sets `base = stack.len() - arity`, and the callee's locals *alias*
-        // the operand stack from there up. So a callee with nonzero arity
-        // legitimately consumes values this simulation cannot see, and every
-        // such function reported a `StackUnderflow` that execution disproves.
-        //
-        // Skipping them trades coverage for correctness. Checking them properly
-        // means modelling the frame rather than absolute depth — a callee owns
-        // exactly `arity` values and popping below `base` corrupts its caller —
-        // which is the frame-aware walk in #1042, not something this linear
-        // pass can express. This is a placeholder for that, not the end state.
-        let takes_operands = callee_arities(&program.code);
+    fn run(mut self) -> Vec<ValidationError> {
+        let program = self.program;
+        let main = entry_function(program)
+            .ok()
+            .map(|f| f.start_address as usize);
+        // A `call` gives the callee a caller below its base, `@main` included.
+        let called: HashSet<usize> = program
+            .code
+            .iter()
+            .filter_map(|inst| match inst {
+                M::Cpu(C::Call(_, target)) => Some(*target as usize),
+                _ => None,
+            })
+            .collect();
+
         for span in function_spans(&program.code) {
-            if takes_operands.contains(&(span.start as u32)) {
-                continue;
-            }
-            self.stack.clear();
-            for (pc, inst) in program.code[span.start..span.end]
-                .iter()
-                .enumerate()
-                .map(|(i, inst)| (span.start + i, inst))
-            {
-                if is_control_flow(inst) {
-                    break;
+            // Declared, not inferred: every `call` is checked against this
+            // (`CallArityMismatch`), so the frame a caller builds is exactly
+            // this many values deep. The entry point is no exception — its
+            // caller is the host, and `LanesMachine::run_with_args` refuses
+            // arguments that disagree with the declaration.
+            let params = self
+                .functions
+                .get(&span.start)
+                .map_or(0, |f| f.signature.params.len());
+            let entry = AbstractStack::Known(vec![Slot::Unknown; params]);
+            self.entry = main == Some(span.start) && !called.contains(&span.start);
+
+            // Reach the fixpoint first, discarding what intermediate states
+            // report: a block is transferred once per change to its input,
+            // and all but the last of those see a state that has not
+            // converged yet.
+            let reported = self.errors.len();
+            self.reporting = false;
+            let Walk {
+                leaders, states, ..
+            } = walk(program, &span, entry, &mut self);
+            self.errors.truncate(reported);
+            self.reporting = true;
+
+            // Then report once, in address order, against the final states:
+            // each block replayed from its leader's, in leader order.
+            let mut reached = vec![false; span.end - span.start];
+            for (offset, state) in states.into_iter().enumerate() {
+                let Some(mut state) = state else { continue };
+                let pc = span.start + offset;
+                if let Some(&(expected, got)) = self.mismatches.get(&pc) {
+                    self.errors
+                        .push(ValidationError::StackDepthMismatch { pc, expected, got });
                 }
-                self.pc = pc;
-                self.dispatch(inst);
+                run_block(
+                    program,
+                    &span,
+                    &leaders,
+                    pc,
+                    &mut state,
+                    &mut self,
+                    &mut reached,
+                );
             }
+            self.mismatches.clear();
         }
         self.errors
     }
 }
 
-/// Run the type-level stack simulation over a program. Collects underflow and
-/// type-mismatch errors, plus lane/location group errors (validated against
-/// `arch` when provided, else duplicate-only).
+impl Dataflow for StackSimulator<'_> {
+    type State = AbstractStack;
+
+    fn transfer(&mut self, pc: usize, inst: &M, state: &mut AbstractStack) {
+        let AbstractStack::Known(slots) = state else {
+            return;
+        };
+        self.pc = pc;
+        self.stack = std::mem::take(slots);
+        self.dispatch(inst);
+        *slots = std::mem::take(&mut self.stack);
+        if matches!(inst, M::Cpu(C::IndirectCall)) {
+            *state = AbstractStack::Unknown;
+        }
+    }
+
+    fn join(&mut self, pc: usize, existing: &mut AbstractStack, incoming: &AbstractStack) -> bool {
+        match (existing, incoming) {
+            (AbstractStack::Unknown, _) => false,
+            (existing, AbstractStack::Unknown) => {
+                *existing = AbstractStack::Unknown;
+                true
+            }
+            (AbstractStack::Known(have), AbstractStack::Known(got)) => {
+                // Path-dependent depth: rejected, as WASM and the JVM do. The
+                // state already recorded stands, so the walk still covers
+                // everything downstream and the fixpoint cannot oscillate.
+                if have.len() != got.len() {
+                    self.mismatches.entry(pc).or_insert((have.len(), got.len()));
+                    return false;
+                }
+                let mut changed = false;
+                for (h, g) in have.iter_mut().zip(got) {
+                    let merged = h.join(g);
+                    if merged != *h {
+                        *h = merged;
+                        changed = true;
+                    }
+                }
+                changed
+            }
+        }
+    }
+}
+
+/// Run the type-level stack simulation over a program. Collects underflow,
+/// frame, depth-mismatch and type-mismatch errors, plus lane/location group
+/// errors (validated against `arch` when provided, else duplicate-only).
 ///
-/// Conservative around control flow: each function is simulated from an empty
-/// stack up to its first branch or call, and a function some `call` passes
-/// operands to is skipped entirely. An empty result therefore means "nothing
-/// this pass can see is wrong", not "the stack discipline is sound" — see the
-/// module docs.
+/// Every function is checked over its whole control-flow graph, from a frame
+/// holding its declared parameters — see the module docs for what that does
+/// and does not see.
 pub fn simulate_stack(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
-    StackSimulator::new(arch).run(program)
+    StackSimulator::new(program, arch).run()
 }
 
 #[cfg(test)]
@@ -1751,12 +2167,14 @@ mod tests {
     ///
     /// The latch condemned `cond_br`'s second arm — the `halt` ending the
     /// first arm set it — and could not see code a `br` jumped over.
-    /// Each function is simulated from an empty stack, independently.
+    /// Each function is simulated from its own frame, independently.
     ///
     /// Breaking at the first control flow lost every multi-function program's
     /// tail — `call` is the only way to reach a second function — and with no
     /// control flow at all, one function's leftover operands were still on the
-    /// stack when the next began.
+    /// stack when the next began. A callee that pops past its frame is
+    /// reported as doing that, not as underflowing: its caller's values are
+    /// below it.
     #[test]
     fn the_stack_is_simulated_per_function() {
         use crate::isa::text::parse_text;
@@ -1767,7 +2185,7 @@ mod tests {
         assert!(
             simulate_stack(&p, None)
                 .iter()
-                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
+                .any(|e| matches!(e, ValidationError::PopBelowFrameBase { .. })),
             "@helper's underflow should be reported: {:?}",
             simulate_stack(&p, None)
         );
@@ -1778,8 +2196,8 @@ mod tests {
         assert!(
             simulate_stack(&p, None)
                 .iter()
-                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
-            "@helper starts from an empty stack: {:?}",
+                .any(|e| matches!(e, ValidationError::PopBelowFrameBase { .. })),
+            "@helper starts from an empty frame: {:?}",
             simulate_stack(&p, None)
         );
     }
@@ -1817,70 +2235,444 @@ mod tests {
         .expect("the module should parse")
     }
 
-    /// A callee that receives operands is not simulated, because this pass
-    /// starts every function from an empty stack.
+    /// A callee's frame starts with its declared parameters, not empty (gap 1
+    /// of #1042).
     ///
     /// `call <arity>` does not clear the stack — it sets
     /// `base = stack.len() - arity` and the callee's locals alias the operand
-    /// stack from there up. So the argument `@helper` consumes below is one
-    /// `@main` legitimately passed, and reporting an underflow for it
-    /// contradicts the machine, which runs this program to `Halted`. See
-    /// <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>.
+    /// stack from there up. Simulating `@helper` from empty reported an
+    /// underflow for the argument `@main` legitimately passed, so every
+    /// nonzero-arity function used to be skipped rather than checked.
     #[test]
-    fn a_callee_taking_operands_is_not_simulated() {
+    fn a_callee_taking_operands_is_checked_from_its_declared_frame() {
         let p = sst_module(
-            "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+            "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.initial_fill 1\n  lanes::lanes.const_zone 0x00000000\n  \
              cpu::cpu.call 1, helper\n  lanes::lanes.pop\n  cpu::cpu.halt\n}\n\n\
-             fn @helper() {\n  cpu::cpu.load u32, 0\n  lanes::lanes.measure 1\n  \
-             lanes::lanes.await_measure\n  cpu::cpu.ret 1\n}\n",
+             fn @helper(z: u32) -> heap_ref {\n  cpu::cpu.load u32, 0\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  cpu::cpu.ret 1\n}\n",
         );
-        assert_eq!(
-            simulate_stack(&p, None),
-            vec![],
-            "a nonzero-arity callee must not report an underflow this pass cannot justify"
-        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
 
-        // The machine is the authority the assertion above defers to.
-        let mut machine = crate::isa::machine::LanesMachine::new();
-        let run = machine.run(&p, 10_000).expect("the program should run");
-        assert!(matches!(
-            run.stopped,
-            crate::isa::machine::Stopped::Halted | crate::isa::machine::Stopped::Returned
-        ));
+        // The machine is the authority the assertions above agree with.
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&p, 10_000)
+            .expect("the program should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
     }
 
-    /// Only callees that receive operands are skipped. A zero-arity callee is
-    /// still simulated, so the concession above cannot quietly widen into
-    /// "stop checking anything reachable by a call".
+    /// The callee *is* checked, so an underflow inside its frame is caught.
     #[test]
-    fn a_zero_arity_callee_is_still_simulated() {
+    fn a_callee_popping_past_its_empty_frame_is_reported() {
         let p = sst_module(
             "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n\n\
              fn @helper() {\n  lanes::lanes.measure 1\n  cpu::cpu.ret 0\n}\n",
         );
-        assert!(
-            simulate_stack(&p, None).contains(&ValidationError::StackUnderflow { pc: 5 }),
-            "a zero-arity callee's underflow is real and must still be reported: {:?}",
-            simulate_stack(&p, None)
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::PopBelowFrameBase { pc: 5 }]
         );
     }
 
-    /// One nonzero-arity call site is enough to skip the callee, even when
-    /// another site passes nothing — the arity lives on the call, not the
-    /// function, so the two disagree and the empty-stack model fits neither.
+    /// Popping below the frame base is an error even when the machine's stack
+    /// is not empty: the callee is consuming a value its caller owns.
+    ///
+    /// This is the rule that keeps the analysis intraprocedural — without it a
+    /// caller could not know its own post-call depth without descending. The
+    /// machine only notices at the `ret`, and only because the callee did not
+    /// push anything back.
     #[test]
-    fn one_operand_passing_call_site_is_enough_to_skip() {
+    fn a_callee_popping_its_callers_values_is_reported() {
         let p = sst_module(
-            "fn @main() {\n  cpu::cpu.call 0, helper\n  \
-             lanes::lanes.const_zone 0x00000000\n  cpu::cpu.call 1, helper\n  \
-             cpu::cpu.halt\n}\n\n\
-             fn @helper() {\n  lanes::lanes.measure 1\n  cpu::cpu.ret 0\n}\n",
+            "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 0, helper\n  lanes::lanes.cz\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::PopBelowFrameBase { pc: 7 }],
+            "@main's own cz is fine: the call left its zone alone"
+        );
+        assert!(
+            crate::isa::machine::LanesMachine::new()
+                .run(&p, 10_000)
+                .is_err(),
+            "the machine's `ret` guard catches the same frame late"
+        );
+    }
+
+    /// `@main`'s base is the bottom of the stack only when nothing calls it.
+    /// Reached by a `call`, it has a caller below it like any other function,
+    /// and an over-pop takes that caller's value rather than underflowing.
+    #[test]
+    fn a_called_entry_point_pops_below_its_frame_base() {
+        let p = sst_module(
+            "fn @main() {\n  lanes::lanes.pop\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 0, main\n  cpu::cpu.ret 0\n}\n",
         );
         assert_eq!(
             simulate_stack(&p, None),
-            vec![],
-            "a callee reached at arity 0 and arity 1 is skipped"
+            vec![ValidationError::PopBelowFrameBase { pc: 1 }]
         );
+    }
+
+    /// A call is a pure stack effect: pop the arguments, push the callee's
+    /// *declared* results. Nothing else about the callee is consulted.
+    #[test]
+    fn a_call_pushes_its_callees_declared_results() {
+        // `@helper` declares one result, so `@main` has exactly one to pop.
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  lanes::lanes.pop\n  \
+             lanes::lanes.pop\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() -> i64 {\n  cpu::cpu.const i64, 7\n  cpu::cpu.ret 1\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 3 }]
+        );
+    }
+
+    /// `load`/`store` address the callee's parameters as slots of its frame.
+    #[test]
+    fn locals_are_the_callees_parameters() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.const i64, 1\n  cpu::cpu.const i64, 2\n  \
+             cpu::cpu.call 2, reader\n  cpu::cpu.halt\n}\n\n\
+             fn @reader(a: i64, b: i64) {\n  cpu::cpu.load i64, 1\n  \
+             cpu::cpu.store i64, 0\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&p, 10_000)
+            .expect("the program should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+    }
+
+    // ---- stack simulation: the CFG walk ----
+
+    fn cpu_bool(v: bool) -> M {
+        M::Cpu(C::Const(Type::Bool, Value::Bool(v)))
+    }
+
+    #[test]
+    fn slot_join_widens_to_what_both_paths_agree_on() {
+        let loc_a = Slot::Known {
+            tag: tag::LOCATION,
+            value: Some(1),
+        };
+        let loc_b = Slot::Known {
+            tag: tag::LOCATION,
+            value: Some(2),
+        };
+        let zone = Slot::Known {
+            tag: tag::ZONE,
+            value: Some(0),
+        };
+        assert_eq!(loc_a.join(&loc_a), loc_a, "agreement keeps the bits");
+        assert_eq!(
+            loc_a.join(&loc_b),
+            Slot::Known {
+                tag: tag::LOCATION,
+                value: None
+            },
+            "same type, different bits: keep the type"
+        );
+        assert_eq!(loc_a.join(&zone), Slot::Unknown);
+        assert_eq!(zone.join(&Slot::Unknown), Slot::Unknown);
+    }
+
+    #[test]
+    fn stack_join_rejects_differing_depths_and_widens_slots() {
+        let p = program(vec![M::Cpu(C::Halt)]);
+        let mut sim = StackSimulator::new(&p, None);
+        let loc = |v| Slot::Known {
+            tag: tag::LOCATION,
+            value: Some(v),
+        };
+
+        // Equal states: no change, nothing to requeue.
+        let mut have = AbstractStack::Known(vec![loc(1)]);
+        assert!(!sim.join(9, &mut have, &AbstractStack::Known(vec![loc(1)])));
+
+        // A disagreeing slot widens, which is a change.
+        assert!(sim.join(9, &mut have, &AbstractStack::Known(vec![loc(2)])));
+        assert_eq!(
+            have,
+            AbstractStack::Known(vec![Slot::Known {
+                tag: tag::LOCATION,
+                value: None
+            }])
+        );
+
+        // A differing depth is recorded, once, and leaves the state alone.
+        let before = have.clone();
+        assert!(!sim.join(9, &mut have, &AbstractStack::Known(vec![])));
+        assert!(!sim.join(9, &mut have, &AbstractStack::Known(vec![loc(1), loc(1)])));
+        assert_eq!(have, before);
+        assert_eq!(sim.mismatches.get(&9), Some(&(1, 0)));
+
+        // An unknowable frame absorbs everything.
+        assert!(sim.join(9, &mut have, &AbstractStack::Unknown));
+        assert!(!sim.join(9, &mut have, &AbstractStack::Known(vec![])));
+        assert_eq!(have, AbstractStack::Unknown);
+    }
+
+    /// Both arms of a diamond reach the join at the same depth: clean. This is
+    /// `branch_two_arms.sst`, reduced.
+    #[test]
+    fn a_balanced_diamond_is_clean() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1
+            M::Cpu(C::ConditionalBranch(3, 6)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Lanes(L::Cz),                    // 4
+            M::Cpu(C::Branch(7)),               // 5
+            M::Cpu(C::Branch(7)),               // 6
+            M::Cpu(C::Halt),                    // 7
+        ]);
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    #[test]
+    fn an_unbalanced_diamond_is_a_depth_mismatch() {
+        // The taken arm leaves a zone behind; the other leaves nothing.
+        let p = program(vec![
+            cpu_bool(true),                     // 1
+            M::Cpu(C::ConditionalBranch(3, 5)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Cpu(C::Branch(6)),               // 4
+            M::Cpu(C::Branch(6)),               // 5
+            M::Cpu(C::Halt),                    // 6
+        ]);
+        let errors = simulate_stack(&p, None);
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [ValidationError::StackDepthMismatch { pc: 6, .. }]
+            ),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_loop_with_zero_depth_delta_is_clean() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1: loop header
+            M::Cpu(C::ConditionalBranch(3, 6)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Lanes(L::Cz),                    // 4
+            M::Cpu(C::Branch(1)),               // 5: back edge
+            M::Cpu(C::Halt),                    // 6
+        ]);
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    /// `load` and `store` each move the depth by one; only a matched pair
+    /// nets out. Treating either as a no-op — as the old catch-all did —
+    /// makes this counter loop look unbalanced at its header.
+    #[test]
+    fn load_and_store_move_the_depth() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.const i64, 0\n  cpu::cpu.call 1, count\n  \
+             cpu::cpu.halt\n}\n\n\
+             fn @count(n: i64) {\n\
+               cpu::cpu.label @loop\n\
+               cpu::cpu.load i64, 0\n  cpu::cpu.const i64, 3\n  cpu::cpu.lt i64\n  \
+               cpu::cpu.cond_br @body, @done\n\
+               cpu::cpu.label @body\n\
+               cpu::cpu.load i64, 0\n  cpu::cpu.const i64, 1\n  cpu::cpu.add i64\n  \
+               cpu::cpu.store i64, 0\n  cpu::cpu.br @loop\n\
+               cpu::cpu.label @done\n\
+               cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&p, 10_000)
+            .expect("the program should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+    }
+
+    /// A body that grows the stack never converges; it is caught at the back
+    /// edge, as WASM does, rather than iterated.
+    #[test]
+    fn a_loop_with_nonzero_depth_delta_is_rejected() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1: loop header
+            M::Cpu(C::ConditionalBranch(3, 5)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Cpu(C::Branch(1)),               // 4: back edge, one deeper
+            M::Cpu(C::Halt),                    // 5
+        ]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackDepthMismatch {
+                pc: 1,
+                expected: 0,
+                got: 1
+            }]
+        );
+    }
+
+    /// An instruction transferred once per change to its input still reports
+    /// once, against the converged state.
+    #[test]
+    fn an_error_inside_a_loop_is_reported_once() {
+        // The back edge brings a different location, so the header widens and
+        // the body is walked a second time.
+        let p = program(vec![
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),        // 1
+            cpu_bool(true),                             // 2: loop header
+            M::Cpu(C::ConditionalBranch(4, 9)),         // 3
+            M::Lanes(L::Pop),                           // 4
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),        // 5
+            M::Cpu(C::Const(Type::I64, Value::I64(0))), // 6
+            M::Lanes(L::Cz),                            // 7: wrong type, every time
+            M::Cpu(C::Branch(2)),                       // 8
+            M::Cpu(C::Halt),                            // 9
+        ]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::TypeMismatch {
+                pc: 7,
+                expected: tag::ZONE,
+                got: tag::INT
+            }]
+        );
+    }
+
+    /// Where the paths disagree about a value's type, what follows cannot be
+    /// rejected for it; where they agree, it can.
+    #[test]
+    fn a_merge_widens_disagreeing_slots() {
+        let diamond = |then: M, other: M, consume: M| {
+            program(vec![
+                cpu_bool(true),                     // 1
+                M::Cpu(C::ConditionalBranch(3, 5)), // 2
+                then,                               // 3
+                M::Cpu(C::Branch(6)),               // 4
+                other,                              // 5
+                consume,                            // 6: the join
+                M::Cpu(C::Halt),                    // 7
+            ])
+        };
+
+        // A location or a zone: `cz` might be right, so it is not rejected.
+        let p = diamond(
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Cz),
+        );
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        // Two different locations: still a location, so `cz` is wrong.
+        let p = diamond(
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),
+            M::Lanes(L::Cz),
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::TypeMismatch {
+                pc: 6,
+                expected: tag::ZONE,
+                got: tag::LOCATION
+            }]
+        );
+    }
+
+    /// Reachability comes out of the same walk, so dead code after a merge is
+    /// still reported.
+    #[test]
+    fn an_unreachable_block_after_a_merge_is_reported() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1
+            M::Cpu(C::ConditionalBranch(3, 4)), // 2
+            M::Cpu(C::Branch(4)),               // 3
+            M::Cpu(C::Halt),                    // 4: the join
+            M::Lanes(L::Cz),                    // 5: after the terminator
+        ]);
+        assert_eq!(
+            validate_structure(&p),
+            vec![ValidationError::UnreachableInstruction { pc: 5 }]
+        );
+        assert_eq!(simulate_stack(&p, None), vec![], "and is not simulated");
+    }
+
+    /// `call_indirect` takes its arity off the stack, so what follows it on
+    /// that path cannot be checked — and is not guessed at.
+    #[test]
+    fn nothing_after_a_call_indirect_is_checked() {
+        let p = program(vec![
+            M::Cpu(C::Const(Type::U32, Value::U32(0))), // 1: fn_ref stand-in
+            M::Cpu(C::Const(Type::U32, Value::U32(0))), // 2: arity
+            M::Cpu(C::Const(Type::U32, Value::U32(0))), // 3: target
+            M::Cpu(C::IndirectCall),                    // 4
+            M::Lanes(L::Pop),                           // 5: unknowable
+            M::Cpu(C::Halt),                            // 6
+        ]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        // Its own three operands are still required.
+        let p = program(vec![M::Cpu(C::IndirectCall), M::Cpu(C::Halt)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    /// `call_indirect` takes three operands on this machine — function
+    /// reference, arity, target — not two. Pinned against execution, since
+    /// the count depends on how the machine dispatches the op: with two,
+    /// vihaco pops the function reference as the arity.
+    #[test]
+    fn a_call_indirect_takes_three_operands() {
+        const HELPER: &str = "fn @helper() {\n  cpu::cpu.ret 0\n}\n";
+        let three = sst_module(&format!(
+            "fn @main() {{\n  cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 0\n  \
+             cpu::cpu.const u32, 7\n  cpu::cpu.call_indirect\n  cpu::cpu.halt\n}}\n\n{HELPER}"
+        ));
+        assert_eq!(simulate_stack(&three, None), vec![]);
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&three, 100)
+            .expect("a three-operand call_indirect should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+
+        let two = sst_module(&format!(
+            "fn @main() {{\n  cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 0\n  \
+             cpu::cpu.call_indirect\n  cpu::cpu.halt\n}}\n\n{HELPER}"
+        ));
+        assert_eq!(
+            simulate_stack(&two, None),
+            vec![ValidationError::StackUnderflow { pc: 3 }]
+        );
+        let error = crate::isa::machine::LanesMachine::new()
+            .run(&two, 100)
+            .expect_err("two operands leave call_indirect short of one");
+        assert!(
+            error.to_string().contains("Cannot convert FunctionRef"),
+            "got: {error}"
+        );
+    }
+
+    /// The vihaco-cpu ops have their real arity. A comparison feeding a
+    /// `cond_br` left as a no-op would make the branch look unbalanced.
+    #[test]
+    fn a_comparison_feeds_a_branch_without_unbalancing_it() {
+        let p = program(vec![
+            M::Cpu(C::Const(Type::I64, Value::I64(1))), // 1
+            M::Cpu(C::Const(Type::I64, Value::I64(2))), // 2
+            M::Cpu(C::Lt(Type::I64)),                   // 3: two in, one out
+            M::Cpu(C::ConditionalBranch(5, 5)),         // 4: pops it
+            M::Cpu(C::Halt),                            // 5
+        ]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
     }
 
     #[test]
@@ -2192,6 +2984,18 @@ mod tests {
                 "pc 1: stack underflow".into(),
             ),
             (
+                ValidationError::PopBelowFrameBase { pc: 7 },
+                "pc 7: pops below its frame base, into its caller's values".into(),
+            ),
+            (
+                ValidationError::StackDepthMismatch {
+                    pc: 6,
+                    expected: 1,
+                    got: 0,
+                },
+                "pc 6: paths reach this instruction with different stack depths (1 and 0)".into(),
+            ),
+            (
                 ValidationError::TypeMismatch {
                     pc: 1,
                     expected: tag::LOCATION,
@@ -2361,32 +3165,30 @@ mod tests {
         );
     }
 
+    /// The walk used to stop at the first branch, so a program with control
+    /// flow got strictly less checking than one without (gap 2 of #1042).
     #[test]
-    fn stack_sim_stops_at_control_flow_rather_than_guessing() {
-        // A `pop` on an empty stack is an underflow the simulator would
-        // normally catch — but behind a branch it cannot know the stack state,
-        // so it stops instead of reporting something it cannot justify.
+    fn stack_sim_checks_past_control_flow() {
+        // An underflow behind a branch is now reached, and reported.
         let behind_branch = program(vec![
             M::Cpu(C::Branch(2)),
             M::Lanes(L::Pop),
             M::Cpu(C::Halt),
         ]);
-        assert!(
-            simulate_stack(&behind_branch, None).is_empty(),
-            "must not report errors derived from an unknown post-branch state"
+        assert_eq!(
+            simulate_stack(&behind_branch, None),
+            vec![ValidationError::StackUnderflow { pc: 2 }]
         );
 
-        // The same underflow ahead of the branch is still caught.
+        // Ahead of it, as before.
         let before_branch = program(vec![
             M::Lanes(L::Pop),
-            M::Cpu(C::Branch(2)),
+            M::Cpu(C::Branch(3)),
             M::Cpu(C::Halt),
         ]);
-        assert!(
-            simulate_stack(&before_branch, None)
-                .iter()
-                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
-            "linear prefix is still checked"
+        assert_eq!(
+            simulate_stack(&before_branch, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 

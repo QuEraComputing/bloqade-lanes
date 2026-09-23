@@ -209,6 +209,40 @@ class StackUnderflowError(ValidationError):
         super().__init__(f"pc {pc}: stack underflow")
 
 
+class PopBelowFrameBaseError(StackUnderflowError):
+    """A function other than the entry popped below its frame base.
+
+    The values below the base belong to the caller, so this is an error even
+    when the machine's stack is not empty. A subclass of
+    :class:`StackUnderflowError` because it is the same condition measured
+    from the frame: in the entry function, whose base is the bottom of the
+    stack, it is reported as a plain underflow.
+    """
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        ValidationError.__init__(
+            self, f"pc {pc}: pops below its frame base, into its caller's values"
+        )
+
+
+class StackDepthMismatchError(ValidationError):
+    """Two control-flow paths reach ``pc`` with different stack depths.
+
+    ``expected`` is the depth the first path arrived with, ``got`` the one that
+    disagrees. A loop whose body changes the depth reports this at its header.
+    """
+
+    def __init__(self, pc: int, expected: int, got: int):
+        self.pc = pc
+        self.expected = expected
+        self.got = got
+        super().__init__(
+            f"pc {pc}: paths reach this instruction with different stack depths "
+            f"({expected} and {got})"
+        )
+
+
 class TypeMismatchError(ValidationError):
     def __init__(self, pc: int, expected: int, got: int):
         self.pc = pc

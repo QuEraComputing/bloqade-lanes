@@ -243,6 +243,41 @@ would silently redefine the callee's shape at each call site:
 So a function that returns something has to say so: `ret 1` in a function
 declaring no return type is now an error.
 
+`@main` may declare parameters too. Its caller is the host, which passes the
+arguments with `LanesMachine::run_with_args`. They are checked against the
+declaration's count and types, and they sit at the bottom of the entry frame
+as locals `0..n`, where a `call` would put them. `run` enters with no
+arguments, so it refuses a `@main` that declares any. The CLI's `run`
+subcommand has no way to pass arguments yet.
+
+### Stack validation follows control flow
+
+`validate(stack=True)` (the CLI's `--simulate-stack`, the C API's
+`lanes_simulate_stack`) used to walk each function in a straight line from an
+empty stack. It stopped at the first `br`, `cond_br` or `call`, and it skipped
+any function that a `call` passed operands to. It now walks every function's
+control-flow graph, starting from a frame that holds its declared parameters:
+
+- **Code after a branch or call is checked.** A program with control flow no
+  longer gets less validation than one without.
+- **A callee that takes operands is checked.** Its frame starts with its
+  declared parameters, so the `load` that reads an argument is no longer an
+  underflow. A `call` is modelled from the callee's signature alone: pop its
+  parameters, push its results.
+- **`StackDepthMismatchError`**: two paths reach the same instruction with
+  different stack depths. Examples are a `cond_br` whose arms leave different
+  depths at their join, or a loop whose body changes the depth.
+- **`PopBelowFrameBaseError`**: a function other than `@main` pops a value its
+  caller owns. This is an error even when the machine's stack is not empty. It
+  subclasses `StackUnderflowError`, so existing `except` clauses still catch it.
+  In `@main`, whose frame starts at the bottom of the stack, the same condition
+  is still reported as a plain `StackUnderflowError`.
+
+Everything after a `call_indirect` goes unchecked, because its target and
+arity are only known at run time. That includes any path that merges with it
+afterwards: an error on the arm without the call is not reported. A branch
+condition's type is not checked either, only that one is present.
+
 ### Lowering to kirin is single-function only
 
 `BytecodeDecoder.decode` (and `load_program`) lower the instruction stream into

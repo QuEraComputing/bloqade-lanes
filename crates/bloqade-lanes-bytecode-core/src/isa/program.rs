@@ -101,6 +101,19 @@ impl vihaco::SstHeader for LanesInfo {}
 /// single `@main` function's worth of flat code plus the version in `extra`.
 pub type Program = LocalModule<MachineInstruction, Value, Type, LanesInfo>;
 
+/// The function execution enters: the one `main_function` names.
+///
+/// One definition for the validator and the machine, which each decide for
+/// themselves what a program without one means.
+pub fn entry_function(program: &Program) -> eyre::Result<&FunctionInfo<Type>> {
+    let index = program
+        .main_function
+        .ok_or_else(|| eyre::eyre!("program declares no entry point"))?;
+    program.functions.get(index as usize).ok_or_else(|| {
+        eyre::eyre!("entry point names function {index}, which the table does not have")
+    })
+}
+
 /// Build a `Program` from a version + flat instruction list, wrapped in a
 /// single `@main`.
 ///
