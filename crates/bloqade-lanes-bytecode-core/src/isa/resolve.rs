@@ -1,0 +1,345 @@
+//! Lower parsed functions into a [`Program`]: symbols, labels, addresses.
+//!
+//! Parsing gives back functions whose control flow is still *symbolic* — `br
+//! @loop`, `call 2, @helper`. Turning those into addresses needs the whole
+//! module in view, which is what this module does and why per-instruction
+//! lowering ([`machine::lower`]) rejects them.
+//!
+//! ## Two passes
+//!
+//! 1. **Lay out.** Walk every function in order, emitting its body into one
+//!    flat code vector and recording where each function and label landed.
+//!    Control-flow operands are emitted as `0` and a fixup is recorded, because
+//!    a forward branch names something not yet placed.
+//! 2. **Patch.** Resolve each fixup against the label and function tables.
+//!
+//! ## Labels are metadata, not instructions
+//!
+//! vihaco executes `Label` as a no-op (`Label(_) => Continue`) — it exists only
+//! to mark a position. It also carries an `Ident`, which has no meaning outside
+//! the parse that produced it and therefore no encodable form.
+//!
+//! So labels do not survive into the code stream: the resolver records each one
+//! in [`LabelInfo`] against the address of the instruction that follows it, and
+//! drops it. Addresses are computed after the drop, so they stay consistent, and
+//! every instruction in `code` is encodable. [`super::text::to_text`] re-emits
+//! the labels from the table.
+//!
+//! ## Functions delimit themselves
+//!
+//! Each body is wrapped in vihaco-cpu's `func_start` / `func_end`, which the
+//! CPU executes as no-ops, and `FunctionInfo::start_address` points at the
+//! `func_start` — matching vihaco's own documented convention that it
+//! "corresponds to a label noop".
+//!
+//! This is what makes the layout self-describing rather than span-described.
+//! A span recorded beside the code can disagree with it: two empty functions
+//! become two zero-width spans at one address and stop being distinguishable,
+//! an `end_address` can run past the code, and instructions can fall outside
+//! every span. With markers in the stream none of those is representable —
+//! the table indexes and names, the code delimits.
+
+use vihaco::module::{FunctionInfo, LabelInfo, Parameter, Signature};
+use vihaco::syntax::ParsedFunction;
+use vihaco_cpu::{SurfaceInstruction as CpuSurface, SurfaceType};
+
+use super::machine::{self, MachineInstruction, MachineSurfaceInstruction};
+use super::program::{LanesInfo, Program};
+
+/// A failure to resolve a parsed module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveError {
+    /// Two labels share a name. Labels are module-global (vihaco's `LabelInfo`
+    /// carries no function), so a repeat is ambiguous rather than shadowing.
+    DuplicateLabel { name: String },
+    /// Two functions share a name.
+    DuplicateFunction { name: String },
+    /// `br`/`cond_br` names a label that does not exist.
+    UnknownLabel { name: String },
+    /// `call` names a function that does not exist.
+    UnknownFunction { name: String },
+    /// The module declares no `@main`.
+    MissingMain,
+    /// An instruction could not be lowered (see [`machine::lower`]).
+    Lowering { message: String },
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveError::DuplicateLabel { name } => write!(f, "duplicate label @{name}"),
+            ResolveError::DuplicateFunction { name } => write!(f, "duplicate function @{name}"),
+            ResolveError::UnknownLabel { name } => write!(f, "branch to unknown label @{name}"),
+            ResolveError::UnknownFunction { name } => write!(f, "call to unknown function @{name}"),
+            ResolveError::MissingMain => write!(f, "module declares no @main"),
+            ResolveError::Lowering { message } => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
+/// A control-flow operand that could not be filled in during layout.
+#[derive(Debug)]
+enum Fixup {
+    Branch {
+        at: usize,
+        target: String,
+    },
+    ConditionalBranch {
+        at: usize,
+        on_true: String,
+        on_false: String,
+    },
+    Call {
+        at: usize,
+        callee: String,
+    },
+}
+
+/// Interns strings, so `FunctionInfo`/`LabelInfo` can hold indices as vihaco
+/// expects rather than owned names.
+#[derive(Default)]
+struct Interner {
+    strings: Vec<String>,
+}
+
+impl Interner {
+    fn intern(&mut self, s: &str) -> u32 {
+        if let Some(i) = self.strings.iter().position(|existing| existing == s) {
+            return i as u32;
+        }
+        self.strings.push(s.to_owned());
+        (self.strings.len() - 1) as u32
+    }
+}
+
+/// Lower a parsed source type into the runtime type the module records.
+///
+/// The two enums are the same set spelled twice — vihaco keeps the parsed form
+/// separate from the runtime one, the same split the instruction macros use
+/// with `SurfaceType => Type`.
+fn runtime_type(ty: SurfaceType) -> vihaco::Type {
+    use vihaco::Type as T;
+    match ty {
+        SurfaceType::Undefined => T::Undefined,
+        SurfaceType::String => T::String,
+        SurfaceType::Bool => T::Bool,
+        SurfaceType::I64 => T::I64,
+        SurfaceType::U32 => T::U32,
+        SurfaceType::U64 => T::U64,
+        SurfaceType::F64 => T::F64,
+        SurfaceType::FunctionRef => T::FunctionRef,
+        SurfaceType::HeapRef => T::HeapRef,
+    }
+}
+
+/// Lower parsed functions into a [`Program`].
+pub fn resolve(
+    functions: Vec<ParsedFunction<MachineSurfaceInstruction, SurfaceType>>,
+    extra: LanesInfo,
+) -> Result<Program, ResolveError> {
+    let mut interner = Interner::default();
+    let mut code: Vec<MachineInstruction> = Vec::new();
+    let mut labels: Vec<LabelInfo> = Vec::new();
+    let mut label_addresses: Vec<(String, u32)> = Vec::new();
+    let mut function_addresses: Vec<(String, u32)> = Vec::new();
+    let mut function_infos: Vec<FunctionInfo<vihaco::Type>> = Vec::new();
+    let mut fixups: Vec<Fixup> = Vec::new();
+    let mut main_function: Option<u32> = None;
+
+    // ── Pass 1: lay out ──
+    for func in &functions {
+        let name = func.name.as_str().to_owned();
+        if function_addresses.iter().any(|(n, _)| *n == name) {
+            return Err(ResolveError::DuplicateFunction { name });
+        }
+        // `func_start` *is* the function's first address: the body is
+        // delimited by instructions in the code stream, not by a span recorded
+        // beside it. vihaco executes the marker as a no-op, so entering at it
+        // simply falls through into the body — and two empty functions still
+        // occupy two distinct addresses, which a pair of zero-width spans
+        // could not.
+        let start_address = code.len() as u32;
+        code.push(MachineInstruction::Cpu(
+            vihaco_cpu::RuntimeInstruction::FunctionStart,
+        ));
+        function_addresses.push((name.clone(), start_address));
+        if name == "main" {
+            main_function = Some(function_infos.len() as u32);
+        }
+
+        for inst in &func.body {
+            match inst {
+                // A label marks the address of whatever comes next, and is not
+                // itself emitted.
+                MachineSurfaceInstruction::Cpu(CpuSurface::Label(ident)) => {
+                    let label = ident.as_str().to_owned();
+                    if label_addresses.iter().any(|(n, _)| *n == label) {
+                        return Err(ResolveError::DuplicateLabel { name: label });
+                    }
+                    let address = code.len() as u32;
+                    label_addresses.push((label.clone(), address));
+                    labels.push(LabelInfo {
+                        address,
+                        name: interner.intern(&label),
+                    });
+                }
+
+                // Symbolic control flow: emit a placeholder and note the fixup.
+                MachineSurfaceInstruction::Cpu(CpuSurface::Branch(target)) => {
+                    fixups.push(Fixup::Branch {
+                        at: code.len(),
+                        target: target.as_str().to_owned(),
+                    });
+                    code.push(MachineInstruction::Cpu(
+                        vihaco_cpu::RuntimeInstruction::Branch(0),
+                    ));
+                }
+                MachineSurfaceInstruction::Cpu(CpuSurface::ConditionalBranch(t, f)) => {
+                    fixups.push(Fixup::ConditionalBranch {
+                        at: code.len(),
+                        on_true: t.as_str().to_owned(),
+                        on_false: f.as_str().to_owned(),
+                    });
+                    code.push(MachineInstruction::Cpu(
+                        vihaco_cpu::RuntimeInstruction::ConditionalBranch(0, 0),
+                    ));
+                }
+                MachineSurfaceInstruction::Cpu(CpuSurface::Call(arity, callee)) => {
+                    fixups.push(Fixup::Call {
+                        at: code.len(),
+                        callee: callee.as_str().to_owned(),
+                    });
+                    code.push(MachineInstruction::Cpu(
+                        vihaco_cpu::RuntimeInstruction::Call(*arity, 0),
+                    ));
+                }
+
+                // The markers are emitted by this function, not written by
+                // hand. Lowering one through produced a nested span:
+                // `to_text` opened a second `fn` block with no closing brace,
+                // and `reconcile_function_spans` reattached the outer
+                // function's start to the inner marker, so the program ran
+                // from the wrong address.
+                MachineSurfaceInstruction::Cpu(
+                    CpuSurface::FunctionStart | CpuSurface::FunctionEnd,
+                ) => {
+                    return Err(ResolveError::Lowering {
+                        message: "func_start/func_end delimit a function and are emitted \
+                                  by the assembler; write `fn @name() { .. }` instead"
+                            .to_owned(),
+                    });
+                }
+
+                // Everything else lowers on its own.
+                other => code.push(machine::lower(other.clone()).map_err(|e| {
+                    ResolveError::Lowering {
+                        message: e.to_string(),
+                    }
+                })?),
+            }
+        }
+
+        code.push(MachineInstruction::Cpu(
+            vihaco_cpu::RuntimeInstruction::FunctionEnd,
+        ));
+        function_infos.push(FunctionInfo {
+            name: interner.intern(&name),
+            // Declared, not inferred. `call <arity>` sets the frame boundary
+            // from the *call site*, so without a declaration a function's
+            // arity is whatever its callers happen to pass — two sites could
+            // disagree and nothing would notice. The signature is what a
+            // caller is checked against; see `validate`.
+            signature: Signature {
+                params: func
+                    .params
+                    .iter()
+                    .map(|p| Parameter {
+                        name: interner.intern(p.name.as_str()),
+                        ty: runtime_type(p.ty),
+                    })
+                    .collect(),
+                ret: func.return_ty.iter().copied().map(runtime_type).collect(),
+            },
+            // Still zero: locals alias the operand stack, so a function has no
+            // scratch to count until a prologue reserves some. See
+            // <https://github.com/QuEraComputing/bloqade-lanes/issues/1038>.
+            local_count: 0,
+            start_address,
+            // One past `func_end`, so the span covers both markers and the
+            // spans of adjacent functions abut without overlapping.
+            end_address: code.len() as u32,
+            file: 0,
+        });
+    }
+
+    // ── Pass 2: patch ──
+    let label_of = |name: &str| -> Result<u32, ResolveError> {
+        label_addresses
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, a)| *a)
+            .ok_or_else(|| ResolveError::UnknownLabel {
+                name: name.to_owned(),
+            })
+    };
+    let function_of = |name: &str| -> Result<u32, ResolveError> {
+        function_addresses
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, a)| *a)
+            .ok_or_else(|| ResolveError::UnknownFunction {
+                name: name.to_owned(),
+            })
+    };
+
+    for fixup in fixups {
+        match fixup {
+            Fixup::Branch { at, target } => {
+                code[at] = MachineInstruction::Cpu(vihaco_cpu::RuntimeInstruction::Branch(
+                    label_of(&target)?,
+                ));
+            }
+            Fixup::ConditionalBranch {
+                at,
+                on_true,
+                on_false,
+            } => {
+                code[at] =
+                    MachineInstruction::Cpu(vihaco_cpu::RuntimeInstruction::ConditionalBranch(
+                        label_of(&on_true)?,
+                        label_of(&on_false)?,
+                    ));
+            }
+            Fixup::Call { at, callee } => {
+                let target = function_of(&callee)?;
+                let arity = match &code[at] {
+                    MachineInstruction::Cpu(vihaco_cpu::RuntimeInstruction::Call(a, _)) => *a,
+                    _ => unreachable!("a Call fixup always points at a Call"),
+                };
+                code[at] =
+                    MachineInstruction::Cpu(vihaco_cpu::RuntimeInstruction::Call(arity, target));
+            }
+        }
+    }
+
+    if main_function.is_none() {
+        return Err(ResolveError::MissingMain);
+    }
+
+    // `LocalModule` is a foreign type, so it is built field by field rather
+    // than with a struct literal.
+    #[allow(clippy::field_reassign_with_default)]
+    let module = {
+        let mut module = Program::default();
+        module.code = code;
+        module.functions = function_infos;
+        module.labels = labels;
+        module.strings = interner.strings;
+        module.main_function = main_function;
+        module.extra = extra;
+        module
+    };
+    Ok(module)
+}

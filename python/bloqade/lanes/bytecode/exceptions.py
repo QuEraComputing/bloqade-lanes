@@ -95,6 +95,72 @@ class NewArrayTooManyElementsError(ValidationError):
         )
 
 
+class CodeOutsideFunctionError(ValidationError):
+    """An instruction sits outside every function's extent.
+
+    Functions are delimited by ``func_start``/``func_end`` in the code
+    stream. Anything after the last ``func_end`` belongs to no function: it
+    can never be entered, and the disassembler emits it after the closing
+    brace, producing text that will not re-read.
+    """
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(f"pc {pc}: instruction is outside any function")
+
+
+class InvalidControlFlowTargetError(ValidationError):
+    """A branch or call names an address that is not what it should be.
+
+    ``br``/``cond_br`` targets are addresses in the code; ``call`` targets are
+    function entries, which since the ``func_start``/``func_end`` layout means
+    the address of a function's opening marker.
+    """
+
+    def __init__(self, pc: int, target: int, expected: str):
+        self.pc = pc
+        self.target = target
+        self.expected = expected
+        super().__init__(f"pc {pc}: control-flow target {target} is not {expected}")
+
+
+class CallArityMismatchError(ValidationError):
+    """A ``call``'s arity disagrees with the callee's declared parameters.
+
+    The operand is not a hint: ``call <arity>`` sets the callee's frame base to
+    ``stack.len() - arity``, so an unchecked one silently redefines the
+    callee's shape per call site.
+    """
+
+    def __init__(self, pc: int, target: int, declared: int, got: int):
+        self.pc = pc
+        self.target = target
+        self.declared = declared
+        self.got = got
+        super().__init__(
+            f"pc {pc}: call passes {got} operand(s) but the function at "
+            f"{target} declares {declared}"
+        )
+
+
+class ReturnCountMismatchError(ValidationError):
+    """A ``ret`` keeps a different number of values than its function declares.
+
+    Two ``ret`` instructions that disagree make every caller's post-call stack
+    depth path-dependent, the same defect as a branch whose arms leave
+    different depths. Each is checked against the declaration instead, which
+    names the offender.
+    """
+
+    def __init__(self, pc: int, declared: int, got: int):
+        self.pc = pc
+        self.declared = declared
+        self.got = got
+        super().__init__(
+            f"pc {pc}: ret keeps {got} value(s) but the function declares {declared}"
+        )
+
+
 class GetItemInvalidDimsError(ValidationError):
     """``get_item`` takes an index count no array can have.
 
@@ -208,11 +274,15 @@ class EmptyProgramError(ValidationError):
 
 
 class MissingTerminatorError(ValidationError):
-    """Program does not end with a return or halt instruction."""
+    """A path through a function runs off its end without return or halt.
+
+    Per function, not per program: ``func_end`` is a no-op, so a function that
+    falls off it runs whatever was laid out next rather than returning.
+    """
 
     def __init__(self, pc: int):
         self.pc = pc
-        super().__init__(f"pc {pc}: program must end with return or halt")
+        super().__init__(f"pc {pc}: function must end with return or halt")
 
 
 class UnreachableInstructionError(ValidationError):
@@ -525,3 +595,16 @@ class DecodeErrorInProgram(ProgramError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(f"decode error: {message}")
+
+
+class EncodeErrorInProgram(ProgramError):
+    """A program uses something the binary container cannot carry.
+
+    Raised by ``Program.to_binary``, not by reading. The container has no
+    encoding for a constant pool, source symbols, or a non-empty function
+    signature, so it refuses to write one rather than dropping it silently.
+    """
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(f"cannot encode program: {message}")

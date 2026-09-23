@@ -168,6 +168,110 @@ Re-assemble any persisted `.bin` from source.
   Previously every decodable instruction had a handler, so this path was
   unreachable from a valid program.
 
+## Functions and control flow
+
+Programs are no longer restricted to a single flat `@main`. Any number of
+functions may be declared, and branch and call targets are written as symbols:
+
+```
+fn @main() {
+  cpu::cpu.call 0, helper
+  cpu::cpu.br @done
+  lanes::lanes.cz
+  cpu::cpu.label @done
+  cpu::cpu.halt
+}
+
+fn @helper() {
+  cpu::cpu.ret 0
+}
+```
+
+Nothing the lanes compiler emits uses this yet — it still produces a single flat
+`@main` — but the format and loader support it now rather than being retrofitted
+later.
+
+- **Each function body is wrapped in `cpu::cpu.func_start` / `cpu::cpu.func_end`.**
+  These are emitted by the assembler and executed as no-ops; you do not write
+  them. They make a function's extent part of the code stream rather than a
+  span recorded beside it, so an empty function still occupies an address and
+  a function table can never disagree with the code it indexes. They are real
+  instructions, so they appear in `Program.instructions` and count towards
+  `len(program)` — a three-instruction `@main` is five words.
+- `br` / `cond_br` name a **label** with `@`; `call` names a **function**
+  without one (`call <arity>, <name>`).
+- Labels are module-global; duplicates are an error.
+- A label occupies no address and is not stored in the code stream. It is
+  recorded in the label table, and re-emitted when the program is written back
+  out.
+- The binary container gained three child sections — `functions`, `labels`,
+  `strings` — so these survive a round-trip. A file without them does not load:
+  it predates the function markers too, so there are no extents to name. This
+  is the same "replace, do not convert" rule as the text format above.
+
+### Functions declare their signatures
+
+A function may declare parameters and a return type, and both survive the
+binary round trip:
+
+```
+fn @measure_zone(z: u32) -> heap_ref {
+  cpu::cpu.load u32, 0
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure
+  cpu::cpu.ret 1
+}
+```
+
+Types are vihaco's: `undef`, `str`, `bool`, `i64`, `u32`, `u64`, `f64`,
+`fn_ref`, `heap_ref`. `fn @name()` with no parameters and no return type parses
+exactly as before, so nothing hand-written needs updating unless it uses a
+`call` with a nonzero arity or a `ret` that keeps a value.
+
+The declaration is checked, not decorative. `call <arity>` is not a hint — it
+sets the callee's frame base to `stack.len() - arity`, so an unchecked operand
+would silently redefine the callee's shape at each call site:
+
+- **`CallArityMismatchError`** — a `call` passes a different number of operands
+  than the callee declares.
+- **`ReturnCountMismatchError`** — a `ret` keeps a different number of values
+  than its function declares returning. Two `ret`s that disagree make every
+  caller's post-call stack depth path-dependent; each is checked against the
+  declaration, which names the offender rather than reporting a pair that
+  happens to differ.
+
+So a function that returns something has to say so: `ret 1` in a function
+declaring no return type is now an error.
+
+### Lowering to kirin is single-function only
+
+`BytecodeDecoder.decode` (and `load_program`) lower the instruction stream into
+one kirin block, so they accept a program declaring exactly one function and
+refuse anything else:
+
+```
+DecodingError at instruction 3 (func_start): program declares 2 functions;
+only a single-function program can be lowered to kirin [stack depth=0]
+```
+
+The format is ahead of the compiler here on purpose. Nothing in the pipeline
+emits multi-function bytecode or lowers it further, so there is no correct
+lowering for the decoder to fall back to — only a silently wrong one. It used
+to take that one: the bodies concatenated into a single block, and because the
+marker handlers skip `func_start` / `func_end` the seam left no trace. A
+`@helper` declared before `@main` produced a kernel whose *first* statement was
+the helper's `func.return`, carrying two terminators — which `method.verify()`
+accepted.
+
+Validation, execution, disassembly and the binary round-trip are unaffected;
+this restriction applies only to the kirin lowering.
+
+**Stack validation stops at the first branch or call.** The type simulator walks
+straight through, so its state is only correct while control flow is linear;
+past a branch it would report underflows and mismatches derived from a state it
+cannot know. The linear prefix is still checked. Full CFG-aware simulation is
+tracked in [#1042](https://github.com/QuEraComputing/bloqade-lanes/issues/1042).
+
 ## Why the CPU instructions changed
 
 In vihaco 0.1 the instruction set nested vihaco-cpu's opcodes wholesale, which

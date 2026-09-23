@@ -177,9 +177,46 @@ class BytecodeDecoder:
     frame: StackMachineFrame = field(default_factory=StackMachineFrame)
 
     def decode(self, program: Program, kernel_name: str = "main") -> ir.Method:
+        self._require_single_function(program)
         for idx, instr in enumerate(program.instructions):
             self._visit(idx, instr)
         return self._finalize(kernel_name)
+
+    @staticmethod
+    def _require_single_function(program: Program) -> None:
+        """Reject a program declaring more than one function.
+
+        This decoder lowers the whole instruction stream into one kirin block.
+        That is only right for a program with a single function: with two, the
+        bodies concatenate, and because the marker handlers skip `func_start` /
+        `func_end` the seam leaves no trace. A `@helper` declared before `@main`
+        produced a kernel whose *first* statement was the helper's `func.return`
+        and which carried two terminators in one block -- and `method.verify()`
+        accepted it, so the damage surfaced later as a kernel that returns
+        before doing anything.
+
+        Refusing is the whole fix rather than a placeholder. The compiler
+        neither emits multi-function bytecode nor lowers it through the rest of
+        the stack, so there is no correct lowering to fall back to -- only a
+        silently wrong one. The Rust side has an entry point to start from
+        (`LanesMachine::entry_point` resolves `@main`), but nothing below this
+        decoder could consume the result, and `Program` exposes no function
+        table to Python to find the span with.
+        """
+
+        starts = [
+            idx
+            for idx, instr in enumerate(program.instructions)
+            if instr.device() == "cpu" and instr.op_name() == "func_start"
+        ]
+        if len(starts) > 1:
+            raise DecodingError(
+                starts[1],
+                "func_start",
+                (),
+                f"program declares {len(starts)} functions; only a single-function "
+                f"program can be lowered to kirin",
+            )
 
     def _visit(self, idx: int, instr: Instruction) -> None:
         name = instr.op_name()
@@ -355,6 +392,19 @@ class BytecodeDecoder:
     def _visit_lanes_set_observable(self, idx: int, instr: Instruction) -> None:
         array = self.frame.pop_value()
         self.frame.push(stack_move.SetObservable(array=array))
+
+    def _visit_cpu_func_start(self, idx: int, instr: Instruction) -> None:
+        # `func_start`/`func_end` delimit a function in the code stream — they
+        # are structure, not stack operations, and vihaco executes them as
+        # no-ops. Skipping them is safe only because `_require_single_function`
+        # has already established there is exactly one pair: the body they
+        # delimit is the whole program, so the boundary carries nothing this
+        # decoder needs. Do not relax that check without giving these handlers
+        # something to do.
+        return None
+
+    def _visit_cpu_func_end(self, idx: int, instr: Instruction) -> None:
+        return None
 
     def _visit_cpu_halt(self, idx: int, instr: Instruction) -> None:
         # The bytecode ``halt`` opcode has no stack_move counterpart —

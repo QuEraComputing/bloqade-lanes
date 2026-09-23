@@ -26,9 +26,9 @@ fn text_to_binary_to_text_round_trip() {
     assert_eq!(status, LanesStatus::Ok);
     assert!(!prog.is_null());
 
-    // Check instruction count
+    // Two instructions plus the `func_start`/`func_end` that delimit `@main`.
     let count = unsafe { lanes_program_instruction_count(prog) };
-    assert_eq!(count, 2);
+    assert_eq!(count, 4);
 
     // Check version
     let mut major: u16 = 0;
@@ -84,7 +84,11 @@ fn binary_decode_known_good() {
     let mut prog2: *mut LANESProgram = ptr::null_mut();
     let status = unsafe { lanes_program_from_binary(bin_data, bin_len, &mut prog2) };
     assert_eq!(status, LanesStatus::Ok);
-    assert_eq!(unsafe { lanes_program_instruction_count(prog2) }, 1);
+    assert_eq!(
+        unsafe { lanes_program_instruction_count(prog2) },
+        3,
+        "one instruction plus the two function markers"
+    );
 
     unsafe {
         lanes_free_bytes(bin_data, bin_len);

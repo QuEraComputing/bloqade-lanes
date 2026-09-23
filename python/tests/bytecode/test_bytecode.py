@@ -414,8 +414,9 @@ class TestProgramConstruction:
             ],
         )
         assert program.version == (1, 0)
-        assert len(program) == 3
-        assert len(program.instructions) == 3
+        # Three instructions plus the `func_start`/`func_end` delimiting `@main`.
+        assert len(program) == 5
+        assert len(program.instructions) == 5
 
     def test_from_text(self):
         source = _sst("""\
@@ -427,7 +428,8 @@ fn @main() {
 """)
         program = Program.from_text(source)
         assert program.version == (1, 0)
-        assert len(program) == 3
+        # Three instructions plus `@main`'s two function markers.
+        assert len(program) == 5
 
     def test_from_text_invalid(self):
         # Well-formed container, no `.header(root)` section — spelled out
@@ -494,20 +496,33 @@ fn @main() {
         assert "VHBC" in str(e.value)
 
     def test_unaligned_binary_raises_unaligned_code_error(self):
-        # Grow the bytecode region by one byte, and the section holding it, so
-        # the container stays well-formed and the only fault is that the region
-        # is no longer a whole number of instruction words. Offsets follow the
-        # container layout: section_len at 16, bytecode_len at 36, bytecode at 44.
-        SECTION_LEN, BYTECODE_LEN, BYTECODE = 16, 36, 44
+        # Grow the bytecode region by one byte, and everything whose extent or
+        # offset covers it, so the container stays well-formed and the only
+        # fault is that the region is no longer a whole number of instruction
+        # words. Offsets are read out of the file rather than hard-coded.
         raw = bytearray(self._sample_program().to_binary())
 
-        def bump(at):
-            v = int.from_bytes(raw[at : at + 8], "little") + 1
-            raw[at : at + 8] = v.to_bytes(8, "little")
+        def u64(at):
+            return int.from_bytes(raw[at : at + 8], "little")
 
-        bump(SECTION_LEN)
-        bump(BYTECODE_LEN)
-        raw.insert(BYTECODE, 0)
+        def bump(at):
+            raw[at : at + 8] = (u64(at) + 1).to_bytes(8, "little")
+
+        FILE_HEADER = 16
+        section = FILE_HEADER + u64(8)  # past the global context
+        bytecode_len_at = section + 16 + u64(section + 8)
+        bytecode_at = bytecode_len_at + 8
+        code_len = u64(bytecode_len_at)
+
+        bump(section)  # section_len
+        bump(bytecode_len_at)
+        raw.insert(bytecode_at + code_len, 0)
+
+        # The child sections shifted with the insert.
+        child_table = bytecode_at + code_len + 1
+        child_count = int.from_bytes(raw[child_table : child_table + 4], "little")
+        for i in range(child_count):
+            bump(child_table + 4 + i * 12 + 4)
 
         with pytest.raises(UnalignedCodeError):
             Program.from_binary(bytes(raw))
@@ -784,13 +799,14 @@ class TestDecoderDispatch:
         program = Program.from_text(
             _sst("fn @main() {\n  cpu::cpu.get_item\n  cpu::cpu.halt\n}\n")
         )
-        instr = program.instructions[0]
+        # Index 1: index 0 is `@main`'s `func_start`.
+        instr = program.instructions[1]
         assert (instr.device(), instr.op_name()) == ("cpu", "get_item")
 
         with pytest.raises(DecodingError) as exc_info:
             BytecodeDecoder().decode(program)
         assert "`cpu::get_item` has no stack_move representation" in str(exc_info.value)
-        assert exc_info.value.instruction_index == 0
+        assert exc_info.value.instruction_index == 1
 
     def test_lanes_get_item_still_decodes(self):
         # The other half of the pair must be unaffected.
@@ -805,7 +821,8 @@ class TestDecoderDispatch:
                 "  cpu::cpu.halt\n}\n"
             )
         )
-        instr = program.instructions[3]
+        # Index 4: the leading `func_start` shifts every body instruction.
+        instr = program.instructions[4]
         assert (instr.device(), instr.op_name()) == ("lanes", "get_item")
         BytecodeDecoder().decode(program)  # should not raise
 
@@ -893,7 +910,8 @@ class TestLocalIndexBounds:
         ]
         assert errs and errs[0].index == 200_000_000
         assert errs[0].mnemonic == "store"
-        assert errs[0].pc == 1
+        # pc 2: address 0 is `@main`'s `func_start`, 1 is the `const`.
+        assert errs[0].pc == 2
 
     def test_load_local_index_is_bounded(self):
         program = Program.from_text(

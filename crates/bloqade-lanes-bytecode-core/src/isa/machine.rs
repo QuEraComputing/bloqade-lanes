@@ -152,7 +152,7 @@ impl LanesMachine {
 
         let mut effects = Vec::new();
         let mut steps = 0u64;
-        let mut pc = 0usize;
+        let mut pc = Self::entry_point(program)?;
 
         let stopped = loop {
             let Some(inst) = program.code.get(pc) else {
@@ -241,6 +241,23 @@ impl LanesMachine {
             },
             _ => Ok(()),
         }
+    }
+
+    /// Where execution begins: the `@main` *symbol*, not byte zero.
+    ///
+    /// A lanes program is an executable, so it enters the way a linked binary
+    /// does — at a named entry the loader resolves, wherever it was laid out.
+    /// Starting at address 0 instead ran whichever function came first in the
+    /// source, so a module declaring `@helper` before `@main` executed the
+    /// wrong one and reported success.
+    fn entry_point(program: &Program) -> eyre::Result<usize> {
+        let index = program
+            .main_function
+            .ok_or_else(|| eyre::eyre!("program declares no entry point"))?;
+        let function = program.functions.get(index as usize).ok_or_else(|| {
+            eyre::eyre!("entry point names function {index}, which the table does not have")
+        })?;
+        Ok(function.start_address as usize)
     }
 
     /// Pop the operands `inst` consumes and pack them into its message.
@@ -431,7 +448,7 @@ fn collect(effects: Effects<LanesEffect>, into: &mut Vec<LanesEffect>) {
 /// vihaco-cpu's own `Display` emits bare mnemonics (`halt`, `const.f64 1.5`)
 /// that its *parser* does not accept, so rendering is written here against the
 /// surface grammar instead. The round-trip tests pin the two together.
-fn cpu_type_text(ty: Type) -> &'static str {
+pub(super) fn cpu_type_text(ty: Type) -> &'static str {
     match ty {
         Type::Undefined => "undef",
         Type::String => "str",
@@ -792,7 +809,7 @@ mod tests {
     const SIMPLE_ARCH_JSON: &str = include_str!("../../../../examples/arch/simple.json");
 
     fn machine() -> LanesMachine {
-        LanesMachine::default()
+        LanesMachine::new()
             .with_arch(ArchSpec::from_json(SIMPLE_ARCH_JSON).expect("simple.json should parse"))
     }
 
@@ -856,6 +873,44 @@ mod tests {
                 msg: LanesMessage::Zones(_)
             })
         ));
+    }
+
+    /// The entry frame is what makes locals addressable at all: without it every
+    /// `load`/`store` fails with "no current frame".
+    ///
+    /// It also pins *what* a local is. vihaco locals are `stack[base + index]`
+    /// — a window into the operand stack, not separate memory — so under the
+    /// entry frame (`base = 0`) local 0 is literally stack slot 0. A function
+    /// with no parameters therefore has no private locals, which is why `store`
+    /// cannot stand in for `pop`: here it pops the operand and writes it
+    /// straight back into slot 0.
+    #[test]
+    fn the_entry_frame_makes_locals_addressable_but_they_alias_the_stack() {
+        use vihaco::traits::StackMemory;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        // Without a frame, locals are unreachable.
+        let mut bare = LanesMachine::default();
+        bare.cpu.stack_push(Value::U64(7));
+        assert!(
+            bare.cpu
+                .execute_instruction(C::Store(Type::U64, 0))
+                .unwrap_err()
+                .to_string()
+                .contains("no current frame")
+        );
+
+        // With one, the same store succeeds — and lands back in slot 0.
+        let mut m = LanesMachine::new();
+        m.cpu.stack_push(Value::U64(7));
+        m.cpu.execute_instruction(C::Store(Type::U64, 0)).unwrap();
+        assert_eq!(
+            m.cpu.stack(),
+            &[Value::U64(7)],
+            "local 0 aliases stack slot 0 under the entry frame"
+        );
+        m.cpu.execute_instruction(C::Load(Type::U64, 0)).unwrap();
+        assert_eq!(m.cpu.stack(), &[Value::U64(7), Value::U64(7)]);
     }
 
     #[test]
@@ -1047,12 +1102,14 @@ mod tests {
                 MachineInstruction::Lanes(I::GlobalRz),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
 
         let mut m = machine();
         let run = m.run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted);
-        assert_eq!(run.steps, 6);
+        // Six instructions plus the `func_start` the entry point lands on.
+        assert_eq!(run.steps, 7);
 
         // The atoms actually moved, and the gate was reported not simulated.
         assert_eq!(
@@ -1107,7 +1164,8 @@ mod tests {
                     inst.clone(),
                     MachineInstruction::Cpu(C::Halt),
                 ],
-            );
+            )
+            .unwrap();
             let mut machine = LanesMachine::new();
             let err = machine
                 .run(&program, 100)
@@ -1150,7 +1208,8 @@ mod tests {
                     MachineInstruction::Cpu(C::Store(Type::U64, index)),
                     MachineInstruction::Cpu(C::Halt),
                 ],
-            );
+            )
+            .unwrap();
             let mut m = LanesMachine::new();
             let err = match m.run(&program, 100) {
                 Ok(run) => panic!("index={index}: the store should have been refused, got {run:?}"),
@@ -1177,7 +1236,8 @@ mod tests {
                 MachineInstruction::Cpu(C::Load(Type::U64, MAX_LOCAL_INDEX)),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
         let mut m = LanesMachine::new();
         assert_eq!(m.run(&program, 100).unwrap().stopped, Stopped::Halted);
         assert_eq!(m.cpu.stack().last(), Some(&Value::U64(7)));
@@ -1205,7 +1265,10 @@ mod tests {
                 MachineInstruction::Lanes(I::ConstZone(0)),
                 MachineInstruction::Lanes(I::ConstZone(1)),
                 MachineInstruction::Lanes(I::ConstZone(2)),
-                MachineInstruction::Cpu(C::Call(0, 5)),
+                // Address 6: `from_code` prepends `@main`'s `func_start`, so
+                // the callee's first instruction sits one past where a bare
+                // instruction list would put it.
+                MachineInstruction::Cpu(C::Call(0, 6)),
                 MachineInstruction::Cpu(C::Halt),
                 // @drain: pops the caller's three values, then returns.
                 MachineInstruction::Lanes(I::Pop),
@@ -1213,7 +1276,8 @@ mod tests {
                 MachineInstruction::Lanes(I::Pop),
                 MachineInstruction::Cpu(C::Return(0)),
             ],
-        );
+        )
+        .unwrap();
         let err = LanesMachine::new()
             .run(&program, 100)
             .expect_err("the underflowing ret should be refused")
@@ -1240,9 +1304,166 @@ mod tests {
                 // @callee: hands its argument back.
                 MachineInstruction::Cpu(C::Return(1)),
             ],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted);
+    }
+
+    /// What a nonzero-arity `call` and a `ret <keep>` actually *do*.
+    ///
+    /// The test above pins only that a balanced pair does not crash. The three
+    /// behaviours the calling convention turns on go unobserved by it, and each
+    /// fails differently:
+    ///
+    /// - the caller's operands become the callee's locals (`call <arity>` sets
+    ///   `base = stack.len() - arity`, and locals index up from there);
+    /// - `ret <keep>` keeps the top `keep` values and drains the rest of the
+    ///   frame, so callee scratch goes and the return value survives;
+    /// - the caller resumes at the instruction after the `call`, not at the
+    ///   start of its own function.
+    ///
+    /// Each observable below is a distinct constant, so a failure names which
+    /// one broke rather than just reporting a different stack.
+    #[test]
+    fn a_call_passes_locals_and_a_ret_keeps_only_what_it_says() {
+        use crate::isa::text::parse_text;
+
+        // `@callee` is declared first to keep the entry-point lookup honest.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n\
+                   .header(root).\n.text(root):\n\
+                   fn @callee() {\n  \
+                     cpu::cpu.const i64, 777\n  \
+                     cpu::cpu.load i64, 0\n  \
+                     cpu::cpu.ret 1\n\
+                   }\n\n\
+                   fn @main() {\n  \
+                     cpu::cpu.const i64, 111\n  \
+                     cpu::cpu.const i64, 222\n  \
+                     cpu::cpu.call 1, callee\n  \
+                     cpu::cpu.const i64, 444\n  \
+                     cpu::cpu.halt\n\
+                   }\n\
+                   .text(root).\n.section(root).\n";
+        let program = parse_text(src).expect("the module should parse");
+
+        let mut machine = LanesMachine::new();
+        let run = machine.run(&program, 100).expect("the program should run");
+        assert_eq!(run.stopped, Stopped::Halted);
+
+        let stack = machine.cpu.stack();
+        assert!(
+            stack.contains(&Value::I64(222)),
+            "the argument should have reached the callee as local 0 and come \
+             back as its return value; stack: {stack:?}"
+        );
+        assert!(
+            !stack.contains(&Value::I64(777)),
+            "callee scratch below the kept value should be drained by `ret 1`; \
+             stack: {stack:?}"
+        );
+        assert!(
+            stack.contains(&Value::I64(444)),
+            "the caller should resume at the instruction after the `call`; \
+             stack: {stack:?}"
+        );
+        assert_eq!(
+            stack,
+            &[Value::I64(111), Value::I64(222), Value::I64(444)],
+            "the caller's own operand below the frame base should be untouched"
+        );
+    }
+
+    /// Execution enters at `@main`, wherever it was laid out.
+    ///
+    /// A lanes program is an executable, so the entry point is a symbol, not
+    /// an address. Starting at 0 ran whichever function came first: a module
+    /// declaring `@helper` before `@main` executed the helper's `ret` and
+    /// reported success without touching a single atom.
+    #[test]
+    fn execution_enters_at_main_not_at_address_zero() {
+        use crate::isa::text::parse_text;
+
+        let program = parse_text(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n             .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n             fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n               lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n             .text(root).\n.section(root).\n",
+        )
+        .expect("the module should parse");
+
+        // `@main` is the second function, so its code starts past address 0.
+        assert_eq!(program.main_function, Some(1));
+        assert!(program.functions[1].start_address > 0);
+
+        let mut m = machine();
+        let run = m.run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Halted, "should reach @main's halt");
+        assert_eq!(
+            run.steps, 4,
+            "should run @main's `func_start` and its three instructions"
+        );
+        assert_eq!(
+            m.atoms().get_qubit(&LocationAddr::decode(loc(0, 0, 0))),
+            Some(0),
+            "@main's initial_fill should have run"
+        );
+    }
+
+    /// Declaration order is not part of a module's meaning.
+    ///
+    /// The test above shows `@main` is *found* when it is not first. This is
+    /// the stronger property the entry-point symbol buys: the same two
+    /// functions in either order are the same program, so reordering a module
+    /// cannot change what it validates as or what it does.
+    ///
+    /// Worth pinning separately because the rules that could break it are not
+    /// all in the entry-point lookup. `initial_fill must be first` and the
+    /// reachability walk are per function only because `func_start` resets
+    /// them; had either stayed whole-program, a helper declared first would
+    /// have made `@main`'s own `initial_fill` illegal.
+    #[test]
+    fn declaration_order_changes_nothing() {
+        use crate::isa::text::parse_text;
+        use crate::isa::validate::{simulate_stack, validate, validate_structure};
+
+        const HELPER: &str = "fn @helper() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  \
+             lanes::lanes.pop\n  cpu::cpu.ret 0\n}\n";
+        const MAIN: &str = "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.initial_fill 1\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n";
+
+        let module = |body: String| {
+            parse_text(&format!(
+                "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n\
+                 .header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
+            ))
+            .expect("the module should parse")
+        };
+
+        let main_first = module(format!("{MAIN}\n{HELPER}"));
+        let helper_first = module(format!("{HELPER}\n{MAIN}"));
+
+        // The entry point moves; nothing that depends on it does.
+        assert_eq!(main_first.main_function, Some(0));
+        assert_eq!(helper_first.main_function, Some(1));
+
+        for (label, program) in [("main first", &main_first), ("helper first", &helper_first)] {
+            assert!(
+                validate_structure(program).is_empty()
+                    && validate(program, None).is_empty()
+                    && simulate_stack(program, None).is_empty(),
+                "{label}: should validate clean",
+            );
+        }
+
+        let run_of = |program| {
+            let mut m = machine();
+            let run = m.run(program, 100).expect("the program should run");
+            (run.stopped, run.steps, run.effects.len())
+        };
+        assert_eq!(
+            run_of(&main_first),
+            run_of(&helper_first),
+            "the same functions in either order should execute identically"
+        );
     }
 
     /// `ret` at top level ends the program, which needs the entry frame:
@@ -1256,7 +1477,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Cpu(C::Return(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Returned);
     }
@@ -1281,7 +1503,8 @@ mod tests {
                 MachineInstruction::Lanes(I::Pop),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
         // The static half accepts it...
         assert_eq!(simulate_stack(&program, None), vec![]);
         // ...so running it must not underflow.
@@ -1317,7 +1540,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Cpu(C::Branch(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 50).unwrap();
         assert_eq!(run.stopped, Stopped::OutOfSteps);
         assert_eq!(run.steps, 50);
@@ -1334,7 +1558,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Lanes(I::ConstZone(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::RanOff);
     }
@@ -1498,10 +1723,10 @@ mod tests {
             wrong.join("\n")
         );
         // A parser that silently matched nothing would make this vacuous:
-        // 24 rows in the quick reference plus 23 in the spec.
+        // 29 rows in the quick reference plus 23 in the spec.
         assert_eq!(
-            checked, 47,
-            "expected 47 documented opcodes, found {checked}"
+            checked, 52,
+            "expected 52 documented opcodes, found {checked}"
         );
     }
 
@@ -1549,7 +1774,7 @@ mod tests {
     #[test]
     fn move_without_an_arch_is_an_error() {
         // `move` cannot resolve a lane into endpoints without a spec.
-        let mut m = LanesMachine::default();
+        let mut m = LanesMachine::new();
         m.step_lanes(I::ConstLane(0)).unwrap();
         let err = m.step_lanes(I::Move(1)).unwrap_err().to_string();
         assert!(err.contains("arch spec"), "got {err}");

@@ -241,3 +241,60 @@ def test_load_program_infers_return_type():
     assert (
         method.return_type != types.Any
     ), f"expected narrowed return type, got {method.return_type}"
+
+
+_TWO_FUNCTIONS = """sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+fn @helper() {
+  cpu::cpu.halt
+}
+
+fn @main() {
+  lanes::lanes.const_loc 0x0000000000000000
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).
+"""
+
+
+def test_multi_function_program_is_rejected():
+    # Decoding lowers the whole stream into one kirin block, which silently
+    # concatenates the bodies: this program used to produce a kernel whose
+    # first statement was `@helper`'s `func.return` and which carried two
+    # terminators -- and `verify()` accepted it. The compiler neither emits
+    # multi-function bytecode nor lowers it further, so there is no correct
+    # lowering to fall back to; refusing is the fix.
+    import pytest
+
+    from bloqade.lanes.bytecode.decode import DecodingError
+
+    prog = Program.from_text(_TWO_FUNCTIONS)
+    with pytest.raises(DecodingError) as excinfo:
+        load_program(prog)
+
+    message = str(excinfo.value)
+    assert "2 functions" in message, message
+    # It names the second `func_start`, not a value-carrying instruction.
+    assert "func_start" in message, message
+
+
+def test_single_function_program_still_decodes():
+    # The guard keys on the marker count, so the single `func_start` /
+    # `func_end` pair every program carries must not trip it.
+    src = _TWO_FUNCTIONS.replace(
+        "fn @helper() {\n  cpu::cpu.halt\n}\n\n",
+        "",
+    )
+    method = load_program(Program.from_text(src))
+    block = method.callable_region.blocks[0]
+
+    terminators = [s for s in block.stmts if isinstance(s, func.Return)]
+    assert len(terminators) == 1, f"expected one terminator, got {len(terminators)}"
+    assert any(isinstance(s, stack_move.InitialFill) for s in block.stmts)

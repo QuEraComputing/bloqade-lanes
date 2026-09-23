@@ -18,10 +18,21 @@
 //!
 //!   The companion rule against branch/call instructions
 //!   ([`ControlFlowRequiresFeedForward`](ValidationError::ControlFlowRequiresFeedForward))
-//!   is currently unreachable — the ISA has no such instructions to reject. See
-//!   that variant's docs.
+//!   rejects control flow for the same reason. It was unreachable for as long
+//!   as the ISA had no such instructions; adopting the calling convention
+//!   brought it back.
 //! - **`atom_reloading` → `fill`.** Without atom reloading, refilling atoms
 //!   after the initial fill is unsupported.
+//!
+//! ## What the stack simulation does not cover
+//!
+//! [`simulate_stack`] is a linear pass over each function from an empty stack,
+//! so it stops at the first branch or call and skips any function a `call`
+//! passes operands to. Both are conservative: it reports nothing rather than
+//! something it cannot justify from a state it does not have. Restoring that
+//! coverage needs a CFG walk that merges state at join points and models calls
+//! against the frame — see
+//! <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>.
 //!
 //! ## Address checks
 //!
@@ -62,15 +73,13 @@ pub mod tag {
 /// instruction's program counter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
-    /// A control-flow instruction appears but `feed_forward` is disabled.
+    /// A `br`, `cond_br`, `call` or `call_indirect` appears but
+    /// `feed_forward` is disabled.
     ///
-    /// Currently unreachable: the ISA has no branch/call instructions to
-    /// trigger it. It reached programs while the ISA nested vihaco-cpu's
-    /// instruction set wholesale, which brought `br`/`cond_br`/`call` along;
-    /// vihaco-cpu 0.4 dropped its binary codec and the nesting went with it.
-    /// Retained because `feed_forward` is a real capability and control flow is
-    /// expected back — and because it is mapped to a Python exception, so
-    /// removing it would be a breaking API change.
+    /// Without mid-circuit classical feedback the hardware can only run
+    /// straight-line code. This was documented as unreachable for as long as
+    /// the ISA had no control flow to reject; adopting the calling convention
+    /// brought it back.
     ControlFlowRequiresFeedForward {
         pc: usize,
         /// The offending mnemonic (e.g. `"cond_br"`).
@@ -103,11 +112,45 @@ pub enum ValidationError {
         mnemonic: &'static str,
         index: u32,
     },
+    /// An instruction sits outside every function's extent — after the last
+    /// `func_end`, or in a stream with no markers at all. Unreachable, and
+    /// unrenderable: [`super::text::to_text`] emits it after the closing brace.
+    CodeOutsideFunction { pc: usize },
+    /// A `br`/`cond_br` names an address outside the code, or a `call` names
+    /// one that does not begin a function.
+    InvalidControlFlowTarget {
+        pc: usize,
+        target: u32,
+        /// What the target should have been: `"an address in the code"` or
+        /// `"a function entry"`.
+        expected: &'static str,
+    },
+    /// A `call`'s arity operand disagrees with the callee's declared
+    /// parameter count.
+    ///
+    /// The operand is not a hint: it sets `base = stack.len() - arity`, so an
+    /// unchecked one redefines the callee's frame per call site.
+    CallArityMismatch {
+        pc: usize,
+        target: u32,
+        declared: u32,
+        got: u32,
+    },
+    /// A `ret`'s keep count disagrees with the enclosing function's declared
+    /// return count.
+    ///
+    /// Two `ret`s that disagree make the caller's post-call stack depth
+    /// path-dependent, which is the same defect as a branch whose arms leave
+    /// different depths. Checking both against the declaration catches it
+    /// without having to compare them to each other.
+    ReturnCountMismatch { pc: usize, declared: u32, got: u32 },
     /// `initial_fill` is not the first non-constant instruction.
     InitialFillNotFirst { pc: usize },
     /// The program has no instructions (and therefore no terminator).
     EmptyProgram,
-    /// The final instruction is neither `return` nor `halt`.
+    /// Some path through a function runs off its end instead of reaching
+    /// `return` or `halt`. Per function, not per program: `func_end` is a
+    /// no-op, so falling off it runs whatever was laid out next.
     MissingTerminator { pc: usize },
     /// An instruction follows a `return`/`halt` and is unreachable.
     UnreachableInstruction { pc: usize },
@@ -169,6 +212,32 @@ pub const MAX_GET_ITEM_DIMS: u32 = 2;
 /// is nothing, while still being three orders of magnitude past any function
 /// the compiler will emit.
 pub const MAX_LOCAL_INDEX: u32 = 1023;
+/// Record a `br`/`cond_br` target that leaves the branch's own function.
+///
+/// Testing only `target < code.len()` let a branch land anywhere in the
+/// stream: a trailing `cpu::cpu.label` resolves to the function's own
+/// `func_end`, and a target past it enters the *next* function's body without
+/// a frame — the caller's locals still in place, no `ret` to come back to.
+/// A branch is intra-procedural; leaving the function is what `call` is for.
+fn check_branch_target(
+    errors: &mut Vec<ValidationError>,
+    owner: &[Option<usize>],
+    pc: usize,
+    target: u32,
+) {
+    let same_function = owner
+        .get(target as usize)
+        .copied()
+        .flatten()
+        .is_some_and(|t| owner.get(pc).copied().flatten() == Some(t));
+    if !same_function {
+        errors.push(ValidationError::InvalidControlFlowTarget {
+            pc,
+            target,
+            expected: "an address in the same function",
+        });
+    }
+}
 
 /// Element count of a `new_array`, in `u64` so the product cannot overflow.
 /// `dim1 == 0` means a 1-D array.
@@ -241,6 +310,28 @@ impl fmt::Display for ValidationError {
                 f,
                 "pc {pc}: {mnemonic} takes a local index 0..={MAX_LOCAL_INDEX}, got {index}"
             ),
+            ValidationError::CodeOutsideFunction { pc } => {
+                write!(f, "pc {pc}: instruction is outside any function")
+            }
+            ValidationError::InvalidControlFlowTarget {
+                pc,
+                target,
+                expected,
+            } => write!(f, "pc {pc}: control-flow target {target} is not {expected}"),
+            ValidationError::CallArityMismatch {
+                pc,
+                target,
+                declared,
+                got,
+            } => write!(
+                f,
+                "pc {pc}: call passes {got} operand(s) but the function at {target} \
+                 declares {declared}"
+            ),
+            ValidationError::ReturnCountMismatch { pc, declared, got } => write!(
+                f,
+                "pc {pc}: ret keeps {got} value(s) but the function declares {declared}"
+            ),
             ValidationError::InitialFillNotFirst { pc } => write!(
                 f,
                 "pc {pc}: initial_fill must be the first non-constant instruction"
@@ -252,7 +343,7 @@ impl fmt::Display for ValidationError {
                 )
             }
             ValidationError::MissingTerminator { pc } => {
-                write!(f, "pc {pc}: program must end with return or halt")
+                write!(f, "pc {pc}: function must end with return or halt")
             }
             ValidationError::UnreachableInstruction { pc } => {
                 write!(f, "pc {pc}: unreachable instruction after return or halt")
@@ -284,20 +375,73 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
 
     let mut errors = Vec::new();
     let mut measure_count = 0u32;
+    let mut initial_fill_count = 0u32;
+
+    // The capability rules describe *the run*, so they are scoped to the code
+    // that runs. With `feed_forward` off the control-flow arm below rejects
+    // every `call`, so only the entry function can execute — counting within
+    // its span is exact wherever the measure rule is active, and stops an
+    // uncallable function's `measure` from condemning a program that measures
+    // once.
+    let entry = program
+        .main_function
+        .and_then(|i| program.functions.get(i as usize))
+        .map(|f| (f.start_address as usize, f.end_address as usize));
+    let runs = |pc: usize| entry.is_none_or(|(start, end)| pc >= start && pc < end);
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
             // ---- capability checks ----
-            // No `ControlFlowRequiresFeedForward` arm: the ISA has no
-            // branch/call instructions to check for (see the variant's docs).
+            // Without mid-circuit classical feedback the hardware runs
+            // straight-line code only, so a branch or a call is unrunnable.
+            // This arm did not exist while the ISA had no such instructions;
+            // now that a program can declare functions and branch between
+            // them, its absence let every one of them through.
+            //
+            // Guarded on [`is_control_flow`] rather than re-listing the
+            // variants, so a new control-flow op is gated here the moment it
+            // joins that predicate, instead of silently passing the rule that
+            // exists to reject it.
+            inst if is_control_flow(inst) && !arch.feed_forward => {
+                errors.push(ValidationError::ControlFlowRequiresFeedForward {
+                    pc,
+                    mnemonic: super::machine::op_name(inst),
+                });
+            }
             M::Lanes(L::Measure(_)) => {
-                measure_count += 1;
-                if !arch.feed_forward && measure_count > 1 {
-                    errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
+                // A textual count over the code stream, which is exact only
+                // because the arm above rejects every branch and call when
+                // `feed_forward` is false: without control flow the code runs
+                // once, top to bottom. With `feed_forward` on, repeats are
+                // allowed anyway, so the count does not have to be exact.
+                if runs(pc) {
+                    measure_count += 1;
+                    if !arch.feed_forward && measure_count > 1 {
+                        errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
+                    }
                 }
             }
             M::Lanes(L::Fill(_)) if !arch.atom_reloading => {
                 errors.push(ValidationError::FillRequiresAtomReloading { pc });
+            }
+            // A *second* `initial_fill` is a refill, whatever it is spelled.
+            // The whole-program "must be first" ordering rule used to make
+            // that unreachable; scoping it to a function did not, so a helper
+            // could reload atoms on hardware that cannot.
+            //
+            // Counted across the whole program, unlike `measure` above. The
+            // measure rule is only active when `feed_forward` is off, which
+            // bans `call` and leaves the entry function as the only code that
+            // runs — so entry-scoping is exact there. This rule is active with
+            // `feed_forward` *on*, where a called function does run, and
+            // deciding which functions are callable needs a call-graph walk.
+            // Counting all of them can only over-report, which is the right
+            // way for a capability gate to be wrong.
+            M::Lanes(L::InitialFill(_)) => {
+                initial_fill_count += 1;
+                if !arch.atom_reloading && initial_fill_count > 1 {
+                    errors.push(ValidationError::FillRequiresAtomReloading { pc });
+                }
             }
 
             // ---- address checks ----
@@ -324,6 +468,14 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     errors
 }
 
+/// True if `inst` transfers control somewhere the linear walk cannot follow.
+fn is_control_flow(inst: &M) -> bool {
+    matches!(
+        inst,
+        M::Cpu(C::Branch(_) | C::ConditionalBranch(_, _) | C::Call(_, _) | C::IndirectCall)
+    )
+}
+
 /// True if `inst` terminates execution (`return` or `halt`).
 fn is_terminator(inst: &M) -> bool {
     matches!(inst, M::Cpu(C::Return(_)) | M::Cpu(C::Halt))
@@ -347,6 +499,16 @@ fn is_constant_push(inst: &M) -> bool {
 pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let mut seen_non_constant = false;
+    let spans = function_spans(&program.code);
+
+    // Which function owns each address, so a branch can be constrained to its
+    // own. `pc -> span index`; `None` for code outside every function.
+    let mut owner = vec![None; program.code.len()];
+    for (i, span) in spans.iter().enumerate() {
+        for slot in owner.iter_mut().take(span.end).skip(span.start) {
+            *slot = Some(i);
+        }
+    }
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
@@ -395,38 +557,272 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                 }
                 seen_non_constant = true;
             }
+            // Branch and call targets are addresses, and nothing has checked
+            // them: a `br` past the end of the code, or a `call` to an address
+            // that begins no function, is a program the renderer cannot even
+            // name — it has to invent `@L9` / `@F1`, producing text that will
+            // not re-read.
+            M::Cpu(C::Branch(t)) => {
+                check_branch_target(&mut errors, &owner, pc, *t);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::ConditionalBranch(t, f)) => {
+                check_branch_target(&mut errors, &owner, pc, *t);
+                check_branch_target(&mut errors, &owner, pc, *f);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Call(arity, target)) => {
+                if !matches!(
+                    program.code.get(*target as usize),
+                    Some(M::Cpu(C::FunctionStart))
+                ) {
+                    errors.push(ValidationError::InvalidControlFlowTarget {
+                        pc,
+                        target: *target,
+                        expected: "a function entry",
+                    });
+                } else if let Some(callee) = program
+                    .functions
+                    .iter()
+                    .find(|f| f.start_address == *target)
+                {
+                    // `call <arity>` sets `base = stack.len() - arity`, so the
+                    // operand decides where the callee's frame begins. Checked
+                    // against the declaration, that is a claim about the
+                    // callee; unchecked, it silently *redefines* the callee's
+                    // shape per call site, and two sites could disagree with
+                    // nothing to notice.
+                    let declared = callee.signature.params.len() as u32;
+                    if *arity != declared {
+                        errors.push(ValidationError::CallArityMismatch {
+                            pc,
+                            target: *target,
+                            declared,
+                            got: *arity,
+                        });
+                    }
+                }
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Return(keep)) => {
+                // Checked against the enclosing function's declaration rather
+                // than against its other `ret`s. Same outcome when they
+                // disagree, but it names the offender: a `ret` that does not
+                // match what the function promised, rather than a pair that
+                // happens to differ.
+                if let Some(declared) = owner[pc]
+                    .and_then(|i| spans.get(i))
+                    .and_then(|span| {
+                        program
+                            .functions
+                            .iter()
+                            .find(|f| f.start_address == span.start as u32)
+                    })
+                    .map(|f| f.signature.ret.len() as u32)
+                    && *keep != declared
+                {
+                    errors.push(ValidationError::ReturnCountMismatch {
+                        pc,
+                        declared,
+                        got: *keep,
+                    });
+                }
+                seen_non_constant = true;
+            }
+            // A function boundary resets the ordering rule: `initial_fill`
+            // must lead its own function, not the whole code stream.
+            M::Cpu(C::FunctionStart) => seen_non_constant = false,
+            M::Cpu(C::FunctionEnd) => {}
             inst if is_constant_push(inst) => {}
             _ => seen_non_constant = true,
         }
     }
 
-    // Any instruction after the first terminator is unreachable. If there are
-    // unreachable instructions they explain a non-terminal last instruction, so
-    // `MissingTerminator` would be a redundant second error.
-    let mut found_terminator = false;
-    let mut unreachable = Vec::new();
-    for (pc, inst) in program.code.iter().enumerate() {
-        if found_terminator {
-            unreachable.push(ValidationError::UnreachableInstruction { pc });
+    // Reachability and terminators are per *function*, and reachability
+    // follows branches rather than latching on the first terminator.
+    //
+    // The latch this replaces was right while a program was one flat `@main`.
+    // It condemned `cond_br`'s second arm — the `halt` ending the first arm
+    // set the latch — and it could not see code a `br` jumped over. Following
+    // the edges gets both right, and the edge extraction already exists for
+    // the target checks above.
+    let spans = function_spans(&program.code);
+
+    // An instruction outside every function is unreachable *and* unrenderable:
+    // `to_text` emits it after the last `}`, producing text that will not
+    // re-read.
+    let mut covered = vec![false; program.code.len()];
+    for span in &spans {
+        for slot in covered.iter_mut().take(span.end).skip(span.start) {
+            *slot = true;
         }
-        if is_terminator(inst) {
-            found_terminator = true;
+    }
+    for (pc, inside) in covered.iter().enumerate() {
+        if !inside {
+            errors.push(ValidationError::CodeOutsideFunction { pc });
         }
     }
 
-    if unreachable.is_empty() {
-        match program.code.last() {
-            None => errors.push(ValidationError::EmptyProgram),
-            Some(last) if !is_terminator(last) => errors.push(ValidationError::MissingTerminator {
-                pc: program.code.len() - 1,
-            }),
-            Some(_) => {}
+    // A label names a position in a function's *body*. One sitting on a
+    // `func_start` cannot be written down: the only spot before a function's
+    // first instruction is the header line, so `to_text` emits it as the first
+    // body label and it re-reads one address later — a different binary, no
+    // error. One on a `func_end`, or outside every function, has no
+    // instruction to mark at all.
+    for label in &program.labels {
+        let body = spans.iter().any(|span| {
+            let body_end = if span.closed { span.end - 1 } else { span.end };
+            (label.address as usize) > span.start && (label.address as usize) < body_end
+        });
+        if !body {
+            errors.push(ValidationError::InvalidControlFlowTarget {
+                pc: label.address as usize,
+                target: label.address,
+                expected: "an instruction inside a function body",
+            });
         }
-    } else {
-        errors.extend(unreachable);
+    }
+
+    // "Empty" means no *body*: a program that is nothing but markers has
+    // nothing to run, however many functions it declares.
+    if !program.code.iter().any(|i| !is_marker(i)) {
+        errors.push(ValidationError::EmptyProgram);
+        return errors;
+    }
+
+    for span in &spans {
+        walk_function(program, span, &mut errors);
     }
 
     errors
+}
+
+/// One function's extent in the code stream.
+struct Span {
+    /// Address of the `func_start`.
+    start: usize,
+    /// One past the last address the function owns.
+    end: usize,
+    /// Whether a `func_end` closed it. An unclosed final function still owns
+    /// the rest of the code, and falls off its own end.
+    closed: bool,
+}
+
+fn is_marker(inst: &M) -> bool {
+    matches!(inst, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd))
+}
+
+/// Entry addresses of every function some `call` passes operands to.
+///
+/// The arity lives at the call site, not on the callee — `resolve` records an
+/// empty [`vihaco::module::Signature`] for every function — so the only way to
+/// learn that a function receives operands is to read the calls that reach it.
+/// A function called from several sites with different arities appears here if
+/// *any* of them is nonzero, because one caller passing operands is enough to
+/// make the empty-stack simulation wrong.
+fn callee_arities(code: &[M]) -> HashSet<u32> {
+    code.iter()
+        .filter_map(|inst| match inst {
+            M::Cpu(C::Call(arity, target)) if *arity > 0 => Some(*target),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Split the code into function extents, delimited by the markers.
+fn function_spans(code: &[M]) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let mut open: Option<usize> = None;
+    for (pc, inst) in code.iter().enumerate() {
+        match inst {
+            M::Cpu(C::FunctionStart) => {
+                // A nested `func_start` closes nothing; the outer function
+                // runs up to it and `resolve` rejects the construct anyway.
+                if let Some(start) = open.replace(pc) {
+                    spans.push(Span {
+                        start,
+                        end: pc,
+                        closed: false,
+                    });
+                }
+            }
+            M::Cpu(C::FunctionEnd) => {
+                if let Some(start) = open.take() {
+                    spans.push(Span {
+                        start,
+                        end: pc + 1,
+                        closed: true,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(start) = open {
+        spans.push(Span {
+            start,
+            end: code.len(),
+            closed: false,
+        });
+    }
+    spans
+}
+
+/// Walk one function from its entry, following branch edges.
+///
+/// Reports every body address no path reaches, and a missing terminator when
+/// any path runs off the end instead of hitting `ret`/`halt`. Both are
+/// per-function: a second function's dead code no longer hides a first
+/// function's missing terminator, which the old single either/or gate did.
+fn walk_function(program: &Program, span: &Span, errors: &mut Vec<ValidationError>) {
+    let body_end = if span.closed { span.end - 1 } else { span.end };
+    let mut seen = vec![false; span.end - span.start];
+    let mut work = vec![span.start];
+    let mut falls_off = false;
+
+    while let Some(pc) = work.pop() {
+        // A target outside this function is reported by the target checks;
+        // following it would attribute the callee's code to the caller.
+        if pc < span.start || pc >= span.end || seen[pc - span.start] {
+            continue;
+        }
+        seen[pc - span.start] = true;
+
+        let inst = &program.code[pc];
+        let fall_through = |work: &mut Vec<usize>, falls_off: &mut bool| {
+            if pc + 1 >= body_end {
+                *falls_off = true;
+            }
+            if pc + 1 < span.end {
+                work.push(pc + 1);
+            }
+        };
+        match inst {
+            M::Cpu(C::FunctionEnd) => falls_off = true,
+            M::Cpu(C::Branch(t)) => work.push(*t as usize),
+            M::Cpu(C::ConditionalBranch(t, f)) => {
+                work.push(*t as usize);
+                work.push(*f as usize);
+            }
+            inst if is_terminator(inst) => {}
+            _ => fall_through(&mut work, &mut falls_off),
+        }
+    }
+
+    for pc in span.start + 1..body_end {
+        if !seen[pc - span.start] {
+            errors.push(ValidationError::UnreachableInstruction { pc });
+        }
+    }
+    if falls_off {
+        // Point at the last body instruction where there is one; an empty
+        // function has only its marker to name. An empty function is not
+        // exempt: `func_end` is a no-op, so falling off it runs whatever was
+        // laid out next rather than returning.
+        errors.push(ValidationError::MissingTerminator {
+            pc: body_end.saturating_sub(1).max(span.start),
+        });
+    }
 }
 
 // ── Stack-type simulation ──────────────────────────────────────────────────
@@ -695,7 +1091,19 @@ impl<'a> StackSimulator<'a> {
             }
 
             // control
-            M::Cpu(C::Return(_)) => self.pop_any(),
+            // `ret <keep>` keeps the top `keep` values as the function's
+            // return values; it does not pop exactly one. Modelling it as one
+            // made `ret 0` — the spelling every function the compiler emits
+            // uses — report a spurious underflow on an empty stack.
+            //
+            // Bounded by the stack depth plus one: `keep` is an operand, and
+            // the extra pop is what records the single underflow when it
+            // exceeds what the function has.
+            M::Cpu(C::Return(keep)) => {
+                for _ in 0..(*keep as usize).min(self.stack.len() + 1) {
+                    self.pop_any();
+                }
+            }
             M::Cpu(C::Halt) => {}
 
             // Every other vihaco-cpu op — arithmetic, comparisons, control
@@ -708,9 +1116,54 @@ impl<'a> StackSimulator<'a> {
     }
 
     fn run(mut self, program: &Program) -> Vec<ValidationError> {
-        for (pc, inst) in program.code.iter().enumerate() {
-            self.pc = pc;
-            self.dispatch(inst);
+        // Simulate each function from an empty stack, independently.
+        //
+        // This used to walk the whole stream and `break` at the first control
+        // flow, which lost two things. A `call` is the *only* way to reach a
+        // second function, so breaking there meant every multi-function
+        // program went unchecked from its first call onwards — a callee's
+        // unconditional underflow, behind no branch at all, was never
+        // reported. And with no control flow anywhere the markers fell through
+        // as no-ops, so one function's leftover operands were still on the
+        // stack when the next began, and its errors surfaced an instruction
+        // late or not at all.
+        //
+        // A branch still stops the *containing* function: past it the stack
+        // state depends on which edge was taken, and merging those needs the
+        // CFG walk tracked in
+        // <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>. The
+        // linear prefix of every function is checked, which is all of every
+        // function the compiler emits today.
+        //
+        // Starting from empty is the part that is only right for a function
+        // nothing passes operands to. `call <arity>` does not clear the stack:
+        // it sets `base = stack.len() - arity`, and the callee's locals *alias*
+        // the operand stack from there up. So a callee with nonzero arity
+        // legitimately consumes values this simulation cannot see, and every
+        // such function reported a `StackUnderflow` that execution disproves.
+        //
+        // Skipping them trades coverage for correctness. Checking them properly
+        // means modelling the frame rather than absolute depth — a callee owns
+        // exactly `arity` values and popping below `base` corrupts its caller —
+        // which is the frame-aware walk in #1042, not something this linear
+        // pass can express. This is a placeholder for that, not the end state.
+        let takes_operands = callee_arities(&program.code);
+        for span in function_spans(&program.code) {
+            if takes_operands.contains(&(span.start as u32)) {
+                continue;
+            }
+            self.stack.clear();
+            for (pc, inst) in program.code[span.start..span.end]
+                .iter()
+                .enumerate()
+                .map(|(i, inst)| (span.start + i, inst))
+            {
+                if is_control_flow(inst) {
+                    break;
+                }
+                self.pc = pc;
+                self.dispatch(inst);
+            }
         }
         self.errors
     }
@@ -719,6 +1172,12 @@ impl<'a> StackSimulator<'a> {
 /// Run the type-level stack simulation over a program. Collects underflow and
 /// type-mismatch errors, plus lane/location group errors (validated against
 /// `arch` when provided, else duplicate-only).
+///
+/// Conservative around control flow: each function is simulated from an empty
+/// stack up to its first branch or call, and a function some `call` passes
+/// operands to is skipped entirely. An empty result therefore means "nothing
+/// this pass can see is wrong", not "the stack discipline is sound" — see the
+/// module docs.
 pub fn simulate_stack(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
     StackSimulator::new(arch).run(program)
 }
@@ -752,7 +1211,7 @@ mod tests {
     }
 
     fn program(instructions: Vec<M>) -> Program {
-        crate::isa::program::from_code(Version::new(1, 0), instructions)
+        crate::isa::program::from_code(Version::new(1, 0), instructions).unwrap()
     }
 
     fn loc(zone_id: u32, word_id: u32, site_id: u32) -> u64 {
@@ -793,12 +1252,56 @@ mod tests {
         assert!(validate(&p, Some(&caps_arch(false, false))).is_empty());
     }
 
+    /// Control flow needs `feed_forward`, and the arm that says so exists.
+    ///
+    /// The variant was declared, formatted, mapped to a Python exception and
+    /// unit-tested — but never constructed, because it was written when the
+    /// ISA had no control flow. Adopting the calling convention made every
+    /// `br`/`cond_br`/`call` reachable from `.sst` with the gate wide open.
+    #[test]
+    fn control_flow_requires_feed_forward() {
+        use vihaco_parser::Ident;
+
+        for (inst, mnemonic) in [
+            (M::Cpu(C::Branch(1)), "br"),
+            (M::Cpu(C::ConditionalBranch(1, 1)), "cond_br"),
+            (M::Cpu(C::Call(0, 0)), "call"),
+            (M::Cpu(C::IndirectCall), "call_indirect"),
+        ] {
+            let p = program(vec![inst, M::Cpu(C::Halt)]);
+            assert!(
+                validate(&p, Some(&caps_arch(false, false)))
+                    .contains(&ValidationError::ControlFlowRequiresFeedForward { pc: 1, mnemonic }),
+                "{mnemonic}: got {:?}",
+                validate(&p, Some(&caps_arch(false, false)))
+            );
+            // With the capability, it is allowed.
+            assert!(
+                !validate(&p, Some(&caps_arch(true, false)))
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::ControlFlowRequiresFeedForward { .. })),
+                "{mnemonic} should pass with feed_forward"
+            );
+        }
+
+        // A label is not control flow, and neither is `ret`.
+        let p = program(vec![
+            M::Cpu(C::Label(Ident("x".into()))),
+            M::Cpu(C::Return(0)),
+        ]);
+        assert!(
+            !validate(&p, Some(&caps_arch(false, false)))
+                .iter()
+                .any(|e| matches!(e, ValidationError::ControlFlowRequiresFeedForward { .. }))
+        );
+    }
+
     #[test]
     fn single_measure_ok_but_second_rejected_without_feed_forward() {
         let p = program(vec![M::Lanes(L::Measure(1)), M::Lanes(L::Measure(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
-            vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 1 }]
+            vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 2 }]
         );
     }
 
@@ -807,7 +1310,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::Fill(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
-            vec![ValidationError::FillRequiresAtomReloading { pc: 0 }]
+            vec![ValidationError::FillRequiresAtomReloading { pc: 1 }]
         );
         assert!(validate(&p, Some(&caps_arch(false, true))).is_empty());
     }
@@ -835,7 +1338,7 @@ mod tests {
         assert!(
             matches!(
                 errors.as_slice(),
-                [ValidationError::InvalidLocation { pc: 0, .. }]
+                [ValidationError::InvalidLocation { pc: 1, .. }]
             ),
             "got {errors:?}"
         );
@@ -852,7 +1355,7 @@ mod tests {
         assert!(
             matches!(
                 errors.as_slice(),
-                [ValidationError::InvalidZone { pc: 0, .. }]
+                [ValidationError::InvalidZone { pc: 1, .. }]
             ),
             "got {errors:?}"
         );
@@ -875,7 +1378,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, ValidationError::InvalidLane { pc: 0, .. })),
+                .any(|e| matches!(e, ValidationError::InvalidLane { pc: 1, .. })),
             "got {errors:?}"
         );
     }
@@ -908,7 +1411,7 @@ mod tests {
         ]);
         assert_eq!(
             validate_structure(&p),
-            vec![ValidationError::MissingTerminator { pc: 1 }]
+            vec![ValidationError::MissingTerminator { pc: 2 }]
         );
     }
 
@@ -923,7 +1426,7 @@ mod tests {
         let p = program(vec![M::Cpu(C::Return(0)), M::Cpu(C::Halt)]);
         assert_eq!(
             validate_structure(&p),
-            vec![ValidationError::UnreachableInstruction { pc: 1 }]
+            vec![ValidationError::UnreachableInstruction { pc: 2 }]
         );
     }
 
@@ -942,16 +1445,16 @@ mod tests {
             M::Lanes(L::InitialFill(1)),
             M::Cpu(C::Return(0)),
         ]);
-        assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 1 }));
+        assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 2 }));
     }
 
     #[test]
     fn new_array_bounds_checked() {
         let p = program(vec![M::Lanes(L::NewArray(99, 0, 0)), M::Cpu(C::Return(0))]);
         let errors = validate_structure(&p);
-        assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 0 }));
+        assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 1 }));
         assert!(errors.contains(&ValidationError::NewArrayInvalidTypeTag {
-            pc: 0,
+            pc: 1,
             type_tag: 99
         }));
     }
@@ -968,7 +1471,7 @@ mod tests {
             .into_iter()
             .chain(validate(&p, Some(&arch)))
             .collect();
-        assert!(errors.contains(&ValidationError::MissingTerminator { pc: 0 }));
+        assert!(errors.contains(&ValidationError::MissingTerminator { pc: 1 }));
         assert!(
             errors
                 .iter()
@@ -991,11 +1494,11 @@ mod tests {
         );
         assert!(matches!(
             errors[0],
-            ValidationError::FillRequiresAtomReloading { pc: 0 }
+            ValidationError::FillRequiresAtomReloading { pc: 1 }
         ));
         assert!(matches!(
             errors[1],
-            ValidationError::InvalidZone { pc: 1, .. }
+            ValidationError::InvalidZone { pc: 2, .. }
         ));
     }
 
@@ -1030,7 +1533,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::Pop)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1043,7 +1546,7 @@ mod tests {
             errors.iter().any(|e| matches!(
                 e,
                 ValidationError::TypeMismatch {
-                    pc: 1,
+                    pc: 2,
                     expected,
                     got
                 } if *expected == tag::LOCATION && *got == tag::FLOAT
@@ -1060,7 +1563,7 @@ mod tests {
         assert!(
             errors.iter().any(|e| matches!(
                 e,
-                ValidationError::TypeMismatch { pc: 1, expected, .. } if *expected == tag::MEASURE_FUTURE
+                ValidationError::TypeMismatch { pc: 2, expected, .. } if *expected == tag::MEASURE_FUTURE
             )),
             "got {errors:?}"
         );
@@ -1156,17 +1659,17 @@ mod tests {
 
     #[test]
     fn await_measure_pushes_an_array_ref() {
+        // Pin the tag the awaited value carries, by observing what rejects it:
+        // `cz` wants a zone, and says what it got instead.
         let p = program(vec![
             M::Lanes(L::ConstZone(0)),
             M::Lanes(L::Measure(1)),
             M::Lanes(L::AwaitMeasure),
+            M::Lanes(L::Cz),
         ]);
-        // Pin the tag the awaited value carries, by observing what rejects it:
-        // `cz` wants a zone, and says what it got instead.
-        let p = program(p.code.iter().cloned().chain([M::Lanes(L::Cz)]).collect());
         assert!(
             simulate_stack(&p, None).contains(&ValidationError::TypeMismatch {
-                pc: 3,
+                pc: 4,
                 expected: tag::ZONE,
                 got: tag::ARRAY_REF,
             }),
@@ -1186,7 +1689,7 @@ mod tests {
         ]);
         assert!(
             validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
-                pc: 0,
+                pc: 1,
                 count: 1 << 32,
             }),
             "got {:?}",
@@ -1198,7 +1701,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
         assert!(
             validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
-                pc: 0,
+                pc: 1,
                 count: u32::MAX as u64,
             }),
             "got {:?}",
@@ -1214,7 +1717,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1224,7 +1727,7 @@ mod tests {
         let p = program(vec![M::Lanes(L::InitialFill(40)), M::Cpu(C::Halt)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
 
         // Distinct instructions still report separately.
@@ -1232,9 +1735,285 @@ mod tests {
         assert_eq!(
             simulate_stack(&p, None),
             vec![
-                ValidationError::StackUnderflow { pc: 0 },
                 ValidationError::StackUnderflow { pc: 1 },
+                ValidationError::StackUnderflow { pc: 2 },
             ]
+        );
+    }
+
+    /// Branch and call targets are addresses, and nothing checked them.
+    ///
+    /// An unnameable target is not just invalid, it is unrenderable: `to_text`
+    /// has to invent `@L9` / `@F1`, and the text it emits does not re-read.
+    /// Catching it here means the renderer is only ever asked to name targets
+    /// that have a name.
+    /// Reachability follows branches instead of latching on a terminator.
+    ///
+    /// The latch condemned `cond_br`'s second arm — the `halt` ending the
+    /// first arm set it — and could not see code a `br` jumped over.
+    /// Each function is simulated from an empty stack, independently.
+    ///
+    /// Breaking at the first control flow lost every multi-function program's
+    /// tail — `call` is the only way to reach a second function — and with no
+    /// control flow at all, one function's leftover operands were still on the
+    /// stack when the next began.
+    #[test]
+    fn the_stack_is_simulated_per_function() {
+        use crate::isa::text::parse_text;
+
+        // (a) A callee's unconditional underflow, behind a `call`.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  lanes::lanes.const_zone 0x00000000\n                     cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n                   fn @helper() {\n  lanes::lanes.pop\n  cpu::cpu.ret 0\n}\n                   .text(root).\n.section(root).\n";
+        let p = parse_text(src).unwrap();
+        assert!(
+            simulate_stack(&p, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
+            "@helper's underflow should be reported: {:?}",
+            simulate_stack(&p, None)
+        );
+
+        // (b) One function must not consume what the previous left behind.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  lanes::lanes.const_zone 0x00000000\n                     cpu::cpu.halt\n}\n                   fn @helper() {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n                   .text(root).\n.section(root).\n";
+        let p = parse_text(src).unwrap();
+        assert!(
+            simulate_stack(&p, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
+            "@helper starts from an empty stack: {:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    /// `ret <keep>` keeps the top `keep` values; it does not pop exactly one.
+    ///
+    /// Modelling it as one made `ret 0` — what every function the compiler
+    /// emits uses — report a spurious underflow on an empty stack.
+    #[test]
+    fn ret_pops_its_keep_count() {
+        let p = program(vec![M::Cpu(C::Return(0))]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        let p = program(vec![M::Cpu(C::Return(1))]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+
+        // An implausible keep count is one diagnosis, not four billion.
+        let p = program(vec![M::Cpu(C::Return(u32::MAX))]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    /// Wrap a multi-function body in the `sst v1` container.
+    fn sst_module(body: &str) -> Program {
+        use crate::isa::text::parse_text;
+        parse_text(&format!(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
+             .text(root):\n{body}.text(root).\n.section(root).\n"
+        ))
+        .expect("the module should parse")
+    }
+
+    /// A callee that receives operands is not simulated, because this pass
+    /// starts every function from an empty stack.
+    ///
+    /// `call <arity>` does not clear the stack — it sets
+    /// `base = stack.len() - arity` and the callee's locals alias the operand
+    /// stack from there up. So the argument `@helper` consumes below is one
+    /// `@main` legitimately passed, and reporting an underflow for it
+    /// contradicts the machine, which runs this program to `Halted`. See
+    /// <https://github.com/QuEraComputing/bloqade-lanes/issues/1042>.
+    #[test]
+    fn a_callee_taking_operands_is_not_simulated() {
+        let p = sst_module(
+            "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 1, helper\n  lanes::lanes.pop\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  cpu::cpu.load u32, 0\n  lanes::lanes.measure 1\n  \
+             lanes::lanes.await_measure\n  cpu::cpu.ret 1\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![],
+            "a nonzero-arity callee must not report an underflow this pass cannot justify"
+        );
+
+        // The machine is the authority the assertion above defers to.
+        let mut machine = crate::isa::machine::LanesMachine::new();
+        let run = machine.run(&p, 10_000).expect("the program should run");
+        assert!(matches!(
+            run.stopped,
+            crate::isa::machine::Stopped::Halted | crate::isa::machine::Stopped::Returned
+        ));
+    }
+
+    /// Only callees that receive operands are skipped. A zero-arity callee is
+    /// still simulated, so the concession above cannot quietly widen into
+    /// "stop checking anything reachable by a call".
+    #[test]
+    fn a_zero_arity_callee_is_still_simulated() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.measure 1\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert!(
+            simulate_stack(&p, None).contains(&ValidationError::StackUnderflow { pc: 5 }),
+            "a zero-arity callee's underflow is real and must still be reported: {:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    /// One nonzero-arity call site is enough to skip the callee, even when
+    /// another site passes nothing — the arity lives on the call, not the
+    /// function, so the two disagree and the empty-stack model fits neither.
+    #[test]
+    fn one_operand_passing_call_site_is_enough_to_skip() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  \
+             lanes::lanes.const_zone 0x00000000\n  cpu::cpu.call 1, helper\n  \
+             cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.measure 1\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![],
+            "a callee reached at arity 0 and arity 1 is skipped"
+        );
+    }
+
+    #[test]
+    fn reachability_follows_branch_edges() {
+        // Both arms of a `cond_br` are reachable.
+        let p = program(vec![
+            M::Cpu(C::ConditionalBranch(2, 4)),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(
+            validate_structure(&p)
+                .iter()
+                .filter(|e| matches!(e, ValidationError::UnreachableInstruction { .. }))
+                .count(),
+            0,
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // And code a branch jumps over is still reported.
+        let p = program(vec![M::Cpu(C::Branch(3)), M::Lanes(L::Cz), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::UnreachableInstruction { pc: 2 }),
+            "the jumped-over cz should be reported: {:?}",
+            validate_structure(&p)
+        );
+    }
+
+    /// Every function must terminate, and one function's dead code must not
+    /// hide another's missing terminator.
+    #[test]
+    fn terminators_are_checked_per_function() {
+        use crate::isa::text::parse_text;
+
+        // @main has unreachable code; @helper has no terminator. The old
+        // either/or gate reported only the first.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.halt\n  lanes::lanes.cz\n}\n                   fn @helper() {\n  lanes::lanes.cz\n}\n.text(root).\n.section(root).\n";
+        let errors = validate_structure(&parse_text(src).unwrap());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UnreachableInstruction { .. })),
+            "got {errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingTerminator { .. })),
+            "got {errors:?}"
+        );
+
+        // An empty function is not exempt: `func_end` is a no-op, so falling
+        // off it runs whatever was laid out next rather than returning.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n                   fn @helper() {\n}\n.text(root).\n.section(root).\n";
+        assert!(
+            validate_structure(&parse_text(src).unwrap())
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingTerminator { .. })),
+            "an empty function still falls through"
+        );
+    }
+
+    /// A branch is intra-procedural; leaving the function is what `call` is
+    /// for. A trailing label resolves to the function's own `func_end`, and a
+    /// target past it enters the next function with no frame.
+    #[test]
+    fn a_branch_cannot_leave_its_function() {
+        use crate::isa::text::parse_text;
+
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.br @far\n  cpu::cpu.halt\n}\n                   fn @helper() {\n  cpu::cpu.label @far\n  cpu::cpu.halt\n}\n                   .text(root).\n.section(root).\n";
+        assert!(
+            validate_structure(&parse_text(src).unwrap())
+                .iter()
+                .any(|e| matches!(
+                    e,
+                    ValidationError::InvalidControlFlowTarget {
+                        expected: "an address in the same function",
+                        ..
+                    }
+                )),
+            "a cross-function branch should be rejected"
+        );
+    }
+
+    #[test]
+    fn control_flow_targets_are_checked() {
+        // A branch past the end of the code.
+        let p = program(vec![M::Cpu(C::Branch(99)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InvalidControlFlowTarget {
+                pc: 1,
+                target: 99,
+                expected: "an address in the same function",
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // Both arms of a `cond_br`.
+        let p = program(vec![M::Cpu(C::ConditionalBranch(99, 98)), M::Cpu(C::Halt)]);
+        assert_eq!(
+            validate_structure(&p)
+                .iter()
+                .filter(|e| matches!(e, ValidationError::InvalidControlFlowTarget { .. }))
+                .count(),
+            2,
+            "both arms should be reported"
+        );
+
+        // A call to an address that begins no function. Address 1 is the
+        // `halt` inside `@main`, not a `func_start`.
+        let p = program(vec![M::Cpu(C::Call(0, 2)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InvalidControlFlowTarget {
+                pc: 1,
+                target: 2,
+                expected: "a function entry",
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // A branch inside the same function is fine.
+        let p = program(vec![M::Cpu(C::Branch(2)), M::Cpu(C::Halt)]);
+        assert!(
+            !validate_structure(&p)
+                .iter()
+                .any(|e| matches!(e, ValidationError::InvalidControlFlowTarget { .. })),
+            "got {:?}",
+            validate_structure(&p)
         );
     }
 
@@ -1246,7 +2025,7 @@ mod tests {
             let p = program(vec![M::Lanes(L::GetItem(ndims)), M::Cpu(C::Halt)]);
             assert!(
                 validate_structure(&p)
-                    .contains(&ValidationError::GetItemInvalidDims { pc: 0, ndims }),
+                    .contains(&ValidationError::GetItemInvalidDims { pc: 1, ndims }),
                 "ndims={ndims}: got {:?}",
                 validate_structure(&p)
             );
@@ -1286,7 +2065,8 @@ mod tests {
             let p = program(vec![M::Cpu(inst.clone()), M::Cpu(C::Halt)]);
             assert!(
                 validate_structure(&p).contains(&ValidationError::LocalIndexOutOfRange {
-                    pc: 0,
+                    // Address 0 is `@main`'s `func_start`.
+                    pc: 1,
                     mnemonic,
                     index,
                 }),
@@ -1323,7 +2103,7 @@ mod tests {
             M::Cpu(C::Halt),
         ]);
         assert!(
-            validate_structure(&p).contains(&ValidationError::InitialFillNotFirst { pc: 1 }),
+            validate_structure(&p).contains(&ValidationError::InitialFillNotFirst { pc: 2 }),
             "got {:?}",
             validate_structure(&p)
         );
@@ -1401,7 +2181,7 @@ mod tests {
             ),
             (
                 ValidationError::MissingTerminator { pc: 7 },
-                "pc 7: program must end with return or halt".into(),
+                "pc 7: function must end with return or halt".into(),
             ),
             (
                 ValidationError::UnreachableInstruction { pc: 8 },
@@ -1471,7 +2251,7 @@ mod tests {
         let bad = program(vec![M::Lanes(L::ConstLoc(loc(0, 0, 0))), M::Lanes(L::Swap)]);
         assert_eq!(
             simulate_stack(&bad, None),
-            vec![ValidationError::StackUnderflow { pc: 1 }]
+            vec![ValidationError::StackUnderflow { pc: 2 }]
         );
     }
 
@@ -1480,7 +2260,7 @@ mod tests {
         let p = program(vec![M::Cpu(C::Dup)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1528,12 +2308,12 @@ mod tests {
         // GlobalRz pops one float via `pop_typed`; empty stack -> underflow.
         assert_eq!(
             simulate_stack(&program(vec![M::Lanes(L::GlobalRz)]), None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
         // Move pops a lane via `pop_addr`; empty stack -> underflow.
         assert_eq!(
             simulate_stack(&program(vec![M::Lanes(L::Move(1))]), None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1578,6 +2358,35 @@ mod tests {
             simulate_stack(&obs, None).is_empty(),
             "{:?}",
             simulate_stack(&obs, None)
+        );
+    }
+
+    #[test]
+    fn stack_sim_stops_at_control_flow_rather_than_guessing() {
+        // A `pop` on an empty stack is an underflow the simulator would
+        // normally catch — but behind a branch it cannot know the stack state,
+        // so it stops instead of reporting something it cannot justify.
+        let behind_branch = program(vec![
+            M::Cpu(C::Branch(2)),
+            M::Lanes(L::Pop),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            simulate_stack(&behind_branch, None).is_empty(),
+            "must not report errors derived from an unknown post-branch state"
+        );
+
+        // The same underflow ahead of the branch is still caught.
+        let before_branch = program(vec![
+            M::Lanes(L::Pop),
+            M::Cpu(C::Branch(2)),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            simulate_stack(&before_branch, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::StackUnderflow { .. })),
+            "linear prefix is still checked"
         );
     }
 
