@@ -4,9 +4,14 @@
 //! [`MoveSearch`](crate::search::move_search::MoveSearch) directly
 //! against an `EntanglingConstraintGoal` (every CZ pair must occupy
 //! *some* valid entangling site, not a pre-decided fixed target).
-//! Internally uses [`LooseTargetGenerator`] which re-runs the
-//! Hungarian assignment per search step so the "target" co-evolves
-//! with the current placement.
+//! Internally uses [`LooseTargetGenerator`], which computes a Hungarian
+//! target assignment once per restart (lazily, on its first `generate`
+//! call) and steers every later expansion in that restart toward the
+//! cached assignment. Diversity comes from the parallel restarts: each
+//! restart's seed perturbs its assignment, and `pick_best` keeps the
+//! best result. Because the goal accepts *any* valid entangling
+//! placement, the final placement can differ from the cached
+//! assignment.
 //!
 //! Unlike [`SingleHeuristicCzPlacement`](super::single_heuristic::SingleHeuristicCzPlacement),
 //! there is *no* [`TargetSolver`](crate::search::target_solver::TargetSolver)
