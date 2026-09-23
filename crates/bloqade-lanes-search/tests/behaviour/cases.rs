@@ -537,6 +537,30 @@ fn false_unsolvable_cases() -> Vec<Case> {
             ..Expect::default()
         }),
     );
+    // The cause is the generator's completeness, not the drivers. The
+    // heuristic generator only proposes moves toward targets; on a
+    // deadlocked configuration the default policy (`Skip`) proposes
+    // nothing, so this sparse funnel's deadlocks become dead ends and the
+    // frontier drains. `AllMoves` falls back to every legal move there,
+    // restoring completeness, and all three drivers then solve it.
+    for strategy in [Strategy::AStar, Strategy::Dfs, Strategy::Ids] {
+        cases.push(
+            case(
+                format!(
+                    "edge/false_unsolvable/zoned_six_up/{}_all_moves",
+                    strategy.label()
+                ),
+                on(&six, strategy).budget(Some(5000)).knobs(Knobs {
+                    deadlock_policy: Some(Deadlock::AllMoves),
+                    ..Knobs::default()
+                }),
+            )
+            .expect(Expect {
+                status: Some(Status::Solved),
+                ..Expect::default()
+            }),
+        );
+    }
     cases
 }
 
@@ -665,7 +689,9 @@ fn big_cz_cases() -> Vec<Case> {
         // layers with every atom still in storage. Its per-pair target rule
         // skips a pair whose location has no CZ partner, so each qubit's
         // target defaults to where it already is. On Gemini every location
-        // has a partner, so this never fires there.
+        // has a partner, so this never fires there. (Checked: no starting
+        // location here has a CZ partner, so no pair starts already paired;
+        // only gate words 4-7 have partners.)
         cases.push(case(
             format!("cz/{name}/zoned_two_pairs_from_storage"),
             stage(

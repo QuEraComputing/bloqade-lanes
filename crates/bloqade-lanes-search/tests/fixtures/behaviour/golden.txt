@@ -1587,6 +1587,21 @@ status: solved | layers: 41 | lanes: 48 | cost: 41 | expanded: 0 | deadlocks: 0 
 final: 0@1:4.0 1@1:4.1 2@1:4.2 3@1:5.0 4@1:5.1 5@1:5.2
 plan: 0709358168646133
 
+== edge/false_unsolvable/zoned_six_up/astar_all_moves
+status: solved | layers: 23 | lanes: 36 | cost: 23 | expanded: 1436 | deadlocks: 7 | proven: false | termination: stopped
+final: 0@1:4.0 1@1:4.1 2@1:4.2 3@1:5.0 4@1:5.1 5@1:5.2
+plan: 540b7fc8b6284a5b
+
+== edge/false_unsolvable/zoned_six_up/dfs_all_moves
+status: solved | layers: 25 | lanes: 38 | cost: 25 | expanded: 36 | deadlocks: 3 | proven: false | termination: stopped
+final: 0@1:4.0 1@1:4.1 2@1:4.2 3@1:5.0 4@1:5.1 5@1:5.2
+plan: 6b681cc107c7b1a5
+
+== edge/false_unsolvable/zoned_six_up/ids_all_moves
+status: solved | layers: 23 | lanes: 36 | cost: 23 | expanded: 44 | deadlocks: 4 | proven: false | termination: stopped
+final: 0@1:4.0 1@1:4.1 2@1:4.2 3@1:5.0 4@1:5.1 5@1:5.2
+plan: 1de1c87fef8313db
+
 == cz/single_heuristic/logical
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@3.0 1@2.0 2@7.0 3@6.0
