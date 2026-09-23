@@ -114,746 +114,781 @@
 <a href=#114 id=114 data-nosnippet>114</a>    })
 <a href=#115 id=115 data-nosnippet>115</a>}
 <a href=#116 id=116 data-nosnippet>116</a>
-<a href=#117 id=117 data-nosnippet>117</a><span class="doccomment">/// Build a `Program` from a version + flat instruction list, wrapped in a
-<a href=#118 id=118 data-nosnippet>118</a>/// single `@main`.
+<a href=#117 id=117 data-nosnippet>117</a><span class="doccomment">/// How many locals a function's frame reserves: its parameters, then every
+<a href=#118 id=118 data-nosnippet>118</a>/// slot its body names.
 <a href=#119 id=119 data-nosnippet>119</a>///
-<a href=#120 id=120 data-nosnippet>120</a>/// This is the ONE constructor used by both binary and text loading, so all
-<a href=#121 id=121 data-nosnippet>121</a>/// `Program`s built from the same (version, code) compare equal regardless of
-<a href=#122 id=122 data-nosnippet>122</a>/// source. It declares the `@main` function table entry that rendering and
-<a href=#123 id=123 data-nosnippet>123</a>/// execution both need — a `Program` with code but no functions would emit
-<a href=#124 id=124 data-nosnippet>124</a>/// nothing and have no entry point.
-<a href=#125 id=125 data-nosnippet>125</a>///
-<a href=#126 id=126 data-nosnippet>126</a>/// Programs with several functions or with labels come from
-<a href=#127 id=127 data-nosnippet>127</a>/// [`super::resolve::resolve`] instead; this is the flat case.
-<a href=#128 id=128 data-nosnippet>128</a></span><span class="attr">#[allow(clippy::field_reassign_with_default)] </span><span class="comment">// `LocalModule` is a foreign type; struct-literal init is not possible
-<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">pub fn </span>from_code(version: Version, code: Vec&lt;MachineInstruction&gt;) -&gt; eyre::Result&lt;Program&gt; {
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="comment">// The caller supplies a function *body*; the markers are this function's
-<a href=#131 id=131 data-nosnippet>131</a>    // job to add. Accepting a list that already has them wrapped it twice —
-<a href=#132 id=132 data-nosnippet>132</a>    // nested `fn` blocks with one closing brace, unparseable text, and a
-<a href=#133 id=133 data-nosnippet>133</a>    // binary that does not compare equal to what produced it. The migration
-<a href=#134 id=134 data-nosnippet>134</a>    // guide documents the markers as visible in `Program.instructions`, so
-<a href=#135 id=135 data-nosnippet>135</a>    // `Program(v, list(p.instructions))` is the obvious thing to try; it now
-<a href=#136 id=136 data-nosnippet>136</a>    // says what to do instead.
-<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">if </span>code.iter().any(|i| {
-<a href=#138 id=138 data-nosnippet>138</a>        <span class="macro">matches!</span>(
-<a href=#139 id=139 data-nosnippet>139</a>            i,
-<a href=#140 id=140 data-nosnippet>140</a>            MachineInstruction::Cpu(
-<a href=#141 id=141 data-nosnippet>141</a>                vihaco_cpu::RuntimeInstruction::FunctionStart
-<a href=#142 id=142 data-nosnippet>142</a>                    | vihaco_cpu::RuntimeInstruction::FunctionEnd
-<a href=#143 id=143 data-nosnippet>143</a>            )
-<a href=#144 id=144 data-nosnippet>144</a>        )
-<a href=#145 id=145 data-nosnippet>145</a>    }) {
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="macro">eyre::bail!</span>(
-<a href=#147 id=147 data-nosnippet>147</a>            <span class="string">"instruction list already carries func_start/func_end; these delimit a \
-<a href=#148 id=148 data-nosnippet>148</a>             function and are added here. To copy a program, use from_binary/to_binary \
-<a href=#149 id=149 data-nosnippet>149</a>             or from_text/to_text."
-<a href=#150 id=150 data-nosnippet>150</a>        </span>);
-<a href=#151 id=151 data-nosnippet>151</a>    }
-<a href=#152 id=152 data-nosnippet>152</a>
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="comment">// Wrap the body in the function markers, so a program built from a bare
-<a href=#154 id=154 data-nosnippet>154</a>    // instruction list is in the same shape as one resolved from text. The
-<a href=#155 id=155 data-nosnippet>155</a>    // format has one layout, not two: a reader can rely on `func_start`
-<a href=#156 id=156 data-nosnippet>156</a>    // delimiting every function because there is no way to build a program
-<a href=#157 id=157 data-nosnippet>157</a>    // without it.
-<a href=#158 id=158 data-nosnippet>158</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>wrapped = Vec::with_capacity(code.len() + <span class="number">2</span>);
-<a href=#159 id=159 data-nosnippet>159</a>    wrapped.push(MachineInstruction::Cpu(
-<a href=#160 id=160 data-nosnippet>160</a>        vihaco_cpu::RuntimeInstruction::FunctionStart,
-<a href=#161 id=161 data-nosnippet>161</a>    ));
-<a href=#162 id=162 data-nosnippet>162</a>    wrapped.extend(code);
-<a href=#163 id=163 data-nosnippet>163</a>    wrapped.push(MachineInstruction::Cpu(
-<a href=#164 id=164 data-nosnippet>164</a>        vihaco_cpu::RuntimeInstruction::FunctionEnd,
-<a href=#165 id=165 data-nosnippet>165</a>    ));
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>code = wrapped;
-<a href=#167 id=167 data-nosnippet>167</a>
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">let </span>end_address = code.len() <span class="kw">as </span>u32;
-<a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">let </span><span class="kw-2">mut </span>m = Program::default();
-<a href=#170 id=170 data-nosnippet>170</a>    m.code = code;
-<a href=#171 id=171 data-nosnippet>171</a>    m.strings = <span class="macro">vec!</span>[<span class="string">"main"</span>.to_owned()];
-<a href=#172 id=172 data-nosnippet>172</a>    m.functions = <span class="macro">vec!</span>[FunctionInfo {
-<a href=#173 id=173 data-nosnippet>173</a>        name: <span class="number">0</span>,
-<a href=#174 id=174 data-nosnippet>174</a>        signature: Signature {
-<a href=#175 id=175 data-nosnippet>175</a>            params: Vec::new(),
-<a href=#176 id=176 data-nosnippet>176</a>            ret: Vec::new(),
-<a href=#177 id=177 data-nosnippet>177</a>        },
-<a href=#178 id=178 data-nosnippet>178</a>        local_count: <span class="number">0</span>,
-<a href=#179 id=179 data-nosnippet>179</a>        start_address: <span class="number">0</span>,
-<a href=#180 id=180 data-nosnippet>180</a>        end_address,
-<a href=#181 id=181 data-nosnippet>181</a>        file: <span class="number">0</span>,
-<a href=#182 id=182 data-nosnippet>182</a>    }];
-<a href=#183 id=183 data-nosnippet>183</a>    m.main_function = <span class="prelude-val">Some</span>(<span class="number">0</span>);
-<a href=#184 id=184 data-nosnippet>184</a>    m.extra = LanesInfo { version };
-<a href=#185 id=185 data-nosnippet>185</a>    <span class="prelude-val">Ok</span>(m)
-<a href=#186 id=186 data-nosnippet>186</a>}
-<a href=#187 id=187 data-nosnippet>187</a>
-<a href=#188 id=188 data-nosnippet>188</a><span class="doccomment">/// Error from binary (de)serialization.
-<a href=#189 id=189 data-nosnippet>189</a>///
-<a href=#190 id=190 data-nosnippet>190</a>/// The variants are unchanged from the pre-container format because each maps to
-<a href=#191 id=191 data-nosnippet>191</a>/// a Python exception class; what changed is where they come from. vihaco's
-<a href=#192 id=192 data-nosnippet>192</a>/// container parser reports failures as `eyre::Report`, so `classify` sorts
-<a href=#193 id=193 data-nosnippet>193</a>/// those messages back into these variants.
-<a href=#194 id=194 data-nosnippet>194</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#195 id=195 data-nosnippet>195</a></span><span class="kw">pub enum </span>BinaryError {
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="doccomment">/// The file did not start with vihaco's `VHBC` magic.
-<a href=#197 id=197 data-nosnippet>197</a>    </span>BadMagic,
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="doccomment">/// Buffer ended before a complete header, section or instruction word.
-<a href=#199 id=199 data-nosnippet>199</a>    </span>Truncated { expected: usize, got: usize },
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// The code region length is not a multiple of the instruction width.
-<a href=#201 id=201 data-nosnippet>201</a>    </span>UnalignedCode { len: usize },
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// A word held an opcode/payload vihaco could not decode, or the container
-<a href=#203 id=203 data-nosnippet>203</a>    /// was otherwise malformed.
-<a href=#204 id=204 data-nosnippet>204</a>    </span>Decode { pc: usize, message: String },
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="doccomment">/// The program could not be *written*: it uses something the container has
-<a href=#206 id=206 data-nosnippet>206</a>    /// no encoding for (see [`super::container::to_binary`]'s refusals).
-<a href=#207 id=207 data-nosnippet>207</a>    ///
-<a href=#208 id=208 data-nosnippet>208</a>    /// Distinct from [`BinaryError::Decode`] because nothing was being decoded
-<a href=#209 id=209 data-nosnippet>209</a>    /// and there is no instruction to blame — reporting these as a decode
-<a href=#210 id=210 data-nosnippet>210</a>    /// failure at `pc 0` named a program counter that had nothing to do with
-<a href=#211 id=211 data-nosnippet>211</a>    /// the problem.
-<a href=#212 id=212 data-nosnippet>212</a>    </span>Encode { message: String },
-<a href=#213 id=213 data-nosnippet>213</a>}
-<a href=#214 id=214 data-nosnippet>214</a>
-<a href=#215 id=215 data-nosnippet>215</a><span class="kw">impl </span>std::fmt::Display <span class="kw">for </span>BinaryError {
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#218 id=218 data-nosnippet>218</a>            BinaryError::BadMagic =&gt; <span class="macro">write!</span>(f, <span class="string">"bad magic bytes (expected VHBC)"</span>),
-<a href=#219 id=219 data-nosnippet>219</a>            BinaryError::Truncated { expected, got } =&gt; {
-<a href=#220 id=220 data-nosnippet>220</a>                <span class="macro">write!</span>(f, <span class="string">"truncated: expected {expected} bytes, got {got}"</span>)
-<a href=#221 id=221 data-nosnippet>221</a>            }
-<a href=#222 id=222 data-nosnippet>222</a>            BinaryError::UnalignedCode { len } =&gt; <span class="macro">write!</span>(
-<a href=#223 id=223 data-nosnippet>223</a>                f,
-<a href=#224 id=224 data-nosnippet>224</a>                <span class="string">"code length {len} is not a multiple of {}"</span>,
-<a href=#225 id=225 data-nosnippet>225</a>                bytecode::instruction_width()
-<a href=#226 id=226 data-nosnippet>226</a>            ),
-<a href=#227 id=227 data-nosnippet>227</a>            BinaryError::Decode { pc, message } =&gt; {
-<a href=#228 id=228 data-nosnippet>228</a>                <span class="macro">write!</span>(f, <span class="string">"decode error at instruction {pc}: {message}"</span>)
-<a href=#229 id=229 data-nosnippet>229</a>            }
-<a href=#230 id=230 data-nosnippet>230</a>            BinaryError::Encode { message } =&gt; <span class="macro">write!</span>(f, <span class="string">"cannot encode program: {message}"</span>),
-<a href=#231 id=231 data-nosnippet>231</a>        }
-<a href=#232 id=232 data-nosnippet>232</a>    }
-<a href=#233 id=233 data-nosnippet>233</a>}
-<a href=#234 id=234 data-nosnippet>234</a>
-<a href=#235 id=235 data-nosnippet>235</a><span class="kw">impl </span>std::error::Error <span class="kw">for </span>BinaryError {}
-<a href=#236 id=236 data-nosnippet>236</a>
-<a href=#237 id=237 data-nosnippet>237</a><span class="doccomment">/// Length of vihaco's fixed file header, taken from the writer's own layout so
-<a href=#238 id=238 data-nosnippet>238</a>/// the reader's truncation guard cannot drift away from what is emitted.
-<a href=#239 id=239 data-nosnippet>239</a></span><span class="kw">use </span><span class="kw">super</span>::container::len::FILE_HEADER <span class="kw">as </span>FILE_HEADER_LEN;
-<a href=#240 id=240 data-nosnippet>240</a>
-<a href=#241 id=241 data-nosnippet>241</a><span class="doccomment">/// Sort a vihaco container/decode error into a [`BinaryError`].
-<a href=#242 id=242 data-nosnippet>242</a>///
-<a href=#243 id=243 data-nosnippet>243</a>/// vihaco reports these as free-form `eyre` messages, so this matches on their
-<a href=#244 id=244 data-nosnippet>244</a>/// text. A message we do not recognise still surfaces in full via
-<a href=#245 id=245 data-nosnippet>245</a>/// [`BinaryError::Decode`] — the classification only decides which Python
-<a href=#246 id=246 data-nosnippet>246</a>/// exception class is raised, never whether the error is reported.
-<a href=#247 id=247 data-nosnippet>247</a></span><span class="kw">fn </span>classify(err: <span class="kw-2">&amp;</span>eyre::Report) -&gt; BinaryError {
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>msg = err.to_string();
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">if </span>msg.contains(<span class="string">"invalid bytecode magic"</span>) {
-<a href=#250 id=250 data-nosnippet>250</a>        BinaryError::BadMagic
-<a href=#251 id=251 data-nosnippet>251</a>    } <span class="kw">else if let </span><span class="prelude-val">Some</span>(len) = unaligned_len(<span class="kw-2">&amp;</span>msg) {
-<a href=#252 id=252 data-nosnippet>252</a>        BinaryError::UnalignedCode { len }
-<a href=#253 id=253 data-nosnippet>253</a>    } <span class="kw">else </span>{
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="comment">// vihaco's structural complaints (section extends past end, header out
-<a href=#255 id=255 data-nosnippet>255</a>        // of bounds, length mismatch, …) carry no byte counts we could put in
-<a href=#256 id=256 data-nosnippet>256</a>        // `Truncated`, so they surface with their message intact rather than
-<a href=#257 id=257 data-nosnippet>257</a>        // with two invented zeroes. `Truncated` is reserved for the one case we
-<a href=#258 id=258 data-nosnippet>258</a>        // measure ourselves: a buffer too short to hold the file header.
-<a href=#259 id=259 data-nosnippet>259</a>        </span>BinaryError::Decode {
-<a href=#260 id=260 data-nosnippet>260</a>            pc: <span class="number">0</span>,
-<a href=#261 id=261 data-nosnippet>261</a>            message: msg,
-<a href=#262 id=262 data-nosnippet>262</a>        }
-<a href=#263 id=263 data-nosnippet>263</a>    }
-<a href=#264 id=264 data-nosnippet>264</a>}
-<a href=#265 id=265 data-nosnippet>265</a>
-<a href=#266 id=266 data-nosnippet>266</a><span class="doccomment">/// Recover the offending length from vihaco's
-<a href=#267 id=267 data-nosnippet>267</a>/// "bytecode length {len} is not a multiple of instruction width {w}" message.
-<a href=#268 id=268 data-nosnippet>268</a></span><span class="kw">fn </span>unaligned_len(msg: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">let </span>rest = msg.strip_prefix(<span class="string">"bytecode length "</span>)<span class="question-mark">?</span>;
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">if </span>!rest.contains(<span class="string">"is not a multiple of instruction width"</span>) {
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#272 id=272 data-nosnippet>272</a>    }
-<a href=#273 id=273 data-nosnippet>273</a>    rest.split_whitespace().next()<span class="question-mark">?</span>.parse().ok()
-<a href=#274 id=274 data-nosnippet>274</a>}
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a><span class="doccomment">/// Serialize into vihaco's `VHBC` container (see [`super::container`]).
-<a href=#277 id=277 data-nosnippet>277</a>///
-<a href=#278 id=278 data-nosnippet>278</a>/// Fails only if an instruction has no encodable form — today just a runtime
-<a href=#279 id=279 data-nosnippet>279</a>/// label, whose identifier is meaningless outside its parse.
-<a href=#280 id=280 data-nosnippet>280</a></span><span class="kw">pub fn </span>to_binary(program: <span class="kw-2">&amp;</span>Program) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, BinaryError&gt; {
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">super</span>::container::to_binary(program).map_err(|e| BinaryError::Encode {
-<a href=#282 id=282 data-nosnippet>282</a>        message: e.to_string(),
-<a href=#283 id=283 data-nosnippet>283</a>    })
-<a href=#284 id=284 data-nosnippet>284</a>}
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a><span class="doccomment">/// Deserialize from vihaco's `VHBC` container.
-<a href=#287 id=287 data-nosnippet>287</a></span><span class="kw">pub fn </span>from_binary(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Program, BinaryError&gt; {
-<a href=#288 id=288 data-nosnippet>288</a>    <span class="comment">// Check the magic up front: vihaco needs a full file header before it can
-<a href=#289 id=289 data-nosnippet>289</a>    // report anything, so a short-but-wrong-magic buffer would otherwise come
-<a href=#290 id=290 data-nosnippet>290</a>    // back as a truncation rather than the more useful `BadMagic`.
-<a href=#291 id=291 data-nosnippet>291</a>    </span><span class="kw">if </span>bytes.len() &gt;= vihaco::MAGIC.len() &amp;&amp; <span class="kw-2">&amp;</span>bytes[..vihaco::MAGIC.len()] != vihaco::MAGIC {
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::BadMagic);
-<a href=#293 id=293 data-nosnippet>293</a>    }
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">if </span>bytes.len() &lt; FILE_HEADER_LEN {
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::Truncated {
-<a href=#296 id=296 data-nosnippet>296</a>            expected: FILE_HEADER_LEN,
-<a href=#297 id=297 data-nosnippet>297</a>            got: bytes.len(),
-<a href=#298 id=298 data-nosnippet>298</a>        });
-<a href=#299 id=299 data-nosnippet>299</a>    }
-<a href=#300 id=300 data-nosnippet>300</a>
-<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>file =
-<a href=#302 id=302 data-nosnippet>302</a>        BytecodeFile::&lt;LanesContext&gt;::from_bytes(bytes.to_vec()).map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?</span>;
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span>root = file.root();
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">let </span>info: LanesInfo = root.decode_header().map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?</span>;
-<a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">let </span>code = root
-<a href=#306 id=306 data-nosnippet>306</a>        .decode_instructions::&lt;BytecodeInstruction&gt;()
-<a href=#307 id=307 data-nosnippet>307</a>        .map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?
-<a href=#308 id=308 data-nosnippet>308</a>        </span>.into_iter()
-<a href=#309 id=309 data-nosnippet>309</a>        .map(bytecode::decode)
-<a href=#310 id=310 data-nosnippet>310</a>        .collect();
-<a href=#311 id=311 data-nosnippet>311</a>
-<a href=#312 id=312 data-nosnippet>312</a>    <span class="comment">// Built directly rather than through `from_code`, which wraps its input
-<a href=#313 id=313 data-nosnippet>313</a>    // in the function markers — the decoded stream already carries them.
-<a href=#314 id=314 data-nosnippet>314</a>    // `reconcile_function_spans` then derives the table from those markers.
-<a href=#315 id=315 data-nosnippet>315</a>    // `LocalModule` is a foreign type, so it is built field by field.
-<a href=#316 id=316 data-nosnippet>316</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>program = Program {
-<a href=#317 id=317 data-nosnippet>317</a>        code,
-<a href=#318 id=318 data-nosnippet>318</a>        extra: LanesInfo {
-<a href=#319 id=319 data-nosnippet>319</a>            version: info.version,
-<a href=#320 id=320 data-nosnippet>320</a>        },
-<a href=#321 id=321 data-nosnippet>321</a>        ..Default::default()
-<a href=#322 id=322 data-nosnippet>322</a>    };
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">super</span>::container::read_tables(<span class="kw-2">&amp;</span>root, <span class="kw-2">&amp;mut </span>program).map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?</span>;
-<a href=#324 id=324 data-nosnippet>324</a>    reconcile_function_spans(<span class="kw-2">&amp;mut </span>program);
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">if </span>program.functions.is_empty() {
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::Decode {
-<a href=#327 id=327 data-nosnippet>327</a>            pc: <span class="number">0</span>,
-<a href=#328 id=328 data-nosnippet>328</a>            message: <span class="string">"no func_start/func_end markers: this container predates the \
-<a href=#329 id=329 data-nosnippet>329</a>                      function layout and cannot be loaded. Re-assemble it from source."
-<a href=#330 id=330 data-nosnippet>330</a>                </span>.to_owned(),
-<a href=#331 id=331 data-nosnippet>331</a>        });
-<a href=#332 id=332 data-nosnippet>332</a>    }
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="comment">// Refused on the way in for the same reason `to_binary` refuses it on the
-<a href=#334 id=334 data-nosnippet>334</a>    // way out: vihaco's grammar spells a return type as `-&gt; Ty`, so a
-<a href=#335 id=335 data-nosnippet>335</a>    // signature with more has no text form, and rendering one would drop all
-<a href=#336 id=336 data-nosnippet>336</a>    // but the first without saying so. Rejecting keeps every loadable program
-<a href=#337 id=337 data-nosnippet>337</a>    // renderable.
-<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(f) = program.functions.iter().find(|f| f.signature.ret.len() &gt; <span class="number">1</span>) {
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::Decode {
-<a href=#340 id=340 data-nosnippet>340</a>            pc: <span class="number">0</span>,
-<a href=#341 id=341 data-nosnippet>341</a>            message: <span class="macro">format!</span>(
-<a href=#342 id=342 data-nosnippet>342</a>                <span class="string">"function signature declares {} return values; the text form \
-<a href=#343 id=343 data-nosnippet>343</a>                 has syntax for at most one"</span>,
-<a href=#344 id=344 data-nosnippet>344</a>                f.signature.ret.len()
-<a href=#345 id=345 data-nosnippet>345</a>            ),
-<a href=#346 id=346 data-nosnippet>346</a>        });
-<a href=#347 id=347 data-nosnippet>347</a>    }
-<a href=#348 id=348 data-nosnippet>348</a>    resolve_entry_point(<span class="kw-2">&amp;mut </span>program)<span class="question-mark">?</span>;
-<a href=#349 id=349 data-nosnippet>349</a>    <span class="prelude-val">Ok</span>(program)
-<a href=#350 id=350 data-nosnippet>350</a>}
-<a href=#351 id=351 data-nosnippet>351</a>
-<a href=#352 id=352 data-nosnippet>352</a><span class="doccomment">/// Re-derive every function's span from the `func_start`/`func_end` markers in
-<a href=#353 id=353 data-nosnippet>353</a>/// the code, keeping only the names the table supplied.
-<a href=#354 id=354 data-nosnippet>354</a>///
-<a href=#355 id=355 data-nosnippet>355</a>/// The code stream is the authority on where a function begins and ends; the
-<a href=#356 id=356 data-nosnippet>356</a>/// table is an index over it. Trusting the decoded spans instead let a
-<a href=#357 id=357 data-nosnippet>357</a>/// well-formed container carry a table that disagreed with its own code — an
-<a href=#358 id=358 data-nosnippet>358</a>/// `end_address` past the end of `code` panicked the disassembler, and a span
-<a href=#359 id=359 data-nosnippet>359</a>/// that under-covered the code made instructions disappear from the rendered
-<a href=#360 id=360 data-nosnippet>360</a>/// text with no error. Re-deriving makes both unrepresentable.
-<a href=#361 id=361 data-nosnippet>361</a>///
-<a href=#362 id=362 data-nosnippet>362</a>/// A stream with no markers is left alone: that is the flat single-`@main`
-<a href=#363 id=363 data-nosnippet>363</a>/// shape [`from_code`] builds, and its span is derived from the code already.
-<a href=#364 id=364 data-nosnippet>364</a></span><span class="kw">fn </span>reconcile_function_spans(program: <span class="kw-2">&amp;mut </span>Program) {
-<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">use </span><span class="kw">super</span>::machine::MachineInstruction <span class="kw">as </span>M;
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">use </span>vihaco_cpu::RuntimeInstruction <span class="kw">as </span>C;
-<a href=#367 id=367 data-nosnippet>367</a>
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">let </span><span class="kw-2">mut </span>spans: Vec&lt;(u32, u32)&gt; = Vec::new();
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">let </span><span class="kw-2">mut </span>open: <span class="prelude-ty">Option</span>&lt;u32&gt; = <span class="prelude-val">None</span>;
-<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">for </span>(address, inst) <span class="kw">in </span>program.code.iter().enumerate() {
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="kw">match </span>inst {
-<a href=#372 id=372 data-nosnippet>372</a>            M::Cpu(C::FunctionStart) =&gt; open = <span class="prelude-val">Some</span>(address <span class="kw">as </span>u32),
-<a href=#373 id=373 data-nosnippet>373</a>            M::Cpu(C::FunctionEnd) =&gt; {
-<a href=#374 id=374 data-nosnippet>374</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(start) = open.take() {
-<a href=#375 id=375 data-nosnippet>375</a>                    spans.push((start, address <span class="kw">as </span>u32 + <span class="number">1</span>));
-<a href=#376 id=376 data-nosnippet>376</a>                }
-<a href=#377 id=377 data-nosnippet>377</a>            }
-<a href=#378 id=378 data-nosnippet>378</a>            <span class="kw">_ </span>=&gt; {}
-<a href=#379 id=379 data-nosnippet>379</a>        }
-<a href=#380 id=380 data-nosnippet>380</a>    }
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="comment">// An unterminated final function still owns the rest of the code.
-<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(start) = open {
-<a href=#383 id=383 data-nosnippet>383</a>        spans.push((start, program.code.len() <span class="kw">as </span>u32));
-<a href=#384 id=384 data-nosnippet>384</a>    }
-<a href=#385 id=385 data-nosnippet>385</a>
-<a href=#386 id=386 data-nosnippet>386</a>    <span class="comment">// Names come from the table, matched on `start_address` — the field the
-<a href=#387 id=387 data-nosnippet>387</a>    // emitter already writes and the one thing the table and the code agree
-<a href=#388 id=388 data-nosnippet>388</a>    // about. Matching positionally assumed the table was in layout order:
-<a href=#389 id=389 data-nosnippet>389</a>    // a well-formed table listing `[helper@3, main@0]` silently renamed both,
-<a href=#390 id=390 data-nosnippet>390</a>    // and `LanesMachine::run` then entered the wrong function reporting
-<a href=#391 id=391 data-nosnippet>391</a>    // success. A short table left `name: u32::MAX`, which renders as `fn @?()`
-<a href=#392 id=392 data-nosnippet>392</a>    // and re-parses as a duplicate once two functions have it.
-<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">let </span>named = std::mem::take(<span class="kw-2">&amp;mut </span>program.functions);
-<a href=#394 id=394 data-nosnippet>394</a>    program.functions = spans
-<a href=#395 id=395 data-nosnippet>395</a>        .into_iter()
-<a href=#396 id=396 data-nosnippet>396</a>        .map(|(start_address, end_address)| {
-<a href=#397 id=397 data-nosnippet>397</a>            <span class="kw">let </span>source = named.iter().find(|f| f.start_address == start_address);
-<a href=#398 id=398 data-nosnippet>398</a>            FunctionInfo {
-<a href=#399 id=399 data-nosnippet>399</a>                name: source.map_or(u32::MAX, |f| f.name),
-<a href=#400 id=400 data-nosnippet>400</a>                <span class="comment">// Carried over, not rebuilt. The *spans* come from the code
-<a href=#401 id=401 data-nosnippet>401</a>                // because the markers are authoritative about extent; a
-<a href=#402 id=402 data-nosnippet>402</a>                // signature has no representation in the code stream at all,
-<a href=#403 id=403 data-nosnippet>403</a>                // so the table is its only source. Hardcoding it empty here
-<a href=#404 id=404 data-nosnippet>404</a>                // was invisible while nothing populated it, and became a
-<a href=#405 id=405 data-nosnippet>405</a>                // silent drop the moment functions could declare parameters.
-<a href=#406 id=406 data-nosnippet>406</a>                </span>signature: source.map_or_else(
-<a href=#407 id=407 data-nosnippet>407</a>                    || Signature {
-<a href=#408 id=408 data-nosnippet>408</a>                        params: Vec::new(),
-<a href=#409 id=409 data-nosnippet>409</a>                        ret: Vec::new(),
-<a href=#410 id=410 data-nosnippet>410</a>                    },
-<a href=#411 id=411 data-nosnippet>411</a>                    |f| f.signature.clone(),
-<a href=#412 id=412 data-nosnippet>412</a>                ),
-<a href=#413 id=413 data-nosnippet>413</a>                local_count: source.map_or(<span class="number">0</span>, |f| f.local_count),
-<a href=#414 id=414 data-nosnippet>414</a>                start_address,
-<a href=#415 id=415 data-nosnippet>415</a>                end_address,
-<a href=#416 id=416 data-nosnippet>416</a>                file: source.map_or(<span class="number">0</span>, |f| f.file),
-<a href=#417 id=417 data-nosnippet>417</a>            }
-<a href=#418 id=418 data-nosnippet>418</a>        })
-<a href=#419 id=419 data-nosnippet>419</a>        .collect();
-<a href=#420 id=420 data-nosnippet>420</a>}
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a><span class="doccomment">/// Point `main_function` at the function actually named `main`.
-<a href=#423 id=423 data-nosnippet>423</a>///
-<a href=#424 id=424 data-nosnippet>424</a>/// The container records the function table but not which entry is the entry
-<a href=#425 id=425 data-nosnippet>425</a>/// point, so `from_code`'s default of `Some(0)` survived `read_tables` and was
-<a href=#426 id=426 data-nosnippet>426</a>/// right only when `@main` happened to be laid out first. A program whose text
-<a href=#427 id=427 data-nosnippet>427</a>/// declared `@helper` before `@main` came back reporting function 0 as the
-<a href=#428 id=428 data-nosnippet>428</a>/// entry — the same program, unequal across a round-trip.
-<a href=#429 id=429 data-nosnippet>429</a>///
-<a href=#430 id=430 data-nosnippet>430</a>/// Recovered by name rather than recorded as a new field: the name is already
-<a href=#431 id=431 data-nosnippet>431</a>/// in the string table, `super::resolve` derives it the same way from text,
-<a href=#432 id=432 data-nosnippet>432</a>/// and deriving it in both places is what makes the two agree. (PPVM does
-<a href=#433 id=433 data-nosnippet>433</a>/// serialize the index, because a PPVM module may legitimately have no `main`;
-<a href=#434 id=434 data-nosnippet>434</a>/// `resolve` makes ours mandatory, so there is no absent case to encode.)
-<a href=#435 id=435 data-nosnippet>435</a></span><span class="kw">fn </span>resolve_entry_point(program: <span class="kw-2">&amp;mut </span>Program) -&gt; <span class="prelude-ty">Result</span>&lt;(), BinaryError&gt; {
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="kw">let </span>main = program.functions.iter().position(|f| {
-<a href=#437 id=437 data-nosnippet>437</a>        program
-<a href=#438 id=438 data-nosnippet>438</a>            .strings
-<a href=#439 id=439 data-nosnippet>439</a>            .get(f.name <span class="kw">as </span>usize)
-<a href=#440 id=440 data-nosnippet>440</a>            .is_some_and(|name| name == <span class="string">"main"</span>)
-<a href=#441 id=441 data-nosnippet>441</a>    });
-<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">match </span>main {
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="prelude-val">Some</span>(index) =&gt; {
-<a href=#444 id=444 data-nosnippet>444</a>            program.main_function = <span class="prelude-val">Some</span>(index <span class="kw">as </span>u32);
-<a href=#445 id=445 data-nosnippet>445</a>            <span class="prelude-val">Ok</span>(())
-<a href=#446 id=446 data-nosnippet>446</a>        }
-<a href=#447 id=447 data-nosnippet>447</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(BinaryError::Decode {
-<a href=#448 id=448 data-nosnippet>448</a>            pc: <span class="number">0</span>,
-<a href=#449 id=449 data-nosnippet>449</a>            message: <span class="string">"function table declares no @main"</span>.to_owned(),
-<a href=#450 id=450 data-nosnippet>450</a>        }),
-<a href=#451 id=451 data-nosnippet>451</a>    }
-<a href=#452 id=452 data-nosnippet>452</a>}
-<a href=#453 id=453 data-nosnippet>453</a>
-<a href=#454 id=454 data-nosnippet>454</a><span class="attr">#[cfg(test)]
-<a href=#455 id=455 data-nosnippet>455</a>#[allow(clippy::approx_constant)] </span><span class="comment">// illustrative sample floats, not math constants
-<a href=#456 id=456 data-nosnippet>456</a></span><span class="kw">mod </span>tests {
-<a href=#457 id=457 data-nosnippet>457</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#458 id=458 data-nosnippet>458</a>    <span class="kw">use </span><span class="kw">crate</span>::isa::device::LanesInstruction <span class="kw">as </span>L;
-<a href=#459 id=459 data-nosnippet>459</a>    <span class="kw">use </span><span class="kw">crate</span>::isa::machine::MachineInstruction <span class="kw">as </span>M;
-<a href=#460 id=460 data-nosnippet>460</a>    <span class="kw">use </span>vihaco_cpu::RuntimeInstruction <span class="kw">as </span>C;
-<a href=#461 id=461 data-nosnippet>461</a>
-<a href=#462 id=462 data-nosnippet>462</a>    <span class="kw">fn </span>sample() -&gt; Program {
-<a href=#463 id=463 data-nosnippet>463</a>        from_code(
-<a href=#464 id=464 data-nosnippet>464</a>            Version::new(<span class="number">1</span>, <span class="number">2</span>),
-<a href=#465 id=465 data-nosnippet>465</a>            <span class="macro">vec!</span>[
-<a href=#466 id=466 data-nosnippet>466</a>                M::Cpu(C::Const(Type::F64, Value::F64(<span class="number">1.5</span>))),
-<a href=#467 id=467 data-nosnippet>467</a>                M::Cpu(C::Const(Type::I64, Value::I64(-<span class="number">42</span>))),
-<a href=#468 id=468 data-nosnippet>468</a>                M::Cpu(C::Dup),
-<a href=#469 id=469 data-nosnippet>469</a>                M::Lanes(L::ConstLoc(<span class="number">0x0000_0000_0100_0000</span>)),
-<a href=#470 id=470 data-nosnippet>470</a>                M::Lanes(L::ConstLane(<span class="number">0x0000_0000_0000_0001</span>)),
-<a href=#471 id=471 data-nosnippet>471</a>                M::Lanes(L::ConstZone(<span class="number">0x0000_0003</span>)),
-<a href=#472 id=472 data-nosnippet>472</a>                M::Lanes(L::InitialFill(<span class="number">2</span>)),
-<a href=#473 id=473 data-nosnippet>473</a>                M::Lanes(L::Move(<span class="number">1</span>)),
-<a href=#474 id=474 data-nosnippet>474</a>                M::Lanes(L::LocalRz(<span class="number">1</span>)),
-<a href=#475 id=475 data-nosnippet>475</a>                M::Lanes(L::LocalR(<span class="number">3</span>)),
-<a href=#476 id=476 data-nosnippet>476</a>                M::Lanes(L::GlobalRz),
-<a href=#477 id=477 data-nosnippet>477</a>                M::Lanes(L::Cz),
-<a href=#478 id=478 data-nosnippet>478</a>                M::Lanes(L::Measure(<span class="number">1</span>)),
-<a href=#479 id=479 data-nosnippet>479</a>                M::Lanes(L::AwaitMeasure),
-<a href=#480 id=480 data-nosnippet>480</a>                M::Lanes(L::NewArray(<span class="number">2</span>, <span class="number">10</span>, <span class="number">20</span>)),
-<a href=#481 id=481 data-nosnippet>481</a>                M::Lanes(L::GetItem(<span class="number">2</span>)),
-<a href=#482 id=482 data-nosnippet>482</a>                M::Lanes(L::SetDetector),
-<a href=#483 id=483 data-nosnippet>483</a>                M::Cpu(C::Halt),
-<a href=#484 id=484 data-nosnippet>484</a>                M::Cpu(C::Return(<span class="number">0</span>)),
-<a href=#485 id=485 data-nosnippet>485</a>            ],
-<a href=#486 id=486 data-nosnippet>486</a>        )
-<a href=#487 id=487 data-nosnippet>487</a>        .unwrap()
-<a href=#488 id=488 data-nosnippet>488</a>    }
-<a href=#489 id=489 data-nosnippet>489</a>
-<a href=#490 id=490 data-nosnippet>490</a>    <span class="attr">#[test]
-<a href=#491 id=491 data-nosnippet>491</a>    </span><span class="kw">fn </span>binary_round_trips() {
-<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>program = sample();
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>program).unwrap();
-<a href=#494 id=494 data-nosnippet>494</a>        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>bytes[<span class="number">0</span>..vihaco::MAGIC.len()], vihaco::MAGIC);
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="macro">assert_eq!</span>(from_binary(<span class="kw-2">&amp;</span>bytes).unwrap(), program);
-<a href=#496 id=496 data-nosnippet>496</a>    }
-<a href=#497 id=497 data-nosnippet>497</a>
-<a href=#498 id=498 data-nosnippet>498</a>    <span class="attr">#[test]
-<a href=#499 id=499 data-nosnippet>499</a>    </span><span class="kw">fn </span>binary_is_readable_by_vihacos_own_parser() {
-<a href=#500 id=500 data-nosnippet>500</a>        <span class="comment">// We emit the container by hand (vihaco ships no writer), so the thing
-<a href=#501 id=501 data-nosnippet>501</a>        // worth pinning is that vihaco can read back what we wrote — not that
-<a href=#502 id=502 data-nosnippet>502</a>        // our writer agrees with our reader.
-<a href=#503 id=503 data-nosnippet>503</a>        </span><span class="kw">let </span>program = sample();
-<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span>file =
-<a href=#505 id=505 data-nosnippet>505</a>            vihaco::BytecodeFile::&lt;LanesContext&gt;::from_bytes(to_binary(<span class="kw-2">&amp;</span>program).unwrap()).unwrap();
-<a href=#506 id=506 data-nosnippet>506</a>        <span class="kw">let </span>root = file.root();
-<a href=#507 id=507 data-nosnippet>507</a>        <span class="macro">assert!</span>(root.path().is_root());
-<a href=#508 id=508 data-nosnippet>508</a>        <span class="comment">// The symbol tables ride along as named child sections — exactly the
-<a href=#509 id=509 data-nosnippet>509</a>        // ones declared, checked against the constant rather than a fourth
-<a href=#510 id=510 data-nosnippet>510</a>        // spelling of the same three strings. A table added to the writer but
-<a href=#511 id=511 data-nosnippet>511</a>        // not to `TABLE_SECTIONS` (so absent from the context name table, and
-<a href=#512 id=512 data-nosnippet>512</a>        // unknown to `read_tables`) fails here.
-<a href=#513 id=513 data-nosnippet>513</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>names: Vec&lt;String&gt; = root
-<a href=#514 id=514 data-nosnippet>514</a>            .children()
-<a href=#515 id=515 data-nosnippet>515</a>            .filter_map(|c| c.local_name().map(str::to_owned))
-<a href=#516 id=516 data-nosnippet>516</a>            .collect();
-<a href=#517 id=517 data-nosnippet>517</a>        names.sort_unstable();
-<a href=#518 id=518 data-nosnippet>518</a>        <span class="kw">let </span><span class="kw-2">mut </span>declared: Vec&lt;String&gt; = <span class="kw">super</span>::<span class="kw">super</span>::container::TABLE_SECTIONS
-<a href=#519 id=519 data-nosnippet>519</a>            .iter()
-<a href=#520 id=520 data-nosnippet>520</a>            .map(|s| (<span class="kw-2">*</span>s).to_owned())
-<a href=#521 id=521 data-nosnippet>521</a>            .collect();
-<a href=#522 id=522 data-nosnippet>522</a>        declared.sort_unstable();
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="macro">assert_eq!</span>(names, declared);
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="macro">assert_eq!</span>(
-<a href=#525 id=525 data-nosnippet>525</a>            root.decode_instructions::&lt;BytecodeInstruction&gt;()
-<a href=#526 id=526 data-nosnippet>526</a>                .unwrap()
-<a href=#527 id=527 data-nosnippet>527</a>                .into_iter()
-<a href=#528 id=528 data-nosnippet>528</a>                .map(bytecode::decode)
-<a href=#529 id=529 data-nosnippet>529</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#530 id=530 data-nosnippet>530</a>            program.code
-<a href=#531 id=531 data-nosnippet>531</a>        );
-<a href=#532 id=532 data-nosnippet>532</a>        <span class="macro">assert_eq!</span>(
-<a href=#533 id=533 data-nosnippet>533</a>            root.decode_header::&lt;LanesInfo&gt;().unwrap().version,
-<a href=#534 id=534 data-nosnippet>534</a>            program.extra.version
-<a href=#535 id=535 data-nosnippet>535</a>        );
-<a href=#536 id=536 data-nosnippet>536</a>    }
-<a href=#537 id=537 data-nosnippet>537</a>
-<a href=#538 id=538 data-nosnippet>538</a>    <span class="attr">#[test]
-<a href=#539 id=539 data-nosnippet>539</a>    </span><span class="kw">fn </span>binary_preserves_functions_labels_and_names() {
-<a href=#540 id=540 data-nosnippet>540</a>        <span class="comment">// The point of the child sections: a program's symbol tables have to
-<a href=#541 id=541 data-nosnippet>541</a>        // survive a binary round-trip, or function and label names are lost and
-<a href=#542 id=542 data-nosnippet>542</a>        // the disassembly is unreadable.
-<a href=#543 id=543 data-nosnippet>543</a>        </span><span class="kw">let </span>src = <span class="string">"sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
-<a href=#544 id=544 data-nosnippet>544</a>                   .text(root):\n\
-<a href=#545 id=545 data-nosnippet>545</a>                   fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.br @done\n  \
-<a href=#546 id=546 data-nosnippet>546</a>                   lanes::lanes.cz\n  cpu::cpu.label @done\n  cpu::cpu.halt\n}\n\
-<a href=#547 id=547 data-nosnippet>547</a>                   fn @helper() {\n  cpu::cpu.ret 0\n}\n\
-<a href=#548 id=548 data-nosnippet>548</a>                   .text(root).\n.section(root).\n"</span>;
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">let </span>original = <span class="kw">crate</span>::isa::text::parse_text(src).unwrap();
-<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">let </span>restored = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>original).unwrap()).unwrap();
-<a href=#551 id=551 data-nosnippet>551</a>
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="macro">assert_eq!</span>(restored, original);
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="macro">assert_eq!</span>(restored.functions.len(), <span class="number">2</span>);
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="macro">assert_eq!</span>(restored.labels.len(), <span class="number">1</span>);
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="macro">assert_eq!</span>(restored.strings, original.strings);
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="macro">assert_eq!</span>(restored.main_function, <span class="prelude-val">Some</span>(<span class="number">0</span>));
-<a href=#557 id=557 data-nosnippet>557</a>
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="comment">// And the names come back, so the text form is identical.
-<a href=#559 id=559 data-nosnippet>559</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#560 id=560 data-nosnippet>560</a>            <span class="kw">crate</span>::isa::text::to_text(<span class="kw-2">&amp;</span>restored),
-<a href=#561 id=561 data-nosnippet>561</a>            <span class="kw">crate</span>::isa::text::to_text(<span class="kw-2">&amp;</span>original)
-<a href=#562 id=562 data-nosnippet>562</a>        );
-<a href=#563 id=563 data-nosnippet>563</a>    }
-<a href=#564 id=564 data-nosnippet>564</a>
-<a href=#565 id=565 data-nosnippet>565</a>    <span class="doccomment">/// The entry point survives the binary, which it did not.
-<a href=#566 id=566 data-nosnippet>566</a>    ///
-<a href=#567 id=567 data-nosnippet>567</a>    /// The container records the function table but not which entry is main,
-<a href=#568 id=568 data-nosnippet>568</a>    /// so `from_code`'s `Some(0)` default came back regardless of what the
-<a href=#569 id=569 data-nosnippet>569</a>    /// text declared — making the same program compare unequal across a
-<a href=#570 id=570 data-nosnippet>570</a>    /// round-trip, since `LocalModule`'s `PartialEq` covers the field.
-<a href=#571 id=571 data-nosnippet>571</a>    /// The markers delimit a function; a caller supplies the body.
-<a href=#572 id=572 data-nosnippet>572</a>    ///
-<a href=#573 id=573 data-nosnippet>573</a>    /// The migration guide documents them as visible in
-<a href=#574 id=574 data-nosnippet>574</a>    /// `Program.instructions`, so feeding that list back is the obvious thing
-<a href=#575 id=575 data-nosnippet>575</a>    /// to try — and it used to wrap them twice, producing nested `fn` blocks.
-<a href=#576 id=576 data-nosnippet>576</a>    </span><span class="attr">#[test]
-<a href=#577 id=577 data-nosnippet>577</a>    </span><span class="kw">fn </span>from_code_rejects_a_body_that_already_has_markers() {
-<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">let </span>p = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap();
-<a href=#579 id=579 data-nosnippet>579</a>        <span class="kw">let </span>err = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), p.code.clone())
-<a href=#580 id=580 data-nosnippet>580</a>            .expect_err(<span class="string">"a wrapped body should be refused"</span>)
-<a href=#581 id=581 data-nosnippet>581</a>            .to_string();
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="macro">assert!</span>(err.contains(<span class="string">"already carries"</span>), <span class="string">"got {err}"</span>);
-<a href=#583 id=583 data-nosnippet>583</a>    }
-<a href=#584 id=584 data-nosnippet>584</a>
-<a href=#585 id=585 data-nosnippet>585</a>    <span class="doccomment">/// Names are matched to spans by address, not by position.
-<a href=#586 id=586 data-nosnippet>586</a>    ///
-<a href=#587 id=587 data-nosnippet>587</a>    /// A well-formed table not in layout order used to rename every function,
-<a href=#588 id=588 data-nosnippet>588</a>    /// and `run` then entered the wrong one reporting success.
-<a href=#589 id=589 data-nosnippet>589</a>    </span><span class="attr">#[test]
-<a href=#590 id=590 data-nosnippet>590</a>    </span><span class="kw">fn </span>a_table_out_of_layout_order_still_names_the_right_spans() {
-<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">use </span><span class="kw">crate</span>::isa::text::parse_text;
+<a href=#120 id=120 data-nosnippet>120</a>/// This is vihaco#110's rule, `max(arity, every load/store index + 1)`. Reads,
+<a href=#121 id=121 data-nosnippet>121</a>/// writes and unreachable instructions all count. The count is derived, never
+<a href=#122 id=122 data-nosnippet>122</a>/// declared — there is no locals syntax, so the body is the only statement of
+<a href=#123 id=123 data-nosnippet>123</a>/// what a function needs — and every constructor derives it the same way:
+<a href=#124 id=124 data-nosnippet>124</a>/// [`from_code`], [`super::resolve::resolve`], and [`from_binary`], which
+<a href=#125 id=125 data-nosnippet>125</a>/// recomputes it rather than trusting the table. A function table therefore
+<a href=#126 id=126 data-nosnippet>126</a>/// cannot disagree with its own code.
+<a href=#127 id=127 data-nosnippet>127</a>///
+<a href=#128 id=128 data-nosnippet>128</a>/// Saturating, because an index of `u32::MAX` has no `+ 1`. Nothing that large
+<a href=#129 id=129 data-nosnippet>129</a>/// is ever reserved: [`super::validate::validate_structure`] rejects an index
+<a href=#130 id=130 data-nosnippet>130</a>/// past [`super::validate::MAX_LOCAL_INDEX`], and the machine refuses a frame
+<a href=#131 id=131 data-nosnippet>131</a>/// past [`super::validate::MAX_LOCAL_COUNT`].
+<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">pub fn </span>local_count(arity: usize, body: <span class="kw-2">&amp;</span>[MachineInstruction]) -&gt; u32 {
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">use </span><span class="kw">super</span>::machine::MachineInstruction <span class="kw">as </span>M;
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">use </span>vihaco_cpu::RuntimeInstruction <span class="kw">as </span>C;
+<a href=#135 id=135 data-nosnippet>135</a>
+<a href=#136 id=136 data-nosnippet>136</a>    body.iter()
+<a href=#137 id=137 data-nosnippet>137</a>        .filter_map(|inst| <span class="kw">match </span>inst {
+<a href=#138 id=138 data-nosnippet>138</a>            M::Cpu(C::Load(<span class="kw">_</span>, index) | C::Store(<span class="kw">_</span>, index)) =&gt; <span class="prelude-val">Some</span>(index.saturating_add(<span class="number">1</span>)),
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#140 id=140 data-nosnippet>140</a>        })
+<a href=#141 id=141 data-nosnippet>141</a>        .fold(u32::try_from(arity).unwrap_or(u32::MAX), u32::max)
+<a href=#142 id=142 data-nosnippet>142</a>}
+<a href=#143 id=143 data-nosnippet>143</a>
+<a href=#144 id=144 data-nosnippet>144</a><span class="doccomment">/// Build a `Program` from a version + flat instruction list, wrapped in a
+<a href=#145 id=145 data-nosnippet>145</a>/// single `@main`.
+<a href=#146 id=146 data-nosnippet>146</a>///
+<a href=#147 id=147 data-nosnippet>147</a>/// This is the ONE constructor used by both binary and text loading, so all
+<a href=#148 id=148 data-nosnippet>148</a>/// `Program`s built from the same (version, code) compare equal regardless of
+<a href=#149 id=149 data-nosnippet>149</a>/// source. It declares the `@main` function table entry that rendering and
+<a href=#150 id=150 data-nosnippet>150</a>/// execution both need — a `Program` with code but no functions would emit
+<a href=#151 id=151 data-nosnippet>151</a>/// nothing and have no entry point.
+<a href=#152 id=152 data-nosnippet>152</a>///
+<a href=#153 id=153 data-nosnippet>153</a>/// Programs with several functions or with labels come from
+<a href=#154 id=154 data-nosnippet>154</a>/// [`super::resolve::resolve`] instead; this is the flat case.
+<a href=#155 id=155 data-nosnippet>155</a></span><span class="attr">#[allow(clippy::field_reassign_with_default)] </span><span class="comment">// `LocalModule` is a foreign type; struct-literal init is not possible
+<a href=#156 id=156 data-nosnippet>156</a></span><span class="kw">pub fn </span>from_code(version: Version, code: Vec&lt;MachineInstruction&gt;) -&gt; eyre::Result&lt;Program&gt; {
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="comment">// The caller supplies a function *body*; the markers are this function's
+<a href=#158 id=158 data-nosnippet>158</a>    // job to add. Accepting a list that already has them wrapped it twice —
+<a href=#159 id=159 data-nosnippet>159</a>    // nested `fn` blocks with one closing brace, unparseable text, and a
+<a href=#160 id=160 data-nosnippet>160</a>    // binary that does not compare equal to what produced it. The migration
+<a href=#161 id=161 data-nosnippet>161</a>    // guide documents the markers as visible in `Program.instructions`, so
+<a href=#162 id=162 data-nosnippet>162</a>    // `Program(v, list(p.instructions))` is the obvious thing to try; it now
+<a href=#163 id=163 data-nosnippet>163</a>    // says what to do instead.
+<a href=#164 id=164 data-nosnippet>164</a>    </span><span class="kw">if </span>code.iter().any(|i| {
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">matches!</span>(
+<a href=#166 id=166 data-nosnippet>166</a>            i,
+<a href=#167 id=167 data-nosnippet>167</a>            MachineInstruction::Cpu(
+<a href=#168 id=168 data-nosnippet>168</a>                vihaco_cpu::RuntimeInstruction::FunctionStart
+<a href=#169 id=169 data-nosnippet>169</a>                    | vihaco_cpu::RuntimeInstruction::FunctionEnd
+<a href=#170 id=170 data-nosnippet>170</a>            )
+<a href=#171 id=171 data-nosnippet>171</a>        )
+<a href=#172 id=172 data-nosnippet>172</a>    }) {
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="macro">eyre::bail!</span>(
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="string">"instruction list already carries func_start/func_end; these delimit a \
+<a href=#175 id=175 data-nosnippet>175</a>             function and are added here. To copy a program, use from_binary/to_binary \
+<a href=#176 id=176 data-nosnippet>176</a>             or from_text/to_text."
+<a href=#177 id=177 data-nosnippet>177</a>        </span>);
+<a href=#178 id=178 data-nosnippet>178</a>    }
+<a href=#179 id=179 data-nosnippet>179</a>
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="comment">// Wrap the body in the function markers, so a program built from a bare
+<a href=#181 id=181 data-nosnippet>181</a>    // instruction list is in the same shape as one resolved from text. The
+<a href=#182 id=182 data-nosnippet>182</a>    // format has one layout, not two: a reader can rely on `func_start`
+<a href=#183 id=183 data-nosnippet>183</a>    // delimiting every function because there is no way to build a program
+<a href=#184 id=184 data-nosnippet>184</a>    // without it.
+<a href=#185 id=185 data-nosnippet>185</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>wrapped = Vec::with_capacity(code.len() + <span class="number">2</span>);
+<a href=#186 id=186 data-nosnippet>186</a>    wrapped.push(MachineInstruction::Cpu(
+<a href=#187 id=187 data-nosnippet>187</a>        vihaco_cpu::RuntimeInstruction::FunctionStart,
+<a href=#188 id=188 data-nosnippet>188</a>    ));
+<a href=#189 id=189 data-nosnippet>189</a>    wrapped.extend(code);
+<a href=#190 id=190 data-nosnippet>190</a>    wrapped.push(MachineInstruction::Cpu(
+<a href=#191 id=191 data-nosnippet>191</a>        vihaco_cpu::RuntimeInstruction::FunctionEnd,
+<a href=#192 id=192 data-nosnippet>192</a>    ));
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>code = wrapped;
+<a href=#194 id=194 data-nosnippet>194</a>
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span>end_address = code.len() <span class="kw">as </span>u32;
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">let </span>local_count = local_count(<span class="number">0</span>, <span class="kw-2">&amp;</span>code);
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">let </span><span class="kw-2">mut </span>m = Program::default();
+<a href=#198 id=198 data-nosnippet>198</a>    m.code = code;
+<a href=#199 id=199 data-nosnippet>199</a>    m.strings = <span class="macro">vec!</span>[<span class="string">"main"</span>.to_owned()];
+<a href=#200 id=200 data-nosnippet>200</a>    m.functions = <span class="macro">vec!</span>[FunctionInfo {
+<a href=#201 id=201 data-nosnippet>201</a>        name: <span class="number">0</span>,
+<a href=#202 id=202 data-nosnippet>202</a>        signature: Signature {
+<a href=#203 id=203 data-nosnippet>203</a>            params: Vec::new(),
+<a href=#204 id=204 data-nosnippet>204</a>            ret: Vec::new(),
+<a href=#205 id=205 data-nosnippet>205</a>        },
+<a href=#206 id=206 data-nosnippet>206</a>        local_count,
+<a href=#207 id=207 data-nosnippet>207</a>        start_address: <span class="number">0</span>,
+<a href=#208 id=208 data-nosnippet>208</a>        end_address,
+<a href=#209 id=209 data-nosnippet>209</a>        file: <span class="number">0</span>,
+<a href=#210 id=210 data-nosnippet>210</a>    }];
+<a href=#211 id=211 data-nosnippet>211</a>    m.main_function = <span class="prelude-val">Some</span>(<span class="number">0</span>);
+<a href=#212 id=212 data-nosnippet>212</a>    m.extra = LanesInfo { version };
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="prelude-val">Ok</span>(m)
+<a href=#214 id=214 data-nosnippet>214</a>}
+<a href=#215 id=215 data-nosnippet>215</a>
+<a href=#216 id=216 data-nosnippet>216</a><span class="doccomment">/// Error from binary (de)serialization.
+<a href=#217 id=217 data-nosnippet>217</a>///
+<a href=#218 id=218 data-nosnippet>218</a>/// The variants are unchanged from the pre-container format because each maps to
+<a href=#219 id=219 data-nosnippet>219</a>/// a Python exception class; what changed is where they come from. vihaco's
+<a href=#220 id=220 data-nosnippet>220</a>/// container parser reports failures as `eyre::Report`, so `classify` sorts
+<a href=#221 id=221 data-nosnippet>221</a>/// those messages back into these variants.
+<a href=#222 id=222 data-nosnippet>222</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#223 id=223 data-nosnippet>223</a></span><span class="kw">pub enum </span>BinaryError {
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="doccomment">/// The file did not start with vihaco's `VHBC` magic.
+<a href=#225 id=225 data-nosnippet>225</a>    </span>BadMagic,
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="doccomment">/// Buffer ended before a complete header, section or instruction word.
+<a href=#227 id=227 data-nosnippet>227</a>    </span>Truncated { expected: usize, got: usize },
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="doccomment">/// The code region length is not a multiple of the instruction width.
+<a href=#229 id=229 data-nosnippet>229</a>    </span>UnalignedCode { len: usize },
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// A word held an opcode/payload vihaco could not decode, or the container
+<a href=#231 id=231 data-nosnippet>231</a>    /// was otherwise malformed.
+<a href=#232 id=232 data-nosnippet>232</a>    </span>Decode { pc: usize, message: String },
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="doccomment">/// The program could not be *written*: it uses something the container has
+<a href=#234 id=234 data-nosnippet>234</a>    /// no encoding for (see [`super::container::to_binary`]'s refusals).
+<a href=#235 id=235 data-nosnippet>235</a>    ///
+<a href=#236 id=236 data-nosnippet>236</a>    /// Distinct from [`BinaryError::Decode`] because nothing was being decoded
+<a href=#237 id=237 data-nosnippet>237</a>    /// and there is no instruction to blame — reporting these as a decode
+<a href=#238 id=238 data-nosnippet>238</a>    /// failure at `pc 0` named a program counter that had nothing to do with
+<a href=#239 id=239 data-nosnippet>239</a>    /// the problem.
+<a href=#240 id=240 data-nosnippet>240</a>    </span>Encode { message: String },
+<a href=#241 id=241 data-nosnippet>241</a>}
+<a href=#242 id=242 data-nosnippet>242</a>
+<a href=#243 id=243 data-nosnippet>243</a><span class="kw">impl </span>std::fmt::Display <span class="kw">for </span>BinaryError {
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#246 id=246 data-nosnippet>246</a>            BinaryError::BadMagic =&gt; <span class="macro">write!</span>(f, <span class="string">"bad magic bytes (expected VHBC)"</span>),
+<a href=#247 id=247 data-nosnippet>247</a>            BinaryError::Truncated { expected, got } =&gt; {
+<a href=#248 id=248 data-nosnippet>248</a>                <span class="macro">write!</span>(f, <span class="string">"truncated: expected {expected} bytes, got {got}"</span>)
+<a href=#249 id=249 data-nosnippet>249</a>            }
+<a href=#250 id=250 data-nosnippet>250</a>            BinaryError::UnalignedCode { len } =&gt; <span class="macro">write!</span>(
+<a href=#251 id=251 data-nosnippet>251</a>                f,
+<a href=#252 id=252 data-nosnippet>252</a>                <span class="string">"code length {len} is not a multiple of {}"</span>,
+<a href=#253 id=253 data-nosnippet>253</a>                bytecode::instruction_width()
+<a href=#254 id=254 data-nosnippet>254</a>            ),
+<a href=#255 id=255 data-nosnippet>255</a>            BinaryError::Decode { pc, message } =&gt; {
+<a href=#256 id=256 data-nosnippet>256</a>                <span class="macro">write!</span>(f, <span class="string">"decode error at instruction {pc}: {message}"</span>)
+<a href=#257 id=257 data-nosnippet>257</a>            }
+<a href=#258 id=258 data-nosnippet>258</a>            BinaryError::Encode { message } =&gt; <span class="macro">write!</span>(f, <span class="string">"cannot encode program: {message}"</span>),
+<a href=#259 id=259 data-nosnippet>259</a>        }
+<a href=#260 id=260 data-nosnippet>260</a>    }
+<a href=#261 id=261 data-nosnippet>261</a>}
+<a href=#262 id=262 data-nosnippet>262</a>
+<a href=#263 id=263 data-nosnippet>263</a><span class="kw">impl </span>std::error::Error <span class="kw">for </span>BinaryError {}
+<a href=#264 id=264 data-nosnippet>264</a>
+<a href=#265 id=265 data-nosnippet>265</a><span class="doccomment">/// Length of vihaco's fixed file header, taken from the writer's own layout so
+<a href=#266 id=266 data-nosnippet>266</a>/// the reader's truncation guard cannot drift away from what is emitted.
+<a href=#267 id=267 data-nosnippet>267</a></span><span class="kw">use </span><span class="kw">super</span>::container::len::FILE_HEADER <span class="kw">as </span>FILE_HEADER_LEN;
+<a href=#268 id=268 data-nosnippet>268</a>
+<a href=#269 id=269 data-nosnippet>269</a><span class="doccomment">/// Sort a vihaco container/decode error into a [`BinaryError`].
+<a href=#270 id=270 data-nosnippet>270</a>///
+<a href=#271 id=271 data-nosnippet>271</a>/// vihaco reports these as free-form `eyre` messages, so this matches on their
+<a href=#272 id=272 data-nosnippet>272</a>/// text. A message we do not recognise still surfaces in full via
+<a href=#273 id=273 data-nosnippet>273</a>/// [`BinaryError::Decode`] — the classification only decides which Python
+<a href=#274 id=274 data-nosnippet>274</a>/// exception class is raised, never whether the error is reported.
+<a href=#275 id=275 data-nosnippet>275</a></span><span class="kw">fn </span>classify(err: <span class="kw-2">&amp;</span>eyre::Report) -&gt; BinaryError {
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">let </span>msg = err.to_string();
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">if </span>msg.contains(<span class="string">"invalid bytecode magic"</span>) {
+<a href=#278 id=278 data-nosnippet>278</a>        BinaryError::BadMagic
+<a href=#279 id=279 data-nosnippet>279</a>    } <span class="kw">else if let </span><span class="prelude-val">Some</span>(len) = unaligned_len(<span class="kw-2">&amp;</span>msg) {
+<a href=#280 id=280 data-nosnippet>280</a>        BinaryError::UnalignedCode { len }
+<a href=#281 id=281 data-nosnippet>281</a>    } <span class="kw">else </span>{
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="comment">// vihaco's structural complaints (section extends past end, header out
+<a href=#283 id=283 data-nosnippet>283</a>        // of bounds, length mismatch, …) carry no byte counts we could put in
+<a href=#284 id=284 data-nosnippet>284</a>        // `Truncated`, so they surface with their message intact rather than
+<a href=#285 id=285 data-nosnippet>285</a>        // with two invented zeroes. `Truncated` is reserved for the one case we
+<a href=#286 id=286 data-nosnippet>286</a>        // measure ourselves: a buffer too short to hold the file header.
+<a href=#287 id=287 data-nosnippet>287</a>        </span>BinaryError::Decode {
+<a href=#288 id=288 data-nosnippet>288</a>            pc: <span class="number">0</span>,
+<a href=#289 id=289 data-nosnippet>289</a>            message: msg,
+<a href=#290 id=290 data-nosnippet>290</a>        }
+<a href=#291 id=291 data-nosnippet>291</a>    }
+<a href=#292 id=292 data-nosnippet>292</a>}
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a><span class="doccomment">/// Recover the offending length from vihaco's
+<a href=#295 id=295 data-nosnippet>295</a>/// "bytecode length {len} is not a multiple of instruction width {w}" message.
+<a href=#296 id=296 data-nosnippet>296</a></span><span class="kw">fn </span>unaligned_len(msg: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">let </span>rest = msg.strip_prefix(<span class="string">"bytecode length "</span>)<span class="question-mark">?</span>;
+<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">if </span>!rest.contains(<span class="string">"is not a multiple of instruction width"</span>) {
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#300 id=300 data-nosnippet>300</a>    }
+<a href=#301 id=301 data-nosnippet>301</a>    rest.split_whitespace().next()<span class="question-mark">?</span>.parse().ok()
+<a href=#302 id=302 data-nosnippet>302</a>}
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a><span class="doccomment">/// Serialize into vihaco's `VHBC` container (see [`super::container`]).
+<a href=#305 id=305 data-nosnippet>305</a>///
+<a href=#306 id=306 data-nosnippet>306</a>/// Fails only if an instruction has no encodable form — today just a runtime
+<a href=#307 id=307 data-nosnippet>307</a>/// label, whose identifier is meaningless outside its parse.
+<a href=#308 id=308 data-nosnippet>308</a></span><span class="kw">pub fn </span>to_binary(program: <span class="kw-2">&amp;</span>Program) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, BinaryError&gt; {
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">super</span>::container::to_binary(program).map_err(|e| BinaryError::Encode {
+<a href=#310 id=310 data-nosnippet>310</a>        message: e.to_string(),
+<a href=#311 id=311 data-nosnippet>311</a>    })
+<a href=#312 id=312 data-nosnippet>312</a>}
+<a href=#313 id=313 data-nosnippet>313</a>
+<a href=#314 id=314 data-nosnippet>314</a><span class="doccomment">/// Deserialize from vihaco's `VHBC` container.
+<a href=#315 id=315 data-nosnippet>315</a></span><span class="kw">pub fn </span>from_binary(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Program, BinaryError&gt; {
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="comment">// Check the magic up front: vihaco needs a full file header before it can
+<a href=#317 id=317 data-nosnippet>317</a>    // report anything, so a short-but-wrong-magic buffer would otherwise come
+<a href=#318 id=318 data-nosnippet>318</a>    // back as a truncation rather than the more useful `BadMagic`.
+<a href=#319 id=319 data-nosnippet>319</a>    </span><span class="kw">if </span>bytes.len() &gt;= vihaco::MAGIC.len() &amp;&amp; <span class="kw-2">&amp;</span>bytes[..vihaco::MAGIC.len()] != vihaco::MAGIC {
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::BadMagic);
+<a href=#321 id=321 data-nosnippet>321</a>    }
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">if </span>bytes.len() &lt; FILE_HEADER_LEN {
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::Truncated {
+<a href=#324 id=324 data-nosnippet>324</a>            expected: FILE_HEADER_LEN,
+<a href=#325 id=325 data-nosnippet>325</a>            got: bytes.len(),
+<a href=#326 id=326 data-nosnippet>326</a>        });
+<a href=#327 id=327 data-nosnippet>327</a>    }
+<a href=#328 id=328 data-nosnippet>328</a>
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">let </span>file =
+<a href=#330 id=330 data-nosnippet>330</a>        BytecodeFile::&lt;LanesContext&gt;::from_bytes(bytes.to_vec()).map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?</span>;
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">let </span>root = file.root();
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">let </span>info: LanesInfo = root.decode_header().map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?</span>;
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">let </span>code = root
+<a href=#334 id=334 data-nosnippet>334</a>        .decode_instructions::&lt;BytecodeInstruction&gt;()
+<a href=#335 id=335 data-nosnippet>335</a>        .map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?
+<a href=#336 id=336 data-nosnippet>336</a>        </span>.into_iter()
+<a href=#337 id=337 data-nosnippet>337</a>        .map(bytecode::decode)
+<a href=#338 id=338 data-nosnippet>338</a>        .collect();
+<a href=#339 id=339 data-nosnippet>339</a>
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="comment">// Built directly rather than through `from_code`, which wraps its input
+<a href=#341 id=341 data-nosnippet>341</a>    // in the function markers — the decoded stream already carries them.
+<a href=#342 id=342 data-nosnippet>342</a>    // `reconcile_function_spans` then derives the table from those markers.
+<a href=#343 id=343 data-nosnippet>343</a>    // `LocalModule` is a foreign type, so it is built field by field.
+<a href=#344 id=344 data-nosnippet>344</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>program = Program {
+<a href=#345 id=345 data-nosnippet>345</a>        code,
+<a href=#346 id=346 data-nosnippet>346</a>        extra: LanesInfo {
+<a href=#347 id=347 data-nosnippet>347</a>            version: info.version,
+<a href=#348 id=348 data-nosnippet>348</a>        },
+<a href=#349 id=349 data-nosnippet>349</a>        ..Default::default()
+<a href=#350 id=350 data-nosnippet>350</a>    };
+<a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">super</span>::container::read_tables(<span class="kw-2">&amp;</span>root, <span class="kw-2">&amp;mut </span>program).map_err(|e| classify(<span class="kw-2">&amp;</span>e))<span class="question-mark">?</span>;
+<a href=#352 id=352 data-nosnippet>352</a>    reconcile_function_spans(<span class="kw-2">&amp;mut </span>program);
+<a href=#353 id=353 data-nosnippet>353</a>    <span class="kw">if </span>program.functions.is_empty() {
+<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::Decode {
+<a href=#355 id=355 data-nosnippet>355</a>            pc: <span class="number">0</span>,
+<a href=#356 id=356 data-nosnippet>356</a>            message: <span class="string">"no func_start/func_end markers: this container predates the \
+<a href=#357 id=357 data-nosnippet>357</a>                      function layout and cannot be loaded. Re-assemble it from source."
+<a href=#358 id=358 data-nosnippet>358</a>                </span>.to_owned(),
+<a href=#359 id=359 data-nosnippet>359</a>        });
+<a href=#360 id=360 data-nosnippet>360</a>    }
+<a href=#361 id=361 data-nosnippet>361</a>    <span class="comment">// Refused on the way in for the same reason `to_binary` refuses it on the
+<a href=#362 id=362 data-nosnippet>362</a>    // way out: vihaco's grammar spells a return type as `-&gt; Ty`, so a
+<a href=#363 id=363 data-nosnippet>363</a>    // signature with more has no text form, and rendering one would drop all
+<a href=#364 id=364 data-nosnippet>364</a>    // but the first without saying so. Rejecting keeps every loadable program
+<a href=#365 id=365 data-nosnippet>365</a>    // renderable.
+<a href=#366 id=366 data-nosnippet>366</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(f) = program.functions.iter().find(|f| f.signature.ret.len() &gt; <span class="number">1</span>) {
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(BinaryError::Decode {
+<a href=#368 id=368 data-nosnippet>368</a>            pc: <span class="number">0</span>,
+<a href=#369 id=369 data-nosnippet>369</a>            message: <span class="macro">format!</span>(
+<a href=#370 id=370 data-nosnippet>370</a>                <span class="string">"function signature declares {} return values; the text form \
+<a href=#371 id=371 data-nosnippet>371</a>                 has syntax for at most one"</span>,
+<a href=#372 id=372 data-nosnippet>372</a>                f.signature.ret.len()
+<a href=#373 id=373 data-nosnippet>373</a>            ),
+<a href=#374 id=374 data-nosnippet>374</a>        });
+<a href=#375 id=375 data-nosnippet>375</a>    }
+<a href=#376 id=376 data-nosnippet>376</a>    resolve_entry_point(<span class="kw-2">&amp;mut </span>program)<span class="question-mark">?</span>;
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="prelude-val">Ok</span>(program)
+<a href=#378 id=378 data-nosnippet>378</a>}
+<a href=#379 id=379 data-nosnippet>379</a>
+<a href=#380 id=380 data-nosnippet>380</a><span class="doccomment">/// Re-derive every function's span from the `func_start`/`func_end` markers in
+<a href=#381 id=381 data-nosnippet>381</a>/// the code, keeping only the names the table supplied.
+<a href=#382 id=382 data-nosnippet>382</a>///
+<a href=#383 id=383 data-nosnippet>383</a>/// The code stream is the authority on where a function begins and ends; the
+<a href=#384 id=384 data-nosnippet>384</a>/// table is an index over it. Trusting the decoded spans instead let a
+<a href=#385 id=385 data-nosnippet>385</a>/// well-formed container carry a table that disagreed with its own code — an
+<a href=#386 id=386 data-nosnippet>386</a>/// `end_address` past the end of `code` panicked the disassembler, and a span
+<a href=#387 id=387 data-nosnippet>387</a>/// that under-covered the code made instructions disappear from the rendered
+<a href=#388 id=388 data-nosnippet>388</a>/// text with no error. Re-deriving makes both unrepresentable.
+<a href=#389 id=389 data-nosnippet>389</a>///
+<a href=#390 id=390 data-nosnippet>390</a>/// A stream with no markers is left alone: that is the flat single-`@main`
+<a href=#391 id=391 data-nosnippet>391</a>/// shape [`from_code`] builds, and its span is derived from the code already.
+<a href=#392 id=392 data-nosnippet>392</a></span><span class="kw">fn </span>reconcile_function_spans(program: <span class="kw-2">&amp;mut </span>Program) {
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">use </span><span class="kw">super</span>::machine::MachineInstruction <span class="kw">as </span>M;
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">use </span>vihaco_cpu::RuntimeInstruction <span class="kw">as </span>C;
+<a href=#395 id=395 data-nosnippet>395</a>
+<a href=#396 id=396 data-nosnippet>396</a>    <span class="kw">let </span><span class="kw-2">mut </span>spans: Vec&lt;(u32, u32)&gt; = Vec::new();
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="kw">let </span><span class="kw-2">mut </span>open: <span class="prelude-ty">Option</span>&lt;u32&gt; = <span class="prelude-val">None</span>;
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw">for </span>(address, inst) <span class="kw">in </span>program.code.iter().enumerate() {
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">match </span>inst {
+<a href=#400 id=400 data-nosnippet>400</a>            M::Cpu(C::FunctionStart) =&gt; open = <span class="prelude-val">Some</span>(address <span class="kw">as </span>u32),
+<a href=#401 id=401 data-nosnippet>401</a>            M::Cpu(C::FunctionEnd) =&gt; {
+<a href=#402 id=402 data-nosnippet>402</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(start) = open.take() {
+<a href=#403 id=403 data-nosnippet>403</a>                    spans.push((start, address <span class="kw">as </span>u32 + <span class="number">1</span>));
+<a href=#404 id=404 data-nosnippet>404</a>                }
+<a href=#405 id=405 data-nosnippet>405</a>            }
+<a href=#406 id=406 data-nosnippet>406</a>            <span class="kw">_ </span>=&gt; {}
+<a href=#407 id=407 data-nosnippet>407</a>        }
+<a href=#408 id=408 data-nosnippet>408</a>    }
+<a href=#409 id=409 data-nosnippet>409</a>    <span class="comment">// An unterminated final function still owns the rest of the code.
+<a href=#410 id=410 data-nosnippet>410</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(start) = open {
+<a href=#411 id=411 data-nosnippet>411</a>        spans.push((start, program.code.len() <span class="kw">as </span>u32));
+<a href=#412 id=412 data-nosnippet>412</a>    }
+<a href=#413 id=413 data-nosnippet>413</a>
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="comment">// Names come from the table, matched on `start_address` — the field the
+<a href=#415 id=415 data-nosnippet>415</a>    // emitter already writes and the one thing the table and the code agree
+<a href=#416 id=416 data-nosnippet>416</a>    // about. Matching positionally assumed the table was in layout order:
+<a href=#417 id=417 data-nosnippet>417</a>    // a well-formed table listing `[helper@3, main@0]` silently renamed both,
+<a href=#418 id=418 data-nosnippet>418</a>    // and `LanesMachine::run` then entered the wrong function reporting
+<a href=#419 id=419 data-nosnippet>419</a>    // success. A short table left `name: u32::MAX`, which renders as `fn @?()`
+<a href=#420 id=420 data-nosnippet>420</a>    // and re-parses as a duplicate once two functions have it.
+<a href=#421 id=421 data-nosnippet>421</a>    </span><span class="kw">let </span>named = std::mem::take(<span class="kw-2">&amp;mut </span>program.functions);
+<a href=#422 id=422 data-nosnippet>422</a>    program.functions = spans
+<a href=#423 id=423 data-nosnippet>423</a>        .into_iter()
+<a href=#424 id=424 data-nosnippet>424</a>        .map(|(start_address, end_address)| {
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">let </span>source = named.iter().find(|f| f.start_address == start_address);
+<a href=#426 id=426 data-nosnippet>426</a>            <span class="comment">// Carried over, not rebuilt. The *spans* come from the code
+<a href=#427 id=427 data-nosnippet>427</a>            // because the markers are authoritative about extent; a
+<a href=#428 id=428 data-nosnippet>428</a>            // signature has no representation in the code stream at all,
+<a href=#429 id=429 data-nosnippet>429</a>            // so the table is its only source. Hardcoding it empty here
+<a href=#430 id=430 data-nosnippet>430</a>            // was invisible while nothing populated it, and became a
+<a href=#431 id=431 data-nosnippet>431</a>            // silent drop the moment functions could declare parameters.
+<a href=#432 id=432 data-nosnippet>432</a>            </span><span class="kw">let </span>signature = source.map_or_else(
+<a href=#433 id=433 data-nosnippet>433</a>                || Signature {
+<a href=#434 id=434 data-nosnippet>434</a>                    params: Vec::new(),
+<a href=#435 id=435 data-nosnippet>435</a>                    ret: Vec::new(),
+<a href=#436 id=436 data-nosnippet>436</a>                },
+<a href=#437 id=437 data-nosnippet>437</a>                |f| f.signature.clone(),
+<a href=#438 id=438 data-nosnippet>438</a>            );
+<a href=#439 id=439 data-nosnippet>439</a>            <span class="comment">// Rebuilt, like the span: the body says how many locals it
+<a href=#440 id=440 data-nosnippet>440</a>            // names, so the table's copy is redundant — and trusted, it
+<a href=#441 id=441 data-nosnippet>441</a>            // could reserve fewer slots than the body indexes, or ask every
+<a href=#442 id=442 data-nosnippet>442</a>            // call to reserve four billion.
+<a href=#443 id=443 data-nosnippet>443</a>            </span><span class="kw">let </span>body = <span class="kw-2">&amp;</span>program.code[start_address <span class="kw">as </span>usize..end_address <span class="kw">as </span>usize];
+<a href=#444 id=444 data-nosnippet>444</a>            <span class="kw">let </span>local_count = local_count(signature.params.len(), body);
+<a href=#445 id=445 data-nosnippet>445</a>            FunctionInfo {
+<a href=#446 id=446 data-nosnippet>446</a>                name: source.map_or(u32::MAX, |f| f.name),
+<a href=#447 id=447 data-nosnippet>447</a>                signature,
+<a href=#448 id=448 data-nosnippet>448</a>                local_count,
+<a href=#449 id=449 data-nosnippet>449</a>                start_address,
+<a href=#450 id=450 data-nosnippet>450</a>                end_address,
+<a href=#451 id=451 data-nosnippet>451</a>                file: source.map_or(<span class="number">0</span>, |f| f.file),
+<a href=#452 id=452 data-nosnippet>452</a>            }
+<a href=#453 id=453 data-nosnippet>453</a>        })
+<a href=#454 id=454 data-nosnippet>454</a>        .collect();
+<a href=#455 id=455 data-nosnippet>455</a>}
+<a href=#456 id=456 data-nosnippet>456</a>
+<a href=#457 id=457 data-nosnippet>457</a><span class="doccomment">/// Point `main_function` at the function actually named `main`.
+<a href=#458 id=458 data-nosnippet>458</a>///
+<a href=#459 id=459 data-nosnippet>459</a>/// The container records the function table but not which entry is the entry
+<a href=#460 id=460 data-nosnippet>460</a>/// point, so `from_code`'s default of `Some(0)` survived `read_tables` and was
+<a href=#461 id=461 data-nosnippet>461</a>/// right only when `@main` happened to be laid out first. A program whose text
+<a href=#462 id=462 data-nosnippet>462</a>/// declared `@helper` before `@main` came back reporting function 0 as the
+<a href=#463 id=463 data-nosnippet>463</a>/// entry — the same program, unequal across a round-trip.
+<a href=#464 id=464 data-nosnippet>464</a>///
+<a href=#465 id=465 data-nosnippet>465</a>/// Recovered by name rather than recorded as a new field: the name is already
+<a href=#466 id=466 data-nosnippet>466</a>/// in the string table, `super::resolve` derives it the same way from text,
+<a href=#467 id=467 data-nosnippet>467</a>/// and deriving it in both places is what makes the two agree. (PPVM does
+<a href=#468 id=468 data-nosnippet>468</a>/// serialize the index, because a PPVM module may legitimately have no `main`;
+<a href=#469 id=469 data-nosnippet>469</a>/// `resolve` makes ours mandatory, so there is no absent case to encode.)
+<a href=#470 id=470 data-nosnippet>470</a></span><span class="kw">fn </span>resolve_entry_point(program: <span class="kw-2">&amp;mut </span>Program) -&gt; <span class="prelude-ty">Result</span>&lt;(), BinaryError&gt; {
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">let </span>main = program.functions.iter().position(|f| {
+<a href=#472 id=472 data-nosnippet>472</a>        program
+<a href=#473 id=473 data-nosnippet>473</a>            .strings
+<a href=#474 id=474 data-nosnippet>474</a>            .get(f.name <span class="kw">as </span>usize)
+<a href=#475 id=475 data-nosnippet>475</a>            .is_some_and(|name| name == <span class="string">"main"</span>)
+<a href=#476 id=476 data-nosnippet>476</a>    });
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="kw">match </span>main {
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="prelude-val">Some</span>(index) =&gt; {
+<a href=#479 id=479 data-nosnippet>479</a>            program.main_function = <span class="prelude-val">Some</span>(index <span class="kw">as </span>u32);
+<a href=#480 id=480 data-nosnippet>480</a>            <span class="prelude-val">Ok</span>(())
+<a href=#481 id=481 data-nosnippet>481</a>        }
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(BinaryError::Decode {
+<a href=#483 id=483 data-nosnippet>483</a>            pc: <span class="number">0</span>,
+<a href=#484 id=484 data-nosnippet>484</a>            message: <span class="string">"function table declares no @main"</span>.to_owned(),
+<a href=#485 id=485 data-nosnippet>485</a>        }),
+<a href=#486 id=486 data-nosnippet>486</a>    }
+<a href=#487 id=487 data-nosnippet>487</a>}
+<a href=#488 id=488 data-nosnippet>488</a>
+<a href=#489 id=489 data-nosnippet>489</a><span class="attr">#[cfg(test)]
+<a href=#490 id=490 data-nosnippet>490</a>#[allow(clippy::approx_constant)] </span><span class="comment">// illustrative sample floats, not math constants
+<a href=#491 id=491 data-nosnippet>491</a></span><span class="kw">mod </span>tests {
+<a href=#492 id=492 data-nosnippet>492</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#493 id=493 data-nosnippet>493</a>    <span class="kw">use </span><span class="kw">crate</span>::isa::device::LanesInstruction <span class="kw">as </span>L;
+<a href=#494 id=494 data-nosnippet>494</a>    <span class="kw">use </span><span class="kw">crate</span>::isa::machine::MachineInstruction <span class="kw">as </span>M;
+<a href=#495 id=495 data-nosnippet>495</a>    <span class="kw">use </span>vihaco_cpu::RuntimeInstruction <span class="kw">as </span>C;
+<a href=#496 id=496 data-nosnippet>496</a>
+<a href=#497 id=497 data-nosnippet>497</a>    <span class="kw">fn </span>sample() -&gt; Program {
+<a href=#498 id=498 data-nosnippet>498</a>        from_code(
+<a href=#499 id=499 data-nosnippet>499</a>            Version::new(<span class="number">1</span>, <span class="number">2</span>),
+<a href=#500 id=500 data-nosnippet>500</a>            <span class="macro">vec!</span>[
+<a href=#501 id=501 data-nosnippet>501</a>                M::Cpu(C::Const(Type::F64, Value::F64(<span class="number">1.5</span>))),
+<a href=#502 id=502 data-nosnippet>502</a>                M::Cpu(C::Const(Type::I64, Value::I64(-<span class="number">42</span>))),
+<a href=#503 id=503 data-nosnippet>503</a>                M::Cpu(C::Dup),
+<a href=#504 id=504 data-nosnippet>504</a>                M::Lanes(L::ConstLoc(<span class="number">0x0000_0000_0100_0000</span>)),
+<a href=#505 id=505 data-nosnippet>505</a>                M::Lanes(L::ConstLane(<span class="number">0x0000_0000_0000_0001</span>)),
+<a href=#506 id=506 data-nosnippet>506</a>                M::Lanes(L::ConstZone(<span class="number">0x0000_0003</span>)),
+<a href=#507 id=507 data-nosnippet>507</a>                M::Lanes(L::InitialFill(<span class="number">2</span>)),
+<a href=#508 id=508 data-nosnippet>508</a>                M::Lanes(L::Move(<span class="number">1</span>)),
+<a href=#509 id=509 data-nosnippet>509</a>                M::Lanes(L::LocalRz(<span class="number">1</span>)),
+<a href=#510 id=510 data-nosnippet>510</a>                M::Lanes(L::LocalR(<span class="number">3</span>)),
+<a href=#511 id=511 data-nosnippet>511</a>                M::Lanes(L::GlobalRz),
+<a href=#512 id=512 data-nosnippet>512</a>                M::Lanes(L::Cz),
+<a href=#513 id=513 data-nosnippet>513</a>                M::Lanes(L::Measure(<span class="number">1</span>)),
+<a href=#514 id=514 data-nosnippet>514</a>                M::Lanes(L::AwaitMeasure),
+<a href=#515 id=515 data-nosnippet>515</a>                M::Lanes(L::NewArray(<span class="number">2</span>, <span class="number">10</span>, <span class="number">20</span>)),
+<a href=#516 id=516 data-nosnippet>516</a>                M::Lanes(L::GetItem(<span class="number">2</span>)),
+<a href=#517 id=517 data-nosnippet>517</a>                M::Lanes(L::SetDetector),
+<a href=#518 id=518 data-nosnippet>518</a>                M::Cpu(C::Halt),
+<a href=#519 id=519 data-nosnippet>519</a>                M::Cpu(C::Return(<span class="number">0</span>)),
+<a href=#520 id=520 data-nosnippet>520</a>            ],
+<a href=#521 id=521 data-nosnippet>521</a>        )
+<a href=#522 id=522 data-nosnippet>522</a>        .unwrap()
+<a href=#523 id=523 data-nosnippet>523</a>    }
+<a href=#524 id=524 data-nosnippet>524</a>
+<a href=#525 id=525 data-nosnippet>525</a>    <span class="attr">#[test]
+<a href=#526 id=526 data-nosnippet>526</a>    </span><span class="kw">fn </span>binary_round_trips() {
+<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">let </span>program = sample();
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>program).unwrap();
+<a href=#529 id=529 data-nosnippet>529</a>        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>bytes[<span class="number">0</span>..vihaco::MAGIC.len()], vihaco::MAGIC);
+<a href=#530 id=530 data-nosnippet>530</a>        <span class="macro">assert_eq!</span>(from_binary(<span class="kw-2">&amp;</span>bytes).unwrap(), program);
+<a href=#531 id=531 data-nosnippet>531</a>    }
+<a href=#532 id=532 data-nosnippet>532</a>
+<a href=#533 id=533 data-nosnippet>533</a>    <span class="attr">#[test]
+<a href=#534 id=534 data-nosnippet>534</a>    </span><span class="kw">fn </span>binary_is_readable_by_vihacos_own_parser() {
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="comment">// We emit the container by hand (vihaco ships no writer), so the thing
+<a href=#536 id=536 data-nosnippet>536</a>        // worth pinning is that vihaco can read back what we wrote — not that
+<a href=#537 id=537 data-nosnippet>537</a>        // our writer agrees with our reader.
+<a href=#538 id=538 data-nosnippet>538</a>        </span><span class="kw">let </span>program = sample();
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">let </span>file =
+<a href=#540 id=540 data-nosnippet>540</a>            vihaco::BytecodeFile::&lt;LanesContext&gt;::from_bytes(to_binary(<span class="kw-2">&amp;</span>program).unwrap()).unwrap();
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span>root = file.root();
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="macro">assert!</span>(root.path().is_root());
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="comment">// The symbol tables ride along as named child sections — exactly the
+<a href=#544 id=544 data-nosnippet>544</a>        // ones declared, checked against the constant rather than a fourth
+<a href=#545 id=545 data-nosnippet>545</a>        // spelling of the same three strings. A table added to the writer but
+<a href=#546 id=546 data-nosnippet>546</a>        // not to `TABLE_SECTIONS` (so absent from the context name table, and
+<a href=#547 id=547 data-nosnippet>547</a>        // unknown to `read_tables`) fails here.
+<a href=#548 id=548 data-nosnippet>548</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>names: Vec&lt;String&gt; = root
+<a href=#549 id=549 data-nosnippet>549</a>            .children()
+<a href=#550 id=550 data-nosnippet>550</a>            .filter_map(|c| c.local_name().map(str::to_owned))
+<a href=#551 id=551 data-nosnippet>551</a>            .collect();
+<a href=#552 id=552 data-nosnippet>552</a>        names.sort_unstable();
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span><span class="kw-2">mut </span>declared: Vec&lt;String&gt; = <span class="kw">super</span>::<span class="kw">super</span>::container::TABLE_SECTIONS
+<a href=#554 id=554 data-nosnippet>554</a>            .iter()
+<a href=#555 id=555 data-nosnippet>555</a>            .map(|s| (<span class="kw-2">*</span>s).to_owned())
+<a href=#556 id=556 data-nosnippet>556</a>            .collect();
+<a href=#557 id=557 data-nosnippet>557</a>        declared.sort_unstable();
+<a href=#558 id=558 data-nosnippet>558</a>        <span class="macro">assert_eq!</span>(names, declared);
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="macro">assert_eq!</span>(
+<a href=#560 id=560 data-nosnippet>560</a>            root.decode_instructions::&lt;BytecodeInstruction&gt;()
+<a href=#561 id=561 data-nosnippet>561</a>                .unwrap()
+<a href=#562 id=562 data-nosnippet>562</a>                .into_iter()
+<a href=#563 id=563 data-nosnippet>563</a>                .map(bytecode::decode)
+<a href=#564 id=564 data-nosnippet>564</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#565 id=565 data-nosnippet>565</a>            program.code
+<a href=#566 id=566 data-nosnippet>566</a>        );
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="macro">assert_eq!</span>(
+<a href=#568 id=568 data-nosnippet>568</a>            root.decode_header::&lt;LanesInfo&gt;().unwrap().version,
+<a href=#569 id=569 data-nosnippet>569</a>            program.extra.version
+<a href=#570 id=570 data-nosnippet>570</a>        );
+<a href=#571 id=571 data-nosnippet>571</a>    }
+<a href=#572 id=572 data-nosnippet>572</a>
+<a href=#573 id=573 data-nosnippet>573</a>    <span class="attr">#[test]
+<a href=#574 id=574 data-nosnippet>574</a>    </span><span class="kw">fn </span>binary_preserves_functions_labels_and_names() {
+<a href=#575 id=575 data-nosnippet>575</a>        <span class="comment">// The point of the child sections: a program's symbol tables have to
+<a href=#576 id=576 data-nosnippet>576</a>        // survive a binary round-trip, or function and label names are lost and
+<a href=#577 id=577 data-nosnippet>577</a>        // the disassembly is unreadable.
+<a href=#578 id=578 data-nosnippet>578</a>        </span><span class="kw">let </span>src = <span class="string">"sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
+<a href=#579 id=579 data-nosnippet>579</a>                   .text(root):\n\
+<a href=#580 id=580 data-nosnippet>580</a>                   fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.br @done\n  \
+<a href=#581 id=581 data-nosnippet>581</a>                   lanes::lanes.cz\n  cpu::cpu.label @done\n  cpu::cpu.halt\n}\n\
+<a href=#582 id=582 data-nosnippet>582</a>                   fn @helper() {\n  cpu::cpu.ret 0\n}\n\
+<a href=#583 id=583 data-nosnippet>583</a>                   .text(root).\n.section(root).\n"</span>;
+<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">let </span>original = <span class="kw">crate</span>::isa::text::parse_text(src).unwrap();
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span>restored = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>original).unwrap()).unwrap();
+<a href=#586 id=586 data-nosnippet>586</a>
+<a href=#587 id=587 data-nosnippet>587</a>        <span class="macro">assert_eq!</span>(restored, original);
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="macro">assert_eq!</span>(restored.functions.len(), <span class="number">2</span>);
+<a href=#589 id=589 data-nosnippet>589</a>        <span class="macro">assert_eq!</span>(restored.labels.len(), <span class="number">1</span>);
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="macro">assert_eq!</span>(restored.strings, original.strings);
+<a href=#591 id=591 data-nosnippet>591</a>        <span class="macro">assert_eq!</span>(restored.main_function, <span class="prelude-val">Some</span>(<span class="number">0</span>));
 <a href=#592 id=592 data-nosnippet>592</a>
-<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw">let </span>src = <span class="string">"sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n                   fn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n"</span>;
-<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = parse_text(src).unwrap();
-<a href=#595 id=595 data-nosnippet>595</a>        p.functions.reverse();
-<a href=#596 id=596 data-nosnippet>596</a>
-<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">let </span>back = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>p).unwrap()).unwrap();
-<a href=#598 id=598 data-nosnippet>598</a>        <span class="kw">let </span>name_of = |i: usize| back.strings[back.functions[i].name <span class="kw">as </span>usize].as_str();
-<a href=#599 id=599 data-nosnippet>599</a>        <span class="macro">assert_eq!</span>((name_of(<span class="number">0</span>), name_of(<span class="number">1</span>)), (<span class="string">"helper"</span>, <span class="string">"main"</span>));
-<a href=#600 id=600 data-nosnippet>600</a>        <span class="macro">assert_eq!</span>(back.main_function, <span class="prelude-val">Some</span>(<span class="number">1</span>), <span class="string">"@main is the second span"</span>);
-<a href=#601 id=601 data-nosnippet>601</a>    }
-<a href=#602 id=602 data-nosnippet>602</a>
-<a href=#603 id=603 data-nosnippet>603</a>    <span class="doccomment">/// A container predating the function markers is refused, not guessed at.
-<a href=#604 id=604 data-nosnippet>604</a>    </span><span class="attr">#[test]
-<a href=#605 id=605 data-nosnippet>605</a>    </span><span class="kw">fn </span>a_binary_without_markers_is_rejected() {
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap();
-<a href=#607 id=607 data-nosnippet>607</a>        p.code
-<a href=#608 id=608 data-nosnippet>608</a>            .retain(|i| !<span class="macro">matches!</span>(i, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd)));
-<a href=#609 id=609 data-nosnippet>609</a>        <span class="kw">let </span>err = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>p).unwrap()).unwrap_err();
-<a href=#610 id=610 data-nosnippet>610</a>        <span class="macro">assert!</span>(
-<a href=#611 id=611 data-nosnippet>611</a>            <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>err, BinaryError::Decode { message, .. } <span class="kw">if </span>message.contains(<span class="string">"predates"</span>)),
-<a href=#612 id=612 data-nosnippet>612</a>            <span class="string">"got {err:?}"
-<a href=#613 id=613 data-nosnippet>613</a>        </span>);
-<a href=#614 id=614 data-nosnippet>614</a>    }
-<a href=#615 id=615 data-nosnippet>615</a>
-<a href=#616 id=616 data-nosnippet>616</a>    <span class="attr">#[test]
-<a href=#617 id=617 data-nosnippet>617</a>    </span><span class="kw">fn </span>binary_preserves_the_entry_point() {
-<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">use </span><span class="kw">crate</span>::isa::text::parse_text;
+<a href=#593 id=593 data-nosnippet>593</a>        <span class="comment">// And the names come back, so the text form is identical.
+<a href=#594 id=594 data-nosnippet>594</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#595 id=595 data-nosnippet>595</a>            <span class="kw">crate</span>::isa::text::to_text(<span class="kw-2">&amp;</span>restored),
+<a href=#596 id=596 data-nosnippet>596</a>            <span class="kw">crate</span>::isa::text::to_text(<span class="kw-2">&amp;</span>original)
+<a href=#597 id=597 data-nosnippet>597</a>        );
+<a href=#598 id=598 data-nosnippet>598</a>    }
+<a href=#599 id=599 data-nosnippet>599</a>
+<a href=#600 id=600 data-nosnippet>600</a>    <span class="doccomment">/// The entry point survives the binary, which it did not.
+<a href=#601 id=601 data-nosnippet>601</a>    ///
+<a href=#602 id=602 data-nosnippet>602</a>    /// The container records the function table but not which entry is main,
+<a href=#603 id=603 data-nosnippet>603</a>    /// so `from_code`'s `Some(0)` default came back regardless of what the
+<a href=#604 id=604 data-nosnippet>604</a>    /// text declared — making the same program compare unequal across a
+<a href=#605 id=605 data-nosnippet>605</a>    /// round-trip, since `LocalModule`'s `PartialEq` covers the field.
+<a href=#606 id=606 data-nosnippet>606</a>    /// The markers delimit a function; a caller supplies the body.
+<a href=#607 id=607 data-nosnippet>607</a>    ///
+<a href=#608 id=608 data-nosnippet>608</a>    /// The migration guide documents them as visible in
+<a href=#609 id=609 data-nosnippet>609</a>    /// `Program.instructions`, so feeding that list back is the obvious thing
+<a href=#610 id=610 data-nosnippet>610</a>    /// to try — and it used to wrap them twice, producing nested `fn` blocks.
+<a href=#611 id=611 data-nosnippet>611</a>    </span><span class="attr">#[test]
+<a href=#612 id=612 data-nosnippet>612</a>    </span><span class="kw">fn </span>from_code_rejects_a_body_that_already_has_markers() {
+<a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">let </span>p = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap();
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">let </span>err = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), p.code.clone())
+<a href=#615 id=615 data-nosnippet>615</a>            .expect_err(<span class="string">"a wrapped body should be refused"</span>)
+<a href=#616 id=616 data-nosnippet>616</a>            .to_string();
+<a href=#617 id=617 data-nosnippet>617</a>        <span class="macro">assert!</span>(err.contains(<span class="string">"already carries"</span>), <span class="string">"got {err}"</span>);
+<a href=#618 id=618 data-nosnippet>618</a>    }
 <a href=#619 id=619 data-nosnippet>619</a>
-<a href=#620 id=620 data-nosnippet>620</a>        <span class="kw">let </span>from_text = parse_text(
-<a href=#621 id=621 data-nosnippet>621</a>            <span class="string">"sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n             .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n             fn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n"</span>,
-<a href=#622 id=622 data-nosnippet>622</a>        )
-<a href=#623 id=623 data-nosnippet>623</a>        .unwrap();
-<a href=#624 id=624 data-nosnippet>624</a>        <span class="macro">assert_eq!</span>(from_text.main_function, <span class="prelude-val">Some</span>(<span class="number">1</span>), <span class="string">"@main is declared second"</span>);
-<a href=#625 id=625 data-nosnippet>625</a>
-<a href=#626 id=626 data-nosnippet>626</a>        <span class="kw">let </span>restored = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>from_text).unwrap()).unwrap();
-<a href=#627 id=627 data-nosnippet>627</a>        <span class="macro">assert_eq!</span>(restored.main_function, <span class="prelude-val">Some</span>(<span class="number">1</span>));
-<a href=#628 id=628 data-nosnippet>628</a>        <span class="macro">assert_eq!</span>(restored, from_text, <span class="string">"the round-trip should be lossless"</span>);
-<a href=#629 id=629 data-nosnippet>629</a>    }
-<a href=#630 id=630 data-nosnippet>630</a>
-<a href=#631 id=631 data-nosnippet>631</a>    <span class="doccomment">/// A function table with no `@main` is a malformed executable.
-<a href=#632 id=632 data-nosnippet>632</a>    ///
-<a href=#633 id=633 data-nosnippet>633</a>    /// `resolve` makes `@main` mandatory on the text path; a hand-crafted
-<a href=#634 id=634 data-nosnippet>634</a>    /// container could otherwise load without one and be executed from
-<a href=#635 id=635 data-nosnippet>635</a>    /// wherever address 0 happened to land.
-<a href=#636 id=636 data-nosnippet>636</a>    </span><span class="attr">#[test]
-<a href=#637 id=637 data-nosnippet>637</a>    </span><span class="kw">fn </span>a_binary_without_main_is_rejected() {
-<a href=#638 id=638 data-nosnippet>638</a>        <span class="kw">let </span><span class="kw-2">mut </span>program = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap();
-<a href=#639 id=639 data-nosnippet>639</a>        program.strings = <span class="macro">vec!</span>[<span class="string">"helper"</span>.to_owned()];
-<a href=#640 id=640 data-nosnippet>640</a>
-<a href=#641 id=641 data-nosnippet>641</a>        <span class="kw">let </span>err = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>program).unwrap()).unwrap_err();
-<a href=#642 id=642 data-nosnippet>642</a>        <span class="macro">assert!</span>(
-<a href=#643 id=643 data-nosnippet>643</a>            <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>err, BinaryError::Decode { message, .. } <span class="kw">if </span>message.contains(<span class="string">"no @main"</span>)),
-<a href=#644 id=644 data-nosnippet>644</a>            <span class="string">"got {err:?}"
-<a href=#645 id=645 data-nosnippet>645</a>        </span>);
-<a href=#646 id=646 data-nosnippet>646</a>    }
-<a href=#647 id=647 data-nosnippet>647</a>
-<a href=#648 id=648 data-nosnippet>648</a>    <span class="attr">#[test]
-<a href=#649 id=649 data-nosnippet>649</a>    </span><span class="kw">fn </span>binary_preserves_version() {
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>sample()).unwrap();
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="macro">assert_eq!</span>(
-<a href=#652 id=652 data-nosnippet>652</a>            from_binary(<span class="kw-2">&amp;</span>bytes).unwrap().extra.version,
-<a href=#653 id=653 data-nosnippet>653</a>            Version::new(<span class="number">1</span>, <span class="number">2</span>)
-<a href=#654 id=654 data-nosnippet>654</a>        );
-<a href=#655 id=655 data-nosnippet>655</a>    }
-<a href=#656 id=656 data-nosnippet>656</a>
-<a href=#657 id=657 data-nosnippet>657</a>    <span class="attr">#[test]
-<a href=#658 id=658 data-nosnippet>658</a>    </span><span class="kw">fn </span>empty_program_round_trips() {
-<a href=#659 id=659 data-nosnippet>659</a>        <span class="kw">let </span>program = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[]).unwrap();
-<a href=#660 id=660 data-nosnippet>660</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>program).unwrap();
-<a href=#661 id=661 data-nosnippet>661</a>        <span class="macro">assert_eq!</span>(from_binary(<span class="kw-2">&amp;</span>bytes).unwrap(), program);
-<a href=#662 id=662 data-nosnippet>662</a>    }
-<a href=#663 id=663 data-nosnippet>663</a>
-<a href=#664 id=664 data-nosnippet>664</a>    <span class="attr">#[test]
-<a href=#665 id=665 data-nosnippet>665</a>    </span><span class="kw">fn </span>bad_magic_rejected() {
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = to_binary(<span class="kw-2">&amp;</span>sample()).unwrap();
-<a href=#667 id=667 data-nosnippet>667</a>        bytes[<span class="number">0</span>] = <span class="string">b'X'</span>;
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="macro">assert_eq!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::BadMagic));
-<a href=#669 id=669 data-nosnippet>669</a>    }
-<a href=#670 id=670 data-nosnippet>670</a>
-<a href=#671 id=671 data-nosnippet>671</a>    <span class="attr">#[test]
-<a href=#672 id=672 data-nosnippet>672</a>    </span><span class="kw">fn </span>short_buffer_rejected() {
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="comment">// Shorter than the file header, which is the one truncation we measure
-<a href=#674 id=674 data-nosnippet>674</a>        // ourselves, so it carries real byte counts.
-<a href=#675 id=675 data-nosnippet>675</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#676 id=676 data-nosnippet>676</a>            from_binary(<span class="string">b"VH"</span>),
-<a href=#677 id=677 data-nosnippet>677</a>            <span class="prelude-val">Err</span>(BinaryError::Truncated {
-<a href=#678 id=678 data-nosnippet>678</a>                expected: FILE_HEADER_LEN,
-<a href=#679 id=679 data-nosnippet>679</a>                got: <span class="number">2
-<a href=#680 id=680 data-nosnippet>680</a>            </span>})
-<a href=#681 id=681 data-nosnippet>681</a>        );
-<a href=#682 id=682 data-nosnippet>682</a>    }
-<a href=#683 id=683 data-nosnippet>683</a>
-<a href=#684 id=684 data-nosnippet>684</a>    <span class="attr">#[test]
-<a href=#685 id=685 data-nosnippet>685</a>    </span><span class="kw">fn </span>truncated_section_reports_vihacos_message() {
-<a href=#686 id=686 data-nosnippet>686</a>        <span class="comment">// A complete file header, then a section that claims more bytes than
-<a href=#687 id=687 data-nosnippet>687</a>        // the file holds.
-<a href=#688 id=688 data-nosnippet>688</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>bytes = to_binary(<span class="kw-2">&amp;</span>sample()).unwrap();
-<a href=#689 id=689 data-nosnippet>689</a>        bytes.truncate(bytes.len() - <span class="number">20</span>);
-<a href=#690 id=690 data-nosnippet>690</a>        <span class="comment">// vihaco reports this structurally, with no byte counts to report, so
-<a href=#691 id=691 data-nosnippet>691</a>        // it surfaces as `Decode` carrying vihaco's own message.
-<a href=#692 id=692 data-nosnippet>692</a>        </span><span class="macro">assert!</span>(
-<a href=#693 id=693 data-nosnippet>693</a>            <span class="macro">matches!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::Decode { .. })),
-<a href=#694 id=694 data-nosnippet>694</a>            <span class="string">"got {:?}"</span>,
-<a href=#695 id=695 data-nosnippet>695</a>            from_binary(<span class="kw-2">&amp;</span>bytes)
-<a href=#696 id=696 data-nosnippet>696</a>        );
+<a href=#620 id=620 data-nosnippet>620</a>    <span class="doccomment">/// Names are matched to spans by address, not by position.
+<a href=#621 id=621 data-nosnippet>621</a>    ///
+<a href=#622 id=622 data-nosnippet>622</a>    /// A well-formed table not in layout order used to rename every function,
+<a href=#623 id=623 data-nosnippet>623</a>    /// and `run` then entered the wrong one reporting success.
+<a href=#624 id=624 data-nosnippet>624</a>    </span><span class="attr">#[test]
+<a href=#625 id=625 data-nosnippet>625</a>    </span><span class="kw">fn </span>a_table_out_of_layout_order_still_names_the_right_spans() {
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="kw">use </span><span class="kw">crate</span>::isa::text::parse_text;
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">let </span>src = <span class="string">"sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n                   fn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n"</span>;
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = parse_text(src).unwrap();
+<a href=#630 id=630 data-nosnippet>630</a>        p.functions.reverse();
+<a href=#631 id=631 data-nosnippet>631</a>
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">let </span>back = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>p).unwrap()).unwrap();
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>name_of = |i: usize| back.strings[back.functions[i].name <span class="kw">as </span>usize].as_str();
+<a href=#634 id=634 data-nosnippet>634</a>        <span class="macro">assert_eq!</span>((name_of(<span class="number">0</span>), name_of(<span class="number">1</span>)), (<span class="string">"helper"</span>, <span class="string">"main"</span>));
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">assert_eq!</span>(back.main_function, <span class="prelude-val">Some</span>(<span class="number">1</span>), <span class="string">"@main is the second span"</span>);
+<a href=#636 id=636 data-nosnippet>636</a>    }
+<a href=#637 id=637 data-nosnippet>637</a>
+<a href=#638 id=638 data-nosnippet>638</a>    <span class="doccomment">/// A container predating the function markers is refused, not guessed at.
+<a href=#639 id=639 data-nosnippet>639</a>    </span><span class="attr">#[test]
+<a href=#640 id=640 data-nosnippet>640</a>    </span><span class="kw">fn </span>a_binary_without_markers_is_rejected() {
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap();
+<a href=#642 id=642 data-nosnippet>642</a>        p.code
+<a href=#643 id=643 data-nosnippet>643</a>            .retain(|i| !<span class="macro">matches!</span>(i, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd)));
+<a href=#644 id=644 data-nosnippet>644</a>        <span class="kw">let </span>err = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>p).unwrap()).unwrap_err();
+<a href=#645 id=645 data-nosnippet>645</a>        <span class="macro">assert!</span>(
+<a href=#646 id=646 data-nosnippet>646</a>            <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>err, BinaryError::Decode { message, .. } <span class="kw">if </span>message.contains(<span class="string">"predates"</span>)),
+<a href=#647 id=647 data-nosnippet>647</a>            <span class="string">"got {err:?}"
+<a href=#648 id=648 data-nosnippet>648</a>        </span>);
+<a href=#649 id=649 data-nosnippet>649</a>    }
+<a href=#650 id=650 data-nosnippet>650</a>
+<a href=#651 id=651 data-nosnippet>651</a>    <span class="attr">#[test]
+<a href=#652 id=652 data-nosnippet>652</a>    </span><span class="kw">fn </span>binary_preserves_the_entry_point() {
+<a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">use </span><span class="kw">crate</span>::isa::text::parse_text;
+<a href=#654 id=654 data-nosnippet>654</a>
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">let </span>from_text = parse_text(
+<a href=#656 id=656 data-nosnippet>656</a>            <span class="string">"sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n             .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n             fn @main() {\n  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n"</span>,
+<a href=#657 id=657 data-nosnippet>657</a>        )
+<a href=#658 id=658 data-nosnippet>658</a>        .unwrap();
+<a href=#659 id=659 data-nosnippet>659</a>        <span class="macro">assert_eq!</span>(from_text.main_function, <span class="prelude-val">Some</span>(<span class="number">1</span>), <span class="string">"@main is declared second"</span>);
+<a href=#660 id=660 data-nosnippet>660</a>
+<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span>restored = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>from_text).unwrap()).unwrap();
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="macro">assert_eq!</span>(restored.main_function, <span class="prelude-val">Some</span>(<span class="number">1</span>));
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="macro">assert_eq!</span>(restored, from_text, <span class="string">"the round-trip should be lossless"</span>);
+<a href=#664 id=664 data-nosnippet>664</a>    }
+<a href=#665 id=665 data-nosnippet>665</a>
+<a href=#666 id=666 data-nosnippet>666</a>    <span class="doccomment">/// A function table with no `@main` is a malformed executable.
+<a href=#667 id=667 data-nosnippet>667</a>    ///
+<a href=#668 id=668 data-nosnippet>668</a>    /// `resolve` makes `@main` mandatory on the text path; a hand-crafted
+<a href=#669 id=669 data-nosnippet>669</a>    /// container could otherwise load without one and be executed from
+<a href=#670 id=670 data-nosnippet>670</a>    /// wherever address 0 happened to land.
+<a href=#671 id=671 data-nosnippet>671</a>    </span><span class="attr">#[test]
+<a href=#672 id=672 data-nosnippet>672</a>    </span><span class="kw">fn </span>a_binary_without_main_is_rejected() {
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span><span class="kw-2">mut </span>program = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap();
+<a href=#674 id=674 data-nosnippet>674</a>        program.strings = <span class="macro">vec!</span>[<span class="string">"helper"</span>.to_owned()];
+<a href=#675 id=675 data-nosnippet>675</a>
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">let </span>err = from_binary(<span class="kw-2">&amp;</span>to_binary(<span class="kw-2">&amp;</span>program).unwrap()).unwrap_err();
+<a href=#677 id=677 data-nosnippet>677</a>        <span class="macro">assert!</span>(
+<a href=#678 id=678 data-nosnippet>678</a>            <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>err, BinaryError::Decode { message, .. } <span class="kw">if </span>message.contains(<span class="string">"no @main"</span>)),
+<a href=#679 id=679 data-nosnippet>679</a>            <span class="string">"got {err:?}"
+<a href=#680 id=680 data-nosnippet>680</a>        </span>);
+<a href=#681 id=681 data-nosnippet>681</a>    }
+<a href=#682 id=682 data-nosnippet>682</a>
+<a href=#683 id=683 data-nosnippet>683</a>    <span class="attr">#[test]
+<a href=#684 id=684 data-nosnippet>684</a>    </span><span class="kw">fn </span>binary_preserves_version() {
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>sample()).unwrap();
+<a href=#686 id=686 data-nosnippet>686</a>        <span class="macro">assert_eq!</span>(
+<a href=#687 id=687 data-nosnippet>687</a>            from_binary(<span class="kw-2">&amp;</span>bytes).unwrap().extra.version,
+<a href=#688 id=688 data-nosnippet>688</a>            Version::new(<span class="number">1</span>, <span class="number">2</span>)
+<a href=#689 id=689 data-nosnippet>689</a>        );
+<a href=#690 id=690 data-nosnippet>690</a>    }
+<a href=#691 id=691 data-nosnippet>691</a>
+<a href=#692 id=692 data-nosnippet>692</a>    <span class="attr">#[test]
+<a href=#693 id=693 data-nosnippet>693</a>    </span><span class="kw">fn </span>empty_program_round_trips() {
+<a href=#694 id=694 data-nosnippet>694</a>        <span class="kw">let </span>program = from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[]).unwrap();
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>program).unwrap();
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="macro">assert_eq!</span>(from_binary(<span class="kw-2">&amp;</span>bytes).unwrap(), program);
 <a href=#697 id=697 data-nosnippet>697</a>    }
 <a href=#698 id=698 data-nosnippet>698</a>
 <a href=#699 id=699 data-nosnippet>699</a>    <span class="attr">#[test]
-<a href=#700 id=700 data-nosnippet>700</a>    </span><span class="kw">fn </span>unaligned_code_rejected() {
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="comment">// Grow the bytecode region by one byte — and the section that holds it,
-<a href=#702 id=702 data-nosnippet>702</a>        // so the container stays well-formed. The only fault is that the region
-<a href=#703 id=703 data-nosnippet>703</a>        // is no longer a whole number of instruction words.
-<a href=#704 id=704 data-nosnippet>704</a>        //
-<a href=#705 id=705 data-nosnippet>705</a>        // Offsets are read out of the file rather than hard-coded, so this keeps
-<a href=#706 id=706 data-nosnippet>706</a>        // working when the layout around them changes.
-<a href=#707 id=707 data-nosnippet>707</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>bytes =
-<a href=#708 id=708 data-nosnippet>708</a>            to_binary(<span class="kw-2">&amp;</span>from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap()).unwrap();
-<a href=#709 id=709 data-nosnippet>709</a>
-<a href=#710 id=710 data-nosnippet>710</a>        <span class="kw">let </span>read_u64 =
-<a href=#711 id=711 data-nosnippet>711</a>            |b: <span class="kw-2">&amp;</span>[u8], at: usize| u64::from_le_bytes(b[at..at + <span class="number">8</span>].try_into().unwrap()) <span class="kw">as </span>usize;
-<a href=#712 id=712 data-nosnippet>712</a>        <span class="kw">let </span>context_len = read_u64(<span class="kw-2">&amp;</span>bytes, <span class="number">8</span>);
-<a href=#713 id=713 data-nosnippet>713</a>        <span class="kw">let </span>section = FILE_HEADER_LEN + context_len;
-<a href=#714 id=714 data-nosnippet>714</a>        <span class="kw">let </span>composite_header_len = read_u64(<span class="kw-2">&amp;</span>bytes, section + <span class="number">8</span>);
-<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>bytecode_len_at = section + <span class="number">16 </span>+ composite_header_len;
-<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">let </span>bytecode_at = bytecode_len_at + <span class="number">8</span>;
-<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>code_len = read_u64(<span class="kw-2">&amp;</span>bytes, bytecode_len_at);
+<a href=#700 id=700 data-nosnippet>700</a>    </span><span class="kw">fn </span>bad_magic_rejected() {
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = to_binary(<span class="kw-2">&amp;</span>sample()).unwrap();
+<a href=#702 id=702 data-nosnippet>702</a>        bytes[<span class="number">0</span>] = <span class="string">b'X'</span>;
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="macro">assert_eq!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::BadMagic));
+<a href=#704 id=704 data-nosnippet>704</a>    }
+<a href=#705 id=705 data-nosnippet>705</a>
+<a href=#706 id=706 data-nosnippet>706</a>    <span class="attr">#[test]
+<a href=#707 id=707 data-nosnippet>707</a>    </span><span class="kw">fn </span>short_buffer_rejected() {
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="comment">// Shorter than the file header, which is the one truncation we measure
+<a href=#709 id=709 data-nosnippet>709</a>        // ourselves, so it carries real byte counts.
+<a href=#710 id=710 data-nosnippet>710</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#711 id=711 data-nosnippet>711</a>            from_binary(<span class="string">b"VH"</span>),
+<a href=#712 id=712 data-nosnippet>712</a>            <span class="prelude-val">Err</span>(BinaryError::Truncated {
+<a href=#713 id=713 data-nosnippet>713</a>                expected: FILE_HEADER_LEN,
+<a href=#714 id=714 data-nosnippet>714</a>                got: <span class="number">2
+<a href=#715 id=715 data-nosnippet>715</a>            </span>})
+<a href=#716 id=716 data-nosnippet>716</a>        );
+<a href=#717 id=717 data-nosnippet>717</a>    }
 <a href=#718 id=718 data-nosnippet>718</a>
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>bump = |buf: <span class="kw-2">&amp;mut </span>Vec&lt;u8&gt;, at: usize| {
-<a href=#720 id=720 data-nosnippet>720</a>            <span class="kw">let </span>v = read_u64(buf, at) + <span class="number">1</span>;
-<a href=#721 id=721 data-nosnippet>721</a>            buf[at..at + <span class="number">8</span>].copy_from_slice(<span class="kw-2">&amp;</span>(v <span class="kw">as </span>u64).to_le_bytes());
-<a href=#722 id=722 data-nosnippet>722</a>        };
-<a href=#723 id=723 data-nosnippet>723</a>        bump(<span class="kw-2">&amp;mut </span>bytes, section); <span class="comment">// section_len
-<a href=#724 id=724 data-nosnippet>724</a>        </span>bump(<span class="kw-2">&amp;mut </span>bytes, bytecode_len_at);
-<a href=#725 id=725 data-nosnippet>725</a>        bytes.insert(bytecode_at + code_len, <span class="number">0</span>);
-<a href=#726 id=726 data-nosnippet>726</a>
-<a href=#727 id=727 data-nosnippet>727</a>        <span class="comment">// The inserted byte shifts everything after the code, so the child
-<a href=#728 id=728 data-nosnippet>728</a>        // sections' recorded offsets move with it. Without this the container
-<a href=#729 id=729 data-nosnippet>729</a>        // rejects the file for a structural reason and never reaches the
-<a href=#730 id=730 data-nosnippet>730</a>        // alignment check.
-<a href=#731 id=731 data-nosnippet>731</a>        </span><span class="kw">let </span>child_table = bytecode_at + code_len + <span class="number">1</span>;
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">let </span>child_count =
-<a href=#733 id=733 data-nosnippet>733</a>            u32::from_le_bytes(bytes[child_table..child_table + <span class="number">4</span>].try_into().unwrap()) <span class="kw">as </span>usize;
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..child_count {
-<a href=#735 id=735 data-nosnippet>735</a>            bump(<span class="kw-2">&amp;mut </span>bytes, child_table + <span class="number">4 </span>+ i * <span class="number">12 </span>+ <span class="number">4</span>);
-<a href=#736 id=736 data-nosnippet>736</a>        }
-<a href=#737 id=737 data-nosnippet>737</a>
-<a href=#738 id=738 data-nosnippet>738</a>        <span class="macro">assert!</span>(
-<a href=#739 id=739 data-nosnippet>739</a>            <span class="macro">matches!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::UnalignedCode { len }) <span class="kw">if </span>len
-<a href=#740 id=740 data-nosnippet>740</a>                == code_len + <span class="number">1</span>),
-<a href=#741 id=741 data-nosnippet>741</a>            <span class="string">"got {:?}"</span>,
-<a href=#742 id=742 data-nosnippet>742</a>            from_binary(<span class="kw-2">&amp;</span>bytes)
-<a href=#743 id=743 data-nosnippet>743</a>        );
-<a href=#744 id=744 data-nosnippet>744</a>    }
-<a href=#745 id=745 data-nosnippet>745</a>
-<a href=#746 id=746 data-nosnippet>746</a>    <span class="attr">#[test]
-<a href=#747 id=747 data-nosnippet>747</a>    </span><span class="kw">fn </span>decode_error_on_bad_opcode() {
-<a href=#748 id=748 data-nosnippet>748</a>        <span class="comment">// A well-formed container holding one aligned word whose opcode byte
-<a href=#749 id=749 data-nosnippet>749</a>        // (0xFF) names no instruction: every length check passes, so the
-<a href=#750 id=750 data-nosnippet>750</a>        // failure must come from per-word decoding.
-<a href=#751 id=751 data-nosnippet>751</a>        </span><span class="kw">let </span>good =
-<a href=#752 id=752 data-nosnippet>752</a>            to_binary(<span class="kw-2">&amp;</span>from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap()).unwrap();
-<a href=#753 id=753 data-nosnippet>753</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = good.clone();
-<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>last_word = bytes.len() - <span class="number">4 </span>- bytecode::instruction_width() <span class="kw">as </span>usize;
-<a href=#755 id=755 data-nosnippet>755</a>        bytes[last_word] = <span class="number">0xFF</span>;
-<a href=#756 id=756 data-nosnippet>756</a>        <span class="macro">assert!</span>(
-<a href=#757 id=757 data-nosnippet>757</a>            <span class="macro">matches!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::Decode { .. })),
-<a href=#758 id=758 data-nosnippet>758</a>            <span class="string">"got {:?}"</span>,
-<a href=#759 id=759 data-nosnippet>759</a>            from_binary(<span class="kw-2">&amp;</span>bytes)
-<a href=#760 id=760 data-nosnippet>760</a>        );
-<a href=#761 id=761 data-nosnippet>761</a>    }
-<a href=#762 id=762 data-nosnippet>762</a>
-<a href=#763 id=763 data-nosnippet>763</a>    <span class="doccomment">/// A signature the text form cannot spell is refused, not truncated.
-<a href=#764 id=764 data-nosnippet>764</a>    ///
-<a href=#765 id=765 data-nosnippet>765</a>    /// `to_text` renders a return type as `-&gt; Ty`, taking the first; a
-<a href=#766 id=766 data-nosnippet>766</a>    /// signature carrying two would have rendered as one and re-parsed into a
-<a href=#767 id=767 data-nosnippet>767</a>    /// different program, with nothing reporting the loss. Nothing can build
-<a href=#768 id=768 data-nosnippet>768</a>    /// one through a supported path — the grammar yields `Option&lt;Ty&gt;` — so
-<a href=#769 id=769 data-nosnippet>769</a>    /// both ends refuse rather than silently narrowing.
-<a href=#770 id=770 data-nosnippet>770</a>    </span><span class="attr">#[test]
-<a href=#771 id=771 data-nosnippet>771</a>    </span><span class="kw">fn </span>a_multi_value_return_is_refused_at_both_ends() {
-<a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = sample();
-<a href=#773 id=773 data-nosnippet>773</a>        p.functions[<span class="number">0</span>].signature.ret = <span class="macro">vec!</span>[vihaco::Type::Bool, vihaco::Type::U32];
-<a href=#774 id=774 data-nosnippet>774</a>
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">let </span>err = to_binary(<span class="kw-2">&amp;</span>p).unwrap_err().to_string();
-<a href=#776 id=776 data-nosnippet>776</a>        <span class="macro">assert!</span>(
-<a href=#777 id=777 data-nosnippet>777</a>            err.contains(<span class="string">"2 return values"</span>) &amp;&amp; err.contains(<span class="string">"at most one"</span>),
-<a href=#778 id=778 data-nosnippet>778</a>            <span class="string">"writing should refuse it: {err}"
-<a href=#779 id=779 data-nosnippet>779</a>        </span>);
+<a href=#719 id=719 data-nosnippet>719</a>    <span class="attr">#[test]
+<a href=#720 id=720 data-nosnippet>720</a>    </span><span class="kw">fn </span>truncated_section_reports_vihacos_message() {
+<a href=#721 id=721 data-nosnippet>721</a>        <span class="comment">// A complete file header, then a section that claims more bytes than
+<a href=#722 id=722 data-nosnippet>722</a>        // the file holds.
+<a href=#723 id=723 data-nosnippet>723</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>bytes = to_binary(<span class="kw-2">&amp;</span>sample()).unwrap();
+<a href=#724 id=724 data-nosnippet>724</a>        bytes.truncate(bytes.len() - <span class="number">20</span>);
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="comment">// vihaco reports this structurally, with no byte counts to report, so
+<a href=#726 id=726 data-nosnippet>726</a>        // it surfaces as `Decode` carrying vihaco's own message.
+<a href=#727 id=727 data-nosnippet>727</a>        </span><span class="macro">assert!</span>(
+<a href=#728 id=728 data-nosnippet>728</a>            <span class="macro">matches!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::Decode { .. })),
+<a href=#729 id=729 data-nosnippet>729</a>            <span class="string">"got {:?}"</span>,
+<a href=#730 id=730 data-nosnippet>730</a>            from_binary(<span class="kw-2">&amp;</span>bytes)
+<a href=#731 id=731 data-nosnippet>731</a>        );
+<a href=#732 id=732 data-nosnippet>732</a>    }
+<a href=#733 id=733 data-nosnippet>733</a>
+<a href=#734 id=734 data-nosnippet>734</a>    <span class="attr">#[test]
+<a href=#735 id=735 data-nosnippet>735</a>    </span><span class="kw">fn </span>unaligned_code_rejected() {
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="comment">// Grow the bytecode region by one byte — and the section that holds it,
+<a href=#737 id=737 data-nosnippet>737</a>        // so the container stays well-formed. The only fault is that the region
+<a href=#738 id=738 data-nosnippet>738</a>        // is no longer a whole number of instruction words.
+<a href=#739 id=739 data-nosnippet>739</a>        //
+<a href=#740 id=740 data-nosnippet>740</a>        // Offsets are read out of the file rather than hard-coded, so this keeps
+<a href=#741 id=741 data-nosnippet>741</a>        // working when the layout around them changes.
+<a href=#742 id=742 data-nosnippet>742</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>bytes =
+<a href=#743 id=743 data-nosnippet>743</a>            to_binary(<span class="kw-2">&amp;</span>from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap()).unwrap();
+<a href=#744 id=744 data-nosnippet>744</a>
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>read_u64 =
+<a href=#746 id=746 data-nosnippet>746</a>            |b: <span class="kw-2">&amp;</span>[u8], at: usize| u64::from_le_bytes(b[at..at + <span class="number">8</span>].try_into().unwrap()) <span class="kw">as </span>usize;
+<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span>context_len = read_u64(<span class="kw-2">&amp;</span>bytes, <span class="number">8</span>);
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>section = FILE_HEADER_LEN + context_len;
+<a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>composite_header_len = read_u64(<span class="kw-2">&amp;</span>bytes, section + <span class="number">8</span>);
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span>bytecode_len_at = section + <span class="number">16 </span>+ composite_header_len;
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span>bytecode_at = bytecode_len_at + <span class="number">8</span>;
+<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">let </span>code_len = read_u64(<span class="kw-2">&amp;</span>bytes, bytecode_len_at);
+<a href=#753 id=753 data-nosnippet>753</a>
+<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>bump = |buf: <span class="kw-2">&amp;mut </span>Vec&lt;u8&gt;, at: usize| {
+<a href=#755 id=755 data-nosnippet>755</a>            <span class="kw">let </span>v = read_u64(buf, at) + <span class="number">1</span>;
+<a href=#756 id=756 data-nosnippet>756</a>            buf[at..at + <span class="number">8</span>].copy_from_slice(<span class="kw-2">&amp;</span>(v <span class="kw">as </span>u64).to_le_bytes());
+<a href=#757 id=757 data-nosnippet>757</a>        };
+<a href=#758 id=758 data-nosnippet>758</a>        bump(<span class="kw-2">&amp;mut </span>bytes, section); <span class="comment">// section_len
+<a href=#759 id=759 data-nosnippet>759</a>        </span>bump(<span class="kw-2">&amp;mut </span>bytes, bytecode_len_at);
+<a href=#760 id=760 data-nosnippet>760</a>        bytes.insert(bytecode_at + code_len, <span class="number">0</span>);
+<a href=#761 id=761 data-nosnippet>761</a>
+<a href=#762 id=762 data-nosnippet>762</a>        <span class="comment">// The inserted byte shifts everything after the code, so the child
+<a href=#763 id=763 data-nosnippet>763</a>        // sections' recorded offsets move with it. Without this the container
+<a href=#764 id=764 data-nosnippet>764</a>        // rejects the file for a structural reason and never reaches the
+<a href=#765 id=765 data-nosnippet>765</a>        // alignment check.
+<a href=#766 id=766 data-nosnippet>766</a>        </span><span class="kw">let </span>child_table = bytecode_at + code_len + <span class="number">1</span>;
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="kw">let </span>child_count =
+<a href=#768 id=768 data-nosnippet>768</a>            u32::from_le_bytes(bytes[child_table..child_table + <span class="number">4</span>].try_into().unwrap()) <span class="kw">as </span>usize;
+<a href=#769 id=769 data-nosnippet>769</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..child_count {
+<a href=#770 id=770 data-nosnippet>770</a>            bump(<span class="kw-2">&amp;mut </span>bytes, child_table + <span class="number">4 </span>+ i * <span class="number">12 </span>+ <span class="number">4</span>);
+<a href=#771 id=771 data-nosnippet>771</a>        }
+<a href=#772 id=772 data-nosnippet>772</a>
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="macro">assert!</span>(
+<a href=#774 id=774 data-nosnippet>774</a>            <span class="macro">matches!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::UnalignedCode { len }) <span class="kw">if </span>len
+<a href=#775 id=775 data-nosnippet>775</a>                == code_len + <span class="number">1</span>),
+<a href=#776 id=776 data-nosnippet>776</a>            <span class="string">"got {:?}"</span>,
+<a href=#777 id=777 data-nosnippet>777</a>            from_binary(<span class="kw-2">&amp;</span>bytes)
+<a href=#778 id=778 data-nosnippet>778</a>        );
+<a href=#779 id=779 data-nosnippet>779</a>    }
 <a href=#780 id=780 data-nosnippet>780</a>
-<a href=#781 id=781 data-nosnippet>781</a>        <span class="comment">// And reading, for a container crafted outside this writer.
-<a href=#782 id=782 data-nosnippet>782</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>single = sample();
-<a href=#783 id=783 data-nosnippet>783</a>        single.functions[<span class="number">0</span>].signature.ret = <span class="macro">vec!</span>[vihaco::Type::Bool];
-<a href=#784 id=784 data-nosnippet>784</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>single).expect(<span class="string">"one return value is fine"</span>);
-<a href=#785 id=785 data-nosnippet>785</a>        <span class="macro">assert!</span>(
-<a href=#786 id=786 data-nosnippet>786</a>            from_binary(<span class="kw-2">&amp;</span>bytes).is_ok(),
-<a href=#787 id=787 data-nosnippet>787</a>            <span class="string">"the single-return baseline should still load"
-<a href=#788 id=788 data-nosnippet>788</a>        </span>);
-<a href=#789 id=789 data-nosnippet>789</a>    }
-<a href=#790 id=790 data-nosnippet>790</a>
-<a href=#791 id=791 data-nosnippet>791</a>    <span class="attr">#[test]
-<a href=#792 id=792 data-nosnippet>792</a>    </span><span class="kw">fn </span>binary_error_display_strings() {
-<a href=#793 id=793 data-nosnippet>793</a>        <span class="macro">assert_eq!</span>(
-<a href=#794 id=794 data-nosnippet>794</a>            BinaryError::BadMagic.to_string(),
-<a href=#795 id=795 data-nosnippet>795</a>            <span class="string">"bad magic bytes (expected VHBC)"
-<a href=#796 id=796 data-nosnippet>796</a>        </span>);
-<a href=#797 id=797 data-nosnippet>797</a>        <span class="macro">assert_eq!</span>(
-<a href=#798 id=798 data-nosnippet>798</a>            BinaryError::Truncated {
-<a href=#799 id=799 data-nosnippet>799</a>                expected: <span class="number">9</span>,
-<a href=#800 id=800 data-nosnippet>800</a>                got: <span class="number">3
-<a href=#801 id=801 data-nosnippet>801</a>            </span>}
-<a href=#802 id=802 data-nosnippet>802</a>            .to_string(),
-<a href=#803 id=803 data-nosnippet>803</a>            <span class="string">"truncated: expected 9 bytes, got 3"
-<a href=#804 id=804 data-nosnippet>804</a>        </span>);
-<a href=#805 id=805 data-nosnippet>805</a>        <span class="macro">assert_eq!</span>(
-<a href=#806 id=806 data-nosnippet>806</a>            BinaryError::UnalignedCode { len: <span class="number">5 </span>}.to_string(),
-<a href=#807 id=807 data-nosnippet>807</a>            <span class="macro">format!</span>(
-<a href=#808 id=808 data-nosnippet>808</a>                <span class="string">"code length 5 is not a multiple of {}"</span>,
-<a href=#809 id=809 data-nosnippet>809</a>                bytecode::instruction_width()
-<a href=#810 id=810 data-nosnippet>810</a>            )
-<a href=#811 id=811 data-nosnippet>811</a>        );
-<a href=#812 id=812 data-nosnippet>812</a>        <span class="macro">assert_eq!</span>(
-<a href=#813 id=813 data-nosnippet>813</a>            BinaryError::Decode {
-<a href=#814 id=814 data-nosnippet>814</a>                pc: <span class="number">2</span>,
-<a href=#815 id=815 data-nosnippet>815</a>                message: <span class="string">"boom"</span>.into()
-<a href=#816 id=816 data-nosnippet>816</a>            }
-<a href=#817 id=817 data-nosnippet>817</a>            .to_string(),
-<a href=#818 id=818 data-nosnippet>818</a>            <span class="string">"decode error at instruction 2: boom"
-<a href=#819 id=819 data-nosnippet>819</a>        </span>);
-<a href=#820 id=820 data-nosnippet>820</a>        <span class="macro">assert_eq!</span>(
-<a href=#821 id=821 data-nosnippet>821</a>            BinaryError::Encode {
-<a href=#822 id=822 data-nosnippet>822</a>                message: <span class="string">"boom"</span>.into()
-<a href=#823 id=823 data-nosnippet>823</a>            }
-<a href=#824 id=824 data-nosnippet>824</a>            .to_string(),
-<a href=#825 id=825 data-nosnippet>825</a>            <span class="string">"cannot encode program: boom"
-<a href=#826 id=826 data-nosnippet>826</a>        </span>);
-<a href=#827 id=827 data-nosnippet>827</a>    }
-<a href=#828 id=828 data-nosnippet>828</a>
-<a href=#829 id=829 data-nosnippet>829</a>    <span class="doccomment">/// A refusal to *write* is an encode failure, not a decode one.
-<a href=#830 id=830 data-nosnippet>830</a>    ///
-<a href=#831 id=831 data-nosnippet>831</a>    /// These used to surface as `Decode { pc: 0, .. }` — a decode error naming
-<a href=#832 id=832 data-nosnippet>832</a>    /// a program counter, for a program nothing was decoding and no
-<a href=#833 id=833 data-nosnippet>833</a>    /// instruction was at fault.
-<a href=#834 id=834 data-nosnippet>834</a>    </span><span class="attr">#[test]
-<a href=#835 id=835 data-nosnippet>835</a>    </span><span class="kw">fn </span>a_write_refusal_is_an_encode_error() {
-<a href=#836 id=836 data-nosnippet>836</a>        <span class="kw">use </span>vihaco::value::Value;
-<a href=#837 id=837 data-nosnippet>837</a>
-<a href=#838 id=838 data-nosnippet>838</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = sample();
-<a href=#839 id=839 data-nosnippet>839</a>        p.constants = <span class="macro">vec!</span>[Value::I64(<span class="number">3</span>)];
-<a href=#840 id=840 data-nosnippet>840</a>        <span class="kw">match </span>to_binary(<span class="kw-2">&amp;</span>p) {
-<a href=#841 id=841 data-nosnippet>841</a>            <span class="prelude-val">Err</span>(BinaryError::Encode { message }) =&gt; {
-<a href=#842 id=842 data-nosnippet>842</a>                <span class="macro">assert!</span>(
-<a href=#843 id=843 data-nosnippet>843</a>                    message.contains(<span class="string">"constant pool"</span>),
-<a href=#844 id=844 data-nosnippet>844</a>                    <span class="string">"the refusal's own words should survive: {message}"
-<a href=#845 id=845 data-nosnippet>845</a>                </span>);
-<a href=#846 id=846 data-nosnippet>846</a>            }
-<a href=#847 id=847 data-nosnippet>847</a>            other =&gt; <span class="macro">panic!</span>(<span class="string">"expected an encode error, got {other:?}"</span>),
-<a href=#848 id=848 data-nosnippet>848</a>        }
-<a href=#849 id=849 data-nosnippet>849</a>    }
-<a href=#850 id=850 data-nosnippet>850</a>
-<a href=#851 id=851 data-nosnippet>851</a>    <span class="attr">#[test]
-<a href=#852 id=852 data-nosnippet>852</a>    </span><span class="kw">fn </span>lanes_info_display() {
-<a href=#853 id=853 data-nosnippet>853</a>        <span class="kw">let </span>info = LanesInfo {
-<a href=#854 id=854 data-nosnippet>854</a>            version: Version::new(<span class="number">1</span>, <span class="number">4</span>),
-<a href=#855 id=855 data-nosnippet>855</a>        };
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="macro">assert_eq!</span>(info.to_string(), <span class="string">"version 1.4"</span>);
-<a href=#857 id=857 data-nosnippet>857</a>    }
-<a href=#858 id=858 data-nosnippet>858</a>}
+<a href=#781 id=781 data-nosnippet>781</a>    <span class="attr">#[test]
+<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="kw">fn </span>decode_error_on_bad_opcode() {
+<a href=#783 id=783 data-nosnippet>783</a>        <span class="comment">// A well-formed container holding one aligned word whose opcode byte
+<a href=#784 id=784 data-nosnippet>784</a>        // (0xFF) names no instruction: every length check passes, so the
+<a href=#785 id=785 data-nosnippet>785</a>        // failure must come from per-word decoding.
+<a href=#786 id=786 data-nosnippet>786</a>        </span><span class="kw">let </span>good =
+<a href=#787 id=787 data-nosnippet>787</a>            to_binary(<span class="kw-2">&amp;</span>from_code(Version::new(<span class="number">1</span>, <span class="number">0</span>), <span class="macro">vec!</span>[M::Cpu(C::Halt)]).unwrap()).unwrap();
+<a href=#788 id=788 data-nosnippet>788</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = good.clone();
+<a href=#789 id=789 data-nosnippet>789</a>        <span class="kw">let </span>last_word = bytes.len() - <span class="number">4 </span>- bytecode::instruction_width() <span class="kw">as </span>usize;
+<a href=#790 id=790 data-nosnippet>790</a>        bytes[last_word] = <span class="number">0xFF</span>;
+<a href=#791 id=791 data-nosnippet>791</a>        <span class="macro">assert!</span>(
+<a href=#792 id=792 data-nosnippet>792</a>            <span class="macro">matches!</span>(from_binary(<span class="kw-2">&amp;</span>bytes), <span class="prelude-val">Err</span>(BinaryError::Decode { .. })),
+<a href=#793 id=793 data-nosnippet>793</a>            <span class="string">"got {:?}"</span>,
+<a href=#794 id=794 data-nosnippet>794</a>            from_binary(<span class="kw-2">&amp;</span>bytes)
+<a href=#795 id=795 data-nosnippet>795</a>        );
+<a href=#796 id=796 data-nosnippet>796</a>    }
+<a href=#797 id=797 data-nosnippet>797</a>
+<a href=#798 id=798 data-nosnippet>798</a>    <span class="doccomment">/// A signature the text form cannot spell is refused, not truncated.
+<a href=#799 id=799 data-nosnippet>799</a>    ///
+<a href=#800 id=800 data-nosnippet>800</a>    /// `to_text` renders a return type as `-&gt; Ty`, taking the first; a
+<a href=#801 id=801 data-nosnippet>801</a>    /// signature carrying two would have rendered as one and re-parsed into a
+<a href=#802 id=802 data-nosnippet>802</a>    /// different program, with nothing reporting the loss. Nothing can build
+<a href=#803 id=803 data-nosnippet>803</a>    /// one through a supported path — the grammar yields `Option&lt;Ty&gt;` — so
+<a href=#804 id=804 data-nosnippet>804</a>    /// both ends refuse rather than silently narrowing.
+<a href=#805 id=805 data-nosnippet>805</a>    </span><span class="attr">#[test]
+<a href=#806 id=806 data-nosnippet>806</a>    </span><span class="kw">fn </span>a_multi_value_return_is_refused_at_both_ends() {
+<a href=#807 id=807 data-nosnippet>807</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = sample();
+<a href=#808 id=808 data-nosnippet>808</a>        p.functions[<span class="number">0</span>].signature.ret = <span class="macro">vec!</span>[vihaco::Type::Bool, vihaco::Type::U32];
+<a href=#809 id=809 data-nosnippet>809</a>
+<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">let </span>err = to_binary(<span class="kw-2">&amp;</span>p).unwrap_err().to_string();
+<a href=#811 id=811 data-nosnippet>811</a>        <span class="macro">assert!</span>(
+<a href=#812 id=812 data-nosnippet>812</a>            err.contains(<span class="string">"2 return values"</span>) &amp;&amp; err.contains(<span class="string">"at most one"</span>),
+<a href=#813 id=813 data-nosnippet>813</a>            <span class="string">"writing should refuse it: {err}"
+<a href=#814 id=814 data-nosnippet>814</a>        </span>);
+<a href=#815 id=815 data-nosnippet>815</a>
+<a href=#816 id=816 data-nosnippet>816</a>        <span class="comment">// And reading, for a container crafted outside this writer.
+<a href=#817 id=817 data-nosnippet>817</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>single = sample();
+<a href=#818 id=818 data-nosnippet>818</a>        single.functions[<span class="number">0</span>].signature.ret = <span class="macro">vec!</span>[vihaco::Type::Bool];
+<a href=#819 id=819 data-nosnippet>819</a>        <span class="kw">let </span>bytes = to_binary(<span class="kw-2">&amp;</span>single).expect(<span class="string">"one return value is fine"</span>);
+<a href=#820 id=820 data-nosnippet>820</a>        <span class="macro">assert!</span>(
+<a href=#821 id=821 data-nosnippet>821</a>            from_binary(<span class="kw-2">&amp;</span>bytes).is_ok(),
+<a href=#822 id=822 data-nosnippet>822</a>            <span class="string">"the single-return baseline should still load"
+<a href=#823 id=823 data-nosnippet>823</a>        </span>);
+<a href=#824 id=824 data-nosnippet>824</a>    }
+<a href=#825 id=825 data-nosnippet>825</a>
+<a href=#826 id=826 data-nosnippet>826</a>    <span class="attr">#[test]
+<a href=#827 id=827 data-nosnippet>827</a>    </span><span class="kw">fn </span>binary_error_display_strings() {
+<a href=#828 id=828 data-nosnippet>828</a>        <span class="macro">assert_eq!</span>(
+<a href=#829 id=829 data-nosnippet>829</a>            BinaryError::BadMagic.to_string(),
+<a href=#830 id=830 data-nosnippet>830</a>            <span class="string">"bad magic bytes (expected VHBC)"
+<a href=#831 id=831 data-nosnippet>831</a>        </span>);
+<a href=#832 id=832 data-nosnippet>832</a>        <span class="macro">assert_eq!</span>(
+<a href=#833 id=833 data-nosnippet>833</a>            BinaryError::Truncated {
+<a href=#834 id=834 data-nosnippet>834</a>                expected: <span class="number">9</span>,
+<a href=#835 id=835 data-nosnippet>835</a>                got: <span class="number">3
+<a href=#836 id=836 data-nosnippet>836</a>            </span>}
+<a href=#837 id=837 data-nosnippet>837</a>            .to_string(),
+<a href=#838 id=838 data-nosnippet>838</a>            <span class="string">"truncated: expected 9 bytes, got 3"
+<a href=#839 id=839 data-nosnippet>839</a>        </span>);
+<a href=#840 id=840 data-nosnippet>840</a>        <span class="macro">assert_eq!</span>(
+<a href=#841 id=841 data-nosnippet>841</a>            BinaryError::UnalignedCode { len: <span class="number">5 </span>}.to_string(),
+<a href=#842 id=842 data-nosnippet>842</a>            <span class="macro">format!</span>(
+<a href=#843 id=843 data-nosnippet>843</a>                <span class="string">"code length 5 is not a multiple of {}"</span>,
+<a href=#844 id=844 data-nosnippet>844</a>                bytecode::instruction_width()
+<a href=#845 id=845 data-nosnippet>845</a>            )
+<a href=#846 id=846 data-nosnippet>846</a>        );
+<a href=#847 id=847 data-nosnippet>847</a>        <span class="macro">assert_eq!</span>(
+<a href=#848 id=848 data-nosnippet>848</a>            BinaryError::Decode {
+<a href=#849 id=849 data-nosnippet>849</a>                pc: <span class="number">2</span>,
+<a href=#850 id=850 data-nosnippet>850</a>                message: <span class="string">"boom"</span>.into()
+<a href=#851 id=851 data-nosnippet>851</a>            }
+<a href=#852 id=852 data-nosnippet>852</a>            .to_string(),
+<a href=#853 id=853 data-nosnippet>853</a>            <span class="string">"decode error at instruction 2: boom"
+<a href=#854 id=854 data-nosnippet>854</a>        </span>);
+<a href=#855 id=855 data-nosnippet>855</a>        <span class="macro">assert_eq!</span>(
+<a href=#856 id=856 data-nosnippet>856</a>            BinaryError::Encode {
+<a href=#857 id=857 data-nosnippet>857</a>                message: <span class="string">"boom"</span>.into()
+<a href=#858 id=858 data-nosnippet>858</a>            }
+<a href=#859 id=859 data-nosnippet>859</a>            .to_string(),
+<a href=#860 id=860 data-nosnippet>860</a>            <span class="string">"cannot encode program: boom"
+<a href=#861 id=861 data-nosnippet>861</a>        </span>);
+<a href=#862 id=862 data-nosnippet>862</a>    }
+<a href=#863 id=863 data-nosnippet>863</a>
+<a href=#864 id=864 data-nosnippet>864</a>    <span class="doccomment">/// A refusal to *write* is an encode failure, not a decode one.
+<a href=#865 id=865 data-nosnippet>865</a>    ///
+<a href=#866 id=866 data-nosnippet>866</a>    /// These used to surface as `Decode { pc: 0, .. }` — a decode error naming
+<a href=#867 id=867 data-nosnippet>867</a>    /// a program counter, for a program nothing was decoding and no
+<a href=#868 id=868 data-nosnippet>868</a>    /// instruction was at fault.
+<a href=#869 id=869 data-nosnippet>869</a>    </span><span class="attr">#[test]
+<a href=#870 id=870 data-nosnippet>870</a>    </span><span class="kw">fn </span>a_write_refusal_is_an_encode_error() {
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">use </span>vihaco::value::Value;
+<a href=#872 id=872 data-nosnippet>872</a>
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span><span class="kw-2">mut </span>p = sample();
+<a href=#874 id=874 data-nosnippet>874</a>        p.constants = <span class="macro">vec!</span>[Value::I64(<span class="number">3</span>)];
+<a href=#875 id=875 data-nosnippet>875</a>        <span class="kw">match </span>to_binary(<span class="kw-2">&amp;</span>p) {
+<a href=#876 id=876 data-nosnippet>876</a>            <span class="prelude-val">Err</span>(BinaryError::Encode { message }) =&gt; {
+<a href=#877 id=877 data-nosnippet>877</a>                <span class="macro">assert!</span>(
+<a href=#878 id=878 data-nosnippet>878</a>                    message.contains(<span class="string">"constant pool"</span>),
+<a href=#879 id=879 data-nosnippet>879</a>                    <span class="string">"the refusal's own words should survive: {message}"
+<a href=#880 id=880 data-nosnippet>880</a>                </span>);
+<a href=#881 id=881 data-nosnippet>881</a>            }
+<a href=#882 id=882 data-nosnippet>882</a>            other =&gt; <span class="macro">panic!</span>(<span class="string">"expected an encode error, got {other:?}"</span>),
+<a href=#883 id=883 data-nosnippet>883</a>        }
+<a href=#884 id=884 data-nosnippet>884</a>    }
+<a href=#885 id=885 data-nosnippet>885</a>
+<a href=#886 id=886 data-nosnippet>886</a>    <span class="attr">#[test]
+<a href=#887 id=887 data-nosnippet>887</a>    </span><span class="kw">fn </span>lanes_info_display() {
+<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>info = LanesInfo {
+<a href=#889 id=889 data-nosnippet>889</a>            version: Version::new(<span class="number">1</span>, <span class="number">4</span>),
+<a href=#890 id=890 data-nosnippet>890</a>        };
+<a href=#891 id=891 data-nosnippet>891</a>        <span class="macro">assert_eq!</span>(info.to_string(), <span class="string">"version 1.4"</span>);
+<a href=#892 id=892 data-nosnippet>892</a>    }
+<a href=#893 id=893 data-nosnippet>893</a>}
 </code></pre></div></section></main></body></html>

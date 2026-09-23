@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["BinaryError"],"fn":["entry_function","from_binary","from_code","to_binary"],"struct":["LanesInfo"],"type":["Program"]};
+window.SIDEBAR_ITEMS = {"enum":["BinaryError"],"fn":["entry_function","from_binary","from_code","local_count","to_binary"],"struct":["LanesInfo"],"type":["Program"]};

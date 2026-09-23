@@ -782,58 +782,50 @@ and both halves are assigned by declaration order — so they renumber whenever
 either instruction set gains a variant. The values below are correct for this
 revision; compare identity with <code>op_name()</code>, never a literal.</p>
 </blockquote>
-<h2 id="lanes-device-0x01--stack-ops-vihaco-cpu-lacks"><a class="header" href="#lanes-device-0x01--stack-ops-vihaco-cpu-lacks"><code>lanes</code> device (<code>0x01</code>) — stack ops vihaco-cpu lacks</a></h2>
-<p><code>pop</code> and <code>swap</code> live here because vihaco-cpu's CPU has neither. The machine
-does the stack work on the device's behalf.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.pop</code></td><td><code>0x0100</code></td><td><code>(a -- )</code></td><td>Discard top of stack</td></tr>
-<tr><td><code>lanes::lanes.swap</code></td><td><code>0x0101</code></td><td><code>(a b -- b a)</code></td><td>Swap top two elements</td></tr>
-</tbody></table>
-</div>
 <h2 id="lanes-device-0x01--address-constants"><a class="header" href="#lanes-device-0x01--address-constants"><code>lanes</code> device (<code>0x01</code>) — address constants</a></h2>
 <p>Kept as lanes instructions, rather than plain <code>cpu::cpu.const u64</code>, so that
 validation can tell a location from a lane from a zone.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.const_loc</code></td><td><code>0x0102</code></td><td><code>( -- loc)</code></td><td>Push location address</td></tr>
-<tr><td><code>lanes::lanes.const_lane</code></td><td><code>0x0103</code></td><td><code>( -- lane)</code></td><td>Push lane address</td></tr>
-<tr><td><code>lanes::lanes.const_zone</code></td><td><code>0x0104</code></td><td><code>( -- zone)</code></td><td>Push zone address</td></tr>
+<tr><td><code>lanes::lanes.const_loc</code></td><td><code>0x0100</code></td><td><code>( -- loc)</code></td><td>Push location address</td></tr>
+<tr><td><code>lanes::lanes.const_lane</code></td><td><code>0x0101</code></td><td><code>( -- lane)</code></td><td>Push lane address</td></tr>
+<tr><td><code>lanes::lanes.const_zone</code></td><td><code>0x0102</code></td><td><code>( -- zone)</code></td><td>Push zone address</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--atom-arrangement"><a class="header" href="#lanes-device-0x01--atom-arrangement"><code>lanes</code> device (<code>0x01</code>) — atom arrangement</a></h2>
 <p>The only ops the machine actually <strong>executes</strong>: they drive the atom state and
 fault on an illegal move.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.initial_fill</code></td><td><code>0x0105</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Initial atom loading</td></tr>
-<tr><td><code>lanes::lanes.fill</code></td><td><code>0x0106</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Atom refill</td></tr>
-<tr><td><code>lanes::lanes.move</code></td><td><code>0x0107</code></td><td><code>(lane₁..laneₙ -- )</code></td><td>Atom transport along lanes</td></tr>
+<tr><td><code>lanes::lanes.initial_fill</code></td><td><code>0x0103</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Initial atom loading</td></tr>
+<tr><td><code>lanes::lanes.fill</code></td><td><code>0x0104</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Atom refill</td></tr>
+<tr><td><code>lanes::lanes.move</code></td><td><code>0x0105</code></td><td><code>(lane₁..laneₙ -- )</code></td><td>Atom transport along lanes</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--quantum-gates"><a class="header" href="#lanes-device-0x01--quantum-gates"><code>lanes</code> device (<code>0x01</code>) — quantum gates</a></h2>
 <p>Not simulated — emitted as effects for hardware or a simulator downstream.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.local_rz</code></td><td><code>0x0108</code></td><td><code>(loc₁..locₙ θ -- )</code></td><td>Local Rz rotation</td></tr>
-<tr><td><code>lanes::lanes.local_r</code></td><td><code>0x0109</code></td><td><code>(loc₁..locₙ θ φ -- )</code></td><td>Local R rotation</td></tr>
-<tr><td><code>lanes::lanes.global_rz</code></td><td><code>0x010A</code></td><td><code>(θ -- )</code></td><td>Global Rz rotation</td></tr>
-<tr><td><code>lanes::lanes.global_r</code></td><td><code>0x010B</code></td><td><code>(θ φ -- )</code></td><td>Global R rotation</td></tr>
-<tr><td><code>lanes::lanes.cz</code></td><td><code>0x010C</code></td><td><code>(zone -- )</code></td><td>Controlled-Z gate on zone</td></tr>
+<tr><td><code>lanes::lanes.local_rz</code></td><td><code>0x0106</code></td><td><code>(loc₁..locₙ θ -- )</code></td><td>Local Rz rotation</td></tr>
+<tr><td><code>lanes::lanes.local_r</code></td><td><code>0x0107</code></td><td><code>(loc₁..locₙ θ φ -- )</code></td><td>Local R rotation</td></tr>
+<tr><td><code>lanes::lanes.global_rz</code></td><td><code>0x0108</code></td><td><code>(θ -- )</code></td><td>Global Rz rotation</td></tr>
+<tr><td><code>lanes::lanes.global_r</code></td><td><code>0x0109</code></td><td><code>(θ φ -- )</code></td><td>Global R rotation</td></tr>
+<tr><td><code>lanes::lanes.cz</code></td><td><code>0x010A</code></td><td><code>(zone -- )</code></td><td>Controlled-Z gate on zone</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--measurement"><a class="header" href="#lanes-device-0x01--measurement"><code>lanes</code> device (<code>0x01</code>) — measurement</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.measure</code></td><td><code>0x010D</code></td><td><code>(zone₁..zoneₙ -- future₁..futureₙ)</code></td><td>Initiate measurement</td></tr>
-<tr><td><code>lanes::lanes.await_measure</code></td><td><code>0x010E</code></td><td><code>(future -- array_ref)</code></td><td>Wait for measurement result</td></tr>
+<tr><td><code>lanes::lanes.measure</code></td><td><code>0x010B</code></td><td><code>(zone₁..zoneₙ -- future₁..futureₙ)</code></td><td>Initiate measurement</td></tr>
+<tr><td><code>lanes::lanes.await_measure</code></td><td><code>0x010C</code></td><td><code>(future -- array_ref)</code></td><td>Wait for measurement result</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--arrays"><a class="header" href="#lanes-device-0x01--arrays"><code>lanes</code> device (<code>0x01</code>) — arrays</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.new_array</code></td><td><code>0x010F</code></td><td><code>(elem₁..elemₙ -- array_ref)</code></td><td>Construct array from stack</td></tr>
-<tr><td><code>lanes::lanes.get_item</code></td><td><code>0x0110</code></td><td><code>(array_ref idx₁..idxₙ -- value)</code></td><td>Index into array</td></tr>
+<tr><td><code>lanes::lanes.new_array</code></td><td><code>0x010D</code></td><td><code>(elem₁..elemₙ -- array_ref)</code></td><td>Construct array from stack</td></tr>
+<tr><td><code>lanes::lanes.get_item</code></td><td><code>0x010E</code></td><td><code>(array_ref idx₁..idxₙ -- value)</code></td><td>Index into array</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--detectors-and-observables"><a class="header" href="#lanes-device-0x01--detectors-and-observables"><code>lanes</code> device (<code>0x01</code>) — detectors and observables</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.set_detector</code></td><td><code>0x0111</code></td><td><code>(array_ref -- detector_ref)</code></td><td>Set detector</td></tr>
-<tr><td><code>lanes::lanes.set_observable</code></td><td><code>0x0112</code></td><td><code>(array_ref -- observable_ref)</code></td><td>Set observable</td></tr>
+<tr><td><code>lanes::lanes.set_detector</code></td><td><code>0x010F</code></td><td><code>(array_ref -- detector_ref)</code></td><td>Set detector</td></tr>
+<tr><td><code>lanes::lanes.set_observable</code></td><td><code>0x0110</code></td><td><code>(array_ref -- observable_ref)</code></td><td>Set observable</td></tr>
 </tbody></table>
 </div>
 <h2 id="cpu-device-0x00--vihaco-cpu"><a class="header" href="#cpu-device-0x00--vihaco-cpu"><code>cpu</code> device (<code>0x00</code>) — vihaco-cpu</a></h2>
@@ -841,11 +833,13 @@ fault on an illegal move.</p>
 comparison, bitwise, control flow, the heap allocator). The ones below are the
 ones a lanes program actually contains; the rest decode and validate but are
 never generated.</p>
-<h3 id="values-and-termination"><a class="header" href="#values-and-termination">Values and termination</a></h3>
+<h3 id="values-locals-and-termination"><a class="header" href="#values-locals-and-termination">Values, locals and termination</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>cpu::cpu.const f64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- float)</code></td><td>Push 64-bit float constant</td></tr>
 <tr><td><code>cpu::cpu.const i64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- int)</code></td><td>Push 64-bit integer constant</td></tr>
 <tr><td><code>cpu::cpu.dup</code></td><td><code>0x000D</code></td><td><code>(a -- a a)</code></td><td>Duplicate top of stack</td></tr>
+<tr><td><code>cpu::cpu.load &lt;ty&gt;, &lt;n&gt;</code></td><td><code>0x000B</code></td><td><code>( -- a)</code></td><td>Push a copy of local <code>n</code></td></tr>
+<tr><td><code>cpu::cpu.store &lt;ty&gt;, &lt;n&gt;</code></td><td><code>0x000C</code></td><td><code>(a -- )</code></td><td>Pop the top into local <code>n</code></td></tr>
 <tr><td><code>cpu::cpu.halt</code></td><td><code>0x0009</code></td><td><code>( -- )</code></td><td>Halt execution</td></tr>
 <tr><td><code>cpu::cpu.ret &lt;n&gt;</code></td><td><code>0x0006</code></td><td><code>( -- )</code></td><td>Return the top <code>n</code> values from the current function</td></tr>
 </tbody></table>
@@ -853,6 +847,11 @@ never generated.</p>
 <p>Note that <code>const</code> is one typed instruction, so <code>const f64</code> and <code>const i64</code> share
 an opcode and differ in their operand. The Python <code>op_name()</code> still reports
 <code>const_float</code> / <code>const_int</code>, because the decoder needs the distinction.</p>
+<p>There is no <code>pop</code> or <code>swap</code>. A function's locals are slots of their own below
+its operands, so parking a value in one takes it out of the operands' way:
+<code>store &lt;ty&gt;, 0</code> discards the top, and <code>store 0; store 1; load 0; load 1</code> swaps
+the top two. The compiler spills a value it needs more than once and loads it
+back for each use.</p>
 <h3 id="structure"><a class="header" href="#structure">Structure</a></h3>
 <p>Emitted for <strong>every</strong> program, not only ones that declare several functions: the
 assembler wraps each <code>fn @name()</code> body in a marker pair, so even a lone <code>@main</code>
@@ -876,8 +875,9 @@ runs straight-line code only, and validation rejects them.</p>
 </tbody></table>
 </div>
 <p>See <a href="bytecode/inst-spec.html#functions-labels-and-control-flow">Functions, labels and control flow</a>
-for the calling convention — in particular that locals <em>alias</em> the operand
-stack, so <code>call</code> moves a frame boundary rather than copying arguments.</p>
+for the calling convention — in particular that <code>call</code> moves a frame boundary
+rather than copying arguments: the top <code>arity</code> operands <em>become</em> the callee's
+first locals, and the rest of its locals are reserved above them.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="bloqade-lanes-bytecode-instruction-specification"><a class="header" href="#bloqade-lanes-bytecode-instruction-specification">Bloqade Lanes Bytecode Instruction Specification</a></h1>
 <p>This document specifies the bytecode instruction set used by Bloqade Lanes to describe atom shuttling programs for neutral atom quantum processors. A bytecode program is a sequence of fixed-width instructions that drive the full lifecycle of a computation: loading atoms into an optical lattice, shuttling them between sites using AOD (Acousto-Optic Deflector) transport, applying quantum gates, and reading out measurement results.</p>
 <p>The instruction set is organized around the physical structure of the hardware. Atoms occupy <strong>sites</strong> within <strong>words</strong> (rows of trapping positions in the lattice). <strong>Buses</strong> define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A <strong>lane</strong> is a single atom trajectory along a bus — one source site to one destination site. A <strong>zone</strong> groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define locations where atoms are measured. These concepts map directly to the address types used in the bytecode: <code>LocationAddr</code> (word, site), <code>LaneAddr</code> (word, site, bus, direction), and <code>ZoneAddr</code> (zone).</p>
@@ -886,7 +886,7 @@ stack, so <code>call</code> moves a frame boundary rather than copying arguments
 <p>A lanes program runs on a <strong>composite machine</strong> of two vihaco devices:</p>
 <div class="table-wrapper"><table><thead><tr><th>Device</th><th>Code</th><th>Supplies</th></tr></thead><tbody>
 <tr><td><code>cpu</code></td><td><code>0x00</code></td><td>vihaco-cpu's <code>CPU</code> component: the stack, constants, arithmetic, comparisons, control flow, the heap allocator</td></tr>
-<tr><td><code>lanes</code></td><td><code>0x01</code></td><td>atom movement, gates, measurement, arrays, and the <code>pop</code>/<code>swap</code> the CPU lacks</td></tr>
+<tr><td><code>lanes</code></td><td><code>0x01</code></td><td>atom movement, gates, measurement, arrays</td></tr>
 </tbody></table>
 </div>
 <p>Instructions are spelled <code>&lt;device&gt;::&lt;dialect&gt;.&lt;mnemonic&gt;</code>. The first half is the
@@ -1035,14 +1035,37 @@ address, and it is not stored in the code stream. See
 <a href="bytecode/inst-spec.html#symbol-tables">Symbol tables</a>.</li>
 </ul>
 <h3 id="frames-and-locals"><a class="header" href="#frames-and-locals">Frames and locals</a></h3>
+<p>A frame is the frame of vihaco#110: its locals, then its operands above them.</p>
+<pre><code class="language-text">[caller's values][locals: parameters, then scratch][operands]
+                  ^ base                            ^ base + local_count
+</code></pre>
 <p><code>call &lt;arity&gt;, &lt;name&gt;</code> makes the top <code>arity</code> operands the callee's locals
-<code>0..arity-1</code> — that is how arguments are passed. <code>ret &lt;keep&gt;</code> returns the top
-<code>keep</code> values and discards the rest of the frame.</p>
-<p>A frame holds <strong>no storage of its own</strong>: locals are <code>stack[frame.base + index]</code>,
-a window into the same operand stack. So <code>load</code>/<code>store</code> address a function's
-arguments, not scratch registers, and a function with no parameters has no
-private locals. That is why <code>pop</code> and <code>swap</code> are lanes instructions rather than
-being expressed with <code>load</code>/<code>store</code>.</p>
+<code>0..arity-1</code> — that is how arguments are passed — and reserves the rest of its
+locals above them before its first instruction. <code>ret &lt;keep&gt;</code> returns the top
+<code>keep</code> values and discards the rest of the frame, locals included.</p>
+<ul>
+<li><strong>How many locals.</strong> A function reserves `max(arity, every load/store index
+<ul>
+<li>1)<code>of them. The count is derived from the body, never declared: there is no locals syntax, and the function table's</code>local_count` is recomputed from
+the code whenever a program is loaded. An index is at most 1023.</li>
+</ul>
+</li>
+<li><strong>What they start as.</strong> A local starts as the <code>Undefined</code> placeholder, and
+a typed <code>load</code> of any local holding it reads as the zero of that type —
+whether nothing wrote it or it holds a placeholder a lanes op pushed, stored
+or passed as an argument. That is how vihaco#110's zero-filled frames of
+untyped words will read. <code>load undef</code> reads the placeholder itself.</li>
+<li><strong>What reaches them.</strong> Only <code>load</code> (push a copy) and <code>store</code> (pop into the
+slot). No operand op can consume a local, a parameter included — a function
+uses its argument by loading it — and popping with no operands left is a
+stack underflow even though the stack below is not empty.</li>
+</ul>
+<p>That is what <code>pop</code> and <code>swap</code> used to be for, and why they are gone:
+<code>store &lt;ty&gt;, 0</code> discards the top, <code>store 0; load 0; load 0</code> duplicates it, and
+<code>store 0; store 1; load 0; load 1</code> swaps the top two.</p>
+<p>The released vihaco 0.4.1 has none of this — its locals alias the operand
+stack from the frame base — so <code>LanesMachine</code> emulates the model until the
+dependency moves past it.</p>
 <p><code>to_text</code> emits this form and <code>parse_text</code> accepts it, round-tripping losslessly.</p>
 <h2 id="address-encoding-1"><a class="header" href="#address-encoding-1">Address Encoding</a></h2>
 <p>Addresses are bit-packed into a single integer operand, written little-endian.</p>
@@ -1097,8 +1120,8 @@ being expressed with <code>load</code>/<code>store</code>.</p>
 <h2 id="instructions"><a class="header" href="#instructions">Instructions</a></h2>
 <h3 id="stack-ops"><a class="header" href="#stack-ops">Stack ops</a></h3>
 <p>These come from vihaco-cpu's <code>CPU</code> component, composed as the <code>cpu</code> device
-(see <a href="bytecode/inst-spec.html#the-machine">The machine</a>) — except <code>pop</code> and <code>swap</code>, which vihaco-cpu
-has neither of and which therefore live on the lanes device.</p>
+(see <a href="bytecode/inst-spec.html#the-machine">The machine</a>). There is no <code>pop</code> or <code>swap</code>; locals spell
+both — see <a href="bytecode/inst-spec.html#frames-and-locals">Frames and locals</a>.</p>
 <h4 id="cpucpuconst-type-value--push-a-constant"><a class="header" href="#cpucpuconst-type-value--push-a-constant"><code>cpu::cpu.const &lt;type&gt;, &lt;value&gt;</code> — Push a constant</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>Opcode</td><td><code>0x0011</code></td></tr>
@@ -1119,20 +1142,25 @@ which.</p>
 <tr><td>Stack</td><td><code>(a -- a a)</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="laneslanespop--discard-top-of-stack"><a class="header" href="#laneslanespop--discard-top-of-stack"><code>lanes::lanes.pop</code> — Discard top of stack</a></h4>
+<h4 id="cpucpuload-type-n--push-a-copy-of-local-n"><a class="header" href="#cpucpuload-type-n--push-a-copy-of-local-n"><code>cpu::cpu.load &lt;type&gt;, &lt;n&gt;</code> — Push a copy of local <code>n</code></a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0100</code></td></tr>
-<tr><td>Operands</td><td>none</td></tr>
+<tr><td>Opcode</td><td><code>0x000B</code></td></tr>
+<tr><td>Operands</td><td>type tag (1 byte) + local index, <code>u32</code> LE (4 bytes)</td></tr>
+<tr><td>Stack</td><td><code>( -- a)</code></td></tr>
+</tbody></table>
+</div>
+<p>The local must hold a value of <code>&lt;type&gt;</code>, or the <code>Undefined</code> placeholder —
+unwritten, or a lanes op's result stored there — which reads as that type's
+zero. <code>load undef</code> reads the placeholder itself, and refuses a concrete value.</p>
+<h4 id="cpucpustore-type-n--pop-the-top-into-local-n"><a class="header" href="#cpucpustore-type-n--pop-the-top-into-local-n"><code>cpu::cpu.store &lt;type&gt;, &lt;n&gt;</code> — Pop the top into local <code>n</code></a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Opcode</td><td><code>0x000C</code></td></tr>
+<tr><td>Operands</td><td>type tag (1 byte) + local index, <code>u32</code> LE (4 bytes)</td></tr>
 <tr><td>Stack</td><td><code>(a -- )</code></td></tr>
 </tbody></table>
 </div>
-<h4 id="laneslanesswap--swap-top-two-stack-elements"><a class="header" href="#laneslanesswap--swap-top-two-stack-elements"><code>lanes::lanes.swap</code> — Swap top two stack elements</a></h4>
-<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0101</code></td></tr>
-<tr><td>Operands</td><td>none</td></tr>
-<tr><td>Stack</td><td><code>(a b -- b a)</code></td></tr>
-</tbody></table>
-</div>
+<p>The value must be a <code>&lt;type&gt;</code>, or a placeholder a lanes op pushed in place of a
+result it does not simulate.</p>
 <h4 id="cpucpuret-n--return-from-the-current-function"><a class="header" href="#cpucpuret-n--return-from-the-current-function"><code>cpu::cpu.ret &lt;n&gt;</code> — Return from the current function</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>Opcode</td><td><code>0x0006</code></td></tr>
@@ -1152,21 +1180,21 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <h3 id="address-constants"><a class="header" href="#address-constants">Address constants</a></h3>
 <h4 id="laneslanesconst_loc--push-location-address"><a class="header" href="#laneslanesconst_loc--push-location-address"><code>lanes::lanes.const_loc</code> — Push location address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0102</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0100</code></td></tr>
 <tr><td>Operands</td><td><code>LocationAddr</code> as <code>u64</code> LE — <code>[zone_id:8][word_id:16][site_id:16][pad:24]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- loc)</code></td></tr>
 </tbody></table>
 </div>
 <h4 id="laneslanesconst_lane--push-lane-address"><a class="header" href="#laneslanesconst_lane--push-lane-address"><code>lanes::lanes.const_lane</code> — Push lane address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0103</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0101</code></td></tr>
 <tr><td>Operands</td><td><code>LaneAddr</code> as <code>u64</code> LE — <code>[dir:1][mt:2][zone_id:8][pad:5][bus_id:16][word_id:16][site_id:16]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- lane)</code></td></tr>
 </tbody></table>
 </div>
 <h4 id="laneslanesconst_zone--push-zone-address"><a class="header" href="#laneslanesconst_zone--push-zone-address"><code>lanes::lanes.const_zone</code> — Push zone address</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0104</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0102</code></td></tr>
 <tr><td>Operands</td><td><code>ZoneAddr</code> as <code>u32</code> LE — <code>[pad:24][zone_id:8]</code></td></tr>
 <tr><td>Stack</td><td><code>( -- zone)</code></td></tr>
 </tbody></table>
@@ -1174,7 +1202,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <h3 id="atom-arrangement"><a class="header" href="#atom-arrangement">Atom arrangement</a></h3>
 <h4 id="laneslanesinitial_fill--initial-atom-loading"><a class="header" href="#laneslanesinitial_fill--initial-atom-loading"><code>lanes::lanes.initial_fill</code> — Initial atom loading</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0105</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0103</code></td></tr>
 <tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
 </tbody></table>
@@ -1182,7 +1210,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops <code>n</code> location addresses and performs the initial atom fill at those sites.</p>
 <h4 id="laneslanesfill--atom-refill"><a class="header" href="#laneslanesfill--atom-refill"><code>lanes::lanes.fill</code> — Atom refill</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0106</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0104</code></td></tr>
 <tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
 </tbody></table>
@@ -1190,7 +1218,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops <code>n</code> location addresses and refills atoms at those sites.</p>
 <h4 id="laneslanesmove--atom-transport"><a class="header" href="#laneslanesmove--atom-transport"><code>lanes::lanes.move</code> — Atom transport</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0107</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0105</code></td></tr>
 <tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(lane₁ lane₂ … laneₙ -- )</code></td></tr>
 </tbody></table>
@@ -1214,7 +1242,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <h3 id="quantum-gates"><a class="header" href="#quantum-gates">Quantum gates</a></h3>
 <h4 id="laneslaneslocal_r--local-r-rotation"><a class="header" href="#laneslaneslocal_r--local-r-rotation"><code>lanes::lanes.local_r</code> — Local R rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0109</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0107</code></td></tr>
 <tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ φ -- )</code></td></tr>
 </tbody></table>
@@ -1222,7 +1250,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops 2 float parameters (φ = axis angle, θ = rotation angle) then <code>n</code> location addresses, and applies a local R rotation. The call convention matches the SSA IR: <code>local_r(%φ, %θ, %loc₁, …)</code> — first argument (φ) is pushed last and popped first.</p>
 <h4 id="laneslaneslocal_rz--local-rz-rotation"><a class="header" href="#laneslaneslocal_rz--local-rz-rotation"><code>lanes::lanes.local_rz</code> — Local Rz rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0108</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0106</code></td></tr>
 <tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ -- )</code></td></tr>
 </tbody></table>
@@ -1230,7 +1258,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops 1 float parameter (θ = rotation angle) then <code>n</code> location addresses, and applies a local Rz rotation. The call convention matches the SSA IR: <code>local_rz(%θ, %loc₁, …)</code>.</p>
 <h4 id="laneslanesglobal_r--global-r-rotation"><a class="header" href="#laneslanesglobal_r--global-r-rotation"><code>lanes::lanes.global_r</code> — Global R rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x010B</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0109</code></td></tr>
 <tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(θ φ -- )</code></td></tr>
 </tbody></table>
@@ -1238,7 +1266,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops 2 float parameters (φ = axis angle, θ = rotation angle), applies a global R rotation. The call convention matches the SSA IR: <code>global_r(%φ, %θ)</code>.</p>
 <h4 id="laneslanesglobal_rz--global-rz-rotation"><a class="header" href="#laneslanesglobal_rz--global-rz-rotation"><code>lanes::lanes.global_rz</code> — Global Rz rotation</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x010A</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0108</code></td></tr>
 <tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(θ -- )</code></td></tr>
 </tbody></table>
@@ -1246,7 +1274,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops 1 float parameter (θ = rotation angle), applies a global Rz rotation. Since there is only one parameter, it is both pushed last and popped first.</p>
 <h4 id="laneslanescz--controlled-z-gate"><a class="header" href="#laneslanescz--controlled-z-gate"><code>lanes::lanes.cz</code> — Controlled-Z gate</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x010C</code></td></tr>
+<tr><td>Opcode</td><td><code>0x010A</code></td></tr>
 <tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(zone -- )</code></td></tr>
 </tbody></table>
@@ -1255,7 +1283,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <h3 id="measurement"><a class="header" href="#measurement">Measurement</a></h3>
 <h4 id="laneslanesmeasure--initiate-measurement"><a class="header" href="#laneslanesmeasure--initiate-measurement"><code>lanes::lanes.measure</code> — Initiate measurement</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x010D</code></td></tr>
+<tr><td>Opcode</td><td><code>0x010B</code></td></tr>
 <tr><td>Operands</td><td><code>u32</code> LE arity</td></tr>
 <tr><td>Stack</td><td><code>(zone₁ zone₂ … zoneₙ -- future₁ future₂ … futureₙ)</code></td></tr>
 </tbody></table>
@@ -1263,7 +1291,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops <code>n</code> zone addresses and pushes <code>n</code> measure futures.</p>
 <h4 id="laneslanesawait_measure--wait-for-measurement-result"><a class="header" href="#laneslanesawait_measure--wait-for-measurement-result"><code>lanes::lanes.await_measure</code> — Wait for measurement result</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x010E</code></td></tr>
+<tr><td>Opcode</td><td><code>0x010C</code></td></tr>
 <tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(future -- array_ref)</code></td></tr>
 </tbody></table>
@@ -1272,7 +1300,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <h3 id="arrays"><a class="header" href="#arrays">Arrays</a></h3>
 <h4 id="laneslanesnew_array--construct-array-from-stack"><a class="header" href="#laneslanesnew_array--construct-array-from-stack"><code>lanes::lanes.new_array</code> — Construct array from stack</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x010F</code></td></tr>
+<tr><td>Opcode</td><td><code>0x010D</code></td></tr>
 <tr><td>Operands</td><td>three <code>u32</code> LE: <code>type_tag</code>, <code>dim0</code>, <code>dim1</code> (<code>dim1 = 0</code> for 1-D)</td></tr>
 <tr><td>Stack</td><td><code>(elem₁ elem₂ … elemₙ -- array_ref)</code></td></tr>
 </tbody></table>
@@ -1280,7 +1308,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Constructs an array of <code>dim0 × dim1</code> elements with element type <code>type_tag</code>. If <code>dim1</code> is 0, the array is 1-dimensional with <code>dim0</code> elements.</p>
 <h4 id="laneslanesget_item--index-into-array"><a class="header" href="#laneslanesget_item--index-into-array"><code>lanes::lanes.get_item</code> — Index into array</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0110</code></td></tr>
+<tr><td>Opcode</td><td><code>0x010E</code></td></tr>
 <tr><td>Operands</td><td><code>u32</code> LE ndims</td></tr>
 <tr><td>Stack</td><td><code>(array_ref idx₁ … idxₙ -- value)</code></td></tr>
 </tbody></table>
@@ -1289,7 +1317,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <h3 id="detectors-and-observables"><a class="header" href="#detectors-and-observables">Detectors and observables</a></h3>
 <h4 id="laneslanesset_detector--set-detector"><a class="header" href="#laneslanesset_detector--set-detector"><code>lanes::lanes.set_detector</code> — Set detector</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0111</code></td></tr>
+<tr><td>Opcode</td><td><code>0x010F</code></td></tr>
 <tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(array_ref -- detector_ref)</code></td></tr>
 </tbody></table>
@@ -1297,7 +1325,7 @@ reports <code>&quot;return&quot;</code>, which predates vihaco-cpu's spelling.</
 <p>Pops an array reference and pushes a detector reference.</p>
 <h4 id="laneslanesset_observable--set-observable"><a class="header" href="#laneslanesset_observable--set-observable"><code>lanes::lanes.set_observable</code> — Set observable</a></h4>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
-<tr><td>Opcode</td><td><code>0x0112</code></td></tr>
+<tr><td>Opcode</td><td><code>0x0110</code></td></tr>
 <tr><td>Operands</td><td>none</td></tr>
 <tr><td>Stack</td><td><code>(array_ref -- observable_ref)</code></td></tr>
 </tbody></table>
@@ -1494,7 +1522,7 @@ additions and one behaviour change are noted under
 single flat instruction set:</p>
 <div class="table-wrapper"><table><thead><tr><th>Device</th><th>Supplies</th></tr></thead><tbody>
 <tr><td><code>cpu</code></td><td>vihaco-cpu's <code>CPU</code> component — stack, constants, arithmetic, control flow, the heap allocator</td></tr>
-<tr><td><code>lanes</code></td><td>atom movement, gates, measurement, arrays, and the <code>pop</code>/<code>swap</code> the CPU lacks</td></tr>
+<tr><td><code>lanes</code></td><td>atom movement, gates, measurement, arrays</td></tr>
 </tbody></table>
 </div>
 <p>This is the idiomatic vihaco composition (PPVM is built the same way), and it
@@ -1551,8 +1579,11 @@ fn @main() {
 gates, measurement, arrays, detectors) are <code>lanes::lanes.*</code>; the CPU ops are
 <code>cpu::cpu.*</code>. A bare <code>move 2</code> no longer parses, and neither does a mnemonic
 under the wrong device.</li>
-<li><strong><code>pop</code> and <code>swap</code> are lanes ops</strong>, not CPU ops: <code>lanes::lanes.pop</code>,
-<code>lanes::lanes.swap</code>. vihaco-cpu's CPU has neither.</li>
+<li><strong>There is no <code>pop</code> or <code>swap</code>.</strong> vihaco-cpu's CPU has neither, and a
+function's locals now spell both — see
+<a href="migration/migration_guide_0_12.html#functions-have-locals-of-their-own">Functions have locals of their own</a>.
+<code>pop</code> becomes <code>cpu::cpu.store &lt;ty&gt;, &lt;n&gt;</code> into a scratch local; <code>swap</code>
+becomes two <code>store</code>s and two <code>load</code>s.</li>
 <li><strong>The constants use vihaco-cpu's single typed <code>const</code>.</strong> <code>const.i64 42</code> →
 <code>cpu::cpu.const i64, 42</code>, and <code>const.f64 1.5</code> → <code>cpu::cpu.const f64, 1.5</code> —
 note the comma. The Python <code>op_name()</code> still reports <code>const_float</code> /
@@ -1615,6 +1646,41 @@ message, because they carry no byte counts to report.</li>
 </li>
 <li>
 <p><strong>Changed:</strong> <code>Instruction.opcode</code> is repacked (see above).</p>
+</li>
+<li>
+<p><strong>Removed:</strong> <code>Instruction.pop()</code> and <code>Instruction.swap()</code>, and the
+<code>stack_move.Pop</code> / <code>stack_move.Swap</code> statements. <strong>New:</strong>
+<code>Instruction.load(value_type, index)</code> and <code>Instruction.store(value_type, index)</code>, with <code>local_index()</code> / <code>value_type()</code> accessors, and the
+<code>stack_move.LoadLocal</code> / <code>stack_move.StoreLocal</code> statements they decode to.
+<code>value_type</code> is spelled as in the text format (<code>&quot;u64&quot;</code>, <code>&quot;undef&quot;</code>, …).
+<code>stack_move.Dup</code> stays: <code>dup</code> is vihaco-cpu's own.</p>
+</li>
+<li>
+<p><strong>Changed:</strong> <code>stackify</code> no longer emits <code>Dup</code>/<code>Swap</code> chains for a value with
+several consumers. It stores the value in a local right after it is produced
+and loads a copy before each consumer, reusing a slot once its value is dead.
+Compiled programs therefore contain <code>cpu::cpu.store undef, 0</code> /
+<code>cpu::cpu.load undef, 0</code> where they used to contain <code>dup</code> and <code>swap</code>:
+<code>undef</code>, because the value is the placeholder a lanes op pushes in place of a
+result it does not simulate. Slots scale with how many values are live at
+once, and <code>stackify</code> raises <code>ValueError</code> rather than need more than the 1024
+a frame may hold. It also raises on two shapes only decoded bytecode has — a
+<code>stack_move.Dup</code>, and a constant operand below a non-constant one — which it
+would otherwise reorder
+(<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1050">#1050</a>).</p>
+</li>
+<li>
+<p><strong>New:</strong> <code>Program.entry_parameters</code> lists the entry point's declared
+parameter types. <code>BytecodeDecoder.decode</code> raises <code>DecodingError</code> for an entry
+point that declares any: the kernel it builds takes no arguments, and a
+parameter would otherwise read as zero.</p>
+</li>
+<li>
+<p><strong>Behaviour:</strong> <code>RewriteStackMoveToMove</code> lowers a <code>load</code> to the value last
+stored only when it reads that value back as itself: <code>load undef</code> of a lanes
+op's placeholder, or <code>load &lt;ty&gt;</code> of a constant of that type. A typed load of
+a placeholder, which the machine reads as that type's zero, and a mistyped
+<code>load</code>/<code>store</code> of a constant, which it refuses, raise <code>ValueError</code>.</p>
 </li>
 <li>
 <p><strong>Behaviour:</strong> a decoded program can now contain any of vihaco-cpu's 42 ops,
@@ -1700,6 +1766,30 @@ declaration's count and types, and they sit at the bottom of the entry frame
 as locals <code>0..n</code>, where a <code>call</code> would put them. <code>run</code> enters with no
 arguments, so it refuses a <code>@main</code> that declares any. The CLI's <code>run</code>
 subcommand has no way to pass arguments yet.</p>
+<h3 id="functions-have-locals-of-their-own"><a class="header" href="#functions-have-locals-of-their-own">Functions have locals of their own</a></h3>
+<p>A frame is its locals — the parameters, then scratch slots — and above them
+its operands. This is the frame model of vihaco#110, which vihaco has merged
+but not yet released; <code>LanesMachine</code> runs it on vihaco 0.4.1 until the
+dependency moves past it.</p>
+<ul>
+<li><strong>A function reserves <code>max(arity, every load/store index + 1)</code> locals</strong>,
+counted from its body. There is nothing to declare, and the function table's
+<code>local_count</code> — always 0 before — now carries that count. It is recomputed
+from the code whenever a program is loaded, so a table cannot disagree with
+its body.</li>
+<li><strong>A local holding the <code>Undefined</code> placeholder reads as zero</strong> of whatever
+type loads it: an unwritten one, so a counter needs no initialising <code>store</code>,
+and one holding the placeholder a lanes op pushes in place of a result it
+does not simulate. <code>load undef</code> reads that placeholder back as itself. A
+local holding a concrete value of another type is still a type error.</li>
+<li><strong>Only <code>load</code> and <code>store</code> reach a local.</strong> No operand op consumes one, a
+parameter included: a callee that used to consume its argument directly now
+has to <code>load</code> it first, or it underflows. <code>store</code> no longer grows the stack
+to reach its index.</li>
+</ul>
+<p>So a program that relied on 0.4.1's aliasing — local <code>n</code> being whatever sat
+<code>n</code> slots above the frame base — behaves differently: a <code>store</code> into a scratch
+slot used to overwrite a working value, and now does not.</p>
 <h3 id="stack-validation-follows-control-flow"><a class="header" href="#stack-validation-follows-control-flow">Stack validation follows control flow</a></h3>
 <p><code>validate(stack=True)</code> (the CLI's <code>--simulate-stack</code>, the C API's
 <code>lanes_simulate_stack</code>) used to walk each function in a straight line from an
@@ -1710,17 +1800,26 @@ control-flow graph, starting from a frame that holds its declared parameters:</p
 <li><strong>Code after a branch or call is checked.</strong> A program with control flow no
 longer gets less validation than one without.</li>
 <li><strong>A callee that takes operands is checked.</strong> Its frame starts with its
-declared parameters, so the <code>load</code> that reads an argument is no longer an
-underflow. A <code>call</code> is modelled from the callee's signature alone: pop its
-parameters, push its results.</li>
+locals — declared parameters, then scratch — so the <code>load</code> that reads an
+argument is no longer an underflow. A <code>call</code> is modelled from the callee's
+signature alone: pop its parameters, push its results.</li>
 <li><strong><code>StackDepthMismatchError</code></strong>: two paths reach the same instruction with
 different stack depths. Examples are a <code>cond_br</code> whose arms leave different
 depths at their join, or a loop whose body changes the depth.</li>
-<li><strong><code>PopBelowFrameBaseError</code></strong>: a function other than <code>@main</code> pops a value its
+<li><strong><code>PopBelowFrameBaseError</code></strong>: a function other than <code>@main</code> pops with no
+operands left, reaching into its own locals and below them the values its
 caller owns. This is an error even when the machine's stack is not empty. It
 subclasses <code>StackUnderflowError</code>, so existing <code>except</code> clauses still catch it.
-In <code>@main</code>, whose frame starts at the bottom of the stack, the same condition
-is still reported as a plain <code>StackUnderflowError</code>.</li>
+In <code>@main</code>, which has no caller, the same condition is still reported as a
+plain <code>StackUnderflowError</code>.</li>
+<li><strong><code>LocalTypeMismatchError</code></strong>: a typed <code>load</code>/<code>store</code> names a type the value
+does not have, so the machine refuses it. A <code>store</code> checks the value it pops;
+a <code>load</code> checks what the local holds. The placeholder a lanes op pushes for a
+result it does not simulate passes under any type, except that <code>load undef</code>
+refuses every concrete value. A call's result is checked by what the callee's
+<code>ret</code> really keeps, not its declared return type, which nothing enforces.</li>
+<li><strong><code>TooManyParametersError</code></strong>: a function declares more parameters than the
+1024 locals a frame may hold, so every call to it would fail.</li>
 </ul>
 <p>Everything after a <code>call_indirect</code> goes unchecked, because its target and
 arity are only known at run time. That includes any path that merges with it
@@ -1758,8 +1857,6 @@ set.</p>
 as a device</strong>, which is how vihaco intends a VM to be built. The binary format
 still needs a codec neither device provides, so encoding goes through a parallel
 mirror instruction set — the same approach PPVM takes.</p>
-<p><code>pop</code> and <code>swap</code> are the exception: vihaco-cpu has neither, and the lanes
-compiler emits both, so they live on the lanes device.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="migration-guide-to-v011"><a class="header" href="#migration-guide-to-v011">Migration guide to v0.11</a></h1>
 <p>Version 0.11 refactors the Gemini simulator API around explicit simulator
 backends. Configure compilation and sampling when constructing a simulator,

@@ -192,58 +192,50 @@ and both halves are assigned by declaration order — so they renumber whenever
 either instruction set gains a variant. The values below are correct for this
 revision; compare identity with <code>op_name()</code>, never a literal.</p>
 </blockquote>
-<h2 id="lanes-device-0x01--stack-ops-vihaco-cpu-lacks"><a class="header" href="#lanes-device-0x01--stack-ops-vihaco-cpu-lacks"><code>lanes</code> device (<code>0x01</code>) — stack ops vihaco-cpu lacks</a></h2>
-<p><code>pop</code> and <code>swap</code> live here because vihaco-cpu's CPU has neither. The machine
-does the stack work on the device's behalf.</p>
-<div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.pop</code></td><td><code>0x0100</code></td><td><code>(a -- )</code></td><td>Discard top of stack</td></tr>
-<tr><td><code>lanes::lanes.swap</code></td><td><code>0x0101</code></td><td><code>(a b -- b a)</code></td><td>Swap top two elements</td></tr>
-</tbody></table>
-</div>
 <h2 id="lanes-device-0x01--address-constants"><a class="header" href="#lanes-device-0x01--address-constants"><code>lanes</code> device (<code>0x01</code>) — address constants</a></h2>
 <p>Kept as lanes instructions, rather than plain <code>cpu::cpu.const u64</code>, so that
 validation can tell a location from a lane from a zone.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.const_loc</code></td><td><code>0x0102</code></td><td><code>( -- loc)</code></td><td>Push location address</td></tr>
-<tr><td><code>lanes::lanes.const_lane</code></td><td><code>0x0103</code></td><td><code>( -- lane)</code></td><td>Push lane address</td></tr>
-<tr><td><code>lanes::lanes.const_zone</code></td><td><code>0x0104</code></td><td><code>( -- zone)</code></td><td>Push zone address</td></tr>
+<tr><td><code>lanes::lanes.const_loc</code></td><td><code>0x0100</code></td><td><code>( -- loc)</code></td><td>Push location address</td></tr>
+<tr><td><code>lanes::lanes.const_lane</code></td><td><code>0x0101</code></td><td><code>( -- lane)</code></td><td>Push lane address</td></tr>
+<tr><td><code>lanes::lanes.const_zone</code></td><td><code>0x0102</code></td><td><code>( -- zone)</code></td><td>Push zone address</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--atom-arrangement"><a class="header" href="#lanes-device-0x01--atom-arrangement"><code>lanes</code> device (<code>0x01</code>) — atom arrangement</a></h2>
 <p>The only ops the machine actually <strong>executes</strong>: they drive the atom state and
 fault on an illegal move.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.initial_fill</code></td><td><code>0x0105</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Initial atom loading</td></tr>
-<tr><td><code>lanes::lanes.fill</code></td><td><code>0x0106</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Atom refill</td></tr>
-<tr><td><code>lanes::lanes.move</code></td><td><code>0x0107</code></td><td><code>(lane₁..laneₙ -- )</code></td><td>Atom transport along lanes</td></tr>
+<tr><td><code>lanes::lanes.initial_fill</code></td><td><code>0x0103</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Initial atom loading</td></tr>
+<tr><td><code>lanes::lanes.fill</code></td><td><code>0x0104</code></td><td><code>(loc₁..locₙ -- )</code></td><td>Atom refill</td></tr>
+<tr><td><code>lanes::lanes.move</code></td><td><code>0x0105</code></td><td><code>(lane₁..laneₙ -- )</code></td><td>Atom transport along lanes</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--quantum-gates"><a class="header" href="#lanes-device-0x01--quantum-gates"><code>lanes</code> device (<code>0x01</code>) — quantum gates</a></h2>
 <p>Not simulated — emitted as effects for hardware or a simulator downstream.</p>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.local_rz</code></td><td><code>0x0108</code></td><td><code>(loc₁..locₙ θ -- )</code></td><td>Local Rz rotation</td></tr>
-<tr><td><code>lanes::lanes.local_r</code></td><td><code>0x0109</code></td><td><code>(loc₁..locₙ θ φ -- )</code></td><td>Local R rotation</td></tr>
-<tr><td><code>lanes::lanes.global_rz</code></td><td><code>0x010A</code></td><td><code>(θ -- )</code></td><td>Global Rz rotation</td></tr>
-<tr><td><code>lanes::lanes.global_r</code></td><td><code>0x010B</code></td><td><code>(θ φ -- )</code></td><td>Global R rotation</td></tr>
-<tr><td><code>lanes::lanes.cz</code></td><td><code>0x010C</code></td><td><code>(zone -- )</code></td><td>Controlled-Z gate on zone</td></tr>
+<tr><td><code>lanes::lanes.local_rz</code></td><td><code>0x0106</code></td><td><code>(loc₁..locₙ θ -- )</code></td><td>Local Rz rotation</td></tr>
+<tr><td><code>lanes::lanes.local_r</code></td><td><code>0x0107</code></td><td><code>(loc₁..locₙ θ φ -- )</code></td><td>Local R rotation</td></tr>
+<tr><td><code>lanes::lanes.global_rz</code></td><td><code>0x0108</code></td><td><code>(θ -- )</code></td><td>Global Rz rotation</td></tr>
+<tr><td><code>lanes::lanes.global_r</code></td><td><code>0x0109</code></td><td><code>(θ φ -- )</code></td><td>Global R rotation</td></tr>
+<tr><td><code>lanes::lanes.cz</code></td><td><code>0x010A</code></td><td><code>(zone -- )</code></td><td>Controlled-Z gate on zone</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--measurement"><a class="header" href="#lanes-device-0x01--measurement"><code>lanes</code> device (<code>0x01</code>) — measurement</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.measure</code></td><td><code>0x010D</code></td><td><code>(zone₁..zoneₙ -- future₁..futureₙ)</code></td><td>Initiate measurement</td></tr>
-<tr><td><code>lanes::lanes.await_measure</code></td><td><code>0x010E</code></td><td><code>(future -- array_ref)</code></td><td>Wait for measurement result</td></tr>
+<tr><td><code>lanes::lanes.measure</code></td><td><code>0x010B</code></td><td><code>(zone₁..zoneₙ -- future₁..futureₙ)</code></td><td>Initiate measurement</td></tr>
+<tr><td><code>lanes::lanes.await_measure</code></td><td><code>0x010C</code></td><td><code>(future -- array_ref)</code></td><td>Wait for measurement result</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--arrays"><a class="header" href="#lanes-device-0x01--arrays"><code>lanes</code> device (<code>0x01</code>) — arrays</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.new_array</code></td><td><code>0x010F</code></td><td><code>(elem₁..elemₙ -- array_ref)</code></td><td>Construct array from stack</td></tr>
-<tr><td><code>lanes::lanes.get_item</code></td><td><code>0x0110</code></td><td><code>(array_ref idx₁..idxₙ -- value)</code></td><td>Index into array</td></tr>
+<tr><td><code>lanes::lanes.new_array</code></td><td><code>0x010D</code></td><td><code>(elem₁..elemₙ -- array_ref)</code></td><td>Construct array from stack</td></tr>
+<tr><td><code>lanes::lanes.get_item</code></td><td><code>0x010E</code></td><td><code>(array_ref idx₁..idxₙ -- value)</code></td><td>Index into array</td></tr>
 </tbody></table>
 </div>
 <h2 id="lanes-device-0x01--detectors-and-observables"><a class="header" href="#lanes-device-0x01--detectors-and-observables"><code>lanes</code> device (<code>0x01</code>) — detectors and observables</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>lanes::lanes.set_detector</code></td><td><code>0x0111</code></td><td><code>(array_ref -- detector_ref)</code></td><td>Set detector</td></tr>
-<tr><td><code>lanes::lanes.set_observable</code></td><td><code>0x0112</code></td><td><code>(array_ref -- observable_ref)</code></td><td>Set observable</td></tr>
+<tr><td><code>lanes::lanes.set_detector</code></td><td><code>0x010F</code></td><td><code>(array_ref -- detector_ref)</code></td><td>Set detector</td></tr>
+<tr><td><code>lanes::lanes.set_observable</code></td><td><code>0x0110</code></td><td><code>(array_ref -- observable_ref)</code></td><td>Set observable</td></tr>
 </tbody></table>
 </div>
 <h2 id="cpu-device-0x00--vihaco-cpu"><a class="header" href="#cpu-device-0x00--vihaco-cpu"><code>cpu</code> device (<code>0x00</code>) — vihaco-cpu</a></h2>
@@ -251,11 +243,13 @@ fault on an illegal move.</p>
 comparison, bitwise, control flow, the heap allocator). The ones below are the
 ones a lanes program actually contains; the rest decode and validate but are
 never generated.</p>
-<h3 id="values-and-termination"><a class="header" href="#values-and-termination">Values and termination</a></h3>
+<h3 id="values-locals-and-termination"><a class="header" href="#values-locals-and-termination">Values, locals and termination</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Instruction</th><th>Opcode</th><th>Stack Effect</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>cpu::cpu.const f64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- float)</code></td><td>Push 64-bit float constant</td></tr>
 <tr><td><code>cpu::cpu.const i64, &lt;v&gt;</code></td><td><code>0x0011</code></td><td><code>( -- int)</code></td><td>Push 64-bit integer constant</td></tr>
 <tr><td><code>cpu::cpu.dup</code></td><td><code>0x000D</code></td><td><code>(a -- a a)</code></td><td>Duplicate top of stack</td></tr>
+<tr><td><code>cpu::cpu.load &lt;ty&gt;, &lt;n&gt;</code></td><td><code>0x000B</code></td><td><code>( -- a)</code></td><td>Push a copy of local <code>n</code></td></tr>
+<tr><td><code>cpu::cpu.store &lt;ty&gt;, &lt;n&gt;</code></td><td><code>0x000C</code></td><td><code>(a -- )</code></td><td>Pop the top into local <code>n</code></td></tr>
 <tr><td><code>cpu::cpu.halt</code></td><td><code>0x0009</code></td><td><code>( -- )</code></td><td>Halt execution</td></tr>
 <tr><td><code>cpu::cpu.ret &lt;n&gt;</code></td><td><code>0x0006</code></td><td><code>( -- )</code></td><td>Return the top <code>n</code> values from the current function</td></tr>
 </tbody></table>
@@ -263,6 +257,11 @@ never generated.</p>
 <p>Note that <code>const</code> is one typed instruction, so <code>const f64</code> and <code>const i64</code> share
 an opcode and differ in their operand. The Python <code>op_name()</code> still reports
 <code>const_float</code> / <code>const_int</code>, because the decoder needs the distinction.</p>
+<p>There is no <code>pop</code> or <code>swap</code>. A function's locals are slots of their own below
+its operands, so parking a value in one takes it out of the operands' way:
+<code>store &lt;ty&gt;, 0</code> discards the top, and <code>store 0; store 1; load 0; load 1</code> swaps
+the top two. The compiler spills a value it needs more than once and loads it
+back for each use.</p>
 <h3 id="structure"><a class="header" href="#structure">Structure</a></h3>
 <p>Emitted for <strong>every</strong> program, not only ones that declare several functions: the
 assembler wraps each <code>fn @name()</code> body in a marker pair, so even a lone <code>@main</code>
@@ -286,8 +285,9 @@ runs straight-line code only, and validation rejects them.</p>
 </tbody></table>
 </div>
 <p>See <a href="inst-spec.html#functions-labels-and-control-flow">Functions, labels and control flow</a>
-for the calling convention — in particular that locals <em>alias</em> the operand
-stack, so <code>call</code> moves a frame boundary rather than copying arguments.</p>
+for the calling convention — in particular that <code>call</code> moves a frame boundary
+rather than copying arguments: the top <code>arity</code> operands <em>become</em> the callee's
+first locals, and the rest of its locals are reserved above them.</p>
 
                     </main>
 

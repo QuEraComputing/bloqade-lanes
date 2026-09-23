@@ -195,7 +195,7 @@ additions and one behaviour change are noted under
 single flat instruction set:</p>
 <div class="table-wrapper"><table><thead><tr><th>Device</th><th>Supplies</th></tr></thead><tbody>
 <tr><td><code>cpu</code></td><td>vihaco-cpu's <code>CPU</code> component — stack, constants, arithmetic, control flow, the heap allocator</td></tr>
-<tr><td><code>lanes</code></td><td>atom movement, gates, measurement, arrays, and the <code>pop</code>/<code>swap</code> the CPU lacks</td></tr>
+<tr><td><code>lanes</code></td><td>atom movement, gates, measurement, arrays</td></tr>
 </tbody></table>
 </div>
 <p>This is the idiomatic vihaco composition (PPVM is built the same way), and it
@@ -252,8 +252,11 @@ fn @main() {
 gates, measurement, arrays, detectors) are <code>lanes::lanes.*</code>; the CPU ops are
 <code>cpu::cpu.*</code>. A bare <code>move 2</code> no longer parses, and neither does a mnemonic
 under the wrong device.</li>
-<li><strong><code>pop</code> and <code>swap</code> are lanes ops</strong>, not CPU ops: <code>lanes::lanes.pop</code>,
-<code>lanes::lanes.swap</code>. vihaco-cpu's CPU has neither.</li>
+<li><strong>There is no <code>pop</code> or <code>swap</code>.</strong> vihaco-cpu's CPU has neither, and a
+function's locals now spell both — see
+<a href="#functions-have-locals-of-their-own">Functions have locals of their own</a>.
+<code>pop</code> becomes <code>cpu::cpu.store &lt;ty&gt;, &lt;n&gt;</code> into a scratch local; <code>swap</code>
+becomes two <code>store</code>s and two <code>load</code>s.</li>
 <li><strong>The constants use vihaco-cpu's single typed <code>const</code>.</strong> <code>const.i64 42</code> →
 <code>cpu::cpu.const i64, 42</code>, and <code>const.f64 1.5</code> → <code>cpu::cpu.const f64, 1.5</code> —
 note the comma. The Python <code>op_name()</code> still reports <code>const_float</code> /
@@ -316,6 +319,41 @@ message, because they carry no byte counts to report.</li>
 </li>
 <li>
 <p><strong>Changed:</strong> <code>Instruction.opcode</code> is repacked (see above).</p>
+</li>
+<li>
+<p><strong>Removed:</strong> <code>Instruction.pop()</code> and <code>Instruction.swap()</code>, and the
+<code>stack_move.Pop</code> / <code>stack_move.Swap</code> statements. <strong>New:</strong>
+<code>Instruction.load(value_type, index)</code> and <code>Instruction.store(value_type, index)</code>, with <code>local_index()</code> / <code>value_type()</code> accessors, and the
+<code>stack_move.LoadLocal</code> / <code>stack_move.StoreLocal</code> statements they decode to.
+<code>value_type</code> is spelled as in the text format (<code>&quot;u64&quot;</code>, <code>&quot;undef&quot;</code>, …).
+<code>stack_move.Dup</code> stays: <code>dup</code> is vihaco-cpu's own.</p>
+</li>
+<li>
+<p><strong>Changed:</strong> <code>stackify</code> no longer emits <code>Dup</code>/<code>Swap</code> chains for a value with
+several consumers. It stores the value in a local right after it is produced
+and loads a copy before each consumer, reusing a slot once its value is dead.
+Compiled programs therefore contain <code>cpu::cpu.store undef, 0</code> /
+<code>cpu::cpu.load undef, 0</code> where they used to contain <code>dup</code> and <code>swap</code>:
+<code>undef</code>, because the value is the placeholder a lanes op pushes in place of a
+result it does not simulate. Slots scale with how many values are live at
+once, and <code>stackify</code> raises <code>ValueError</code> rather than need more than the 1024
+a frame may hold. It also raises on two shapes only decoded bytecode has — a
+<code>stack_move.Dup</code>, and a constant operand below a non-constant one — which it
+would otherwise reorder
+(<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1050">#1050</a>).</p>
+</li>
+<li>
+<p><strong>New:</strong> <code>Program.entry_parameters</code> lists the entry point's declared
+parameter types. <code>BytecodeDecoder.decode</code> raises <code>DecodingError</code> for an entry
+point that declares any: the kernel it builds takes no arguments, and a
+parameter would otherwise read as zero.</p>
+</li>
+<li>
+<p><strong>Behaviour:</strong> <code>RewriteStackMoveToMove</code> lowers a <code>load</code> to the value last
+stored only when it reads that value back as itself: <code>load undef</code> of a lanes
+op's placeholder, or <code>load &lt;ty&gt;</code> of a constant of that type. A typed load of
+a placeholder, which the machine reads as that type's zero, and a mistyped
+<code>load</code>/<code>store</code> of a constant, which it refuses, raise <code>ValueError</code>.</p>
 </li>
 <li>
 <p><strong>Behaviour:</strong> a decoded program can now contain any of vihaco-cpu's 42 ops,
@@ -401,6 +439,30 @@ declaration's count and types, and they sit at the bottom of the entry frame
 as locals <code>0..n</code>, where a <code>call</code> would put them. <code>run</code> enters with no
 arguments, so it refuses a <code>@main</code> that declares any. The CLI's <code>run</code>
 subcommand has no way to pass arguments yet.</p>
+<h3 id="functions-have-locals-of-their-own"><a class="header" href="#functions-have-locals-of-their-own">Functions have locals of their own</a></h3>
+<p>A frame is its locals — the parameters, then scratch slots — and above them
+its operands. This is the frame model of vihaco#110, which vihaco has merged
+but not yet released; <code>LanesMachine</code> runs it on vihaco 0.4.1 until the
+dependency moves past it.</p>
+<ul>
+<li><strong>A function reserves <code>max(arity, every load/store index + 1)</code> locals</strong>,
+counted from its body. There is nothing to declare, and the function table's
+<code>local_count</code> — always 0 before — now carries that count. It is recomputed
+from the code whenever a program is loaded, so a table cannot disagree with
+its body.</li>
+<li><strong>A local holding the <code>Undefined</code> placeholder reads as zero</strong> of whatever
+type loads it: an unwritten one, so a counter needs no initialising <code>store</code>,
+and one holding the placeholder a lanes op pushes in place of a result it
+does not simulate. <code>load undef</code> reads that placeholder back as itself. A
+local holding a concrete value of another type is still a type error.</li>
+<li><strong>Only <code>load</code> and <code>store</code> reach a local.</strong> No operand op consumes one, a
+parameter included: a callee that used to consume its argument directly now
+has to <code>load</code> it first, or it underflows. <code>store</code> no longer grows the stack
+to reach its index.</li>
+</ul>
+<p>So a program that relied on 0.4.1's aliasing — local <code>n</code> being whatever sat
+<code>n</code> slots above the frame base — behaves differently: a <code>store</code> into a scratch
+slot used to overwrite a working value, and now does not.</p>
 <h3 id="stack-validation-follows-control-flow"><a class="header" href="#stack-validation-follows-control-flow">Stack validation follows control flow</a></h3>
 <p><code>validate(stack=True)</code> (the CLI's <code>--simulate-stack</code>, the C API's
 <code>lanes_simulate_stack</code>) used to walk each function in a straight line from an
@@ -411,17 +473,26 @@ control-flow graph, starting from a frame that holds its declared parameters:</p
 <li><strong>Code after a branch or call is checked.</strong> A program with control flow no
 longer gets less validation than one without.</li>
 <li><strong>A callee that takes operands is checked.</strong> Its frame starts with its
-declared parameters, so the <code>load</code> that reads an argument is no longer an
-underflow. A <code>call</code> is modelled from the callee's signature alone: pop its
-parameters, push its results.</li>
+locals — declared parameters, then scratch — so the <code>load</code> that reads an
+argument is no longer an underflow. A <code>call</code> is modelled from the callee's
+signature alone: pop its parameters, push its results.</li>
 <li><strong><code>StackDepthMismatchError</code></strong>: two paths reach the same instruction with
 different stack depths. Examples are a <code>cond_br</code> whose arms leave different
 depths at their join, or a loop whose body changes the depth.</li>
-<li><strong><code>PopBelowFrameBaseError</code></strong>: a function other than <code>@main</code> pops a value its
+<li><strong><code>PopBelowFrameBaseError</code></strong>: a function other than <code>@main</code> pops with no
+operands left, reaching into its own locals and below them the values its
 caller owns. This is an error even when the machine's stack is not empty. It
 subclasses <code>StackUnderflowError</code>, so existing <code>except</code> clauses still catch it.
-In <code>@main</code>, whose frame starts at the bottom of the stack, the same condition
-is still reported as a plain <code>StackUnderflowError</code>.</li>
+In <code>@main</code>, which has no caller, the same condition is still reported as a
+plain <code>StackUnderflowError</code>.</li>
+<li><strong><code>LocalTypeMismatchError</code></strong>: a typed <code>load</code>/<code>store</code> names a type the value
+does not have, so the machine refuses it. A <code>store</code> checks the value it pops;
+a <code>load</code> checks what the local holds. The placeholder a lanes op pushes for a
+result it does not simulate passes under any type, except that <code>load undef</code>
+refuses every concrete value. A call's result is checked by what the callee's
+<code>ret</code> really keeps, not its declared return type, which nothing enforces.</li>
+<li><strong><code>TooManyParametersError</code></strong>: a function declares more parameters than the
+1024 locals a frame may hold, so every call to it would fail.</li>
 </ul>
 <p>Everything after a <code>call_indirect</code> goes unchecked, because its target and
 arity are only known at run time. That includes any path that merges with it
@@ -459,8 +530,6 @@ set.</p>
 as a device</strong>, which is how vihaco intends a VM to be built. The binary format
 still needs a codec neither device provides, so encoding goes through a parallel
 mirror instruction set — the same approach PPVM takes.</p>
-<p><code>pop</code> and <code>swap</code> are the exception: vihaco-cpu has neither, and the lanes
-compiler emits both, so they live on the lanes device.</p>
 
                     </main>
 
