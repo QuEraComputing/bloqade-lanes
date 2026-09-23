@@ -152,6 +152,59 @@ pub fn two_zone_bus_arch_json() -> &'static str {
     }"#
 }
 
+/// A storage zone with **no entangling pairs** feeding a gate zone that has
+/// one.
+///
+/// Zone 0 ("storage") holds word 0 and has no buses. Zone 1 ("gate") holds
+/// the entangling pair words 1 and 2, joined by a word bus (`1 → 2`) and a
+/// site bus (`0 → 1`) on both words. Each word has two sites. A zone bus
+/// lifts storage word 0 onto gate word 1, site for site, so a CZ pair that
+/// starts in storage must leave the zone to entangle.
+///
+/// `get_cz_partner` is `None` for every storage site. Unpaired words count
+/// as home words, so a storage atom is already "home" for the no-home
+/// placement.
+#[allow(dead_code)]
+pub fn storage_gate_arch_json() -> &'static str {
+    r#"{
+        "version": "2.0",
+        "words": [
+            { "sites": [[0, 0], [1, 0]] },
+            { "sites": [[0, 0], [1, 0]] },
+            { "sites": [[0, 1], [1, 1]] }
+        ],
+        "zones": [
+            {
+                "name": "storage",
+                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [2.0], "y_spacing": [2.0] },
+                "site_buses": [],
+                "word_buses": [],
+                "words_with_site_buses": [],
+                "sites_with_word_buses": [],
+                "entangling_pairs": []
+            },
+            {
+                "name": "gate",
+                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [2.0], "y_spacing": [2.0] },
+                "site_buses": [{ "src": [0], "dst": [1] }],
+                "word_buses": [{ "src": [1], "dst": [2] }],
+                "words_with_site_buses": [1, 2],
+                "sites_with_word_buses": [0, 1],
+                "entangling_pairs": [[1, 2]]
+            }
+        ],
+        "zone_buses": [
+            {
+                "src": [{ "zone_id": 0, "word_id": 0 }],
+                "dst": [{ "zone_id": 1, "word_id": 1 }]
+            }
+        ],
+        "modes": [
+            { "name": "default", "zones": [0, 1], "bitstring_order": [] }
+        ]
+    }"#
+}
+
 /// Two zones with **aligned columns** and one site bus each: the fixture on
 /// which the one-bus-group rule (S3) can actually fire.
 ///
@@ -343,7 +396,7 @@ mod tests {
     /// through.
     #[test]
     fn every_fixture_is_a_valid_spec() {
-        let fixtures: [(&str, String); 7] = [
+        let fixtures: [(&str, String); 8] = [
             ("example", example_arch_json().to_string()),
             ("full (P1 negative)", full_arch_json().to_string()),
             ("chain", chain_arch_json()),
@@ -352,6 +405,7 @@ mod tests {
                 chain_with_siding_arch_json().to_string(),
             ),
             ("two-zone bus", two_zone_bus_arch_json().to_string()),
+            ("storage and gate", storage_gate_arch_json().to_string()),
             (
                 "two-zone aligned site buses",
                 two_zone_aligned_site_bus_arch_json().to_string(),
