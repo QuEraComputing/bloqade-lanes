@@ -59,12 +59,13 @@
 //! itself and refuses every concrete value.
 //!
 //! TODO(vihaco#110): the bump deletes this shim — `frame_locals`,
-//! [`reserve_locals`](LanesMachine::reserve_locals), the operand floor and
-//! the zero-reading `load` — and passes `local_count` to the CPU in its
-//! `FunctionInfo` message instead. Nothing outside this module changes.
+//! [`push_locals`](LanesMachine::push_locals), the operand floor and the
+//! zero-reading `load` — and passes `local_count` to the CPU in its
+//! `FunctionInfo` message instead. [`check_frame`](LanesMachine::check_frame)
+//! stays, in front of that message. Nothing outside this module changes.
 
 use vihaco::frame::Frame;
-use vihaco::machine::StackFrame;
+use vihaco::machine::{FrameMemory, StackFrame};
 use vihaco::traits::StackMemory;
 use vihaco::{Effects, GeneratedComponent, ProgramImage, Type, Value, composite};
 use vihaco_cpu::{CPU, SurfaceInstruction as CpuSurfaceInstruction};
@@ -77,6 +78,19 @@ use super::device::{Lanes, LanesEffect, LanesInstruction, LanesMessage};
 use super::program::LanesInfo;
 use super::program::Program;
 use super::validate::{MAX_LOCAL_COUNT, array_element_count};
+
+/// Most values the stack may hold once a frame's locals are reserved.
+///
+/// A frame reserves at most [`MAX_LOCAL_COUNT`] locals, but recursion reserves
+/// a frame per level, so the whole stack needs a bound of its own: 2²⁰ values
+/// is 16 MB, room for a thousand levels of the largest frame or a million of
+/// the smallest. Checked when a frame is reserved; the step budget already
+/// bounds what plain pushes can add.
+///
+/// TODO(vihaco#110): the bump keeps this. #110's `call` still resizes the
+/// stack to reserve the callee's locals, so the check moves in front of the
+/// `FunctionInfo` message it sends.
+pub const MAX_STACK_SLOTS: usize = 1 << 20;
 
 /// The combined instruction set: one variant per device.
 pub type MachineInstruction = lanes_machine::runtime::Instruction;
@@ -334,43 +348,67 @@ impl LanesMachine {
             return Ok(StepOutcome::Continue);
         }
 
-        // Read before the instruction runs: `call_indirect` pops its target.
-        let callee = match inst {
-            C::Call(_, target) => Some(*target),
-            C::IndirectCall => match self.cpu.stack().last() {
-                Some(Value::U32(target)) => Some(*target),
-                // Not a target at all; `op_indirect_call` says so.
-                _ => None,
-            },
+        // Resolve the callee, and refuse its frame, before the CPU pushes one:
+        // a refusal then leaves `frame_locals` and the CPU's frames in step.
+        // That is #110's order too — its `call` checks the `local_count` in
+        // its `FunctionInfo` message before entering. And it is #110's check:
+        // `arity <= local_count`, not that the arity equals the declared
+        // parameter count. `validate`'s `CallArityMismatch` covers a direct
+        // call, and after the bump `call_indirect` takes its arity from the
+        // function table rather than the stack.
+        let frame = match inst {
+            C::Call(arity, target) => Some(self.plan_frame(program, *target, *arity as usize)?),
+            // The target is on top and the arity below it. Anything else is
+            // not a call at all, and `op_indirect_call` says so.
+            C::IndirectCall => {
+                let stack = self.cpu.stack();
+                match (stack.last(), stack.len().checked_sub(2).map(|i| &stack[i])) {
+                    (Some(Value::U32(target)), Some(Value::U32(arity))) => {
+                        Some(self.plan_frame(program, *target, *arity as usize)?)
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         };
 
         let outcome = self.cpu.execute_instruction(inst.clone())?;
-        if let Some(target) = callee {
-            let function = program
-                .functions
-                .iter()
-                .find(|f| f.start_address == target)
-                .ok_or_else(|| eyre::eyre!("call target {target} does not begin a function"))?;
-            // `op_call` just set `base = stack.len() - arity`.
+        if let Some(local_count) = frame {
+            // `op_call` just set `base = stack.len() - arity`, so the
+            // arguments are already the first locals.
             let arity = self.cpu.stack().len() - self.cpu.get_frame()?.base;
-            self.reserve_locals(function.local_count, arity)?;
-        } else if matches!(inst, C::Return(_))
-            && matches!(outcome, StepOutcome::Continue | StepOutcome::Return)
-        {
+            self.push_locals(local_count, arity);
+        } else if matches!(inst, C::Return(_)) {
+            // Reached only when `op_return` succeeded, and so popped a frame.
             self.frame_locals.pop();
         }
         Ok(outcome)
     }
 
-    /// Reserve a new frame's locals past its `arity` arguments, which are
-    /// already in place as locals `0..arity`.
+    /// The locals a call to `target` with `arity` arguments reserves, once
+    /// [`check_frame`](Self::check_frame) has passed them.
+    fn plan_frame(&self, program: &Program, target: u32, arity: usize) -> eyre::Result<u32> {
+        let function = program
+            .functions
+            .iter()
+            .find(|f| f.start_address == target)
+            .ok_or_else(|| eyre::eyre!("call target {target} does not begin a function"))?;
+        self.check_frame(function.local_count, arity)?;
+        Ok(function.local_count)
+    }
+
+    /// Refuse a frame of `local_count` locals, the first `arity` of them
+    /// arguments already on the stack, before anything is reserved:
     ///
-    /// Refuses a count below the arity, as #110's `call` does, and one past
-    /// [`MAX_LOCAL_COUNT`] — the count is the table's, and a program that was
-    /// never validated could otherwise ask every call to reserve four billion
-    /// slots, which is #1032 again by another road.
-    fn reserve_locals(&mut self, local_count: u32, arity: usize) -> eyre::Result<()> {
+    /// - below its arity, as #110's `call` does;
+    /// - past [`MAX_LOCAL_COUNT`]. The count is the table's, and a program
+    ///   that was never validated could otherwise ask every call to reserve
+    ///   four billion slots, which is #1032 again by another road;
+    /// - past [`MAX_STACK_SLOTS`] in all. A frame is bounded, but a recursive
+    ///   call reserves one per level: without this, a function that calls
+    ///   itself before its one `load u64, 1023` reserved 16 KB a level and
+    ///   passed 1.5 GB within 200,000 steps.
+    fn check_frame(&self, local_count: u32, arity: usize) -> eyre::Result<()> {
         if local_count > MAX_LOCAL_COUNT {
             eyre::bail!(
                 "the frame reserves {local_count} locals, past the maximum of {MAX_LOCAL_COUNT}"
@@ -382,11 +420,25 @@ impl LanesMachine {
                  local(s), which must include them"
             );
         };
+        let depth = self.cpu.stack().len();
+        if depth + extra > MAX_STACK_SLOTS {
+            eyre::bail!(
+                "reserving {local_count} locals would take the stack from {depth} values past \
+                 the maximum of {MAX_STACK_SLOTS}: unbounded recursion?"
+            );
+        }
+        Ok(())
+    }
+
+    /// Reserve a new frame's locals past its `arity` arguments, which are
+    /// already in place as locals `0..arity`. Checked beforehand by
+    /// [`check_frame`](Self::check_frame).
+    fn push_locals(&mut self, local_count: u32, arity: usize) {
+        let extra = (local_count as usize).saturating_sub(arity);
         self.cpu
             .stack_mut()
             .extend(std::iter::repeat_n(Value::Undefined, extra));
         self.frame_locals.push(local_count);
-        Ok(())
     }
 
     /// Locals the current frame reserves; none without a frame.
@@ -407,8 +459,7 @@ impl LanesMachine {
 
     /// The current frame's local `index`, if the frame has that slot.
     fn local(&self, index: u32) -> Option<&Value> {
-        let base = self.cpu.get_frame().ok()?.base;
-        self.cpu.stack().get(base + index as usize)
+        self.cpu.get_local(index as usize).ok()
     }
 
     /// Pop one operand, refusing to reach into the frame's locals.
@@ -461,7 +512,8 @@ impl LanesMachine {
         for arg in args {
             self.cpu.stack_push(*arg);
         }
-        self.reserve_locals(function.local_count, args.len())?;
+        self.check_frame(function.local_count, args.len())?;
+        self.push_locals(function.local_count, args.len());
 
         Ok(function.start_address as usize)
     }
@@ -1157,14 +1209,7 @@ mod tests {
         ));
     }
 
-    /// Wrap a module body in the `sst v1` container and resolve it.
-    fn module(body: &str) -> Program {
-        crate::isa::text::parse_text(&format!(
-            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
-             .text(root):\n{body}.text(root).\n.section(root).\n"
-        ))
-        .expect("the module should parse")
-    }
+    use crate::isa::bytecode::tests_support::sst_module as module;
 
     /// Run `@main`'s body against a fresh machine and return what is left on
     /// the stack, locals first.
@@ -1733,6 +1778,75 @@ mod tests {
         assert_eq!(program.functions[1].start_address, 7, "the target above");
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted);
+    }
+
+    /// Recursion reserves a frame per level, so the whole stack is bounded,
+    /// not just each frame. `@f` calls itself before its one `load` — which
+    /// sizes its frame at 1024 locals and never runs — so each level reserved
+    /// 16 KB, and the CLI's default step budget reached gigabytes.
+    #[test]
+    fn recursion_cannot_reserve_past_the_stack_budget() {
+        let mut m = LanesMachine::new();
+        let err = m
+            .run(
+                &module(
+                    "fn @main() {\n  cpu::cpu.call 0, f\n  cpu::cpu.halt\n}\n\n\
+                     fn @f() {\n  cpu::cpu.call 0, f\n  cpu::cpu.load u64, 1023\n  \
+                     cpu::cpu.ret 0\n}\n",
+                ),
+                10_000_000,
+            )
+            .expect_err("the recursion has no base case");
+        assert!(err.to_string().contains("unbounded recursion"), "got {err}");
+        assert!(m.cpu.stack().len() <= MAX_STACK_SLOTS);
+        // A frame per level, each of 1024 locals: the budget, not the step
+        // count, is what stopped it.
+        assert_eq!(m.frame_locals.len(), MAX_STACK_SLOTS / 1024 + 1);
+    }
+
+    /// A refused call is refused before the CPU pushes its frame, so the
+    /// machine's own frame stack stays in step with the CPU's. Checked after
+    /// the frame was pushed, both refusals below left the CPU one frame deep
+    /// with no `local_count` to go with it.
+    #[test]
+    fn a_refused_call_pushes_no_frame() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        // Into the middle of `@main`, which begins no function.
+        let into_the_middle = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Call(0, 3)),
+                MachineInstruction::Cpu(C::Halt),
+                MachineInstruction::Cpu(C::Return(0)),
+            ],
+        )
+        .unwrap();
+        // Two arguments to a function that reserves no locals to hold them.
+        let too_many_arguments = module(
+            "fn @main() {\n  cpu::cpu.const i64, 1\n  cpu::cpu.const i64, 2\n  \
+             cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 2\n  cpu::cpu.const u32, 9\n  \
+             cpu::cpu.call_indirect\n  cpu::cpu.halt\n}\n\nfn @none() {\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(too_many_arguments.functions[1].start_address, 9);
+
+        for (program, expected) in [
+            (&into_the_middle, "does not begin a function"),
+            (
+                &too_many_arguments,
+                "receives 2 argument(s) but reserves only 0",
+            ),
+        ] {
+            let mut m = LanesMachine::new();
+            let err = m.run(program, 100).expect_err("the call should be refused");
+            assert!(err.to_string().contains(expected), "got {err}");
+            // Still in `@main`: the entry frame returns nowhere, a call frame
+            // to the instruction after its `call`.
+            assert_eq!(m.cpu.get_frame().unwrap().ret_pc, 0);
+            assert_eq!(m.frame_locals.len(), 1);
+        }
     }
 
     /// A call's target has to begin a function: that is where the machine

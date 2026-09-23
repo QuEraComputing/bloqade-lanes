@@ -277,12 +277,18 @@ pub const MAX_GET_ITEM_DIMS: u32 = 2;
 /// its index. The frame model closes that road and opens this one, so the
 /// bound stays.)
 ///
-/// The compiler spills a value to a local only when it cannot wait on the
-/// stack for its consumer, and reuses a slot once its value is dead, so every
-/// legitimate index is a handful. The bound is set well above that rather than at it:
-/// its job is to keep a malformed operand from becoming an allocation, not to
-/// impose a limit on a hand-written program. The ceiling costs about 16 KB of
-/// stack per frame, which is nothing.
+/// It is not a bound that only a malformed program meets. The compiler spills
+/// a value to a local when it cannot wait on the stack for its consumer, and
+/// a slot is free again only after its value's last reload, so a function
+/// needs as many slots as it has spilled values live at once. That scales
+/// with the program: detectors built after every result of a measurement has
+/// been read keep each result live, which is 160 slots for one full
+/// measurement on the bundled physical spec. `stackify` refuses to emit past
+/// the bound rather than produce bytecode that fails here.
+///
+/// A frame of the full 1024 costs 16 KB of stack. Recursion reserves one per
+/// level, so the machine also bounds the whole stack
+/// ([`MAX_STACK_SLOTS`](super::machine::MAX_STACK_SLOTS)).
 pub const MAX_LOCAL_INDEX: u32 = 1023;
 
 /// Most locals a frame may reserve: one for every index up to
@@ -1497,20 +1503,19 @@ impl<'a> StackSimulator<'a> {
             // changes the other slots, and neither can reach past the locals,
             // so they are how a value outlives the op that would consume it.
             //
-            // An index past the frame has no slot to model. The function
-            // table's count covers every index its body names, so that only
-            // happens past [`MAX_LOCAL_INDEX`], which `validate_structure`
-            // reports; here it only has to leave the depth right.
+            // A local past the tracked ones is one no `store` in the function
+            // writes (see [`Self::entry_state`]), so it holds the placeholder
+            // on every path. The function table's count covers every index
+            // the body names, so none is past the frame.
             //
             // Both are typed, and checked the way vihaco-cpu checks them:
             // see [`Self::sim_load`], and a `store` refuses a concrete value
             // of another type while taking a placeholder under any.
             M::Cpu(C::Load(ty, index)) => {
-                let slot = self
-                    .locals
-                    .get(*index as usize)
-                    .copied()
-                    .unwrap_or(Slot::UNKNOWN);
+                let slot = self.locals.get(*index as usize).copied().unwrap_or(Slot {
+                    rep: Rep::Placeholder,
+                    ..Slot::UNKNOWN
+                });
                 let loaded = self.sim_load(*ty, slot);
                 self.stack.push(loaded);
             }
@@ -1716,15 +1721,27 @@ impl<'a> StackSimulator<'a> {
     /// A callee's arguments are whatever its caller passed — nothing checks
     /// them against the declaration — so they are unknown.
     ///
-    /// Clamped, so a table claiming more than any frame may reserve is not
-    /// also an allocation here: every slot past the clamp is named by an index,
-    /// or declared by a parameter list, that `validate_structure` rejects.
+    /// Only the slots some `store` writes are tracked, past the parameters:
+    /// one no path writes holds the placeholder on every path, and a `load`
+    /// of it needs no slot to say so (see [`StackSimulator::dispatch`]).
+    /// Every state carries its locals, so sizing them by the highest index
+    /// *named* made one `load u64, 1023` behind ten thousand branches cost a
+    /// quarter of a gigabyte. Clamped as well, so a table claiming more than
+    /// any frame may reserve is not an allocation here either: every slot
+    /// past the clamp is stored by an index, or declared by a parameter list,
+    /// that `validate_structure` rejects.
     fn entry_state(&self, span: &Span) -> AbstractStack {
+        let stored = self.program.code[span.start..span.end]
+            .iter()
+            .filter_map(|inst| match inst {
+                M::Cpu(C::Store(_, index)) => Some(*index as usize + 1),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
         let locals = self.functions.get(&span.start).map_or_else(Vec::new, |f| {
             let params = &f.signature.params;
-            let count = (f.local_count as usize)
-                .max(params.len())
-                .min(MAX_LOCAL_COUNT as usize);
+            let count = stored.max(params.len()).min(MAX_LOCAL_COUNT as usize);
             (0..count)
                 .map(|i| match params.get(i) {
                     Some(param) if self.entry && param.ty != Type::Undefined => {
@@ -1913,6 +1930,7 @@ pub fn simulate_stack(program: &Program, arch: Option<&ArchSpec>) -> Vec<Validat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::isa::bytecode::tests_support::sst_module;
     use crate::version::Version;
 
     /// A small, valid arch: one word of 5 sites, one zone.
@@ -2539,16 +2557,6 @@ mod tests {
             simulate_stack(&p, None),
             vec![ValidationError::StackUnderflow { pc: 1 }]
         );
-    }
-
-    /// Wrap a multi-function body in the `sst v1` container.
-    fn sst_module(body: &str) -> Program {
-        use crate::isa::text::parse_text;
-        parse_text(&format!(
-            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
-             .text(root):\n{body}.text(root).\n.section(root).\n"
-        ))
-        .expect("the module should parse")
     }
 
     /// A callee's frame starts with its declared parameters, not empty (gap 1

@@ -383,14 +383,25 @@ fn decode_lanes(inst: BytecodeLanes) -> LanesInstruction {
     }
 }
 
-/// The exhaustive instruction list the tests walk.
+/// Test helpers more than one module's tests share: the exhaustive
+/// instruction list, and the `sst v1` wrapper for hand-written modules.
 ///
-/// It lives outside `mod tests` because `machine`'s renderer tests walk the
-/// same list: there is one place to keep exhaustive, not two that can drift
+/// They live outside `mod tests` because `machine`'s and `validate`'s tests
+/// use them too: there is one place to keep exhaustive, not two that can drift
 /// apart while both look thorough.
 #[cfg(test)]
 pub(crate) mod tests_support {
     use super::*;
+
+    /// Wrap a module body — one or more `fn` blocks — in the `sst v1`
+    /// container and resolve it.
+    pub(crate) fn sst_module(body: &str) -> crate::isa::Program {
+        crate::isa::text::parse_text(&format!(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
+             .text(root):\n{body}.text(root).\n.section(root).\n"
+        ))
+        .expect("the module should parse")
+    }
 
     /// **Every** variant of both instruction sets.
     ///
