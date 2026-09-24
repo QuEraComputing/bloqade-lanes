@@ -133,7 +133,8 @@ pub(crate) fn solve_single_heuristic(
     let mut attempts = Vec::new();
 
     for (i, candidate) in candidates.iter().enumerate() {
-        if validate_candidate(candidate, controls, targets, engine.index()).is_err() {
+        if validate_candidate(candidate, &initial_pairs, controls, targets, engine.index()).is_err()
+        {
             continue;
         }
 

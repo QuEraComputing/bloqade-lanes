@@ -28,7 +28,7 @@ use bloqade_lanes_search::placement::receding_horizon::{
     RecedingHorizonCzPlacement, RecedingHorizonOptions, default_weight_grid,
 };
 use bloqade_lanes_search::placement::single_heuristic::SingleHeuristicCzPlacement;
-use bloqade_lanes_search::placement::target_generator::DefaultTargetGenerator;
+use bloqade_lanes_search::placement::target_generator::{CandidateList, DefaultTargetGenerator};
 use bloqade_lanes_search::primitives::config::Config;
 use bloqade_lanes_search::primitives::context::SearchContext;
 use bloqade_lanes_search::primitives::distance::DistanceTable;
@@ -2042,8 +2042,13 @@ impl PySingleHeuristicCzPlacement {
     ///
     /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
     /// ``future_layers`` are later stages, nearest first, for placements that
-    /// look ahead.
-    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    /// look ahead. ``candidates``, when given, are the target placements to
+    /// try, in order, instead of ``DefaultTargetGenerator``'s. Each is
+    /// validated before it is routed and skipped if it fails: it must place
+    /// exactly ``initial``'s qubits, at valid and distinct locations, with
+    /// every pair on CZ partner sites (in either direction).
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None, candidates=None))]
+    #[allow(clippy::too_many_arguments)]
     fn place(
         &self,
         py: Python<'_>,
@@ -2052,10 +2057,33 @@ impl PySingleHeuristicCzPlacement {
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
         future_layers: Option<Vec<Vec<(u32, u32)>>>,
+        candidates: Option<Vec<std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>>>,
     ) -> PyResult<PyPlacementResult> {
+        let Some(candidates) = candidates else {
+            return place_stage(
+                py,
+                &self.inner,
+                &initial,
+                &pairs,
+                &blocked,
+                max_expansions,
+                future_layers,
+            );
+        };
+        let list = CandidateList(
+            candidates
+                .iter()
+                .map(|c| c.iter().map(|(&qid, loc)| (qid, loc.inner)).collect())
+                .collect(),
+        );
+        let solver = self.inner.target_solver();
+        let placement = SingleHeuristicCzPlacement::new(
+            TargetSolver::new(solver.engine().clone(), solver.search().clone()),
+            Box::new(list),
+        );
         place_stage(
             py,
-            &self.inner,
+            &placement,
             &initial,
             &pairs,
             &blocked,
