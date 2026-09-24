@@ -305,6 +305,11 @@ def test_unsupported_gate_is_a_validation_error():
         assert len(messages) == 2, messages
         assert any("Gate ccz is not supported" in m for m in messages), messages
         assert any("Non-clifford gate u3" in m for m in messages), messages
+        # Both come from inlined stdlib kernels, so the call site is named; but
+        # the kernel already unrolls and neither error is about unrolling, so the
+        # unroll advice must not be tacked on.
+        assert all("inlined from" in m for m in messages), messages
+        assert not any("aggressive_unroll" in m for m in messages), messages
     else:
         pytest.fail("expected a ValidationErrorGroup")
 
