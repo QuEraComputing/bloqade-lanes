@@ -107,23 +107,25 @@ pub fn chain_with_siding_arch_json() -> &'static str {
 
 /// Minimal two-zone architecture with a single inter-zone `zone_bus`.
 ///
-/// Zone 0 ("gate") holds word 0 and zone 1 ("memory") holds word 1, each a
-/// single-site word. A one-to-one `zone_bus` connects (zone 1, word 1) ->
-/// (zone 0, word 0). There are no intra-zone buses, so the only edges in the
-/// search graph come from the zone bus — making this arch a focused regression
-/// fixture for inter-zone graph construction (issue #845).
+/// Two single-site words on a 2×1 grid (word 0 at column 0, word 1 at
+/// column 1). The word template is spec-wide, so both zones lay out both
+/// words; zone 0 is "gate" and zone 1 "memory". A one-to-one `zone_bus`
+/// connects (zone 1, word 1) -> (zone 0, word 0). There are no intra-zone
+/// buses, so the only edges in the search graph come from the zone bus —
+/// making this arch a focused regression fixture for inter-zone graph
+/// construction (issue #845).
 #[allow(dead_code)]
 pub fn two_zone_bus_arch_json() -> &'static str {
     r#"{
         "version": "2.0",
         "words": [
             { "sites": [[0, 0]] },
-            { "sites": [[0, 0]] }
+            { "sites": [[1, 0]] }
         ],
         "zones": [
             {
                 "name": "gate",
-                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [], "y_spacing": [] },
+                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0], "y_spacing": [] },
                 "site_buses": [],
                 "word_buses": [],
                 "words_with_site_buses": [],
@@ -132,7 +134,7 @@ pub fn two_zone_bus_arch_json() -> &'static str {
             },
             {
                 "name": "memory",
-                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [], "y_spacing": [] },
+                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [1.0], "y_spacing": [] },
                 "site_buses": [],
                 "word_buses": [],
                 "words_with_site_buses": [],
