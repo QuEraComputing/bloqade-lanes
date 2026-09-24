@@ -549,7 +549,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
 
         let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
@@ -693,7 +692,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
         let scorer = DistanceScorer;

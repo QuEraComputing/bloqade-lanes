@@ -71,7 +71,7 @@ fn time_case(bencher: Bencher, name: &str) {
         .into_iter()
         .find(|c| c.name == name)
         .expect("case exists");
-    let engine = interface::engine(case.spec.arch).expect("engine builds");
+    let engine = interface::engine_for(&case.spec).expect("engine builds");
     // Untimed warm-up: fills the engine's lazy caches and yields the count.
     let expanded = match interface::run_with(&case.spec, &engine) {
         Outcome::Ran(run) => u64::from(run.nodes_expanded),

@@ -296,7 +296,6 @@ pub(crate) fn solve_with_engine(
         blocked: &blocked_encoded,
         targets: &target_encoded,
         cz_pairs: None,
-        capacity: opts.aod_capacity,
     };
 
     let lookahead = opts.lookahead;
@@ -420,7 +419,7 @@ mod tests {
         assert_eq!(spun.cost.to_bits(), stopped.cost.to_bits());
     }
 
-    /// `SolveOptions::aod_capacity` reaches the shot generator through the
+    /// The spec's `aod_capacity` reaches the shot generator through the
     /// public entry point.
     ///
     /// Three atoms in one row of the example arch move together in a single
@@ -429,22 +428,21 @@ mod tests {
     /// assertion is on the emitted *widths* rather than the layer count, so it
     /// pins the capacity rather than any particular plan length.
     ///
-    /// This covers the wiring, not the generator: the option has to survive
-    /// `solve` building its `SearchContext`. That thread is exactly what the
-    /// loose-target generator got wrong before this test's sibling fix, so it
-    /// is worth an assertion of its own.
+    /// This covers the wiring, not the generator: the capacity has to reach
+    /// every shot assembler from the architecture spec, through the engine's
+    /// `LaneIndex`.
     #[test]
-    fn solve_honours_the_aod_capacity_from_options() {
-        let engine = make_engine();
+    fn solve_honours_the_aod_capacity_from_the_arch_spec() {
         let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
         let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i + 5))).collect();
 
         let widths = |capacity: Option<AodCapacity>| -> Vec<usize> {
-            let search = MoveSearch::default().with_options(SolveOptions {
-                aod_capacity: capacity,
-                ..Default::default()
-            });
-            let result = TargetSolver::new(Arc::clone(&engine), search)
+            let spec: bloqade_lanes_bytecode_core::arch::ArchSpec =
+                serde_json::from_str(example_arch_json()).unwrap();
+            let engine =
+                Arc::new(SearchEngine::from_arch_spec(&spec.with_aod_capacity(capacity)).unwrap());
+            let search = MoveSearch::default();
+            let result = TargetSolver::new(engine, search)
                 .solve(
                     initial.clone(),
                     target.clone(),

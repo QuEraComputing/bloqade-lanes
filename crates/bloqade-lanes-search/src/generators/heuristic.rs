@@ -617,8 +617,12 @@ impl MoveGenerator for HeuristicGenerator {
 
         for (key, qubits) in groups {
             // Build grid context from all lanes of this bus group (one zone).
-            let grid_ctx =
-                crate::ops::aod_grid::BusGridContext::new(ctx.index, key, &occupied, ctx.capacity);
+            let grid_ctx = crate::ops::aod_grid::BusGridContext::new(
+                ctx.index,
+                key,
+                &occupied,
+                ctx.index.aod_capacity(),
+            );
 
             // Build entries (src_encoded -> lane_encoded) and the seed order for
             // the chain closure. Each source location has at most one atom, so
@@ -1061,7 +1065,6 @@ mod tests {
             blocked,
             targets,
             cz_pairs: None,
-            capacity: None,
         }
     }
 
@@ -1079,7 +1082,6 @@ mod tests {
             blocked,
             targets,
             cz_pairs: Some(cz_pairs),
-            capacity: None,
         }
     }
 

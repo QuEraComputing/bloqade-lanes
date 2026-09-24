@@ -172,7 +172,6 @@ impl Fixture {
             blocked: &self.blocked,
             targets: &self.targets,
             cz_pairs: None,
-            capacity: None,
         }
     }
 

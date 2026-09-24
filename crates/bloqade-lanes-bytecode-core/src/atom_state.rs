@@ -673,6 +673,7 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: None,
+            aod_capacity: None,
         }
     }
 
@@ -1326,6 +1327,7 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: None,
+            aod_capacity: None,
         };
         assert!(
             spec.validate().is_ok(),

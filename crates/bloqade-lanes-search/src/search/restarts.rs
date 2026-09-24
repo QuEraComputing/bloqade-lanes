@@ -631,7 +631,6 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs,
-            capacity: None,
         };
         let opts = SolveOptions {
             strategy,
