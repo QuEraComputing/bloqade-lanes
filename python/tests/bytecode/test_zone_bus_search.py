@@ -16,7 +16,10 @@ from bloqade.lanes.bytecode._native import (
     ArchSpec as RustArchSpec,
     EntropyOptions,
     MoveSearch,
+    Proof,
     SearchEngine,
+    SolveStatus,
+    Termination,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
@@ -73,7 +76,7 @@ def test_rust_solver_routes_across_zone_bus():
     solver = _native.TargetSolver(engine, MoveSearch.entropy())
     result = solver.solve({0: mem_loc._inner}, {0: gate_loc._inner}, [], None)
 
-    assert result.status == "solved"
+    assert result.status == SolveStatus.SOLVED
 
 
 def test_rust_solver_routes_back_across_zone_bus():
@@ -86,7 +89,7 @@ def test_rust_solver_routes_back_across_zone_bus():
     solver = _native.TargetSolver(engine, MoveSearch.entropy())
     result = solver.solve({0: gate_loc._inner}, {0: mem_loc._inner}, [], None)
 
-    assert result.status == "solved"
+    assert result.status == SolveStatus.SOLVED
 
 
 def test_solve_result_reports_proven_and_termination():
@@ -115,12 +118,12 @@ def test_solve_result_reports_proven_and_termination():
 
     stopped, spun = solve(True), solve(False)
 
-    assert stopped.status == "solved"
-    assert stopped.proven is True
-    assert stopped.termination == "exhausted_proof"
-    assert "proven=true" in repr(stopped)
+    assert stopped.status == SolveStatus.SOLVED
+    assert stopped.proof == Proof.OPTIMAL
+    assert stopped.termination == Termination.EXHAUSTED
+    assert "proof=OPTIMAL" in repr(stopped)
 
-    assert spun.proven is False
+    assert spun.proof is None
     assert spun.cost == stopped.cost
     assert spun.nodes_expanded == stopped.nodes_expanded
 
@@ -137,5 +140,5 @@ def test_unbounded_solve_is_never_proven():
         [],
         None,
     )
-    assert result.status == "solved"
-    assert result.proven is False
+    assert result.status == SolveStatus.SOLVED
+    assert result.proof is None

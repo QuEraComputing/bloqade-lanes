@@ -12,6 +12,7 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode._native import SolveStatus
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
@@ -100,10 +101,10 @@ def test_cz_placements_rust_raises_on_failure(monkeypatch):
     state = _make_state()
 
     class _FakeResult:
-        status = "unsolvable"
+        status = SolveStatus.UNSOLVABLE
         nodes_expanded = 0
         bound_stats: ClassVar[dict[str, float]] = {}
-        proven = False
+        proof = None
 
     class _FakeSolver:
         def solve(self, *_args):
@@ -183,10 +184,10 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     )
 
     class _FakeResult:
-        status = "solved"
+        status = SolveStatus.SOLVED
         nodes_expanded = 1
         bound_stats: ClassVar[dict[str, float]] = {}
-        proven = False
+        proof = None
         # move_layers: list[list[LaneAddress]] — MoveType.ZONE variant
         move_layers: ClassVar = [
             [NativeLane(MoveType.ZONE, 0, 0, 0, 0, BytecodeDirection.FORWARD)]
@@ -227,10 +228,10 @@ def test_cz_placements_counts_entropy_fallback_trace(monkeypatch):
         steps: ClassVar = [_FakeTraceStep()]
 
     class _FakeResult:
-        status = "solved"
+        status = SolveStatus.SOLVED
         nodes_expanded = 1
         bound_stats: ClassVar[dict[str, float]] = {}
-        proven = False
+        proof = None
         move_layers: ClassVar = []
         goal_config: ClassVar = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
         entropy_trace = _FakeTrace()
@@ -281,10 +282,10 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
 
     class _FakeResult:
         def __init__(self):
-            self.status = "unsolvable"
+            self.status = SolveStatus.UNSOLVABLE
             self.nodes_expanded = consumed
             self.bound_stats: dict[str, float] = {}
-            self.proven = False
+            self.proof = None
 
     class _FakeSolver:
         def solve(self, _initial, _target, _blocked, max_expansions):
@@ -821,9 +822,9 @@ def test_fallback_push_rotate_is_forwarded_to_the_native_solve_options():
         )
 
     assert RustPlacementTraversal().fallback_push_rotate is False
-    assert solve(fallback=False).status == "budget_exceeded"
+    assert solve(fallback=False).status == SolveStatus.BUDGET_EXCEEDED
     rescued = solve(fallback=True)
-    assert rescued.status == "solved"
+    assert rescued.status == SolveStatus.SOLVED
     assert len(rescued.move_layers) == 3
 
 

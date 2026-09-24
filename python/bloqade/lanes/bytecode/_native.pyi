@@ -1242,6 +1242,58 @@ class RecedingHorizonOptions:
     def __repr__(self) -> str: ...
 
 @final
+class SolveStatus:
+    """How a solve ended.
+
+    Compare with members (``result.status == SolveStatus.SOLVED``); comparing
+    with a string raises ``TypeError``, since the string labels were retired.
+    ``UNSOLVABLE`` is a proof only when the result's ``proof`` is
+    ``Proof.NO_PLAN``.
+    """
+
+    SOLVED: SolveStatus
+    UNSOLVABLE: SolveStatus
+    BUDGET_EXCEEDED: SolveStatus
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class Termination:
+    """How the search behind a result ended, as the driver's own account.
+
+    ``BUDGET`` ran out of expansions; ``STOPPED`` ended on a rule of its own,
+    such as collecting its goal quota; ``EXHAUSTED`` drained its space. Whether
+    that is a proof is the result's ``proof``. Comparing with a string raises
+    ``TypeError``.
+    """
+
+    BUDGET: Termination
+    EXHAUSTED: Termination
+    STOPPED: Termination
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class Proof:
+    """What a result proves: ``OPTIMAL`` (no legal plan is cheaper) or
+    ``NO_PLAN`` (no plan exists). Comparing with a string raises ``TypeError``.
+    """
+
+    OPTIMAL: Proof
+    NO_PLAN: Proof
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
 class SolveResult:
     """Result of a move synthesis solve.
 
@@ -1252,21 +1304,15 @@ class SolveResult:
     """
 
     @property
-    def status(self) -> str:
-        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
-
-        ``"unsolvable"`` is a proof only from the ``push_rotate`` strategy. From
-        a search strategy it means the search exhausted the moves its generator
-        offered — which is deliberately less than the architecture allows — not
-        that no solution exists.
-        """
+    def status(self) -> SolveStatus:
+        """How the solve ended; see ``SolveStatus``."""
         ...
 
     @property
     def move_layers(self) -> list[list[LaneAddress]]:
         """Move layers as lists of LaneAddress objects.
 
-        Empty when ``status`` is not ``"solved"``.
+        Empty when ``status`` is not ``SolveStatus.SOLVED``.
         """
         ...
 
@@ -1274,7 +1320,8 @@ class SolveResult:
     def goal_config(self) -> dict[int, LocationAddress]:
         """Goal configuration as qubit_id -> LocationAddress mapping.
 
-        Equals the initial configuration when ``status`` is not ``"solved"``.
+        Equals the initial configuration when ``status`` is not
+        ``SolveStatus.SOLVED``.
         """
         ...
 
@@ -1285,7 +1332,7 @@ class SolveResult:
 
     @property
     def cost(self) -> float:
-        """Total path cost. 0.0 when ``status`` is not ``"solved"``."""
+        """Total path cost. 0.0 when ``status`` is not ``SolveStatus.SOLVED``."""
         ...
 
     @property
@@ -1306,32 +1353,22 @@ class SolveResult:
         ...
 
     @property
-    def proven(self) -> bool:
-        """Whether this plan is *proven* optimal.
+    def proof(self) -> Optional[Proof]:
+        """What the result proves, or ``None``.
 
-        ``True`` means the search drained everything that could still have
-        beaten this plan, and its branching was complete enough for that to
-        mean something. On the entropy driver it is the root certificate: the
-        plan's cost reached ``h(root)``, a lower bound on every legal plan, so
-        none is cheaper -- including plans the generator would never have
-        proposed.
+        ``Proof.OPTIMAL``: the plan is optimal. On the entropy driver that is
+        the root certificate: the plan's cost reached ``h(root)``, a lower
+        bound on every legal plan, so none is cheaper -- including plans the
+        generator would never have proposed. ``Proof.NO_PLAN``: no plan exists.
 
-        ``False`` is not "suboptimal", it is "unproven": most solves end on
-        their expansion budget. Read it to tell a solver giving up from an
-        instance that is genuinely this expensive, which is what an escalation
-        policy needs to know.
+        ``None`` is not "suboptimal" or "solvable", it is "unproven": most
+        solves end on their expansion budget.
         """
         ...
 
     @property
-    def termination(self) -> str:
-        """How the search ended, as the driver's own account.
-
-        ``"budget"`` ran out of expansions; ``"stopped"`` ended on a rule of
-        its own, such as collecting its goal quota; ``"exhausted"`` drained
-        its space without that being a proof; ``"exhausted_proof"`` drained it
-        and the result is optimal, which is the case ``proven`` reports.
-        """
+    def termination(self) -> Termination:
+        """How the search ended; see ``Termination``."""
         ...
 
     @property
@@ -1494,8 +1531,8 @@ class MultiSolveResult:
     """Result of a multi-candidate solve via ``SingleHeuristicCzPlacement.solve_with_attempts()``."""
 
     @property
-    def status(self) -> str:
-        """Status of the winning solve."""
+    def status(self) -> SolveStatus:
+        """How the winning (or last) solve ended."""
         ...
 
     @property

@@ -671,6 +671,24 @@ adapter rebuild.
 
 ### Phase 3A — typed adapter + Python migration (structural, behaviour-preserving)
 
+**How it lands: four stacked PRs.** (1) typed status, termination and proof; (2) typed
+`BoundStats`, a `PlacementResult` binding and a Python `place()`; (3) `bound_terminates`
+Rust-only and typed exceptions; (4) caller-supplied candidates.
+
+**Part 1 — landed notes.**
+- Python gets `SolveStatus` (`SOLVED` / `UNSOLVABLE` / `BUDGET_EXCEEDED`), `Termination`
+  (`BUDGET` / `EXHAUSTED` / `STOPPED`) and `Proof` (`OPTIMAL` / `NO_PLAN`).
+  `SolveResult.status`, `.termination` and the new `.proof` return them; `.proven` and
+  the `"exhausted_proof"` label are gone.
+- **Comparing a member with a string raises `TypeError`,** naming the replacement. A plain
+  enum would have turned every surviving `status != "solved"` into a silent "always
+  failed" — `bloqade-internal`'s `placement/zoned.py` has exactly that line and must
+  migrate before it moves to this surface.
+- `PhysicalPlacementStrategy.rust_proven_total` now counts `Proof.OPTIMAL` only, as its
+  docstring always said.
+- Core `SolveStatus::as_label` is deleted; the labels were the Python ABI. `policy_status`
+  (`PolicyRunner`) is the DSL sidecar's own label and stays out of scope.
+
 - **A typed status enum replaces the string ABI.**
   - Python comparison sites (paths relative to `python/bloqade/lanes/`):
     - `heuristics/physical/movement.py:454`;
