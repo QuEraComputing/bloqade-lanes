@@ -223,11 +223,14 @@ impl ArchSpec {
         map
     }
 
-    /// Map each word to the zone that owns it.
+    /// Map each word to a zone, for callers that need one zone per word.
     ///
-    /// Derived from each zone's `entangling_pairs`, `word_buses`, and
-    /// `words_with_site_buses`. First match wins. Words not referenced
-    /// by any zone default to zone 0.
+    /// The word template is spec-wide: every zone lays out every word on
+    /// its own grid, and a [`LocationAddr`] carries its zone explicitly. So
+    /// this is not ownership — a word exists in every zone. It is the first
+    /// zone whose `entangling_pairs`, `word_buses` or `words_with_site_buses`
+    /// reference the word, else zone 0, and it serves as a placement
+    /// preference only.
     pub fn word_zone_map(&self) -> HashMap<u32, u32> {
         let mut map = HashMap::new();
         for (zone_id, zone) in self.zones.iter().enumerate() {
@@ -254,8 +257,47 @@ impl ArchSpec {
         map
     }
 
+    /// Whether `word_id` is a home (non-staging) word within `zone`: it is
+    /// the lower word of one of the zone's entangling pairs, or in none of
+    /// them.
+    fn is_home_word_in_zone(zone: &Zone, word_id: u32) -> bool {
+        let mut paired = false;
+        for &[w_a, w_b] in &zone.entangling_pairs {
+            if w_a.min(w_b) == word_id {
+                return true;
+            }
+            paired |= w_a == word_id || w_b == word_id;
+        }
+        !paired
+    }
+
+    /// Every home location, sorted by `(zone, word, site)`: each site of
+    /// each word in each zone, except where the word is a staging word of
+    /// that zone (see [`Self::is_home_position`]).
+    pub fn home_locations(&self) -> Vec<LocationAddr> {
+        let mut result = Vec::new();
+        for (zone_id, zone) in self.zones.iter().enumerate() {
+            for (word_id, word) in self.words.iter().enumerate() {
+                let word_id = word_id as u32;
+                if !Self::is_home_word_in_zone(zone, word_id) {
+                    continue;
+                }
+                result.extend((0..word.sites.len() as u32).map(|site_id| LocationAddr {
+                    zone_id: zone_id as u32,
+                    word_id,
+                    site_id,
+                }));
+            }
+        }
+        result
+    }
+
     /// Return the set of "home" word IDs — the lower word in each entangling
     /// pair, plus any word not appearing in any pair.
+    ///
+    /// This ignores zones: a word that is staging in one zone counts as
+    /// staging everywhere. For a specific location use
+    /// [`Self::is_home_position`], which decides per zone.
     pub fn left_cz_word_ids(&self) -> Vec<u32> {
         let partner = self.word_partner_map();
         let mut paired: HashSet<u32> = HashSet::new();
@@ -483,12 +525,17 @@ impl ArchSpec {
         }
     }
 
-    /// Whether a location sits in a "home" word — i.e. its `word_id` is in
-    /// [`Self::left_cz_word_ids`]. Used by the no-home placement strategy
-    /// to identify atoms still at their original home positions vs.
-    /// returners that need re-assigning.
+    /// Whether a location is a home (non-staging) position: its word is not
+    /// the upper, staging word of an entangling pair *in its own zone*. A
+    /// zone with no entangling pairs has no staging positions. Used by the
+    /// no-home placement strategy to tell atoms at home from returners that
+    /// need re-assigning. Returns `false` for an out-of-range zone or word.
     pub fn is_home_position(&self, loc: &LocationAddr) -> bool {
-        self.left_cz_word_ids().contains(&loc.word_id)
+        (loc.word_id as usize) < self.words.len()
+            && self
+                .zones
+                .get(loc.zone_id as usize)
+                .is_some_and(|zone| Self::is_home_word_in_zone(zone, loc.word_id))
     }
 
     /// Get the CZ partner for a given location.
@@ -520,22 +567,20 @@ impl ArchSpec {
     /// `col` is the grid x-index and `row` the grid y-index within `zone_id`.
     /// Returns the location whose word site sits at that grid position — a
     /// unique `(word_id, site_id)` within the zone — or `None` if no atom
-    /// occupies it (or the zone doesn't exist). This is the authoritative
-    /// `(row, col) -> (word_id, site_id)` mapping for the architecture's
-    /// addressing scheme; callers depend only on this, not on the word/site
-    /// layout.
+    /// occupies it (or the zone doesn't exist). The word template is
+    /// spec-wide, so the `(word_id, site_id)` found does not depend on the
+    /// zone; `zone_id` only selects which zone's copy is returned. This is
+    /// the authoritative `(row, col) -> (word_id, site_id)` mapping for the
+    /// architecture's addressing scheme; callers depend only on this, not on
+    /// the word/site layout.
     pub fn location_at(&self, zone_id: u32, row: u32, col: u32) -> Option<LocationAddr> {
-        // TODO: this does an O(words * sites) linear scan and rebuilds
-        // `word_zone_map()` on every call. Replace with a lazily-evaluated,
-        // cached `HashMap` keyed by `(zone_id, row, col) -> LocationAddr` so
-        // repeated lookups during compilation are O(1).
+        // TODO: this does an O(words * sites) linear scan on every call.
+        // Replace with a lazily-evaluated, cached `HashMap` keyed by
+        // `(row, col) -> (word_id, site_id)` so repeated lookups during
+        // compilation are O(1).
         self.zones.get(zone_id as usize)?;
-        let word_zone = self.word_zone_map();
         for (word_id, word) in self.words.iter().enumerate() {
             let wid = word_id as u32;
-            if word_zone.get(&wid).copied().unwrap_or(0) != zone_id {
-                continue;
-            }
             for (site_id, site) in word.sites.iter().enumerate() {
                 if site[0] == col && site[1] == row {
                     return Some(LocationAddr {
@@ -1613,6 +1658,76 @@ mod tests {
         };
         assert!(spec.is_home_position(&home));
         assert!(!spec.is_home_position(&staging));
+    }
+
+    #[test]
+    fn test_is_home_position_is_per_zone() {
+        let spec = make_valid_two_zone_spec();
+        // Word 1 is the staging word of zone 0's pair, but zone 1 has no
+        // entangling pairs, so nothing in zone 1 is a staging position.
+        let storage = LocationAddr {
+            zone_id: 1,
+            word_id: 1,
+            site_id: 0,
+        };
+        assert!(spec.is_home_position(&storage));
+    }
+
+    #[test]
+    fn test_is_home_position_out_of_range() {
+        let spec = make_valid_two_zone_spec();
+        let at = |zone_id, word_id| LocationAddr {
+            zone_id,
+            word_id,
+            site_id: 0,
+        };
+        assert!(!spec.is_home_position(&at(2, 0)));
+        assert!(!spec.is_home_position(&at(0, 2)));
+    }
+
+    #[test]
+    fn test_home_locations_span_every_zone() {
+        let spec = make_valid_two_zone_spec();
+        let at = |zone_id, word_id, site_id| LocationAddr {
+            zone_id,
+            word_id,
+            site_id,
+        };
+        // Zone 0 pairs [0, 1], so word 1 is staging there. Zone 1 has no
+        // pairs, so both words are home in it, whether or not any bus
+        // references them there.
+        assert_eq!(
+            spec.home_locations(),
+            vec![
+                at(0, 0, 0),
+                at(0, 0, 1),
+                at(1, 0, 0),
+                at(1, 0, 1),
+                at(1, 1, 0),
+                at(1, 1, 1),
+            ]
+        );
+        for loc in spec.home_locations() {
+            assert!(spec.is_home_position(&loc));
+        }
+    }
+
+    #[test]
+    fn test_location_at_resolves_in_every_zone() {
+        let spec = make_valid_two_zone_spec();
+        // The word template is spec-wide: grid (row 0, col 1) is word 1
+        // site 0 in every zone, even though no zone-1 bus references word 1.
+        for zone_id in 0..2 {
+            assert_eq!(
+                spec.location_at(zone_id, 0, 1),
+                Some(LocationAddr {
+                    zone_id,
+                    word_id: 1,
+                    site_id: 0,
+                })
+            );
+        }
+        assert_eq!(spec.location_at(2, 0, 1), None);
     }
 
     #[test]

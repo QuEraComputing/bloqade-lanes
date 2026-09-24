@@ -654,6 +654,30 @@ mod tests {
         }
     }
 
+    /// Neither zone has entangling pairs, so every location in every zone is
+    /// home — in particular `(zone 1, word 1)`, the storage end of the zone
+    /// bus. The old owner-zone lookup put word 1 in zone 0 only, so an atom
+    /// parked in storage looked like a returner and NoHome ran a return phase
+    /// towards a hole in the wrong zone.
+    #[test]
+    fn test_home_sites_span_every_zone() {
+        let arch: ArchSpec =
+            serde_json::from_str(crate::test_utils::two_zone_bus_arch_json()).unwrap();
+        let sites: HashSet<LocationAddr> = entangling::home_sites(&arch)
+            .into_iter()
+            .map(LocationAddr::decode)
+            .collect();
+        let at = |zone_id, word_id| LocationAddr {
+            zone_id,
+            word_id,
+            site_id: 0,
+        };
+        let expected: HashSet<LocationAddr> = [at(0, 0), at(0, 1), at(1, 0), at(1, 1)]
+            .into_iter()
+            .collect();
+        assert_eq!(sites, expected);
+    }
+
     #[test]
     fn test_partner_weights_gamma_decay() {
         let layers = vec![vec![(0, 1), (2, 3)], vec![(0, 2)]];

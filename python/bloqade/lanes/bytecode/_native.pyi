@@ -909,14 +909,33 @@ class ArchSpec:
         ...
 
     def word_zone_map(self) -> dict[int, int]:
-        """Map each word_id to the zone_id that owns it.
+        """Map each word_id to a preferred zone_id.
 
-        Derived from each zone's ``entangling_pairs``, ``word_buses``,
-        and ``words_with_site_buses``. Words not referenced by any zone
-        default to zone 0.
+        Not ownership: the word template is spec-wide, so every word exists
+        in every zone and a ``LocationAddress`` carries its zone explicitly.
+        This is the first zone whose ``entangling_pairs``, ``word_buses`` or
+        ``words_with_site_buses`` reference the word, else zone 0.
 
         Returns:
             dict[int, int]: word_id → zone_id.
+        """
+        ...
+
+    def home_locations(self) -> list[LocationAddress]:
+        """Every home (non-staging) location, sorted by (zone, word, site).
+
+        One entry per site of each word in each zone, except where the word
+        is a staging word of that zone's entangling pairs.
+        """
+        ...
+
+    def is_home_position(self, loc: LocationAddress) -> bool:
+        """Whether ``loc`` is a home (non-staging) position.
+
+        True when the location's word is not the upper, staging word of an
+        entangling pair in the location's own zone. A zone with no
+        entangling pairs has no staging positions. False for an
+        out-of-range zone or word.
         """
         ...
 

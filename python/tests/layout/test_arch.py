@@ -277,14 +277,20 @@ def test_home_sites_single_zone_uses_zone_zero():
     assert all(site.word_id in arch_spec._home_words for site in sites)
 
 
-def test_home_sites_multi_zone_uses_per_word_zone():
-    """home_sites uses each word's actual zone_id, not a hardcoded 0."""
+def test_home_sites_multi_zone_is_per_zone():
+    """home_sites covers every zone, excluding only that zone's staging words.
+
+    The word template is spec-wide, so every zone lays out all five words.
+    Zone 0 pairs (0, 1), making word 1 staging there; zone 1 pairs (3, 4),
+    making word 4 staging there.
+    """
     arch_spec = _build_two_zone_spec()
     sites = arch_spec.home_sites
-    # Home words are min of each entangling pair, plus unpaired words:
-    # zone 0: words 0 (pair 0,1) and 2 (unpaired); zone 1: word 3 (pair 3,4).
-    by_word = {site.word_id: site.zone_id for site in sites}
-    assert by_word == {0: 0, 2: 0, 3: 1}
+    by_zone: dict[int, set[int]] = {}
+    for site in sites:
+        by_zone.setdefault(site.zone_id, set()).add(site.word_id)
+    assert by_zone == {0: {0, 2, 3, 4}, 1: {0, 1, 2, 3}}
+    assert all(arch_spec.is_home_position(site) for site in sites)
 
 
 def test_cz_zone_addresses_single_zone():
