@@ -59,6 +59,9 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Search / move synthesis
     m.add_class::<search_python::PySearchStrategy>()?;
+    m.add_class::<search_python::PySolveStatus>()?;
+    m.add_class::<search_python::PyTermination>()?;
+    m.add_class::<search_python::PyProof>()?;
     m.add_class::<search_python::PyDeadlockPolicy>()?;
     m.add_class::<search_python::PySolveOptions>()?;
     m.add_class::<search_python::PyEntropyOptions>()?;

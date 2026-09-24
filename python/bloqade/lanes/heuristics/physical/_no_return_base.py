@@ -35,6 +35,7 @@ from bloqade.lanes.bytecode._native import (
     MoveSearch,
     SearchEngine,
     SearchStrategy,
+    SolveStatus,
 )
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.heuristics.physical.movement import convert_move_layers
@@ -287,7 +288,7 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         )
         self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
-        if result.status != "solved":
+        if result.status != SolveStatus.SOLVED:
             raise PlacementError(
                 f"CZ routing solver failed with status {result.status!r} for "
                 f"pairs {cz_pairs}; could not route atoms to valid partner sites"

@@ -16,7 +16,12 @@ from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import EntropyTrace, SearchEngine
+from bloqade.lanes.bytecode._native import (
+    EntropyTrace,
+    Proof,
+    SearchEngine,
+    SolveStatus,
+)
 from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
@@ -299,8 +304,9 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     def rust_proven_total(self) -> int:
         """Solves whose plan the bound proved optimal.
 
-        Read against the solve count rather than alone: `False` on a solve
-        means unproven, not suboptimal.
+        Counts ``Proof.OPTIMAL`` only; a ``Proof.NO_PLAN`` is a different
+        claim. Read against the solve count rather than alone: a solve without
+        a proof is unproven, not suboptimal.
         """
         return self._rust_proven_total
 
@@ -452,7 +458,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             self._accumulate_bound_stats(result.bound_stats)
-            if result.proven:
+            if result.proof == Proof.OPTIMAL:
                 self._rust_proven_total += 1
             if remaining is not None:
                 # The search strategies expand ≥ 1 node per call (even when
@@ -461,7 +467,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
                 # forward progress across candidates and this loop
                 # terminates under every strategy.
                 remaining -= max(1, int(result.nodes_expanded))
-            if result.status == "solved":
+            if result.status == SolveStatus.SOLVED:
                 winning_result = result
                 if should_trace and self.traversal.collect_entropy_trace:
                     trace = result.entropy_trace

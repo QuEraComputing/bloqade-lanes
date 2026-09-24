@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::pyclass::CompareOp;
 use pyo3::types::PyDict;
 
 // `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
@@ -42,7 +43,7 @@ use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::options::{
     BoundKind, EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
 };
-use bloqade_lanes_search::search::result::SolveResult;
+use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use bloqade_lanes_search::search::target_solver::TargetSolver;
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
@@ -196,6 +197,153 @@ impl PyDeadlockPolicy {
     }
 }
 
+// ── Typed result enums ──
+
+/// Python equality for a typed result enum: equal to its own members, and a
+/// `TypeError` against a `str`, so code still comparing with the string labels
+/// these replaced fails loudly instead of silently reading `False`.
+macro_rules! typed_result_enum {
+    ($ty:ident, $pyname:literal, [$($variant:ident => $name:literal),+ $(,)?]) => {
+        #[pymethods]
+        impl $ty {
+            /// The member's name.
+            #[getter]
+            fn name(&self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+
+            fn __hash__(&self) -> u64 {
+                *self as u64
+            }
+
+            fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+                if other.is_instance_of::<pyo3::types::PyString>() {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        concat!(
+                            "cannot compare ", $pyname, " with the string {}: results now ",
+                            "report ", $pyname, " members, e.g. ", $pyname, ".{}"
+                        ),
+                        other.repr()?,
+                        self.name(),
+                    )));
+                }
+                let equal = other.extract::<Self>().is_ok_and(|o| o == *self);
+                match op {
+                    CompareOp::Eq => Ok(equal),
+                    CompareOp::Ne => Ok(!equal),
+                    _ => Err(pyo3::exceptions::PyTypeError::new_err(concat!(
+                        $pyname,
+                        " members are not ordered"
+                    ))),
+                }
+            }
+        }
+    };
+}
+
+/// How a solve ended: solved, proven or given up as unsolvable, or out of budget.
+///
+/// ``UNSOLVABLE`` is a *proof* only when the result's ``proof`` is
+/// ``Proof.NO_PLAN``. From a search strategy it usually means the search
+/// exhausted the moves its generator offered, which is less than the
+/// architecture allows.
+#[pyclass(
+    from_py_object,
+    name = "SolveStatus",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PySolveStatus {
+    #[pyo3(name = "SOLVED")]
+    Solved = 0,
+    #[pyo3(name = "UNSOLVABLE")]
+    Unsolvable = 1,
+    #[pyo3(name = "BUDGET_EXCEEDED")]
+    BudgetExceeded = 2,
+}
+
+typed_result_enum!(PySolveStatus, "SolveStatus", [
+    Solved => "SOLVED",
+    Unsolvable => "UNSOLVABLE",
+    BudgetExceeded => "BUDGET_EXCEEDED",
+]);
+
+impl PySolveStatus {
+    fn from_rs(status: SolveStatus) -> Self {
+        match status {
+            SolveStatus::Solved => Self::Solved,
+            SolveStatus::Unsolvable => Self::Unsolvable,
+            SolveStatus::BudgetExceeded => Self::BudgetExceeded,
+        }
+    }
+}
+
+/// How the search behind a result ended, as the driver's own account.
+///
+/// ``BUDGET`` ran out of expansions; ``STOPPED`` ended on a rule of its own,
+/// such as collecting its goal quota; ``EXHAUSTED`` drained its space. Whether
+/// that is a proof is the result's ``proof``, not this.
+#[pyclass(
+    from_py_object,
+    name = "Termination",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PyTermination {
+    #[pyo3(name = "BUDGET")]
+    Budget = 0,
+    #[pyo3(name = "EXHAUSTED")]
+    Exhausted = 1,
+    #[pyo3(name = "STOPPED")]
+    Stopped = 2,
+}
+
+typed_result_enum!(PyTermination, "Termination", [
+    Budget => "BUDGET",
+    Exhausted => "EXHAUSTED",
+    Stopped => "STOPPED",
+]);
+
+/// What a result proves, when it proves anything.
+///
+/// ``OPTIMAL``: the plan is optimal (no legal plan is cheaper).
+/// ``NO_PLAN``: no plan exists for the instance.
+#[pyclass(
+    from_py_object,
+    name = "Proof",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PyProof {
+    #[pyo3(name = "OPTIMAL")]
+    Optimal = 0,
+    #[pyo3(name = "NO_PLAN")]
+    NoPlan = 1,
+}
+
+typed_result_enum!(PyProof, "Proof", [
+    Optimal => "OPTIMAL",
+    NoPlan => "NO_PLAN",
+]);
+
+/// The proof a result carries: optimal when solved, no plan when unsolvable,
+/// and nothing unless the termination is a proof.
+fn result_proof(result: &SolveResult) -> Option<PyProof> {
+    if !result.proven() {
+        return None;
+    }
+    match result.status {
+        SolveStatus::Solved => Some(PyProof::Optimal),
+        SolveStatus::Unsolvable => Some(PyProof::NoPlan),
+        SolveStatus::BudgetExceeded => None,
+    }
+}
+
 // ── Solve results ──
 
 /// Result of a move synthesis solve.
@@ -213,15 +361,10 @@ pub struct PySolveResult {
 
 #[pymethods]
 impl PySolveResult {
-    /// Status of the solve: "solved", "unsolvable", or "budget_exceeded".
-    ///
-    /// ``"unsolvable"`` is a *proof* only from the ``push_rotate`` strategy. From
-    /// a search strategy it means the search exhausted the moves its generator
-    /// offered, which is less than the architecture allows — see
-    /// ``SolveStatus::Unsolvable`` in the Rust docs for why (issue #910).
+    /// How the solve ended; see ``SolveStatus``.
     #[getter]
-    fn status(&self) -> &'static str {
-        self.inner.status.as_label()
+    fn status(&self) -> PySolveStatus {
+        PySolveStatus::from_rs(self.inner.status)
     }
 
     /// Move layers: list of move steps, each a list of lane address tuples.
@@ -276,38 +419,29 @@ impl PySolveResult {
         self.inner.deadlocks
     }
 
-    /// Whether this plan is *proven* optimal.
+    /// What the result proves, or ``None``.
     ///
-    /// `True` means the search drained everything that could still have
-    /// beaten this plan, and its branching was complete enough for that to
-    /// mean something. On the entropy driver it is the root certificate: the
-    /// plan's cost reached `h(root)`, a lower bound on every legal plan, so
-    /// none is cheaper -- including plans the generator would never have
-    /// proposed.
+    /// ``Proof.OPTIMAL``: the plan is optimal. On the entropy driver that is
+    /// the root certificate: the plan's cost reached `h(root)`, a lower bound on
+    /// every legal plan, so none is cheaper -- including plans the generator
+    /// would never have proposed. ``Proof.NO_PLAN``: no plan exists, as Push
+    /// and Rotate's completeness or an infinite root bound shows.
     ///
-    /// `False` is not "suboptimal", it is "unproven": most solves end on
-    /// their expansion budget. Read it to tell a solver giving up from an
-    /// instance that is genuinely this expensive, which is what an escalation
-    /// policy needs to know.
+    /// ``None`` is not "suboptimal" or "solvable", it is "unproven": most
+    /// solves end on their expansion budget. Read it to tell a solver giving
+    /// up from an instance that is genuinely this hard.
     #[getter]
-    fn proven(&self) -> bool {
-        self.inner.proven()
+    fn proof(&self) -> Option<PyProof> {
+        result_proof(&self.inner)
     }
 
-    /// How the search ended, as the driver's own account rather than an
-    /// inference from the expansion count.
-    ///
-    /// `"budget"` ran out of expansions; `"stopped"` ended on a rule of its
-    /// own, such as collecting its goal quota; `"exhausted"` drained its
-    /// space without that being a proof; `"exhausted_proof"` drained it and
-    /// the result is optimal, which is the case `proven` reports.
+    /// How the search ended; see ``Termination``.
     #[getter]
-    fn termination(&self) -> &'static str {
+    fn termination(&self) -> PyTermination {
         match self.inner.termination {
-            Termination::Budget => "budget",
-            Termination::Exhausted { proof: false } => "exhausted",
-            Termination::Exhausted { proof: true } => "exhausted_proof",
-            Termination::Stopped => "stopped",
+            Termination::Budget => PyTermination::Budget,
+            Termination::Exhausted { .. } => PyTermination::Exhausted,
+            Termination::Stopped => PyTermination::Stopped,
         }
     }
 
@@ -361,13 +495,13 @@ impl PySolveResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={}, proven={})",
-            self.inner.status.as_label(),
+            "SolveResult(status=SolveStatus.{}, steps={}, cost={}, expanded={}, deadlocks={}, proof={})",
+            PySolveStatus::from_rs(self.inner.status).name(),
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
             self.inner.deadlocks,
-            self.inner.proven(),
+            result_proof(&self.inner).map_or("None", |p| p.name()),
         )
     }
 }
@@ -1401,10 +1535,10 @@ pub struct PyMultiSolveResult {
 
 #[pymethods]
 impl PyMultiSolveResult {
-    /// Status of the winning solve: "solved", "unsolvable", or "budget_exceeded".
+    /// How the winning (or last) solve ended; see ``SolveStatus``.
     #[getter]
-    fn status(&self) -> &'static str {
-        self.inner.result.status.as_label()
+    fn status(&self) -> PySolveStatus {
+        PySolveStatus::from_rs(self.inner.result.status)
     }
 
     /// Index of the candidate that succeeded, or None if all failed.
@@ -1436,7 +1570,7 @@ impl PyMultiSolveResult {
                 .map(|a| {
                     let dict = pyo3::types::PyDict::new(py);
                     dict.set_item("candidate_index", a.candidate_index)?;
-                    dict.set_item("status", a.status.as_label())?;
+                    dict.set_item("status", PySolveStatus::from_rs(a.status))?;
                     dict.set_item("nodes_expanded", a.nodes_expanded)?;
                     Ok(dict.into_any().unbind())
                 })
@@ -1485,8 +1619,8 @@ impl PyMultiSolveResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "MultiSolveResult(status='{}', candidate={:?}, tried={}, expansions={})",
-            self.inner.result.status.as_label(),
+            "MultiSolveResult(status=SolveStatus.{}, candidate={:?}, tried={}, expansions={})",
+            PySolveStatus::from_rs(self.inner.result.status).name(),
             self.inner.chosen,
             self.inner.candidates_tried(),
             self.inner.total_expansions,

@@ -41,17 +41,6 @@ pub enum SolveStatus {
     BudgetExceeded,
 }
 
-impl SolveStatus {
-    /// Stable string label for status reporting (PyO3 wrappers, logs).
-    pub fn as_label(&self) -> &'static str {
-        match self {
-            Self::Solved => "solved",
-            Self::Unsolvable => "unsolvable",
-            Self::BudgetExceeded => "budget_exceeded",
-        }
-    }
-}
-
 /// Result of a solve attempt.
 ///
 /// Always returned (never `None`). Check [`status`](SolveResult::status) to
