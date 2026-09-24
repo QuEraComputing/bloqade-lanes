@@ -706,6 +706,8 @@ where
     // With the gate off this stays the inert default every frontier result
     // has always carried.
     let mut stats = crate::bounds::BoundStats::default();
+    // Configurations the gate has cut, so each counts once; see the gate.
+    let mut cut_configs: HashSet<Config> = HashSet::new();
     if !P::OFF {
         stats.bound_enabled = true;
         stats.root_lower_bound = gate.estimate(graph.config(root_id));
@@ -812,28 +814,39 @@ where
             let new_g = current_g + edge_cost;
 
             // The completion gate, before the child takes a node.
+            //
+            // A cut child is never inserted, so the graph cannot tell that its
+            // configuration was cut before: `cut_configs` does, so that each
+            // distinct configuration counts once however many parents
+            // generate it, as `BoundStats` promises.
             if !P::OFF {
                 let h = gate.estimate(&candidate.new_config);
                 let child_depth = depth + 1;
                 if h == f64::INFINITY {
-                    stats.cuts_infeasible += 1;
+                    if cut_configs.insert(candidate.new_config) {
+                        stats.cuts_infeasible += 1;
+                    }
                     continue;
                 }
                 if let Some(cap) = max_cost {
                     if new_g >= cap {
-                        stats.cuts_by_g += 1;
+                        if cut_configs.insert(candidate.new_config) {
+                            stats.cuts_by_g += 1;
+                        }
                         continue;
                     }
                     if new_g + h >= cap {
-                        stats.cuts_by_h += 1;
-                        stats.cut_depth_sum += u64::from(child_depth);
-                        let min_shot = gate.min_shot_cost();
-                        let extra = if min_shot > 0.0 {
-                            ((cap - new_g) / min_shot).ceil().max(0.0) as u64
-                        } else {
-                            0
-                        };
-                        stats.cut_depth_g_only_sum += u64::from(child_depth) + extra;
+                        if cut_configs.insert(candidate.new_config) {
+                            stats.cuts_by_h += 1;
+                            stats.cut_depth_sum += u64::from(child_depth);
+                            let min_shot = gate.min_shot_cost();
+                            let extra = if min_shot > 0.0 {
+                                ((cap - new_g) / min_shot).ceil().max(0.0) as u64
+                            } else {
+                                0
+                            };
+                            stats.cut_depth_g_only_sum += u64::from(child_depth) + extra;
+                        }
                         continue;
                     }
                 }

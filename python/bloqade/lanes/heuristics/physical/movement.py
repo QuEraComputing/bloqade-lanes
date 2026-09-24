@@ -291,10 +291,13 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         the widest observed gap is kept as ``max_optimality_gap`` instead.
 
         **Empty** — not zeroed — before the first solve, and after any number of
-        solves run with :pyattr:`RustPlacementTraversal.completion_bound` set to
-        ``None``: an unbounded run measured nothing, and reporting zeros would
-        be indistinguishable from a bounded run that pruned nothing. Key-check
-        rather than expecting the keys to exist.
+        solves in which no bound ran: an unbounded run measured nothing, and
+        reporting zeros would be indistinguishable from a bounded run that
+        pruned nothing. A bound runs when
+        :pyattr:`RustPlacementTraversal.completion_bound` is set, or when a
+        cascade strategy's refinement is gated
+        (:pyattr:`RustPlacementTraversal.cascade_bound`), which needs no
+        ``completion_bound``. Key-check rather than expecting the keys to exist.
         """
         return dict(self._bound_stats_total)
 

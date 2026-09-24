@@ -1373,9 +1373,11 @@ class SolveResult:
 
     @property
     def bound_stats(self) -> Optional[BoundStats]:
-        """Branch-and-bound pruning statistics, or ``None`` unless
-        ``EntropyOptions.completion_bound`` was set: an unbounded solve
-        measured nothing."""
+        """Branch-and-bound pruning statistics, or ``None`` when no bound ran:
+        an unbounded solve measured nothing. A bound runs when
+        ``EntropyOptions.completion_bound`` is set, or when a cascade
+        strategy's refinement is gated (``SolveOptions.cascade_bound``), which
+        needs no ``completion_bound``."""
         ...
 
     @property

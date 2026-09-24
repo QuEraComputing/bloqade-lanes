@@ -1867,7 +1867,7 @@ bound: cuts_g=0 cuts_h=4 cuts_inf=0 root_lb=3 incumbent=6
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 383 | generated: 384 | deadlocks: 4 | proven: false | termination: exhausted
 final: 0@2.0 1@4.0 2@0.0
 plan: 736099ff3df4cb19
-bound: cuts_g=0 cuts_h=357 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=257 cuts_inf=0 root_lb=3 incumbent=6
 
 == bound/cascade_gate/physical_congested/cascade_ids
 status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 322 | generated: 937 | deadlocks: 3 | proven: false | termination: stopped

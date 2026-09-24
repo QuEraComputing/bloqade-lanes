@@ -512,10 +512,12 @@ impl PySolveResult {
         }
     }
 
-    /// Branch-and-bound pruning statistics, or ``None`` unless
-    /// ``EntropyOptions.completion_bound`` was set: an unbounded solve measured
-    /// nothing, and zeros would advertise a ``root_lower_bound`` of 0.0 as if
-    /// it were a measurement.
+    /// Branch-and-bound pruning statistics, or ``None`` when no bound ran: an
+    /// unbounded solve measured nothing, and zeros would advertise a
+    /// ``root_lower_bound`` of 0.0 as if it were a measurement. A bound runs
+    /// when ``EntropyOptions.completion_bound`` is set, or when a cascade
+    /// strategy's refinement is gated (``SolveOptions.cascade_bound``), which
+    /// needs no ``completion_bound``.
     #[getter]
     fn bound_stats(&self) -> Option<PyBoundStats> {
         self.inner
