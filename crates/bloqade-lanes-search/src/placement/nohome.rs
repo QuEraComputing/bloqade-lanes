@@ -32,6 +32,18 @@ type StagePair = ((u32, LocationAddr), (u32, LocationAddr));
 /// A candidate CZ-staging target: every qubit's location.
 type CzTarget = Vec<(u32, LocationAddr)>;
 
+/// The CZ phase's candidate targets.
+struct CzCandidates {
+    /// The candidates, the rule's first when `has_rule`.
+    targets: Vec<CzTarget>,
+    /// Whether `targets[0]` is the rule's candidate. It is not when, under
+    /// `Ranked` or `RouteAll`, the rule's assignment cannot be placed or puts
+    /// two qubits on one location, and another assignment can.
+    has_rule: bool,
+    /// Whether the candidates cover every way to stage the pairs.
+    complete: bool,
+}
+
 // ── Options ───────────────────────────────────────────────────────
 
 /// How the CZ phase chooses, for each pair, which qubit moves.
@@ -675,10 +687,16 @@ pub(crate) fn solve_nohome(
     // candidates (under `Ranked` and `RouteAll`) vary that choice. A pair
     // with a qubit anywhere else (e.g. a storage zone with no entangling
     // pairs) has no such move, so it goes to a free entangling slot instead.
-    // `None` means the rule's own target cannot be placed at all. A
-    // non-rule candidate that cannot be placed, or that puts two qubits on
-    // one location, is dropped.
-    let cz_target_candidates = |from: &Config| -> Option<(Vec<CzTarget>, bool)> {
+    //
+    // A candidate that cannot be placed, or that puts two qubits on one
+    // location, is dropped, and the others are still generated: another
+    // assignment moves other qubits, so it can free a slot or avoid a clash.
+    // `Rule` has only the rule's candidate, and keeps its historical
+    // handling: an unplaceable one makes the stage unplaceable, and a clash
+    // is not checked here (the router rejects it). `None` means no candidate
+    // can be placed.
+    let cz_target_candidates = |from: &Config| -> Option<CzCandidates> {
+        let rule_only = nohome_opts.mover_selection == MoverSelection::Rule;
         let mut options: Vec<((u32, LocationAddr), (u32, LocationAddr))> = Vec::new();
         let mut rule: Vec<bool> = Vec::new();
         let mut unpartnered: Vec<StagePair> = Vec::new();
@@ -707,6 +725,7 @@ pub(crate) fn solve_nohome(
         };
 
         let mut candidates = Vec::with_capacity(assignments.len());
+        let mut has_rule = false;
         for (n, assignment) in assignments.iter().enumerate() {
             let mut chosen: HashMap<u32, LocationAddr> = HashMap::with_capacity(cz_pairs.len());
             for (&moves_target, &(move_c, move_t)) in assignment.iter().zip(&options) {
@@ -730,7 +749,7 @@ pub(crate) fn solve_nohome(
                 let dist_table = &engine.entangling_cache().dist_table;
                 match assign_free_slots(&unpartnered, &claimed, index, dist_table) {
                     Some(slots) => chosen.extend(slots),
-                    None if n == 0 => return None,
+                    None if rule_only => return None,
                     None => continue,
                 }
             }
@@ -739,29 +758,39 @@ pub(crate) fn solve_nohome(
                 .iter()
                 .map(|(qid, loc)| (qid, chosen.get(&qid).copied().unwrap_or(loc)))
                 .collect();
-            if n > 0 {
+            if !rule_only {
                 let mut ends = HashSet::with_capacity(target.len());
                 if !target.iter().all(|(_, loc)| ends.insert(loc.encode())) {
                     continue;
                 }
             }
+            has_rule |= n == 0;
             candidates.push(target);
         }
-        Some((candidates, complete))
+        if candidates.is_empty() {
+            return None;
+        }
+        Some(CzCandidates {
+            targets: candidates,
+            has_rule,
+            complete,
+        })
     };
 
-    // Helper: route Phase 2 from `from` to one of `candidates` (the rule's
-    // first), chosen per `mover_selection`. Under `Rule` this is exactly one
-    // routing solve to the rule's target. Otherwise the result is the chosen
-    // candidate's, with the search counters of every routing solve summed in.
-    // When none routes, the result describes the stage rather than the rule's
-    // target alone: `BudgetExceeded` if any candidate ran out of budget, else
-    // `Unsolvable`, and a no-plan proof only when `complete` candidates were
-    // all routed and all proved it.
-    let route_cz_phase = |from: &Config,
-                          candidates: Vec<CzTarget>,
-                          complete: bool|
-     -> Result<SolveResult, ConfigError> {
+    // Helper: route Phase 2 from `from` to one of the candidates, chosen per
+    // `mover_selection`. Under `Rule` this is exactly one routing solve to the
+    // rule's target. Otherwise the result is the chosen candidate's, with the
+    // search counters of every routing solve summed in. When none routes, the
+    // result describes the stage rather than any one target: `BudgetExceeded`
+    // if any candidate ran out of budget, else `Unsolvable`, and a no-plan
+    // proof only when `complete` candidates were all routed and all proved
+    // it.
+    let route_cz_phase = |from: &Config, cands: CzCandidates| -> Result<SolveResult, ConfigError> {
+        let CzCandidates {
+            targets: candidates,
+            has_rule,
+            complete,
+        } = cands;
         let route = |target: &[(u32, LocationAddr)]| {
             solve_with_engine(
                 engine,
@@ -800,21 +829,30 @@ pub(crate) fn solve_nohome(
                     }
                 }
                 planned.sort_unstable();
-                // When Push and Rotate ranks the rule's candidate first,
-                // routing it alone is enough. Otherwise the rule's candidate
-                // is routed too, so the ranked pick is kept only if it routes
-                // in fewer layers: ranking never does worse than the rule.
-                let rule_ranked_first = planned.first().is_some_and(|&(_, i)| i == 0);
-                let mut order = vec![0];
-                order.extend(planned.into_iter().map(|(_, i)| i).filter(|&i| i != 0));
-                (order, rule_ranked_first)
+                if has_rule {
+                    // When Push and Rotate ranks the rule's candidate first,
+                    // routing it alone is enough. Otherwise the rule's
+                    // candidate is routed too, so the ranked pick is kept
+                    // only if it routes in fewer layers: ranking never does
+                    // worse than the rule.
+                    let rule_ranked_first = planned.first().is_some_and(|&(_, i)| i == 0);
+                    let mut order = vec![0];
+                    order.extend(planned.into_iter().map(|(_, i)| i).filter(|&i| i != 0));
+                    (order, rule_ranked_first)
+                } else if planned.is_empty() {
+                    // No rule's candidate to fall back on, and nothing
+                    // ranked: try them in order.
+                    ((0..candidates.len()).collect(), true)
+                } else {
+                    (planned.into_iter().map(|(_, i)| i).collect(), true)
+                }
             }
         };
 
         let mut expanded: u32 = 0;
         let mut generated: u32 = 0;
         let mut best: Option<SolveResult> = None;
-        let mut rule_result: Option<SolveResult> = None;
+        let mut first_failure: Option<SolveResult> = None;
         let mut routed = 0usize;
         let mut any_budget = false;
         let mut all_proven = true;
@@ -839,22 +877,24 @@ pub(crate) fn solve_nohome(
                 // `Ranked` stops at its ranked pick: the first routed
                 // candidate other than the rule's, or the rule's itself when
                 // it was ranked first.
+                let is_rule = has_rule && i == 0;
                 if nohome_opts.mover_selection == MoverSelection::Ranked
-                    && (i != 0 || first_solve_wins)
+                    && (!is_rule || first_solve_wins)
                 {
                     break;
                 }
-            } else if i == 0 {
-                rule_result = Some(result);
+            } else if first_failure.is_none() {
+                first_failure = Some(result);
             }
         }
         let mut result = match best {
             Some(solved) => solved,
             None => {
-                // The rule's candidate is always routed first, so when
-                // nothing solved, its result is set; it keeps the stage's
-                // starting configuration and the rule's partial.
-                let rule = rule_result.expect("the rule's candidate is always routed");
+                // Something was routed and nothing solved, so a failure is
+                // set: the rule's, when it has a candidate, since that is
+                // routed first. It keeps the stage's starting configuration
+                // and that candidate's partial.
+                let failed = first_failure.expect("a candidate is routed when none solves");
                 let (status, termination) = failed_stage_verdict(
                     any_budget,
                     all_proven,
@@ -863,7 +903,7 @@ pub(crate) fn solve_nohome(
                 SolveResult {
                     status,
                     termination,
-                    ..rule
+                    ..failed
                 }
             }
         };
@@ -874,10 +914,10 @@ pub(crate) fn solve_nohome(
 
     if !has_returners {
         // Skip the return phase — go directly to fixed-target entangling.
-        let Some((cz_targets, complete)) = cz_target_candidates(&root) else {
+        let Some(cz_targets) = cz_target_candidates(&root) else {
             return Ok(SolveResult::unsolvable(root));
         };
-        return route_cz_phase(&root, cz_targets, complete);
+        return route_cz_phase(&root, cz_targets);
     }
 
     let occupied_set: HashSet<u64> = root.iter().map(|(_, loc)| loc.encode()).collect();
@@ -946,7 +986,7 @@ pub(crate) fn solve_nohome(
     };
 
     // Phase 2: pick the CZ-staging target per `mover_selection`, and route it.
-    let Some((cz_targets, complete)) = cz_target_candidates(&return_result.goal_config) else {
+    let Some(cz_targets) = cz_target_candidates(&return_result.goal_config) else {
         let mut unsolved = SolveResult::unsolved(
             SolveStatus::Unsolvable,
             root,
@@ -956,7 +996,7 @@ pub(crate) fn solve_nohome(
         unsolved.nodes_generated = total_generated;
         return Ok(unsolved);
     };
-    let entangling_result = route_cz_phase(&return_result.goal_config, cz_targets, complete)?;
+    let entangling_result = route_cz_phase(&return_result.goal_config, cz_targets)?;
 
     total_expanded += entangling_result.nodes_expanded;
     total_generated = total_generated.saturating_add(entangling_result.nodes_generated);
