@@ -118,6 +118,15 @@ class RustPlacementTraversal:
     Push and Rotate restarts from the solve's original placement rather than
     from wherever the search got to, and it does not honour an AOD capacity.
     """
+    cascade_bound: bool = False
+    """Gate a cascade strategy's A* refinement with the completion bound.
+
+    Off by default. The refinement looks for a plan strictly cheaper than the
+    inner strategy's; with the gate, a child whose ``g + h`` already reaches
+    that cost is dropped before it takes a node, which saves memory without
+    losing a cheaper plan (a tie may resolve to a different plan of the same
+    cost). Only the ``cascade-*`` strategies read it.
+    """
 
 
 def _move_search_from_traversal(
@@ -135,6 +144,7 @@ def _move_search_from_traversal(
         restarts=traversal.restarts,
         lookahead=traversal.lookahead,
         fallback_push_rotate=traversal.fallback_push_rotate,
+        cascade_bound=traversal.cascade_bound,
     )
     entropy_opts = _native.EntropyOptions(
         max_movesets_per_group=traversal.max_movesets_per_group,
@@ -281,10 +291,13 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         the widest observed gap is kept as ``max_optimality_gap`` instead.
 
         **Empty** — not zeroed — before the first solve, and after any number of
-        solves run with :pyattr:`RustPlacementTraversal.completion_bound` set to
-        ``None``: an unbounded run measured nothing, and reporting zeros would
-        be indistinguishable from a bounded run that pruned nothing. Key-check
-        rather than expecting the keys to exist.
+        solves in which no bound ran: an unbounded run measured nothing, and
+        reporting zeros would be indistinguishable from a bounded run that
+        pruned nothing. A bound runs when
+        :pyattr:`RustPlacementTraversal.completion_bound` is set, or when a
+        cascade strategy's refinement is gated
+        (:pyattr:`RustPlacementTraversal.cascade_bound`), which needs no
+        ``completion_bound``. Key-check rather than expecting the keys to exist.
         """
         return dict(self._bound_stats_total)
 

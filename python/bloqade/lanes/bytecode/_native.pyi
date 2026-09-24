@@ -1081,6 +1081,7 @@ class SolveOptions:
         top_c: int | None = None,
         fallback_push_rotate: bool = False,
         backwards_search: bool = False,
+        cascade_bound: bool = False,
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
@@ -1098,6 +1099,13 @@ class SolveOptions:
     def fallback_push_rotate(self) -> bool: ...
     @property
     def backwards_search(self) -> bool: ...
+    @property
+    def cascade_bound(self) -> bool:
+        """Whether a cascade's A* refinement is gated by the completion bound:
+        a child whose ``g + h`` reaches the inner plan's cost is dropped before
+        it takes a node. Point goals only. Off by default."""
+        ...
+
     def __repr__(self) -> str: ...
 
 @final
@@ -1365,9 +1373,11 @@ class SolveResult:
 
     @property
     def bound_stats(self) -> Optional[BoundStats]:
-        """Branch-and-bound pruning statistics, or ``None`` unless
-        ``EntropyOptions.completion_bound`` was set: an unbounded solve
-        measured nothing."""
+        """Branch-and-bound pruning statistics, or ``None`` when no bound ran:
+        an unbounded solve measured nothing. A bound runs when
+        ``EntropyOptions.completion_bound`` is set, or when a cascade
+        strategy's refinement is gated (``SolveOptions.cascade_bound``), which
+        needs no ``completion_bound``."""
         ...
 
     @property

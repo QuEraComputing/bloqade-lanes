@@ -85,8 +85,8 @@ pub struct SolveResult {
     ///
     /// Counters stay zero unless a completion bound was enabled; check
     /// [`BoundStats::bound_enabled`] for that, since `incumbent_cost` is
-    /// populated either way. The Python surface reports an unbounded run as an
-    /// *empty* dict rather than zeros.
+    /// populated either way. The Python surface reports an unbounded run as
+    /// `None` rather than zeros.
     pub bound_stats: BoundStats,
     /// How the search that produced this result ended.
     pub termination: Termination,

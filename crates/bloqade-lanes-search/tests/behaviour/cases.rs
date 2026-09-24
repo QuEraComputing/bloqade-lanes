@@ -1220,6 +1220,47 @@ fn anticipate_cases() -> Vec<Case> {
                 ..Knobs::default()
             }),
         ),
+        // The cascade bound gate (Epic 2B), opt-in: the same instances as the
+        // two cascade-memory cases above, with the refinement gated. Plan cost
+        // must match the ungated cases; nodes generated should drop.
+        case(
+            "bound/cascade_gate/logical_cycle/cascade_ids",
+            on(&cycle, Strategy::CascadeIds).knobs(Knobs {
+                cascade_bound: true,
+                ..Knobs::default()
+            }),
+        ),
+        case(
+            "bound/cascade_gate/logical_cycle/cascade_entropy_bounded",
+            on(&cycle, Strategy::CascadeEntropy).knobs(Knobs {
+                cascade_bound: true,
+                completion_bound: true,
+                ..Knobs::default()
+            }),
+        ),
+        case(
+            "bound/cascade_gate/physical_congested/cascade_ids",
+            on(&congested, Strategy::CascadeIds).knobs(Knobs {
+                cascade_bound: true,
+                ..Knobs::default()
+            }),
+        ),
+        // A loose goal is set-valued, so the gate must not engage: the two
+        // blocks below must be identical.
+        case(
+            "bound/cascade_gate/loose_goal/off",
+            logical_stage(Placement::LooseGoal, Strategy::CascadeIds),
+        ),
+        case(
+            "bound/cascade_gate/loose_goal/on",
+            ProblemSpec {
+                knobs: Knobs {
+                    cascade_bound: true,
+                    ..Knobs::default()
+                },
+                ..logical_stage(Placement::LooseGoal, Strategy::CascadeIds)
+            },
+        ),
         // Candidate ranking (Epic 4): first-solve-wins.
         case(
             "anticipate/candidate_order/move_control_first",

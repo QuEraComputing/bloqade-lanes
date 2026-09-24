@@ -129,6 +129,8 @@ pub struct Knobs {
     pub weight: Option<f64>,
     pub fallback_push_rotate: bool,
     pub backwards_search: bool,
+    /// `SolveOptions::cascade_bound`: gate the cascade's A* refinement.
+    pub cascade_bound: bool,
     pub max_goal_candidates: Option<usize>,
     pub seed: Option<u64>,
     /// Request the weighted-distance completion bound.

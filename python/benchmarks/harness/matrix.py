@@ -236,6 +236,21 @@ def default_strategy_configs(
             notes="IDS, then an A* refinement capped at the IDS plan's cost",
         ),
         StrategyConfig(
+            strategy_id="rust_cascade_ids_bounded",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="cascade-ids", cascade_bound=True
+                    ),
+                )
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="cascade-ids with the refinement gated by the completion bound",
+        ),
+        StrategyConfig(
             strategy_id="rust_astar_fallback",
             backend="rust",
             generator_id="rust_solver",

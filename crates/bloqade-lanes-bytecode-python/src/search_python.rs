@@ -512,10 +512,12 @@ impl PySolveResult {
         }
     }
 
-    /// Branch-and-bound pruning statistics, or ``None`` unless
-    /// ``EntropyOptions.completion_bound`` was set: an unbounded solve measured
-    /// nothing, and zeros would advertise a ``root_lower_bound`` of 0.0 as if
-    /// it were a measurement.
+    /// Branch-and-bound pruning statistics, or ``None`` when no bound ran: an
+    /// unbounded solve measured nothing, and zeros would advertise a
+    /// ``root_lower_bound`` of 0.0 as if it were a measurement. A bound runs
+    /// when ``EntropyOptions.completion_bound`` is set, or when a cascade
+    /// strategy's refinement is gated (``SolveOptions.cascade_bound``), which
+    /// needs no ``completion_bound``.
     #[getter]
     fn bound_stats(&self) -> Option<PyBoundStats> {
         self.inner
@@ -1111,7 +1113,7 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false, cascade_bound=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,
@@ -1122,6 +1124,7 @@ impl PySolveOptions {
         top_c: Option<usize>,
         fallback_push_rotate: bool,
         backwards_search: bool,
+        cascade_bound: bool,
     ) -> PyResult<Self> {
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
@@ -1143,6 +1146,7 @@ impl PySolveOptions {
                 top_c,
                 fallback_push_rotate,
                 backwards_search,
+                cascade_bound,
             },
         })
     }
@@ -1187,6 +1191,12 @@ impl PySolveOptions {
         self.inner.backwards_search
     }
 
+    /// Whether a cascade's A* refinement is gated by the completion bound.
+    #[getter]
+    fn cascade_bound(&self) -> bool {
+        self.inner.cascade_bound
+    }
+
     /// Every constructor field, in constructor order.
     ///
     /// Keep this exhaustive: a `SolveOptions` that prints fewer options than
@@ -1194,7 +1204,7 @@ impl PySolveOptions {
     /// someone is printing the options to find one.
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?}, fallback_push_rotate={}, backwards_search={})",
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?}, fallback_push_rotate={}, backwards_search={}, cascade_bound={})",
             self.strategy().name(),
             self.inner.weight,
             self.inner.restarts,
@@ -1203,6 +1213,7 @@ impl PySolveOptions {
             self.inner.top_c,
             self.inner.fallback_push_rotate,
             self.inner.backwards_search,
+            self.inner.cascade_bound,
         )
     }
 }

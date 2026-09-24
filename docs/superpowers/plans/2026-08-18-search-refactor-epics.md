@@ -529,6 +529,21 @@ phases). This moves the `rust_cascade_ids` rows' `nodes_explored` and 66 cascade
 the behaviour golden, in those three counters only (checked mechanically); no plan, cost
 or status moves.
 
+**Part 1 — landed notes (the gate, opt-in).**
+- `run_search_bounded` gates each child **before** `graph.insert`: `h = +∞` is an
+  infeasibility cut, and `g + h ≥ C` (with `C` the refinement's cost cap) a cut by the
+  bound, so pruned children never take a node. `run_search` runs the same loop with a
+  no-op gate that compiles out, so every unbounded caller is unchanged.
+- `SolveOptions.cascade_bound` (default `false`; also on PyO3 `SolveOptions` and
+  `RustPlacementTraversal`) builds a `WeightedDistanceBound` for the cascade's refinement,
+  point goals only. The cascade then reports both legs' bound statistics.
+- Measured on the behaviour net (same plans throughout): `logical_cycle` cascade-IDS
+  384 → 381 nodes generated; bounded cascade-entropy 637 → 384 generated and 513 → 383
+  expanded; `physical_congested` cascade-IDS has no cuts (`h(root)` = 5 against a 22-layer
+  plan). The loose-goal cascade is untouched by the switch, as required.
+- New benchmark rows `rust_cascade_ids_bounded` (physical and logical); no existing row
+  moves.
+
 1. **P&R resumes from the best partial** in `solve_with_engine`'s fallback branch
    (`search/target_solver.rs:328`), reading 2A's best-partial field.
    - Run P&R from the partial config, then replay the *whole* chain: the search prefix
