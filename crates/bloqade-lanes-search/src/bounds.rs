@@ -783,7 +783,6 @@ mod tests {
             blocked,
             targets,
             cz_pairs: None,
-            capacity: None,
         };
         let goal = AllAtTarget::new(targets);
         let mut frontier = BfsFrontier::new();

@@ -17,9 +17,11 @@ pub(crate) type PyObject = Py<PyAny>;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::drivers::entropy::{
-    EntropyParams, EntropyTrace, EntropyTraceStep, MovesetMetrics, compute_moveset_metrics,
+    EntropyParams, EntropyTrace, EntropyTraceEvent, EntropyTraceStep, MovesetMetrics,
+    compute_moveset_metrics,
 };
 use bloqade_lanes_search::drivers::result::Termination;
+use bloqade_lanes_search::observer::EntropyReason;
 use bloqade_lanes_search::placement::cz_placement::CzPlacement;
 use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
 use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
@@ -31,6 +33,7 @@ use bloqade_lanes_search::placement::target_generator::DefaultTargetGenerator;
 use bloqade_lanes_search::primitives::config::Config;
 use bloqade_lanes_search::primitives::context::SearchContext;
 use bloqade_lanes_search::primitives::distance::DistanceTable;
+use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::search::engine::SearchEngine;
 use bloqade_lanes_search::search::move_search::MoveSearch;
@@ -286,7 +289,7 @@ impl PySolveResult {
     /// policy needs to know.
     #[getter]
     fn proven(&self) -> bool {
-        self.inner.proven
+        self.inner.proven()
     }
 
     /// How the search ended, as the driver's own account rather than an
@@ -362,7 +365,7 @@ impl PySolveResult {
             self.inner.cost,
             self.inner.nodes_expanded,
             self.inner.deadlocks,
-            self.inner.proven,
+            self.inner.proven(),
         )
     }
 }
@@ -414,6 +417,55 @@ impl PyEntropyTrace {
     }
 }
 
+/// The visualizer's label for a trace event.
+fn trace_event_label(event: EntropyTraceEvent) -> &'static str {
+    match event {
+        EntropyTraceEvent::Descend => "descend",
+        EntropyTraceEvent::Goal => "goal",
+        EntropyTraceEvent::EntropyBump => "entropy_bump",
+        EntropyTraceEvent::Revert => "revert",
+        EntropyTraceEvent::FallbackStart => "fallback_start",
+    }
+}
+
+/// The visualizer's label for a trace reason.
+fn trace_reason_label(reason: EntropyReason) -> &'static str {
+    match reason {
+        EntropyReason::NoValidMoves => "no-valid-moves",
+        EntropyReason::StateSeen => "state-seen",
+        EntropyReason::StateSeenGoal => "state-seen-goal",
+        EntropyReason::DeadlockBreaker => "deadlock-breaker",
+        EntropyReason::EntropyLimit => "entropy",
+    }
+}
+
+/// A moveset as the visualizer's lane tuples:
+/// `(direction, move_type, zone, word, site, bus)`.
+fn trace_moveset(moveset: &MoveSet) -> Vec<(u8, u8, u32, u32, u32, u32)> {
+    moveset
+        .decode()
+        .into_iter()
+        .map(|lane| {
+            (
+                lane.direction as u8,
+                lane.move_type as u8,
+                lane.zone_id,
+                lane.word_id,
+                lane.site_id,
+                lane.bus_id,
+            )
+        })
+        .collect()
+}
+
+/// A configuration as the visualizer's `(qubit, zone, word, site)` tuples.
+fn trace_configuration(config: &Config) -> Vec<(u32, u32, u32, u32)> {
+    config
+        .iter()
+        .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
+        .collect()
+}
+
 /// One step in an entropy-search trace.
 #[pyclass(
     name = "EntropyTraceStep",
@@ -428,7 +480,7 @@ pub struct PyEntropyTraceStep {
 impl PyEntropyTraceStep {
     #[getter]
     fn event(&self) -> String {
-        self.inner.event.clone()
+        trace_event_label(self.inner.event).to_string()
     }
 
     #[getter]
@@ -459,13 +511,17 @@ impl PyEntropyTraceStep {
     #[getter]
     #[allow(clippy::type_complexity)]
     fn moveset(&self) -> Option<Vec<(u8, u8, u32, u32, u32, u32)>> {
-        self.inner.moveset.clone()
+        self.inner.moveset.as_ref().map(trace_moveset)
     }
 
     #[getter]
     #[allow(clippy::type_complexity)]
     fn candidate_movesets(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
-        self.inner.candidate_movesets.clone()
+        self.inner
+            .candidate_movesets
+            .iter()
+            .map(trace_moveset)
+            .collect()
     }
 
     #[getter]
@@ -475,7 +531,9 @@ impl PyEntropyTraceStep {
 
     #[getter]
     fn reason(&self) -> Option<String> {
-        self.inner.reason.clone()
+        self.inner
+            .reason
+            .map(|reason| trace_reason_label(reason).to_string())
     }
 
     #[getter]
@@ -495,12 +553,15 @@ impl PyEntropyTraceStep {
 
     #[getter]
     fn configuration(&self) -> Vec<(u32, u32, u32, u32)> {
-        self.inner.configuration.clone()
+        trace_configuration(&self.inner.configuration)
     }
 
     #[getter]
     fn parent_configuration(&self) -> Option<Vec<(u32, u32, u32, u32)>> {
-        self.inner.parent_configuration.clone()
+        self.inner
+            .parent_configuration
+            .as_ref()
+            .map(trace_configuration)
     }
 
     #[getter]
@@ -516,7 +577,10 @@ impl PyEntropyTraceStep {
     fn __repr__(&self) -> String {
         format!(
             "EntropyTraceStep(event='{}', node_id={}, depth={}, entropy={})",
-            self.inner.event, self.inner.node_id, self.inner.depth, self.inner.entropy,
+            trace_event_label(self.inner.event),
+            self.inner.node_id,
+            self.inner.depth,
+            self.inner.entropy,
         )
     }
 }
@@ -720,14 +784,7 @@ impl PyEntropyScorer {
             occupied.insert(loc.encode());
         }
 
-        let ctx = SearchContext {
-            index: &self.index,
-            dist_table: &self.dist_table,
-            blocked: &self.blocked,
-            targets: &self.targets,
-            cz_pairs: None,
-            capacity: None,
-        };
+        let ctx = SearchContext::new(&self.index, &self.dist_table, &self.blocked, &self.targets);
         let inner =
             compute_moveset_metrics(&old_config, &new_config, &occupied, &ctx, &self.params);
         Ok(PyMovesetMetrics {
@@ -906,8 +963,6 @@ impl PySolveOptions {
                 top_c,
                 fallback_push_rotate,
                 backwards_search,
-                // Not exposed to Python yet (Task 3.4 of the B&B plan).
-                aod_capacity: None,
             },
         })
     }

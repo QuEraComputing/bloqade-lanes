@@ -21,8 +21,10 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use bloqade_lanes_bytecode_core::arch::ArchSpec;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::placement::nohome::NoHomeOptions;
+use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::search::options::{BoundKind, EntanglingOptions, EntropyOptions};
 use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use bloqade_lanes_search::{
@@ -34,8 +36,8 @@ use bloqade_lanes_search::{
 };
 
 use crate::spec::{
-    Arch, Attempt, AttemptLog, BoundSummary, Deadlock, Knobs, Loc, Outcome, Placement, Problem,
-    ProblemSpec, Run, Status, Strategy, Termination,
+    Arch, Attempt, AttemptLog, BoundSummary, Deadlock, Knobs, Loc, Outcome, PartialSummary,
+    Placement, Problem, ProblemSpec, Run, Status, Strategy, Termination,
 };
 
 const GEMINI_LOGICAL: &str =
@@ -60,10 +62,10 @@ const TWO_ZONE_GRID: &str = include_str!("../fixtures/behaviour/arch/two_zone_gr
 /// A fresh engine per case means no case sees another's lazily built caches,
 /// which is what the golden wants.
 pub fn run(spec: &ProblemSpec) -> Outcome {
-    guarded(|| run_on(spec, engine(spec.arch)?))
+    guarded(|| run_on(spec, engine_for(spec)?))
 }
 
-/// Run one case on an engine the caller built with [`engine`]. The benches use
+/// Run one case on an engine the caller built with [`engine_for`]. The benches use
 /// this to keep engine construction out of the timed loop, the way production
 /// builds an engine once per architecture.
 #[allow(dead_code)] // used by benches/behaviour.rs, not by the test runner
@@ -71,9 +73,28 @@ pub fn run_with(spec: &ProblemSpec, engine: &Arc<SearchEngine>) -> Outcome {
     guarded(|| run_on(spec, Arc::clone(engine)))
 }
 
-/// Build the engine for an architecture.
+/// Build the engine a case runs on: its architecture, with the case's AOD
+/// capacity knob applied to the spec, which is where the crate reads it.
+pub fn engine_for(spec: &ProblemSpec) -> Result<Arc<SearchEngine>, String> {
+    let Some((x, y)) = spec.knobs.aod_capacity else {
+        return engine(spec.arch);
+    };
+    let capacity = AodCapacity::new(x, y).expect("a capacity has no zero axis");
+    let arch = ArchSpec::from_json_validated(arch_json(spec.arch)).map_err(|e| e.to_string())?;
+    SearchEngine::from_arch_spec(&arch.with_aod_capacity(Some(capacity)))
+        .map(Arc::new)
+        .map_err(|errors| format!("{errors:?}"))
+}
+
+/// Build the engine for an architecture, as shipped (no AOD capacity knob).
 pub fn engine(arch: Arch) -> Result<Arc<SearchEngine>, String> {
-    let json = match arch {
+    SearchEngine::from_json_validated(arch_json(arch))
+        .map(Arc::new)
+        .map_err(|e| e.to_string())
+}
+
+fn arch_json(arch: Arch) -> &'static str {
+    match arch {
         Arch::GeminiLogical => GEMINI_LOGICAL,
         Arch::GeminiPhysical => GEMINI_PHYSICAL,
         Arch::Example => EXAMPLE,
@@ -83,10 +104,7 @@ pub fn engine(arch: Arch) -> Result<Arc<SearchEngine>, String> {
         Arch::TwoZoneAlignedSiteBus => TWO_ZONE_ALIGNED_SITE_BUS,
         Arch::AsymmetricDuration => ASYMMETRIC_DURATION,
         Arch::TwoZoneGrid => TWO_ZONE_GRID,
-    };
-    SearchEngine::from_json_validated(json)
-        .map(Arc::new)
-        .map_err(|e| e.to_string())
+    }
 }
 
 fn guarded(f: impl FnOnce() -> Result<Run, String>) -> Outcome {
@@ -281,10 +299,8 @@ fn move_search(strategy: Strategy, knobs: &Knobs) -> MoveSearch {
         },
         lookahead: knobs.lookahead,
         top_c: knobs.top_c.or(solve_defaults.top_c),
-        aod_capacity: match knobs.aod_capacity {
-            None => solve_defaults.aod_capacity,
-            Some((x, y)) => Some(AodCapacity::new(x, y).expect("a capacity has no zero axis")),
-        },
+        // `knobs.aod_capacity` is not a solve option: it goes on the spec, in
+        // `engine_for`.
         // Every field is named on purpose, with no `..` fill: a new
         // `SolveOptions` field then fails to compile here, which is where it
         // has to be mapped.
@@ -339,13 +355,19 @@ fn from_result(result: &SolveResult) -> Run {
         lanes: result.move_layers.iter().map(|m| m.len()).sum(),
         cost: result.cost,
         nodes_expanded: result.nodes_expanded,
+        nodes_generated: result.nodes_generated,
         deadlocks: result.deadlocks,
-        proven: result.proven,
+        proven: result.proven(),
         termination,
         final_placement,
-        plan_digest: plan_digest(result),
+        plan_digest: plan_digest(&result.move_layers),
         bound,
         attempts: None,
+        partial: result.best_partial.as_ref().map(|p| PartialSummary {
+            unresolved: p.unresolved,
+            layers: p.layers.len(),
+            plan_digest: plan_digest(&p.layers),
+        }),
     }
 }
 
@@ -374,7 +396,7 @@ fn from_multi(result: &MultiSolveResult) -> Run {
 
 /// FNV-1a over each layer's lane count and encoded lanes. Stable across
 /// platforms and Rust versions, unlike `DefaultHasher`.
-fn plan_digest(result: &SolveResult) -> u64 {
+fn plan_digest(layers: &[MoveSet]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut hash = OFFSET;
@@ -384,7 +406,7 @@ fn plan_digest(result: &SolveResult) -> u64 {
             hash = hash.wrapping_mul(PRIME);
         }
     };
-    for layer in &result.move_layers {
+    for layer in layers {
         feed(layer.len() as u64);
         for &lane in layer.encoded_lanes() {
             feed(lane);

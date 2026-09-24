@@ -226,7 +226,6 @@ impl MoveGenerator for LooseTargetGenerator {
             blocked: ctx.blocked,
             targets: &targets,
             cz_pairs: ctx.cz_pairs,
-            capacity: ctx.capacity,
         };
         self.inner.generate(config, node_id, &loose_ctx, state, out);
     }
@@ -284,7 +283,6 @@ mod tests {
             blocked: &blocked,
             targets: &dummy_targets,
             cz_pairs: None,
-            capacity: None,
         };
 
         let mut state = SearchState::default();
@@ -333,7 +331,6 @@ mod tests {
             blocked: &blocked,
             targets: &dummy_targets,
             cz_pairs: None,
-            capacity: None,
         };
 
         // Different configs in the same site column (0↔5), both needing moves.

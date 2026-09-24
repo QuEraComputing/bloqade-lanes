@@ -68,6 +68,13 @@ pub struct SolveResult {
     pub goal_config: Config,
     /// Number of nodes expanded during search.
     pub nodes_expanded: u32,
+    /// Number of nodes the search generated: the size of its search graph.
+    ///
+    /// Summed across every search behind the result wherever
+    /// [`nodes_expanded`](Self::nodes_expanded) is, so the two describe the
+    /// same work. Where `nodes_expanded` measures time, this measures memory.
+    /// Zero for Push and Rotate, which is not a search.
+    pub nodes_generated: u32,
     /// Total path cost. 0.0 when `status` is not `Solved`.
     pub cost: f64,
     /// Number of nodes at which the generator had nothing useful to offer.
@@ -92,11 +99,42 @@ pub struct SolveResult {
     /// populated either way. The Python surface reports an unbounded run as an
     /// *empty* dict rather than zeros.
     pub bound_stats: BoundStats,
+    /// How the search that produced this result ended.
+    pub termination: Termination,
+    /// On a failed point-goal search, the furthest it got: see [`PartialPlan`].
+    ///
+    /// `None` when the search solved, when its goal is set-valued (a loose
+    /// goal has no single target to measure progress against), and on results
+    /// that compose several searches from different starting points (a
+    /// placement's phases, a mirrored search, Push and Rotate). Every `Some`
+    /// is a prefix from this result's own root, so a caller can resume from
+    /// it.
+    pub best_partial: Option<PartialPlan>,
+}
+
+/// The furthest a failed point-goal search got.
+///
+/// Of every configuration the search reached, the one with the fewest atoms
+/// off their targets; ties go to the cheaper prefix, then to the node reached
+/// first. Measured by atoms rather than by a distance bound, which can be zero
+/// at a configuration that is not the goal.
+#[derive(Debug, Clone)]
+pub struct PartialPlan {
+    /// The configuration reached.
+    pub config: Config,
+    /// The move layers from the search's root to `config`.
+    pub layers: Vec<MoveSet>,
+    /// Atoms not on their targets at `config`.
+    pub unresolved: u32,
+}
+
+impl SolveResult {
     /// Whether the verdict is a proof: when `Solved`, the plan is optimal;
     /// when `Unsolvable`, no plan exists.
     ///
-    /// Exactly `matches!(termination, Termination::Exhausted { proof: true })`,
-    /// and `false` on every other path. Two things set it, neither of which
+    /// Derived from [`termination`](Self::termination): exactly
+    /// `matches!(termination, Termination::Exhausted { proof: true })`, and
+    /// `false` on every other path. Two things set it, neither of which
     /// needs an exhaustive walk of the space:
     ///
     /// * the **root certificate** — the incumbent's cost has reached
@@ -111,12 +149,10 @@ pub struct SolveResult {
     /// hardware cannot do it.
     ///
     /// [`solve_push_rotate`]: crate::push_rotate::solver::solve_push_rotate
-    pub proven: bool,
-    /// How the search that produced this result ended.
-    pub termination: Termination,
-}
+    pub fn proven(&self) -> bool {
+        matches!(self.termination, Termination::Exhausted { proof: true })
+    }
 
-impl SolveResult {
     /// Construct a [`SolveStatus::Solved`] result with the given path and counters.
     pub fn solved(
         goal_config: Config,
@@ -130,12 +166,13 @@ impl SolveResult {
             move_layers,
             goal_config,
             nodes_expanded,
+            nodes_generated: 0,
             cost,
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
-            proven: false,
             termination: Termination::Stopped,
+            best_partial: None,
         }
     }
 
@@ -157,15 +194,16 @@ impl SolveResult {
             move_layers: Vec::new(),
             goal_config: root_config,
             nodes_expanded,
+            nodes_generated: 0,
             cost: 0.0,
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
-            proven: false,
             termination: match status {
                 SolveStatus::BudgetExceeded => Termination::Budget,
                 _ => Termination::Exhausted { proof: false },
             },
+            best_partial: None,
         }
     }
 
@@ -181,12 +219,11 @@ impl SolveResult {
     /// [`Self::unsolved`] infers `Exhausted { proof: false }` from the status,
     /// which is what a search driver wants — its `Unsolvable` says the
     /// heuristic gave up. A complete method needs the opposite, and every one
-    /// of its proof-bearing exits must agree, or `proven` becomes a property
+    /// of its proof-bearing exits must agree, or [`proven`](Self::proven) becomes a property
     /// of which internal path happened to fire. Hence one constructor rather
     /// than a flag set at each site.
     pub fn proven_unsolvable(root_config: Config) -> Self {
         Self {
-            proven: true,
             termination: Termination::Exhausted { proof: true },
             ..Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
         }
@@ -249,13 +286,13 @@ mod tests {
         let proved = SolveResult::proven_unsolvable(root);
 
         assert_eq!(drained.status, proved.status);
-        assert!(!drained.proven);
+        assert!(!drained.proven());
         assert_eq!(drained.termination, Termination::Exhausted { proof: false });
-        assert!(proved.proven);
+        assert!(proved.proven());
         assert_eq!(proved.termination, Termination::Exhausted { proof: true });
         for result in [&drained, &proved] {
             assert_eq!(
-                result.proven,
+                result.proven(),
                 matches!(result.termination, Termination::Exhausted { proof: true })
             );
         }

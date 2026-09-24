@@ -733,6 +733,7 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: None,
+            aod_capacity: None,
         });
         let arch_wrap = StarlarkArchSpec(arch);
         let targets = vec![

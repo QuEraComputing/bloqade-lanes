@@ -700,6 +700,10 @@ class ArchSpec:
             indicates the radius associated with the architecture and is typically
             used to interpret entangling pairs. It is metadata; this constructor
             does not itself verify that the pairs match the radius. Default = None.
+        aod_capacity (Optional[tuple[int, int]]): The largest AOD rectangle one shot
+            may drive, as ``(x, y)`` tone counts: at most ``x`` distinct source
+            columns and ``y`` distinct source rows. Both must be at least 1.
+            Default = None, meaning unlimited.
     """
 
     def __init__(
@@ -713,6 +717,7 @@ class ArchSpec:
         feed_forward: bool = False,
         atom_reloading: bool = False,
         blockade_radius: Optional[float] = None,
+        aod_capacity: Optional[tuple[int, int]] = None,
     ) -> None: ...
     @staticmethod
     def from_json(json: str) -> ArchSpec:
@@ -814,6 +819,12 @@ class ArchSpec:
     @property
     def blockade_radius(self) -> Optional[float]:
         """Rydberg blockade radius (µm), or None if not provided."""
+        ...
+
+    @property
+    def aod_capacity(self) -> Optional[tuple[int, int]]:
+        """The largest AOD rectangle one shot may drive, as ``(x, y)`` tone
+        counts, or None if unlimited."""
         ...
 
     @property

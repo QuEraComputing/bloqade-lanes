@@ -396,7 +396,10 @@ fn phantom_target_is_unsolvable_not_a_fabricated_success() {
     // a proof on the result the caller reads. `SolveResult::unsolved` infers
     // the unproven termination from the status, which is right for a search
     // driver and wrong here.
-    assert!(result.proven, "a proven verdict must report itself as one");
+    assert!(
+        result.proven(),
+        "a proven verdict must report itself as one"
+    );
     assert_eq!(result.termination, Termination::Exhausted { proof: true });
 }
 
@@ -427,7 +430,7 @@ fn a_target_off_the_carved_graph_is_a_proven_verdict() {
 
     assert_eq!(result.status, SolveStatus::Unsolvable);
     assert!(
-        result.proven,
+        result.proven(),
         "an inexpressible request is a proof, not a give-up"
     );
     assert_eq!(result.termination, Termination::Exhausted { proof: true });
@@ -479,7 +482,7 @@ fn out_of_regime_reports_budget_exceeded_not_unsolvable() {
         "a solvable out-of-regime instance must not be reported as proven unsolvable"
     );
     assert!(
-        !result.proven,
+        !result.proven(),
         "giving up outside the completeness regime proves nothing"
     );
 }
@@ -600,7 +603,7 @@ fn verdicts_match_brute_force_on_carved_instances() {
             SolveStatus::Unsolvable => {
                 proofs += 1;
                 assert!(
-                    result.proven,
+                    result.proven(),
                     "seed {seed}: an Unsolvable verdict must carry its proof"
                 );
                 assert!(

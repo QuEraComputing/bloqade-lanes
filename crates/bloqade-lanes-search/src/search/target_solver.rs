@@ -186,9 +186,12 @@ pub(crate) fn solve_with_engine(
         )?;
         if mirrored.status != SolveStatus::Solved {
             // An unsolved result reports the configuration the *caller's*
-            // solve started from, not the mirror's.
+            // solve started from, not the mirror's. The mirror's partial is
+            // a suffix of the reversed problem, not a prefix from `root`, so
+            // it cannot be resumed from and is dropped.
             return Ok(SolveResult {
                 goal_config: root,
+                best_partial: None,
                 ..mirrored
             });
         }
@@ -296,7 +299,6 @@ pub(crate) fn solve_with_engine(
         blocked: &blocked_encoded,
         targets: &target_encoded,
         cz_pairs: None,
-        capacity: opts.aod_capacity,
     };
 
     let lookahead = opts.lookahead;
@@ -342,7 +344,7 @@ pub(crate) fn solve_with_engine(
         // the status names the property this promotion actually depends on, so
         // a planner path that ever reports `Unsolvable` without a proof stops
         // being promoted instead of silently borrowing the proof's authority.
-        if fallback.proven {
+        if fallback.proven() {
             return Ok(fallback);
         }
     }
@@ -405,7 +407,7 @@ mod tests {
 
         let stopped = solve(true);
         assert_eq!(stopped.status, SolveStatus::Solved);
-        assert!(stopped.proven, "a plan at h(root) is proven optimal");
+        assert!(stopped.proven(), "a plan at h(root) is proven optimal");
         assert_eq!(
             stopped.termination,
             Termination::Exhausted { proof: true },
@@ -414,13 +416,13 @@ mod tests {
 
         let spun = solve(false);
         assert!(
-            !spun.proven,
+            !spun.proven(),
             "declining to act on the certificate proves nothing"
         );
         assert_eq!(spun.cost.to_bits(), stopped.cost.to_bits());
     }
 
-    /// `SolveOptions::aod_capacity` reaches the shot generator through the
+    /// The spec's `aod_capacity` reaches the shot generator through the
     /// public entry point.
     ///
     /// Three atoms in one row of the example arch move together in a single
@@ -429,22 +431,21 @@ mod tests {
     /// assertion is on the emitted *widths* rather than the layer count, so it
     /// pins the capacity rather than any particular plan length.
     ///
-    /// This covers the wiring, not the generator: the option has to survive
-    /// `solve` building its `SearchContext`. That thread is exactly what the
-    /// loose-target generator got wrong before this test's sibling fix, so it
-    /// is worth an assertion of its own.
+    /// This covers the wiring, not the generator: the capacity has to reach
+    /// every shot assembler from the architecture spec, through the engine's
+    /// `LaneIndex`.
     #[test]
-    fn solve_honours_the_aod_capacity_from_options() {
-        let engine = make_engine();
+    fn solve_honours_the_aod_capacity_from_the_arch_spec() {
         let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
         let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i + 5))).collect();
 
         let widths = |capacity: Option<AodCapacity>| -> Vec<usize> {
-            let search = MoveSearch::default().with_options(SolveOptions {
-                aod_capacity: capacity,
-                ..Default::default()
-            });
-            let result = TargetSolver::new(Arc::clone(&engine), search)
+            let spec: bloqade_lanes_bytecode_core::arch::ArchSpec =
+                serde_json::from_str(example_arch_json()).unwrap();
+            let engine =
+                Arc::new(SearchEngine::from_arch_spec(&spec.with_aod_capacity(capacity)).unwrap());
+            let search = MoveSearch::default();
+            let result = TargetSolver::new(engine, search)
                 .solve(
                     initial.clone(),
                     target.clone(),
@@ -470,6 +471,86 @@ mod tests {
             vec![1, 1, 1],
             "a 1x1 AOD cannot carry more than one atom per shot"
         );
+    }
+
+    /// Atoms 0 and 1 are one site-bus hop from their targets; atom 2 also
+    /// needs a word-bus hop. One expansion is enough to reach a node with
+    /// two atoms home but not the goal.
+    type Placement = Vec<(u32, LocationAddr)>;
+
+    fn two_of_three_in_one_hop() -> (Placement, Placement) {
+        (
+            vec![(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))],
+            vec![(0, loc(0, 5)), (1, loc(0, 6)), (2, loc(1, 7))],
+        )
+    }
+
+    fn unresolved(config: &Config, target: &[(u32, LocationAddr)]) -> u32 {
+        target
+            .iter()
+            .filter(|&&(q, t)| config.location_of(q) != Some(t))
+            .count() as u32
+    }
+
+    /// A failed point-goal solve reports how far it got, and the reported
+    /// prefix replays from the caller's root to exactly the reported
+    /// configuration, which is what a resume needs.
+    #[test]
+    fn a_failed_solve_reports_a_replayable_best_partial() {
+        let engine = make_engine();
+        let (initial, target) = two_of_three_in_one_hop();
+        let result = TargetSolver::new(Arc::clone(&engine), MoveSearch::astar(1.0))
+            .solve(initial.clone(), target.clone(), std::iter::empty(), Some(1))
+            .expect("valid config");
+        assert_ne!(result.status, SolveStatus::Solved);
+        assert!(
+            result.nodes_generated > 1,
+            "the root's children were generated"
+        );
+
+        let partial = result
+            .best_partial
+            .expect("a failed point-goal solve has a partial");
+        assert_eq!(partial.unresolved, unresolved(&partial.config, &target));
+        let root = Config::new(initial).unwrap();
+        assert!(
+            partial.unresolved < unresolved(&root, &target),
+            "the search got closer than the root"
+        );
+        let replayed = crate::search::verify::replay_move_layers(
+            &root,
+            &partial.layers,
+            engine.index(),
+            &HashSet::new(),
+        )
+        .expect("the prefix executes");
+        let reached: std::collections::HashMap<u32, LocationAddr> = partial.config.iter().collect();
+        assert_eq!(replayed, reached);
+    }
+
+    /// A solved result has no partial, and neither does a failed mirrored
+    /// solve: the mirror's partial is a suffix of the reversed problem, not a
+    /// prefix from the caller's root.
+    #[test]
+    fn best_partial_is_absent_when_solved_or_mirrored() {
+        let engine = make_engine();
+        let (initial, target) = two_of_three_in_one_hop();
+        let solved = TargetSolver::new(Arc::clone(&engine), MoveSearch::astar(1.0))
+            .solve(initial.clone(), target.clone(), std::iter::empty(), None)
+            .expect("valid config");
+        assert_eq!(solved.status, SolveStatus::Solved);
+        assert!(solved.best_partial.is_none());
+        assert!(solved.nodes_generated >= solved.nodes_expanded);
+
+        let mirrored = MoveSearch::astar(1.0).with_options(SolveOptions {
+            backwards_search: true,
+            ..Default::default()
+        });
+        let failed = TargetSolver::new(engine, mirrored)
+            .solve(initial, target, std::iter::empty(), Some(1))
+            .expect("valid config");
+        assert_ne!(failed.status, SolveStatus::Solved);
+        assert!(failed.best_partial.is_none());
     }
 
     #[test]

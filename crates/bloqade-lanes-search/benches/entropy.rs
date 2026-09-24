@@ -161,14 +161,7 @@ fn prepare(index: &LaneIndex, s: &Scenario) -> Prepared {
 
 /// Time ONLY the driver call; context is prebuilt and reused.
 fn run_driver(index: &LaneIndex, p: &Prepared) -> SearchResult {
-    let ctx = SearchContext {
-        index,
-        dist_table: &p.dist_table,
-        blocked: &p.blocked,
-        targets: &p.target_encoded,
-        cz_pairs: None,
-        capacity: None,
-    };
+    let ctx = SearchContext::new(index, &p.dist_table, &p.blocked, &p.target_encoded);
     entropy_search(
         p.root.clone(),
         &p.goal,

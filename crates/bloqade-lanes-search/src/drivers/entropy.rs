@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::bounds::{BoundStats, CompletionBound};
 use crate::drivers::result::{SearchResult, Termination};
 use crate::feasibility::graph::LaneGraph;
-use crate::observer::{SearchEvent, SearchObserver};
+use crate::observer::{EntropyReason, SearchEvent, SearchObserver};
 use crate::ops::aod_grid::{BusGridContext, ChainLink, close_chain_entries};
 use crate::primitives::config::Config;
 use crate::primitives::context::SearchContext;
@@ -66,42 +66,53 @@ impl EntropyTrace {
     }
 }
 
+/// What an entropy trace step records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntropyTraceEvent {
+    /// Descended to a new node through a chosen moveset.
+    Descend,
+    /// Reached a goal node.
+    Goal,
+    /// Raised a node's entropy counter; see the step's `reason`.
+    EntropyBump,
+    /// Reverted from a node whose entropy reached the limit to an ancestor.
+    Revert,
+    /// The expansion budget ran out; the sequential fallback starts.
+    FallbackStart,
+}
+
 /// One entropy-search step snapshot.
+///
+/// Domain types only; the Python binding renders them in the visualizer's
+/// format.
 #[derive(Debug, Clone)]
-#[allow(clippy::type_complexity)]
 pub struct EntropyTraceStep {
-    pub event: String,
+    pub event: EntropyTraceEvent,
     pub node_id: u32,
     pub parent_node_id: Option<u32>,
     pub depth: u32,
     pub entropy: u32,
     pub unresolved_count: u32,
-    pub moveset: Option<Vec<(u8, u8, u32, u32, u32, u32)>>,
-    pub candidate_movesets: Vec<Vec<(u8, u8, u32, u32, u32, u32)>>,
+    pub moveset: Option<MoveSet>,
+    pub candidate_movesets: Vec<MoveSet>,
     pub candidate_index: Option<u32>,
-    pub reason: Option<String>,
+    pub reason: Option<EntropyReason>,
     pub state_seen_node_id: Option<u32>,
     pub no_valid_moves_qubit: Option<u32>,
     pub trigger_node_id: Option<u32>,
-    pub configuration: Vec<(u32, u32, u32, u32)>,
-    pub parent_configuration: Option<Vec<(u32, u32, u32, u32)>>,
+    pub configuration: Config,
+    pub parent_configuration: Option<Config>,
     pub moveset_score: Option<f64>,
     pub best_buffer_node_ids: Vec<u32>,
 }
 
 /// `EntropyTrace` collects entropy-driver events into a `Vec<EntropyTraceStep>`,
-/// preserving the legacy step-record shape consumed by the Python
-/// visualization layer. Frontier-driver events (`GoalFound`,
+/// one step per event, in the step-record shape the Python visualization
+/// layer consumes. Frontier-driver events (`GoalFound`,
 /// `NodeExpanded`) are ignored — `EntropyTrace` is specifically the
 /// entropy driver's trace sink.
 impl SearchObserver for EntropyTrace {
     fn on_event(&mut self, event: SearchEvent<'_>) {
-        let to_candidate_tuples = |movesets: &[MoveSet]| {
-            movesets
-                .iter()
-                .map(moveset_to_trace_tuple)
-                .collect::<Vec<_>>()
-        };
         match event {
             SearchEvent::EntropyDescend {
                 node_id,
@@ -119,21 +130,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "descend".to_string(),
+                    event: EntropyTraceEvent::Descend,
                     node_id: node_id.0,
                     parent_node_id: Some(parent_node_id.0),
                     depth,
                     entropy,
                     unresolved_count,
-                    moveset: Some(moveset_to_trace_tuple(moveset)),
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    moveset: Some(moveset.clone()),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index: Some(candidate_index),
-                    reason: reason.map(|s| s.to_string()),
+                    reason,
                     state_seen_node_id: None,
                     no_valid_moves_qubit: None,
                     trigger_node_id: None,
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: Some(config_as_trace_tuples(parent_configuration)),
+                    configuration: configuration.clone(),
+                    parent_configuration: Some(parent_configuration.clone()),
                     moveset_score: Some(moveset_score),
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -154,21 +165,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "goal".to_string(),
+                    event: EntropyTraceEvent::Goal,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
                     entropy,
                     unresolved_count: 0,
-                    moveset: moveset.map(moveset_to_trace_tuple),
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    moveset: moveset.cloned(),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index,
-                    reason: reason.map(str::to_string),
+                    reason,
                     state_seen_node_id: state_seen_node_id.map(|id| id.0),
                     no_valid_moves_qubit: None,
                     trigger_node_id: trigger_node_id.map(|id| id.0),
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    configuration: configuration.clone(),
+                    parent_configuration: parent_configuration.cloned(),
                     moveset_score: None,
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -190,21 +201,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "entropy_bump".to_string(),
+                    event: EntropyTraceEvent::EntropyBump,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
                     entropy,
                     unresolved_count,
-                    moveset: moveset.map(moveset_to_trace_tuple),
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    moveset: moveset.cloned(),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index,
-                    reason: Some(reason.to_string()),
+                    reason: Some(reason),
                     state_seen_node_id: state_seen_node_id.map(|id| id.0),
                     no_valid_moves_qubit,
                     trigger_node_id: None,
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    configuration: configuration.clone(),
+                    parent_configuration: parent_configuration.cloned(),
                     moveset_score: None,
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -223,21 +234,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "revert".to_string(),
+                    event: EntropyTraceEvent::Revert,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
                     entropy,
                     unresolved_count,
                     moveset: None,
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index: None,
-                    reason: Some("entropy".to_string()),
+                    reason: Some(EntropyReason::EntropyLimit),
                     state_seen_node_id: None,
                     no_valid_moves_qubit: None,
                     trigger_node_id: Some(trigger_node_id.0),
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    configuration: configuration.clone(),
+                    parent_configuration: parent_configuration.cloned(),
                     moveset_score: Some(trigger_entropy as f64),
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -251,7 +262,7 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "fallback_start".to_string(),
+                    event: EntropyTraceEvent::FallbackStart,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
@@ -264,7 +275,7 @@ impl SearchObserver for EntropyTrace {
                     state_seen_node_id: None,
                     no_valid_moves_qubit: None,
                     trigger_node_id: None,
-                    configuration: config_as_trace_tuples(configuration),
+                    configuration: configuration.clone(),
                     parent_configuration: None,
                     moveset_score: None,
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
@@ -460,7 +471,7 @@ fn build_deadlock_breaker_candidate(
     let mut best: Option<(usize, f64, MoveSet, Config)> = None;
     for (key, mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
-        let grid_ctx = BusGridContext::new(ctx.index, key, occupied, ctx.capacity);
+        let grid_ctx = BusGridContext::new(ctx.index, key, occupied, ctx.index.aod_capacity());
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -1522,28 +1533,6 @@ fn unresolved_count(config: &Config, targets: &[(u32, u64)]) -> u32 {
         .count() as u32
 }
 
-fn config_as_trace_tuples(config: &Config) -> Vec<(u32, u32, u32, u32)> {
-    config
-        .iter()
-        .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
-        .collect()
-}
-
-fn lane_to_trace_tuple(lane: LaneAddr) -> (u8, u8, u32, u32, u32, u32) {
-    (
-        lane.direction as u8,
-        lane.move_type as u8,
-        lane.zone_id,
-        lane.word_id,
-        lane.site_id,
-        lane.bus_id,
-    )
-}
-
-fn moveset_to_trace_tuple(ms: &MoveSet) -> Vec<(u8, u8, u32, u32, u32, u32)> {
-    ms.decode().into_iter().map(lane_to_trace_tuple).collect()
-}
-
 fn first_unresolved_qubit_without_valid_move(config: &Config, ctx: &SearchContext) -> Option<u32> {
     let mut occupied = HashSet::with_capacity(ctx.blocked.len() + config.len());
     occupied.extend(ctx.blocked);
@@ -1770,7 +1759,7 @@ pub(crate) fn generate_candidates(
     for (key, mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
 
-        let grid_ctx = BusGridContext::new(ctx.index, key, &occupied, ctx.capacity);
+        let grid_ctx = BusGridContext::new(ctx.index, key, &occupied, ctx.index.aod_capacity());
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -2662,7 +2651,7 @@ where
                     moveset: None,
                     candidate_movesets: &candidate_movesets,
                     candidate_index: None,
-                    reason: "no-valid-moves",
+                    reason: EntropyReason::NoValidMoves,
                     state_seen_node_id: None,
                     no_valid_moves_qubit: no_valid_qid,
                     configuration: cfg,
@@ -2720,7 +2709,7 @@ where
                         moveset: Some(&trace_move_set),
                         candidate_movesets: &candidate_movesets,
                         candidate_index: Some(candidate_idx as u32),
-                        reason: Some("state-seen-goal"),
+                        reason: Some(EntropyReason::StateSeenGoal),
                         state_seen_node_id: Some(child_id),
                         trigger_node_id: Some(current),
                         configuration: goal_cfg,
@@ -2790,7 +2779,7 @@ where
                     moveset: Some(&trace_move_set),
                     candidate_movesets: &candidate_movesets,
                     candidate_index: Some(candidate_idx as u32),
-                    reason: "state-seen",
+                    reason: EntropyReason::StateSeen,
                     state_seen_node_id: Some(child_id),
                     no_valid_moves_qubit: None,
                     configuration: cfg,
@@ -2857,7 +2846,7 @@ where
                 moveset: &trace_move_set,
                 candidate_movesets: &candidate_movesets,
                 candidate_index: candidate_idx as u32,
-                reason: candidate_origin.then_some("deadlock-breaker"),
+                reason: candidate_origin.then_some(EntropyReason::DeadlockBreaker),
                 configuration: child_cfg,
                 parent_configuration: current_cfg_owned,
                 moveset_score,
@@ -3186,7 +3175,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         entropy_search(
             root,
@@ -3224,7 +3212,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         entropy_search(
             root,
@@ -3271,7 +3258,6 @@ mod tests {
                 blocked: &blocked,
                 targets: &target_encoded,
                 cz_pairs: None,
-                capacity: None,
             };
             let r = entropy_search(
                 root,
@@ -3542,7 +3528,7 @@ mod tests {
             trace
                 .steps
                 .iter()
-                .any(|step| step.event == "fallback_start")
+                .any(|step| step.event == EntropyTraceEvent::FallbackStart)
         );
     }
 
@@ -3562,7 +3548,7 @@ mod tests {
             trace
                 .steps
                 .iter()
-                .all(|step| step.event != "fallback_start")
+                .all(|step| step.event != EntropyTraceEvent::FallbackStart)
         );
     }
 
@@ -3749,7 +3735,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams::default();
 
@@ -3781,7 +3766,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams {
             w_d: 0.0,
@@ -3823,7 +3807,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
 
         for lookahead in [false, true] {
@@ -3895,7 +3878,6 @@ mod tests {
                 blocked: &blocked,
                 targets,
                 cz_pairs: None,
-                capacity: None,
             };
 
             let uncached = HeuristicTables::build(&ctx, params.w_t, params.lookahead);
@@ -3933,7 +3915,6 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs: None,
-            capacity: None,
         };
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
 
@@ -3990,7 +3971,6 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs: None,
-            capacity: None,
         };
         let w_t = EntropyParams::default().w_t;
 
@@ -4025,7 +4005,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 0,
@@ -4049,7 +4028,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 4,
@@ -4112,7 +4090,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 8,
@@ -4155,7 +4132,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams {
             w_m: 0.0,
@@ -4222,7 +4198,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let goal = crate::goals::AllAtTarget::new(&target_encoded);
         let params = EntropyParams {
@@ -4247,8 +4222,11 @@ mod tests {
         );
 
         assert!(
-            trace.steps.iter().any(|step| step.event == "descend"
-                && step.reason.as_deref() == Some("deadlock-breaker")),
+            trace
+                .steps
+                .iter()
+                .any(|step| step.event == EntropyTraceEvent::Descend
+                    && step.reason == Some(EntropyReason::DeadlockBreaker)),
             "expected descend step marked with deadlock-breaker reason in trace"
         );
     }
@@ -4341,7 +4319,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let objective = WeightedDuration::new(&index, 10.0);
@@ -4406,7 +4383,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams::default();
         let root = Config::new(initial).unwrap();
@@ -4479,7 +4455,6 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams::default();
         let mut trace = EntropyTrace::for_params(&params);
@@ -4529,7 +4504,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let bound = crate::bounds::WeightedDistanceBound::new(
             &UniformCost,
@@ -4616,7 +4590,6 @@ mod tests {
             blocked: &blocked,
             targets: &targets,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams::default();
         let mut trace = EntropyTrace::for_params(&params);
@@ -4666,7 +4639,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let bound = crate::bounds::WeightedDistanceBound::new(
             &UniformCost,
@@ -4728,7 +4700,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let result = entropy_search(
             Config::new([(0, loc(0, 0))]).unwrap(),
@@ -4772,7 +4743,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let run = |bound_terminates: bool| {
             entropy_search(
@@ -4994,7 +4964,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
 
         let accumulating = WeightedDuration::new(&index, 1.0);
@@ -5048,7 +5017,6 @@ mod chain_assembly {
             blocked: &blocked,
             targets: &target_encoded,
             cz_pairs: None,
-            capacity: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 16,

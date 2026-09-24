@@ -6,11 +6,11 @@
 
 use std::collections::HashMap;
 
-use bloqade_lanes_bytecode_core::arch::ArchSpecError;
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use bloqade_lanes_bytecode_core::arch::metrics::MotionModel;
 use bloqade_lanes_bytecode_core::arch::query::LaneGroupError;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+use bloqade_lanes_bytecode_core::arch::{AodCapacity, ArchSpecError};
 use bloqade_lanes_bytecode_core::atom_state::{AtomStateData, MoveValidationError, ValidatedMoves};
 
 use crate::primitives::bus_grid_maps::BusGridMaps;
@@ -299,6 +299,24 @@ impl LaneIndex {
     /// `only_lane_index_reads_the_arch_spec` test enforces that.
     pub(crate) fn arch_spec(&self) -> &ArchSpec {
         &self.arch_spec
+    }
+
+    /// The largest AOD rectangle one shot may drive; `None` is unlimited.
+    ///
+    /// Read by everything that assembles a shot's AOD rectangle, so that no
+    /// generator emits a shot the hardware cannot drive.
+    ///
+    /// **Not honoured by Push and Rotate.** The planner's scheduler batches
+    /// rectangles without consulting a capacity, so
+    /// [`Strategy::PushRotate`](crate::search::options::Strategy::PushRotate)
+    /// and the `fallback_push_rotate` path can return a shot wider than the
+    /// cap. The planner does not *grow* rectangles the way the shot assemblers
+    /// do — it packages the moves a plan already needs — so it is not expected
+    /// to exceed a real hardware limit in practice, and threading the cap
+    /// through its scheduler is deliberately left as follow-up. Treat the cap
+    /// as binding on the search strategies only.
+    pub fn aod_capacity(&self) -> Option<AodCapacity> {
+        self.arch_spec.aod_capacity
     }
 
     /// Number of sites per word. The word template is spec-wide, so this is
