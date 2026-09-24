@@ -11,6 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::ops::entangling;
 use crate::primitives::config::Config;
@@ -24,6 +25,10 @@ type LaneSig = (MoveType, u32, Direction);
 /// Per-edge scoring entry in `candidate_return_layouts`:
 /// `(score, hole_index, hop_cost, sig_set)`.
 type EdgeScore = (f64, usize, u32, HashSet<LaneSig>);
+
+/// A CZ pair with each qubit's current location:
+/// `((control, location), (target, location))`.
+type StagePair = ((u32, LocationAddr), (u32, LocationAddr));
 
 // ── Options ───────────────────────────────────────────────────────
 
@@ -340,6 +345,92 @@ fn build_full_layout(
         .collect()
 }
 
+/// Place CZ pairs on free entangling slots.
+///
+/// This is Phase 2's fallback for pairs the per-pair rule cannot place,
+/// because a qubit sits where [`ArchSpec::get_cz_partner`] has no partner.
+/// A slot is one site index of an entangling word pair: the same site on
+/// both words, in the pair's zone. It is free when neither half is in
+/// `claimed`, so a pair placed there collides with no other atom and has no
+/// third atom beside it. The Hungarian chooses the slots that minimise total
+/// hop distance, with each slot taking its cheaper orientation.
+///
+/// Entangling pairs may overlap (`[0, 1]` and `[1, 2]` both pass
+/// validation), so two slots can share a half, and the Hungarian does not
+/// know that. The search crate assumes one CZ partner per location (see
+/// [`entangling::build_partner_map`]), so rather than repair such an
+/// assignment this reports the stage unplaceable: it never returns
+/// colliding targets.
+///
+/// Returns both qubits' targets for every pair, or `None` when some pair
+/// cannot be placed: there are fewer free slots than pairs, none that both
+/// of its qubits can reach, or the chosen slots share a half.
+fn assign_free_slots(
+    pairs: &[StagePair],
+    claimed: &HashSet<u64>,
+    arch: &ArchSpec,
+    dist_table: &DistanceTable,
+) -> Option<Vec<(u32, LocationAddr)>> {
+    let sites_per_word = arch.sites_per_word() as u32;
+    let slots: Vec<(LocationAddr, LocationAddr)> = entangling::enumerate_word_pairs(arch)
+        .into_iter()
+        .flat_map(|wp| {
+            (0..sites_per_word).map(move |site_id| {
+                let at = |word_id| LocationAddr {
+                    zone_id: wp.zone_id,
+                    word_id,
+                    site_id,
+                };
+                (at(wp.word_a), at(wp.word_b))
+            })
+        })
+        .filter(|(a, b)| !claimed.contains(&a.encode()) && !claimed.contains(&b.encode()))
+        .collect();
+    let n_slots = slots.len();
+    if n_slots < pairs.len() {
+        return None;
+    }
+
+    // Unreachable halves cost `BIG`, so any cell at or above it is unusable.
+    const BIG: u32 = u32::MAX / 4;
+    let hops = |from: LocationAddr, to: LocationAddr| {
+        dist_table
+            .distance(from.encode(), to.encode())
+            .unwrap_or(BIG)
+    };
+    let mut costs = vec![BIG; pairs.len() * n_slots];
+    // `crossed[i]`: the control takes half `b` and the target half `a`.
+    let mut crossed = vec![false; costs.len()];
+    for (row, &((_, c_loc), (_, t_loc))) in pairs.iter().enumerate() {
+        for (col, &(a, b)) in slots.iter().enumerate() {
+            let straight_cost = hops(c_loc, a).saturating_add(hops(t_loc, b));
+            let crossed_cost = hops(c_loc, b).saturating_add(hops(t_loc, a));
+            let idx = row * n_slots + col;
+            costs[idx] = straight_cost.min(crossed_cost);
+            crossed[idx] = crossed_cost < straight_cost;
+        }
+    }
+
+    let assignment = entangling::hungarian(&costs, pairs.len(), n_slots);
+    let mut taken: HashSet<u64> = HashSet::with_capacity(2 * pairs.len());
+    let mut targets = Vec::with_capacity(2 * pairs.len());
+    for (row, &col) in assignment.iter().enumerate() {
+        let idx = row * n_slots + col;
+        if costs[idx] >= BIG {
+            return None;
+        }
+        let (a, b) = slots[col];
+        if !taken.insert(a.encode()) || !taken.insert(b.encode()) {
+            return None; // overlapping entangling pairs: slots share a half
+        }
+        let ((c, _), (t, _)) = pairs[row];
+        let (c_dst, t_dst) = if crossed[idx] { (b, a) } else { (a, b) };
+        targets.push((c, c_dst));
+        targets.push((t, t_dst));
+    }
+    Some(targets)
+}
+
 // ── CzPlacement composition ─────────────────────────────────────────────
 
 use crate::placement::cz_placement::CzPlacement;
@@ -359,7 +450,10 @@ use std::sync::Arc;
 /// each via [`solve_with_engine`], and keeps the candidate whose
 /// return-routing produces the fewest move layers. Phase 2 picks one
 /// CZ-staging target per pair via a deterministic per-pair rule, then
-/// routes once.
+/// routes once. A pair with a qubit that has no CZ partner (e.g. in a
+/// storage zone with no entangling pairs) goes to a free entangling slot
+/// instead. If some pair cannot be placed at all, the result is
+/// [`SolveStatus::Unsolvable`].
 pub struct NoHomeCzPlacement {
     engine: Arc<SearchEngine>,
     search: MoveSearch,
@@ -479,43 +573,67 @@ pub(crate) fn solve_nohome(
     let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
 
     // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
-    let resolve_cz_targets = |from: &Config| -> Vec<(u32, LocationAddr)> {
-        let mut chosen: Vec<(u32, LocationAddr)> = Vec::with_capacity(cz_pairs.len());
+    //
+    // A pair whose qubits both have a CZ partner takes the per-pair rule:
+    // one qubit moves to the other's partner site. A pair with a qubit
+    // anywhere else (e.g. a storage zone with no entangling pairs) has no
+    // such move, so it goes to a free entangling slot instead. `None`
+    // means some pair cannot be placed at all.
+    let resolve_cz_targets = |from: &Config| -> Option<Vec<(u32, LocationAddr)>> {
+        let mut chosen: HashMap<u32, LocationAddr> = HashMap::with_capacity(cz_pairs.len());
+        let mut unpartnered: Vec<StagePair> = Vec::new();
         for &(c, t) in cz_pairs {
-            let Some(c_addr) = from.location_of(c) else {
-                continue;
-            };
-            let Some(t_addr) = from.location_of(t) else {
-                continue;
-            };
-            let Some(c_dst) = arch.get_cz_partner(&t_addr) else {
-                continue;
-            };
-            let Some(t_dst) = arch.get_cz_partner(&c_addr) else {
+            let c_addr = from.location_of(c)?;
+            let t_addr = from.location_of(t)?;
+            let (Some(c_dst), Some(t_dst)) =
+                (arch.get_cz_partner(&t_addr), arch.get_cz_partner(&c_addr))
+            else {
+                unpartnered.push(((c, c_addr), (t, t_addr)));
                 continue;
             };
 
             let move_c = (c, c_dst);
             let move_t = (t, t_dst);
 
-            let pick = if c_addr.word_id == t_addr.word_id {
+            let (qid, dst) = if c_addr.word_id == t_addr.word_id {
                 move_c
             } else if arch.is_home_position(&t_addr) {
                 move_t
             } else {
                 move_c
             };
-            chosen.push(pick);
+            chosen.insert(qid, dst);
         }
-        let chosen_map: HashMap<u32, LocationAddr> = chosen.iter().copied().collect();
-        from.iter()
-            .map(|(qid, loc)| (qid, chosen_map.get(&qid).copied().unwrap_or(loc)))
-            .collect()
+
+        if !unpartnered.is_empty() {
+            // A slot is taken if another atom ends on either half, or either
+            // half is blocked.
+            let slotted: HashSet<u32> = unpartnered
+                .iter()
+                .flat_map(|&((c, _), (t, _))| [c, t])
+                .collect();
+            let mut claimed = blocked_set.clone();
+            claimed.extend(
+                from.iter()
+                    .filter(|(qid, _)| !slotted.contains(qid))
+                    .map(|(qid, loc)| chosen.get(&qid).copied().unwrap_or(loc).encode()),
+            );
+            let dist_table = &engine.entangling_cache().dist_table;
+            chosen.extend(assign_free_slots(&unpartnered, &claimed, arch, dist_table)?);
+        }
+
+        Some(
+            from.iter()
+                .map(|(qid, loc)| (qid, chosen.get(&qid).copied().unwrap_or(loc)))
+                .collect(),
+        )
     };
 
     if !has_returners {
         // Skip the return phase — go directly to fixed-target entangling.
-        let cz_targets = resolve_cz_targets(&root);
+        let Some(cz_targets) = resolve_cz_targets(&root) else {
+            return Ok(SolveResult::unsolvable(root));
+        };
         return solve_with_engine(
             engine,
             opts,
@@ -589,7 +707,14 @@ pub(crate) fn solve_nohome(
     };
 
     // Phase 2: simple per-pair target picker, then route once.
-    let cz_targets = resolve_cz_targets(&return_result.goal_config);
+    let Some(cz_targets) = resolve_cz_targets(&return_result.goal_config) else {
+        return Ok(SolveResult::unsolved(
+            SolveStatus::Unsolvable,
+            root,
+            total_expanded,
+            return_result.deadlocks,
+        ));
+    };
     let entangling_result = solve_with_engine(
         engine,
         opts,
@@ -628,8 +753,7 @@ mod tests {
     use super::*;
     use crate::primitives::lane_index::LaneIndex;
     use crate::search::result::SolveStatus;
-    use crate::test_utils::{example_arch_json, loc};
-    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+    use crate::test_utils::{example_arch_json, loc, storage_gate_arch_json};
 
     fn make_parts() -> (ArchSpec, LaneIndex) {
         let json = example_arch_json();
@@ -652,6 +776,30 @@ mod tests {
                 addr.word_id
             );
         }
+    }
+
+    /// Neither zone has entangling pairs, so every location in every zone is
+    /// home — in particular `(zone 1, word 1)`, the storage end of the zone
+    /// bus. The old owner-zone lookup put word 1 in zone 0 only, so an atom
+    /// parked in storage looked like a returner and NoHome ran a return phase
+    /// towards a hole in the wrong zone.
+    #[test]
+    fn test_home_sites_span_every_zone() {
+        let arch: ArchSpec =
+            serde_json::from_str(crate::test_utils::two_zone_bus_arch_json()).unwrap();
+        let sites: HashSet<LocationAddr> = entangling::home_sites(&arch)
+            .into_iter()
+            .map(LocationAddr::decode)
+            .collect();
+        let at = |zone_id, word_id| LocationAddr {
+            zone_id,
+            word_id,
+            site_id: 0,
+        };
+        let expected: HashSet<LocationAddr> = [at(0, 0), at(0, 1), at(1, 0), at(1, 1)]
+            .into_iter()
+            .collect();
+        assert_eq!(sites, expected);
     }
 
     #[test]
@@ -772,5 +920,147 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.status, SolveStatus::Unsolvable);
+    }
+
+    fn zloc(zone_id: u32, word_id: u32, site_id: u32) -> LocationAddr {
+        LocationAddr {
+            zone_id,
+            word_id,
+            site_id,
+        }
+    }
+
+    fn solve_stage(
+        arch_json: &str,
+        initial: &[(u32, LocationAddr)],
+        cz_pairs: &[(u32, u32)],
+    ) -> (Arc<SearchEngine>, SolveResult) {
+        let engine = Arc::new(SearchEngine::from_json_validated(arch_json).unwrap());
+        let search = MoveSearch::new(SolveOptions::default(), Default::default());
+        let placement = NoHomeCzPlacement::new(engine.clone(), search, NoHomeOptions::default());
+        let blocked: [LocationAddr; 0] = [];
+        let result = placement
+            .solve_pairs(
+                initial.iter().copied(),
+                cz_pairs,
+                blocked.iter().copied(),
+                Some(5000),
+                &[],
+            )
+            .unwrap();
+        (engine, result)
+    }
+
+    /// A pair in a zone with no entangling pairs has no per-pair move, so it
+    /// must be staged in the gate zone. It used to be skipped: every target
+    /// defaulted to the current site and the stage "solved" in zero layers
+    /// with the pair still apart in storage. Covers both qubits in storage;
+    /// one in storage with its partner on home gate word 1; and one in
+    /// storage with its partner on non-home gate word 2, which runs Phase 1
+    /// first, so the fallback resolves from the returned layout.
+    #[test]
+    fn nohome_stages_a_pair_from_a_pairless_zone() {
+        let starts = [
+            [(0u32, zloc(0, 0, 0)), (1u32, zloc(0, 0, 1))],
+            [(0u32, zloc(0, 0, 0)), (1u32, zloc(1, 1, 1))],
+            [(0u32, zloc(0, 0, 0)), (1u32, zloc(1, 2, 1))],
+        ];
+        for initial in starts {
+            let (engine, result) = solve_stage(storage_gate_arch_json(), &initial, &[(0, 1)]);
+
+            assert_eq!(result.status, SolveStatus::Solved, "from {initial:?}");
+            assert!(!result.move_layers.is_empty(), "from {initial:?}");
+            let c = result.goal_config.location_of(0).unwrap();
+            let t = result.goal_config.location_of(1).unwrap();
+            assert_eq!(
+                engine.index().arch_spec().get_cz_partner(&t),
+                Some(c),
+                "from {initial:?}: pair ends at {c:?} and {t:?}, not on CZ partner sites",
+            );
+        }
+    }
+
+    /// A pair that cannot be staged makes the stage unsolvable, not solved in
+    /// place. Two ways: spectators on gate word 1 claim a half of every slot,
+    /// and a pair names a qubit the placement does not hold.
+    #[test]
+    fn nohome_is_unsolvable_when_a_pair_cannot_be_staged() {
+        let in_storage = [(0u32, zloc(0, 0, 0)), (1u32, zloc(0, 0, 1))];
+        let spectators = [(2u32, zloc(1, 1, 0)), (3u32, zloc(1, 1, 1))];
+        let full_gate: Vec<_> = in_storage.iter().chain(&spectators).copied().collect();
+
+        let (_, gate_full) = solve_stage(storage_gate_arch_json(), &full_gate, &[(0, 1)]);
+        assert_eq!(gate_full.status, SolveStatus::Unsolvable);
+        assert!(gate_full.move_layers.is_empty());
+
+        let (_, missing) = solve_stage(storage_gate_arch_json(), &in_storage, &[(0, 9)]);
+        assert_eq!(missing.status, SolveStatus::Unsolvable);
+        assert!(missing.move_layers.is_empty());
+    }
+
+    /// The same verdict when the slots fill only after Phase 1: the
+    /// spectator on non-home word 2 returns to the last free home site,
+    /// (1, 1, 1), and with (1, 1, 0) already taken no slot is left free.
+    #[test]
+    fn nohome_is_unsolvable_when_phase_1_fills_the_slots() {
+        let initial = [
+            (0u32, zloc(0, 0, 0)),
+            (1u32, zloc(0, 0, 1)),
+            (2u32, zloc(1, 1, 0)),
+            (3u32, zloc(1, 2, 1)),
+        ];
+        let (_, result) = solve_stage(storage_gate_arch_json(), &initial, &[(0, 1)]);
+
+        assert_eq!(result.status, SolveStatus::Unsolvable);
+        assert!(result.move_layers.is_empty());
+        assert!(result.nodes_expanded > 0, "Phase 1 should have routed");
+    }
+
+    /// The storage/gate spec with a third gate word and **overlapping**
+    /// entangling pairs `[1, 2]` and `[2, 3]`, which validation allows.
+    fn overlapping_pairs_arch_json() -> String {
+        let mut spec: serde_json::Value = serde_json::from_str(storage_gate_arch_json()).unwrap();
+        spec["words"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "sites": [[0, 3], [1, 3]] }));
+        for zone in spec["zones"].as_array_mut().unwrap() {
+            zone["grid"]["y_spacing"] = serde_json::json!([2.0, 2.0, 2.0]);
+        }
+        let gate = &mut spec["zones"][1];
+        gate["word_buses"] = serde_json::json!([
+            { "src": [1], "dst": [2] },
+            { "src": [2], "dst": [3] }
+        ]);
+        gate["words_with_site_buses"] = serde_json::json!([1, 2, 3]);
+        gate["entangling_pairs"] = serde_json::json!([[1, 2], [2, 3]]);
+        spec.to_string()
+    }
+
+    /// With overlapping entangling pairs two slots can share a half. Here the
+    /// cheapest assignment puts `[1, 2]` and `[2, 3]` both at site 0, sharing
+    /// (1, 2, 0), so the stage is unplaceable rather than given colliding
+    /// targets. The distance table is built directly: the engine's entangling
+    /// cache debug-asserts one partner per location, which this spec breaks.
+    #[test]
+    fn free_slots_reject_a_shared_half_across_overlapping_pairs() {
+        let engine = SearchEngine::from_json_validated(&overlapping_pairs_arch_json()).unwrap();
+        let arch = engine.index().arch_spec();
+        let dist_table =
+            DistanceTable::new(&entangling::all_entangling_locations(arch), engine.index());
+        let pairs = [
+            ((0u32, zloc(0, 0, 0)), (1u32, zloc(0, 0, 0))),
+            ((2u32, zloc(0, 0, 0)), (3u32, zloc(0, 0, 0))),
+        ];
+        // Take site 1 of `[1, 2]` so the collision is the cheapest answer.
+        let claimed = HashSet::from([zloc(1, 1, 1).encode()]);
+
+        assert!(assign_free_slots(&pairs, &claimed, arch, &dist_table).is_none());
+
+        // With `[2, 3]` at site 0 taken too, the only disjoint choice is left.
+        let claimed = HashSet::from([zloc(1, 1, 1).encode(), zloc(1, 3, 0).encode()]);
+        let targets = assign_free_slots(&pairs, &claimed, arch, &dist_table).unwrap();
+        let distinct: HashSet<LocationAddr> = targets.iter().map(|&(_, l)| l).collect();
+        assert_eq!(distinct.len(), 4, "colliding targets: {targets:?}");
     }
 }
