@@ -1116,23 +1116,7 @@ class EntropyOptions:
         collect_entropy_trace: bool = False,
         seed: int = 0,
         completion_bound: str | None = None,
-        bound_terminates: bool = True,
     ) -> None: ...
-    @property
-    def bound_terminates(self) -> bool:
-        """Whether the completion bound may end the search. On by default.
-
-        The driver stops once the bound has proven the plan optimal instead of
-        running on to its expansion budget, and reports
-        ``SolveResult.proof`` as ``Proof.OPTIMAL``. The proof is the root
-        certificate: the plan's
-        cost reached ``h(root)``, a lower bound on *every* legal plan, so none
-        is cheaper -- including plans the generator would never have proposed.
-        Stopping skips no expansion, because a cut root cannot be expanded
-        from. Requires ``completion_bound``; inert without one.
-        """
-        ...
-
     @property
     def completion_bound(self) -> str | None:
         """Admissible completion bound for branch-and-bound pruning.

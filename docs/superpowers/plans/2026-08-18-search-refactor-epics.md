@@ -700,6 +700,15 @@ Rust-only and typed exceptions; (4) caller-supplied candidates.
   `solve_pairs`, `solve_with_attempts` and `MultiSolveResult` are gone; the three Python
   placement strategies call `place(...).result`.
 
+**Part 3 — landed notes.**
+- `bound_terminates` is Rust-only: gone from Python's `EntropyOptions` and
+  `RustPlacementTraversal`; the binding always sets it on. The Rust tests keep the on/off
+  comparison.
+- `ConfigError` reaches Python as `SearchConfigError(ValueError)` subclasses —
+  `DuplicateQubitIdError`, `DuplicateTargetLocationError`, `DuplicateTargetQubitError`,
+  `DuplicateOccupancyError` — carrying the variant's fields (locations encoded). Being
+  `ValueError`s, every existing `except ValueError` still catches them.
+
 - **A typed status enum replaces the string ABI.**
   - Python comparison sites (paths relative to `python/bloqade/lanes/`):
     - `heuristics/physical/movement.py:454`;
