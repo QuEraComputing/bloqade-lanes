@@ -49,7 +49,7 @@ Y_CLEARANCE = 1.0
 # - `word_shape`, which tells us the shape of each word in terms of the `(rows, cols)` it spans.
 
 # %%
-gemini_arch_builder = ArchBuilder(grid_shape=(NUM_ROWS, NUM_COLS), word_shape=(1, 1))
+arch_builder = ArchBuilder(grid_shape=(NUM_ROWS, NUM_COLS), word_shape=(1, 1))
 
 # %% [markdown]
 # On our architecture, which is defined as a 5 by 8 grid, we can define what SLM sites are a part of what "word" in the architecture. This will help us create an addressing mechanism for each site in the architecture.
@@ -58,7 +58,7 @@ gemini_arch_builder = ArchBuilder(grid_shape=(NUM_ROWS, NUM_COLS), word_shape=(1
 # %%
 for row in range(NUM_ROWS):
     for col in range(NUM_COLS):
-        gemini_arch_builder.add_word([row], [col])
+        arch_builder.add_word([row], [col])
 
 # %% [markdown]
 # In general, our architectures can have multiple zones. For this notebook, we add a zone to the architecture builder named `gate`, and specify the positions of the rows and columns that are part of the zone via lists.
@@ -67,7 +67,7 @@ for row in range(NUM_ROWS):
 # > We can also specify what words have site buses (in this case, we only have word buses in the architecture as every site is a word). As every word is at site index 0, we want `sites_with_word_buses` to contain only 0 (so that the specified word ID's have a bus between them).
 
 # %%
-gemini_arch_builder.add_zone(
+arch_builder.add_zone(
     name="gate",
     rows=list(range(0, NUM_ROWS * ROW_SPACING, ROW_SPACING)),
     columns=[
@@ -88,20 +88,20 @@ gemini_arch_builder.add_zone(
 # We can additionally set the blockade radius for our architecture, which provides us a way to validate that two atoms are in blockade radius during compilation.
 
 # %%
-gemini_arch_builder.set_blockade_radius(BLOCKADE_RADIUS)
+arch_builder.set_blockade_radius(BLOCKADE_RADIUS)
 
 # %% [markdown]
 # Finally, we can build the resulting architecture specification by calling the `build()` on the architecture builder.
 
 # %%
-spec = gemini_arch_builder.build()
+arch_spec = arch_builder.build()
 
 # %% [markdown]
 # ## Visualizing the Architecture
 # We can subsequently visualize our architecture given all of our choices above. To visualize the architecture, we can use the `ArchVisualizer` class that takes in an architecture, and has a method `plot_interactive` for visualizing the architecture in a notebook.
 
 # %%
-ArchVisualizer(spec).plot_interactive()
+ArchVisualizer(arch_spec).plot_interactive()
 
 # %% [markdown]
 # You can see a variety of features in the above visualizer tool.
@@ -118,7 +118,7 @@ ArchVisualizer(spec).plot_interactive()
 
 # %%
 new_builder = ArchBuilder.from_spec(
-    spec, x_clearance=X_CLEARANCE, y_clearance=Y_CLEARANCE
+    arch_spec, x_clearance=X_CLEARANCE, y_clearance=Y_CLEARANCE
 )
 
 # %% [markdown]
@@ -161,11 +161,14 @@ new_builder_aodconstr = ArchBuilder.from_spec(
 # Due to the no-crossing constraint on AOD's, the below word bus is invalid, as the vertical AOD's would have to cross to perform this move.
 
 # %%
-new_builder_aodconstr.add_word_bus(
-    "gate",
-    new_builder_aodconstr.words[0, 0] + new_builder_aodconstr.words[0, 2],
-    new_builder_aodconstr.words[0, 5] + new_builder_aodconstr.words[0, 3],
-)
+try:
+    new_builder_aodconstr.add_word_bus(
+        "gate",
+        new_builder_aodconstr.words[0, 0] + new_builder_aodconstr.words[0, 2],
+        new_builder_aodconstr.words[0, 5] + new_builder_aodconstr.words[0, 3],
+    )
+except ValueError as error:
+    print(f"No crossing constraint: {error}")
 
 # %% [markdown]
 # ### Case 2: AOD Must Form Rectangle
@@ -174,11 +177,14 @@ new_builder_aodconstr.add_word_bus(
 # In the below example, we attempt to pick up an atom at row 0, column 0 and row 1, column 2. However, because we do not also include the atoms at row 0, column 2 and row 1, column 0 in this bus, this is not a valid bus as those sites must be included.
 
 # %%
-new_builder_aodconstr.add_word_bus(
-    "gate",
-    new_builder_aodconstr.words[0, 0] + new_builder_aodconstr.words[1, 2],
-    new_builder_aodconstr.words[0, 3] + new_builder_aodconstr.words[1, 5],
-)
+try:
+    new_builder_aodconstr.add_word_bus(
+        "gate",
+        new_builder_aodconstr.words[0, 0] + new_builder_aodconstr.words[1, 2],
+        new_builder_aodconstr.words[0, 3] + new_builder_aodconstr.words[1, 5],
+    )
+except ValueError as error:
+    print(f"AOD must form valid rectangle: {error}")
 
 # %% [markdown]
 # ### Case 3: Shape of Destination Differs from Source
@@ -186,10 +192,13 @@ new_builder_aodconstr.add_word_bus(
 #
 
 # %%
-new_builder_aodconstr.add_word_bus(
-    "gate",
-    new_builder_aodconstr.words[0, 0] + new_builder_aodconstr.words[0, 2],
-    new_builder_aodconstr.words[0, 3] + new_builder_aodconstr.words[1, 5],
-)
+try:
+    new_builder_aodconstr.add_word_bus(
+        "gate",
+        new_builder_aodconstr.words[0, 0] + new_builder_aodconstr.words[0, 2],
+        new_builder_aodconstr.words[0, 3] + new_builder_aodconstr.words[1, 5],
+    )
+except ValueError as error:
+    print(f"Shape of destination differs from source: {error}")
 
 # %%
