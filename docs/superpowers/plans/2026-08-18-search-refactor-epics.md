@@ -544,6 +544,18 @@ or status moves.
 - New benchmark rows `rust_cascade_ids_bounded` (physical and logical); no existing row
   moves.
 
+**Part 2 — landed notes (P&R resume).**
+- `finish_with_push_rotate`: with a best partial past the root, Push and Rotate runs from
+  the partial and the chained plan (search prefix, then P&R layers) is replayed from the
+  caller's root. A failed resume reruns from `initial` (decision 1), which also keeps the
+  outcome no worse than today's restart. The mirrored solve always restarts (critique F2),
+  via an internal `FallbackStart::Initial`.
+- Every result the fallback returns keeps the search's counters, trace and bound stats
+  (the Epic-1 "lost search counters" item).
+- Behaviour net: `zoned_six_up` with the fallback now resumes — DFS 32 layers, A* 33,
+  against Push and Rotate's 41 from the initial placement; the mirrored DFS restarts (35).
+  Three existing fallback blocks move in their counters only (their partials are the root).
+
 1. **P&R resumes from the best partial** in `solve_with_engine`'s fallback branch
    (`search/target_solver.rs:328`), reading 2A's best-partial field.
    - Run P&R from the partial config, then replay the *whole* chain: the search prefix

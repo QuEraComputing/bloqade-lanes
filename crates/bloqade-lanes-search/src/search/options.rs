@@ -127,9 +127,14 @@ pub struct SolveOptions {
     ///   completeness regime, or when its proof checks come up short, it
     ///   reports `BudgetExceeded` and the search's own result stands.
     ///
-    /// The recovered schedule uses more AOD operations than a search would
-    /// have, but it only ever applies where the search produced nothing at
-    /// all.
+    /// The planner starts from the search's best partial when the search got
+    /// anywhere, so the schedule is the search's prefix followed by the
+    /// planner's layers; if that run cannot finish, the planner reruns from
+    /// `initial`, and only that run can report a proof. A mirrored solve
+    /// (`backwards_search`) always starts from its own initial placement. The
+    /// result keeps the search's counters. The recovered schedule uses more
+    /// AOD operations than a search would have, but it only ever applies where
+    /// the search produced nothing at all.
     ///
     /// Cheap to leave on: the planner is rule-based and runs in well under a
     /// millisecond on Gemini-sized instances, and it only runs after a

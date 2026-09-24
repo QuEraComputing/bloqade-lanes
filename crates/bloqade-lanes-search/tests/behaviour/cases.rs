@@ -781,6 +781,17 @@ fn route_cases() -> Vec<Case> {
 }
 
 fn fallback_cases() -> Vec<Case> {
+    let six = instances()
+        .into_iter()
+        .find(|i| i.name == "zoned_six_up")
+        .expect("instance exists");
+    let on_six = |strategy, backwards_search| {
+        route(six.arch, strategy, six.initial.clone(), six.target.clone()).knobs(Knobs {
+            fallback_push_rotate: true,
+            backwards_search,
+            ..Knobs::default()
+        })
+    };
     let one_atom = || {
         route(
             Arch::GeminiLogical,
@@ -796,7 +807,8 @@ fn fallback_cases() -> Vec<Case> {
             status: Some(Status::BudgetExceeded),
             ..Expect::default()
         }),
-        // Push and Rotate finishes it; the search's counters are not kept.
+        // Push and Rotate finishes it, keeping the search's counters. The
+        // best partial is the root (one hop resolves nothing), so it restarts.
         case(
             "fallback/on_rescues_exhausted_search",
             one_atom().knobs(Knobs {
@@ -826,6 +838,33 @@ fn fallback_cases() -> Vec<Case> {
             proven: Some(true),
             ..Expect::default()
         }),
+        // Resume (Epic 2B): these searches stop with most atoms home (the
+        // `partial:` lines of `route/zoned_six_up/*`), so Push and Rotate
+        // finishes from there and the plan is the search's prefix plus its
+        // layers. Compare `route/zoned_six_up/push_rotate`, a run from the
+        // initial placement.
+        case(
+            "fallback/resume/zoned_six_up/dfs",
+            on_six(Strategy::Dfs, false),
+        )
+        .expect(Expect {
+            status: Some(Status::Solved),
+            ..Expect::default()
+        }),
+        case(
+            "fallback/resume/zoned_six_up/astar",
+            on_six(Strategy::AStar, false),
+        )
+        .expect(Expect {
+            status: Some(Status::Solved),
+            ..Expect::default()
+        }),
+        // A mirrored solve never resumes (critique F2): Push and Rotate
+        // restarts from the mirrored instance's start.
+        case(
+            "fallback/resume/mirror_restarts/zoned_six_up/dfs",
+            on_six(Strategy::Dfs, true),
+        ),
     ]
 }
 

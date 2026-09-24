@@ -115,8 +115,10 @@ class RustPlacementTraversal:
     Off by default. When ``True``, a solve the search does not finish is handed
     to Push and Rotate, a complete rule-based router: it either returns a
     schedule or proves that none exists. Only the failure path pays for it.
-    Push and Rotate restarts from the solve's original placement rather than
-    from wherever the search got to, and it does not honour an AOD capacity.
+    Push and Rotate starts from the furthest configuration the search reached,
+    so the schedule is the search's prefix plus its own layers; if that cannot
+    finish, it reruns from the original placement. It does not honour an AOD
+    capacity.
     """
     cascade_bound: bool = False
     """Gate a cascade strategy's A* refinement with the completion bound.
