@@ -1236,8 +1236,9 @@ fn anticipate_cases() -> Vec<Case> {
     };
     vec![
         // Frontier bound-wiring (Epic 2B). On logical_cycle, IDS finds 7
-        // layers and the cascade's A* refinement, capped only by g, spends its
-        // expansions finding 6. A g + h prune should cut that work.
+        // layers and the cascade's A* refinement finds 6. The refinement is
+        // gated by the completion bound by default since Epic 2B, part 3; the
+        // ungated runs are `bound/cascade_gate/*/ungated`.
         case(
             "anticipate/cascade_memory/ids",
             on(&cycle, Strategy::CascadeIds),
@@ -1259,20 +1260,20 @@ fn anticipate_cases() -> Vec<Case> {
                 ..Knobs::default()
             }),
         ),
-        // The cascade bound gate (Epic 2B), opt-in: the same instances as the
-        // two cascade-memory cases above, with the refinement gated. Plan cost
-        // must match the ungated cases; nodes generated should drop.
+        // The cascade bound gate (Epic 2B), now the default, so these match the
+        // two cascade-memory cases above; the ungated refinement is pinned by
+        // `bound/cascade_gate/*/ungated` below.
         case(
             "bound/cascade_gate/logical_cycle/cascade_ids",
             on(&cycle, Strategy::CascadeIds).knobs(Knobs {
-                cascade_bound: true,
+                cascade_bound: Some(true),
                 ..Knobs::default()
             }),
         ),
         case(
             "bound/cascade_gate/logical_cycle/cascade_entropy_bounded",
             on(&cycle, Strategy::CascadeEntropy).knobs(Knobs {
-                cascade_bound: true,
+                cascade_bound: Some(true),
                 completion_bound: true,
                 ..Knobs::default()
             }),
@@ -1280,7 +1281,22 @@ fn anticipate_cases() -> Vec<Case> {
         case(
             "bound/cascade_gate/physical_congested/cascade_ids",
             on(&congested, Strategy::CascadeIds).knobs(Knobs {
-                cascade_bound: true,
+                cascade_bound: Some(true),
+                ..Knobs::default()
+            }),
+        ),
+        case(
+            "bound/cascade_gate/logical_cycle/cascade_ids/ungated",
+            on(&cycle, Strategy::CascadeIds).knobs(Knobs {
+                cascade_bound: Some(false),
+                ..Knobs::default()
+            }),
+        ),
+        case(
+            "bound/cascade_gate/logical_cycle/cascade_entropy_bounded/ungated",
+            on(&cycle, Strategy::CascadeEntropy).knobs(Knobs {
+                cascade_bound: Some(false),
+                completion_bound: true,
                 ..Knobs::default()
             }),
         ),
@@ -1288,13 +1304,19 @@ fn anticipate_cases() -> Vec<Case> {
         // blocks below must be identical.
         case(
             "bound/cascade_gate/loose_goal/off",
-            logical_stage(Placement::LooseGoal, Strategy::CascadeIds),
+            ProblemSpec {
+                knobs: Knobs {
+                    cascade_bound: Some(false),
+                    ..Knobs::default()
+                },
+                ..logical_stage(Placement::LooseGoal, Strategy::CascadeIds)
+            },
         ),
         case(
             "bound/cascade_gate/loose_goal/on",
             ProblemSpec {
                 knobs: Knobs {
-                    cascade_bound: true,
+                    cascade_bound: Some(true),
                     ..Knobs::default()
                 },
                 ..logical_stage(Placement::LooseGoal, Strategy::CascadeIds)

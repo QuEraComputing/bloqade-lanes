@@ -57,6 +57,32 @@ def test_rust_traversal_default_params():
     assert t.max_expansions == 300
 
 
+def test_cascade_bound_defaults_on_and_is_forwarded(monkeypatch):
+    """The cascade gate is on by default at both layers, an explicit ``False``
+    opts out, and the traversal forwards its value to the ``SolveOptions`` it
+    builds (``MoveSearch`` does not expose the flag, so the call is observed)."""
+    from bloqade.lanes.bytecode import _native
+    from bloqade.lanes.heuristics.physical import movement
+
+    assert _native.SolveOptions().cascade_bound is True
+    assert _native.SolveOptions(cascade_bound=False).cascade_bound is False
+    assert RustPlacementTraversal().cascade_bound is True
+    assert RustPlacementTraversal(cascade_bound=False).cascade_bound is False
+
+    built: list[bool] = []
+    real = _native.SolveOptions
+
+    def spy(*args, **kwargs):
+        options = real(*args, **kwargs)
+        built.append(options.cascade_bound)
+        return options
+
+    monkeypatch.setattr(movement._native, "SolveOptions", spy)
+    movement._move_search_from_traversal(RustPlacementTraversal())
+    movement._move_search_from_traversal(RustPlacementTraversal(cascade_bound=False))
+    assert built == [True, False]
+
+
 def test_rust_traversal_dispatches_to_rust_path(monkeypatch):
     strategy = PhysicalPlacementStrategy(
         arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()

@@ -168,8 +168,8 @@ pub struct SolveOptions {
     /// found. That is deliberate: a request to solve backwards returns the
     /// backwards solve's answer rather than silently searching twice.
     pub backwards_search: bool,
-    /// Gate a cascade's A* refinement with the completion bound. **Off by
-    /// default** (the refactor plan's decision 7: opt in, measure, then flip).
+    /// Gate a cascade's A* refinement with the completion bound. **On by
+    /// default** (the refactor plan's decision 7: opted in, measured, flipped).
     ///
     /// The refinement looks for a plan strictly cheaper than the inner
     /// strategy's, so a child whose `g + h` already reaches that cost, or whose
@@ -197,7 +197,7 @@ impl Default for SolveOptions {
             top_c: None,
             fallback_push_rotate: false,
             backwards_search: false,
-            cascade_bound: false,
+            cascade_bound: true,
         }
     }
 }

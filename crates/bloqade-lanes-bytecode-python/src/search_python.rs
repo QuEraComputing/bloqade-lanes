@@ -1113,7 +1113,7 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false, cascade_bound=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false, cascade_bound=true))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,

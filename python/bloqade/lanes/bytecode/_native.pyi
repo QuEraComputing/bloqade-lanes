@@ -1081,7 +1081,7 @@ class SolveOptions:
         top_c: int | None = None,
         fallback_push_rotate: bool = False,
         backwards_search: bool = False,
-        cascade_bound: bool = False,
+        cascade_bound: bool = True,
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
@@ -1103,7 +1103,7 @@ class SolveOptions:
     def cascade_bound(self) -> bool:
         """Whether a cascade's A* refinement is gated by the completion bound:
         a child whose ``g + h`` reaches the inner plan's cost is dropped before
-        it takes a node. Point goals only. Off by default."""
+        it takes a node. Point goals only. On by default."""
         ...
 
     def __repr__(self) -> str: ...

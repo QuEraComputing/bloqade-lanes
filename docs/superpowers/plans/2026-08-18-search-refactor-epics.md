@@ -556,6 +556,14 @@ or status moves.
   against Push and Rotate's 41 from the initial placement; the mirrored DFS restarts (35).
   Three existing fallback blocks move in their counters only (their partials are the root).
 
+**Part 3 — landed notes (the gate becomes the default).**
+- `SolveOptions.cascade_bound` defaults to `true` (Rust, PyO3 and `RustPlacementTraversal`).
+- Behaviour net: the 66 cascade blocks move; every plan digest, status and cost is
+  unchanged; over those blocks nodes generated fall 8,672 → 8,192 and expansions
+  4,958 → 4,663. The ungated runs stay pinned as `bound/cascade_gate/*/ungated`.
+- Benchmarks: `rust_cascade_ids` now runs gated; the opt-in row becomes
+  `rust_cascade_ids_ungated`, so the comparison stays in the baselines.
+
 1. **P&R resumes from the best partial** in `solve_with_engine`'s fallback branch
    (`search/target_solver.rs:328`), reading 2A's best-partial field.
    - Run P&R from the partial config, then replay the *whole* chain: the search prefix

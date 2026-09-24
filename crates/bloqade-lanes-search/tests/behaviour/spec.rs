@@ -130,7 +130,8 @@ pub struct Knobs {
     pub fallback_push_rotate: bool,
     pub backwards_search: bool,
     /// `SolveOptions::cascade_bound`: gate the cascade's A* refinement.
-    pub cascade_bound: bool,
+    /// `None` follows the crate default.
+    pub cascade_bound: Option<bool>,
     pub max_goal_candidates: Option<usize>,
     pub seed: Option<u64>,
     /// Request the weighted-distance completion bound.

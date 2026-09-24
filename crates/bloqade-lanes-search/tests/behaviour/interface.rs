@@ -219,7 +219,7 @@ fn move_search(strategy: Strategy, knobs: &Knobs) -> MoveSearch {
         restarts: knobs.restarts.unwrap_or(solve_defaults.restarts),
         fallback_push_rotate: knobs.fallback_push_rotate,
         backwards_search: knobs.backwards_search,
-        cascade_bound: knobs.cascade_bound,
+        cascade_bound: knobs.cascade_bound.unwrap_or(solve_defaults.cascade_bound),
         deadlock_policy: match knobs.deadlock_policy {
             None => solve_defaults.deadlock_policy,
             Some(Deadlock::Skip) => DeadlockPolicy::Skip,
