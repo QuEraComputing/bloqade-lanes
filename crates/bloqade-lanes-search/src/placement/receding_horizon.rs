@@ -349,6 +349,9 @@ pub(crate) struct RolloutOutcome {
     pub(crate) goal_node: Option<NodeId>,
     pub(crate) max_depth_reached: u32,
     pub(crate) nodes_expanded: u32,
+    /// Nodes generated across the rollout, including a greedy beam's graph
+    /// that was discarded for IDS, matching `nodes_expanded`.
+    pub(crate) nodes_generated: u32,
 }
 
 /// Fast bounded beam-search rollout used as the first attempt inside
@@ -399,6 +402,7 @@ fn beam_rollout<G: Goal>(
             goal_node: Some(graph.root()),
             max_depth_reached: 0,
             nodes_expanded: 0,
+            nodes_generated: graph_len(&graph),
             graph,
         };
     }
@@ -436,6 +440,7 @@ fn beam_rollout<G: Goal>(
                 goal_node: None,
                 max_depth_reached: depth,
                 nodes_expanded,
+                nodes_generated: graph_len(&graph),
                 graph,
             };
         }
@@ -457,6 +462,7 @@ fn beam_rollout<G: Goal>(
                     goal_node: Some(next),
                     max_depth_reached: depth,
                     nodes_expanded,
+                    nodes_generated: graph_len(&graph),
                     graph,
                 };
             }
@@ -474,8 +480,14 @@ fn beam_rollout<G: Goal>(
         goal_node: None,
         max_depth_reached: depth,
         nodes_expanded,
+        nodes_generated: graph_len(&graph),
         graph,
     }
+}
+
+/// A search graph's size as the `u32` counters use.
+fn graph_len(graph: &SearchGraph) -> u32 {
+    u32::try_from(graph.len()).unwrap_or(u32::MAX)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -525,6 +537,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     // The beam's expansions are real work even when its result is thrown
     // away, so a rollout that falls through to IDS reports both.
     let mut beam_nodes: u32 = 0;
+    let mut beam_generated: u32 = 0;
     if greedy_first {
         let greedy_outcome = beam_rollout(
             root.clone(),
@@ -560,6 +573,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
             }
         }
         beam_nodes = greedy_outcome.nodes_expanded;
+        beam_generated = greedy_outcome.nodes_generated;
     }
 
     // ── Phase 2: greedy got stuck; fall back to full IDS ───────────────
@@ -596,6 +610,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     };
 
     RolloutOutcome {
+        nodes_generated: beam_generated.saturating_add(graph_len(&result.graph)),
         graph: result.graph,
         goal_node: result.goal,
         max_depth_reached: result.max_depth_reached,
@@ -699,6 +714,7 @@ pub(crate) fn classify_into_tier(
         goal_node,
         max_depth_reached,
         nodes_expanded: _,
+        nodes_generated: _,
     } = outcome;
 
     // Tier-0: rollout reached the constraint goal.
@@ -870,6 +886,7 @@ pub fn solve_entangling_rh_single_budgeted(
     let mut state = root;
     let mut committed_layers: Vec<MoveSet> = Vec::new();
     let mut total_expansions: u32 = 0;
+    let mut total_generated: u32 = 0;
     let mut x = rh_opts.rollout_horizon;
 
     // Reusable handle to the sum-heuristic for IDS frontier ordering and
@@ -895,12 +912,13 @@ pub fn solve_entangling_rh_single_budgeted(
                 move_layers: committed_layers,
                 goal_config: state,
                 nodes_expanded: total_expansions,
+                nodes_generated: total_generated,
                 cost: 0.0,
                 deadlocks: 0,
                 entropy_trace: None,
                 bound_stats: crate::bounds::BoundStats::default(),
-                proven: false,
                 termination: crate::drivers::result::Termination::Budget,
+                best_partial: None,
             };
         }
         stage_iter = stage_iter.saturating_add(1);
@@ -932,11 +950,11 @@ pub fn solve_entangling_rh_single_budgeted(
         if candidates.is_empty() {
             // No assignment possible from this state — fall back.
             let fb = fallback(&state, remaining(total_expansions));
-            return merge_fallback(committed_layers, fb, total_expansions);
+            return merge_fallback(committed_layers, fb, total_expansions, total_generated);
         }
 
         // (b) Run rollouts (optionally parallel).
-        let rollout = |targets: Vec<(u32, u64)>| -> (u32, Option<BranchResult>) {
+        let rollout = |targets: Vec<(u32, u64)>| -> (u32, u32, Option<BranchResult>) {
             let outcome = run_inner_rollout(
                 state.clone(),
                 targets,
@@ -957,11 +975,12 @@ pub fn solve_entangling_rh_single_budgeted(
             );
             (
                 outcome.nodes_expanded,
+                outcome.nodes_generated,
                 classify_into_tier(outcome, x, heuristic),
             )
         };
 
-        let outcomes: Vec<(u32, Option<BranchResult>)> = if rh_opts.branch_parallel {
+        let outcomes: Vec<(u32, u32, Option<BranchResult>)> = if rh_opts.branch_parallel {
             candidates.into_par_iter().map(rollout).collect()
         } else {
             candidates.into_iter().map(rollout).collect()
@@ -970,9 +989,15 @@ pub fn solve_entangling_rh_single_budgeted(
         // all-drop batch is retried below at a shorter horizon, so counting
         // only the surviving branches let each retry run a whole batch
         // outside `max_expansions` and left it out of `nodes_expanded`.
-        total_expansions =
-            total_expansions.saturating_add(outcomes.iter().map(|(nodes, _)| *nodes).sum::<u32>());
-        let branches: Vec<BranchResult> = outcomes.into_iter().filter_map(|(_, b)| b).collect();
+        total_expansions = total_expansions
+            .saturating_add(outcomes.iter().map(|(nodes, _, _)| *nodes).sum::<u32>());
+        total_generated = total_generated.saturating_add(
+            outcomes
+                .iter()
+                .map(|(_, generated, _)| *generated)
+                .sum::<u32>(),
+        );
+        let branches: Vec<BranchResult> = outcomes.into_iter().filter_map(|(_, _, b)| b).collect();
 
         // (c) All-drop fallback.
         if branches.is_empty() {
@@ -981,7 +1006,7 @@ pub fn solve_entangling_rh_single_budgeted(
                 continue;
             }
             let fb = fallback(&state, remaining(total_expansions));
-            return merge_fallback(committed_layers, fb, total_expansions);
+            return merge_fallback(committed_layers, fb, total_expansions, total_generated);
         }
 
         // (d) Pick best branch.
@@ -998,7 +1023,7 @@ pub fn solve_entangling_rh_single_budgeted(
             Some(b) => b,
             None => {
                 let fb = fallback(&state, remaining(total_expansions));
-                return merge_fallback(committed_layers, fb, total_expansions);
+                return merge_fallback(committed_layers, fb, total_expansions, total_generated);
             }
         };
 
@@ -1011,7 +1036,7 @@ pub fn solve_entangling_rh_single_budgeted(
         if commit_count == 0 {
             // Nothing to commit (shouldn't happen — guards against infinite loop).
             let fb = fallback(&state, remaining(total_expansions));
-            return merge_fallback(committed_layers, fb, total_expansions);
+            return merge_fallback(committed_layers, fb, total_expansions, total_generated);
         }
         // Advance state. If the partial-commit replay fails (would only
         // happen on an internal inconsistency between the rollout graph
@@ -1046,12 +1071,13 @@ pub fn solve_entangling_rh_single_budgeted(
         move_layers: committed_layers,
         goal_config: state,
         nodes_expanded: total_expansions,
+        nodes_generated: total_generated,
         cost,
         deadlocks: 0,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
-        proven: false,
         termination: Termination::Stopped,
+        best_partial: None,
     }
 }
 
@@ -1122,8 +1148,10 @@ fn merge_fallback(
     committed_layers: Vec<MoveSet>,
     fallback: SolveResult,
     total_expansions: u32,
+    total_generated: u32,
 ) -> SolveResult {
     let combined_expansions = total_expansions.saturating_add(fallback.nodes_expanded);
+    let combined_generated = total_generated.saturating_add(fallback.nodes_generated);
     if fallback.status != SolveStatus::Solved {
         // The fallback ran from wherever the committed prefix left the atoms,
         // so a proof it carries is a proof about *that* state, not about the
@@ -1132,8 +1160,8 @@ fn merge_fallback(
         // proof transfers intact.
         //
         // Downgrading only the proof keeps `Budget` intact — a give-up says
-        // the same thing from any state — and keeps `proven` exactly equal to
-        // the termination it is derived from, which the field documents.
+        // the same thing from any state — and `proven()`, which is derived
+        // from the termination, follows it.
         let termination = match fallback.termination {
             Termination::Exhausted { proof: true } if !committed_layers.is_empty() => {
                 Termination::Exhausted { proof: false }
@@ -1145,12 +1173,13 @@ fn merge_fallback(
             move_layers: committed_layers,
             goal_config: fallback.goal_config,
             nodes_expanded: combined_expansions,
+            nodes_generated: combined_generated,
             cost: 0.0,
             deadlocks: fallback.deadlocks,
             entropy_trace: None,
             bound_stats: crate::bounds::BoundStats::default(),
-            proven: matches!(termination, Termination::Exhausted { proof: true }),
             termination,
+            best_partial: None,
         };
     }
     let mut merged = committed_layers;
@@ -1161,12 +1190,13 @@ fn merge_fallback(
         move_layers: merged,
         goal_config: fallback.goal_config,
         nodes_expanded: combined_expansions,
+        nodes_generated: combined_generated,
         cost,
         deadlocks: fallback.deadlocks,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
-        proven: false,
         termination: crate::drivers::result::Termination::Stopped,
+        best_partial: None,
     }
 }
 
@@ -1433,21 +1463,21 @@ mod tests {
         };
         let one_layer = any_layer;
 
-        let after_prefix = merge_fallback(one_layer(), proven(), 3);
+        let after_prefix = merge_fallback(one_layer(), proven(), 3, 0);
         assert_eq!(
             after_prefix.termination,
             Termination::Exhausted { proof: false },
             "the proof was about the post-prefix state, not the root"
         );
-        assert!(!after_prefix.proven);
+        assert!(!after_prefix.proven());
 
-        let no_prefix = merge_fallback(Vec::new(), proven(), 3);
+        let no_prefix = merge_fallback(Vec::new(), proven(), 3, 0);
         assert_eq!(
             no_prefix.termination,
             Termination::Exhausted { proof: true },
             "with no prefix committed the proof is about the root itself"
         );
-        assert!(no_prefix.proven);
+        assert!(no_prefix.proven());
     }
 
     /// Downgrading touches the proof only: a give-up says the same thing from
@@ -1458,9 +1488,9 @@ mod tests {
         let mut give_up = SolveResult::unsolved(SolveStatus::BudgetExceeded, root, 0, 0);
         give_up.termination = Termination::Budget;
 
-        let merged = merge_fallback(any_layer(), give_up, 1);
+        let merged = merge_fallback(any_layer(), give_up, 1, 0);
         assert_eq!(merged.termination, Termination::Budget);
-        assert!(!merged.proven);
+        assert!(!merged.proven());
     }
 
     /// `proven` is documented as exactly `Exhausted { proof: true }`, so the
@@ -1473,9 +1503,9 @@ mod tests {
                 SolveResult::proven_unsolvable(root.clone()),
                 SolveResult::unsolvable(root.clone()),
             ] {
-                let merged = merge_fallback(prefix.clone(), fallback, 0);
+                let merged = merge_fallback(prefix.clone(), fallback, 0, 0);
                 assert_eq!(
-                    merged.proven,
+                    merged.proven(),
                     matches!(merged.termination, Termination::Exhausted { proof: true }),
                     "proven disagreed with {:?}",
                     merged.termination

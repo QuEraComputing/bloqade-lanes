@@ -166,13 +166,7 @@ impl Fixture {
     }
 
     fn ctx(&self) -> SearchContext<'_> {
-        SearchContext {
-            index: &self.index,
-            dist_table: &self.dist_table,
-            blocked: &self.blocked,
-            targets: &self.targets,
-            cz_pairs: None,
-        }
+        SearchContext::new(&self.index, &self.dist_table, &self.blocked, &self.targets)
     }
 
     fn params() -> EntropyParams {

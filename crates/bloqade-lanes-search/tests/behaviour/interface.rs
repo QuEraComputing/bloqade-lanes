@@ -24,6 +24,7 @@ use std::sync::Arc;
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::placement::nohome::NoHomeOptions;
+use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::search::options::{BoundKind, EntanglingOptions, EntropyOptions};
 use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use bloqade_lanes_search::{
@@ -35,8 +36,8 @@ use bloqade_lanes_search::{
 };
 
 use crate::spec::{
-    Arch, Attempt, AttemptLog, BoundSummary, Deadlock, Knobs, Loc, Outcome, Placement, Problem,
-    ProblemSpec, Run, Status, Strategy, Termination,
+    Arch, Attempt, AttemptLog, BoundSummary, Deadlock, Knobs, Loc, Outcome, PartialSummary,
+    Placement, Problem, ProblemSpec, Run, Status, Strategy, Termination,
 };
 
 const GEMINI_LOGICAL: &str =
@@ -354,13 +355,19 @@ fn from_result(result: &SolveResult) -> Run {
         lanes: result.move_layers.iter().map(|m| m.len()).sum(),
         cost: result.cost,
         nodes_expanded: result.nodes_expanded,
+        nodes_generated: result.nodes_generated,
         deadlocks: result.deadlocks,
-        proven: result.proven,
+        proven: result.proven(),
         termination,
         final_placement,
-        plan_digest: plan_digest(result),
+        plan_digest: plan_digest(&result.move_layers),
         bound,
         attempts: None,
+        partial: result.best_partial.as_ref().map(|p| PartialSummary {
+            unresolved: p.unresolved,
+            layers: p.layers.len(),
+            plan_digest: plan_digest(&p.layers),
+        }),
     }
 }
 
@@ -389,7 +396,7 @@ fn from_multi(result: &MultiSolveResult) -> Run {
 
 /// FNV-1a over each layer's lane count and encoded lanes. Stable across
 /// platforms and Rust versions, unlike `DefaultHasher`.
-fn plan_digest(result: &SolveResult) -> u64 {
+fn plan_digest(layers: &[MoveSet]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut hash = OFFSET;
@@ -399,7 +406,7 @@ fn plan_digest(result: &SolveResult) -> u64 {
             hash = hash.wrapping_mul(PRIME);
         }
     };
-    for layer in &result.move_layers {
+    for layer in layers {
         feed(layer.len() as u64);
         for &lane in layer.encoded_lanes() {
             feed(lane);

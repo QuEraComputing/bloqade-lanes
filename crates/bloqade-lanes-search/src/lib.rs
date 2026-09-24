@@ -51,7 +51,7 @@ pub use generators::{
     HeuristicGenerator, LooseTargetGenerator, SeedPolicy,
 };
 pub use goals::{AllAtTarget, EntanglingConstraintGoal, PartialPlacementGoal};
-pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
+pub use observer::{EntropyReason, NoOpObserver, SearchEvent, SearchObserver};
 pub use placement::cz_placement::CzPlacement;
 pub use placement::loose_goal::LooseGoalCzPlacement;
 pub use placement::nohome::NoHomeCzPlacement;
