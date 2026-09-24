@@ -95,7 +95,18 @@ class GeminiLogicalValidation(ValidationPass):
 
         frame, _ = analysis.run(method)
 
-        if address_analysis.qubit_count > analysis.max_qubits:
+        # NOTE: applies to sub-kernels too. One that is handed its qubits rather
+        # than allocating them opts out with `verify=False`; it is re-validated
+        # as part of its caller once inlined.
+        if address_analysis.qubit_count < 1:
+            analysis.add_validation_error(
+                method.code,
+                ir.ValidationError(
+                    method.code,
+                    "kernel allocates no qubits; at least 1 is required",
+                ),
+            )
+        elif address_analysis.qubit_count > analysis.max_qubits:
             analysis.add_validation_error(
                 method.code,
                 ir.ValidationError(
