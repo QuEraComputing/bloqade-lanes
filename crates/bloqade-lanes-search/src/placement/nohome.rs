@@ -355,12 +355,13 @@ fn build_full_layout(
 /// third atom beside it. The Hungarian chooses the slots that minimise total
 /// hop distance, with each slot taking its cheaper orientation.
 ///
-/// Entangling pairs may overlap (`[0, 1]` and `[1, 2]` both pass
-/// validation), so two slots can share a half, and the Hungarian does not
-/// know that. The search crate assumes one CZ partner per location (see
-/// [`entangling::build_partner_map`]), so rather than repair such an
-/// assignment this reports the stage unplaceable: it never returns
-/// colliding targets.
+/// [`ArchSpec::validate`] rejects overlapping entangling pairs (`[0, 1]` and
+/// `[1, 2]` in one zone), but a spec loaded unvalidated can still have them.
+/// Then two slots can share a half, and the Hungarian does not know that.
+/// The search crate assumes one CZ partner per location (see
+/// [`entangling::build_partner_map`]), so as a defence for such callers this
+/// reports the stage unplaceable rather than repair the assignment: it never
+/// returns colliding targets.
 ///
 /// Returns both qubits' targets for every pair, or `None` when some pair
 /// cannot be placed: there are fewer free slots than pairs, none that both
