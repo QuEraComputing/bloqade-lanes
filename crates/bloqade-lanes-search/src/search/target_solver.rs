@@ -186,9 +186,12 @@ pub(crate) fn solve_with_engine(
         )?;
         if mirrored.status != SolveStatus::Solved {
             // An unsolved result reports the configuration the *caller's*
-            // solve started from, not the mirror's.
+            // solve started from, not the mirror's. The mirror's partial is
+            // a suffix of the reversed problem, not a prefix from `root`, so
+            // it cannot be resumed from and is dropped.
             return Ok(SolveResult {
                 goal_config: root,
+                best_partial: None,
                 ..mirrored
             });
         }
@@ -468,6 +471,86 @@ mod tests {
             vec![1, 1, 1],
             "a 1x1 AOD cannot carry more than one atom per shot"
         );
+    }
+
+    /// Atoms 0 and 1 are one site-bus hop from their targets; atom 2 also
+    /// needs a word-bus hop. One expansion is enough to reach a node with
+    /// two atoms home but not the goal.
+    type Placement = Vec<(u32, LocationAddr)>;
+
+    fn two_of_three_in_one_hop() -> (Placement, Placement) {
+        (
+            vec![(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))],
+            vec![(0, loc(0, 5)), (1, loc(0, 6)), (2, loc(1, 7))],
+        )
+    }
+
+    fn unresolved(config: &Config, target: &[(u32, LocationAddr)]) -> u32 {
+        target
+            .iter()
+            .filter(|&&(q, t)| config.location_of(q) != Some(t))
+            .count() as u32
+    }
+
+    /// A failed point-goal solve reports how far it got, and the reported
+    /// prefix replays from the caller's root to exactly the reported
+    /// configuration, which is what a resume needs.
+    #[test]
+    fn a_failed_solve_reports_a_replayable_best_partial() {
+        let engine = make_engine();
+        let (initial, target) = two_of_three_in_one_hop();
+        let result = TargetSolver::new(Arc::clone(&engine), MoveSearch::astar(1.0))
+            .solve(initial.clone(), target.clone(), std::iter::empty(), Some(1))
+            .expect("valid config");
+        assert_ne!(result.status, SolveStatus::Solved);
+        assert!(
+            result.nodes_generated > 1,
+            "the root's children were generated"
+        );
+
+        let partial = result
+            .best_partial
+            .expect("a failed point-goal solve has a partial");
+        assert_eq!(partial.unresolved, unresolved(&partial.config, &target));
+        let root = Config::new(initial).unwrap();
+        assert!(
+            partial.unresolved < unresolved(&root, &target),
+            "the search got closer than the root"
+        );
+        let replayed = crate::search::verify::replay_move_layers(
+            &root,
+            &partial.layers,
+            engine.index(),
+            &HashSet::new(),
+        )
+        .expect("the prefix executes");
+        let reached: std::collections::HashMap<u32, LocationAddr> = partial.config.iter().collect();
+        assert_eq!(replayed, reached);
+    }
+
+    /// A solved result has no partial, and neither does a failed mirrored
+    /// solve: the mirror's partial is a suffix of the reversed problem, not a
+    /// prefix from the caller's root.
+    #[test]
+    fn best_partial_is_absent_when_solved_or_mirrored() {
+        let engine = make_engine();
+        let (initial, target) = two_of_three_in_one_hop();
+        let solved = TargetSolver::new(Arc::clone(&engine), MoveSearch::astar(1.0))
+            .solve(initial.clone(), target.clone(), std::iter::empty(), None)
+            .expect("valid config");
+        assert_eq!(solved.status, SolveStatus::Solved);
+        assert!(solved.best_partial.is_none());
+        assert!(solved.nodes_generated >= solved.nodes_expanded);
+
+        let mirrored = MoveSearch::astar(1.0).with_options(SolveOptions {
+            backwards_search: true,
+            ..Default::default()
+        });
+        let failed = TargetSolver::new(engine, mirrored)
+            .solve(initial, target, std::iter::empty(), Some(1))
+            .expect("valid config");
+        assert_ne!(failed.status, SolveStatus::Solved);
+        assert!(failed.best_partial.is_none());
     }
 
     #[test]
