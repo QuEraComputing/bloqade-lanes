@@ -507,7 +507,7 @@ def test_every_gate_after_terminal_measurement_is_reported():
         gemini.logical.terminal_measure(q)
         squin.x(q[0])
         squin.cz(q[0], q[1])
-        gemini.logical.star_rz(0.125, q[1])
+        gemini.logical.extensions.star_rz(0.125, q[1])
 
     validation_result = ValidationSuite([GeminiTerminalMeasurementValidation]).validate(
         main
@@ -550,3 +550,23 @@ def test_every_gate_statement_is_checked_after_terminal_measurement():
     covered = {sig.head for sig in registry}
     missing = {stmt.__name__ for stmt in gate.dialect.stmts if stmt not in covered}
     assert not missing, f"gates without a post-measurement check: {missing}"
+
+
+def test_every_extension_statement_is_checked_after_terminal_measurement():
+    """The same guard for `gemini.logical.extensions`.
+
+    The extension statements act on qubits, so applying one after the terminal
+    measurement is the same mistake a gate is -- but they are a separate dialect,
+    so the sweep above does not reach them. Without this, a second extension
+    would be silently accepted after the measurement.
+    """
+    from bloqade.gemini.logical.dialects import extensions
+
+    registry = gemini.logical.kernel.registry.interpreter(
+        keys=_GeminiTerminalMeasurementValidationAnalysis.keys
+    )
+    covered = {sig.head for sig in registry}
+    missing = {
+        stmt.__name__ for stmt in extensions.dialect.stmts if stmt not in covered
+    }
+    assert not missing, f"extensions without a post-measurement check: {missing}"

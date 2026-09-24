@@ -5,8 +5,8 @@ from kirin.analysis import ForwardFrame, const
 from kirin.dialects import scf
 
 from bloqade import qubit
-from bloqade.gemini.logical.dialects import extensions
 from bloqade.gemini.common.validation.static_call import UnrollFixableError
+from bloqade.gemini.logical.dialects import extensions
 
 from .analysis import _GeminiLogicalValidationAnalysis
 

@@ -88,7 +88,7 @@ def test_a_use_inside_an_inlined_sub_kernel_is_caught():
     """The usual shape: decoration unrolls the helper away, so the statement is
     in `main`'s own region by the time any suite runs."""
 
-    @logical.kernel
+    @logical.kernel(verify=False)
     def rotate(q: types.Qubit):
         logical.extensions.star_rz(THETA, q)
 
@@ -112,7 +112,7 @@ def test_a_use_inside_an_inlined_sub_kernel_is_caught():
 
 
 def test_a_use_inside_an_un_inlined_callee_is_caught():
-    @logical.kernel
+    @logical.kernel(verify=False)
     def rotate(q: types.Qubit):
         logical.extensions.star_rz(THETA, q)
 
@@ -128,7 +128,7 @@ def test_a_use_inside_an_un_inlined_callee_is_caught():
 def test_a_use_two_hops_down_is_caught():
     """The interpreter keeps descending, so depth is not a way out."""
 
-    @logical.kernel
+    @logical.kernel(verify=False)
     def rotate(q: types.Qubit):
         logical.extensions.star_rz(THETA, q)
 
@@ -151,7 +151,7 @@ def test_a_use_two_hops_down_is_caught():
 def test_a_clean_call_graph_is_valid():
     """The traversal must not report a helper that is merely reachable."""
 
-    @logical.kernel
+    @logical.kernel(verify=False)
     def flip(q: types.Qubit):
         squin.x(q)
 
