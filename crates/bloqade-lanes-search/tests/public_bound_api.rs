@@ -1,15 +1,14 @@
 //! Every public entry point of the objective/completion-bound surface, driven
 //! from **outside** the crate.
 //!
-//! `MaxBound`, `WeightedDuration`, `CompletionBound::as_heuristic`,
-//! `entropy_search_with_objective` and `entropy_search_with_bound` are all
-//! exported from `lib.rs` but have no non-test caller anywhere in the
-//! workspace. A unit test inside the crate cannot tell whether they are
-//! *usable* from outside it — whether the types a caller must name are
-//! reachable, whether the generic bounds can be satisfied with public types,
-//! whether `MaxBound::new`'s objective-pairing assert can be passed. An
-//! integration test compiles as an external consumer, so it answers exactly
-//! that.
+//! `entropy_search`, `run_search`, `NoBound`, `WeightedDistanceBound` and the
+//! `CompletionBound` trait itself are public, and a downstream crate may
+//! implement `CompletionBound`. A unit test inside the crate cannot tell
+//! whether that surface is *usable* from outside it — whether the types a
+//! caller must name are reachable, whether the generic bounds can be satisfied
+//! with public types, whether an impl the crate does not own meets the trait's
+//! documented contract. An integration test compiles as an external consumer,
+//! so it answers exactly that.
 //!
 //! # What is asserted, and what deliberately is not
 //!
@@ -30,9 +29,7 @@ use std::collections::HashSet;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_search::bounds::CompletionBound;
-use bloqade_lanes_search::drivers::entropy::{
-    EntropyParams, entropy_search_with_bound, entropy_search_with_objective,
-};
+use bloqade_lanes_search::drivers::entropy::{EntropyParams, entropy_search};
 use bloqade_lanes_search::drivers::frontier::{PriorityFrontier, run_search};
 use bloqade_lanes_search::goals::AllAtTarget;
 use bloqade_lanes_search::observer::NoOpObserver;
@@ -42,19 +39,14 @@ use bloqade_lanes_search::primitives::distance::DistanceTable;
 use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::{
-    DistanceScorer, HeuristicGenerator, MaxBound, NoBound, SearchResult, UniformCost,
-    WeightedDistanceBound, WeightedDuration,
+    DistanceScorer, HeuristicGenerator, NoBound, SearchResult, UniformCost, WeightedDistanceBound,
 };
 
 /// The bundled Gemini **logical** spec: 20 single-site words, 20 locations,
 /// 110 lanes. Small (14 KB) but a real shipped spec rather than a hand-rolled
 /// fixture — and, unlike `examples/arch/*.json`, it carries transport paths, so
-/// lane durations exist and `WeightedDuration` has something to weigh.
-///
-/// Durations come from waypoint geometry: each path's segment lengths are summed
-/// as a linear distance, which on this spec yields **6 distinct** values from
-/// ~325 µs to ~816 µs. That spread is what makes the weighted objective below a
-/// genuine test rather than uniform cost under another name.
+/// lane durations exist and the entropy scorer's duration blend (`w_t > 0` by
+/// default) has something to blend; see [`Fixture::new`].
 const LOGICAL_ARCH_JSON: &str =
     include_str!("../../../python/bloqade/lanes/arch/gemini/logical/_logical_spec.json");
 
@@ -220,12 +212,12 @@ impl Fixture {
     }
 }
 
-/// `entropy_search_with_objective` is reachable externally and solves with the
-/// default `UniformCost`.
+/// `entropy_search` is reachable externally and solves under `UniformCost`
+/// with no bound.
 #[test]
-fn entropy_search_with_objective_solves_under_uniform_cost() {
+fn entropy_search_solves_under_uniform_cost() {
     let fx = Fixture::new(make_index());
-    let result = entropy_search_with_objective(
+    let result = entropy_search(
         fx.root.clone(),
         &fx.goal,
         &Fixture::params(),
@@ -235,51 +227,19 @@ fn entropy_search_with_objective_solves_under_uniform_cost() {
         0,
         &mut NoOpObserver,
         &UniformCost,
+        &NoBound::for_objective(&UniformCost),
     );
     fx.assert_valid_plan("uniform", &result);
 }
 
-/// The same entry point with `WeightedDuration`, the only other public
-/// `Objective`, over a spec whose lane durations differ.
-///
-/// This is the objective-swappability the pluggable-`g` work exists for, run end
-/// to end by an external caller: a different `g` must still yield an executable
-/// plan, and `g` must reflect the weights rather than the layer count.
+/// `entropy_search` with each publicly constructible bound: the trivial one
+/// and the real one.
 #[test]
-fn entropy_search_with_objective_solves_under_weighted_duration() {
-    let fx = Fixture::new(make_index());
-    let objective = WeightedDuration::new(&fx.index, 100.0);
-    let result = entropy_search_with_objective(
-        fx.root.clone(),
-        &fx.goal,
-        &Fixture::params(),
-        &fx.ctx(),
-        Some(2000),
-        None,
-        0,
-        &mut NoOpObserver,
-        &objective,
-    );
-    let layers = fx.assert_valid_plan("weighted-duration", &result);
-
-    // Every shot costs `1 + duration/tau` with a positive duration term, so `g`
-    // must exceed the layer count — i.e. this really is a non-uniform objective
-    // and not `UniformCost` reached under another name.
-    let cost = result.graph.g_score(result.goal.expect("solved"));
-    assert!(
-        cost > layers as f64,
-        "weighted g {cost} should exceed the {layers} layers it paid for"
-    );
-}
-
-/// `entropy_search_with_bound` with each publicly constructible bound: the
-/// trivial one, the real one, and the two composed.
-#[test]
-fn entropy_search_with_bound_solves_for_every_public_bound() {
+fn entropy_search_solves_for_every_public_bound() {
     let fx = Fixture::new(make_index());
     let h0 = || WeightedDistanceBound::new(&UniformCost, &fx.targets, &fx.index, &fx.blocked);
 
-    let unbounded = entropy_search_with_bound(
+    let unbounded = entropy_search(
         fx.root.clone(),
         &fx.goal,
         &Fixture::params(),
@@ -297,7 +257,7 @@ fn entropy_search_with_bound_solves_for_every_public_bound() {
         "NoBound must report itself as no measurement"
     );
 
-    let bounded = entropy_search_with_bound(
+    let bounded = entropy_search(
         fx.root.clone(),
         &fx.goal,
         &Fixture::params(),
@@ -311,62 +271,22 @@ fn entropy_search_with_bound_solves_for_every_public_bound() {
     );
     fx.assert_valid_plan("weighted-distance", &bounded);
     assert!(bounded.bound_stats.bound_enabled);
-
-    // `MaxBound::new` asserts both children were built against the same
-    // objective *instance*; passing that assert is part of what this covers.
-    let composed = entropy_search_with_bound(
-        fx.root.clone(),
-        &fx.goal,
-        &Fixture::params(),
-        &fx.ctx(),
-        Some(2000),
-        None,
-        0,
-        &mut NoOpObserver,
-        &UniformCost,
-        &MaxBound::new(h0(), NoBound::for_objective(&UniformCost)),
-    );
-    fx.assert_valid_plan("max(h0, no-bound)", &composed);
-    assert!(
-        composed.bound_stats.bound_enabled,
-        "composing a real bound with a trivial one is still a real bound"
-    );
 }
 
-/// `MaxBound` must report the larger of its two children, from either position.
+/// A bound can order a frontier search: wrapped in a closure it satisfies
+/// `run_search`'s `Heuristic + Copy` bound, and searching with it still finds a
+/// valid plan.
 ///
-/// Composition is the documented way a second bound gets added "without any
-/// driver change", so an external caller has to be able to build one and get
-/// `max` — not "whichever child happens to be first".
-#[test]
-fn max_bound_reports_the_larger_child_from_either_side() {
-    let fx = Fixture::new(make_index());
-    let h0 = || WeightedDistanceBound::new(&UniformCost, &fx.targets, &fx.index, &fx.blocked);
-    let real = h0().estimate(&fx.root);
-    assert!(
-        real > 0.0,
-        "the instance must give the root a non-zero bound for this to discriminate"
-    );
-
-    let a_larger = MaxBound::new(h0(), NoBound::for_objective(&UniformCost));
-    let b_larger = MaxBound::new(NoBound::for_objective(&UniformCost), h0());
-    assert_eq!(a_larger.estimate(&fx.root), real, "larger child first");
-    assert_eq!(b_larger.estimate(&fx.root), real, "larger child second");
-}
-
-/// `CompletionBound::as_heuristic` must yield something the frontier drivers
-/// accept, and searching with it must still find a valid plan.
-///
-/// The adapter exists so a bound can be reused for *ordering*; its only
-/// in-crate use is a unit test, so this is the first place the returned value
-/// has to satisfy `run_search`'s `Heuristic + Copy` bound at a real call site.
+/// Wrapping it loses the objective pairing — the frontier's `f = g + weight * h`
+/// may scale it for ordering. That is sound for weighted A\* (bounded
+/// suboptimal) but must never feed an incumbent prune.
 #[test]
 fn a_bound_used_as_a_frontier_heuristic_finds_a_valid_plan() {
     let fx = Fixture::new(make_index());
     let h0 = WeightedDistanceBound::new(&UniformCost, &fx.targets, &fx.index, &fx.blocked);
 
     let generator = HeuristicGenerator::new();
-    let mut frontier = PriorityFrontier::astar(h0.as_heuristic(), 1.0);
+    let mut frontier = PriorityFrontier::astar(|config: &Config| h0.estimate(config), 1.0);
     let mut state = SearchState::default();
     let result = run_search(
         fx.root.clone(),
@@ -382,7 +302,7 @@ fn a_bound_used_as_a_frontier_heuristic_finds_a_valid_plan() {
         None,
         None,
     );
-    fx.assert_valid_plan("as_heuristic", &result);
+    fx.assert_valid_plan("bound as heuristic", &result);
 }
 
 /// A bound written by an *external* crate, returning a caller-chosen constant.
@@ -429,7 +349,7 @@ fn only_positive_infinity_is_the_infeasibility_sentinel() {
     let fx = Fixture::new(make_index());
 
     let solve = |bound: &ConstantBound| {
-        entropy_search_with_bound(
+        entropy_search(
             fx.root.clone(),
             &fx.goal,
             &Fixture::params(),
@@ -530,7 +450,7 @@ fn the_bound_is_evaluated_at_most_once_per_node() {
     let fx = Fixture::new(make_index());
     let bound = CountingBound::new();
 
-    let result = entropy_search_with_bound(
+    let result = entropy_search(
         fx.root.clone(),
         &fx.goal,
         &Fixture::params(),

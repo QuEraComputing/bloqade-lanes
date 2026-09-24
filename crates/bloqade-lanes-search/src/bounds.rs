@@ -29,7 +29,7 @@ use std::marker::PhantomData;
 use crate::primitives::config::Config;
 use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::weighted_distance::WeightedDistanceTable;
-use crate::traits::{Heuristic, Objective, ObjectiveId};
+use crate::traits::{Objective, ObjectiveId};
 
 /// Pruning statistics for one search episode.
 ///
@@ -161,20 +161,6 @@ pub trait CompletionBound: Sync {
 
     /// Lower bound on remaining cost. [`f64::INFINITY`] means infeasible.
     fn estimate(&self, config: &Config) -> f64;
-
-    /// View this bound as a plain [`Heuristic`], for the frontier drivers.
-    ///
-    /// The returned closure is `Copy`, which the `Heuristic + Copy` call sites
-    /// in strategy dispatch require. Note that passing a bound here *loses* the
-    /// objective pairing — the frontier's `f = g + weight * h` may scale it for
-    /// ordering. That is sound for weighted A\* (bounded suboptimal) but must
-    /// never feed an incumbent prune.
-    fn as_heuristic(&self) -> impl Heuristic + Copy + '_
-    where
-        Self: Sized,
-    {
-        move |config: &Config| self.estimate(config)
-    }
 }
 
 /// The trivial bound: `h ≡ 0`, equivalent to no bounding at all.
@@ -205,65 +191,6 @@ impl<O: Objective> CompletionBound for NoBound<O> {
 
     fn estimate(&self, _config: &Config) -> f64 {
         0.0
-    }
-}
-
-/// Combine two bounds by taking the larger estimate.
-///
-/// The max of two admissible bounds is admissible — each is individually a
-/// floor on the same quantity — and is at least as tight as either. This is how
-/// later bounds (a zone-bus cut bound, a per-triplet phase decomposition) get
-/// added without any driver change.
-///
-/// Fields are private and construction goes through [`MaxBound::new`]: public
-/// tuple fields would let a caller skip the objective-instance check and
-/// reintroduce, one level up, exactly the mismatch this module exists to
-/// prevent. The type parameters guarantee the two bounds name the same
-/// objective *type*; only the check in `new` covers the *instance*.
-pub struct MaxBound<A, B> {
-    a: A,
-    b: B,
-}
-
-impl<A, B> MaxBound<A, B>
-where
-    A: CompletionBound,
-    B: CompletionBound<Obj = A::Obj>,
-{
-    /// # Panics
-    ///
-    /// If the two bounds were built against different objective instances.
-    pub fn new(a: A, b: B) -> Self {
-        assert_eq!(
-            a.objective_id(),
-            b.objective_id(),
-            "composed bounds must target the same objective instance"
-        );
-        Self { a, b }
-    }
-}
-
-impl<A, B> CompletionBound for MaxBound<A, B>
-where
-    A: CompletionBound,
-    B: CompletionBound<Obj = A::Obj>,
-{
-    type Obj = A::Obj;
-
-    /// Trivial only when *both* children are: `max(0, 0) == 0` is still no
-    /// bound, but `max(h, 0) == h` is. Without this override the trait default
-    /// (`false`) would make a composition of two [`NoBound`]s report itself as
-    /// a real bound, so the driver would set `bound_enabled` and offer
-    /// `root_lower_bound = 0.0` as a measurement.
-    const TRIVIAL: bool = A::TRIVIAL && B::TRIVIAL;
-
-    fn objective_id(&self) -> ObjectiveId {
-        // Equal to `b`'s by the assert in `new`.
-        self.a.objective_id()
-    }
-
-    fn estimate(&self, config: &Config) -> f64 {
-        self.a.estimate(config).max(self.b.estimate(config))
     }
 }
 
@@ -793,67 +720,6 @@ mod tests {
         );
     }
 
-    // ── Composition ──
-
-    #[test]
-    fn max_bound_takes_the_larger_estimate() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let blocked = HashSet::new();
-        let config = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let real = bound_for(&targets, &index, &blocked);
-        let real_estimate = real.estimate(&config);
-        let composed = MaxBound::new(real, NoBound::<UniformCost>::for_objective(&UniformCost));
-
-        assert_eq!(composed.estimate(&config), real_estimate);
-        assert_eq!(composed.objective_id(), UniformCost.id());
-    }
-
-    #[test]
-    fn max_bound_composes_recursively() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let blocked = HashSet::new();
-        let config = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let expected = bound_for(&targets, &index, &blocked).estimate(&config);
-        let composed = MaxBound::new(
-            MaxBound::new(
-                bound_for(&targets, &index, &blocked),
-                NoBound::<UniformCost>::for_objective(&UniformCost),
-            ),
-            bound_for(&targets, &index, &blocked),
-        );
-        assert_eq!(composed.estimate(&config), expected);
-    }
-
-    /// Two bounds of the same type built against *different instances* of the
-    /// same objective family must not compose. The type system cannot catch
-    /// this — both are `WeightedDistanceBound<WeightedDuration>` — so the
-    /// construction-time check is the only guard.
-    #[test]
-    #[should_panic(expected = "same objective instance")]
-    fn max_bound_rejects_mismatched_objective_instances() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let blocked = HashSet::new();
-
-        let a = WeightedDistanceBound::new(
-            &WeightedDuration::new(&index, 1.0),
-            &targets,
-            &index,
-            &blocked,
-        );
-        let b = WeightedDistanceBound::new(
-            &WeightedDuration::new(&index, 10.0),
-            &targets,
-            &index,
-            &blocked,
-        );
-        let _ = MaxBound::new(a, b);
-    }
-
     // Compile-time, not runtime: a driver monomorphizes its bound test on
     // `TRIVIAL`, so "bounding disabled" must compile to the same code as no
     // bounding at all. If these ever became runtime-only facts, the flag-off
@@ -1144,23 +1010,5 @@ mod tests {
             "only {verified} randomized instances were verified \
              ({skipped_budget} skipped on budget); the test is not exercising the bound"
         );
-    }
-
-    // ── Frontier interop ──
-
-    /// The same bound object is consumable by the frontier drivers through the
-    /// plain `Heuristic` trait, and the adapter is `Copy` as those call sites
-    /// require.
-    #[test]
-    fn as_heuristic_matches_estimate_and_is_copy() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let bound = bound_for(&targets, &index, &HashSet::new());
-        let config = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let h = bound.as_heuristic();
-        let h_copy = h; // requires Copy
-        assert_eq!(h.estimate(&config), bound.estimate(&config));
-        assert_eq!(h_copy.estimate(&config), bound.estimate(&config));
     }
 }

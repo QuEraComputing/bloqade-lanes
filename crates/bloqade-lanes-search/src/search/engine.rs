@@ -8,7 +8,7 @@
 //! architecture, share it via [`std::sync::Arc`] across the
 //! composition layers above.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
 use bloqade_lanes_bytecode_core::arch::query::ArchSpecLoadError;
@@ -16,7 +16,6 @@ use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 
 use crate::drivers::entropy::BlendedColumnCache;
-use crate::generators::exhaustive::{ExhaustiveGenerator, ExhaustivePrecondition};
 use crate::ops::entangling::{self, WordPairDistances};
 use crate::primitives::distance::DistanceTable;
 use crate::primitives::lane_index::LaneIndex;
@@ -29,7 +28,6 @@ use crate::primitives::lane_index::LaneIndex;
 /// subsequent calls.
 pub(crate) struct EntanglingCache {
     pub ent_set: HashSet<(u64, u64)>,
-    pub partner_map: HashMap<u64, u64>,
     pub dist_table: Arc<DistanceTable>,
     pub wpd: WordPairDistances,
 }
@@ -57,9 +55,6 @@ pub struct SearchEngine {
     /// Cross-solve cache of entropy blended-distance columns; see
     /// [`BlendedColumnCache`]. Remove alongside the entropy driver.
     blended_cache: OnceLock<BlendedColumnCache>,
-    /// Whether the exhaustive generator's architecture preconditions (P1,
-    /// P2) hold on this spec. A property of the arch alone, so checked once.
-    exhaustive_preconditions: OnceLock<Result<(), ExhaustivePrecondition>>,
 }
 
 impl std::fmt::Debug for SearchEngine {
@@ -125,7 +120,6 @@ impl SearchEngine {
             entangling_cache: OnceLock::new(),
             nohome_cache: OnceLock::new(),
             blended_cache: OnceLock::new(),
-            exhaustive_preconditions: OnceLock::new(),
         }
     }
 
@@ -140,20 +134,6 @@ impl SearchEngine {
         &self.index
     }
 
-    /// Whether [`ExhaustiveGenerator`](crate::generators::ExhaustiveGenerator)'s
-    /// model fits this architecture: P1 (distinct lane sources of a bus group
-    /// sit at distinct positions) and P2 (the group's source→destination
-    /// position map carries rectangles to rectangles).
-    ///
-    /// Computed on first use and cached; a strategy whose search space is the
-    /// exhaustive one consults this at its entry point and refuses the solve
-    /// with [`ConfigError::UnsupportedArchitecture`](crate::primitives::config::ConfigError)
-    /// rather than enumerate a model that does not fit the spec.
-    pub fn exhaustive_preconditions(&self) -> &Result<(), ExhaustivePrecondition> {
-        self.exhaustive_preconditions
-            .get_or_init(|| ExhaustiveGenerator::check_preconditions(&self.index))
-    }
-
     /// Get or build the cached entangling precomputation.
     pub(crate) fn entangling_cache(&self) -> &EntanglingCache {
         self.entangling_cache.get_or_init(|| {
@@ -161,7 +141,6 @@ impl SearchEngine {
             let word_pairs = entangling::enumerate_word_pairs(arch);
             let ent_locs = entangling::all_entangling_locations(arch);
             let ent_set = entangling::build_entangling_set(arch);
-            let partner_map = entangling::build_partner_map(&ent_set);
             // Always include time distances — callers with w_t=0.0 just
             // ignore them (hop-count fields are separate).
             let dist_table = Arc::new(
@@ -171,7 +150,6 @@ impl SearchEngine {
                 entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
             EntanglingCache {
                 ent_set,
-                partner_map,
                 dist_table,
                 wpd,
             }
