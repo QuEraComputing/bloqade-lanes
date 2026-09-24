@@ -29,7 +29,7 @@ def test_roundtrip_const_float():
     _assert_roundtrip(
         [
             Instruction.const_float(3.14),
-            Instruction.pop(),
+            Instruction.store("f64", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -40,7 +40,7 @@ def test_roundtrip_const_loc():
     _assert_roundtrip(
         [
             Instruction.const_loc(0, 1, 2),
-            Instruction.pop(),
+            Instruction.store("u64", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -51,7 +51,7 @@ def test_roundtrip_const_lane():
     _assert_roundtrip(
         [
             Instruction.const_lane(MoveType.SITE, 0, 1, 2, 3),
-            Instruction.pop(),
+            Instruction.store("u64", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -62,19 +62,19 @@ def test_roundtrip_const_zone():
     _assert_roundtrip(
         [
             Instruction.const_zone(5),
-            Instruction.pop(),
+            Instruction.store("u32", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
     )
 
 
-def test_roundtrip_pop():
+def test_roundtrip_store_load():
     _assert_roundtrip(
         [
             Instruction.const_int(1),
-            Instruction.pop(),
-            Instruction.const_int(0),
+            Instruction.store("i64", 3),
+            Instruction.load("i64", 3),
             Instruction.return_(),
         ]
     )
@@ -85,19 +85,22 @@ def test_roundtrip_dup():
         [
             Instruction.const_int(7),
             Instruction.dup(),
-            Instruction.pop(),
+            Instruction.store("i64", 0),
             Instruction.return_(),
         ]
     )
 
 
-def test_roundtrip_swap():
+def test_roundtrip_swap_through_locals():
     _assert_roundtrip(
         [
             Instruction.const_int(1),
             Instruction.const_int(2),
-            Instruction.swap(),
-            Instruction.pop(),
+            Instruction.store("i64", 0),
+            Instruction.store("i64", 1),
+            Instruction.load("i64", 0),
+            Instruction.load("i64", 1),
+            Instruction.store("i64", 0),
             Instruction.return_(),
         ]
     )
@@ -202,7 +205,7 @@ def test_roundtrip_measure_await():
             Instruction.const_zone(0),
             Instruction.measure(1),
             Instruction.await_measure(),
-            Instruction.pop(),
+            Instruction.store("undef", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -215,7 +218,7 @@ def test_roundtrip_new_array_1d():
             Instruction.const_float(0.0),
             Instruction.const_float(1.0),
             Instruction.new_array(type_tag=0, dim0=2),
-            Instruction.pop(),
+            Instruction.store("undef", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -230,7 +233,7 @@ def test_roundtrip_new_array_2d():
             Instruction.const_float(2.0),
             Instruction.const_float(3.0),
             Instruction.new_array(type_tag=0, dim0=2, dim1=2),
-            Instruction.pop(),
+            Instruction.store("undef", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -245,7 +248,7 @@ def test_roundtrip_get_item_1d():
             Instruction.new_array(type_tag=0, dim0=2),
             Instruction.const_int(0),
             Instruction.get_item(1),
-            Instruction.pop(),
+            Instruction.store("undef", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -263,7 +266,7 @@ def test_roundtrip_get_item_2d():
             Instruction.const_int(0),
             Instruction.const_int(1),
             Instruction.get_item(2),
-            Instruction.pop(),
+            Instruction.store("undef", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -277,7 +280,7 @@ def test_roundtrip_set_detector():
             Instruction.measure(1),
             Instruction.await_measure(),
             Instruction.set_detector(),
-            Instruction.pop(),
+            Instruction.store("undef", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]
@@ -291,7 +294,7 @@ def test_roundtrip_set_observable():
             Instruction.measure(1),
             Instruction.await_measure(),
             Instruction.set_observable(),
-            Instruction.pop(),
+            Instruction.store("undef", 0),
             Instruction.const_int(0),
             Instruction.return_(),
         ]

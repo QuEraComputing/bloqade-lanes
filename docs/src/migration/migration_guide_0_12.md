@@ -19,7 +19,7 @@ single flat instruction set:
 | Device | Supplies |
 |---|---|
 | `cpu` | vihaco-cpu's `CPU` component — stack, constants, arithmetic, control flow, the heap allocator |
-| `lanes` | atom movement, gates, measurement, arrays, and the `pop`/`swap` the CPU lacks |
+| `lanes` | atom movement, gates, measurement, arrays |
 
 This is the idiomatic vihaco composition (PPVM is built the same way), and it
 means a lanes program can now be **executed**, via the new `bloqade-bytecode
@@ -89,8 +89,11 @@ Point by point:
   gates, measurement, arrays, detectors) are `lanes::lanes.*`; the CPU ops are
   `cpu::cpu.*`. A bare `move 2` no longer parses, and neither does a mnemonic
   under the wrong device.
-- **`pop` and `swap` are lanes ops**, not CPU ops: `lanes::lanes.pop`,
-  `lanes::lanes.swap`. vihaco-cpu's CPU has neither.
+- **There is no `pop` or `swap`.** vihaco-cpu's CPU has neither, and a
+  function's locals now spell both — see
+  [Functions have locals of their own](#functions-have-locals-of-their-own).
+  `pop` becomes `cpu::cpu.store <ty>, <n>` into a scratch local; `swap`
+  becomes two `store`s and two `load`s.
 - **The constants use vihaco-cpu's single typed `const`.** `const.i64 42` →
   `cpu::cpu.const i64, 42`, and `const.f64 1.5` → `cpu::cpu.const f64, 1.5` —
   note the comma. The Python `op_name()` still reports `const_float` /
@@ -154,6 +157,34 @@ Re-assemble any persisted `.bin` from source.
 
 - **New:** `Instruction.device()` returns `"cpu"` or `"lanes"`.
 - **Changed:** `Instruction.opcode` is repacked (see above).
+- **Removed:** `Instruction.pop()` and `Instruction.swap()`, and the
+  `stack_move.Pop` / `stack_move.Swap` statements. **New:**
+  `Instruction.load(value_type, index)` and `Instruction.store(value_type,
+  index)`, with `local_index()` / `value_type()` accessors, and the
+  `stack_move.LoadLocal` / `stack_move.StoreLocal` statements they decode to.
+  `value_type` is spelled as in the text format (`"u64"`, `"undef"`, …).
+  `stack_move.Dup` stays: `dup` is vihaco-cpu's own.
+- **Changed:** `stackify` no longer emits `Dup`/`Swap` chains for a value with
+  several consumers. It stores the value in a local right after it is produced
+  and loads a copy before each consumer, reusing a slot once its value is dead.
+  Compiled programs therefore contain `cpu::cpu.store undef, 0` /
+  `cpu::cpu.load undef, 0` where they used to contain `dup` and `swap`:
+  `undef`, because the value is the placeholder a lanes op pushes in place of a
+  result it does not simulate. Slots scale with how many values are live at
+  once, and `stackify` raises `ValueError` rather than need more than the 1024
+  a frame may hold. It also raises on two shapes only decoded bytecode has — a
+  `stack_move.Dup`, and a constant operand below a non-constant one — which it
+  would otherwise reorder
+  ([#1050](https://github.com/QuEraComputing/bloqade-lanes/issues/1050)).
+- **New:** `Program.entry_parameters` lists the entry point's declared
+  parameter types. `BytecodeDecoder.decode` raises `DecodingError` for an entry
+  point that declares any: the kernel it builds takes no arguments, and a
+  parameter would otherwise read as zero.
+- **Behaviour:** `RewriteStackMoveToMove` lowers a `load` to the value last
+  stored only when it reads that value back as itself: `load undef` of a lanes
+  op's placeholder, or `load <ty>` of a constant of that type. A typed load of
+  a placeholder, which the machine reads as that type's zero, and a mistyped
+  `load`/`store` of a constant, which it refuses, raise `ValueError`.
 - **Behaviour:** a decoded program can now contain any of vihaco-cpu's 42 ops,
   including arithmetic and control flow the lanes compiler never emits. Those
   load and validate fine, but the `stack_move` dialect has no statement for
@@ -250,6 +281,32 @@ as locals `0..n`, where a `call` would put them. `run` enters with no
 arguments, so it refuses a `@main` that declares any. The CLI's `run`
 subcommand has no way to pass arguments yet.
 
+### Functions have locals of their own
+
+A frame is its locals — the parameters, then scratch slots — and above them
+its operands. This is the frame model of vihaco#110, which vihaco has merged
+but not yet released; `LanesMachine` runs it on vihaco 0.4.1 until the
+dependency moves past it.
+
+- **A function reserves `max(arity, every load/store index + 1)` locals**,
+  counted from its body. There is nothing to declare, and the function table's
+  `local_count` — always 0 before — now carries that count. It is recomputed
+  from the code whenever a program is loaded, so a table cannot disagree with
+  its body.
+- **A local holding the `Undefined` placeholder reads as zero** of whatever
+  type loads it: an unwritten one, so a counter needs no initialising `store`,
+  and one holding the placeholder a lanes op pushes in place of a result it
+  does not simulate. `load undef` reads that placeholder back as itself. A
+  local holding a concrete value of another type is still a type error.
+- **Only `load` and `store` reach a local.** No operand op consumes one, a
+  parameter included: a callee that used to consume its argument directly now
+  has to `load` it first, or it underflows. `store` no longer grows the stack
+  to reach its index.
+
+So a program that relied on 0.4.1's aliasing — local `n` being whatever sat
+`n` slots above the frame base — behaves differently: a `store` into a scratch
+slot used to overwrite a working value, and now does not.
+
 ### Stack validation follows control flow
 
 `validate(stack=True)` (the CLI's `--simulate-stack`, the C API's
@@ -261,17 +318,26 @@ control-flow graph, starting from a frame that holds its declared parameters:
 - **Code after a branch or call is checked.** A program with control flow no
   longer gets less validation than one without.
 - **A callee that takes operands is checked.** Its frame starts with its
-  declared parameters, so the `load` that reads an argument is no longer an
-  underflow. A `call` is modelled from the callee's signature alone: pop its
-  parameters, push its results.
+  locals — declared parameters, then scratch — so the `load` that reads an
+  argument is no longer an underflow. A `call` is modelled from the callee's
+  signature alone: pop its parameters, push its results.
 - **`StackDepthMismatchError`**: two paths reach the same instruction with
   different stack depths. Examples are a `cond_br` whose arms leave different
   depths at their join, or a loop whose body changes the depth.
-- **`PopBelowFrameBaseError`**: a function other than `@main` pops a value its
+- **`PopBelowFrameBaseError`**: a function other than `@main` pops with no
+  operands left, reaching into its own locals and below them the values its
   caller owns. This is an error even when the machine's stack is not empty. It
   subclasses `StackUnderflowError`, so existing `except` clauses still catch it.
-  In `@main`, whose frame starts at the bottom of the stack, the same condition
-  is still reported as a plain `StackUnderflowError`.
+  In `@main`, which has no caller, the same condition is still reported as a
+  plain `StackUnderflowError`.
+- **`LocalTypeMismatchError`**: a typed `load`/`store` names a type the value
+  does not have, so the machine refuses it. A `store` checks the value it pops;
+  a `load` checks what the local holds. The placeholder a lanes op pushes for a
+  result it does not simulate passes under any type, except that `load undef`
+  refuses every concrete value. A call's result is checked by what the callee's
+  `ret` really keeps, not its declared return type, which nothing enforces.
+- **`TooManyParametersError`**: a function declares more parameters than the
+  1024 locals a frame may hold, so every call to it would fail.
 
 Everything after a `call_indirect` goes unchecked, because its target and
 arity are only known at run time. That includes any path that merges with it
@@ -319,6 +385,3 @@ Rather than reimplement those ops, the machine now **composes vihaco-cpu's CPU
 as a device**, which is how vihaco intends a VM to be built. The binary format
 still needs a codec neither device provides, so encoding goes through a parallel
 mirror instruction set — the same approach PPVM takes.
-
-`pop` and `swap` are the exception: vihaco-cpu has neither, and the lanes
-compiler emits both, so they live on the lanes device.

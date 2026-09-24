@@ -33,9 +33,9 @@ fn @main() {
   lanes::lanes.const_lane 0x8000000000010002
   lanes::lanes.const_zone 0x00000003
   lanes::lanes.initial_fill 3
-  lanes::lanes.pop
+  cpu::cpu.store f64, 0
   cpu::cpu.dup
-  lanes::lanes.swap
+  cpu::cpu.load f64, 0
   lanes::lanes.fill 2
   lanes::lanes.move 1
   lanes::lanes.local_r 4
@@ -158,9 +158,9 @@ fn test_disassemble_to_file() {
         "lanes::lanes.const_loc",
         "lanes::lanes.const_lane",
         "lanes::lanes.const_zone",
-        "lanes::lanes.pop",
+        "cpu::cpu.store f64, 0",
         "cpu::cpu.dup",
-        "lanes::lanes.swap",
+        "cpu::cpu.load f64, 0",
         "lanes::lanes.initial_fill 3",
         "lanes::lanes.fill 2",
         "lanes::lanes.move 1",

@@ -44,7 +44,7 @@ use vihaco::syntax::ParsedFunction;
 use vihaco_cpu::{SurfaceInstruction as CpuSurface, SurfaceType};
 
 use super::machine::{self, MachineInstruction, MachineSurfaceInstruction};
-use super::program::{LanesInfo, Program};
+use super::program::{LanesInfo, Program, local_count};
 
 /// A failure to resolve a parsed module.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,10 +262,9 @@ pub fn resolve(
                     .collect(),
                 ret: func.return_ty.iter().copied().map(runtime_type).collect(),
             },
-            // Still zero: locals alias the operand stack, so a function has no
-            // scratch to count until a prologue reserves some. See
-            // <https://github.com/QuEraComputing/bloqade-lanes/issues/1038>.
-            local_count: 0,
+            // Inferred, unlike the signature: the parameters plus every slot
+            // the body names. The machine reserves this many at each call.
+            local_count: local_count(func.params.len(), &code[start_address as usize..]),
             start_address,
             // One past `func_end`, so the span covers both markers and the
             // spans of adjacent functions abut without overlapping.

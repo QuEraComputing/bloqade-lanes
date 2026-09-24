@@ -78,11 +78,11 @@ static const char *INVALID_STRUCTURE =
     "}\n"
     SST_TAIL;
 
-/* Program that triggers a stack underflow: `pop` on an empty stack. */
+/* Program that triggers a stack underflow: `dup` on an empty stack. */
 static const char *STACK_UNDERFLOW =
     SST_HEAD
     "fn @main() {\n"
-    "  lanes::lanes.pop\n"
+    "  cpu::cpu.dup\n"
     "  cpu::cpu.halt\n"
     "}\n"
     SST_TAIL;

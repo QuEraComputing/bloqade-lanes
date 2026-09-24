@@ -104,27 +104,14 @@ pub fn all_entangling_locations(arch: &ArchSpec) -> Vec<u64> {
 
 /// Enumerate all home-site locations (encoded) from the architecture.
 ///
-/// A home site is any `(zone_id, word_id, site_id)` where `word_id` is
-/// in [`ArchSpec::left_cz_word_ids`].
+/// See [`ArchSpec::home_locations`]: every zone a home word is present in
+/// contributes its sites, so a storage word reached only by a zone bus is
+/// home in the zone it actually lives in.
 pub(crate) fn home_sites(arch: &ArchSpec) -> Vec<u64> {
-    let home_words = arch.left_cz_word_ids();
-    let word_zone = arch.word_zone_map();
-    let sites_per_word = arch.sites_per_word() as u32;
-    let mut result = Vec::new();
-    for &word_id in &home_words {
-        let zone_id = *word_zone.get(&word_id).unwrap_or(&0);
-        for site_id in 0..sites_per_word {
-            result.push(
-                LocationAddr {
-                    zone_id,
-                    word_id,
-                    site_id,
-                }
-                .encode(),
-            );
-        }
-    }
-    result
+    arch.home_locations()
+        .iter()
+        .map(LocationAddr::encode)
+        .collect()
 }
 
 /// Build O(1) lookup set for valid entangling placements.

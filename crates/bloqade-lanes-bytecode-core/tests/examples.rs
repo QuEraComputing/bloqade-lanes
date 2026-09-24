@@ -72,6 +72,7 @@ fn kind(error: &ValidationError) -> &'static str {
         E::InvalidControlFlowTarget { .. } => "InvalidControlFlowTarget",
         E::CallArityMismatch { .. } => "CallArityMismatch",
         E::ReturnCountMismatch { .. } => "ReturnCountMismatch",
+        E::TooManyParameters { .. } => "TooManyParameters",
         E::CodeOutsideFunction { .. } => "CodeOutsideFunction",
         E::InitialFillNotFirst { .. } => "InitialFillNotFirst",
         E::EmptyProgram => "EmptyProgram",
@@ -81,6 +82,7 @@ fn kind(error: &ValidationError) -> &'static str {
         E::PopBelowFrameBase { .. } => "PopBelowFrameBase",
         E::StackDepthMismatch { .. } => "StackDepthMismatch",
         E::TypeMismatch { .. } => "TypeMismatch",
+        E::LocalTypeMismatch { .. } => "LocalTypeMismatch",
         E::LocationGroupValidation { .. } => "LocationGroupValidation",
         E::LaneGroupValidation { .. } => "LaneGroupValidation",
     }

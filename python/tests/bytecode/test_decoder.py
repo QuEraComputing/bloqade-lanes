@@ -66,9 +66,12 @@ def test_decode_const_zone():
     assert stmt.value == ZoneAddress(3)
 
 
-def test_decode_pop_consumes_top():
-    block = _decode([Instruction.const_int(1), Instruction.pop()])
-    assert any(isinstance(s, stack_move.Pop) for s in block.stmts)
+def test_decode_store_consumes_top():
+    block = _decode([Instruction.const_int(1), Instruction.store("i64", 2)])
+    store = next(s for s in block.stmts if isinstance(s, stack_move.StoreLocal))
+    cint = next(s for s in block.stmts if isinstance(s, stack_move.ConstInt))
+    assert store.value is cint.result
+    assert (store.index, store.value_type) == (2, "i64")
 
 
 def test_decode_dup_duplicates_top():
@@ -78,23 +81,31 @@ def test_decode_dup_duplicates_top():
     assert dup.value is cint.result
 
 
-def test_decode_swap_permutes_top_two():
+def test_decode_load_pushes_a_fresh_value():
+    """Which value a load copies is a question about the locals, not the
+    stack, so the decoder gives it a fresh SSA value and the lowering to
+    ``move`` resolves it."""
     block = _decode(
-        [Instruction.const_int(1), Instruction.const_int(2), Instruction.swap()]
+        [
+            Instruction.const_int(1),
+            Instruction.store("i64", 0),
+            Instruction.load("i64", 0),
+            Instruction.store("i64", 1),
+        ]
     )
-    swap = next(s for s in block.stmts if isinstance(s, stack_move.Swap))
-    ints = [s for s in block.stmts if isinstance(s, stack_move.ConstInt)]
-    assert swap.in_top is ints[1].result
-    assert swap.in_bot is ints[0].result
+    load = next(s for s in block.stmts if isinstance(s, stack_move.LoadLocal))
+    stores = [s for s in block.stmts if isinstance(s, stack_move.StoreLocal)]
+    assert (load.index, load.value_type) == (0, "i64")
+    assert stores[1].value is load.result
 
 
-def test_decode_pop_underflow_raises():
+def test_decode_store_underflow_raises():
     import pytest
 
     from bloqade.lanes.bytecode.decode import DecodingError
 
     with pytest.raises(DecodingError):
-        _decode([Instruction.pop()])
+        _decode([Instruction.store("i64", 0)])
 
 
 def test_decode_fill_consumes_arity_locations():
@@ -298,3 +309,27 @@ def test_single_function_program_still_decodes():
     terminators = [s for s in block.stmts if isinstance(s, func.Return)]
     assert len(terminators) == 1, f"expected one terminator, got {len(terminators)}"
     assert any(isinstance(s, stack_move.InitialFill) for s in block.stmts)
+
+
+def test_decode_refuses_an_entry_point_with_parameters():
+    """The kernel takes no arguments, so a parameter would vanish: the body
+    still decodes — a parameter is a local, reached with `load` — and the
+    kernel would read zero. Refused instead, naming the parameters."""
+    import pytest
+
+    from bloqade.lanes.bytecode import Program
+    from bloqade.lanes.bytecode.decode import DecodingError
+
+    program = Program.from_text(
+        "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n"
+        ".text(root):\nfn @main(z: u32) {\n  cpu::cpu.load u32, 0\n  lanes::lanes.cz\n"
+        "  cpu::cpu.halt\n}\n.text(root).\n.section(root).\n"
+    )
+    assert program.entry_parameters == ["u32"]
+    with pytest.raises(DecodingError, match=r"declares 1 parameter\(s\) \(u32\)"):
+        load_program(program)
+
+
+def test_a_program_without_parameters_reports_none():
+    program = Program(version=(1, 0), instructions=[Instruction.halt()])
+    assert program.entry_parameters == []

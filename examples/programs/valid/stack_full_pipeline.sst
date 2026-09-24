@@ -60,12 +60,17 @@ fn @main() {
   lanes::lanes.measure 1
   lanes::lanes.await_measure    // pops future, pushes array_ref
 
-  // --- Stack manipulation: dup, swap, pop ---
+  // --- Stack manipulation: dup, and locals for swap and pop ---
+  // `@main` reserves one local per index its body names, below the operands,
+  // so parking a value there takes it out of the operands' way.
   cpu::cpu.const f64, 3.0
   cpu::cpu.dup    // [array_ref, 3.0, 3.0]
-  lanes::lanes.swap    // [array_ref, 3.0, 3.0]
-  lanes::lanes.pop    // [array_ref, 3.0]
-  lanes::lanes.pop    // [array_ref]
+  cpu::cpu.store f64, 0    // swap: park both...
+  cpu::cpu.store f64, 1    // [array_ref]
+  cpu::cpu.load f64, 0    // ...and load them back the other way round
+  cpu::cpu.load f64, 1    // [array_ref, 3.0, 3.0]
+  cpu::cpu.store f64, 0    // pop: park a value and leave it → [array_ref, 3.0]
+  cpu::cpu.store f64, 0    // [array_ref]
 
   // --- Array operations ---
   // Build a 1D array of 3 floats
@@ -79,8 +84,8 @@ fn @main() {
   lanes::lanes.get_item 1    // ndims=1 -> pops u32 + array_ref, pushes float
 
   // Clean up the float and first array_ref
-  lanes::lanes.pop    // discard float from get_item
-  lanes::lanes.pop    // discard first array_ref from await_measure
+  cpu::cpu.store f64, 0    // discard float from get_item
+  cpu::cpu.store heap_ref, 2    // discard first array_ref from await_measure
 
   // --- Set detector ---
   lanes::lanes.const_zone 0x00000000
@@ -94,11 +99,10 @@ fn @main() {
   lanes::lanes.await_measure    // pushes array_ref
   lanes::lanes.set_observable    // pops array_ref, pushes observable_ref
 
-  // --- Return one value ---
-  // Stack: [detector_ref, observable_ref]. Discard detector_ref first, then return.
-  lanes::lanes.swap    // [observable_ref, detector_ref]
-  lanes::lanes.pop    // discard detector_ref → [observable_ref]
-  cpu::cpu.ret 0    // return observable_ref
+  // --- Return ---
+  // Stack: [detector_ref, observable_ref]. `ret 0` keeps nothing and drains the
+  // whole frame, locals and operands alike.
+  cpu::cpu.ret 0
 }
 .text(root).
 .section(root).
