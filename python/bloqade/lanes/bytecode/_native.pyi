@@ -1295,12 +1295,55 @@ class Proof:
     def __hash__(self) -> int: ...
 
 @final
+class BoundStats:
+    """Branch-and-bound pruning statistics from one solve."""
+
+    @property
+    def cuts_by_g(self) -> int:
+        """Cuts the accumulated cost alone could make."""
+        ...
+
+    @property
+    def cuts_by_h(self) -> int:
+        """Cuts only the bound could make."""
+        ...
+
+    @property
+    def cuts_infeasible(self) -> int:
+        """Branches cut because the bound proved them infeasible."""
+        ...
+
+    @property
+    def cut_depth_sum(self) -> int:
+        """Sum of the depths at which the bound cut."""
+        ...
+
+    @property
+    def cut_depth_g_only_sum(self) -> int:
+        """Sum of the depths at which the cost alone would have cut."""
+        ...
+
+    @property
+    def root_lower_bound(self) -> float:
+        """A certified lower bound on the instance optimum."""
+        ...
+
+    @property
+    def incumbent_cost(self) -> float | None:
+        """Cost of the best plan found, or None if none was."""
+        ...
+
+    @property
+    def optimality_gap(self) -> float | None:
+        """``(incumbent - root_lower_bound) / incumbent``, or None when unsolved."""
+        ...
+
+@final
 class SolveResult:
     """Result of a move synthesis solve.
 
-    Returned by ``TargetSolver.solve()`` and the ``CzPlacement.solve*()``
-    placement methods (``LooseGoalCzPlacement``, ``NoHomeCzPlacement``,
-    ``RecedingHorizonCzPlacement``). Check ``status`` to determine whether a
+    Returned by ``TargetSolver.solve()``, and as ``PlacementResult.result`` by
+    the placements' ``place()``. Check ``status`` to determine whether a
     solution was found.
     """
 
@@ -1337,20 +1380,10 @@ class SolveResult:
         ...
 
     @property
-    def bound_stats(self) -> dict[str, float | None]:
-        """Branch-and-bound pruning statistics.
-
-        **Empty** unless ``EntropyOptions.completion_bound`` was set — an
-        unbounded solve measured nothing, and a zeroed dict would advertise a
-        ``root_lower_bound`` of 0.0 and an ``optimality_gap`` of 1.0 as if they
-        were measurements. Key-check rather than expecting zeros. Keys:
-        ``cuts_by_g`` (cuts accumulated cost alone could make), ``cuts_by_h``
-        (cuts only the bound could make), ``cuts_infeasible``,
-        ``cut_depth_sum`` / ``cut_depth_g_only_sum`` (the depth ratio measuring
-        how much earlier the bound cut), ``root_lower_bound`` (a certified
-        lower bound on the instance optimum), ``incumbent_cost``, and
-        ``optimality_gap`` (``None`` when unsolved).
-        """
+    def bound_stats(self) -> Optional[BoundStats]:
+        """Branch-and-bound pruning statistics, or ``None`` unless
+        ``EntropyOptions.completion_bound`` was set: an unbounded solve
+        measured nothing."""
         ...
 
     @property
@@ -1528,57 +1561,65 @@ class DefaultTargetGenerator:
     def __repr__(self) -> str: ...
 
 @final
-class MultiSolveResult:
-    """Result of a multi-candidate solve via ``SingleHeuristicCzPlacement.solve_with_attempts()``."""
+class CandidateAttempt:
+    """One candidate a placement tried, in order."""
 
     @property
-    def status(self) -> SolveStatus:
-        """How the winning (or last) solve ended."""
+    def candidate_index(self) -> int:
+        """Index of the candidate in the order the placement generated them."""
         ...
 
     @property
-    def candidate_index(self) -> int | None:
-        """Index of the winning candidate, or None if all failed."""
+    def status(self) -> SolveStatus:
+        """How routing the candidate ended."""
+        ...
+
+    @property
+    def nodes_expanded(self) -> int:
+        """Nodes expanded routing it."""
+        ...
+
+    @property
+    def score(self) -> float | None:
+        """The score a candidate evaluator gave it, or None if nothing ranked
+        the candidates."""
+        ...
+
+@final
+class PlacementResult:
+    """The outcome of placing one CZ stage (``*CzPlacement.place``)."""
+
+    @property
+    def result(self) -> SolveResult:
+        """The routing result. On success its ``goal_config`` is the chosen
+        placement. On failure it is usually the stage's starting
+        configuration, but a placement that commits layers before failing
+        (``RecedingHorizonCzPlacement``) returns those layers and the
+        configuration they reach instead: read ``move_layers`` and
+        ``goal_config`` together."""
+        ...
+
+    @property
+    def chosen(self) -> int | None:
+        """Which candidate won, for placements that enumerate candidates; None
+        when none won or the placement does not enumerate them."""
+        ...
+
+    @property
+    def attempts(self) -> list[CandidateAttempt]:
+        """Every candidate tried, in order. Empty for placements that do not
+        enumerate candidates."""
         ...
 
     @property
     def total_expansions(self) -> int:
-        """Total nodes expanded across all candidates."""
+        """Expansions across every leg and candidate of the placement."""
         ...
 
     @property
     def candidates_tried(self) -> int:
-        """Number of candidates attempted."""
+        """Candidates actually routed (validation failures are not counted)."""
         ...
-
-    @property
-    def attempts(self) -> list[dict[str, object]]:
-        """Per-candidate attempt details."""
-        ...
-
-    @property
-    def move_layers(self) -> list[list[LaneAddress]]:
-        """Move layers from the winning candidate."""
-        ...
-
-    @property
-    def goal_config(self) -> dict[int, LocationAddress]:
-        """Goal configuration from the winning candidate."""
-        ...
-
-    @property
-    def cost(self) -> float:
-        """Path cost from the winning candidate."""
-        ...
-
-    @property
-    def deadlocks(self) -> int:
-        """Deadlocks from the winning candidate."""
-        ...
-
-    def __repr__(self) -> str: ...
-
-# ── New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers ──
 
 @final
 class SearchEngine:
@@ -1724,15 +1765,20 @@ class SingleHeuristicCzPlacement:
     """
 
     def __init__(self, solver: TargetSolver) -> None: ...
-    def solve_with_attempts(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-    ) -> MultiSolveResult:
-        """Solve and return per-candidate attempt details."""
+        future_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
+
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead.
+        """
         ...
 
     def __repr__(self) -> str: ...
@@ -1750,15 +1796,20 @@ class LooseGoalCzPlacement:
         search: MoveSearch,
         entangling_options: EntanglingOptions | None = None,
     ) -> None: ...
-    def solve_pairs(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Solve using CZ pair constraints (with optional future-layer lookahead)."""
+        future_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
+
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead.
+        """
         ...
 
     def __repr__(self) -> str: ...
@@ -1774,15 +1825,20 @@ class RecedingHorizonCzPlacement:
         entangling_options: EntanglingOptions | None = None,
         rh_options: RecedingHorizonOptions | None = None,
     ) -> None: ...
-    def solve_pairs(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Solve via receding-horizon MPC (with optional future-layer lookahead)."""
+        future_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
+
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead.
+        """
         ...
 
     def __repr__(self) -> str: ...
@@ -1797,15 +1853,20 @@ class NoHomeCzPlacement:
         search: MoveSearch,
         nohome_options: NoHomeOptions | None = None,
     ) -> None: ...
-    def solve_pairs(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Solve via two-phase no-home placement (with optional future-layer lookahead)."""
+        future_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
+
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead.
+        """
         ...
 
     def __repr__(self) -> str: ...

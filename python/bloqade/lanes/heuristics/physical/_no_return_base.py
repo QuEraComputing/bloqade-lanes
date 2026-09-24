@@ -183,7 +183,7 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         Implementations should build the appropriate typed placement object
         (e.g. :class:`LooseGoalCzPlacement`, :class:`NoHomeCzPlacement`,
         :class:`RecedingHorizonCzPlacement`) from ``engine`` and
-        ``move_search``, then delegate to its ``solve_pairs`` method.
+        ``move_search``, then return its ``place(...).result``.
         """
 
     def validate_initial_layout(

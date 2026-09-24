@@ -9,14 +9,10 @@ use std::sync::Arc;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
-use pyo3::types::PyDict;
-
-// `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
-// so the attempts-list getter's return signature stays legible.
-pub(crate) type PyObject = Py<PyAny>;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
+use bloqade_lanes_search::bounds::BoundStats;
 use bloqade_lanes_search::drivers::entropy::{
     EntropyParams, EntropyTrace, EntropyTraceEvent, EntropyTraceStep, MovesetMetrics,
     compute_moveset_metrics,
@@ -24,7 +20,7 @@ use bloqade_lanes_search::drivers::entropy::{
 use bloqade_lanes_search::drivers::result::Termination;
 use bloqade_lanes_search::observer::EntropyReason;
 use bloqade_lanes_search::placement::cz_placement::{
-    CzPlacement, CzStage, PlacementBudget, PlacementResult,
+    CandidateAttempt, CzPlacement, CzStage, PlacementBudget, PlacementResult,
 };
 use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
 use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
@@ -346,6 +342,77 @@ fn result_proof(result: &SolveResult) -> Option<PyProof> {
 
 // ── Solve results ──
 
+/// Branch-and-bound pruning statistics from one solve.
+#[pyclass(name = "BoundStats", frozen, module = "bloqade.lanes.bytecode._native")]
+pub struct PyBoundStats {
+    inner: BoundStats,
+}
+
+#[pymethods]
+impl PyBoundStats {
+    /// Cuts the accumulated cost alone could make.
+    #[getter]
+    fn cuts_by_g(&self) -> u64 {
+        self.inner.cuts_by_g
+    }
+
+    /// Cuts only the bound could make.
+    #[getter]
+    fn cuts_by_h(&self) -> u64 {
+        self.inner.cuts_by_h
+    }
+
+    /// Branches cut because the bound proved them infeasible.
+    #[getter]
+    fn cuts_infeasible(&self) -> u64 {
+        self.inner.cuts_infeasible
+    }
+
+    /// Sum of the depths at which the bound cut.
+    #[getter]
+    fn cut_depth_sum(&self) -> u64 {
+        self.inner.cut_depth_sum
+    }
+
+    /// Sum of the depths at which the cost alone would have cut; against
+    /// ``cut_depth_sum`` it measures how much earlier the bound fired.
+    #[getter]
+    fn cut_depth_g_only_sum(&self) -> u64 {
+        self.inner.cut_depth_g_only_sum
+    }
+
+    /// A certified lower bound on the instance optimum.
+    #[getter]
+    fn root_lower_bound(&self) -> f64 {
+        self.inner.root_lower_bound
+    }
+
+    /// Cost of the best plan found, or None if none was.
+    #[getter]
+    fn incumbent_cost(&self) -> Option<f64> {
+        // A `Some` is always a finite `g_score`; the filter keeps a non-finite
+        // cost from ever reaching Python as a misleading float.
+        self.inner.incumbent_cost.filter(|c| c.is_finite())
+    }
+
+    /// ``(incumbent - root_lower_bound) / incumbent``, or None when unsolved.
+    #[getter]
+    fn optimality_gap(&self) -> Option<f64> {
+        self.inner.optimality_gap()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BoundStats(cuts_by_g={}, cuts_by_h={}, cuts_infeasible={}, root_lower_bound={}, incumbent_cost={:?})",
+            self.inner.cuts_by_g,
+            self.inner.cuts_by_h,
+            self.inner.cuts_infeasible,
+            self.inner.root_lower_bound,
+            self.inner.incumbent_cost,
+        )
+    }
+}
+
 /// Result of a move synthesis solve.
 ///
 /// Contains the sequence of move steps, the final qubit configuration,
@@ -445,41 +512,18 @@ impl PySolveResult {
         }
     }
 
-    /// Branch-and-bound pruning statistics as a dict.
-    ///
-    /// **Empty** unless `EntropyOptions.completion_bound` was set — an
-    /// unbounded solve measured nothing, and zeros would advertise a
-    /// `root_lower_bound` of 0.0 as if it were a measurement. Key-check rather
-    /// than expecting zeros. Keys:
-    /// `cuts_by_g` (cuts `g` alone could make), `cuts_by_h` (cuts only the
-    /// bound could make), `cuts_infeasible`, `cut_depth_sum` /
-    /// `cut_depth_g_only_sum` (the depth ratio measuring how much earlier the
-    /// bound fired), `root_lower_bound` (a certified lower bound on the
-    /// instance optimum), `incumbent_cost`, and `optimality_gap`
-    /// (`None` when unsolved).
+    /// Branch-and-bound pruning statistics, or ``None`` unless
+    /// ``EntropyOptions.completion_bound`` was set: an unbounded solve measured
+    /// nothing, and zeros would advertise a ``root_lower_bound`` of 0.0 as if
+    /// it were a measurement.
     #[getter]
-    fn bound_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let s = &self.inner.bound_stats;
-        let dict = PyDict::new(py);
-        // No bound in use: return an empty dict rather than a wall of zeros, so
-        // "bounding was off" stays distinguishable from "bounding was on and
-        // pruned nothing" — and so no spurious gap of 1.0 is reported for a
-        // run that measured no lower bound at all.
-        if !s.bound_enabled {
-            return Ok(dict);
-        }
-        dict.set_item("cuts_by_g", s.cuts_by_g)?;
-        dict.set_item("cuts_by_h", s.cuts_by_h)?;
-        dict.set_item("cuts_infeasible", s.cuts_infeasible)?;
-        dict.set_item("cut_depth_sum", s.cut_depth_sum)?;
-        dict.set_item("cut_depth_g_only_sum", s.cut_depth_g_only_sum)?;
-        dict.set_item("root_lower_bound", s.root_lower_bound)?;
-        // `None` ("no solution found") maps to Python `None`. The `filter`
-        // guards the invariant that a `Some` is always a finite `g_score`, so a
-        // non-finite cost could never round-trip as a misleading Python float.
-        dict.set_item("incumbent_cost", s.incumbent_cost.filter(|c| c.is_finite()))?;
-        dict.set_item("optimality_gap", s.optimality_gap())?;
-        Ok(dict)
+    fn bound_stats(&self) -> Option<PyBoundStats> {
+        self.inner
+            .bound_stats
+            .bound_enabled
+            .then_some(PyBoundStats {
+                inner: self.inner.bound_stats,
+            })
     }
 
     /// Optional entropy trace (present when `collect_entropy_trace=True`).
@@ -1522,110 +1566,159 @@ impl PyDefaultTargetGenerator {
     }
 }
 
-/// Result of a multi-candidate solve via
-/// `SingleHeuristicCzPlacement.solve_with_attempts()`.
+/// One candidate a placement tried, in order.
 #[pyclass(
-    name = "MultiSolveResult",
+    name = "CandidateAttempt",
     frozen,
     module = "bloqade.lanes.bytecode._native"
 )]
-pub struct PyMultiSolveResult {
-    inner: PlacementResult,
+pub struct PyCandidateAttempt {
+    inner: CandidateAttempt,
 }
 
 #[pymethods]
-impl PyMultiSolveResult {
-    /// How the winning (or last) solve ended; see ``SolveStatus``.
+impl PyCandidateAttempt {
+    /// Index of the candidate in the order the placement generated them.
+    #[getter]
+    fn candidate_index(&self) -> usize {
+        self.inner.candidate_index
+    }
+
+    /// How routing the candidate ended.
     #[getter]
     fn status(&self) -> PySolveStatus {
-        PySolveStatus::from_rs(self.inner.result.status)
+        PySolveStatus::from_rs(self.inner.status)
     }
 
-    /// Index of the candidate that succeeded, or None if all failed.
+    /// Nodes expanded routing it.
     #[getter]
-    fn candidate_index(&self) -> Option<usize> {
-        self.inner.chosen
+    fn nodes_expanded(&self) -> u32 {
+        self.inner.nodes_expanded
     }
 
-    /// Total nodes expanded across all candidates.
+    /// The score a candidate evaluator gave it, or None if nothing ranked
+    /// the candidates.
     #[getter]
-    fn total_expansions(&self) -> u32 {
-        self.inner.total_expansions
-    }
-
-    /// Number of candidates actually attempted (excludes validation failures).
-    #[getter]
-    fn candidates_tried(&self) -> usize {
-        self.inner.candidates_tried()
-    }
-
-    /// Per-candidate attempt details: list of dicts with
-    /// `candidate_index`, `status`, `nodes_expanded`.
-    #[getter]
-    fn attempts(&self) -> PyResult<Vec<PyObject>> {
-        Python::attach(|py| {
-            self.inner
-                .attempts
-                .iter()
-                .map(|a| {
-                    let dict = pyo3::types::PyDict::new(py);
-                    dict.set_item("candidate_index", a.candidate_index)?;
-                    dict.set_item("status", PySolveStatus::from_rs(a.status))?;
-                    dict.set_item("nodes_expanded", a.nodes_expanded)?;
-                    Ok(dict.into_any().unbind())
-                })
-                .collect()
-        })
-    }
-
-    /// Move layers from the winning candidate (same format as SolveResult.move_layers).
-    #[getter]
-    fn move_layers(&self) -> Vec<Vec<PyLaneAddr>> {
-        self.inner
-            .result
-            .move_layers
-            .iter()
-            .map(|ms| {
-                ms.decode()
-                    .into_iter()
-                    .map(|lane| PyLaneAddr { inner: lane })
-                    .collect()
-            })
-            .collect()
-    }
-
-    /// Goal configuration from the winning candidate.
-    #[getter]
-    fn goal_config(&self) -> std::collections::HashMap<u32, PyLocationAddr> {
-        self.inner
-            .result
-            .goal_config
-            .iter()
-            .map(|(qid, loc)| (qid, PyLocationAddr { inner: loc }))
-            .collect()
-    }
-
-    /// Total path cost from the winning candidate.
-    #[getter]
-    fn cost(&self) -> f64 {
-        self.inner.result.cost
-    }
-
-    /// Number of deadlocks from the winning candidate.
-    #[getter]
-    fn deadlocks(&self) -> u32 {
-        self.inner.result.deadlocks
+    fn score(&self) -> Option<f64> {
+        self.inner.score
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "MultiSolveResult(status=SolveStatus.{}, candidate={:?}, tried={}, expansions={})",
-            PySolveStatus::from_rs(self.inner.result.status).name(),
-            self.inner.chosen,
-            self.inner.candidates_tried(),
-            self.inner.total_expansions,
+            "CandidateAttempt(candidate_index={}, status=SolveStatus.{}, nodes_expanded={})",
+            self.inner.candidate_index,
+            PySolveStatus::from_rs(self.inner.status).name(),
+            self.inner.nodes_expanded,
         )
     }
+}
+
+/// The outcome of placing one CZ stage (``CzPlacement.place``).
+#[pyclass(
+    name = "PlacementResult",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyPlacementResult {
+    result: Py<PySolveResult>,
+    chosen: Option<usize>,
+    attempts: Vec<CandidateAttempt>,
+    total_expansions: u32,
+}
+
+impl PyPlacementResult {
+    fn from_rs(py: Python<'_>, placed: PlacementResult) -> PyResult<Self> {
+        Ok(Self {
+            result: Py::new(
+                py,
+                PySolveResult {
+                    inner: placed.result,
+                },
+            )?,
+            chosen: placed.chosen,
+            attempts: placed.attempts,
+            total_expansions: placed.total_expansions,
+        })
+    }
+}
+
+#[pymethods]
+impl PyPlacementResult {
+    /// The routing result. On success its ``goal_config`` is the chosen
+    /// placement. On failure it is usually the stage's starting
+    /// configuration, but a placement that commits layers before failing
+    /// (``RecedingHorizonCzPlacement``) returns those layers and the
+    /// configuration they reach instead: read ``move_layers`` and
+    /// ``goal_config`` together.
+    #[getter]
+    fn result(&self, py: Python<'_>) -> Py<PySolveResult> {
+        self.result.clone_ref(py)
+    }
+
+    /// Which candidate won, for placements that enumerate candidates; None
+    /// when none won or the placement does not enumerate them.
+    #[getter]
+    fn chosen(&self) -> Option<usize> {
+        self.chosen
+    }
+
+    /// Every candidate tried, in order. Empty for placements that do not
+    /// enumerate candidates.
+    #[getter]
+    fn attempts(&self) -> Vec<PyCandidateAttempt> {
+        self.attempts
+            .iter()
+            .map(|a| PyCandidateAttempt { inner: a.clone() })
+            .collect()
+    }
+
+    /// Expansions across every leg and candidate of the placement.
+    #[getter]
+    fn total_expansions(&self) -> u32 {
+        self.total_expansions
+    }
+
+    /// Candidates actually routed (validation failures are not counted).
+    #[getter]
+    fn candidates_tried(&self) -> usize {
+        self.attempts.len()
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        format!(
+            "PlacementResult(status=SolveStatus.{}, chosen={:?}, tried={}, expansions={})",
+            PySolveStatus::from_rs(self.result.borrow(py).inner.status).name(),
+            self.chosen,
+            self.attempts.len(),
+            self.total_expansions,
+        )
+    }
+}
+
+/// Place one stage through a `CzPlacement`, with the GIL released.
+#[allow(clippy::too_many_arguments)]
+fn place_stage(
+    py: Python<'_>,
+    placement: &(impl CzPlacement + Sync),
+    initial: &std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+    pairs: &[(u32, u32)],
+    blocked: &[PyRef<'_, PyLocationAddr>],
+    max_expansions: Option<u32>,
+    future_layers: Option<Vec<Vec<(u32, u32)>>>,
+) -> PyResult<PyPlacementResult> {
+    let initial: Vec<(u32, LocationAddr)> =
+        initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+    let blocked: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+    let future = future_layers.unwrap_or_default();
+    let placed = py
+        .detach(|| {
+            placement.place(
+                &CzStage::new(&initial, pairs, &blocked).with_future_layers(&future),
+                &PlacementBudget::new(max_expansions),
+            )
+        })
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    PyPlacementResult::from_rs(py, placed)
 }
 
 // ── New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers ──
@@ -1952,39 +2045,30 @@ impl PySingleHeuristicCzPlacement {
         }
     }
 
-    /// Solve and return per-candidate attempt details.
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve_with_attempts(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead.
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-    ) -> PyResult<PyMultiSolveResult> {
-        if controls.len() != targets.len() {
-            return Err(PyValueError::new_err(format!(
-                "controls and targets must have equal length, got {} and {}",
-                controls.len(),
-                targets.len()
-            )));
-        }
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let pairs: Vec<(u32, u32)> = controls.into_iter().zip(targets).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.place(
-                    &CzStage::new(&initial_pairs, &pairs, &blocked_locs),
-                    &PlacementBudget::new(max_expansions),
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PyMultiSolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PyPlacementResult> {
+        place_stage(
+            py,
+            &self.inner,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {
@@ -2024,35 +2108,30 @@ impl PyLooseGoalCzPlacement {
         }
     }
 
-    /// Solve using CZ pair constraints (with optional future-layer lookahead).
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
-    fn solve_pairs(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead.
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .detach(|| {
-                self.inner
-                    .place(
-                        &CzStage::new(&initial_pairs, &cz_pairs, &blocked_locs)
-                            .with_future_layers(&future),
-                        &PlacementBudget::new(max_expansions),
-                    )
-                    .map(|placed| placed.result)
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PyPlacementResult> {
+        place_stage(
+            py,
+            &self.inner,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {
@@ -2099,35 +2178,30 @@ impl PyRecedingHorizonCzPlacement {
         }
     }
 
-    /// Solve via receding-horizon MPC (with optional future-layer lookahead).
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
-    fn solve_pairs(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead.
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .detach(|| {
-                self.inner
-                    .place(
-                        &CzStage::new(&initial_pairs, &cz_pairs, &blocked_locs)
-                            .with_future_layers(&future),
-                        &PlacementBudget::new(max_expansions),
-                    )
-                    .map(|placed| placed.result)
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PyPlacementResult> {
+        place_stage(
+            py,
+            &self.inner,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {
@@ -2163,35 +2237,30 @@ impl PyNoHomeCzPlacement {
         }
     }
 
-    /// Solve via two-phase no-home placement (with optional future-layer lookahead).
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
-    fn solve_pairs(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead.
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .detach(|| {
-                self.inner
-                    .place(
-                        &CzStage::new(&initial_pairs, &cz_pairs, &blocked_locs)
-                            .with_future_layers(&future),
-                        &PlacementBudget::new(max_expansions),
-                    )
-                    .map(|placed| placed.result)
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PyPlacementResult> {
+        place_stage(
+            py,
+            &self.inner,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {

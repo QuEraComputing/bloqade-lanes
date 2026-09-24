@@ -17,6 +17,7 @@ from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arc
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import (
+    BoundStats,
     EntropyTrace,
     Proof,
     SearchEngine,
@@ -310,8 +311,14 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         """
         return self._rust_proven_total
 
-    def _accumulate_bound_stats(self, stats: dict[str, float | None]) -> None:
-        """Fold one solve's bound statistics into the running totals."""
+    def _accumulate_bound_stats(self, stats: BoundStats | None) -> None:
+        """Fold one solve's bound statistics into the running totals.
+
+        ``None`` -- an unbounded solve, which measured nothing -- contributes
+        nothing.
+        """
+        if stats is None:
+            return
         for key in (
             "cuts_by_g",
             "cuts_by_h",
@@ -319,12 +326,10 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             "cut_depth_sum",
             "cut_depth_g_only_sum",
         ):
-            value = stats.get(key)
-            if value is not None:
-                self._bound_stats_total[key] = self._bound_stats_total.get(
-                    key, 0
-                ) + int(value)
-        gap = stats.get("optimality_gap")
+            self._bound_stats_total[key] = self._bound_stats_total.get(key, 0) + int(
+                getattr(stats, key)
+            )
+        gap = stats.optimality_gap
         if gap is not None:
             gap = float(gap)
             # `optimality_gap` is `(incumbent - h(root)) / incumbent`, and Rust
@@ -332,9 +337,9 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             # plan. That is exactly the set over which a root bound is
             # comparable to a cost, so all four of these accumulate together
             # and stay consistent with one another.
-            root = stats.get("root_lower_bound")
-            cost = stats.get("incumbent_cost")
-            if root is not None and cost is not None:
+            root = stats.root_lower_bound
+            cost = stats.incumbent_cost
+            if cost is not None:
                 self._bound_stats_total["measured_solves"] = (
                     self._bound_stats_total.get("measured_solves", 0) + 1
                 )
