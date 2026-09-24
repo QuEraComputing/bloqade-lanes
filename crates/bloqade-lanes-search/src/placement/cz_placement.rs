@@ -99,7 +99,12 @@ pub struct CandidateAttempt {
 #[derive(Debug)]
 pub struct PlacementResult {
     /// The routing result. On success its `goal_config` is the chosen
-    /// placement; on failure it is the stage's starting configuration.
+    /// placement. On failure it is usually the stage's starting
+    /// configuration, but a placement that commits layers before failing can
+    /// return those layers and the configuration they reach instead:
+    /// [`RecedingHorizonCzPlacement`](crate::placement::receding_horizon::RecedingHorizonCzPlacement)
+    /// does. Read `move_layers` and `goal_config` together on failure; do not
+    /// assume the stage's starting configuration.
     pub result: SolveResult,
     /// Which candidate won, for placements that enumerate candidates;
     /// `None` when none won or the placement does not enumerate them.
