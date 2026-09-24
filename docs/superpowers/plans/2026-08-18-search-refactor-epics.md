@@ -859,9 +859,11 @@ summed over the kernels, no success regressions, per space. **NoHome's per-pair 
 choice: GO, marginally** — 1,625 → 1,543 ops (5.05%), 50% of the oracle's win, no
 regressions; concentrated on trotter_rand_35 (9.2%) and adder_64 (4.0%), and worse on
 steane_physical_35 (−4.2%). **The Python generators: NO-GO** (0.4%, −1.3%, 0.4%; a real
-choice on only 52–76 of 409 stages). Recommendation: rank inside `NoHomeCzPlacement`,
-opt-in first, and decide the default from end-to-end benchmark rows, since this is a
-per-stage counterfactual with a thin margin.
+choice on only 52–76 of 409 stages). **End to end** (`--end-to-end`, whole compiles,
+the rule-as-control reproducing `pipeline_default` exactly): ranked 3,250 → 3,086 events
+(5.05%, same as per stage), 9/9 success, +4% compile time; routing every candidate and
+keeping the cheapest gives 2,908 (10.5%), no kernel worse, about 2× compile time. Phases
+2–3 go inside `NoHomeCzPlacement`; ranked versus route-all is Phil's call.
 
 **Phases.**
 1. **Re-measure with real candidate sets (go/no-go).** The random-walk candidates may

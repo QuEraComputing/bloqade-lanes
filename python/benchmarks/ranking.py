@@ -27,7 +27,24 @@ the ranked pick routes in at least 5% fewer operations than today's pick, with
 no success regressions (a stage today's pick routes but the ranked pick does
 not). Per candidate space.
 
-Run: ``uv run --no-sync python -m benchmarks.ranking [--cases a,b] [--output f.json]``
+**End to end (``--end-to-end``).** The per-stage counterfactual costs every
+stage from today's placement. This mode instead compiles each kernel whole with
+NoHome's mover choice replaced at every stage by a picker, so each pick changes
+the stages that follow, and reports the benchmark row's metrics (success,
+``move_count_events``, ``move_count_lanes``, ``estimated_fidelity``):
+
+- ``pipeline``: today's pipeline, untouched.
+- ``rule``: the rule's candidate, routed by the pipeline's router -- the
+  control; it must reproduce ``pipeline``.
+- ``ranked``: the Push-and-Rotate-ranked candidate, routed by the router.
+- ``oracle``: every candidate routed, the cheapest kept -- greedy per stage.
+
+A stage the space does not model, or whose picked candidate does not route
+(then the next by rank), falls back to NoHome itself; the fallbacks are
+counted.
+
+Run: ``uv run --no-sync python -m benchmarks.ranking [--cases a,b] [--output f.json]
+[--end-to-end]``
 """
 
 from __future__ import annotations
@@ -42,7 +59,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from benchmarks.harness import BenchmarkRunner
-from benchmarks.harness.models import BenchmarkJob, StrategyConfig
+from benchmarks.harness.models import BenchmarkJob, BenchmarkRow, StrategyConfig
 from benchmarks.kernels import select_benchmark_cases
 
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
@@ -336,11 +353,135 @@ def summarise(space: str, stages: list[Stage]) -> Summary:
     return s
 
 
+# ── End to end ──
+
+PICKERS = ("rule", "ranked", "oracle")
+
+
+@dataclass
+class PickStats:
+    stages: int = 0
+    changed: int = 0  # the pick differs from the rule's candidate
+    fallbacks: int = 0  # NoHome itself routed the stage
+
+
+def _picking_strategy(arch: ArchSpec, picker: str, cap: int, stats: PickStats):
+    """``pipeline_default``'s strategy with NoHome's mover choice replaced."""
+    strategy = make_physical_placement_strategy(arch_spec=arch)
+    inner = getattr(strategy, "inner", strategy)
+    assert isinstance(inner, NoHomePlacementStrategy), type(inner)
+    original = inner._invoke_placement
+
+    def pick(engine, move_search, initial, cz_pairs, blocked, future):
+        stats.stages += 1
+        built = _mover_candidates(arch, dict(initial), list(cz_pairs), cap, 0)
+        if built is None:
+            stats.fallbacks += 1
+            return original(engine, move_search, initial, cz_pairs, blocked, future)
+        candidates, rule = built
+        route = _native.TargetSolver(engine, move_search)
+        if picker == "rule":
+            order = [rule]
+        elif picker == "ranked":
+            rank = _native.TargetSolver(engine, _PUSH_ROTATE)
+            pr = [_ops(rank.solve(initial, t, blocked, None)) for t in candidates]
+            order = sorted(
+                (i for i, ops in enumerate(pr) if ops is not None),
+                key=lambda i: (pr[i], i),
+            )
+        else:
+            order = list(range(len(candidates)))
+        best: tuple[int, int, _native.SolveResult] | None = None
+        for i in order:
+            result = route.solve(initial, candidates[i], blocked, inner.max_expansions)
+            ops = _ops(result)
+            if ops is None:
+                continue
+            if best is None or ops < best[0]:
+                best = (ops, i, result)
+            if picker != "oracle":
+                break
+        if best is None:
+            stats.fallbacks += 1
+            return original(engine, move_search, initial, cz_pairs, blocked, future)
+        if best[1] != rule:
+            stats.changed += 1
+        return best[2]
+
+    object.__setattr__(inner, "_invoke_placement", pick)
+    return strategy
+
+
+def _row(case, picker: str, arch: ArchSpec, cap: int) -> tuple[BenchmarkRow, PickStats]:
+    stats: list[PickStats] = []
+
+    def build():
+        if picker == "pipeline":
+            return make_physical_placement_strategy(arch_spec=arch)
+        stats.append(PickStats())
+        return _picking_strategy(arch, picker, cap, stats[-1])
+
+    config = StrategyConfig(
+        strategy_id=f"ranking_{picker}",
+        backend="rust",
+        generator_id="rust_solver",
+        build_placement_strategy=build,
+    )
+    row = BenchmarkRunner()._run_one(BenchmarkJob(case=case, strategy=config))
+    # The runner compiles twice (the row, then the fidelity estimate); both
+    # compiles make the same picks, so report the first.
+    return row, stats[0] if stats else PickStats()
+
+
+def end_to_end(cases, arch: ArchSpec, cap: int) -> dict[str, Any]:
+    report: dict[str, Any] = {"cases": {}, "total": {}}
+    totals: dict[str, dict[str, float]] = {
+        p: {"success": 0, "events": 0, "lanes": 0} for p in ("pipeline", *PICKERS)
+    }
+    for case in cases:
+        per: dict[str, Any] = {}
+        for picker in ("pipeline", *PICKERS):
+            start = time.perf_counter()
+            row, stats = _row(case, picker, arch, cap)
+            per[picker] = {
+                "success": row.success,
+                "move_count_events": row.move_count_events,
+                "move_count_lanes": row.move_count_lanes,
+                "estimated_fidelity": row.estimated_fidelity,
+                **({} if picker == "pipeline" else asdict(stats)),
+                "seconds": round(time.perf_counter() - start, 1),
+                **({"notes": row.notes} if not row.success else {}),
+            }
+            t = totals[picker]
+            t["success"] += int(row.success)
+            t["events"] += row.move_count_events or 0
+            t["lanes"] += row.move_count_lanes or 0
+            print(f"e2e {case.case_id:20} {picker:9} {per[picker]}", flush=True)
+        report["cases"][case.case_id] = per
+    base = totals["rule"]["events"]
+    for picker, t in totals.items():
+        t["events_vs_rule"] = 1.0 - t["events"] / base if base else 0.0
+    report["total"] = totals
+    for picker, t in totals.items():
+        print(
+            f"== e2e {picker:9} success {t['success']}/{len(cases)}, "
+            f"events {t['events']} ({100 * t['events_vs_rule']:+.1f}% fewer than rule), "
+            f"lanes {t['lanes']}",
+            flush=True,
+        )
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--cases", default=None, help="comma-separated case names")
     parser.add_argument("--max-assignments", type=int, default=64)
     parser.add_argument("--output", default=None, help="JSON summary path")
+    parser.add_argument(
+        "--end-to-end",
+        action="store_true",
+        help="compile whole kernels with each picker instead (NoHome space only)",
+    )
     args = parser.parse_args()
     # The physical architecture compiles without logical initialization, as
     # `benchmarks.cli` does for `--architecture physical`.
@@ -351,6 +492,12 @@ def main() -> int:
         )
     )
     arch = physical.get_arch_spec()
+    if args.end_to_end:
+        report = end_to_end(cases, arch, args.max_assignments)
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(report, f, indent=2)
+        return 0
 
     spaces: dict[str, Callable[[Any], list[Stage]]] = {
         "nohome": lambda case: record_nohome(case, arch, args.max_assignments),

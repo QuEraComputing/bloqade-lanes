@@ -65,7 +65,7 @@ Operations summed over all 9 physical kernels and 409 stages:
 | steane_physical_35 | 3 | 48 | 50 | 42 | −4.2% |
 | adder_4, bv_70, qpe_9, steane_logical_5 | 88 | 237 | 237 | 237 | 0% |
 
-## Verdict and reading
+## Verdict and reading (per stage)
 
 - **NoHome's mover choice: GO, by the letter — 5.05% against a 5% bar.** Ranking by a
   Push-and-Rotate plan captures half of what an oracle over the same candidates would. The
@@ -77,12 +77,44 @@ Operations summed over all 9 physical kernels and 409 stages:
   is consistent with the generators already encoding congestion heuristics that the
   cheap plan does not see.
 
+## End to end
+
+The per-stage figures cost every stage from today's placement. To follow the
+trajectory a different pick leads to, `--end-to-end` compiles each kernel whole with
+NoHome's mover choice replaced at every stage, and reads the benchmark row's metrics.
+
+- `rule`: the rule's candidate, routed by the router. This is the control; it
+  reproduces `pipeline_default` exactly on all 9 kernels (events, lanes, fidelity).
+- `ranked`: the Push-and-Rotate-ranked candidate.
+- `oracle`: every candidate routed, the cheapest kept, stage by stage. Greedy, and
+  implementable (it is what `PhysicalPlacementStrategy`'s candidate loop does), but it
+  routes every candidate.
+
+No stage fell back to NoHome in any run, and all runs succeed on all 9 kernels.
+
+| kernel | rule events | ranked | oracle | ranked picks changed | fidelity, ranked ÷ rule |
+|---|---|---|---|---|---|
+| trotter_rand_35 | 1,104 | 1,008 (−8.7%) | 900 (−18.5%) | 35 / 56 | ×36 |
+| adder_64 | 1,544 | 1,478 (−4.3%) | 1,422 (−7.9%) | 28 / 257 | ×95 |
+| ghz_4 | 12 | 10 (−16.7%) | 10 | 1 / 2 | ×1.009 |
+| ghz_6 | 20 | 18 (−10.0%) | 18 | 1 / 3 | ×1.013 |
+| steane_physical_35 | 96 | 98 (+2.1%) | 84 (−12.5%) | 3 / 3 | ×0.93 |
+| adder_4, bv_70, qpe_9, steane_logical_5 | 474 | 474 | 474 | 1 / 88 | ×1 |
+| **total** | **3,250** | **3,086 (−5.05%)** | **2,908 (−10.5%)** | | |
+
+- **The per-stage result holds end to end**, to the event: 5.05% fewer events, the
+  same kernels gaining and the same one losing. Following the changed trajectory
+  neither compounds nor erodes the win.
+- **Lanes barely move** (3,868 → 3,884 ranked, 3,844 oracle): ranking trades the number
+  of move operations, not the atoms moved.
+- **Fidelity follows events.** It rises on every kernel whose events fall, and drops on
+  steane_physical_35 (0.0106 → 0.0098).
+- **Wall time** (single run, both of the runner's compiles, all kernels): rule 38 s,
+  ranked 40 s (+4%), oracle 74 s (about 2×; trotter_rand_35 4×).
+
 ## Caveats
 
-- **Per-stage, not end to end.** Each stage is costed from today's placement, so the
-  measurement does not follow the trajectory a ranked pick would lead to, and it counts
-  one routing per stage rather than the palindrome's forward-and-return. The effect on
-  `move_count_events` end to end can differ in either direction.
+- **Per-stage figures are settled by the end-to-end run** above, which agrees with them.
 - **The margin is thin.** The run is deterministic, but 5.05% clears the bar by 0.05
   points, and one kernel (trotter_rand_35) contributes 62% of the saving (51 of 82 ops).
 - **Cost was not measured separately.** The whole `nohome` pass, which routes every
@@ -91,9 +123,11 @@ Operations summed over all 9 physical kernels and 409 stages:
 
 ## Recommendation for phases 2–3
 
-Rank **inside `NoHomeCzPlacement`, over the per-pair mover choice** — the only space that
-passed, and the one that reaches `pipeline_default` directly (decision 2's open half). Land
-it opt-in first, and decide the default from the **end-to-end** benchmark rows rather than
-from this per-stage counterfactual, given the thin margin. The Python-generator route
-(`PhysicalPlacementStrategy` + caller-supplied candidates) is not worth pursuing on this
-evidence.
+Choose **inside `NoHomeCzPlacement`, over the per-pair mover choice**: the only space that
+passed, and the one that reaches `pipeline_default` directly (decision 2's open half). The
+Python-generator route is not worth pursuing on this evidence.
+
+The end-to-end run adds a second option. Ranking by Push and Rotate recovers half the
+available saving for about 4% more compile time. Routing every candidate and keeping the
+cheapest recovers all of it (10.5%, and no kernel regresses) for about twice the compile
+time. Which one ships, and whether it becomes the default, is a speed-versus-quality call.
