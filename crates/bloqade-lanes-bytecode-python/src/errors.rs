@@ -278,6 +278,43 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("GetItemInvalidDimsError")?;
             cls.call1((*pc, *ndims, validate::MAX_GET_ITEM_DIMS))?
         }
+        ValidationError::LocalIndexOutOfRange {
+            pc,
+            mnemonic,
+            index,
+        } => {
+            let cls = module.getattr("LocalIndexOutOfRangeError")?;
+            cls.call1((*pc, *mnemonic, *index, validate::MAX_LOCAL_INDEX))?
+        }
+        ValidationError::TooManyParameters { pc, count } => {
+            let cls = module.getattr("TooManyParametersError")?;
+            cls.call1((*pc, *count, validate::MAX_LOCAL_COUNT))?
+        }
+        ValidationError::CodeOutsideFunction { pc } => {
+            let cls = module.getattr("CodeOutsideFunctionError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::InvalidControlFlowTarget {
+            pc,
+            target,
+            expected,
+        } => {
+            let cls = module.getattr("InvalidControlFlowTargetError")?;
+            cls.call1((*pc, *target, *expected))?
+        }
+        ValidationError::CallArityMismatch {
+            pc,
+            target,
+            declared,
+            got,
+        } => {
+            let cls = module.getattr("CallArityMismatchError")?;
+            cls.call1((*pc, *target, *declared, *got))?
+        }
+        ValidationError::ReturnCountMismatch { pc, declared, got } => {
+            let cls = module.getattr("ReturnCountMismatchError")?;
+            cls.call1((*pc, *declared, *got))?
+        }
         ValidationError::InitialFillNotFirst { pc } => {
             let cls = module.getattr("InitialFillNotFirstError")?;
             cls.call1((*pc,))?
@@ -299,9 +336,26 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("StackUnderflowError")?;
             cls.call1((*pc,))?
         }
+        ValidationError::PopBelowFrameBase { pc } => {
+            let cls = module.getattr("PopBelowFrameBaseError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::StackDepthMismatch { pc, expected, got } => {
+            let cls = module.getattr("StackDepthMismatchError")?;
+            cls.call1((*pc, *expected, *got))?
+        }
         ValidationError::TypeMismatch { pc, expected, got } => {
             let cls = module.getattr("TypeMismatchError")?;
             cls.call1((*pc, *expected, *got))?
+        }
+        ValidationError::LocalTypeMismatch {
+            pc,
+            mnemonic,
+            declared,
+            got,
+        } => {
+            let cls = module.getattr("LocalTypeMismatchError")?;
+            cls.call1((*pc, *mnemonic, *declared, *got))?
         }
         ValidationError::LocationGroupValidation { pc, error } => {
             let inner = location_group_error_to_py(py, error)?;
@@ -411,6 +465,10 @@ pub fn program_error_to_py(py: Python<'_>, error: &BinaryError) -> PyErr {
             BinaryError::Decode { pc, message } => {
                 let cls = module.getattr("DecodeErrorInProgram")?;
                 cls.call1((format!("pc {pc}: {message}"),))?
+            }
+            BinaryError::Encode { message } => {
+                let cls = module.getattr("EncodeErrorInProgram")?;
+                cls.call1((message.clone(),))?
             }
         };
         Ok(obj.into())

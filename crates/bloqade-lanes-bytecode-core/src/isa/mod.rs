@@ -11,7 +11,7 @@
 //! | Device | Supplies |
 //! |---|---|
 //! | `cpu` | vihaco-cpu's `CPU` component — stack, constants, arithmetic, control flow, the heap allocator |
-//! | `lanes` | atom movement, gates, measurement, arrays, and the `pop`/`swap` the CPU lacks |
+//! | `lanes` | atom movement, gates, measurement, arrays |
 //!
 //! [`device`] declares the lanes device with [`vihaco::component!`];
 //! [`machine`] composes the pair and routes operands between the CPU stack and
@@ -51,6 +51,7 @@ pub mod device;
 pub mod machine;
 pub mod parse_helpers;
 pub mod program;
+pub mod resolve;
 pub mod syntax;
 pub mod text;
 pub mod validate;

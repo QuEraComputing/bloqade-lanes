@@ -8,13 +8,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # uv defaults to a 30s HTTP timeout, which is not enough for the large
+  # jaxlib wheels (~70 MB and growing) on a slow runner. setup-uv restores a
+  # pruned cache, so those wheels are re-downloaded on every run.
+  UV_HTTP_TIMEOUT: 300
+
 jobs:
   javascript:
     name: JavaScript syntax and controller tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - uses: extractions/setup-just@v4

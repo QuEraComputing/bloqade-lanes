@@ -25,10 +25,10 @@ fn @main() {
   lanes::lanes.cz
 
   // Error 4: stack underflow -- the location and the zone are still on the
-  // stack after `cz` consumed the float, so it takes a third `pop` to run out.
-  lanes::lanes.pop
-  lanes::lanes.pop
-  lanes::lanes.pop
+  // stack after `cz` consumed the float, so it takes a third `store` to run out.
+  cpu::cpu.store u32, 0
+  cpu::cpu.store u64, 1
+  cpu::cpu.store u64, 1
 
   cpu::cpu.halt
 }

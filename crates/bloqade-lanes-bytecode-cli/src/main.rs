@@ -206,6 +206,23 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
 fn cmd_disassemble(input: &PathBuf, output: Option<&std::path::Path>) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
     let program = from_binary(&bytes).map_err(|e| e.to_string())?;
+
+    // Only the failures that make the program *unwritable* — a target with no
+    // name, an instruction with no function to sit in. A program with dead
+    // code or a missing terminator renders fine, and is exactly the kind you
+    // disassemble in order to look at; `validate` is the subcommand for
+    // judging it.
+    let errors = bloqade_lanes_bytecode_core::isa::text::render_blockers(&program);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("  {e}");
+        }
+        return Err(format!(
+            "{} structural error(s): this binary cannot be rendered as text",
+            errors.len()
+        ));
+    }
+
     let text_out = to_text(&program);
     match output {
         Some(path) => {

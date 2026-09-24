@@ -78,11 +78,11 @@ static const char *INVALID_STRUCTURE =
     "}\n"
     SST_TAIL;
 
-/* Program that triggers a stack underflow: `pop` on an empty stack. */
+/* Program that triggers a stack underflow: `dup` on an empty stack. */
 static const char *STACK_UNDERFLOW =
     SST_HEAD
     "fn @main() {\n"
-    "  lanes::lanes.pop\n"
+    "  cpu::cpu.dup\n"
     "  cpu::cpu.halt\n"
     "}\n"
     SST_TAIL;
@@ -111,8 +111,9 @@ int main(void) {
                   "parse valid program");
         ASSERT_TRUE(prog != NULL, "program handle is non-null");
 
+        /* Four instructions plus the func_start/func_end delimiting @main. */
         uint32_t count = lanes_program_instruction_count(prog);
-        ASSERT_EQ(count, 4, "instruction count");
+        ASSERT_EQ(count, 6, "instruction count");
 
         uint16_t major = 0, minor = 0;
         lanes_program_version(prog, &major, &minor);

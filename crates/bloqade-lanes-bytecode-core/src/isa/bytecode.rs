@@ -154,8 +154,6 @@ pub enum BytecodeCpu {
 /// Encodable mirror of [`LanesInstruction`].
 #[derive(Debug, Clone, PartialEq, vihaco::Instruction)]
 pub enum BytecodeLanes {
-    Pop,
-    Swap,
     ConstLoc(u64),
     ConstLane(u64),
     ConstZone(u32),
@@ -342,8 +340,6 @@ fn decode_cpu(inst: BytecodeCpu) -> CpuInstruction {
 fn encode_lanes(inst: &LanesInstruction) -> BytecodeLanes {
     use LanesInstruction as L;
     match inst {
-        L::Pop => BytecodeLanes::Pop,
-        L::Swap => BytecodeLanes::Swap,
         L::ConstLoc(v) => BytecodeLanes::ConstLoc(*v),
         L::ConstLane(v) => BytecodeLanes::ConstLane(*v),
         L::ConstZone(v) => BytecodeLanes::ConstZone(*v),
@@ -367,8 +363,6 @@ fn encode_lanes(inst: &LanesInstruction) -> BytecodeLanes {
 fn decode_lanes(inst: BytecodeLanes) -> LanesInstruction {
     use BytecodeLanes as B;
     match inst {
-        B::Pop => LanesInstruction::Pop,
-        B::Swap => LanesInstruction::Swap,
         B::ConstLoc(v) => LanesInstruction::ConstLoc(v),
         B::ConstLane(v) => LanesInstruction::ConstLane(v),
         B::ConstZone(v) => LanesInstruction::ConstZone(v),
@@ -389,14 +383,25 @@ fn decode_lanes(inst: BytecodeLanes) -> LanesInstruction {
     }
 }
 
-/// The exhaustive instruction list the tests walk.
+/// Test helpers more than one module's tests share: the exhaustive
+/// instruction list, and the `sst v1` wrapper for hand-written modules.
 ///
-/// It lives outside `mod tests` because `machine`'s renderer tests walk the
-/// same list: there is one place to keep exhaustive, not two that can drift
+/// They live outside `mod tests` because `machine`'s and `validate`'s tests
+/// use them too: there is one place to keep exhaustive, not two that can drift
 /// apart while both look thorough.
 #[cfg(test)]
 pub(crate) mod tests_support {
     use super::*;
+
+    /// Wrap a module body — one or more `fn` blocks — in the `sst v1`
+    /// container and resolve it.
+    pub(crate) fn sst_module(body: &str) -> crate::isa::Program {
+        crate::isa::text::parse_text(&format!(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n\
+             .text(root):\n{body}.text(root).\n.section(root).\n"
+        ))
+        .expect("the module should parse")
+    }
 
     /// **Every** variant of both instruction sets.
     ///
@@ -478,8 +483,6 @@ pub(crate) mod tests_support {
         }
 
         let lanes = [
-            LanesInstruction::Pop,
-            LanesInstruction::Swap,
             LanesInstruction::ConstLoc(0x0100_0000),
             LanesInstruction::ConstLane(1),
             LanesInstruction::ConstZone(7),

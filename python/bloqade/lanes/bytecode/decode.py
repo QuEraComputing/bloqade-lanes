@@ -70,9 +70,8 @@ class StackMachineFrame:
 
         Results are pushed in reverse declaration order — the first-declared
         result (highest on the stack per the dialect convention) ends up on
-        top after pushing. For Swap this means out_top (declared first) sits
-        above out_bot (declared second). For single-result statements there
-        is only one result, so the reversed iteration is a no-op.
+        top after pushing. For single-result statements there is only one
+        result, so the reversed iteration is a no-op.
         """
         self.current_block.stmts.append(stmt)
         for result in reversed(list(stmt.results)):
@@ -120,16 +119,6 @@ class StackMachineFrame:
             raise StackUnderflowError(snapshot=self.snapshot(), required=1)
         return self.stack[-1]
 
-    def swap_values(self) -> None:
-        """Swap the top two values on the virtual stack in place.
-
-        Raises:
-            StackUnderflowError: when the stack has fewer than 2 values.
-        """
-        if len(self.stack) < 2:
-            raise StackUnderflowError(snapshot=self.snapshot(), required=2)
-        self.stack[-1], self.stack[-2] = self.stack[-2], self.stack[-1]
-
     def snapshot(self) -> tuple[ir.SSAValue, ...]:
         """Return a tuple snapshot of the stack -- used for error reporting."""
         return tuple(self.stack)
@@ -165,9 +154,9 @@ class BytecodeDecoder:
 
     Maintains a virtual stack of SSA values during decoding: each bytecode
     push emits a stack_move statement whose result is pushed onto the
-    virtual stack, and each pop consumes the top SSA reference. Stack ops
-    (Pop/Dup/Swap) emit corresponding stack_move statements (linear-IR
-    style -- see the design doc).
+    virtual stack, and each pop consumes the top SSA reference. Stack and
+    locals ops (Dup, LoadLocal, StoreLocal) emit corresponding stack_move
+    statements (linear-IR style -- see the design doc).
 
     All stack and IR manipulation is delegated to ``self.frame``; the
     handlers below are thin translators from bytecode opcodes to
@@ -177,9 +166,68 @@ class BytecodeDecoder:
     frame: StackMachineFrame = field(default_factory=StackMachineFrame)
 
     def decode(self, program: Program, kernel_name: str = "main") -> ir.Method:
+        self._require_single_function(program)
+        self._require_no_parameters(program)
         for idx, instr in enumerate(program.instructions):
             self._visit(idx, instr)
         return self._finalize(kernel_name)
+
+    @staticmethod
+    def _require_single_function(program: Program) -> None:
+        """Reject a program declaring more than one function.
+
+        This decoder lowers the whole instruction stream into one kirin block.
+        That is only right for a program with a single function: with two, the
+        bodies concatenate, and because the marker handlers skip `func_start` /
+        `func_end` the seam leaves no trace. A `@helper` declared before `@main`
+        produced a kernel whose *first* statement was the helper's `func.return`
+        and which carried two terminators in one block -- and `method.verify()`
+        accepted it, so the damage surfaced later as a kernel that returns
+        before doing anything.
+
+        Refusing is the whole fix rather than a placeholder. The compiler
+        neither emits multi-function bytecode nor lowers it through the rest of
+        the stack, so there is no correct lowering to fall back to -- only a
+        silently wrong one. The Rust side has an entry point to start from
+        (`LanesMachine::entry_point` resolves `@main`), but nothing below this
+        decoder could consume the result, and `Program` exposes no function
+        table to Python to find the span with.
+        """
+
+        starts = [
+            idx
+            for idx, instr in enumerate(program.instructions)
+            if instr.device() == "cpu" and instr.op_name() == "func_start"
+        ]
+        if len(starts) > 1:
+            raise DecodingError(
+                starts[1],
+                "func_start",
+                (),
+                f"program declares {len(starts)} functions; only a single-function "
+                f"program can be lowered to kirin",
+            )
+
+    @staticmethod
+    def _require_no_parameters(program: Program) -> None:
+        """Reject an entry point that declares parameters.
+
+        The kernel this builds takes no arguments (``_finalize``), so a
+        parameter would simply vanish. It used to be an underflow the first
+        time the body touched one; since a parameter is a local, reached with
+        ``load``, the body decodes fine and the kernel reads zero instead. Say
+        so rather than lower a different program.
+        """
+        params = program.entry_parameters
+        if params:
+            raise DecodingError(
+                0,
+                "func_start",
+                (),
+                f"the entry point declares {len(params)} parameter(s) "
+                f"({', '.join(params)}); a kernel with arguments cannot be "
+                f"lowered to kirin",
+            )
 
     def _visit(self, idx: int, instr: Instruction) -> None:
         name = instr.op_name()
@@ -249,21 +297,26 @@ class BytecodeDecoder:
             stack_move.ConstZone(value=ZoneAddress.from_inner(instr.zone_address()))
         )
 
-    def _visit_lanes_pop(self, idx: int, instr: Instruction) -> None:
-        value = self.frame.pop_value()
-        self.frame.push(stack_move.Pop(value=value))
-
     def _visit_cpu_dup(self, idx: int, instr: Instruction) -> None:
         top = self.frame.peek_value()
         self.frame.push(stack_move.Dup(value=top))
 
-    def _visit_lanes_swap(self, idx: int, instr: Instruction) -> None:
-        in_top = self.frame.pop_value()
-        in_bot = self.frame.pop_value()
-        # Swap declares results as (out_top, out_bot); auto-push in reverse
-        # declaration order pushes out_bot first then out_top, leaving
-        # out_top on top — matching the previous explicit behaviour.
-        self.frame.push(stack_move.Swap(in_top=in_top, in_bot=in_bot))
+    def _visit_cpu_store(self, idx: int, instr: Instruction) -> None:
+        value = self.frame.pop_value()
+        self.frame.push(
+            stack_move.StoreLocal(
+                value=value, index=instr.local_index(), value_type=instr.value_type()
+            )
+        )
+
+    def _visit_cpu_load(self, idx: int, instr: Instruction) -> None:
+        # A fresh SSA value: which one it copies is a question about the
+        # locals, not the stack, and ``RewriteStackMoveToMove`` answers it.
+        self.frame.push(
+            stack_move.LoadLocal(
+                index=instr.local_index(), value_type=instr.value_type()
+            )
+        )
 
     def _visit_lanes_initial_fill(self, idx: int, instr: Instruction) -> None:
         locs = self.frame.pop_n(instr.arity())
@@ -355,6 +408,19 @@ class BytecodeDecoder:
     def _visit_lanes_set_observable(self, idx: int, instr: Instruction) -> None:
         array = self.frame.pop_value()
         self.frame.push(stack_move.SetObservable(array=array))
+
+    def _visit_cpu_func_start(self, idx: int, instr: Instruction) -> None:
+        # `func_start`/`func_end` delimit a function in the code stream — they
+        # are structure, not stack operations, and vihaco executes them as
+        # no-ops. Skipping them is safe only because `_require_single_function`
+        # has already established there is exactly one pair: the body they
+        # delimit is the whole program, so the boundary carries nothing this
+        # decoder needs. Do not relax that check without giving these handlers
+        # something to do.
+        return None
+
+    def _visit_cpu_func_end(self, idx: int, instr: Instruction) -> None:
+        return None
 
     def _visit_cpu_halt(self, idx: int, instr: Instruction) -> None:
         # The bytecode ``halt`` opcode has no stack_move counterpart —

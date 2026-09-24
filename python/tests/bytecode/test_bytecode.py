@@ -20,10 +20,15 @@ from bloqade.lanes.bytecode.exceptions import (
     FeedForwardNotSupportedError,
     GetItemInvalidDimsError,
     InitialFillNotFirstError,
+    LocalIndexOutOfRangeError,
+    LocalTypeMismatchError,
     MissingTerminatorError,
     MissingVersionError,
     NewArrayTooManyElementsError,
+    PopBelowFrameBaseError,
+    StackDepthMismatchError,
     StackUnderflowError,
+    TooManyParametersError,
     TypeMismatchError,
     UnalignedCodeError,
     UnreachableInstructionError,
@@ -188,9 +193,31 @@ class TestInstruction:
         assert Instruction.const_zone(zone_id=0).op_name() == "const_zone"
 
     def test_stack_ops(self):
-        assert Instruction.pop().op_name() == "pop"
         assert Instruction.dup().op_name() == "dup"
-        assert Instruction.swap().op_name() == "swap"
+        assert Instruction.load("u64", 0).op_name() == "load"
+        assert Instruction.store("u64", 0).op_name() == "store"
+
+    def test_there_is_no_pop_or_swap(self):
+        """Locals spell both: see ``Instruction.load``/``store``."""
+        assert not hasattr(Instruction, "pop")
+        assert not hasattr(Instruction, "swap")
+
+    def test_load_and_store_carry_their_type_and_index(self):
+        for factory, op in ((Instruction.load, "load"), (Instruction.store, "store")):
+            instr = factory("heap_ref", 7)
+            assert (instr.value_type(), instr.local_index()) == ("heap_ref", 7)
+            assert repr(instr) == f'Instruction.{op}("heap_ref", 7)'
+            assert instr.device() == "cpu"
+        with pytest.raises(RuntimeError):
+            Instruction.halt().local_index()
+        with pytest.raises(RuntimeError):
+            Instruction.halt().value_type()
+
+    def test_load_and_store_refuse_what_is_not_a_type_or_an_index(self):
+        with pytest.raises(ValueError, match="unknown value type"):
+            Instruction.load("float", 0)
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.store("u64", -1)
 
     def test_atom_ops(self):
         assert Instruction.initial_fill(2).op_name() == "initial_fill"
@@ -224,9 +251,11 @@ class TestInstruction:
     def test_equality(self):
         a = Instruction.halt()
         b = Instruction.halt()
-        c = Instruction.pop()
+        c = Instruction.dup()
         assert a == b
         assert a != c
+        assert Instruction.load("u64", 0) != Instruction.load("u64", 1)
+        assert Instruction.load("u64", 0) != Instruction.load("i64", 0)
 
 
 class TestInstructionAccessors:
@@ -238,9 +267,9 @@ class TestInstructionAccessors:
             (Instruction.const_loc(0, 0, 0), "const_loc"),
             (Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0), "const_lane"),
             (Instruction.const_zone(0), "const_zone"),
-            (Instruction.pop(), "pop"),
             (Instruction.dup(), "dup"),
-            (Instruction.swap(), "swap"),
+            (Instruction.load("u64", 0), "load"),
+            (Instruction.store("u64", 0), "store"),
             (Instruction.initial_fill(1), "initial_fill"),
             (Instruction.fill(1), "fill"),
             (Instruction.move_(1), "move"),
@@ -273,7 +302,7 @@ class TestInstructionAccessors:
         with pytest.raises(RuntimeError):
             Instruction.const_float(0.0).arity()
         with pytest.raises(RuntimeError):
-            Instruction.pop().arity()
+            Instruction.dup().arity()
         with pytest.raises(RuntimeError):
             Instruction.cz().arity()
 
@@ -311,12 +340,12 @@ class TestInstructionAccessors:
         assert instr.dim0() == 4
         assert instr.dim1() == 2
         with pytest.raises(RuntimeError):
-            Instruction.pop().type_tag()
+            Instruction.dup().type_tag()
 
     def test_get_item_ndims(self):
         assert Instruction.get_item(3).ndims() == 3
         with pytest.raises(RuntimeError):
-            Instruction.pop().ndims()
+            Instruction.dup().ndims()
 
 
 class TestInstructionAddressValidation:
@@ -413,8 +442,9 @@ class TestProgramConstruction:
             ],
         )
         assert program.version == (1, 0)
-        assert len(program) == 3
-        assert len(program.instructions) == 3
+        # Three instructions plus the `func_start`/`func_end` delimiting `@main`.
+        assert len(program) == 5
+        assert len(program.instructions) == 5
 
     def test_from_text(self):
         source = _sst("""\
@@ -426,7 +456,8 @@ fn @main() {
 """)
         program = Program.from_text(source)
         assert program.version == (1, 0)
-        assert len(program) == 3
+        # Three instructions plus `@main`'s two function markers.
+        assert len(program) == 5
 
     def test_from_text_invalid(self):
         # Well-formed container, no `.header(root)` section — spelled out
@@ -493,20 +524,33 @@ fn @main() {
         assert "VHBC" in str(e.value)
 
     def test_unaligned_binary_raises_unaligned_code_error(self):
-        # Grow the bytecode region by one byte, and the section holding it, so
-        # the container stays well-formed and the only fault is that the region
-        # is no longer a whole number of instruction words. Offsets follow the
-        # container layout: section_len at 16, bytecode_len at 36, bytecode at 44.
-        SECTION_LEN, BYTECODE_LEN, BYTECODE = 16, 36, 44
+        # Grow the bytecode region by one byte, and everything whose extent or
+        # offset covers it, so the container stays well-formed and the only
+        # fault is that the region is no longer a whole number of instruction
+        # words. Offsets are read out of the file rather than hard-coded.
         raw = bytearray(self._sample_program().to_binary())
 
-        def bump(at):
-            v = int.from_bytes(raw[at : at + 8], "little") + 1
-            raw[at : at + 8] = v.to_bytes(8, "little")
+        def u64(at):
+            return int.from_bytes(raw[at : at + 8], "little")
 
-        bump(SECTION_LEN)
-        bump(BYTECODE_LEN)
-        raw.insert(BYTECODE, 0)
+        def bump(at):
+            raw[at : at + 8] = (u64(at) + 1).to_bytes(8, "little")
+
+        FILE_HEADER = 16
+        section = FILE_HEADER + u64(8)  # past the global context
+        bytecode_len_at = section + 16 + u64(section + 8)
+        bytecode_at = bytecode_len_at + 8
+        code_len = u64(bytecode_len_at)
+
+        bump(section)  # section_len
+        bump(bytecode_len_at)
+        raw.insert(bytecode_at + code_len, 0)
+
+        # The child sections shifted with the insert.
+        child_table = bytecode_at + code_len + 1
+        child_count = int.from_bytes(raw[child_table : child_table + 4], "little")
+        for i in range(child_count):
+            bump(child_table + 4 + i * 12 + 4)
 
         with pytest.raises(UnalignedCodeError):
             Program.from_binary(bytes(raw))
@@ -548,7 +592,7 @@ fn @main() {
     def test_stack_validation(self):
         program = Program.from_text(_sst("""\
 fn @main() {
-  lanes::lanes.pop
+  cpu::cpu.dup
 }
 """))
         with pytest.raises(ValidationError) as exc_info:
@@ -783,13 +827,14 @@ class TestDecoderDispatch:
         program = Program.from_text(
             _sst("fn @main() {\n  cpu::cpu.get_item\n  cpu::cpu.halt\n}\n")
         )
-        instr = program.instructions[0]
+        # Index 1: index 0 is `@main`'s `func_start`.
+        instr = program.instructions[1]
         assert (instr.device(), instr.op_name()) == ("cpu", "get_item")
 
         with pytest.raises(DecodingError) as exc_info:
             BytecodeDecoder().decode(program)
         assert "`cpu::get_item` has no stack_move representation" in str(exc_info.value)
-        assert exc_info.value.instruction_index == 0
+        assert exc_info.value.instruction_index == 1
 
     def test_lanes_get_item_still_decodes(self):
         # The other half of the pair must be unaffected.
@@ -800,11 +845,12 @@ class TestDecoderDispatch:
                 "  lanes::lanes.new_array 1 1 0\n"
                 "  cpu::cpu.const i64, 0\n"
                 "  lanes::lanes.get_item 1\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )
-        instr = program.instructions[3]
+        # Index 4: the leading `func_start` shifts every body instruction.
+        instr = program.instructions[4]
         assert (instr.device(), instr.op_name()) == ("lanes", "get_item")
         BytecodeDecoder().decode(program)  # should not raise
 
@@ -861,11 +907,183 @@ class TestArrayOperandBounds:
                 "  cpu::cpu.const i64, 0\n"
                 "  cpu::cpu.const i64, 0\n"
                 "  lanes::lanes.get_item 2\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )
         program.validate(stack=True)  # should not raise
+
+
+class TestLocalIndexBounds:
+    """``load``/``store`` take a local index straight out of the instruction
+    word, and ``store`` grows the operand stack to reach it — so the validator
+    bounds the index rather than letting it become an allocation."""
+
+    def test_store_local_index_is_bounded(self):
+        # 200_000_000 measured at 3.2 GB resident in issue #1032; u32::MAX
+        # would be ~68 GB. The assertion is on the operand the validator
+        # reports, not on the allocator noticing.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const u64, 7\n"
+                "  cpu::cpu.store u64, 200000000\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, LocalIndexOutOfRangeError)
+        ]
+        assert errs and errs[0].index == 200_000_000
+        assert errs[0].mnemonic == "store"
+        # pc 2: address 0 is `@main`'s `func_start`, 1 is the `const`.
+        assert errs[0].pc == 2
+
+    def test_load_local_index_is_bounded(self):
+        program = Program.from_text(
+            _sst("fn @main() {\n  cpu::cpu.load u64, 4294967295\n  cpu::cpu.halt\n}\n")
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, LocalIndexOutOfRangeError)
+        ]
+        assert errs and errs[0].mnemonic == "load"
+
+    def test_an_ordinary_local_index_is_accepted(self):
+        # The compiler spills to a handful of slots, so a small index is the
+        # whole legitimate range and must keep validating.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const u64, 7\n"
+                "  cpu::cpu.store u64, 0\n"
+                "  cpu::cpu.load u64, 0\n"
+                "  cpu::cpu.store u64, 1\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        program.validate()  # should not raise
+
+
+class TestTypedLocals:
+    """``load``/``store`` name a vihaco type, and validation checks it the way
+    the machine does."""
+
+    def test_a_store_of_another_type_is_reported(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n  cpu::cpu.const i64, 7\n  cpu::cpu.store undef, 0\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, LocalTypeMismatchError)
+        ]
+        assert len(errs) == 1
+        assert (errs[0].mnemonic, errs[0].declared, errs[0].got) == (
+            "store",
+            "undef",
+            "i64",
+        )
+
+    def test_a_placeholder_is_stored_under_any_type(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n"
+                "  lanes::lanes.measure 1\n  lanes::lanes.await_measure\n"
+                "  cpu::cpu.store f64, 0\n  cpu::cpu.halt\n}\n"
+            )
+        )
+        program.validate(stack=True)  # should not raise
+
+    def test_a_parameter_list_past_the_frame_bound_is_reported(self):
+        params = ", ".join(f"p{i}: u32" for i in range(1025))
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n  cpu::cpu.halt\n}\n\n"
+                f"fn @wide({params}) {{\n  cpu::cpu.ret 0\n}}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, TooManyParametersError)
+        ]
+        assert len(errs) == 1
+        assert (errs[0].count, errs[0].maximum) == (1025, 1024)
+
+
+class TestStackDataflow:
+    """The stack simulation walks each function's control-flow graph, from a
+    frame seeded by its declared parameters (#1042)."""
+
+    def test_a_callee_consuming_its_parameter_validates(self):
+        # Simulated from an empty stack, the argument looked like an underflow.
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  lanes::lanes.const_zone 0x00000000\n"
+                "  cpu::cpu.call 1, helper\n"
+                "  cpu::cpu.store heap_ref, 0\n"
+                "  cpu::cpu.halt\n}\n\n"
+                "fn @helper(z: u32) -> heap_ref {\n"
+                "  cpu::cpu.load u32, 0\n"
+                "  lanes::lanes.measure 1\n"
+                "  lanes::lanes.await_measure\n"
+                "  cpu::cpu.ret 1\n}\n"
+            )
+        )
+        program.validate(stack=True)  # should not raise
+
+    def test_popping_a_callers_value_is_a_frame_underflow(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  lanes::lanes.const_zone 0x00000000\n"
+                "  cpu::cpu.call 0, helper\n"
+                "  lanes::lanes.cz\n"
+                "  cpu::cpu.halt\n}\n\n"
+                "fn @helper() {\n"
+                "  lanes::lanes.cz\n"
+                "  cpu::cpu.ret 0\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, PopBelowFrameBaseError)
+        ]
+        assert [e.pc for e in errs] == [7]
+        # Still catchable as the underflow it is.
+        assert isinstance(errs[0], StackUnderflowError)
+
+    def test_arms_leaving_different_depths_are_rejected(self):
+        program = Program.from_text(
+            _sst(
+                "fn @main() {\n"
+                "  cpu::cpu.const bool, true\n"
+                "  cpu::cpu.cond_br @one, @zero\n"
+                "  cpu::cpu.label @one\n"
+                "  lanes::lanes.const_zone 0x00000000\n"
+                "  cpu::cpu.br @done\n"
+                "  cpu::cpu.label @zero\n"
+                "  cpu::cpu.br @done\n"
+                "  cpu::cpu.label @done\n"
+                "  cpu::cpu.halt\n}\n"
+            )
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(stack=True)
+        errs = [
+            e for e in exc_info.value.errors if isinstance(e, StackDepthMismatchError)
+        ]
+        assert len(errs) == 1
+        assert (errs[0].expected, errs[0].got) in {(0, 1), (1, 0)}
 
 
 class TestMeasurementPipeline:
@@ -884,7 +1102,7 @@ class TestMeasurementPipeline:
                 "  lanes::lanes.measure 1\n"
                 "  lanes::lanes.await_measure\n"
                 "  lanes::lanes.set_detector\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )
@@ -900,7 +1118,7 @@ class TestMeasurementPipeline:
                 "  cpu::cpu.const i64, 1\n"
                 "  lanes::lanes.new_array 9 1 0\n"
                 "  lanes::lanes.set_observable\n"
-                "  lanes::lanes.pop\n"
+                "  cpu::cpu.store undef, 0\n"
                 "  cpu::cpu.halt\n}\n"
             )
         )

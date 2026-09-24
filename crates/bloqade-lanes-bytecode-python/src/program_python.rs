@@ -23,13 +23,16 @@ pub struct PyProgram {
 #[pymethods]
 impl PyProgram {
     #[new]
-    fn new(version: (u16, u16), instructions: Vec<PyRef<'_, PyInstruction>>) -> Self {
-        Self {
-            inner: rs_prog::from_code(
-                Version::new(version.0, version.1),
-                instructions.iter().map(|i| i.inner.clone()).collect(),
-            ),
-        }
+    fn new(version: (u16, u16), instructions: Vec<PyRef<'_, PyInstruction>>) -> PyResult<Self> {
+        // `from_code` wraps the body in the function markers, so a list that
+        // already carries them would be wrapped twice. It says so rather than
+        // building a malformed program.
+        let inner = rs_prog::from_code(
+            Version::new(version.0, version.1),
+            instructions.iter().map(|i| i.inner.clone()).collect(),
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
     }
 
     #[staticmethod]
@@ -38,8 +41,15 @@ impl PyProgram {
         Ok(Self { inner: program })
     }
 
-    fn to_text(&self) -> String {
-        to_text(&self.inner)
+    fn to_text(&self, py: Python<'_>) -> PyResult<String> {
+        // Same gate as the CLI's `disassemble`: `to_text` must name every
+        // branch and call target, and a decoded program can carry ones with no
+        // name. Rendering them anyway produced text `from_text` rejects.
+        let errors = bloqade_lanes_bytecode_core::isa::text::render_blockers(&self.inner);
+        if !errors.is_empty() {
+            return Err(crate::errors::validation_errors_to_py(py, errors));
+        }
+        Ok(to_text(&self.inner))
     }
 
     #[staticmethod]
@@ -61,7 +71,8 @@ impl PyProgram {
     /// With no arguments, runs structural validation only.
     /// With `arch=spec`, also validates addresses and device-capability
     /// constraints against the architecture.
-    /// With `stack=True`, also runs stack-type simulation (underflow, type
+    /// With `stack=True`, also runs the stack-type simulation over every
+    /// function's control flow (underflow, frame and depth errors, type
     /// mismatches, and lane/location group checks).
     #[pyo3(signature = (arch=None, stack=false))]
     fn validate(&self, py: Python<'_>, arch: Option<&PyArchSpec>, stack: bool) -> PyResult<()> {
@@ -87,6 +98,22 @@ impl PyProgram {
         (
             self.inner.extra.version.major,
             self.inner.extra.version.minor,
+        )
+    }
+
+    /// The entry point's declared parameter types, spelled as in the text
+    /// format; empty when it takes none, or the program has no entry point.
+    #[getter]
+    fn entry_parameters(&self) -> Vec<&'static str> {
+        rs_prog::entry_function(&self.inner).map_or_else(
+            |_| Vec::new(),
+            |f| {
+                f.signature
+                    .params
+                    .iter()
+                    .map(|p| bloqade_lanes_bytecode_core::isa::machine::cpu_type_text(p.ty))
+                    .collect()
+            },
         )
     }
 
