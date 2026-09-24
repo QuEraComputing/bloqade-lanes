@@ -1017,7 +1017,9 @@ mod tests {
     }
 
     /// The storage/gate spec with a third gate word and **overlapping**
-    /// entangling pairs `[1, 2]` and `[2, 3]`, which validation allows.
+    /// entangling pairs `[1, 2]` and `[2, 3]`. `ArchSpec::validate` rejects
+    /// this shape (a word has at most one partner per zone), so it must be
+    /// loaded unvalidated.
     fn overlapping_pairs_arch_json() -> String {
         let mut spec: serde_json::Value = serde_json::from_str(storage_gate_arch_json()).unwrap();
         spec["words"]
@@ -1040,11 +1042,13 @@ mod tests {
     /// With overlapping entangling pairs two slots can share a half. Here the
     /// cheapest assignment puts `[1, 2]` and `[2, 3]` both at site 0, sharing
     /// (1, 2, 0), so the stage is unplaceable rather than given colliding
-    /// targets. The distance table is built directly: the engine's entangling
-    /// cache debug-asserts one partner per location, which this spec breaks.
+    /// targets. Validation now rejects such specs, so this covers the
+    /// defensive guard for callers that bypass it. The distance table is built
+    /// directly: the engine's entangling cache debug-asserts one partner per
+    /// location, which this spec breaks.
     #[test]
     fn free_slots_reject_a_shared_half_across_overlapping_pairs() {
-        let engine = SearchEngine::from_json_validated(&overlapping_pairs_arch_json()).unwrap();
+        let engine = SearchEngine::from_json(&overlapping_pairs_arch_json()).unwrap();
         let arch = engine.index().arch_spec();
         let dist_table =
             DistanceTable::new(&entangling::all_entangling_locations(arch), engine.index());
