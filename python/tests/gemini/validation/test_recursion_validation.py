@@ -236,11 +236,11 @@ def test_passing_a_parameter_to_a_subkernel_is_allowed():
     enclosing kernel's other parameters -- must not trip it.
     """
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def flip(q):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def outer(q):
         flip(q)
 
@@ -302,7 +302,7 @@ def test_opaque_call_inside_a_reachable_callee_is_rejected():
 
 
 def test_non_recursive_subkernel_calls_are_unaffected():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def flip(q):
         squin.x(q)
 
@@ -319,15 +319,15 @@ def test_non_recursive_subkernel_calls_are_unaffected():
 def test_diamond_call_graph_is_not_a_cycle():
     """Two paths to the same callee is sharing, not recursion."""
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def leaf(q):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def left(q):
         leaf(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def right(q):
         leaf(q)
 
@@ -342,7 +342,7 @@ def test_diamond_call_graph_is_not_a_cycle():
 
 
 def test_callgraph_records_edges_caller_to_callee():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def leaf(q):
         squin.x(q)
 
@@ -374,15 +374,15 @@ def test_callgraph_terminates_and_finds_multi_node_cycles():
     is exercised directly on an injected cycle.
     """
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def a(q):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def b(q):
         squin.y(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def c(q):
         squin.z(q)
 
@@ -399,11 +399,11 @@ def test_callgraph_terminates_and_finds_multi_node_cycles():
 
 
 def test_callgraph_reports_one_cycle_per_group():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def a(q):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def b(q):
         squin.y(q)
 
@@ -424,15 +424,15 @@ def test_cycle_below_the_entry_reports_the_route():
     cycle would then leave the reader with no way to find it.
     """
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def a(q):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def b(q):
         squin.y(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def c(q):
         squin.z(q)
 
@@ -457,11 +457,11 @@ def test_no_recursion_validation_pass_reports_no_errors_for_acyclic_kernel():
 
 
 def test_format_cycle_closes_the_loop():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def a(q):
         squin.x(q)
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def b(q):
         squin.y(q)
 

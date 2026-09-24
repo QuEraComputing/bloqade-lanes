@@ -21,7 +21,8 @@ fn @main() {
 ")
 }
 
-/// All 23 instructions exercised in a single program.
+/// All 23 distinct instructions exercised in a single program
+/// (25 code slots, counting `@main`'s two function markers).
 /// Ordered so that initial_fill comes right after constants (structurally valid).
 fn all_instructions_program() -> String {
     sst("\
@@ -32,9 +33,9 @@ fn @main() {
   lanes::lanes.const_lane 0x8000000000010002
   lanes::lanes.const_zone 0x00000003
   lanes::lanes.initial_fill 3
-  lanes::lanes.pop
+  cpu::cpu.store f64, 0
   cpu::cpu.dup
-  lanes::lanes.swap
+  cpu::cpu.load f64, 0
   lanes::lanes.fill 2
   lanes::lanes.move 1
   lanes::lanes.local_r 4
@@ -80,7 +81,7 @@ fn test_assemble_creates_binary() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("assembled 23 instructions"));
+        .stderr(predicate::str::contains("assembled 25 instructions"));
 
     let bytes = fs::read(&output).unwrap();
     // Should start with vihaco's container magic
@@ -146,7 +147,7 @@ fn test_disassemble_to_file() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("disassembled 23 instructions"));
+        .stderr(predicate::str::contains("disassembled 25 instructions"));
 
     let text = fs::read_to_string(&output_txt).unwrap();
     // Spot-check all instruction categories are present. Each is asserted with
@@ -157,9 +158,9 @@ fn test_disassemble_to_file() {
         "lanes::lanes.const_loc",
         "lanes::lanes.const_lane",
         "lanes::lanes.const_zone",
-        "lanes::lanes.pop",
+        "cpu::cpu.store f64, 0",
         "cpu::cpu.dup",
-        "lanes::lanes.swap",
+        "cpu::cpu.load f64, 0",
         "lanes::lanes.initial_fill 3",
         "lanes::lanes.fill 2",
         "lanes::lanes.move 1",
@@ -228,6 +229,89 @@ fn test_round_trip_assemble_disassemble() {
     assert_eq!(b1, b2, "round-trip binary mismatch");
 }
 
+/// The same round trip for a program with more than one function.
+///
+/// `test_round_trip_assemble_disassemble` above uses a single flat `@main`,
+/// which is what every CLI test used to do — so the whole symbol-table path
+/// (the `functions`, `labels` and `strings` child sections, the `call` target
+/// patched to an address and named back, the labels resolved and re-emitted)
+/// went through the CLI untested. Byte equality across the second assemble is
+/// what pins it: a name resolved to the wrong address, or a label dropped,
+/// diverges here even when both halves parse.
+#[test]
+fn test_round_trip_preserves_functions_and_labels() {
+    let dir = TempDir::new().unwrap();
+    let input_txt = dir.path().join("prog.sst");
+    let binary = dir.path().join("prog.bin");
+    let output_txt = dir.path().join("out.sst");
+    let binary2 = dir.path().join("prog2.bin");
+
+    fs::write(
+        &input_txt,
+        sst("fn @main() {\n  \
+             cpu::cpu.call 0, helper\n  \
+             cpu::cpu.halt\n\
+             }\n\n\
+             fn @helper() {\n  \
+             cpu::cpu.label @spin\n  \
+             cpu::cpu.br @spin\n\
+             }\n"),
+    )
+    .unwrap();
+
+    cmd()
+        .args([
+            "assemble",
+            input_txt.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    cmd()
+        .args([
+            "disassemble",
+            binary.to_str().unwrap(),
+            "-o",
+            output_txt.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    cmd()
+        .args([
+            "assemble",
+            output_txt.to_str().unwrap(),
+            "-o",
+            binary2.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Both function names survive the trip through binary, where they live in
+    // the `strings` table rather than in the text.
+    let rendered = fs::read_to_string(&output_txt).unwrap();
+    assert!(
+        rendered.contains("fn @main()") && rendered.contains("fn @helper()"),
+        "both functions should be named, not synthesised as F<address>:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("cpu::cpu.call 0, helper"),
+        "the call should name its callee:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("label @spin"),
+        "the label should survive:\n{rendered}"
+    );
+
+    assert_eq!(
+        fs::read(&binary).unwrap(),
+        fs::read(&binary2).unwrap(),
+        "round-trip binary mismatch for a multi-function program"
+    );
+}
+
 #[test]
 fn test_validate_text_file() {
     let dir = TempDir::new().unwrap();
@@ -238,7 +322,7 @@ fn test_validate_text_file() {
         .args(["validate", input.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("valid (23 instructions)"));
+        .stderr(predicate::str::contains("valid (25 instructions)"));
 }
 
 #[test]
@@ -262,7 +346,7 @@ fn test_validate_binary_file() {
         .args(["validate", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("valid (23 instructions)"));
+        .stderr(predicate::str::contains("valid (25 instructions)"));
 }
 
 #[test]

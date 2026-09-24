@@ -6,6 +6,7 @@ from kirin.dialects import scf
 
 from bloqade import qubit
 from bloqade.gemini.logical.dialects import extensions
+from bloqade.gemini.common.validation.static_call import UnrollFixableError
 
 from .analysis import _GeminiLogicalValidationAnalysis
 
@@ -37,7 +38,7 @@ class __ScfGeminiLogicalValidation(_interp.MethodTable):
         if not isinstance(stmt.iterable.hints.get("const"), const.Value):
             interp.add_validation_error(
                 stmt,
-                ir.ValidationError(
+                UnrollFixableError(
                     stmt,
                     "Non-constant iterable in for loop is not supported in Gemini logical programs!",
                 ),

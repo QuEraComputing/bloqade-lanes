@@ -87,7 +87,7 @@ def test_the_message_names_the_offending_parameter():
 def test_a_sub_kernel_may_take_arguments():
     """It is handed its qubits, so it is not a program -- see the module docstring."""
 
-    @logical.kernel
+    @logical.kernel(verify=False)
     def flip(q):
         squin.x(q)
 
@@ -97,7 +97,7 @@ def test_a_sub_kernel_may_take_arguments():
 def test_a_sub_kernel_with_arguments_still_compiles_into_a_program():
     """The pattern end to end: the helper is inlined, the program takes nothing."""
 
-    @logical.kernel
+    @logical.kernel(verify=False)
     def flip(q):
         squin.x(q)
 

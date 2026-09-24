@@ -177,7 +177,7 @@ expect_pass "well-typed program" validate "$WORK/typed_ok.sst" --simulate-stack
 
 prog underflow <<'EOF'
 fn @main() {
-  lanes::lanes.pop
+  cpu::cpu.dup
   cpu::cpu.ret 0
 }
 EOF

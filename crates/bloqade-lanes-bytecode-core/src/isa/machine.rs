@@ -22,13 +22,50 @@
 //! stay lanes instructions while still behaving like stack pushes.
 //!
 //! [`super::validate::simulate_stack`] is the static half of this: it models
-//! the same pops *and the same pushes*, so a program it accepts runs without
-//! underflowing. The ops the device does not interpret hold up their end by
-//! pushing [`Value::Undefined`] placeholders — the depth the simulator
-//! predicts, with a value nothing can mistake for a result.
+//! the same pops *and the same pushes*, so a program it accepts does not
+//! underflow on any path it checks. That is every path except those past a
+//! `call_indirect`, whose arity only the run knows, and any path merging with
+//! one (TODO(vihaco#110): close with a declared signature on `call_indirect`).
+//! The ops the device does not interpret hold up their end by pushing
+//! [`Value::Undefined`] placeholders — the depth the simulator predicts, with
+//! a value nothing can mistake for a result.
+//!
+//! ## Frames: vihaco#110's model, emulated on 0.4.1
+//!
+//! vihaco 0.4.1 gives a function no locals of its own: `call arity` sets
+//! `base = stack.len() - arity`, and local `n` is `stack[base + n]`, so past
+//! the arguments a local *is* whatever was pushed next. vihaco#110 (merged
+//! upstream, in no release yet) splits the frame instead:
+//!
+//! ```text
+//! [caller's values][locals: parameters, then scratch][operands]
+//!                   ^ base                            ^ base + local_count
+//! ```
+//!
+//! This machine runs that model today, so the compiler and the validator can
+//! be written against it once. On entry and after every `call` it reserves
+//! the callee's [`local_count`](vihaco::module::FunctionInfo::local_count)
+//! slots past its arguments; every operand pop, CPU or lanes, is floored at
+//! the first operand; and `load`/`store` must name a reserved slot, so a
+//! `store` can no longer grow the stack.
+//!
+//! A reserved slot starts as [`Value::Undefined`], and a typed `load` of any
+//! local holding `Undefined` reads that type's zero — whether nothing wrote
+//! it or it holds a placeholder a lanes op pushed, stored or passed in as an
+//! argument. That is what the bump will do: #110 zero-fills the frame, and
+//! under vihaco#85's untyped words a placeholder is a zero word too, and no
+//! `load` can fail on a type. A local holding a *concrete* value of another
+//! type is still 0.4.1's type error; `load undef` reads a placeholder as
+//! itself and refuses every concrete value.
+//!
+//! TODO(vihaco#110): the bump deletes this shim — `frame_locals`,
+//! [`push_locals`](LanesMachine::push_locals), the operand floor and the
+//! zero-reading `load` — and passes `local_count` to the CPU in its
+//! `FunctionInfo` message instead. [`check_frame`](LanesMachine::check_frame)
+//! stays, in front of that message. Nothing outside this module changes.
 
 use vihaco::frame::Frame;
-use vihaco::machine::StackFrame;
+use vihaco::machine::{FrameMemory, StackFrame};
 use vihaco::traits::StackMemory;
 use vihaco::{Effects, GeneratedComponent, ProgramImage, Type, Value, composite};
 use vihaco_cpu::{CPU, SurfaceInstruction as CpuSurfaceInstruction};
@@ -40,7 +77,26 @@ use super::container::LanesContext;
 use super::device::{Lanes, LanesEffect, LanesInstruction, LanesMessage};
 use super::program::LanesInfo;
 use super::program::Program;
-use super::validate::array_element_count;
+use super::validate::{MAX_LOCAL_COUNT, array_element_count};
+
+/// Most values the stack may hold after any instruction.
+///
+/// A frame reserves at most [`MAX_LOCAL_COUNT`] locals, but recursion reserves
+/// a frame per level, and a loop that only pushes grows the stack without
+/// reserving anything. The step budget bounds both only as loosely as the
+/// caller chose it, so the stack has a bound of its own: 2²⁰ values is 16 MB,
+/// room for a thousand levels of the largest frame or a million of the
+/// smallest.
+///
+/// Checked once per step, in [`run_with_args`](LanesMachine::run_with_args).
+/// That covers every way the stack grows — CPU pushes, lanes effects, and
+/// reserved locals — because no instruction grows it by more than one value
+/// except a `call`, which reserves at most [`MAX_LOCAL_COUNT`]; so the stack
+/// never overshoots the bound by more than one frame.
+///
+/// TODO(vihaco#110): the bump keeps this. #110's `call` still resizes the
+/// stack to reserve the callee's locals.
+pub const MAX_STACK_SLOTS: usize = 1 << 20;
 
 /// The combined instruction set: one variant per device.
 pub type MachineInstruction = lanes_machine::runtime::Instruction;
@@ -76,6 +132,13 @@ pub struct LanesMachine {
 
     #[device(0x01)]
     lanes: Lanes,
+
+    /// How many locals each live frame reserves, innermost last — one entry
+    /// per CPU frame. vihaco 0.4.1's `Frame` has no field for it, which is
+    /// the whole of why this exists; see the module docs.
+    ///
+    /// TODO(vihaco#110): `Frame::local_count` replaces this.
+    frame_locals: Vec<u32>,
 }
 
 /// Why [`LanesMachine::run`] stopped.
@@ -110,21 +173,29 @@ pub struct Run {
     pub steps: u64,
 }
 
+/// The frame `@main` runs in: based at the bottom of the stack, returning
+/// nowhere.
+fn entry_frame() -> Frame {
+    Frame {
+        base: 0,
+        span: (0, 0, 0),
+        function: None,
+        ret_pc: 0,
+    }
+}
+
 impl LanesMachine {
     /// A machine ready to run, with the entry frame already pushed.
     ///
-    /// vihaco's locals are a window into the operand stack starting at the
-    /// current frame's `base`, so `load`/`store` and `ret` all fail with "no
-    /// current frame" until one exists. A `call` pushes its own; `@main` is
-    /// entered without one, so the machine establishes it.
+    /// vihaco's locals are addressed from the current frame's `base`, so
+    /// `load`/`store` and `ret` all fail with "no current frame" until one
+    /// exists. A `call` pushes its own; `@main` is entered without one, so the
+    /// machine establishes it. It reserves no locals: [`run`](Self::run)
+    /// re-enters with the entry point's own count.
     pub fn new() -> Self {
         let mut machine = Self::default();
-        machine.cpu.push_frame(Frame {
-            base: 0,
-            span: (0, 0, 0),
-            function: None,
-            ret_pc: 0,
-        });
+        machine.cpu.push_frame(entry_frame());
+        machine.frame_locals.push(0);
         machine
     }
 
@@ -147,12 +218,36 @@ impl LanesMachine {
     /// forever, and the ISA carries vihaco-cpu's control flow whether or not
     /// the lanes compiler emits it, so the budget is a parameter rather than
     /// an assumption.
+    ///
+    /// The entry point is entered with no arguments; one that declares
+    /// parameters needs [`run_with_args`](Self::run_with_args).
     pub fn run(&mut self, program: &Program, max_steps: u64) -> eyre::Result<Run> {
+        self.run_with_args(program, &[], max_steps)
+    }
+
+    /// [`run`](Self::run) an entry point that takes arguments.
+    ///
+    /// `args` are pushed before the first instruction, in declaration order,
+    /// so they sit at the bottom of the entry frame as locals `0..args.len()`
+    /// — where a `call` leaves a callee's. That is the frame `simulate_stack`
+    /// assumes for every function, the entry included.
+    ///
+    /// They are checked against the entry point's declaration, count and
+    /// type, the way `validate` checks a `call` against its callee's. The host
+    /// is the entry point's only caller, and without the check a missing
+    /// argument surfaces mid-run as an out-of-bounds `load`, far from its
+    /// cause.
+    pub fn run_with_args(
+        &mut self,
+        program: &Program,
+        args: &[Value],
+        max_steps: u64,
+    ) -> eyre::Result<Run> {
         use vihaco_cpu::StepOutcome;
 
         let mut effects = Vec::new();
         let mut steps = 0u64;
-        let mut pc = 0usize;
+        let mut pc = self.enter(program, args)?;
 
         let stopped = loop {
             let Some(inst) = program.code.get(pc) else {
@@ -172,7 +267,7 @@ impl LanesMachine {
                     collect(self.step_lanes(inst.clone())?, &mut effects);
                 }
                 MachineInstruction::Cpu(inst) => {
-                    match self.cpu.execute_instruction(inst.clone())? {
+                    match self.step_cpu(program, inst)? {
                         StepOutcome::Halt => break Stopped::Halted,
                         // `op_return` reports `Return` only when it pops the
                         // last frame; an inner return sets the resume address
@@ -181,6 +276,14 @@ impl LanesMachine {
                         StepOutcome::Continue | StepOutcome::Breakpoint => {}
                     }
                 }
+            }
+
+            let depth = self.cpu.stack().len();
+            if depth > MAX_STACK_SLOTS {
+                eyre::bail!(
+                    "the stack holds {depth} values, past the maximum of {MAX_STACK_SLOTS}: \
+                     unbounded recursion, or a loop that only pushes?"
+                );
             }
 
             // A branch or call leaves its destination here; anything else
@@ -198,6 +301,229 @@ impl LanesMachine {
         })
     }
 
+    /// Run one CPU instruction inside vihaco#110's frame model.
+    ///
+    /// vihaco-cpu 0.4.1 executes it; this supplies what 0.4.1 lacks around
+    /// it (see the module docs). Checks come first and are made against the
+    /// operands alone, for the same reason
+    /// [`pop_capacity`](Self::pop_capacity) clamps its reservation: `run` has
+    /// no validation gate — `validate` is its own subcommand, and a program
+    /// you have not validated is still one you may want to execute.
+    ///
+    /// Two upstream hazards cannot be reached from here, and no longer need
+    /// guards of their own:
+    ///
+    /// - `store` ([#1032]): `op_store` `resize`s the stack to reach an index
+    ///   past its top — 68 GB for `store u64, 4294967295`. Every index must
+    ///   now be a reserved slot, all of which exist below the operands.
+    /// - `ret` ([#1033]): `op_return` subtracts `frame.base` from the depth
+    ///   assuming the callee never popped below it, and a panic followed when
+    ///   one did. No pop reaches past the locals now, let alone the base.
+    ///
+    /// [#1032]: https://github.com/QuEraComputing/bloqade-lanes/issues/1032
+    /// [#1033]: https://github.com/QuEraComputing/bloqade-lanes/issues/1033
+    fn step_cpu(
+        &mut self,
+        program: &Program,
+        inst: &vihaco_cpu::RuntimeInstruction,
+    ) -> eyre::Result<vihaco_cpu::StepOutcome> {
+        use vihaco_cpu::RuntimeInstruction as C;
+        use vihaco_cpu::StepOutcome;
+
+        if let C::Load(_, index) | C::Store(_, index) = inst {
+            let reserved = self.current_locals();
+            if *index >= reserved {
+                eyre::bail!(
+                    "{} names local {index}, but the frame reserves {reserved}",
+                    cpu_op_name(inst)
+                );
+            }
+        }
+        let needed = cpu_operands(inst, self.cpu.stack());
+        let have = self.operand_count();
+        if have < needed {
+            eyre::bail!(
+                "stack underflow: {} takes {needed} operand(s), and the frame has \
+                 {have} above its locals",
+                cpu_op_name(inst)
+            );
+        }
+
+        // A local holding `Undefined` — unwritten, or a stored or passed
+        // placeholder — reads as the zero of the type that loads it, as the
+        // bump's untyped, zero-filled frames will (see the module docs).
+        // 0.4.1 would fail the `load` instead: an `Undefined` is not the type
+        // it names. `load undef` still reads the placeholder itself.
+        if let C::Load(ty, index) = inst
+            && *ty != Type::Undefined
+            && self.local(*index) == Some(&Value::Undefined)
+        {
+            self.cpu.stack_push(zero_of(*ty));
+            return Ok(StepOutcome::Continue);
+        }
+
+        // Resolve the callee, and refuse its frame, before the CPU pushes one:
+        // a refusal then leaves `frame_locals` and the CPU's frames in step.
+        // That is #110's order too — its `call` checks the `local_count` in
+        // its `FunctionInfo` message before entering. And it is #110's check:
+        // `arity <= local_count`, not that the arity equals the declared
+        // parameter count. `validate`'s `CallArityMismatch` covers a direct
+        // call, and after the bump `call_indirect` takes its arity from the
+        // function table rather than the stack.
+        let frame = match inst {
+            C::Call(arity, target) => Some(self.plan_frame(program, *target, *arity as usize)?),
+            // The target is on top and the arity below it. Anything else is
+            // not a call at all, and `op_indirect_call` says so.
+            C::IndirectCall => {
+                let stack = self.cpu.stack();
+                match (stack.last(), stack.len().checked_sub(2).map(|i| &stack[i])) {
+                    (Some(Value::U32(target)), Some(Value::U32(arity))) => {
+                        Some(self.plan_frame(program, *target, *arity as usize)?)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+
+        let outcome = self.cpu.execute_instruction(inst.clone())?;
+        if let Some(local_count) = frame {
+            // `op_call` just set `base = stack.len() - arity`, so the
+            // arguments are already the first locals.
+            let arity = self.cpu.stack().len() - self.cpu.get_frame()?.base;
+            self.push_locals(local_count, arity);
+        } else if matches!(inst, C::Return(_)) {
+            // Reached only when `op_return` succeeded, and so popped a frame.
+            self.frame_locals.pop();
+        }
+        Ok(outcome)
+    }
+
+    /// The locals a call to `target` with `arity` arguments reserves, once
+    /// [`check_frame`](Self::check_frame) has passed them.
+    fn plan_frame(&self, program: &Program, target: u32, arity: usize) -> eyre::Result<u32> {
+        let function = program
+            .functions
+            .iter()
+            .find(|f| f.start_address == target)
+            .ok_or_else(|| eyre::eyre!("call target {target} does not begin a function"))?;
+        self.check_frame(function.local_count, arity)?;
+        Ok(function.local_count)
+    }
+
+    /// Refuse a frame of `local_count` locals, the first `arity` of them
+    /// arguments already on the stack, before anything is reserved:
+    ///
+    /// - below its arity, as #110's `call` does;
+    /// - past [`MAX_LOCAL_COUNT`]. The count is the table's, and a program
+    ///   that was never validated could otherwise ask every call to reserve
+    ///   four billion slots, which is #1032 again by another road.
+    ///
+    /// How many frames recursion stacks up is [`MAX_STACK_SLOTS`]'s job,
+    /// checked once per step with every other way the stack grows.
+    fn check_frame(&self, local_count: u32, arity: usize) -> eyre::Result<()> {
+        if local_count > MAX_LOCAL_COUNT {
+            eyre::bail!(
+                "the frame reserves {local_count} locals, past the maximum of {MAX_LOCAL_COUNT}"
+            );
+        }
+        if (local_count as usize) < arity {
+            eyre::bail!(
+                "the frame receives {arity} argument(s) but reserves only {local_count} \
+                 local(s), which must include them"
+            );
+        }
+        Ok(())
+    }
+
+    /// Reserve a new frame's locals past its `arity` arguments, which are
+    /// already in place as locals `0..arity`. Checked beforehand by
+    /// [`check_frame`](Self::check_frame).
+    fn push_locals(&mut self, local_count: u32, arity: usize) {
+        let extra = (local_count as usize).saturating_sub(arity);
+        self.cpu
+            .stack_mut()
+            .extend(std::iter::repeat_n(Value::Undefined, extra));
+        self.frame_locals.push(local_count);
+    }
+
+    /// Locals the current frame reserves; none without a frame.
+    fn current_locals(&self) -> u32 {
+        self.frame_locals.last().copied().unwrap_or(0)
+    }
+
+    /// Where the current frame's operands begin: past its locals.
+    fn operands_index(&self) -> usize {
+        let base = self.cpu.get_frame().map_or(0, |frame| frame.base);
+        base + self.current_locals() as usize
+    }
+
+    /// Operands the current frame holds above its locals.
+    fn operand_count(&self) -> usize {
+        self.cpu.stack().len().saturating_sub(self.operands_index())
+    }
+
+    /// The current frame's local `index`, if the frame has that slot.
+    fn local(&self, index: u32) -> Option<&Value> {
+        self.cpu.get_local(index as usize).ok()
+    }
+
+    /// Pop one operand, refusing to reach into the frame's locals.
+    fn pop_operand(&mut self) -> eyre::Result<Value> {
+        if self.operand_count() == 0 {
+            eyre::bail!("stack underflow: the frame has no operands above its locals");
+        }
+        self.cpu.stack_pop()
+    }
+
+    /// Where execution begins: the `@main` *symbol*, not byte zero.
+    ///
+    /// A lanes program is an executable, so it enters the way a linked binary
+    /// does — at a named entry the loader resolves, wherever it was laid out.
+    /// Starting at address 0 instead ran whichever function came first in the
+    /// source, so a module declaring `@helper` before `@main` executed the
+    /// wrong one and reported success.
+    ///
+    /// Pushes the entry point's arguments, checked against its declared
+    /// parameters, reserves the rest of its locals, and returns the address
+    /// to start at.
+    ///
+    /// Every run starts from a reset CPU holding only the entry frame, so the
+    /// arguments land at locals `0..n` however the machine was last left: a
+    /// halt mid-callee leaves frames and operands behind, and a `ret` from
+    /// `@main` pops the entry frame outright.
+    fn enter(&mut self, program: &Program, args: &[Value]) -> eyre::Result<usize> {
+        let function = super::program::entry_function(program)?;
+
+        let params = &function.signature.params;
+        if args.len() != params.len() {
+            eyre::bail!(
+                "the entry point declares {} parameter(s), but {} argument(s) were supplied",
+                params.len(),
+                args.len()
+            );
+        }
+        for (i, (arg, param)) in args.iter().zip(params).enumerate() {
+            if arg.type_of() != param.ty {
+                eyre::bail!(
+                    "entry argument {i} is {:?}, but the entry point declares {:?}",
+                    arg.type_of(),
+                    param.ty
+                );
+            }
+        }
+        vihaco::Reset::reset(&mut self.cpu);
+        self.frame_locals.clear();
+        self.cpu.push_frame(entry_frame());
+        for arg in args {
+            self.cpu.stack_push(*arg);
+        }
+        self.check_frame(function.local_count, args.len())?;
+        self.push_locals(function.local_count, args.len());
+
+        Ok(function.start_address as usize)
+    }
+
     /// Pop the operands `inst` consumes and pack them into its message.
     ///
     /// Pops are in reverse push order throughout: the last value pushed is the
@@ -208,14 +534,6 @@ impl LanesMachine {
         Ok(match inst {
             // Constants carry their operand in the instruction word.
             I::ConstLoc(_) | I::ConstLane(_) | I::ConstZone(_) => LanesMessage::None,
-
-            // The device cannot reach the stack, so the machine does the
-            // popping for it and the pushes come back as effects.
-            I::Pop => {
-                self.cpu.stack_pop()?;
-                LanesMessage::None
-            }
-            I::Swap => LanesMessage::Values(self.pop_values(2)?),
 
             I::InitialFill(n) | I::Fill(n) => LanesMessage::Locations(self.pop_locations(*n)?),
             I::Move(n) => LanesMessage::Lanes(self.pop_lanes(*n)?),
@@ -271,7 +589,7 @@ impl LanesMachine {
     fn pop_values(&mut self, n: u64) -> eyre::Result<Vec<Value>> {
         let mut out = Vec::with_capacity(self.pop_capacity(n));
         for _ in 0..n {
-            out.push(self.cpu.stack_pop()?);
+            out.push(self.pop_operand()?);
         }
         out.reverse();
         Ok(out)
@@ -285,15 +603,15 @@ impl LanesMachine {
     /// (SIGABRT, no unwinding, no test failure to catch); macOS commits
     /// lazily and hands it back, which is why this only ever showed up in CI.
     ///
-    /// A pop can never take more than the stack holds, so the stack depth is
+    /// A pop can never take more than the frame's operands, so their count is
     /// both a safe bound and a sufficient one — every legitimate arity still
     /// gets its single up-front allocation.
     fn pop_capacity(&self, n: u64) -> usize {
-        n.min(self.cpu.stack().len() as u64) as usize
+        n.min(self.operand_count() as u64) as usize
     }
 
     fn pop_u64(&mut self) -> eyre::Result<u64> {
-        match self.cpu.stack_pop()? {
+        match self.pop_operand()? {
             Value::U64(v) => Ok(v),
             v => Err(eyre::eyre!("expected a packed u64 address, got {v:?}")),
         }
@@ -302,7 +620,7 @@ impl LanesMachine {
     fn pop_floats(&mut self, n: u32) -> eyre::Result<Vec<f64>> {
         let mut out = Vec::with_capacity(self.pop_capacity(n as u64));
         for _ in 0..n {
-            match self.cpu.stack_pop()? {
+            match self.pop_operand()? {
                 Value::F64(v) => out.push(v),
                 v => return Err(eyre::eyre!("expected an angle (f64), got {v:?}")),
             }
@@ -332,7 +650,7 @@ impl LanesMachine {
     fn pop_zones(&mut self, n: u32) -> eyre::Result<Vec<ZoneAddr>> {
         let mut out = Vec::with_capacity(self.pop_capacity(n as u64));
         for _ in 0..n {
-            match self.cpu.stack_pop()? {
+            match self.pop_operand()? {
                 Value::U32(v) => out.push(ZoneAddr::decode(v)),
                 v => return Err(eyre::eyre!("expected a zone address (u32), got {v:?}")),
             }
@@ -372,6 +690,92 @@ impl LanesMachine {
     }
 }
 
+/// How many operands a CPU instruction consumes, so they can be floored at
+/// the frame's locals before vihaco-cpu 0.4.1 — which floors nothing — pops
+/// them. `dup` only reads its operand, but it still needs one.
+///
+/// Exhaustive on purpose: an instruction a vihaco bump adds has to be counted
+/// here before it compiles, rather than defaulting to zero and popping into
+/// the locals unchecked.
+///
+/// TODO(vihaco#110): upstream floors every operand pop itself.
+fn cpu_operands(inst: &vihaco_cpu::RuntimeInstruction, stack: &[Value]) -> usize {
+    use vihaco_cpu::RuntimeInstruction as C;
+    match inst {
+        C::Const(..)
+        | C::Load(..)
+        | C::Branch(_)
+        | C::Halt
+        | C::Label(_)
+        | C::Span(..)
+        | C::Breakpoint
+        | C::FunctionStart
+        | C::FunctionEnd => 0,
+        C::Dup
+        | C::Store(..)
+        | C::ConditionalBranch(..)
+        | C::Print
+        | C::HeapDealloc
+        | C::Neg(_)
+        | C::Not => 1,
+        C::GetItem
+        | C::Add(_)
+        | C::Sub(_)
+        | C::Mul(_)
+        | C::Div(_)
+        | C::Rem(_)
+        | C::Shl(_)
+        | C::Shr(_)
+        | C::Rol(_)
+        | C::Ror(_)
+        | C::BitAnd(_)
+        | C::BitOr(_)
+        | C::BitXor(_)
+        | C::And
+        | C::Or
+        | C::Xor
+        | C::Eq(_)
+        | C::Ne(_)
+        | C::Lt(_)
+        | C::Gt(_)
+        | C::Le(_)
+        | C::Ge(_) => 2,
+        C::HeapAlloc(n) => *n as usize,
+        C::Return(keep) => *keep as usize,
+        C::Call(arity, _) => *arity as usize,
+        // Function reference, arity and target, then the arguments beneath
+        // them. The arity is itself an operand, second from the top; one that
+        // is not a `u32` fails in `op_indirect_call` before any argument is
+        // taken.
+        C::IndirectCall => {
+            let arity = match stack.len().checked_sub(2).map(|i| &stack[i]) {
+                Some(Value::U32(arity)) => *arity as usize,
+                _ => 0,
+            };
+            3 + arity
+        }
+    }
+}
+
+/// What a local holding `Undefined` reads as when loaded as `ty`: the zero
+/// word.
+///
+/// The reference types get index 0 because that is what the word 0 *is*
+/// read as one; nothing here claims the index is live.
+fn zero_of(ty: Type) -> Value {
+    match ty {
+        Type::Undefined => Value::Undefined,
+        Type::String => Value::String(0),
+        Type::Bool => Value::Bool(false),
+        Type::I64 => Value::I64(0),
+        Type::U32 => Value::U32(0),
+        Type::U64 => Value::U64(0),
+        Type::F64 => Value::F64(0.0),
+        Type::FunctionRef => Value::FunctionRef(0),
+        Type::HeapRef => Value::HeapRef(0),
+    }
+}
+
 /// Flatten one instruction's effects onto the run's record.
 fn collect(effects: Effects<LanesEffect>, into: &mut Vec<LanesEffect>) {
     match effects {
@@ -386,7 +790,9 @@ fn collect(effects: Effects<LanesEffect>, into: &mut Vec<LanesEffect>) {
 /// vihaco-cpu's own `Display` emits bare mnemonics (`halt`, `const.f64 1.5`)
 /// that its *parser* does not accept, so rendering is written here against the
 /// surface grammar instead. The round-trip tests pin the two together.
-fn cpu_type_text(ty: Type) -> &'static str {
+///
+/// Also the spelling the Python `Instruction.load`/`store` take their type in.
+pub fn cpu_type_text(ty: Type) -> &'static str {
     match ty {
         Type::Undefined => "undef",
         Type::String => "str",
@@ -466,8 +872,6 @@ fn cpu_text(inst: &vihaco_cpu::RuntimeInstruction) -> String {
 fn lanes_text(inst: &LanesInstruction) -> String {
     use LanesInstruction as L;
     match inst {
-        L::Pop => "pop".into(),
-        L::Swap => "swap".into(),
         // Hex, fixed width, so addresses line up by eye.
         L::ConstLoc(v) => format!("const_loc 0x{v:016x}"),
         L::ConstLane(v) => format!("const_lane 0x{v:016x}"),
@@ -591,8 +995,6 @@ fn cpu_op_name(inst: &vihaco_cpu::RuntimeInstruction) -> &'static str {
 fn lanes_op_name(inst: &LanesInstruction) -> &'static str {
     use LanesInstruction as L;
     match inst {
-        L::Pop => "pop",
-        L::Swap => "swap",
         L::ConstLoc(_) => "const_loc",
         L::ConstLane(_) => "const_lane",
         L::ConstZone(_) => "const_zone",
@@ -747,7 +1149,7 @@ mod tests {
     const SIMPLE_ARCH_JSON: &str = include_str!("../../../../examples/arch/simple.json");
 
     fn machine() -> LanesMachine {
-        LanesMachine::default()
+        LanesMachine::new()
             .with_arch(ArchSpec::from_json(SIMPLE_ARCH_JSON).expect("simple.json should parse"))
     }
 
@@ -813,26 +1215,149 @@ mod tests {
         ));
     }
 
+    use crate::isa::bytecode::tests_support::sst_module as module;
+
+    /// Run `@main`'s body against a fresh machine and return what is left on
+    /// the stack, locals first.
+    fn stack_after(body: &str) -> Vec<Value> {
+        let mut m = LanesMachine::new();
+        let run = m
+            .run(
+                &module(&format!("fn @main() {{\n{body}  cpu::cpu.halt\n}}\n")),
+                100,
+            )
+            .unwrap_or_else(|e| panic!("should run: {e:#}"));
+        assert_eq!(run.stopped, Stopped::Halted);
+        m.cpu.stack().to_vec()
+    }
+
+    /// The entry frame is what makes locals addressable at all: without it every
+    /// `load`/`store` fails with "no current frame".
     #[test]
-    fn swap_exchanges_the_top_two_and_pop_discards() {
-        let mut m = machine();
-        m.step_lanes(I::ConstZone(1)).unwrap();
-        m.step_lanes(I::ConstZone(2)).unwrap();
-        m.step_lanes(I::Swap).unwrap();
+    fn locals_need_a_frame() {
+        use vihaco_cpu::RuntimeInstruction as C;
 
-        // After the swap, `cz` consumes what was the *lower* of the two.
-        let effects = m.step_lanes(I::Cz).unwrap();
-        match effects {
-            Effects::One(LanesEffect::NotSimulated {
-                msg: LanesMessage::Zones(zones),
-                ..
-            }) => assert_eq!(zones[0].zone_id, 1),
-            other => panic!("expected a zone message, got {other:?}"),
+        let mut bare = LanesMachine::default();
+        bare.cpu.stack_push(Value::U64(7));
+        assert!(
+            bare.cpu
+                .execute_instruction(C::Store(Type::U64, 0))
+                .unwrap_err()
+                .to_string()
+                .contains("no current frame")
+        );
+    }
+
+    /// Locals are their own slots, reserved below the operands at entry.
+    ///
+    /// On vihaco 0.4.1 alone they are not: local `n` is `stack[base + n]`, so
+    /// under `@main`'s frame a `store` lands on whatever was pushed first and
+    /// a `load` reads a working value. Here local 1 is reserved before the
+    /// body runs, holds `7` through a push above it, and local 0 — named by
+    /// nothing — is still the unwritten placeholder.
+    #[test]
+    fn locals_are_reserved_below_the_operands() {
+        assert_eq!(
+            stack_after(
+                "  cpu::cpu.const u64, 7\n  cpu::cpu.store u64, 1\n  \
+                 cpu::cpu.const u64, 9\n  cpu::cpu.load u64, 1\n"
+            ),
+            [
+                Value::Undefined,
+                Value::U64(7),
+                Value::U64(9),
+                Value::U64(7)
+            ]
+        );
+    }
+
+    /// The three stack ops the lanes device used to carry, spelled with
+    /// reserved locals — the table from #1038. Each starts from the working
+    /// stack `[10, 20]`; what is compared is what is left above the locals.
+    #[test]
+    fn locals_express_pop_dup_and_swap() {
+        // (op, body, locals the body reserves, working stack after)
+        let cases = [
+            ("pop", "store i64, 0", 1, vec![10]),
+            (
+                "dup",
+                "store i64, 0; load i64, 0; load i64, 0",
+                1,
+                vec![10, 20, 20],
+            ),
+            (
+                "swap",
+                "store i64, 0; store i64, 1; load i64, 0; load i64, 1",
+                2,
+                vec![20, 10],
+            ),
+        ];
+        for (op, ops, locals, working) in cases {
+            let body: String = ["const i64, 10", "const i64, 20"]
+                .into_iter()
+                .chain(ops.split("; "))
+                .map(|inst| format!("  cpu::cpu.{inst}\n"))
+                .collect();
+            let stack = stack_after(&body);
+            let working: Vec<Value> = working.into_iter().map(Value::I64).collect();
+            assert_eq!(stack[locals..], working[..], "{op}: {stack:?}");
         }
+    }
 
-        // `pop` discards, so the remaining value is gone and `cz` underflows.
-        m.step_lanes(I::Pop).unwrap();
-        assert!(m.step_lanes(I::Cz).is_err());
+    /// An unwritten local reads as the zero of the type that loads it, the
+    /// way vihaco#110's zero-filled frame reads — so a counter needs no
+    /// initialising `store`. `load undef` reads the placeholder itself, which
+    /// is how a device result parked in a local comes back unchanged.
+    #[test]
+    fn an_unwritten_local_reads_as_zero() {
+        let stack = stack_after(
+            "  cpu::cpu.load i64, 0\n  cpu::cpu.load f64, 0\n  cpu::cpu.load bool, 0\n  \
+             cpu::cpu.load undef, 0\n",
+        );
+        assert_eq!(
+            stack[1..],
+            [
+                Value::I64(0),
+                Value::F64(0.0),
+                Value::Bool(false),
+                Value::Undefined
+            ]
+        );
+
+        // Once written with a *concrete* value, a local reads as that value,
+        // and a mistyped `load` of it is still 0.4.1's type error.
+        let err = LanesMachine::new()
+            .run(
+                &module(
+                    "fn @main() {\n  cpu::cpu.const u64, 7\n  cpu::cpu.store u64, 0\n  \
+                     cpu::cpu.load i64, 0\n  cpu::cpu.halt\n}\n",
+                ),
+                100,
+            )
+            .expect_err("a u64 does not load as an i64");
+        assert!(format!("{err:#}").contains("type error"), "got {err:#}");
+    }
+
+    /// A placeholder parked in a local reads as a typed zero too: the
+    /// machine cannot tell it from an unwritten slot, and after the bump
+    /// neither can vihaco — both are the zero word. Only `load undef` reads
+    /// it back as the placeholder.
+    #[test]
+    fn a_stored_placeholder_reads_as_the_zero_of_a_typed_load() {
+        let stack = stack_after(
+            "  lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+             lanes::lanes.await_measure\n  cpu::cpu.store heap_ref, 0\n  \
+             cpu::cpu.load heap_ref, 0\n  cpu::cpu.load u32, 0\n  cpu::cpu.load undef, 0\n",
+        );
+        assert_eq!(
+            stack,
+            [
+                Value::Undefined,
+                Value::HeapRef(0),
+                Value::U32(0),
+                Value::Undefined
+            ]
+        );
     }
 
     #[test]
@@ -1002,12 +1527,14 @@ mod tests {
                 MachineInstruction::Lanes(I::GlobalRz),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
 
         let mut m = machine();
         let run = m.run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Halted);
-        assert_eq!(run.steps, 6);
+        // Six instructions plus the `func_start` the entry point lands on.
+        assert_eq!(run.steps, 7);
 
         // The atoms actually moved, and the gate was reported not simulated.
         assert_eq!(
@@ -1062,7 +1589,8 @@ mod tests {
                     inst.clone(),
                     MachineInstruction::Cpu(C::Halt),
                 ],
-            );
+            )
+            .unwrap();
             let mut machine = LanesMachine::new();
             let err = machine
                 .run(&program, 100)
@@ -1084,6 +1612,586 @@ mod tests {
         }
     }
 
+    /// A `store` cannot grow the operand stack to reach its index, and a frame
+    /// cannot be sized to do the same.
+    ///
+    /// vihaco 0.4.1's `op_store` resizes the stack to `base + index + 1` and
+    /// *writes* every new slot, so `store u64, 4294967295` made ~68 GB
+    /// resident — from a 12-byte program, and with no allocation failure to
+    /// notice on a platform that commits lazily (#1032). Every index is a
+    /// reserved slot now, so that path is closed; but the same index sizes
+    /// the frame, and reserving it would be the same allocation. `run` has no
+    /// validation gate, so the assertion is on the stack depth rather than on
+    /// the allocator complaining.
+    #[test]
+    fn a_store_cannot_grow_the_stack_to_reach_its_index() {
+        use crate::isa::program::from_code;
+        use crate::isa::validate::MAX_LOCAL_INDEX;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        for index in [MAX_LOCAL_INDEX + 1, 2_000_000, u32::MAX] {
+            let program = from_code(
+                Version::new(1, 0),
+                vec![
+                    MachineInstruction::Cpu(C::Const(Type::U64, Value::U64(7))),
+                    MachineInstruction::Cpu(C::Store(Type::U64, index)),
+                    MachineInstruction::Cpu(C::Halt),
+                ],
+            )
+            .unwrap();
+            let mut m = LanesMachine::new();
+            let err = match m.run(&program, 100) {
+                Ok(run) => panic!("index={index}: the store should have been refused, got {run:?}"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains("local"), "index={index}: {err}");
+
+            // The diagnosis is only worth anything if the allocation did not
+            // happen first: one `const` pushed one value, and the refused
+            // `store` must leave it at that.
+            assert!(
+                m.cpu.stack().len() <= 1,
+                "index={index}: the stack grew to {} entries",
+                m.cpu.stack().len()
+            );
+        }
+
+        // An index inside the bound still stores, and still reads back.
+        let program = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Const(Type::U64, Value::U64(7))),
+                MachineInstruction::Cpu(C::Store(Type::U64, MAX_LOCAL_INDEX)),
+                MachineInstruction::Cpu(C::Load(Type::U64, MAX_LOCAL_INDEX)),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        )
+        .unwrap();
+        let mut m = LanesMachine::new();
+        assert_eq!(m.run(&program, 100).unwrap().stopped, Stopped::Halted);
+        assert_eq!(m.cpu.stack().last(), Some(&Value::U64(7)));
+    }
+
+    /// A table reserving fewer locals than the body names — which no
+    /// constructor builds, since each derives the count from the body — is
+    /// refused at the `store` rather than let it grow the stack.
+    #[test]
+    fn a_local_the_frame_does_not_reserve_is_refused() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let mut program = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Const(Type::U64, Value::U64(7))),
+                MachineInstruction::Cpu(C::Store(Type::U64, 3)),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        )
+        .unwrap();
+        assert_eq!(program.functions[0].local_count, 4, "derived from the body");
+        program.functions[0].local_count = 1;
+
+        let mut m = LanesMachine::new();
+        let err = m.run(&program, 100).expect_err("local 3 is not reserved");
+        assert!(
+            err.to_string()
+                .contains("store names local 3, but the frame reserves 1"),
+            "got {err}"
+        );
+        assert_eq!(m.cpu.stack().len(), 2, "one local and the constant");
+    }
+
+    /// A callee cannot pop its caller's values — nor its own arguments, which
+    /// are locals and come back with `load`.
+    ///
+    /// Under 0.4.1 alone a callee's pops ran on into its caller's frame, and
+    /// `op_return`'s `stack.len() - frame.base` then underflowed: a panic in
+    /// debug builds, an out-of-range `drain` in release (#1033). The operand
+    /// floor stops the first pop instead.
+    #[test]
+    fn a_callee_cannot_pop_past_its_operands() {
+        let cases = [
+            // Three zones below a zero-arity call.
+            (
+                "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+                 lanes::lanes.const_zone 0x00000001\n  lanes::lanes.const_zone 0x00000002\n  \
+                 cpu::cpu.call 0, drain\n  cpu::cpu.halt\n}\n\n\
+                 fn @drain() {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n",
+                "no operands above its locals",
+            ),
+            // One zone passed as the argument, consumed without a `load`.
+            (
+                "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+                 cpu::cpu.call 1, use_arg\n  cpu::cpu.halt\n}\n\n\
+                 fn @use_arg(z: u32) {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n",
+                "no operands above its locals",
+            ),
+            // A `ret` keeping a value the callee never pushed.
+            (
+                "fn @main() {\n  cpu::cpu.const i64, 1\n  cpu::cpu.call 1, give_back\n  \
+                 cpu::cpu.halt\n}\n\n\
+                 fn @give_back(x: i64) -> i64 {\n  cpu::cpu.ret 1\n}\n",
+                "return takes 1 operand(s)",
+            ),
+        ];
+        for (body, expected) in cases {
+            let err = LanesMachine::new()
+                .run(&module(body), 100)
+                .expect_err("the pop should be refused");
+            let message = format!("{err:#}");
+            assert!(
+                message.contains("stack underflow") && message.contains(expected),
+                "got {message}"
+            );
+        }
+    }
+
+    /// The floor must not change what a well-formed `call`/`ret` pair does: a
+    /// callee that loads its argument and hands it back returns to its caller
+    /// with exactly that value above the caller's own operands.
+    #[test]
+    fn a_balanced_call_still_returns_to_its_caller() {
+        let mut m = LanesMachine::new();
+        let run = m
+            .run(
+                &module(
+                    "fn @main() {\n  cpu::cpu.const i64, 1\n  cpu::cpu.call 1, echo\n  \
+                     cpu::cpu.halt\n}\n\n\
+                     fn @echo(x: i64) -> i64 {\n  cpu::cpu.const i64, 9\n  \
+                     cpu::cpu.store i64, 1\n  cpu::cpu.load i64, 0\n  cpu::cpu.ret 1\n}\n",
+                ),
+                100,
+            )
+            .unwrap();
+        assert_eq!(run.stopped, Stopped::Halted);
+        assert_eq!(m.cpu.stack(), &[Value::I64(1)]);
+    }
+
+    /// `call_indirect` reserves its callee's locals too. The callee reads an
+    /// unwritten scratch local first, which fails on 0.4.1 alone — the slot
+    /// does not exist — and reads as zero once it is reserved.
+    #[test]
+    fn an_indirect_call_reserves_its_callees_locals() {
+        let program = module(
+            "fn @main() {\n  cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 0\n  \
+             cpu::cpu.const u32, 7\n  cpu::cpu.call_indirect\n  cpu::cpu.halt\n}\n\n\
+             fn @scratch() {\n  cpu::cpu.load i64, 0\n  cpu::cpu.store i64, 0\n  \
+             cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(program.functions[1].start_address, 7, "the target above");
+        let run = LanesMachine::new().run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Halted);
+    }
+
+    /// Recursion reserves a frame per level, so the whole stack is bounded,
+    /// not just each frame. `@f` calls itself before its one `load` — which
+    /// sizes its frame at 1024 locals and never runs — so each level reserved
+    /// 16 KB, and the CLI's default step budget reached gigabytes.
+    #[test]
+    fn recursion_cannot_grow_the_stack_past_its_bound() {
+        let mut m = LanesMachine::new();
+        let err = m
+            .run(
+                &module(
+                    "fn @main() {\n  cpu::cpu.call 0, f\n  cpu::cpu.halt\n}\n\n\
+                     fn @f() {\n  cpu::cpu.call 0, f\n  cpu::cpu.load u64, 1023\n  \
+                     cpu::cpu.ret 0\n}\n",
+                ),
+                10_000_000,
+            )
+            .expect_err("the recursion has no base case");
+        assert!(err.to_string().contains("unbounded recursion"), "got {err}");
+        // At most one frame over: the bound, not the step count, stopped it.
+        assert!(m.cpu.stack().len() <= MAX_STACK_SLOTS + MAX_LOCAL_COUNT as usize);
+        assert!(m.frame_locals.len() > MAX_STACK_SLOTS / MAX_LOCAL_COUNT as usize);
+    }
+
+    /// A loop that only pushes reserves no frame at all, and the step budget
+    /// is the caller's to choose: with an unlimited one, only the stack's own
+    /// bound stops it. The validator rejects this loop — its back edge
+    /// changes the depth — but `run` has no validation gate.
+    #[test]
+    fn a_loop_that_only_pushes_cannot_grow_the_stack_past_its_bound() {
+        let mut m = LanesMachine::new();
+        let err = m
+            .run(
+                &module(
+                    "fn @main() {\n  cpu::cpu.label @top\n  cpu::cpu.const u64, 0\n  \
+                     cpu::cpu.br @top\n}\n",
+                ),
+                u64::MAX,
+            )
+            .expect_err("the loop never ends");
+        assert!(
+            err.to_string().contains("a loop that only pushes"),
+            "got {err}"
+        );
+        assert_eq!(m.cpu.stack().len(), MAX_STACK_SLOTS + 1);
+    }
+
+    /// A refused call is refused before the CPU pushes its frame, so the
+    /// machine's own frame stack stays in step with the CPU's. Checked after
+    /// the frame was pushed, both refusals below left the CPU one frame deep
+    /// with no `local_count` to go with it.
+    #[test]
+    fn a_refused_call_pushes_no_frame() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        // Into the middle of `@main`, which begins no function.
+        let into_the_middle = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Call(0, 3)),
+                MachineInstruction::Cpu(C::Halt),
+                MachineInstruction::Cpu(C::Return(0)),
+            ],
+        )
+        .unwrap();
+        // Two arguments to a function that reserves no locals to hold them.
+        let too_many_arguments = module(
+            "fn @main() {\n  cpu::cpu.const i64, 1\n  cpu::cpu.const i64, 2\n  \
+             cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 2\n  cpu::cpu.const u32, 9\n  \
+             cpu::cpu.call_indirect\n  cpu::cpu.halt\n}\n\nfn @none() {\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(too_many_arguments.functions[1].start_address, 9);
+
+        for (program, expected) in [
+            (&into_the_middle, "does not begin a function"),
+            (
+                &too_many_arguments,
+                "receives 2 argument(s) but reserves only 0",
+            ),
+        ] {
+            let mut m = LanesMachine::new();
+            let err = m.run(program, 100).expect_err("the call should be refused");
+            assert!(err.to_string().contains(expected), "got {err}");
+            // Still in `@main`: the entry frame returns nowhere, a call frame
+            // to the instruction after its `call`.
+            assert_eq!(m.cpu.get_frame().unwrap().ret_pc, 0);
+            assert_eq!(m.frame_locals.len(), 1);
+        }
+    }
+
+    /// A call's target has to begin a function: that is where the machine
+    /// learns how many locals to reserve.
+    #[test]
+    fn a_call_into_the_middle_of_a_function_is_refused() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let program = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Call(0, 3)),
+                MachineInstruction::Cpu(C::Halt),
+                MachineInstruction::Cpu(C::Return(0)),
+            ],
+        )
+        .unwrap();
+        let err = LanesMachine::new()
+            .run(&program, 100)
+            .expect_err("address 3 is inside @main");
+        assert!(
+            err.to_string()
+                .contains("call target 3 does not begin a function"),
+            "got {err}"
+        );
+    }
+
+    /// A frame past [`MAX_LOCAL_COUNT`] is refused before it is reserved, and
+    /// so is one too small to hold its own arguments.
+    #[test]
+    fn an_impossible_frame_is_refused_at_entry() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let mut program =
+            from_code(Version::new(1, 0), vec![MachineInstruction::Cpu(C::Halt)]).unwrap();
+        program.functions[0].local_count = u32::MAX;
+        let mut m = LanesMachine::new();
+        let err = m.run(&program, 100).expect_err("four billion locals");
+        assert!(err.to_string().contains("past the maximum"), "got {err}");
+        assert!(
+            m.cpu.stack().is_empty(),
+            "nothing should have been reserved"
+        );
+
+        let mut program = parameterised_main();
+        program.functions[0].local_count = 0;
+        let err = machine()
+            .run_with_args(&program, &[Value::U32(0)], 100)
+            .expect_err("the argument is a local");
+        assert!(err.to_string().contains("must include them"), "got {err}");
+    }
+
+    /// What a nonzero-arity `call` and a `ret <keep>` actually *do*.
+    ///
+    /// The test above pins only that a balanced pair does not crash. The three
+    /// behaviours the calling convention turns on go unobserved by it, and each
+    /// fails differently:
+    ///
+    /// - the caller's operands become the callee's locals (`call <arity>` sets
+    ///   `base = stack.len() - arity`, and locals index up from there);
+    /// - `ret <keep>` keeps the top `keep` values and drains the rest of the
+    ///   frame, so callee scratch goes and the return value survives;
+    /// - the caller resumes at the instruction after the `call`, not at the
+    ///   start of its own function.
+    ///
+    /// Each observable below is a distinct constant, so a failure names which
+    /// one broke rather than just reporting a different stack.
+    #[test]
+    fn a_call_passes_locals_and_a_ret_keeps_only_what_it_says() {
+        use crate::isa::text::parse_text;
+
+        // `@callee` is declared first to keep the entry-point lookup honest.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n\
+                   .header(root).\n.text(root):\n\
+                   fn @callee() {\n  \
+                     cpu::cpu.const i64, 777\n  \
+                     cpu::cpu.load i64, 0\n  \
+                     cpu::cpu.ret 1\n\
+                   }\n\n\
+                   fn @main() {\n  \
+                     cpu::cpu.const i64, 111\n  \
+                     cpu::cpu.const i64, 222\n  \
+                     cpu::cpu.call 1, callee\n  \
+                     cpu::cpu.const i64, 444\n  \
+                     cpu::cpu.halt\n\
+                   }\n\
+                   .text(root).\n.section(root).\n";
+        let program = parse_text(src).expect("the module should parse");
+
+        let mut machine = LanesMachine::new();
+        let run = machine.run(&program, 100).expect("the program should run");
+        assert_eq!(run.stopped, Stopped::Halted);
+
+        let stack = machine.cpu.stack();
+        assert!(
+            stack.contains(&Value::I64(222)),
+            "the argument should have reached the callee as local 0 and come \
+             back as its return value; stack: {stack:?}"
+        );
+        assert!(
+            !stack.contains(&Value::I64(777)),
+            "callee scratch below the kept value should be drained by `ret 1`; \
+             stack: {stack:?}"
+        );
+        assert!(
+            stack.contains(&Value::I64(444)),
+            "the caller should resume at the instruction after the `call`; \
+             stack: {stack:?}"
+        );
+        assert_eq!(
+            stack,
+            &[Value::I64(111), Value::I64(222), Value::I64(444)],
+            "the caller's own operand below the frame base should be untouched"
+        );
+    }
+
+    /// Execution enters at `@main`, wherever it was laid out.
+    ///
+    /// A lanes program is an executable, so the entry point is a symbol, not
+    /// an address. Starting at 0 ran whichever function came first: a module
+    /// declaring `@helper` before `@main` executed the helper's `ret` and
+    /// reported success without touching a single atom.
+    #[test]
+    fn execution_enters_at_main_not_at_address_zero() {
+        use crate::isa::text::parse_text;
+
+        let program = parse_text(
+            "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n             .text(root):\nfn @helper() {\n  cpu::cpu.ret 0\n}\n             fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n               lanes::lanes.initial_fill 1\n  cpu::cpu.halt\n}\n             .text(root).\n.section(root).\n",
+        )
+        .expect("the module should parse");
+
+        // `@main` is the second function, so its code starts past address 0.
+        assert_eq!(program.main_function, Some(1));
+        assert!(program.functions[1].start_address > 0);
+
+        let mut m = machine();
+        let run = m.run(&program, 100).unwrap();
+        assert_eq!(run.stopped, Stopped::Halted, "should reach @main's halt");
+        assert_eq!(
+            run.steps, 4,
+            "should run @main's `func_start` and its three instructions"
+        );
+        assert_eq!(
+            m.atoms().get_qubit(&LocationAddr::decode(loc(0, 0, 0))),
+            Some(0),
+            "@main's initial_fill should have run"
+        );
+    }
+
+    /// Declaration order is not part of a module's meaning.
+    ///
+    /// The test above shows `@main` is *found* when it is not first. This is
+    /// the stronger property the entry-point symbol buys: the same two
+    /// functions in either order are the same program, so reordering a module
+    /// cannot change what it validates as or what it does.
+    ///
+    /// Worth pinning separately because the rules that could break it are not
+    /// all in the entry-point lookup. `initial_fill must be first` and the
+    /// reachability walk are per function only because `func_start` resets
+    /// them; had either stayed whole-program, a helper declared first would
+    /// have made `@main`'s own `initial_fill` illegal.
+    #[test]
+    fn declaration_order_changes_nothing() {
+        use crate::isa::text::parse_text;
+        use crate::isa::validate::{simulate_stack, validate, validate_structure};
+
+        const HELPER: &str = "fn @helper() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  \
+             cpu::cpu.store undef, 0\n  cpu::cpu.ret 0\n}\n";
+        const MAIN: &str = "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.initial_fill 1\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n";
+
+        let module = |body: String| {
+            parse_text(&format!(
+                "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n\
+                 .header(root).\n.text(root):\n{body}.text(root).\n.section(root).\n"
+            ))
+            .expect("the module should parse")
+        };
+
+        let main_first = module(format!("{MAIN}\n{HELPER}"));
+        let helper_first = module(format!("{HELPER}\n{MAIN}"));
+
+        // The entry point moves; nothing that depends on it does.
+        assert_eq!(main_first.main_function, Some(0));
+        assert_eq!(helper_first.main_function, Some(1));
+
+        for (label, program) in [("main first", &main_first), ("helper first", &helper_first)] {
+            assert!(
+                validate_structure(program).is_empty()
+                    && validate(program, None).is_empty()
+                    && simulate_stack(program, None).is_empty(),
+                "{label}: should validate clean",
+            );
+        }
+
+        let run_of = |program| {
+            let mut m = machine();
+            let run = m.run(program, 100).expect("the program should run");
+            (run.stopped, run.steps, run.effects.len())
+        };
+        assert_eq!(
+            run_of(&main_first),
+            run_of(&helper_first),
+            "the same functions in either order should execute identically"
+        );
+    }
+
+    /// An entry point that takes one `u32`, reads it, and measures it,
+    /// parking the result in a scratch local.
+    fn parameterised_main() -> Program {
+        module(
+            "fn @main(z: u32) {\n  cpu::cpu.load u32, 0\n  lanes::lanes.measure 1\n  \
+             lanes::lanes.await_measure\n  cpu::cpu.store undef, 1\n  cpu::cpu.halt\n}\n",
+        )
+    }
+
+    /// The host is the entry point's caller. Its arguments land at the bottom
+    /// of the entry frame, where `load` finds them — and where
+    /// `simulate_stack` seeds every function's declared parameters, the entry
+    /// included.
+    #[test]
+    fn an_entry_point_receives_its_arguments() {
+        use crate::isa::validate::{simulate_stack, validate_structure};
+
+        let program = parameterised_main();
+        assert_eq!(validate_structure(&program), vec![]);
+        assert_eq!(simulate_stack(&program, None), vec![]);
+
+        let run = machine()
+            .run_with_args(&program, &[Value::U32(0)], 100)
+            .expect("the program should run");
+        assert_eq!(run.stopped, Stopped::Halted);
+    }
+
+    /// A missing argument is refused at entry, naming the cause, rather than
+    /// surfacing mid-run as an out-of-bounds `load`.
+    #[test]
+    fn a_missing_entry_argument_is_refused_at_entry() {
+        let error = machine()
+            .run(&parameterised_main(), 100)
+            .expect_err("@main declares a parameter nothing supplied");
+        assert!(
+            error
+                .to_string()
+                .contains("declares 1 parameter(s), but 0 argument(s) were supplied"),
+            "got: {error}"
+        );
+
+        // And the other way: arguments for an entry point that takes none.
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+        let program =
+            from_code(Version::new(1, 0), vec![MachineInstruction::Cpu(C::Halt)]).unwrap();
+        let error = machine()
+            .run_with_args(&program, &[Value::U32(0)], 100)
+            .expect_err("@main takes no arguments");
+        assert!(
+            error
+                .to_string()
+                .contains("declares 0 parameter(s), but 1 argument(s) were supplied"),
+            "got: {error}"
+        );
+    }
+
+    /// Arguments are checked against the declared types, as `load` would
+    /// check them later — but here, at the boundary that supplied them.
+    #[test]
+    fn a_mistyped_entry_argument_is_refused_at_entry() {
+        let error = machine()
+            .run_with_args(&parameterised_main(), &[Value::I64(0)], 100)
+            .expect_err("the argument is not the declared u32");
+        assert!(
+            error.to_string().contains("entry argument 0 is I64"),
+            "got: {error}"
+        );
+    }
+
+    /// A machine can be run again, and every run starts from the entry frame
+    /// alone. Otherwise the arguments land above whatever the last run left:
+    /// an `i64` still on the stack after `halt`, which `load u32, 0` would read
+    /// instead of the argument, or no entry frame at all after `ret`.
+    #[test]
+    fn a_reused_machine_places_entry_arguments_afresh() {
+        use crate::isa::program::from_code;
+        use crate::version::Version;
+        use vihaco_cpu::RuntimeInstruction as C;
+
+        let leaves_a_value = from_code(
+            Version::new(1, 0),
+            vec![
+                MachineInstruction::Cpu(C::Const(Type::I64, Value::I64(9))),
+                MachineInstruction::Cpu(C::Halt),
+            ],
+        )
+        .unwrap();
+        let pops_the_entry_frame = from_code(
+            Version::new(1, 0),
+            vec![MachineInstruction::Cpu(C::Return(0))],
+        )
+        .unwrap();
+
+        for first in [&leaves_a_value, &pops_the_entry_frame] {
+            let mut m = machine();
+            m.run(first, 100).expect("the first program should run");
+            let run = m
+                .run_with_args(&parameterised_main(), &[Value::U32(0)], 100)
+                .expect("the second program should run");
+            assert_eq!(run.stopped, Stopped::Halted);
+        }
+    }
+
     /// `ret` at top level ends the program, which needs the entry frame:
     /// `op_return` pops a frame and errors when there is none.
     #[test]
@@ -1095,7 +2203,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Cpu(C::Return(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::Returned);
     }
@@ -1117,10 +2226,11 @@ mod tests {
                 MachineInstruction::Lanes(I::Measure(1)),
                 MachineInstruction::Lanes(I::AwaitMeasure),
                 MachineInstruction::Lanes(I::SetDetector),
-                MachineInstruction::Lanes(I::Pop),
+                MachineInstruction::Cpu(C::Store(Type::Undefined, 0)),
                 MachineInstruction::Cpu(C::Halt),
             ],
-        );
+        )
+        .unwrap();
         // The static half accepts it...
         assert_eq!(simulate_stack(&program, None), vec![]);
         // ...so running it must not underflow.
@@ -1156,7 +2266,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Cpu(C::Branch(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 50).unwrap();
         assert_eq!(run.stopped, Stopped::OutOfSteps);
         assert_eq!(run.steps, 50);
@@ -1173,7 +2284,8 @@ mod tests {
         let program = from_code(
             Version::new(1, 0),
             vec![MachineInstruction::Lanes(I::ConstZone(0))],
-        );
+        )
+        .unwrap();
         let run = LanesMachine::new().run(&program, 100).unwrap();
         assert_eq!(run.stopped, Stopped::RanOff);
     }
@@ -1337,10 +2449,10 @@ mod tests {
             wrong.join("\n")
         );
         // A parser that silently matched nothing would make this vacuous:
-        // 24 rows in the quick reference plus 23 in the spec.
+        // 29 rows in the quick reference plus 23 in the spec.
         assert_eq!(
-            checked, 47,
-            "expected 47 documented opcodes, found {checked}"
+            checked, 52,
+            "expected 52 documented opcodes, found {checked}"
         );
     }
 
@@ -1380,15 +2492,15 @@ mod tests {
             checked += 1;
         }
         assert_eq!(
-            checked, 19,
-            "the lanes device has 19 instructions; every_instruction() yielded {checked}"
+            checked, 17,
+            "the lanes device has 17 instructions; every_instruction() yielded {checked}"
         );
     }
 
     #[test]
     fn move_without_an_arch_is_an_error() {
         // `move` cannot resolve a lane into endpoints without a spec.
-        let mut m = LanesMachine::default();
+        let mut m = LanesMachine::new();
         m.step_lanes(I::ConstLane(0)).unwrap();
         let err = m.step_lanes(I::Move(1)).unwrap_err().to_string();
         assert!(err.contains("arch spec"), "got {err}");

@@ -44,12 +44,9 @@ LaneAddressType = types.PyClass(LaneAddress)
 ZoneAddressType = types.PyClass(ZoneAddress)
 # ArrayType and MeasurementFutureType come from bloqade.lanes.types.
 
-# Type variables for stack-manipulation invariants:
+# Type variable for the stack-manipulation invariant:
 #   Dup preserves the top-of-stack type (T → T).
-#   Swap permutes the top two types ((TopType, BottomType) → (BottomType, TopType)).
 T = types.TypeVar("T")
-TopType = types.TypeVar("TopType")
-BottomType = types.TypeVar("BottomType")
 
 # Type variables for the parameterised ArrayType — used by NewArray (result
 # type) and GetItem (array element type flows through to result).
@@ -122,14 +119,6 @@ class ConstZone(ir.Statement):
 
 
 @statement(dialect=dialect)
-class Pop(ir.Statement):
-    """Pop and discard the top of the virtual stack."""
-
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
-    value: ir.SSAValue = info.argument(types.Any)
-
-
-@statement(dialect=dialect)
 class Dup(ir.Statement):
     """Duplicate the top of the virtual stack. Semantically result ≡ value;
     preserved as an explicit op to give downstream passes a hook for
@@ -140,15 +129,40 @@ class Dup(ir.Statement):
     result: ir.ResultValue = info.result(T)
 
 
-@statement(dialect=dialect)
-class Swap(ir.Statement):
-    """Swap the top two virtual-stack values. out_top ≡ in_bot; out_bot ≡ in_top."""
+# ── Locals ─────────────────────────────────────────────────────────────
+#
+# A function's locals are slots of their own below its operands, reached only
+# by these two. That is what replaced the ``pop``/``swap`` the bytecode used to
+# carry: a value parked in a local is out of every operand op's way until a
+# ``LoadLocal`` brings a copy back, however much is pushed and popped between.
+#
+# ``value_type`` is the vihaco type the bytecode names, spelled as the text
+# format spells it (``"f64"``, ``"undef"``, ...) — see ``Instruction.load``.
+#
+# Neither is ``Pure``: a ``LoadLocal`` reads whatever the last ``StoreLocal``
+# to its index wrote, so two loads of one index are not interchangeable across
+# a store, and CSE must not merge them.
 
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
-    in_top: ir.SSAValue = info.argument(TopType)
-    in_bot: ir.SSAValue = info.argument(BottomType)
-    out_top: ir.ResultValue = info.result(BottomType)
-    out_bot: ir.ResultValue = info.result(TopType)
+
+@statement(dialect=dialect)
+class StoreLocal(ir.Statement):
+    """Pop the top of the virtual stack into local ``index``."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    value: ir.SSAValue = info.argument(types.Any)
+    index: int = info.attribute()
+    value_type: str = info.attribute()
+
+
+@statement(dialect=dialect)
+class LoadLocal(ir.Statement):
+    """Push a copy of local ``index``. Semantically result ≡ the value the last
+    ``StoreLocal`` to ``index`` wrote."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    index: int = info.attribute()
+    value_type: str = info.attribute()
+    result: ir.ResultValue = info.result(types.Any)
 
 
 # ── Atom operations ────────────────────────────────────────────────────

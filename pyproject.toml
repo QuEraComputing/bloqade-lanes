@@ -194,5 +194,26 @@ markers = [
     "msd_numerical_regression: optional long-running, environment-specific MSD numerical regression",
 ]
 
+[tool.uv]
+constraint-dependencies = [
+    # cuda-quantum-cu13 0.16.0.post1 (2026-09-17) shipped without the
+    # macosx_13_0_arm64 wheels that 0.14.0 through 0.16.0 all published, so
+    # resolving it breaks `just sync` on the macOS leg of Cross-Platform:
+    #
+    #   error: Distribution `cuda-quantum-cu13==0.16.0.post1` can't be
+    #   installed because it doesn't have a source distribution or wheel for
+    #   the current platform
+    #
+    # CUDA-Q supports macOS by design — 0.14.0's release notes announced the
+    # macOS wheels, and the package's own CUDA dependencies are marked
+    # `sys_platform != 'darwin'` — so this is an upstream packaging gap in the
+    # .post1 re-release, not a dropped platform. `cudaq` requires
+    # cuda-quantum-cu13 with no version specifier, so the exclusion has to sit
+    # on the transitive package rather than on `cudaq` itself.
+    #
+    # Drop this once a release later than 0.16.0.post1 restores the macOS wheel.
+    "cuda-quantum-cu13!=0.16.0.post1",
+]
+
 [tool.uv.sources]
 ppvm = { git = "https://github.com/QuEraComputing/ppvm.git", subdirectory = "ppvm-python" }
