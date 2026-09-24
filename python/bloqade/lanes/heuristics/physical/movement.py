@@ -120,10 +120,10 @@ class RustPlacementTraversal:
     finish, it reruns from the original placement. It does not honour an AOD
     capacity.
     """
-    cascade_bound: bool = False
+    cascade_bound: bool = True
     """Gate a cascade strategy's A* refinement with the completion bound.
 
-    Off by default. The refinement looks for a plan strictly cheaper than the
+    On by default; ``False`` restores the ungated refinement. The refinement looks for a plan strictly cheaper than the
     inner strategy's; with the gate, a child whose ``g + h`` already reaches
     that cost is dropped before it takes a node, which saves memory without
     losing a cheaper plan (a tie may resolve to a different plan of the same
