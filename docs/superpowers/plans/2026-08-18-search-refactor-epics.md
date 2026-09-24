@@ -1,8 +1,8 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** in progress. Epics 0 and 1 are done. Epic 2A is in progress, as five PRs
-(see its "How it lands" note); the rest has not started.
+**Status:** in progress. Epics 0 and 1 are done. Epic 2A is in review as five stacked
+PRs (#1059 merged; see its "How it lands" note); the rest has not started.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
 branch that is **not merged into `main`**.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
@@ -377,6 +377,54 @@ string events on the Python side.
   public entry points, which the Parked extension surface needs. Only its tests of the
   deleted items went; its `WeightedDuration` test was redundant with the in-crate
   `driver_accumulates_g_under_a_swapped_objective`.
+
+**Part 2 — landed notes (the architecture boundary).**
+- `LaneIndex` gained only the queries production code used: `sites_per_word`,
+  `cz_partner`, `is_home_position`, `home_locations`, `entangling_word_pairs`,
+  `check_lanes`, `check_move_set` and `validate_arch`. `left_cz_word_ids`,
+  `word_zone_map`, `location_position` and `lane_endpoints`, listed above, have no
+  non-test caller and were not added.
+- **Deviation: `LaneIndex::arch_spec()` is `pub(crate)`, not removed.** The DSL sidecar
+  hands the spec to Starlark policies as a value, and `dsl/` is out of scope. A guard test,
+  `only_lane_index_reads_the_arch_spec`, fails if non-test code outside `LaneIndex`,
+  `SearchEngine` and `dsl/` calls it or takes `&ArchSpec` / `Arc<ArchSpec>`, so Rule 2 is
+  now enforced by CI rather than by review.
+
+**Part 3 — landed notes (the AOD capacity).**
+- **Top-level, not per zone:** `ArchSpec.aod_capacity`, serialized as
+  `{"x": <columns>, "y": <rows>}` and omitted when unlimited. This matches the single
+  per-solve cap it replaces. A per-zone override can be added later without breaking
+  anything.
+- `AodCapacity` moved to `bytecode-core`, together with `admits` and `tighten`; the search
+  crate re-exports it. Deserialization rejects a zero axis or an unknown key.
+- **Open point, decided:** the exhaustive generator keeps its own cap argument, tightened
+  against the spec's. It is a per-generator tightening, and the oracle tests use it.
+- Python exposure: `ArchSpec.from_components(aod_capacity=(x, y))` and an
+  `aod_capacity` property. The behaviour net applies its capacity knob to the spec.
+
+**Part 4 — landed notes (Rule 1 types).**
+- `SolveResult::proven()` is derived from `termination`. Every producer already kept the
+  documented invariant, so the golden is unchanged.
+- `SearchContext::new` / `with_cz_pairs`, with the type `#[non_exhaustive]`. PyO3, the
+  benches and the integration tests use the constructor.
+- `EntropyTraceStep` holds `EntropyTraceEvent`, `EntropyReason`, `MoveSet` and `Config`.
+  `EntropyReason` also replaced `SearchEvent`'s `&'static str` reasons, which carried the
+  same strings. The PyO3 adapter renders the old labels and tuples. A dump of every
+  step field over 24,082 steps, covering all five events and all five reasons, is
+  byte-identical before and after. That keeps `bloqade-internal`'s
+  `step.event == "fallback_start"` check working.
+
+**Part 5 — landed notes (best partial, `nodes_generated`).**
+- `SolveResult::best_partial: Option<PartialPlan>`, holding the config, its prefix and
+  the unresolved count, computed in `extract` as specified. It is `None` on composed
+  results, and the failed mirror path explicitly drops the mirror's partial.
+- `SolveResult::nodes_generated`, summed wherever `nodes_expanded` is, including
+  NoHome's phases and RecedingHorizon's rollouts (threaded through `RolloutOutcome`).
+- The golden gained `| generated: N` on every status line and a `partial:` line on the
+  23 cases that fail toward a point goal; stripping those reproduces the previous golden.
+- **Evidence for 2B:** on `route/zoned_six_up`, DFS, greedy, IDS and both cascades run out
+  of budget with **one** atom unresolved after 14 layers. That is where resuming P&R from
+  the partial should pay.
 
 **Scope.**
 
