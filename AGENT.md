@@ -143,6 +143,46 @@ compare a fresh local run's wall times against the committed baselines.
    columns — they must be identical run-to-run. Then commit both CSVs alongside
    the change that caused them.
 
+## Search behaviour net
+
+`crates/bloqade-lanes-search/tests/behaviour/` is a Rust suite that detects any
+behaviour change in `bloqade-lanes-search`. It runs with `just test-rust`, in
+about 3 s. It records every case's outcome in
+`crates/bloqade-lanes-search/tests/fixtures/behaviour/golden.txt`: status, layer
+and lane counts, cost, expansions, proof verdict, final placement, a plan digest,
+bound statistics, and the placement attempt log. Any difference fails the test,
+with a diff.
+
+- **Layout.** `cases.rs` is the case corpus, as plain data. `interface.rs` is the
+  *only* module that imports the crate, and a guard test enforces that. If an API
+  change breaks the build, fix `interface.rs`, not the cases.
+- **When the golden fails.** An unintended diff is a regression. An intended one
+  (a deliberate behaviour change) needs the golden regenerated in the same commit:
+
+  ```bash
+  BEHAVIOUR_BLESS=1 cargo test -p bloqade-lanes-search --test behaviour
+  ```
+
+  Review the diff: only the cases your change should affect may move.
+- **Adding cases.** When a change reaches a path the corpus does not cover, add a
+  case. Keep instances small; the suite runs in a debug build. Put inline
+  expectations (`Expect`) only on answers derivable by hand, and only for the
+  strategies that must find them.
+- **Architecture fixtures.** Besides the bundled Gemini specs, cases run on
+  snapshots of the crate's synthetic unit-test specs in
+  `tests/fixtures/behaviour/arch/`. They are copies, not live links, so a change
+  to `src/test_utils.rs` does not move this golden.
+- **Debug only.** The golden is recorded in a debug build. A few cases depend on
+  `debug_assert!`, so under `--release` they, and the golden comparison, are
+  skipped.
+- **Micro-benchmarks.** `just bench-search [filter]` (`benches/behaviour.rs`, divan)
+  times the corpus's search-heavy cases in a release build: the hard instances,
+  the four-pair CZ stages and the anticipatory cases, about 7 s in all. It reports
+  expansions per second where a case expands nodes, and times engine construction
+  per architecture separately. It includes the net's own files, so every timed
+  case is also pinned by the golden. Use it to compare before and after on one
+  machine; it is not a CI gate, because wall time varies.
+
 ## Move Policy DSL
 
 The Move Policy DSL lets you author search policies in Starlark (a deterministic Python-syntax subset) instead of Rust. Policies are invoked through a sidecar `PolicyRunner` (sibling to `MoveSolver`) so the strategy-based solver surface stays untouched:

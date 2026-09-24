@@ -200,6 +200,11 @@ benchmark-physical:
 benchmark-logical:
     uv run --locked --no-sync python -m benchmarks.cli --architecture logical --compare python/benchmarks/harness/latest_logical.csv
 
+# Time the search crate on the behaviour-net corpus (local A/B, not a CI gate).
+# Pass a name filter to narrow it, e.g. `just bench-search congested`.
+bench-search *filter:
+    cargo bench -p bloqade-lanes-search --bench behaviour -- {{filter}}
+
 # Run fast Python tests only (skip slow integration tests)
 test-python-fast:
     uv run --locked --no-sync pytest python/tests/ -v -m "not slow"
