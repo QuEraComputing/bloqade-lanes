@@ -20,8 +20,8 @@
 //!   When that work lands, only these goldens should move.
 
 use crate::spec::{
-    Arch, Case, Deadlock, Expect, Knobs, Loc, Placement, Problem, ProblemSpec, Status, Strategy,
-    loc, zloc,
+    Arch, Case, Deadlock, Expect, Knobs, Loc, Mover, Placement, Problem, ProblemSpec, Status,
+    Strategy, loc, zloc,
 };
 
 /// Expansion budget for routing cases: enough for the small instances here,
@@ -712,6 +712,40 @@ fn big_cz_cases() -> Vec<Case> {
                 &[(0, 1), (2, 3), (4, 5)],
             ),
         ));
+    }
+    // NoHome's other mover selections, on the stages where the choice of
+    // mover matters (the crate default is covered above).
+    for (label, mover) in [("rule", Mover::Rule), ("route_all", Mover::RouteAll)] {
+        let knobs = Knobs {
+            mover_selection: Some(mover),
+            ..Knobs::default()
+        };
+        for (instance, arch, initial, pairs) in [
+            (
+                "logical_four_pairs",
+                Arch::GeminiLogical,
+                &logical_four_pairs[..],
+                &four_pairs[..],
+            ),
+            (
+                "physical_four_pairs_spectators",
+                Arch::GeminiPhysical,
+                &physical_four_pairs[..],
+                &four_pairs[..],
+            ),
+            (
+                "example_pairable",
+                Arch::Example,
+                &example_pairable[..],
+                &[(0, 1)][..],
+            ),
+        ] {
+            cases.push(case(
+                format!("cz/nohome/{label}/{instance}"),
+                stage(arch, Placement::NoHome, Strategy::Entropy, initial, pairs)
+                    .knobs(knobs.clone()),
+            ));
+        }
     }
     cases
 }

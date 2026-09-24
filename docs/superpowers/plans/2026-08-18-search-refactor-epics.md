@@ -1,10 +1,12 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** in progress. Epics 0, 1 and 2A are done (2A as #1059, #1060, #1061, #1063,
-#1065). Epics 3A and 2B and Epic 4 phase 1 are in review as one stack of PRs (#1066–#1074
-and the phase-1 PR), each on the previous; merge them bottom-up. Epic 4 phases 2–3 wait on
-decision 2, now informed by phase 1.
+**Status:** in progress. Epics 0, 1, 2A, 2B, 3A.0 and 3A and Epic 4 phase 1 are done
+(2A as #1059, #1060, #1061, #1063, #1065; 3A.0 and 3A as #1066–#1070; 2B as #1071–#1074;
+Epic 4 phase 1 as #1076). Epic 4 phases 2–3 land together (decision 2, now decided), and
+decision 8 is decided (keep the slices). Left: Epic 5 (deferred), Epic 4's optional
+extensions and the Parked items. The branch lands on `main` as one squash once the
+refactor is done.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
 branch that is **not merged into `main`**.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
@@ -701,11 +703,10 @@ adapter rebuild.
   goal and NoHome's single Hungarian assignment don't fit one pipeline. If ranking and
   RecedingHorizon both need a shared "score a candidate placement" helper, extract it
   then.
-- **`TargetGenerator` keeps its parallel slices for now.** `TargetContext` and
+- **`TargetGenerator` keeps its parallel slices.** `TargetContext` and
   `validate_candidate` take parallel `controls`/`targets`
   (`placement/target_generator.rs:15-24, 136`). `SingleHeuristic` unzips the pairs to
-  feed them, which is zero-drift. Whether to reshape `TargetGenerator` too is open
-  decision 8.
+  feed them, which is zero-drift. Decision 8 (2026-09-24) keeps it that way.
 - **Drift: none, apart from inputs that can no longer be expressed.** Mismatched
   `controls`/`targets` lengths behave differently today:
   - `LooseGoal` panics via `assert_eq!`;
@@ -865,6 +866,25 @@ the rule-as-control reproducing `pipeline_default` exactly): ranked 3,250 → 3,
 keeping the cheapest gives 2,908 (10.5%), no kernel worse, about 2× compile time. Phases
 2–3 go inside `NoHomeCzPlacement`; ranked versus route-all is Phil's call.
 
+**Phases 2–3 — DONE 2026-09-24 (one PR):** `NoHomeOptions.mover_selection` in
+`placement/nohome.rs`, with `RULE` (the old fixed rule, one routing solve), `RANKED`
+(**the default**: plan each candidate mover assignment with Push and Rotate, route the
+shortest, the next on failure) and `ROUTE_ALL` (route every candidate, keep the fewest
+layers, the rule's on ties). Candidates are every assignment up to
+`max_mover_candidates` (64), else the rule, every single-pair flip and a seeded sample.
+Exposed as `MoverSelection` on `NoHomeOptions`, `NoHomePlacementStrategy` and
+`make_physical_placement_strategy(mover_selection=...)`. `RULE` reproduces the previous
+behaviour exactly (behaviour net unchanged under it). Measured on the physical suite:
+`pipeline_default` 3,250 → 3,066 events (5.7%; trotter_rand_35 −10.3%, adder_64 −4.5%,
+steane_physical_35 +4.2%), compile time about unchanged; the new opt-in
+`pipeline_route_all` row gives 2,898 (10.8%, no kernel worse) at about 2.4× the compile
+time. `success` is unchanged everywhere, and the logical suite's `pipeline_default` does
+not move. Behaviour net: `cz/nohome/example_pairable` goes from unsolvable (the rule's
+target cannot be routed) to solved, and six cases pin `RULE` and `ROUTE_ALL`. The phase-2
+"blocker" for `PhysicalPlacementStrategy` (one candidate, first solve wins) is left as
+is: its generators failed phase 1's bar, so there is nothing to rank there. The optional
+extensions (P&R seed incumbent, class-bound pruning over candidates) stay open.
+
 **Phases.**
 1. **Re-measure with real candidate sets (go/no-go).** The random-walk candidates may
    overstate the spread. Per decision 2, measure **both** candidate spaces:
@@ -989,9 +1009,15 @@ Numbers are stable, because the epics refer to them.
    - **Rejected:** downgrading the proof, as RecedingHorizon's `merge_fallback`
      (`placement/receding_horizon.rs:1092`) does, which loses the signal; and carrying it
      over on an invertibility argument.
-2. **PARTLY DECIDED (2026-09-23): candidate ranking — where it lives and how it reaches
-   the default pipeline.**
-   - **Decided:** Epic 4 phase 1 measures both candidate spaces:
+2. **DECIDED (2026-09-24): candidate ranking — where it lives and how it reaches the
+   default pipeline.**
+   - **Chosen (from phase 1's data):** inside `NoHomeCzPlacement`, over the per-pair
+     mover choice, as `NoHomeOptions.mover_selection`. `RANKED` (plan every candidate
+     with Push and Rotate, route the shortest) is the default, so it reaches the default
+     pipeline with no change of placement family; `ROUTE_ALL` (route every candidate,
+     keep the fewest layers) is opt-in; `RULE` keeps the old fixed rule. The
+     Python-generator route is not pursued: it failed phase 1's bar.
+   - **Originally decided (2026-09-23):** Epic 4 phase 1 measures both candidate spaces:
      - NoHome's per-pair mover choice, ranked in Rust inside `NoHomeCzPlacement`, which
        reaches the default directly;
      - the Python generators, ranked in `PhysicalPlacementStrategy`'s Python loop, where
@@ -1033,9 +1059,12 @@ Numbers are stable, because the epics refer to them.
    default.** It lands opt-in, switched from `SolveOptions`, and moves no existing row.
    After measurement it becomes the default in a separate reviewed change that moves the
    cascade rows. The prune is sound but can change which equal-cost plan wins a tie.
-8. **OPEN (deferred 2026-09-23): `TargetGenerator`'s parallel slices.** Keep them, with
-   `SingleHeuristic` unzipping pairs (zero-drift), or reshape `TargetGenerator` /
-   `TargetContext` to pairs to match `CzStage`. Facts for whoever decides:
+8. **DECIDED (2026-09-24): `TargetGenerator` keeps its parallel `controls` / `targets`
+   slices.** `SingleHeuristic` keeps unzipping `CzStage`'s pairs for it (zero-drift), and
+   the Starlark target-generator surface (`ctx.controls` / `ctx.targets`) stays as is.
+   **Rejected:** reshaping `TargetGenerator` / `TargetContext` to pairs to match
+   `CzStage`, which would churn the DSL surface and its policies for no behaviour gain.
+   The facts it was decided on:
    - the only Rust implementation is `DefaultTargetGenerator`
      (`placement/target_generator.rs:48`);
    - the Starlark target-generator DSL exposes `ctx.controls` / `ctx.targets` as separate

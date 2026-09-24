@@ -103,7 +103,7 @@ Regenerate whenever a change alters the deterministic benchmark metrics
   kernels/registry.
 - Changes to the defaults resolved by `make_physical_placement_strategy` —
   placement family, `backwards_search`, `block_spectators`, `search_budget`,
-  `move_solutions_per_layer`. The `pipeline_default` strategy row deliberately
+  `move_solutions_per_layer`, NoHome's `mover_selection`. The `pipeline_default` strategy row deliberately
   leaves these unpinned so it tracks whatever `PhysicalPipeline` gives a user
   who passes no strategy; that is the row's entire purpose, so a default change
   is *expected* to move it.

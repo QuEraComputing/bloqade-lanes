@@ -31,6 +31,32 @@ type StagePair = ((u32, LocationAddr), (u32, LocationAddr));
 
 // ── Options ───────────────────────────────────────────────────────
 
+/// How the CZ phase chooses, for each pair, which qubit moves.
+///
+/// A pair whose qubits both have a CZ partner can be staged two ways: the
+/// control moves to the target's partner site, or the target moves to the
+/// control's. Over a stage's `k` such pairs that is up to `2^k` candidate
+/// targets. Pairs without a partner go to a free entangling slot under every
+/// variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MoverSelection {
+    /// A fixed per-pair rule, with no comparison: the control moves if both
+    /// qubits share a word, else the target if it sits on a home site, else
+    /// the control. One routing solve.
+    Rule,
+    /// Plan every candidate with Push and Rotate, which is fast and always
+    /// finishes but is not shortest, and route the candidate with the
+    /// shortest plan (the next, on failure). The plan's length is an upper
+    /// bound on the candidate's cost. One routing solve when the first pick
+    /// routes.
+    #[default]
+    Ranked,
+    /// Route every candidate and keep the one with the fewest move layers,
+    /// the rule's on ties. The most thorough, and one routing solve per
+    /// candidate.
+    RouteAll,
+}
+
 /// Tuning knobs for the no-home return assignment.
 #[derive(Debug, Clone)]
 pub struct NoHomeOptions {
@@ -49,6 +75,14 @@ pub struct NoHomeOptions {
     /// Per-edge hop-count discount applied to edges using a top signature
     /// when building bus-reward variant cost matrices (default 1).
     pub bus_reward_rho: u32,
+    /// How the CZ phase picks which qubit of each pair moves (default
+    /// [`MoverSelection::Ranked`]).
+    pub mover_selection: MoverSelection,
+    /// Most candidate targets [`MoverSelection::Ranked`] and
+    /// [`MoverSelection::RouteAll`] compare (default 64). A stage with more
+    /// mover assignments than this compares the rule's, every single-pair
+    /// flip of it, and a seeded sample of the rest.
+    pub max_mover_candidates: usize,
 }
 
 impl Default for NoHomeOptions {
@@ -59,8 +93,54 @@ impl Default for NoHomeOptions {
             k_candidates: 8,
             top_bus_signatures: 6,
             bus_reward_rho: 1,
+            mover_selection: MoverSelection::default(),
+            max_mover_candidates: 64,
         }
     }
+}
+
+/// Mover assignments to compare, the rule's first: `true` moves the pair's
+/// target, `false` its control.
+///
+/// Every assignment when there are at most `cap`; otherwise the rule's, every
+/// single-pair flip of it, then distinct assignments drawn from a fixed seed,
+/// up to `cap` (or fewer, when the draws keep repeating).
+fn mover_assignments(rule: &[bool], cap: usize) -> Vec<Vec<bool>> {
+    use rand::rngs::SmallRng;
+    use rand::{Rng, SeedableRng};
+
+    let k = rule.len();
+    let cap = cap.max(1);
+    if k < usize::BITS as usize && (1usize << k) <= cap {
+        let mut all = vec![rule.to_vec()];
+        all.extend(
+            (0..1usize << k)
+                .map(|bits| (0..k).map(|i| bits >> i & 1 == 1).collect::<Vec<_>>())
+                .filter(|a| a != rule),
+        );
+        return all;
+    }
+    let mut seen: HashSet<Vec<bool>> = HashSet::new();
+    let mut out = Vec::with_capacity(cap);
+    let mut push = |a: Vec<bool>, out: &mut Vec<Vec<bool>>| {
+        if out.len() < cap && seen.insert(a.clone()) {
+            out.push(a);
+        }
+    };
+    push(rule.to_vec(), &mut out);
+    for i in 0..k {
+        let mut flip = rule.to_vec();
+        flip[i] = !flip[i];
+        push(flip, &mut out);
+    }
+    let mut rng = SmallRng::seed_from_u64(0x4E0_40E5);
+    for _ in 0..cap.saturating_mul(8) {
+        if out.len() >= cap {
+            break;
+        }
+        push((0..k).map(|_| rng.random_bool(0.5)).collect(), &mut out);
+    }
+    out
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -436,7 +516,7 @@ use crate::placement::cz_placement::{CzPlacement, CzStage, PlacementBudget, Plac
 use crate::primitives::config::ConfigError;
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::SolveOptions;
+use crate::search::options::{SolveOptions, Strategy};
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::search::target_solver::solve_with_engine;
 use std::sync::Arc;
@@ -539,15 +619,20 @@ pub(crate) fn solve_nohome(
 
     let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
 
-    // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
+    // Helper: the candidate CZ-staging targets for Phase 2 from a config, the
+    // rule's first.
     //
-    // A pair whose qubits both have a CZ partner takes the per-pair rule:
-    // one qubit moves to the other's partner site. A pair with a qubit
-    // anywhere else (e.g. a storage zone with no entangling pairs) has no
-    // such move, so it goes to a free entangling slot instead. `None`
-    // means some pair cannot be placed at all.
-    let resolve_cz_targets = |from: &Config| -> Option<Vec<(u32, LocationAddr)>> {
-        let mut chosen: HashMap<u32, LocationAddr> = HashMap::with_capacity(cz_pairs.len());
+    // A pair whose qubits both have a CZ partner is staged by moving one
+    // qubit to the other's partner site; the rule picks which, and the other
+    // candidates (under `Ranked` and `RouteAll`) vary that choice. A pair
+    // with a qubit anywhere else (e.g. a storage zone with no entangling
+    // pairs) has no such move, so it goes to a free entangling slot instead.
+    // `None` means the rule's own target cannot be placed at all. A
+    // non-rule candidate that cannot be placed, or that puts two qubits on
+    // one location, is dropped.
+    let cz_target_candidates = |from: &Config| -> Option<Vec<Vec<(u32, LocationAddr)>>> {
+        let mut options: Vec<((u32, LocationAddr), (u32, LocationAddr))> = Vec::new();
+        let mut rule: Vec<bool> = Vec::new();
         let mut unpartnered: Vec<StagePair> = Vec::new();
         for &(c, t) in cz_pairs {
             let c_addr = from.location_of(c)?;
@@ -557,63 +642,151 @@ pub(crate) fn solve_nohome(
                 unpartnered.push(((c, c_addr), (t, t_addr)));
                 continue;
             };
-
-            let move_c = (c, c_dst);
-            let move_t = (t, t_dst);
-
-            let (qid, dst) = if c_addr.word_id == t_addr.word_id {
-                move_c
-            } else if index.is_home_position(&t_addr) {
-                move_t
-            } else {
-                move_c
-            };
-            chosen.insert(qid, dst);
+            options.push(((c, c_dst), (t, t_dst)));
+            rule.push(c_addr.word_id != t_addr.word_id && index.is_home_position(&t_addr));
         }
 
-        if !unpartnered.is_empty() {
-            // A slot is taken if another atom ends on either half, or either
-            // half is blocked.
-            let slotted: HashSet<u32> = unpartnered
+        let assignments = match nohome_opts.mover_selection {
+            MoverSelection::Rule => vec![rule],
+            MoverSelection::Ranked | MoverSelection::RouteAll => {
+                mover_assignments(&rule, nohome_opts.max_mover_candidates)
+            }
+        };
+
+        let mut candidates = Vec::with_capacity(assignments.len());
+        for (n, assignment) in assignments.iter().enumerate() {
+            let mut chosen: HashMap<u32, LocationAddr> = HashMap::with_capacity(cz_pairs.len());
+            for (&moves_target, &(move_c, move_t)) in assignment.iter().zip(&options) {
+                let (qid, dst) = if moves_target { move_t } else { move_c };
+                chosen.insert(qid, dst);
+            }
+
+            if !unpartnered.is_empty() {
+                // A slot is taken if another atom ends on either half, or
+                // either half is blocked.
+                let slotted: HashSet<u32> = unpartnered
+                    .iter()
+                    .flat_map(|&((c, _), (t, _))| [c, t])
+                    .collect();
+                let mut claimed = blocked_set.clone();
+                claimed.extend(
+                    from.iter()
+                        .filter(|(qid, _)| !slotted.contains(qid))
+                        .map(|(qid, loc)| chosen.get(&qid).copied().unwrap_or(loc).encode()),
+                );
+                let dist_table = &engine.entangling_cache().dist_table;
+                match assign_free_slots(&unpartnered, &claimed, index, dist_table) {
+                    Some(slots) => chosen.extend(slots),
+                    None if n == 0 => return None,
+                    None => continue,
+                }
+            }
+
+            let target: Vec<(u32, LocationAddr)> = from
                 .iter()
-                .flat_map(|&((c, _), (t, _))| [c, t])
-                .collect();
-            let mut claimed = blocked_set.clone();
-            claimed.extend(
-                from.iter()
-                    .filter(|(qid, _)| !slotted.contains(qid))
-                    .map(|(qid, loc)| chosen.get(&qid).copied().unwrap_or(loc).encode()),
-            );
-            let dist_table = &engine.entangling_cache().dist_table;
-            chosen.extend(assign_free_slots(
-                &unpartnered,
-                &claimed,
-                index,
-                dist_table,
-            )?);
-        }
-
-        Some(
-            from.iter()
                 .map(|(qid, loc)| (qid, chosen.get(&qid).copied().unwrap_or(loc)))
-                .collect(),
-        )
+                .collect();
+            if n > 0 {
+                let mut ends = HashSet::with_capacity(target.len());
+                if !target.iter().all(|(_, loc)| ends.insert(loc.encode())) {
+                    continue;
+                }
+            }
+            candidates.push(target);
+        }
+        Some(candidates)
+    };
+
+    // Helper: route Phase 2 from `from` to one of `candidates` (the rule's
+    // first), chosen per `mover_selection`. Under `Rule` this is exactly one
+    // routing solve to the rule's target. Otherwise the result is the chosen
+    // candidate's, or the rule's when none routes, with the search counters
+    // of every routing solve summed in.
+    let route_cz_phase = |from: &Config,
+                          candidates: Vec<Vec<(u32, LocationAddr)>>|
+     -> Result<SolveResult, ConfigError> {
+        let route = |target: &[(u32, LocationAddr)]| {
+            solve_with_engine(
+                engine,
+                opts,
+                None,
+                from.iter(),
+                target.iter().copied(),
+                blocked_locs.iter().copied(),
+                max_expansions,
+            )
+        };
+        let order: Vec<usize> = match nohome_opts.mover_selection {
+            MoverSelection::Rule => return route(&candidates[0]),
+            MoverSelection::RouteAll => (0..candidates.len()).collect(),
+            MoverSelection::Ranked => {
+                let plan_opts = SolveOptions {
+                    strategy: Strategy::PushRotate,
+                    backwards_search: false,
+                    ..opts.clone()
+                };
+                let mut planned: Vec<(usize, usize)> = Vec::new();
+                for (i, target) in candidates.iter().enumerate() {
+                    let plan = solve_with_engine(
+                        engine,
+                        &plan_opts,
+                        None,
+                        from.iter(),
+                        target.iter().copied(),
+                        blocked_locs.iter().copied(),
+                        None,
+                    )?;
+                    if plan.status == SolveStatus::Solved {
+                        planned.push((plan.move_layers.len(), i));
+                    }
+                }
+                planned.sort_unstable();
+                let mut order: Vec<usize> = planned.into_iter().map(|(_, i)| i).collect();
+                if !order.contains(&0) {
+                    order.push(0);
+                }
+                order
+            }
+        };
+
+        let mut expanded: u32 = 0;
+        let mut generated: u32 = 0;
+        let mut best: Option<SolveResult> = None;
+        let mut rule_result: Option<SolveResult> = None;
+        for i in order {
+            let result = route(&candidates[i])?;
+            expanded = expanded.saturating_add(result.nodes_expanded);
+            generated = generated.saturating_add(result.nodes_generated);
+            if result.status == SolveStatus::Solved {
+                if best
+                    .as_ref()
+                    .is_none_or(|b| result.move_layers.len() < b.move_layers.len())
+                {
+                    best = Some(result);
+                }
+                if nohome_opts.mover_selection == MoverSelection::Ranked {
+                    break;
+                }
+            } else if i == 0 {
+                rule_result = Some(result);
+            }
+        }
+        // The rule's candidate is always routed when nothing else solved, so
+        // one of the two is set.
+        let mut result = best
+            .or(rule_result)
+            .expect("the rule's candidate is routed when no other solves");
+        result.nodes_expanded = expanded;
+        result.nodes_generated = generated;
+        Ok(result)
     };
 
     if !has_returners {
         // Skip the return phase — go directly to fixed-target entangling.
-        let Some(cz_targets) = resolve_cz_targets(&root) else {
+        let Some(cz_targets) = cz_target_candidates(&root) else {
             return Ok(SolveResult::unsolvable(root));
         };
-        return solve_with_engine(
-            engine,
-            opts,
-            None,
-            root.iter(),
-            cz_targets,
-            blocked_locs.iter().copied(),
-            max_expansions,
-        );
+        return route_cz_phase(&root, cz_targets);
     }
 
     let occupied_set: HashSet<u64> = root.iter().map(|(_, loc)| loc.encode()).collect();
@@ -681,8 +854,8 @@ pub(crate) fn solve_nohome(
         return Ok(unsolved);
     };
 
-    // Phase 2: simple per-pair target picker, then route once.
-    let Some(cz_targets) = resolve_cz_targets(&return_result.goal_config) else {
+    // Phase 2: pick the CZ-staging target per `mover_selection`, and route it.
+    let Some(cz_targets) = cz_target_candidates(&return_result.goal_config) else {
         let mut unsolved = SolveResult::unsolved(
             SolveStatus::Unsolvable,
             root,
@@ -692,15 +865,7 @@ pub(crate) fn solve_nohome(
         unsolved.nodes_generated = total_generated;
         return Ok(unsolved);
     };
-    let entangling_result = solve_with_engine(
-        engine,
-        opts,
-        None,
-        return_result.goal_config.iter(),
-        cz_targets,
-        blocked_locs.iter().copied(),
-        max_expansions,
-    )?;
+    let entangling_result = route_cz_phase(&return_result.goal_config, cz_targets)?;
 
     total_expanded += entangling_result.nodes_expanded;
     total_generated = total_generated.saturating_add(entangling_result.nodes_generated);
@@ -743,6 +908,34 @@ mod tests {
         let arch: ArchSpec = serde_json::from_str(json).unwrap();
         let index = LaneIndex::new(arch.clone());
         (arch, index)
+    }
+
+    #[test]
+    fn mover_assignments_enumerates_all_when_under_the_cap() {
+        let rule = [true, false, true];
+        let all = mover_assignments(&rule, 8);
+        assert_eq!(all.len(), 8);
+        assert_eq!(all[0], rule);
+        let distinct: HashSet<_> = all.iter().cloned().collect();
+        assert_eq!(distinct.len(), 8);
+    }
+
+    #[test]
+    fn mover_assignments_samples_over_the_cap() {
+        let rule = vec![false; 10];
+        let some = mover_assignments(&rule, 20);
+        assert_eq!(some.len(), 20);
+        assert_eq!(some[0], rule);
+        // Every single-pair flip comes right after the rule.
+        for (i, flip) in some[1..=10].iter().enumerate() {
+            assert!(flip.iter().enumerate().all(|(j, &b)| b == (j == i)));
+        }
+        let distinct: HashSet<_> = some.iter().cloned().collect();
+        assert_eq!(distinct.len(), 20);
+        // Deterministic.
+        assert_eq!(some, mover_assignments(&rule, 20));
+        // A cap below the flips keeps the rule and the first flips.
+        assert_eq!(mover_assignments(&rule, 3).len(), 3);
     }
 
     #[test]

@@ -9,7 +9,9 @@ Phase 1 (return): Hungarian-pick a home layout, then route current → home
 via fixed-target ``solve``.
 Phase 2 (entangling): pick CZ-staging targets per pair, moving one qubit to
 the other's CZ partner site, then route home → staging via fixed-target
-``solve``. A pair with a qubit that has no partner site (e.g. in a storage
+``solve``. Which qubit of each pair moves follows ``mover_selection``: by
+default every assignment (up to ``max_mover_candidates``) is planned with Push
+and Rotate and the one with the shortest plan is routed. A pair with a qubit that has no partner site (e.g. in a storage
 zone with no entangling pairs) is staged on a free entangling slot instead,
 and a pair that cannot be staged makes the result ``unsolvable``. This mirrors
 how :class:`PhysicalPlacementStrategy` routes to pre-computed CZ targets.
@@ -23,6 +25,7 @@ from dataclasses import dataclass
 
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import (
+    MoverSelection,
     MoveSearch,
     NoHomeCzPlacement,
     SearchEngine,
@@ -71,6 +74,17 @@ class NoHomePlacementStrategy(NoReturnStrategyBase):
         Per-edge hop-count discount applied to edges using a top
         signature when building bus-reward variant cost matrices
         (default ``1``).
+    mover_selection:
+        How the CZ phase picks which qubit of each pair moves.
+        :py:attr:`MoverSelection.RANKED` (the default, via ``None``) plans
+        every candidate with Push and Rotate and routes the one with the
+        shortest plan; :py:attr:`MoverSelection.ROUTE_ALL` routes every
+        candidate and keeps the one with the fewest move layers, at one
+        routing solve per candidate; :py:attr:`MoverSelection.RULE` applies a
+        fixed per-pair rule with no comparison.
+    max_mover_candidates:
+        Most candidate targets ``RANKED`` and ``ROUTE_ALL`` compare per stage
+        (default ``64``).
 
     Notes
     -----
@@ -87,6 +101,8 @@ class NoHomePlacementStrategy(NoReturnStrategyBase):
     k_candidates: int = 8
     top_bus_signatures: int = 6
     bus_reward_rho: int = 1
+    mover_selection: MoverSelection | None = None
+    max_mover_candidates: int = 64
 
     def _build_nohome_options(self) -> _native.NoHomeOptions:
         return _native.NoHomeOptions(
@@ -95,6 +111,8 @@ class NoHomePlacementStrategy(NoReturnStrategyBase):
             k_candidates=self.k_candidates,
             top_bus_signatures=self.top_bus_signatures,
             bus_reward_rho=self.bus_reward_rho,
+            mover_selection=self.mover_selection,
+            max_mover_candidates=self.max_mover_candidates,
         )
 
     def _invoke_placement(

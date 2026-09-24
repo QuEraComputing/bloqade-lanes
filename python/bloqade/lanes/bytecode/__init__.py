@@ -64,6 +64,7 @@ from bloqade.lanes.bytecode._native import (
     MovesetMetrics as MovesetMetrics,
     MoveType as MoveType,
     NoHomeCzPlacement as NoHomeCzPlacement,
+    MoverSelection as MoverSelection,
     NoHomeOptions as NoHomeOptions,
     PlacementResult as PlacementResult,
     PolicyRunner as PolicyRunner,

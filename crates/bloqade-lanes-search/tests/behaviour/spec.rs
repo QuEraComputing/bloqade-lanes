@@ -77,6 +77,14 @@ pub enum Deadlock {
     AllMoves,
 }
 
+/// NoHome's CZ-phase mover selections other than the crate default (ranked),
+/// which a knob of `None` runs.
+#[derive(Clone, Copy, Debug)]
+pub enum Mover {
+    Rule,
+    RouteAll,
+}
+
 /// The routing strategy, one per crate strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Strategy {
@@ -144,6 +152,8 @@ pub struct Knobs {
     pub aod_capacity: Option<(usize, usize)>,
     /// Weight of lane duration against hop count in the entropy heuristic.
     pub w_t: Option<f64>,
+    /// NoHome's mover selection. `None` follows the crate default.
+    pub mover_selection: Option<Mover>,
 }
 
 /// Which CZ-stage placement a [`Problem::CzStage`] runs through.
