@@ -1756,12 +1756,15 @@ class SingleHeuristicCzPlacement:
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
         future_layers: list[list[tuple[int, int]]] | None = None,
+        candidates: list[dict[int, LocationAddress]] | None = None,
     ) -> PlacementResult:
         """Place and route one CZ stage.
 
         ``pairs`` are the stage's ``(control, target)`` CZ pairs;
         ``future_layers`` are later stages, nearest first, for placements that
-        look ahead.
+        look ahead. ``candidates``, when given, are the target placements to
+        try, in order, instead of ``DefaultTargetGenerator``'s: each maps every
+        qubit to its location, and each is validated before it is routed.
         """
         ...
 

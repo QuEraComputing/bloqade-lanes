@@ -28,11 +28,11 @@ use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::search::options::{BoundKind, EntanglingOptions, EntropyOptions};
 use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use bloqade_lanes_search::{
-    AodCapacity, CzPlacement, CzStage, DeadlockPolicy, DefaultTargetGenerator, InnerStrategy,
-    LooseGoalCzPlacement, MoveSearch, NoHomeCzPlacement, PlacementBudget, PlacementResult,
-    RecedingHorizonCzPlacement, RecedingHorizonOptions, SearchEngine, SingleHeuristicCzPlacement,
-    SolveOptions, Strategy as CrateStrategy, TargetContext, TargetGenerator, TargetSolver,
-    Termination as CrateTermination,
+    AodCapacity, CandidateList, CzPlacement, CzStage, DeadlockPolicy, DefaultTargetGenerator,
+    InnerStrategy, LooseGoalCzPlacement, MoveSearch, NoHomeCzPlacement, PlacementBudget,
+    PlacementResult, RecedingHorizonCzPlacement, RecedingHorizonOptions, SearchEngine,
+    SingleHeuristicCzPlacement, SolveOptions, Strategy as CrateStrategy, TargetGenerator,
+    TargetSolver, Termination as CrateTermination,
 };
 
 use crate::spec::{
@@ -165,7 +165,7 @@ fn cz_placement(
         Placement::SingleHeuristic { candidates } => {
             let generator: Box<dyn TargetGenerator> = match candidates {
                 None => Box::new(DefaultTargetGenerator),
-                Some(list) => Box::new(FixedCandidates(
+                Some(list) => Box::new(CandidateList(
                     list.iter().map(|c| addrs(c).collect()).collect(),
                 )),
             };
@@ -190,15 +190,6 @@ fn cz_placement(
             EntanglingOptions::default(),
             RecedingHorizonOptions::default(),
         )),
-    }
-}
-
-/// Offers exactly the listed candidates, in order, whatever the context.
-struct FixedCandidates(Vec<Vec<(u32, LocationAddr)>>);
-
-impl TargetGenerator for FixedCandidates {
-    fn generate(&self, _ctx: &TargetContext) -> Vec<Vec<(u32, LocationAddr)>> {
-        self.0.clone()
     }
 }
 

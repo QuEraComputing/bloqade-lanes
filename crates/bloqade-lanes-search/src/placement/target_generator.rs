@@ -37,6 +37,23 @@ pub trait TargetGenerator: Send + Sync {
     fn generate(&self, ctx: &TargetContext) -> Vec<Vec<(u32, LocationAddr)>>;
 }
 
+/// A fixed list of candidate placements, offered in order whatever the
+/// context.
+///
+/// This is how a caller supplies its own candidates — for example ones a
+/// Python generator produced — to
+/// [`SingleHeuristicCzPlacement`](crate::placement::single_heuristic::SingleHeuristicCzPlacement).
+/// Each candidate still goes through [`validate_candidate`] before it is
+/// routed.
+#[derive(Debug, Clone, Default)]
+pub struct CandidateList(pub Vec<Vec<(u32, LocationAddr)>>);
+
+impl TargetGenerator for CandidateList {
+    fn generate(&self, _ctx: &TargetContext) -> Vec<Vec<(u32, LocationAddr)>> {
+        self.0.clone()
+    }
+}
+
 /// Default target generator: keeps target qubits fixed, moves each control
 /// qubit to its CZ blockade partner location.
 ///

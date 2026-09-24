@@ -131,3 +131,25 @@ def test_search_config_errors_carry_their_fields(cls, args, fields):
     assert str(err) == "m"
     for name, value in fields.items():
         assert getattr(err, name) == value
+
+
+def test_single_heuristic_routes_caller_supplied_candidates_in_order():
+    """``candidates`` replaces the default generator: invalid ones are skipped
+    before routing, and the rest are tried in the order given."""
+    engine = _engine()
+    placement = SingleHeuristicCzPlacement(TargetSolver(engine, MoveSearch.astar(1.0)))
+    initial = {0: _loc(0), 1: _loc(3)}
+    default = placement.place(initial, [(0, 1)], [], 2000)
+    assert default.result.status == SolveStatus.SOLVED
+    good = default.result.goal_config
+
+    # The starting placement does not put the pair on partner sites, so it
+    # fails validation and is never routed.
+    placed = placement.place(initial, [(0, 1)], [], 2000, candidates=[initial, good])
+    assert placed.result.status == SolveStatus.SOLVED
+    assert placed.chosen == 1
+    assert [a.candidate_index for a in placed.attempts] == [1]
+
+    nothing = placement.place(initial, [(0, 1)], [], 2000, candidates=[])
+    assert nothing.result.status == SolveStatus.UNSOLVABLE
+    assert nothing.attempts == []

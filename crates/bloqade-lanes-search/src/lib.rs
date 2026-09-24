@@ -62,7 +62,7 @@ pub use placement::receding_horizon::{
 };
 pub use placement::single_heuristic::SingleHeuristicCzPlacement;
 pub use placement::target_generator::{
-    CandidateError, DefaultTargetGenerator, TargetContext, TargetGenerator,
+    CandidateError, CandidateList, DefaultTargetGenerator, TargetContext, TargetGenerator,
 };
 pub use primitives::config::{Config, ConfigError};
 pub use primitives::context::{AodCapacity, MoveCandidate, SearchContext, SearchState};

@@ -709,6 +709,15 @@ Rust-only and typed exceptions; (4) caller-supplied candidates.
   `DuplicateOccupancyError` — carrying the variant's fields (locations encoded). Being
   `ValueError`s, every existing `except ValueError` still catches them.
 
+**Part 4 — landed notes.**
+- Core `CandidateList`, a `TargetGenerator` that offers a fixed list in order (the behaviour
+  net's private `FixedCandidates` is replaced by it; golden unchanged).
+- `SingleHeuristicCzPlacement.place(..., candidates=[...])` routes caller-supplied
+  placements, in order, each validated first, instead of `DefaultTargetGenerator`'s. This
+  is the channel Epic 4's Python generators would feed a Rust ranking through.
+- **Phase 3A is complete** with this part; the "retire the old Python method names" item
+  was done in part 2.
+
 - **A typed status enum replaces the string ABI.**
   - Python comparison sites (paths relative to `python/bloqade/lanes/`):
     - `heuristics/physical/movement.py:454`;
