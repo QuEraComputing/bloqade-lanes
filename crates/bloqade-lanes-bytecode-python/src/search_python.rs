@@ -1645,7 +1645,11 @@ impl PyPlacementResult {
 #[pymethods]
 impl PyPlacementResult {
     /// The routing result. On success its ``goal_config`` is the chosen
-    /// placement; on failure it is the stage's starting configuration.
+    /// placement. On failure it is usually the stage's starting
+    /// configuration, but a placement that commits layers before failing
+    /// (``RecedingHorizonCzPlacement``) returns those layers and the
+    /// configuration they reach instead: read ``move_layers`` and
+    /// ``goal_config`` together.
     #[getter]
     fn result(&self, py: Python<'_>) -> Py<PySolveResult> {
         self.result.clone_ref(py)
