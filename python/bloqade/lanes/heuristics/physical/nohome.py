@@ -7,10 +7,12 @@ gamma-decayed future CZ partner proximity as a lookahead signal.
 
 Phase 1 (return): Hungarian-pick a home layout, then route current → home
 via fixed-target ``solve``.
-Phase 2 (entangling): Hungarian-pick CZ-staging targets (with optional
-lookahead-aware blend), then route home → staging via fixed-target ``solve``.
-This mirrors how :class:`PhysicalPlacementStrategy` routes to pre-computed
-CZ targets.
+Phase 2 (entangling): pick CZ-staging targets per pair, moving one qubit to
+the other's CZ partner site, then route home → staging via fixed-target
+``solve``. A pair with a qubit that has no partner site (e.g. in a storage
+zone with no entangling pairs) is staged on a free entangling slot instead,
+and a pair that cannot be staged makes the result ``unsolvable``. This mirrors
+how :class:`PhysicalPlacementStrategy` routes to pre-computed CZ targets.
 
 Both phases run in Rust via ``NoHomeCzPlacement``.
 """
