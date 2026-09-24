@@ -516,6 +516,19 @@ fixtures, `ArchSpec` is named only in `LaneIndex` / `SearchEngine` construction 
 
 ### Phase 2B — behavioural payoffs, each gated separately
 
+**How it lands: four stacked PRs.** (0) the cascade counts both legs; (1) the frontier
+bound gate, opt-in; (2) P&R resumes from the best partial; (3) the gate becomes the
+default.
+
+**Part 0 — landed notes (not in the original list).** Measuring the gate needs the
+cascade's counters to include the A* refinement, and they did not: when the refinement
+found nothing cheaper the cascade returned the inner result, and the refinement's
+expansions, generated nodes and deadlocks were dropped — hiding the very leg whose memory
+the gate is meant to cut. The cascade now adds both legs' counters (as NoHome does for its
+phases). This moves the `rust_cascade_ids` rows' `nodes_explored` and 66 cascade blocks of
+the behaviour golden, in those three counters only (checked mechanically); no plan, cost
+or status moves.
+
 1. **P&R resumes from the best partial** in `solve_with_engine`'s fallback branch
    (`search/target_solver.rs:328`), reading 2A's best-partial field.
    - Run P&R from the partial config, then replay the *whole* chain: the search prefix

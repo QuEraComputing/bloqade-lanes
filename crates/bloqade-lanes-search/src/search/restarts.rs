@@ -435,7 +435,19 @@ where
             goal,
         );
 
-        if astar_solve.status == SolveStatus::Solved {
+        // Both legs are this solve's work, whichever result is returned, so
+        // their counters add — as NoHome's phases do. Reporting only the
+        // returned leg's counters hid the refinement entirely whenever it found
+        // nothing cheaper, which is where a cascade's memory goes.
+        let nodes_expanded = inner_result
+            .nodes_expanded
+            .saturating_add(astar_solve.nodes_expanded);
+        let nodes_generated = inner_result
+            .nodes_generated
+            .saturating_add(astar_solve.nodes_generated);
+        let deadlocks = inner_result.deadlocks.saturating_add(astar_solve.deadlocks);
+
+        let mut best = if astar_solve.status == SolveStatus::Solved {
             // The refinement runs on a frontier driver, which never prunes
             // against an incumbent and so reports an inert `BoundStats`. If it
             // wins, the pruning the inner entropy pass really did still has to
@@ -447,9 +459,14 @@ where
             if !best.bound_stats.bound_enabled {
                 best.bound_stats = inner_stats;
             }
-            return best;
-        }
-        return inner_result;
+            best
+        } else {
+            inner_result
+        };
+        best.nodes_expanded = nodes_expanded;
+        best.nodes_generated = nodes_generated;
+        best.deadlocks = deadlocks;
+        return best;
     }
 
     // ── Non-cascade strategies ─────────────────────────────────
