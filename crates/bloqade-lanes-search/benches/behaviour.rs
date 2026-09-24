@@ -44,8 +44,7 @@ fn main() {
 
 /// Cases on the instances that do real search work. Most of the corpus
 /// finishes in a handful of expansions, where timing would measure the call
-/// overhead rather than the search. `debug_only` cases are skipped: benches
-/// run in release.
+/// overhead rather than the search.
 fn is_timed(name: &str) -> bool {
     const HARD: [&str; 5] = [
         "logical_cycle",
@@ -61,7 +60,7 @@ fn is_timed(name: &str) -> bool {
 fn timed(prefix: &str) -> Vec<&'static str> {
     cases::all()
         .into_iter()
-        .filter(|c| !c.debug_only && c.name.starts_with(prefix) && is_timed(&c.name))
+        .filter(|c| c.name.starts_with(prefix) && is_timed(&c.name))
         .map(|c| &*Box::leak(c.name.into_boxed_str()))
         .collect()
 }

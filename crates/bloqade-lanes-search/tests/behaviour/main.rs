@@ -20,8 +20,8 @@
 //! ```
 //!
 //! The golden is recorded in a debug build, which is what `cargo test` and CI
-//! use: a few cases depend on a `debug_assert!`. Under `--release` those cases
-//! are skipped and the golden comparison is skipped.
+//! use. Under `--release` the golden comparison is skipped, since a
+//! `debug_assert!` can end a case that a release build would run through.
 
 mod cases;
 mod interface;
@@ -47,7 +47,6 @@ fn outcomes() -> &'static [Ran] {
     RUNS.get_or_init(|| {
         cases::all()
             .into_iter()
-            .filter(|case| cfg!(debug_assertions) || !case.debug_only)
             .map(|case| Ran {
                 outcome: interface::run(&case.spec),
                 name: case.name,

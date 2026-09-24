@@ -1641,11 +1641,6 @@ final: 0@3.0 1@2.0 2@3.1 3@2.1 4@0.2
 plan: 97dc51f1b54c3755
 attempts: chosen=0 total=2 [0:solved/2]
 
-== cz/single_heuristic/mismatched_lengths
-status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | generated: 0 | deadlocks: 0 | proven: false | termination: exhausted
-final: 0@0.0 1@2.0 2@4.0 3@6.0
-plan: cbf29ce484222325
-
 == cz/loose_goal/logical
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | generated: 3 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@0.0 1@1.0 2@4.0 3@5.0
@@ -1660,9 +1655,6 @@ plan: c5c76942abe198d5
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | generated: 3 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@0.2
 plan: c5c76942abe198d5
-
-== cz/loose_goal/mismatched_lengths
-panicked: assertion `left == right` failed: controls and targets must have equal length
 
 == cz/nohome/logical
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 24 | generated: 25 | deadlocks: 0 | proven: false | termination: exhausted
@@ -1679,9 +1671,6 @@ status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 12 | generated: 13 |
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@0.2
 plan: c5c76942abe198d5
 
-== cz/nohome/mismatched_lengths
-panicked: assertion `left == right` failed: controls and targets must have equal length
-
 == cz/receding_horizon/logical
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 18 | generated: 22 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@0.0 1@1.0 2@4.0 3@5.0
@@ -1696,9 +1685,6 @@ plan: c5c76942abe198d5
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 28 | generated: 30 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@0.2
 plan: c5c76942abe198d5
-
-== cz/receding_horizon/mismatched_lengths
-panicked: assertion `left == right` failed: controls and targets must have equal length
 
 == cz/loose_goal/logical_spectators_facing
 status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 3 | generated: 5 | deadlocks: 0 | proven: false | termination: stopped

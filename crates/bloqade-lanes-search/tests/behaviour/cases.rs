@@ -289,18 +289,12 @@ fn case(name: impl Into<String>, spec: ProblemSpec) -> Case {
         name: name.into(),
         spec,
         expect: Expect::default(),
-        debug_only: false,
     }
 }
 
 impl Case {
     fn expect(mut self, expect: Expect) -> Self {
         self.expect = expect;
-        self
-    }
-
-    fn debug_only(mut self) -> Self {
-        self.debug_only = true;
         self
     }
 }
@@ -586,8 +580,7 @@ fn stage(
         problem: Problem::CzStage {
             placement,
             initial: placed(initial),
-            controls: pairs.iter().map(|p| p.0).collect(),
-            targets: pairs.iter().map(|p| p.1).collect(),
+            pairs: pairs.to_vec(),
             blocked: Vec::new(),
             future: Vec::new(),
         },
@@ -996,8 +989,7 @@ fn logical_stage(placement: Placement, strategy: Strategy) -> ProblemSpec {
                 (2, loc(4, 0)),
                 (3, loc(6, 0)),
             ]),
-            controls: vec![0, 2],
-            targets: vec![1, 3],
+            pairs: vec![(0, 1), (2, 3)],
             blocked: Vec::new(),
             future: Vec::new(),
         },
@@ -1020,8 +1012,7 @@ fn physical_stage(placement: Placement, strategy: Strategy) -> ProblemSpec {
                 (3, loc(2, 1)),
                 (4, loc(0, 2)),
             ]),
-            controls: vec![0, 2],
-            targets: vec![1, 3],
+            pairs: vec![(0, 1), (2, 3)],
             blocked: Vec::new(),
             future: Vec::new(),
         },
@@ -1032,13 +1023,6 @@ fn physical_stage(placement: Placement, strategy: Strategy) -> ProblemSpec {
 fn with_future(mut spec: ProblemSpec, layers: Vec<Vec<(u32, u32)>>) -> ProblemSpec {
     if let Problem::CzStage { future, .. } = &mut spec.problem {
         *future = layers;
-    }
-    spec
-}
-
-fn mismatched(mut spec: ProblemSpec) -> ProblemSpec {
-    if let Problem::CzStage { targets, .. } = &mut spec.problem {
-        targets.pop();
     }
     spec
 }
@@ -1075,17 +1059,9 @@ fn cz_cases() -> Vec<Case> {
                 vec![vec![(0, 3)], vec![(1, 2)]],
             ),
         ));
-        // Mismatched controls/targets. The three placements handle it
-        // differently today; the reshape to `CzStage` retires these cases.
-        let mismatch = case(
-            format!("cz/{name}/mismatched_lengths"),
-            mismatched(logical_stage(placement.clone(), strategy)),
-        );
-        cases.push(match placement {
-            // NoHome and RecedingHorizon only `debug_assert!` the lengths.
-            Placement::NoHome | Placement::RecedingHorizon => mismatch.debug_only(),
-            _ => mismatch,
-        });
+        // The `cz/{name}/mismatched_lengths` cases (controls and targets of
+        // different lengths) were retired in Epic 3A.0: a stage is a list of
+        // pairs, so a mismatch can no longer be expressed.
     }
     // Loose goal with spectators already facing each other, or facing a pair
     // qubit, across a CZ word pair. The goal itself forbids two spectators on
@@ -1098,8 +1074,7 @@ fn cz_cases() -> Vec<Case> {
         problem: Problem::CzStage {
             placement: Placement::LooseGoal,
             initial: placed(initial),
-            controls: vec![0],
-            targets: vec![1],
+            pairs: vec![(0, 1)],
             blocked: Vec::new(),
             future: Vec::new(),
         },
@@ -1149,8 +1124,7 @@ fn cz_cases() -> Vec<Case> {
                     (2, loc(4, 0)),
                     (3, loc(6, 0)),
                 ]),
-                controls: vec![0, 2],
-                targets: vec![1, 3],
+                pairs: vec![(0, 1), (2, 3)],
                 blocked: Vec::new(),
                 future: Vec::new(),
             },
@@ -1212,8 +1186,7 @@ fn anticipate_cases() -> Vec<Case> {
                 (2, loc(4, 0)),
                 (3, loc(6, 0)),
             ]),
-            controls: vec![0],
-            targets: vec![1],
+            pairs: vec![(0, 1)],
             blocked: Vec::new(),
             future: Vec::new(),
         },

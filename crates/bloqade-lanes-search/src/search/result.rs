@@ -230,38 +230,6 @@ impl SolveResult {
     }
 }
 
-// ── Multi-candidate solve ──
-
-/// Per-candidate debug info recorded during a multi-candidate solve
-/// (see [`SingleHeuristicCzPlacement::solve_with_attempts`](crate::placement::single_heuristic::SingleHeuristicCzPlacement::solve_with_attempts)).
-#[derive(Debug, Clone)]
-pub struct CandidateAttempt {
-    /// Index of this candidate in the generator's output.
-    pub candidate_index: usize,
-    /// Outcome status of the solve attempt for this candidate.
-    pub status: SolveStatus,
-    /// Number of nodes expanded for this candidate.
-    pub nodes_expanded: u32,
-}
-
-/// Result of a multi-candidate solve attempt.
-///
-/// Surfaced through
-/// [`SingleHeuristicCzPlacement::solve_with_attempts`](crate::placement::single_heuristic::SingleHeuristicCzPlacement::solve_with_attempts).
-#[derive(Debug)]
-pub struct MultiSolveResult {
-    /// The solve result from the winning candidate (or the last attempted).
-    pub result: SolveResult,
-    /// Index of the candidate that succeeded (`None` if all failed).
-    pub candidate_index: Option<usize>,
-    /// Total nodes expanded across all candidates.
-    pub total_expansions: u32,
-    /// Number of candidates actually attempted (excludes validation failures).
-    pub candidates_tried: usize,
-    /// Per-candidate attempt details for debugging.
-    pub attempts: Vec<CandidateAttempt>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,16 +531,15 @@ mod tests {
             None,
             &DefaultTargetGenerator,
             [(0, loc(0, 0)), (1, loc(1, 0))],
-            &[0],
-            &[1],
+            &[(0, 1)],
             std::iter::empty(),
             Some(1000),
         )
         .unwrap();
 
         assert_eq!(result.result.status, SolveStatus::Solved);
-        assert_eq!(result.candidate_index, Some(0));
-        assert_eq!(result.candidates_tried, 1);
+        assert_eq!(result.chosen, Some(0));
+        assert_eq!(result.candidates_tried(), 1);
         assert_eq!(result.attempts.len(), 1);
     }
 
@@ -586,16 +553,15 @@ mod tests {
             None,
             &DefaultTargetGenerator,
             [(0, loc(0, 0))],
-            &[0],
-            &[1],
+            &[(0, 1)],
             std::iter::empty(),
             Some(1000),
         )
         .unwrap();
 
         assert_eq!(result.result.status, SolveStatus::Unsolvable);
-        assert_eq!(result.candidate_index, None);
-        assert_eq!(result.candidates_tried, 0);
+        assert_eq!(result.chosen, None);
+        assert_eq!(result.candidates_tried(), 0);
         assert!(result.attempts.is_empty());
     }
 

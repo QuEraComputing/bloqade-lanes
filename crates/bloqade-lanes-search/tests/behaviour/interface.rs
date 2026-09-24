@@ -28,8 +28,8 @@ use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::search::options::{BoundKind, EntanglingOptions, EntropyOptions};
 use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use bloqade_lanes_search::{
-    AodCapacity, CzPlacement, DeadlockPolicy, DefaultTargetGenerator, InnerStrategy,
-    LooseGoalCzPlacement, MoveSearch, MultiSolveResult, NoHomeCzPlacement,
+    AodCapacity, CzPlacement, CzStage, DeadlockPolicy, DefaultTargetGenerator, InnerStrategy,
+    LooseGoalCzPlacement, MoveSearch, NoHomeCzPlacement, PlacementBudget, PlacementResult,
     RecedingHorizonCzPlacement, RecedingHorizonOptions, SearchEngine, SingleHeuristicCzPlacement,
     SolveOptions, Strategy as CrateStrategy, TargetContext, TargetGenerator, TargetSolver,
     Termination as CrateTermination,
@@ -133,92 +133,29 @@ fn run_on(spec: &ProblemSpec, engine: Arc<SearchEngine>) -> Result<Run, String> 
         Problem::CzStage {
             placement,
             initial,
-            controls,
-            targets,
+            pairs,
             blocked,
             future,
         } => {
             let blocked_locs: Vec<LocationAddr> = locs(blocked).collect();
             let initial_addrs: Vec<(u32, LocationAddr)> = addrs(initial).collect();
-            let pairs: Vec<(u32, u32)> = controls
-                .iter()
-                .copied()
-                .zip(targets.iter().copied())
-                .collect();
-            let mismatched = controls.len() != targets.len();
-
-            // Mismatched lengths are only expressible through the trait method.
-            if mismatched {
-                let placement = cz_placement(placement, engine, search);
-                let result = placement
-                    .solve(
-                        &initial_addrs,
-                        controls,
-                        targets,
-                        &blocked_locs,
-                        spec.budget,
-                    )
-                    .map_err(|e| e.to_string())?;
-                return Ok(from_result(&result));
+            let stage =
+                CzStage::new(&initial_addrs, pairs, &blocked_locs).with_future_layers(future);
+            let placed = cz_placement(placement, engine, search)
+                .place(&stage, &PlacementBudget::new(spec.budget))
+                .map_err(|e| e.to_string())?;
+            let mut run = from_result(&placed.result);
+            // Only the single-heuristic placement enumerates candidates; the
+            // others report an empty log, which the golden does not record.
+            if let Placement::SingleHeuristic { .. } = placement {
+                run.attempts = Some(attempt_log(&placed));
             }
-
-            match placement {
-                Placement::SingleHeuristic { candidates } => {
-                    let generator: Box<dyn TargetGenerator> = match candidates {
-                        None => Box::new(DefaultTargetGenerator),
-                        Some(list) => Box::new(FixedCandidates(
-                            list.iter().map(|c| addrs(c).collect()).collect(),
-                        )),
-                    };
-                    let placement = SingleHeuristicCzPlacement::new(
-                        TargetSolver::new(engine, search),
-                        generator,
-                    );
-                    let result = placement
-                        .solve_with_attempts(
-                            initial_addrs,
-                            controls,
-                            targets,
-                            blocked_locs,
-                            spec.budget,
-                        )
-                        .map_err(|e| e.to_string())?;
-                    Ok(from_multi(&result))
-                }
-                Placement::LooseGoal => {
-                    let placement =
-                        LooseGoalCzPlacement::new(engine, search, EntanglingOptions::default());
-                    let result = placement
-                        .solve_pairs(initial_addrs, &pairs, blocked_locs, spec.budget, future)
-                        .map_err(|e| e.to_string())?;
-                    Ok(from_result(&result))
-                }
-                Placement::NoHome => {
-                    let placement =
-                        NoHomeCzPlacement::new(engine, search, NoHomeOptions::default());
-                    let result = placement
-                        .solve_pairs(initial_addrs, &pairs, blocked_locs, spec.budget, future)
-                        .map_err(|e| e.to_string())?;
-                    Ok(from_result(&result))
-                }
-                Placement::RecedingHorizon => {
-                    let placement = RecedingHorizonCzPlacement::new(
-                        engine,
-                        search,
-                        EntanglingOptions::default(),
-                        RecedingHorizonOptions::default(),
-                    );
-                    let result = placement
-                        .solve_pairs(initial_addrs, &pairs, blocked_locs, spec.budget, future)
-                        .map_err(|e| e.to_string())?;
-                    Ok(from_result(&result))
-                }
-            }
+            Ok(run)
         }
     }
 }
 
-/// The placement behind the `CzPlacement` trait, for the trait-method path.
+/// The placement a case names, behind the `CzPlacement` trait.
 fn cz_placement(
     placement: &Placement,
     engine: Arc<SearchEngine>,
@@ -371,17 +308,16 @@ fn from_result(result: &SolveResult) -> Run {
     }
 }
 
-fn from_multi(result: &MultiSolveResult) -> Run {
-    let mut run = from_result(&result.result);
+fn attempt_log(placed: &PlacementResult) -> AttemptLog {
     let status = |s: SolveStatus| match s {
         SolveStatus::Solved => Status::Solved,
         SolveStatus::Unsolvable => Status::Unsolvable,
         SolveStatus::BudgetExceeded => Status::BudgetExceeded,
     };
-    run.attempts = Some(AttemptLog {
-        chosen: result.candidate_index,
-        total_expansions: result.total_expansions,
-        attempts: result
+    AttemptLog {
+        chosen: placed.chosen,
+        total_expansions: placed.total_expansions,
+        attempts: placed
             .attempts
             .iter()
             .map(|a| Attempt {
@@ -390,8 +326,7 @@ fn from_multi(result: &MultiSolveResult) -> Run {
                 nodes_expanded: a.nodes_expanded,
             })
             .collect(),
-    });
-    run
+    }
 }
 
 /// FNV-1a over each layer's lane count and encoded lanes. Stable across

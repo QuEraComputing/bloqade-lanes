@@ -1686,17 +1686,6 @@ class SingleHeuristicCzPlacement:
     """
 
     def __init__(self, solver: TargetSolver) -> None: ...
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve and return the best result across all candidates."""
-        ...
-
     def solve_with_attempts(
         self,
         initial: dict[int, LocationAddress],
@@ -1734,17 +1723,6 @@ class LooseGoalCzPlacement:
         """Solve using CZ pair constraints (with optional future-layer lookahead)."""
         ...
 
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve using explicit control/target qubit lists."""
-        ...
-
     def __repr__(self) -> str: ...
 
 @final
@@ -1769,17 +1747,6 @@ class RecedingHorizonCzPlacement:
         """Solve via receding-horizon MPC (with optional future-layer lookahead)."""
         ...
 
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve using explicit control/target qubit lists."""
-        ...
-
     def __repr__(self) -> str: ...
 
 @final
@@ -1801,17 +1768,6 @@ class NoHomeCzPlacement:
         future_cz_layers: list[list[tuple[int, int]]] | None = None,
     ) -> SolveResult:
         """Solve via two-phase no-home placement (with optional future-layer lookahead)."""
-        ...
-
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve using explicit control/target qubit lists."""
         ...
 
     def __repr__(self) -> str: ...

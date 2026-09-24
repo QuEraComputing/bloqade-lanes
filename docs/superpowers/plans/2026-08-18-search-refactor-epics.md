@@ -1,8 +1,8 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** in progress. Epics 0 and 1 are done. Epic 2A is in review as five stacked
-PRs (#1059 merged; see its "How it lands" note); the rest has not started.
+**Status:** in progress. Epics 0, 1 and 2A are done (2A as #1059, #1060, #1061, #1063,
+#1065). The rest lands as one stack of PRs, each on the previous; merge them bottom-up.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
 branch that is **not merged into `main`**.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
@@ -567,6 +567,22 @@ under both rules, and migrate the Python layer.
 
 Agreed 2026-09-23. It lands alone, so any drift can be traced to it rather than to the
 adapter rebuild.
+
+**Landed notes.**
+- The trait is `place(&CzStage, &PlacementBudget) -> Result<PlacementResult, ConfigError>`,
+  as sketched below. `PlacementResult` replaces `MultiSolveResult`, and `CandidateAttempt`
+  gains `score: Option<f64>` (always `None` until Epic 4). Both types moved to
+  `placement::cz_placement`.
+- Each implementation has `place` as its only entry point: the inherent `solve_pairs` /
+  `solve_with_attempts` and the trait's `solve` are gone, and each `place` documents its
+  budget scope.
+- PyO3 keeps `solve_pairs` and `solve_with_attempts`, mapped onto `place`. The four
+  trait-level `solve` bindings are removed; nothing in the repo or in `bloqade-internal`
+  called them. Python's `solve_with_attempts` raises `ValueError` on mismatched
+  `controls`/`targets`, which used to be unchecked.
+- The behaviour net's `Problem::CzStage` takes `pairs`. The four `mismatched_lengths`
+  cases are retired; the other 358 golden blocks are unchanged. With them went the net's
+  `debug_only` flag, which only they used.
 
 - **Today:** `solve(initial, controls, targets, blocked, max_expansions) ->
   Result<SolveResult, ConfigError>` is a lowest common denominator.

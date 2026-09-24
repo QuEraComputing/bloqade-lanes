@@ -22,7 +22,9 @@ use bloqade_lanes_search::drivers::entropy::{
 };
 use bloqade_lanes_search::drivers::result::Termination;
 use bloqade_lanes_search::observer::EntropyReason;
-use bloqade_lanes_search::placement::cz_placement::CzPlacement;
+use bloqade_lanes_search::placement::cz_placement::{
+    CzPlacement, CzStage, PlacementBudget, PlacementResult,
+};
 use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
 use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
 use bloqade_lanes_search::placement::receding_horizon::{
@@ -40,7 +42,7 @@ use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::options::{
     BoundKind, EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
 };
-use bloqade_lanes_search::search::result::{MultiSolveResult, SolveResult};
+use bloqade_lanes_search::search::result::SolveResult;
 use bloqade_lanes_search::search::target_solver::TargetSolver;
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
@@ -1394,7 +1396,7 @@ impl PyDefaultTargetGenerator {
     module = "bloqade.lanes.bytecode._native"
 )]
 pub struct PyMultiSolveResult {
-    inner: MultiSolveResult,
+    inner: PlacementResult,
 }
 
 #[pymethods]
@@ -1408,7 +1410,7 @@ impl PyMultiSolveResult {
     /// Index of the candidate that succeeded, or None if all failed.
     #[getter]
     fn candidate_index(&self) -> Option<usize> {
-        self.inner.candidate_index
+        self.inner.chosen
     }
 
     /// Total nodes expanded across all candidates.
@@ -1420,7 +1422,7 @@ impl PyMultiSolveResult {
     /// Number of candidates actually attempted (excludes validation failures).
     #[getter]
     fn candidates_tried(&self) -> usize {
-        self.inner.candidates_tried
+        self.inner.candidates_tried()
     }
 
     /// Per-candidate attempt details: list of dicts with
@@ -1485,8 +1487,8 @@ impl PyMultiSolveResult {
         format!(
             "MultiSolveResult(status='{}', candidate={:?}, tried={}, expansions={})",
             self.inner.result.status.as_label(),
-            self.inner.candidate_index,
-            self.inner.candidates_tried,
+            self.inner.chosen,
+            self.inner.candidates_tried(),
             self.inner.total_expansions,
         )
     }
@@ -1816,36 +1818,6 @@ impl PySingleHeuristicCzPlacement {
         }
     }
 
-    /// Solve and return the best result across all candidates.
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
     /// Solve and return per-candidate attempt details.
     #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
     fn solve_with_attempts(
@@ -1857,18 +1829,23 @@ impl PySingleHeuristicCzPlacement {
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
     ) -> PyResult<PyMultiSolveResult> {
+        if controls.len() != targets.len() {
+            return Err(PyValueError::new_err(format!(
+                "controls and targets must have equal length, got {} and {}",
+                controls.len(),
+                targets.len()
+            )));
+        }
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let pairs: Vec<(u32, u32)> = controls.into_iter().zip(targets).collect();
 
         let result = py
             .detach(|| {
-                self.inner.solve_with_attempts(
-                    initial_pairs,
-                    &controls,
-                    &targets,
-                    blocked_locs,
-                    max_expansions,
+                self.inner.place(
+                    &CzStage::new(&initial_pairs, &pairs, &blocked_locs),
+                    &PlacementBudget::new(max_expansions),
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -1931,43 +1908,13 @@ impl PyLooseGoalCzPlacement {
 
         let result = py
             .detach(|| {
-                self.inner.solve_pairs(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
+                self.inner
+                    .place(
+                        &CzStage::new(&initial_pairs, &cz_pairs, &blocked_locs)
+                            .with_future_layers(&future),
+                        &PlacementBudget::new(max_expansions),
+                    )
+                    .map(|placed| placed.result)
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -2036,43 +1983,13 @@ impl PyRecedingHorizonCzPlacement {
 
         let result = py
             .detach(|| {
-                self.inner.solve_pairs(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
+                self.inner
+                    .place(
+                        &CzStage::new(&initial_pairs, &cz_pairs, &blocked_locs)
+                            .with_future_layers(&future),
+                        &PlacementBudget::new(max_expansions),
+                    )
+                    .map(|placed| placed.result)
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -2130,43 +2047,13 @@ impl PyNoHomeCzPlacement {
 
         let result = py
             .detach(|| {
-                self.inner.solve_pairs(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
+                self.inner
+                    .place(
+                        &CzStage::new(&initial_pairs, &cz_pairs, &blocked_locs)
+                            .with_future_layers(&future),
+                        &PlacementBudget::new(max_expansions),
+                    )
+                    .map(|placed| placed.result)
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
