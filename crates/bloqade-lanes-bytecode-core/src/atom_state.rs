@@ -534,7 +534,7 @@ impl AtomStateData {
     /// Find CZ gate control/target qubit pairings within a zone.
     ///
     /// Iterates over all qubits whose current location is in the given zone
-    /// and checks whether the CZ pair site (via [`ArchSpec::get_blockaded_location`])
+    /// and checks whether the CZ pair site (via [`ArchSpec::get_cz_partner`])
     /// is also occupied. If both sites are occupied, the qubits form a
     /// control/target pair. If the pair site is empty or doesn't exist, the
     /// qubit is unpaired.

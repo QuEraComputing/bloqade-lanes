@@ -169,21 +169,21 @@ def test_realistic_cz_sandwich_runs_end_to_end():
         # 9. Await the future (consumes it, pushes the 1-D result array).
         Instruction.await_measure(),
         # 10. Extract results at the original fill word_ids (0, 2, 4, 6)
-        #     and bundle into a new 1-D Int array. Stack discipline:
-        #     dup the array each time, then leave the last get_item to
-        #     consume the final array copy without an extra dup.
-        Instruction.dup(),
+        #     and bundle into a new 1-D Int array. Stack discipline: park
+        #     the array in local 0 and load a copy below each index, so
+        #     the extracted elements stack up in order with nothing
+        #     between them.
+        Instruction.store("undef", 0),
+        Instruction.load("undef", 0),
         Instruction.const_int(0),
         Instruction.get_item(1),
-        Instruction.swap(),
-        Instruction.dup(),
+        Instruction.load("undef", 0),
         Instruction.const_int(2),
         Instruction.get_item(1),
-        Instruction.swap(),
-        Instruction.dup(),
+        Instruction.load("undef", 0),
         Instruction.const_int(4),
         Instruction.get_item(1),
-        Instruction.swap(),
+        Instruction.load("undef", 0),
         Instruction.const_int(6),
         Instruction.get_item(1),
         # new_array(type_tag=1 Int, dim0=4, dim1=0) — placeholder: no

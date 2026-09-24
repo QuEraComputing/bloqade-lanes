@@ -1,18 +1,36 @@
-.version 1
-; Multiple errors in one file to demonstrate multi-error collection.
-; LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
+sst v1
 
-; Error 1: invalid location (word 5 doesn't exist)
-const_loc 0x0000050000000000    ; zone 0, word 5, site 0
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: simple
+// expect: InvalidLocation
+// expect: InvalidZone
+// expect: TypeMismatch
+// expect: StackUnderflow
+// Multiple errors in one file to demonstrate multi-error collection.
+// LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
 
-; Error 2: invalid zone (zone 5 doesn't exist)
-const_zone 0x00000005   ; zone 5
+fn @main() {
+  // Error 1: invalid location (word 5 doesn't exist)
+  lanes::lanes.const_loc 0x0000050000000000    // zone 0, word 5, site 0
 
-; Error 3: type mismatch -- cz expects zone, gets float
-const_float 99.0
-cz
+  // Error 2: invalid zone (zone 5 doesn't exist)
+  lanes::lanes.const_zone 0x00000005    // zone 5
 
-; Error 4: stack underflow -- pop on empty stack
-pop
+  // Error 3: type mismatch -- cz expects zone, gets float
+  cpu::cpu.const f64, 99.0
+  lanes::lanes.cz
 
-halt
+  // Error 4: stack underflow -- the location and the zone are still on the
+  // stack after `cz` consumed the float, so it takes a third `store` to run out.
+  cpu::cpu.store u32, 0
+  cpu::cpu.store u64, 1
+  cpu::cpu.store u64, 1
+
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).

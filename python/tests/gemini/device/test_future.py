@@ -99,7 +99,9 @@ def definitions_client(mocker, _auth_no_op):
 # === _wait_for_completion ===
 
 
-def test_wait_for_completion_polls_until_terminal(tasks_client, mocker):
+def test_wait_for_completion_polls_until_terminal(
+    tasks_client, mocker, assert_called_with_kwargs
+):
     tasks_client.get.side_effect = [
         make_task(TaskStatus.SCHEDULED),
         make_task(TaskStatus.EXECUTION_STARTED),
@@ -110,7 +112,7 @@ def test_wait_for_completion_polls_until_terminal(tasks_client, mocker):
     fut = GeminiLogicalFuture(task_id="task-1", storage=DictStorage())
     assert fut._wait_for_completion() == TaskStatus.COMPLETED
     assert tasks_client.get.call_count == 3
-    tasks_client.get.assert_called_with(id="task-1")
+    assert_called_with_kwargs(tasks_client.get, id="task-1")
 
 
 def test_wait_for_completion_raises_on_failure(tasks_client, mocker):
@@ -190,13 +192,13 @@ def test_wait_for_completion_backoff_capped(tasks_client, mocker):
 # === get_task / status / done / cancelled ===
 
 
-def test_get_task_returns_task(tasks_client):
+def test_get_task_returns_task(tasks_client, assert_called_with_kwargs):
     expected = make_task(TaskStatus.COMPLETED)
     tasks_client.get.return_value = expected
 
     fut = GeminiLogicalFuture(task_id="task-1", storage=DictStorage())
     assert fut.get_task() is expected
-    tasks_client.get.assert_called_once_with(id="task-1")
+    assert_called_with_kwargs(tasks_client.get, times=1, id="task-1")
 
 
 def test_status_returns_current_status(tasks_client):
@@ -252,10 +254,10 @@ def test_cancelled_false_when_status_not_cancelled(tasks_client):
 # === cancel ===
 
 
-def test_cancel_calls_client_cancel_with_id(tasks_client):
+def test_cancel_calls_client_cancel_with_id(tasks_client, assert_called_with_kwargs):
     fut = GeminiLogicalFuture(task_id="task-1", storage=DictStorage())
     fut.cancel()
-    tasks_client.cancel.assert_called_once_with(id="task-1")
+    assert_called_with_kwargs(tasks_client.cancel, times=1, id="task-1")
 
 
 def test_cancel_warns_on_exception(tasks_client, recwarn):
@@ -269,18 +271,20 @@ def test_cancel_warns_on_exception(tasks_client, recwarn):
 # === get_compilation ===
 
 
-def test_get_compilation_with_explicit_id(compilations_client):
+def test_get_compilation_with_explicit_id(
+    compilations_client, assert_called_with_kwargs
+):
     compilations_client.get.return_value = "compilation-obj"
 
     fut = GeminiLogicalFuture(task_id="task-1", storage=DictStorage())
     result = fut.get_compilation(compilation_id="comp-explicit")
 
     assert result == "compilation-obj"
-    compilations_client.get.assert_called_once_with(id="comp-explicit")
+    assert_called_with_kwargs(compilations_client.get, times=1, id="comp-explicit")
 
 
 def test_get_compilation_falls_back_to_task_compilation_id(
-    tasks_client, compilations_client
+    tasks_client, compilations_client, assert_called_with_kwargs
 ):
     tasks_client.get.return_value = make_task(
         TaskStatus.COMPLETED, compilation_id="comp-from-task"
@@ -291,7 +295,7 @@ def test_get_compilation_falls_back_to_task_compilation_id(
     result = fut.get_compilation()
 
     assert result == "compilation-obj"
-    compilations_client.get.assert_called_once_with(id="comp-from-task")
+    assert_called_with_kwargs(compilations_client.get, times=1, id="comp-from-task")
 
 
 # === fetch / _fetch_subtask_page ===
@@ -730,7 +734,7 @@ def test_from_storage_uses_explicit_task_id():
 
 
 def test_from_task_id_fetches_definition_and_stores_it(
-    tasks_client, definitions_client
+    tasks_client, definitions_client, assert_called_with_kwargs
 ):
     group_id = uuid4()
     # One ID threaded through the task's ``definition_id``, the ID the client is
@@ -760,8 +764,8 @@ def test_from_task_id_fetches_definition_and_stores_it(
 
     assert fut.task_id == "task-1"
     assert fut.storage is storage
-    tasks_client.get.assert_called_once_with(id="task-1")
-    definitions_client.get.assert_called_once_with(id=str(definition_id))
+    assert_called_with_kwargs(tasks_client.get, times=1, id="task-1")
+    assert_called_with_kwargs(definitions_client.get, times=1, id=str(definition_id))
     assert storage.task_ids() == {"task-1"}
     # What lands in storage is rebuilt, not the response object: the identifying
     # fields plus ``group_id`` flattened out of ``group``.

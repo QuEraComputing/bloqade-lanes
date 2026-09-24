@@ -14,6 +14,7 @@ from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
 from bloqade.gemini import common as gemini_common
+from bloqade.gemini.steane_defaults import STEANE7_PHYSICAL_QUBITS
 
 from .dialects import operations
 
@@ -24,7 +25,17 @@ from .dialects import operations
     )
 )
 def kernel(self):
-    """Compile a function to a Gemini logical kernel."""
+    """Compile a function to a Gemini logical kernel.
+
+    Aggressive inlining and unrolling are enabled by default. Set
+    ``aggressive_unroll=False`` to use the standard pass pipeline instead.
+
+    The number of physical qubits per logical qubit is fixed at Steane
+    [[7,1,3]]'s seven. It is not configurable: this is the first version of
+    gemini-qec, where the logical-to-physical lowering is hand-written against
+    that code, so any other width produces a program the rest of the pipeline
+    cannot lower.
+    """
     address_analysis = address.AddressAnalysis(dialects=self)
 
     def run_pass(
@@ -41,17 +52,15 @@ def kernel(self):
         aggressive: Annotated[
             bool, Doc("run aggressive folding passes if `fold=True`")
         ] = False,
-        inline: Annotated[bool, Doc("inline function calls, default `True`")] = True,
+        inline: Annotated[
+            bool,
+            Doc("inline function calls when `aggressive_unroll=False`, default `True`"),
+        ] = True,
         aggressive_unroll: Annotated[
             bool,
-            Doc(
-                "Run aggressive inlining and unrolling pass on the IR, default `False`"
-            ),
-        ] = False,
+            Doc("Run aggressive inlining and unrolling pass on the IR, default `True`"),
+        ] = True,
         no_raise: Annotated[bool, Doc("do not raise exception during analysis")] = True,
-        num_physical_qubits: Annotated[
-            int, Doc("number of physical qubits per logical qubit")
-        ] = 7,
     ) -> None:
         # stop circular import problems
         from ..common.validation.call_site import InlineOrigins
@@ -97,18 +106,28 @@ def kernel(self):
 
         address_frame, _ = runner(mt)
 
+        # NOTE: the code distance is hard-coded to Steane [[7,1,3]] because this
+        # is the first version of gemini-qec, where the logical-to-physical
+        # lowering is written out by hand against that code -- the stdlib
+        # post-processing kernels index measurements 0..6 directly, and
+        # `append_measurements_and_annotations` strides detectors by seven.
+        # Nothing downstream honours another width, so it is not a knob the
+        # user gets to turn. When the lowering becomes code-generic, this
+        # should come from the code/architecture, not from the decorator.
         rewrite.Walk(
             rewrite.Chain(
                 WrapAddressAnalysis(address_frame.entries),
-                InsertQubitCount(num_physical_qubits),
+                InsertQubitCount(STEANE7_PHYSICAL_QUBITS),
             )
         ).rewrite(mt.code)
 
         if verify:
             # stop circular import problems
+            from ..common.validation.const_address import ConstAddressValidation
             from ..common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
+            from .validation.arguments import GeminiLogicalArgumentValidation
             from .validation.clifford.analysis import (
                 GeminiLogicalValidation,
             )
@@ -121,11 +140,18 @@ def kernel(self):
                     GeminiLogicalValidation,
                     GeminiTerminalMeasurementValidation,
                     FlatKernelNoCloningValidation,
+                    # Before DuplicateAddressValidation: it is that pass's
+                    # precondition, and reporting the precondition first reads
+                    # better when both fire.
+                    ConstAddressValidation,
                     DuplicateAddressValidation,
+                    GeminiLogicalArgumentValidation,
                 ]
             )
             origins.snapshot(mt)
-            validation_result = origins.annotate(mt, validator.validate(mt))
+            validation_result = origins.annotate(
+                mt, validator.validate(mt), aggressive_unroll=aggressive_unroll
+            )
             validation_result.raise_if_invalid()
             mt.verify()
 

@@ -1,15 +1,43 @@
+from collections.abc import Callable
+from typing import ParamSpec, TypeVar
+
 import bloqade.squin as squin
+from kirin import ir, rewrite
 from kirin.dialects import ilist
 
 import bloqade.gemini as gemini
 from bloqade.gemini.logical import kernel
+from bloqade.gemini.logical.rewrite.qubit_count import InsertQubitCount
 from bloqade.gemini.post_processing import build_post_processing
 from bloqade.lanes.analysis import atom
+
+Params = ParamSpec("Params")
+ReturnType = TypeVar("ReturnType")
+
+
+def narrow_kernel(
+    num_physical_qubits: int,
+) -> Callable[[Callable[Params, ReturnType]], ir.Method[Params, ReturnType]]:
+    """``@kernel``, then re-stamp a narrower physical-qubits-per-logical width.
+
+    ``@logical.kernel`` fixes the width at Steane [[7,1,3]]'s seven and offers
+    no knob for it. These tests exercise ``build_post_processing``, which reads
+    the width off the terminal measurement rather than assuming a code, so a
+    narrower stamp keeps the raw-measurement fixtures below readable.
+    """
+
+    def decorate(fn: Callable[Params, ReturnType]) -> ir.Method[Params, ReturnType]:
+        mt = kernel(aggressive_unroll=True)(fn)
+        rewrite.Walk(InsertQubitCount(num_physical_qubits)).rewrite(mt.code)
+        return mt
+
+    return decorate
 
 
 def test_none():
 
-    @kernel
+    # An empty program no longer passes validation; this pins post-processing.
+    @kernel(verify=False)
     def main():
         return
 
@@ -22,7 +50,7 @@ def test_none():
 
 
 def test_measurements():
-    @kernel(num_physical_qubits=2, aggressive_unroll=True)
+    @narrow_kernel(2)
     def main():
         q = squin.qalloc(2)
         return gemini.logical.terminal_measure(q)
@@ -39,7 +67,7 @@ def test_measurements():
 
 
 def test_detectors():
-    @kernel(num_physical_qubits=1, aggressive_unroll=True)
+    @narrow_kernel(1)
     def main():
         q = squin.qalloc(2)
         m = gemini.logical.terminal_measure(q)
@@ -56,7 +84,7 @@ def test_detectors():
 
 
 def test_tuple():
-    @kernel(num_physical_qubits=1, aggressive_unroll=True)
+    @narrow_kernel(1)
     def main():
         q = squin.qalloc(2)
         m = gemini.logical.terminal_measure(q)
@@ -73,7 +101,7 @@ def test_tuple():
 
 
 def test_collects_detectors_and_observables_not_returned():
-    @kernel(num_physical_qubits=1, aggressive_unroll=True)
+    @narrow_kernel(1)
     def main():
         q = squin.qalloc(2)
         measurements = gemini.logical.terminal_measure(q)
@@ -104,7 +132,7 @@ def test_collects_detectors_and_observables_not_returned():
 
 
 def test_empty_detector_reduces_to_false():
-    @kernel(num_physical_qubits=1, aggressive_unroll=True)
+    @narrow_kernel(1)
     def main():
         q = squin.qalloc(1)
         gemini.logical.terminal_measure(q)
@@ -119,7 +147,7 @@ def test_empty_detector_reduces_to_false():
 def test_logical_compile_uses_source_kernel_post_processing(monkeypatch):
     from bloqade.gemini.compile import compile_task
 
-    @kernel(num_physical_qubits=1, aggressive_unroll=True)
+    @narrow_kernel(1)
     def main():
         q = squin.qalloc(1)
         return gemini.logical.terminal_measure(q)

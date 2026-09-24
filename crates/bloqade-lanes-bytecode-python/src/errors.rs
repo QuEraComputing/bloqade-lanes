@@ -10,10 +10,10 @@ pub(crate) type PyObject = Py<PyAny>;
 use bloqade_lanes_bytecode_core::arch::query::{LaneGroupError, LocationGroupError};
 use bloqade_lanes_bytecode_core::arch::validate::ArchSpecError;
 use bloqade_lanes_bytecode_core::atom_state::MoveValidationError;
-use bloqade_lanes_bytecode_core::isa::INSTRUCTION_WIDTH;
+use bloqade_lanes_bytecode_core::isa::instruction_width;
 use bloqade_lanes_bytecode_core::isa::program::BinaryError;
 use bloqade_lanes_bytecode_core::isa::text::TextError;
-use bloqade_lanes_bytecode_core::isa::validate::ValidationError;
+use bloqade_lanes_bytecode_core::isa::validate::{self, ValidationError};
 
 const EXCEPTIONS_MODULE: &str = "bloqade.lanes.bytecode.exceptions";
 
@@ -268,6 +268,53 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("NewArrayInvalidTypeTagError")?;
             cls.call1((*pc, *type_tag))?
         }
+        // The bound travels with the error so the Python message stays in
+        // step with the Rust one without restating the number.
+        ValidationError::NewArrayTooManyElements { pc, count } => {
+            let cls = module.getattr("NewArrayTooManyElementsError")?;
+            cls.call1((*pc, *count, validate::MAX_ARRAY_ELEMENTS))?
+        }
+        ValidationError::GetItemInvalidDims { pc, ndims } => {
+            let cls = module.getattr("GetItemInvalidDimsError")?;
+            cls.call1((*pc, *ndims, validate::MAX_GET_ITEM_DIMS))?
+        }
+        ValidationError::LocalIndexOutOfRange {
+            pc,
+            mnemonic,
+            index,
+        } => {
+            let cls = module.getattr("LocalIndexOutOfRangeError")?;
+            cls.call1((*pc, *mnemonic, *index, validate::MAX_LOCAL_INDEX))?
+        }
+        ValidationError::TooManyParameters { pc, count } => {
+            let cls = module.getattr("TooManyParametersError")?;
+            cls.call1((*pc, *count, validate::MAX_LOCAL_COUNT))?
+        }
+        ValidationError::CodeOutsideFunction { pc } => {
+            let cls = module.getattr("CodeOutsideFunctionError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::InvalidControlFlowTarget {
+            pc,
+            target,
+            expected,
+        } => {
+            let cls = module.getattr("InvalidControlFlowTargetError")?;
+            cls.call1((*pc, *target, *expected))?
+        }
+        ValidationError::CallArityMismatch {
+            pc,
+            target,
+            declared,
+            got,
+        } => {
+            let cls = module.getattr("CallArityMismatchError")?;
+            cls.call1((*pc, *target, *declared, *got))?
+        }
+        ValidationError::ReturnCountMismatch { pc, declared, got } => {
+            let cls = module.getattr("ReturnCountMismatchError")?;
+            cls.call1((*pc, *declared, *got))?
+        }
         ValidationError::InitialFillNotFirst { pc } => {
             let cls = module.getattr("InitialFillNotFirstError")?;
             cls.call1((*pc,))?
@@ -289,9 +336,26 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("StackUnderflowError")?;
             cls.call1((*pc,))?
         }
+        ValidationError::PopBelowFrameBase { pc } => {
+            let cls = module.getattr("PopBelowFrameBaseError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::StackDepthMismatch { pc, expected, got } => {
+            let cls = module.getattr("StackDepthMismatchError")?;
+            cls.call1((*pc, *expected, *got))?
+        }
         ValidationError::TypeMismatch { pc, expected, got } => {
             let cls = module.getattr("TypeMismatchError")?;
             cls.call1((*pc, *expected, *got))?
+        }
+        ValidationError::LocalTypeMismatch {
+            pc,
+            mnemonic,
+            declared,
+            got,
+        } => {
+            let cls = module.getattr("LocalTypeMismatchError")?;
+            cls.call1((*pc, *mnemonic, *declared, *got))?
         }
         ValidationError::LocationGroupValidation { pc, error } => {
             let inner = location_group_error_to_py(py, error)?;
@@ -396,11 +460,15 @@ pub fn program_error_to_py(py: Python<'_>, error: &BinaryError) -> PyErr {
             }
             BinaryError::UnalignedCode { len } => {
                 let cls = module.getattr("UnalignedCodeError")?;
-                cls.call1((*len, INSTRUCTION_WIDTH as usize))?
+                cls.call1((*len, instruction_width() as usize))?
             }
             BinaryError::Decode { pc, message } => {
                 let cls = module.getattr("DecodeErrorInProgram")?;
                 cls.call1((format!("pc {pc}: {message}"),))?
+            }
+            BinaryError::Encode { message } => {
+                let cls = module.getattr("EncodeErrorInProgram")?;
+                cls.call1((message.clone(),))?
             }
         };
         Ok(obj.into())

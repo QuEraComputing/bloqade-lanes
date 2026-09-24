@@ -1,0 +1,42 @@
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: full
+// A two-armed `cond_br` whose arms converge on a shared `@done`.
+//
+// This is the shape reachability has to get right: both arms are live, neither
+// is fallthrough-only, and `@done` is reached from two different predecessors.
+// A walk that followed only fallthrough would call one arm dead; one that
+// stopped at the first terminator would call everything after it dead.
+//
+// `cond_br` pops a bool. Pushing an `i64` here instead validates clean and then
+// fails at run time with "expected bool on stack" — the type of a branch
+// condition is not something the stack simulation checks today.
+
+fn @main() {
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.initial_fill 1
+
+  cpu::cpu.const bool, true
+  cpu::cpu.cond_br @one, @zero
+
+  cpu::cpu.label @one
+    // Taken arm: entangle zone 0.
+    lanes::lanes.const_zone 0x00000000
+    lanes::lanes.cz
+    cpu::cpu.br @done
+
+  cpu::cpu.label @zero
+    // Untaken arm: nothing to do, but it still has to be reachable and still
+    // has to reach the join.
+    cpu::cpu.br @done
+
+  cpu::cpu.label @done
+    cpu::cpu.halt
+}
+.text(root).
+.section(root).

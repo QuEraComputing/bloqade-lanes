@@ -77,6 +77,142 @@ class NewArrayInvalidTypeTagError(ValidationError):
         super().__init__(f"pc {pc}: invalid type tag 0x{type_tag:x}")
 
 
+class NewArrayTooManyElementsError(ValidationError):
+    """``new_array`` declares more elements than the validator will model.
+
+    ``dim0`` and ``dim1`` are read straight out of the instruction word, so
+    their product can reach 2^64; the bound keeps a malformed word from
+    driving an unbounded loop.
+    """
+
+    def __init__(self, pc: int, count: int, maximum: int):
+        self.pc = pc
+        self.count = count
+        self.maximum = maximum
+        super().__init__(
+            f"pc {pc}: new_array declares {count} elements, "
+            f"more than the maximum of {maximum}"
+        )
+
+
+class TooManyParametersError(ValidationError):
+    """A function declares more parameters than a frame may hold locals.
+
+    Every parameter is a local, and a frame holds at most ``maximum`` of them,
+    so the machine refuses to enter the function and every call to it fails.
+    ``pc`` is the function's ``func_start``.
+    """
+
+    def __init__(self, pc: int, count: int, maximum: int):
+        self.pc = pc
+        self.count = count
+        self.maximum = maximum
+        super().__init__(
+            f"pc {pc}: function declares {count} parameters, more than the "
+            f"{maximum} locals a frame may hold"
+        )
+
+
+class CodeOutsideFunctionError(ValidationError):
+    """An instruction sits outside every function's extent.
+
+    Functions are delimited by ``func_start``/``func_end`` in the code
+    stream. Anything after the last ``func_end`` belongs to no function: it
+    can never be entered, and the disassembler emits it after the closing
+    brace, producing text that will not re-read.
+    """
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(f"pc {pc}: instruction is outside any function")
+
+
+class InvalidControlFlowTargetError(ValidationError):
+    """A branch or call names an address that is not what it should be.
+
+    ``br``/``cond_br`` targets are addresses in the code; ``call`` targets are
+    function entries, which since the ``func_start``/``func_end`` layout means
+    the address of a function's opening marker.
+    """
+
+    def __init__(self, pc: int, target: int, expected: str):
+        self.pc = pc
+        self.target = target
+        self.expected = expected
+        super().__init__(f"pc {pc}: control-flow target {target} is not {expected}")
+
+
+class CallArityMismatchError(ValidationError):
+    """A ``call``'s arity disagrees with the callee's declared parameters.
+
+    The operand is not a hint: ``call <arity>`` sets the callee's frame base to
+    ``stack.len() - arity``, so an unchecked one silently redefines the
+    callee's shape per call site.
+    """
+
+    def __init__(self, pc: int, target: int, declared: int, got: int):
+        self.pc = pc
+        self.target = target
+        self.declared = declared
+        self.got = got
+        super().__init__(
+            f"pc {pc}: call passes {got} operand(s) but the function at "
+            f"{target} declares {declared}"
+        )
+
+
+class ReturnCountMismatchError(ValidationError):
+    """A ``ret`` keeps a different number of values than its function declares.
+
+    Two ``ret`` instructions that disagree make every caller's post-call stack
+    depth path-dependent, the same defect as a branch whose arms leave
+    different depths. Each is checked against the declaration instead, which
+    names the offender.
+    """
+
+    def __init__(self, pc: int, declared: int, got: int):
+        self.pc = pc
+        self.declared = declared
+        self.got = got
+        super().__init__(
+            f"pc {pc}: ret keeps {got} value(s) but the function declares {declared}"
+        )
+
+
+class GetItemInvalidDimsError(ValidationError):
+    """``get_item`` takes an index count no array can have.
+
+    ``new_array`` carries exactly two dimension fields, so an array is at
+    most 2-D and one or two indices is the only well-formed shape.
+    """
+
+    def __init__(self, pc: int, ndims: int, maximum: int):
+        self.pc = pc
+        self.ndims = ndims
+        self.maximum = maximum
+        super().__init__(f"pc {pc}: get_item takes 1..={maximum} indices, got {ndims}")
+
+
+class LocalIndexOutOfRangeError(ValidationError):
+    """``load``/``store`` names a local index past the maximum.
+
+    The index is read straight out of the instruction word, and it sizes the
+    function's frame: every call reserves a slot for each local the body
+    names, up to the highest index. Unbounded, one instruction could make each
+    call reserve gigabytes. Compiled programs spill to as many locals as they
+    keep values live at once, which is well under the bound.
+    """
+
+    def __init__(self, pc: int, mnemonic: str, index: int, maximum: int):
+        self.pc = pc
+        self.mnemonic = mnemonic
+        self.index = index
+        self.maximum = maximum
+        super().__init__(
+            f"pc {pc}: {mnemonic} takes a local index 0..={maximum}, got {index}"
+        )
+
+
 class InitialFillNotFirstError(ValidationError):
     def __init__(self, pc: int):
         self.pc = pc
@@ -91,6 +227,42 @@ class StackUnderflowError(ValidationError):
         super().__init__(f"pc {pc}: stack underflow")
 
 
+class PopBelowFrameBaseError(StackUnderflowError):
+    """A function other than the entry popped with no operands left.
+
+    Below its operands are its own locals, and below those the values its
+    caller owns; no operand op may reach either, so this is an error even when
+    the machine's stack is not empty. A subclass of
+    :class:`StackUnderflowError` because it is the same condition: in the
+    entry function, which has no caller, it is reported as a plain underflow.
+    """
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        ValidationError.__init__(
+            self,
+            f"pc {pc}: pops past its operands, into its locals and its caller's "
+            f"values",
+        )
+
+
+class StackDepthMismatchError(ValidationError):
+    """Two control-flow paths reach ``pc`` with different stack depths.
+
+    ``expected`` is the depth the first path arrived with, ``got`` the one that
+    disagrees. A loop whose body changes the depth reports this at its header.
+    """
+
+    def __init__(self, pc: int, expected: int, got: int):
+        self.pc = pc
+        self.expected = expected
+        self.got = got
+        super().__init__(
+            f"pc {pc}: paths reach this instruction with different stack depths "
+            f"({expected} and {got})"
+        )
+
+
 class TypeMismatchError(ValidationError):
     def __init__(self, pc: int, expected: int, got: int):
         self.pc = pc
@@ -98,6 +270,26 @@ class TypeMismatchError(ValidationError):
         self.got = got
         super().__init__(
             f"pc {pc}: type mismatch: expected tag 0x{expected:x}, got 0x{got:x}"
+        )
+
+
+class LocalTypeMismatchError(ValidationError):
+    """A typed ``load``/``store`` names a type the value does not have.
+
+    ``store <ty>`` refuses a value of another type, and ``load <ty>`` a local
+    holding one. The placeholder a lanes op pushes for a result it does not
+    simulate — and that an unwritten local holds — passes either, except that
+    ``load undef`` refuses every concrete value. ``declared`` and ``got`` are
+    spelled as in the text format (``"u64"``, ``"undef"``, ...).
+    """
+
+    def __init__(self, pc: int, mnemonic: str, declared: str, got: str):
+        self.pc = pc
+        self.mnemonic = mnemonic
+        self.declared = declared
+        self.got = got
+        super().__init__(
+            f"pc {pc}: {mnemonic} names type {declared}, but the value is {got}"
         )
 
 
@@ -156,11 +348,15 @@ class EmptyProgramError(ValidationError):
 
 
 class MissingTerminatorError(ValidationError):
-    """Program does not end with a return or halt instruction."""
+    """A path through a function runs off its end without return or halt.
+
+    Per function, not per program: ``func_end`` is a no-op, so a function that
+    falls off it runs whatever was laid out next rather than returning.
+    """
 
     def __init__(self, pc: int):
         self.pc = pc
-        super().__init__(f"pc {pc}: program must end with return or halt")
+        super().__init__(f"pc {pc}: function must end with return or halt")
 
 
 class UnreachableInstructionError(ValidationError):
@@ -389,12 +585,12 @@ class InvalidOperandError(ParseError):
 
 
 class ProgramError(Exception):
-    """Base class for native LANES binary format errors."""
+    """Base class for ``VHBC`` binary container errors."""
 
 
 class BadMagicError(ProgramError):
     def __init__(self):
-        super().__init__("bad magic bytes (expected LANES)")
+        super().__init__("bad magic bytes (expected VHBC)")
 
 
 class TruncatedError(ProgramError):
@@ -404,6 +600,10 @@ class TruncatedError(ProgramError):
         super().__init__(f"truncated: expected {expected} bytes, got {got}")
 
 
+# Deprecated: no Rust path maps here anymore. `LANES` framed a program as a
+# flat list of typed sections; `VHBC` carries a section *tree* whose framing
+# faults vihaco reports itself, surfacing as DecodeErrorInProgram (kept for
+# backward-compatible imports).
 class UnknownSectionTypeError(ProgramError):
     def __init__(self, section_type: int):
         self.section_type = section_type
@@ -428,11 +628,16 @@ class UnalignedCodeError(ProgramError):
         super().__init__(f"code length {length} is not a multiple of {width}")
 
 
+# Deprecated: no Rust path maps here anymore. A `VHBC` root section always
+# has a header and a bytecode region, so neither can go missing the way a
+# `LANES` section could (kept for backward-compatible imports).
 class MissingMetadataSectionError(ProgramError):
     def __init__(self):
         super().__init__("missing metadata section")
 
 
+# Deprecated: see MissingMetadataSectionError (kept for backward-compatible
+# imports).
 class MissingCodeSectionError(ProgramError):
     def __init__(self):
         super().__init__("missing code section")
@@ -464,3 +669,16 @@ class DecodeErrorInProgram(ProgramError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(f"decode error: {message}")
+
+
+class EncodeErrorInProgram(ProgramError):
+    """A program uses something the binary container cannot carry.
+
+    Raised by ``Program.to_binary``, not by reading. The container has no
+    encoding for a constant pool, source symbols, or a non-empty function
+    signature, so it refuses to write one rather than dropping it silently.
+    """
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(f"cannot encode program: {message}")

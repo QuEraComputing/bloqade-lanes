@@ -5,8 +5,10 @@
 //!
 //! When `solve_entangling` runs parallel restarts, each restart constructs
 //! its own [`LooseTargetGenerator`] with a different seed. The seed feeds
-//! [`greedy_assign_pairs`](entangling::greedy_assign_pairs)'s internal cost
-//! perturbation, so each restart sees a slightly-different target
+//! the Hungarian cost perturbation inside
+//! [`assign_pairs_with_blockers`](entangling::assign_pairs_with_blockers)
+//! (or [`lookahead_assign_pairs`](entangling::lookahead_assign_pairs) when
+//! lookahead is enabled), so each restart sees a slightly-different target
 //! assignment. That diversity across restarts is what makes the parallel
 //! `pick_best` strategy effective on hard problems.
 //!
@@ -38,7 +40,7 @@ use crate::traits::MoveGenerator;
 /// reused unchanged. When `with_lookahead(...)` has supplied future layers
 /// and a non-zero β, the per-restart computation uses
 /// [`entangling::lookahead_assign_pairs`] instead of plain
-/// [`entangling::greedy_assign_pairs`] so the search expansion sees the
+/// [`entangling::assign_pairs_with_blockers`] so the search expansion sees the
 /// same lookahead refinement that `solve_entangling` computes for
 /// `ctx.targets`.
 pub struct LooseTargetGenerator {
@@ -48,9 +50,9 @@ pub struct LooseTargetGenerator {
     index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     seed: u64,
-    /// Forwarded to greedy_assign_pairs; 0.0 = standard min-sum assignment.
+    /// Forwarded to assign_pairs_with_blockers; 0.0 = standard min-sum assignment.
     congestion_weight: f64,
-    /// Forwarded to greedy_assign_pairs; 0.0 = occupancy-blind assignment.
+    /// Forwarded to assign_pairs_with_blockers; 0.0 = occupancy-blind assignment.
     occupancy_penalty: f64,
     /// Forwarded to assign_pairs_with_blockers; per-atom-moved cost added
     /// to each Hungarian cell to bias toward stay-in-place. 0.0 disables.
@@ -118,7 +120,7 @@ impl LooseTargetGenerator {
     ///
     /// When `future_layers` is non-empty and `beta > 0.0`, the per-restart
     /// target computation uses [`entangling::lookahead_assign_pairs`]
-    /// instead of plain [`entangling::greedy_assign_pairs`]. The forward /
+    /// instead of plain [`entangling::assign_pairs_with_blockers`]. The forward /
     /// backward sweep biases the current layer's assignment toward
     /// positions that are well-placed for the upcoming layers, weighted
     /// by `beta`.
@@ -233,6 +235,7 @@ impl MoveGenerator for LooseTargetGenerator {
             blocked: ctx.blocked,
             targets: &targets,
             cz_pairs: ctx.cz_pairs,
+            capacity: ctx.capacity,
         };
         self.inner.generate(config, node_id, &loose_ctx, state, out);
     }
@@ -296,6 +299,7 @@ mod tests {
             blocked: &blocked,
             targets: &dummy_targets,
             cz_pairs: None,
+            capacity: None,
         };
 
         let mut state = SearchState::default();
@@ -347,6 +351,7 @@ mod tests {
             blocked: &blocked,
             targets: &dummy_targets,
             cz_pairs: None,
+            capacity: None,
         };
 
         // Different configs in the same site column (0↔5), both needing moves.
