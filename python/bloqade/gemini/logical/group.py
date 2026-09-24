@@ -132,7 +132,9 @@ def kernel(self):
                 ]
             )
             origins.snapshot(mt)
-            validation_result = origins.annotate(mt, validator.validate(mt))
+            validation_result = origins.annotate(
+                mt, validator.validate(mt), aggressive_unroll=aggressive_unroll
+            )
             validation_result.raise_if_invalid()
             mt.verify()
 
