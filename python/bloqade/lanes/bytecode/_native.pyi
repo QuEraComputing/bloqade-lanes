@@ -1124,7 +1124,8 @@ class EntropyOptions:
 
         The driver stops once the bound has proven the plan optimal instead of
         running on to its expansion budget, and reports
-        ``SolveResult.proven``. The proof is the root certificate: the plan's
+        ``SolveResult.proof`` as ``Proof.OPTIMAL``. The proof is the root
+        certificate: the plan's
         cost reached ``h(root)``, a lower bound on *every* legal plan, so none
         is cheaper -- including plans the generator would never have proposed.
         Stopping skips no expansion, because a cut root cannot be expanded
