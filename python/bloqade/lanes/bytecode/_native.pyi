@@ -1171,9 +1171,10 @@ class MoverSelection:
     """How NoHome's CZ phase chooses, for each pair, which qubit moves.
 
     ``RULE`` applies a fixed per-pair rule. ``RANKED`` (the default) plans every
-    candidate with Push and Rotate and routes the one with the shortest plan.
-    ``ROUTE_ALL`` routes every candidate and keeps the one with the fewest move
-    layers.
+    candidate with Push and Rotate, routes the one with the shortest plan and
+    the rule's, and keeps whichever takes fewer layers, so it is never worse
+    than ``RULE``. ``ROUTE_ALL`` routes every candidate and keeps the one with
+    the fewest move layers.
     """
 
     RULE: MoverSelection

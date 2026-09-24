@@ -869,14 +869,17 @@ keeping the cheapest gives 2,908 (10.5%), no kernel worse, about 2× compile tim
 **Phases 2–3 — DONE 2026-09-24 (one PR):** `NoHomeOptions.mover_selection` in
 `placement/nohome.rs`, with `RULE` (the old fixed rule, one routing solve), `RANKED`
 (**the default**: plan each candidate mover assignment with Push and Rotate, route the
-shortest, the next on failure) and `ROUTE_ALL` (route every candidate, keep the fewest
-layers, the rule's on ties). Candidates are every assignment up to
+shortest, the next on failure, *and* the rule's, keeping whichever takes fewer layers,
+so it is never worse than `RULE`) and `ROUTE_ALL` (route every candidate, keep the
+fewest layers, the rule's on ties). The comparison with the rule was added in review:
+ranking alone lost on steane_physical_35 (96 → 100), where Push and Rotate's plan
+length orders candidates worse than chance on a dense stage. Candidates are every assignment up to
 `max_mover_candidates` (64), else the rule, every single-pair flip and a seeded sample.
 Exposed as `MoverSelection` on `NoHomeOptions`, `NoHomePlacementStrategy` and
 `make_physical_placement_strategy(mover_selection=...)`. `RULE` reproduces the previous
 behaviour exactly (behaviour net unchanged under it). Measured on the physical suite:
-`pipeline_default` 3,250 → 3,066 events (5.7%; trotter_rand_35 −10.3%, adder_64 −4.5%,
-steane_physical_35 +4.2%), compile time about unchanged; the new opt-in
+`pipeline_default` 3,250 → 3,052 events (6.1%; trotter_rand_35 −10.9%, adder_64 −4.5%,
+steane_physical_35 −4.2%, no kernel worse), compile time up about 10–15% (most stages route twice); the new opt-in
 `pipeline_route_all` row gives 2,898 (10.8%, no kernel worse) at about 2.4× the compile
 time. `success` is unchanged everywhere, and the logical suite's `pipeline_default` does
 not move. Behaviour net: `cz/nohome/example_pairable` goes from unsolvable (the rule's

@@ -47,8 +47,10 @@ pub enum MoverSelection {
     /// Plan every candidate with Push and Rotate, which is fast and always
     /// finishes but is not shortest, and route the candidate with the
     /// shortest plan (the next, on failure). The plan's length is an upper
-    /// bound on the candidate's cost. One routing solve when the first pick
-    /// routes.
+    /// bound on the candidate's cost, but not always a good predictor of the
+    /// router's, so the rule's candidate is routed too and the ranked pick is
+    /// kept only if it takes fewer layers: never worse than [`Self::Rule`].
+    /// Two routing solves, or one when the rule's candidate is ranked first.
     #[default]
     Ranked,
     /// Route every candidate and keep the one with the fewest move layers,
@@ -716,9 +718,11 @@ pub(crate) fn solve_nohome(
                 max_expansions,
             )
         };
-        let order: Vec<usize> = match nohome_opts.mover_selection {
+        // The routing order, the rule's candidate always first, and whether
+        // one routed candidate is enough.
+        let (order, first_solve_wins): (Vec<usize>, bool) = match nohome_opts.mover_selection {
             MoverSelection::Rule => return route(&candidates[0]),
-            MoverSelection::RouteAll => (0..candidates.len()).collect(),
+            MoverSelection::RouteAll => ((0..candidates.len()).collect(), false),
             MoverSelection::Ranked => {
                 let plan_opts = SolveOptions {
                     strategy: Strategy::PushRotate,
@@ -741,11 +745,14 @@ pub(crate) fn solve_nohome(
                     }
                 }
                 planned.sort_unstable();
-                let mut order: Vec<usize> = planned.into_iter().map(|(_, i)| i).collect();
-                if !order.contains(&0) {
-                    order.push(0);
-                }
-                order
+                // When Push and Rotate ranks the rule's candidate first,
+                // routing it alone is enough. Otherwise the rule's candidate
+                // is routed too, so the ranked pick is kept only if it routes
+                // in fewer layers: ranking never does worse than the rule.
+                let rule_ranked_first = planned.first().is_some_and(|&(_, i)| i == 0);
+                let mut order = vec![0];
+                order.extend(planned.into_iter().map(|(_, i)| i).filter(|&i| i != 0));
+                (order, rule_ranked_first)
             }
         };
 
@@ -758,24 +765,31 @@ pub(crate) fn solve_nohome(
             expanded = expanded.saturating_add(result.nodes_expanded);
             generated = generated.saturating_add(result.nodes_generated);
             if result.status == SolveStatus::Solved {
+                // Strictly fewer layers: a tie keeps the earlier candidate,
+                // and the rule's is routed first.
                 if best
                     .as_ref()
                     .is_none_or(|b| result.move_layers.len() < b.move_layers.len())
                 {
                     best = Some(result);
                 }
-                if nohome_opts.mover_selection == MoverSelection::Ranked {
+                // `Ranked` stops at its ranked pick: the first routed
+                // candidate other than the rule's, or the rule's itself when
+                // it was ranked first.
+                if nohome_opts.mover_selection == MoverSelection::Ranked
+                    && (i != 0 || first_solve_wins)
+                {
                     break;
                 }
             } else if i == 0 {
                 rule_result = Some(result);
             }
         }
-        // The rule's candidate is always routed when nothing else solved, so
-        // one of the two is set.
+        // The rule's candidate is always routed first, so when nothing
+        // solved, its result is set.
         let mut result = best
             .or(rule_result)
-            .expect("the rule's candidate is routed when no other solves");
+            .expect("the rule's candidate is always routed");
         result.nodes_expanded = expanded;
         result.nodes_generated = generated;
         Ok(result)

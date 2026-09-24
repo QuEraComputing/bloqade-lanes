@@ -1869,7 +1869,7 @@ final: 0@0.0 1@1.0 2@0.1 3@1.1 4@4.0 5@5.0 6@4.1 7@5.1 8@0.2 9@2.2
 plan: 766d4d243c89b805
 
 == cz/nohome/example_pairable
-status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | generated: 3 | deadlocks: 0 | proven: false | termination: exhausted
+status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | generated: 4 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0
 plan: 45e1b13bb22bfc19
 

@@ -11,7 +11,8 @@ Phase 2 (entangling): pick CZ-staging targets per pair, moving one qubit to
 the other's CZ partner site, then route home → staging via fixed-target
 ``solve``. Which qubit of each pair moves follows ``mover_selection``: by
 default every assignment (up to ``max_mover_candidates``) is planned with Push
-and Rotate and the one with the shortest plan is routed. A pair with a qubit that has no partner site (e.g. in a storage
+and Rotate, and the one with the shortest plan is routed alongside the fixed
+rule's, keeping whichever takes fewer layers. A pair with a qubit that has no partner site (e.g. in a storage
 zone with no entangling pairs) is staged on a free entangling slot instead,
 and a pair that cannot be staged makes the result ``unsolvable``. This mirrors
 how :class:`PhysicalPlacementStrategy` routes to pre-computed CZ targets.
@@ -77,8 +78,10 @@ class NoHomePlacementStrategy(NoReturnStrategyBase):
     mover_selection:
         How the CZ phase picks which qubit of each pair moves.
         :py:attr:`MoverSelection.RANKED` (the default, via ``None``) plans
-        every candidate with Push and Rotate and routes the one with the
-        shortest plan; :py:attr:`MoverSelection.ROUTE_ALL` routes every
+        every candidate with Push and Rotate, routes the one with the
+        shortest plan and the rule's, and keeps whichever takes fewer layers,
+        so it is never worse than ``RULE``;
+        :py:attr:`MoverSelection.ROUTE_ALL` routes every
         candidate and keeps the one with the fewest move layers, at one
         routing solve per candidate; :py:attr:`MoverSelection.RULE` applies a
         fixed per-pair rule with no comparison.
