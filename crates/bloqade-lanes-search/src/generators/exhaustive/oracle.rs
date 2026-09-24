@@ -914,7 +914,6 @@ mod tests {
     fn other_generators(
         ctx: &SearchContext<'_>,
         inst: &Instance,
-        arch: &std::sync::Arc<ArchSpec>,
         index: &std::sync::Arc<LaneIndex>,
         dist_table: &std::sync::Arc<DistanceTable>,
     ) -> Vec<(&'static str, Vec<MoveCandidate>)> {
@@ -972,7 +971,6 @@ mod tests {
                 inner,
                 inst.targets.clone(),
                 inst.cz_pairs.clone(),
-                arch.clone(),
                 index.clone(),
                 dist_table.clone(),
             );
@@ -1016,7 +1014,6 @@ mod tests {
 
     /// One instance's context, owned so the generators can borrow it.
     struct Owned {
-        arch: std::sync::Arc<ArchSpec>,
         index: std::sync::Arc<LaneIndex>,
         dist_table: std::sync::Arc<DistanceTable>,
         inst: Instance,
@@ -1037,13 +1034,11 @@ mod tests {
 
     fn owned_instance(json: &str, rng: &mut SmallRng, oracle: &Oracle) -> Owned {
         let spec: ArchSpec = serde_json::from_str(json).expect("spec json parses");
-        let arch = std::sync::Arc::new(spec.clone());
         let index = std::sync::Arc::new(LaneIndex::new(spec));
         let inst = random_instance(rng, &oracle.endpoints());
         let target_locs: Vec<u64> = inst.targets.iter().map(|&(_, l)| l).collect();
         let dist_table = std::sync::Arc::new(DistanceTable::new(&target_locs, &index));
         Owned {
-            arch,
             index,
             dist_table,
             inst,
@@ -1077,13 +1072,9 @@ mod tests {
                 ));
                 let exhaustive_keys: HashSet<(Group, Shot)> =
                     exhaustive.iter().map(|(g, s, _)| (*g, s.clone())).collect();
-                for (gen_name, cands) in other_generators(
-                    &ctx,
-                    &owned.inst,
-                    &owned.arch,
-                    &owned.index,
-                    &owned.dist_table,
-                ) {
+                for (gen_name, cands) in
+                    other_generators(&ctx, &owned.inst, &owned.index, &owned.dist_table)
+                {
                     for cand in &cands {
                         if cand.move_set.is_empty() {
                             continue;

@@ -11,7 +11,6 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::ops::entangling;
 use crate::primitives::config::Config;
@@ -368,11 +367,11 @@ fn build_full_layout(
 fn assign_free_slots(
     pairs: &[StagePair],
     claimed: &HashSet<u64>,
-    arch: &ArchSpec,
+    index: &LaneIndex,
     dist_table: &DistanceTable,
 ) -> Option<Vec<(u32, LocationAddr)>> {
-    let sites_per_word = arch.sites_per_word() as u32;
-    let slots: Vec<(LocationAddr, LocationAddr)> = entangling::enumerate_word_pairs(arch)
+    let sites_per_word = index.sites_per_word() as u32;
+    let slots: Vec<(LocationAddr, LocationAddr)> = entangling::enumerate_word_pairs(index)
         .into_iter()
         .flat_map(|wp| {
             (0..sites_per_word).map(move |site_id| {
@@ -564,7 +563,7 @@ pub(crate) fn solve_nohome(
     let root = Config::new(initial)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
     let nh_cache = engine.nohome_cache();
-    let arch = engine.index().arch_spec();
+    let index = engine.index();
 
     let has_returners = root
         .iter()
@@ -585,8 +584,7 @@ pub(crate) fn solve_nohome(
         for &(c, t) in cz_pairs {
             let c_addr = from.location_of(c)?;
             let t_addr = from.location_of(t)?;
-            let (Some(c_dst), Some(t_dst)) =
-                (arch.get_cz_partner(&t_addr), arch.get_cz_partner(&c_addr))
+            let (Some(c_dst), Some(t_dst)) = (index.cz_partner(&t_addr), index.cz_partner(&c_addr))
             else {
                 unpartnered.push(((c, c_addr), (t, t_addr)));
                 continue;
@@ -597,7 +595,7 @@ pub(crate) fn solve_nohome(
 
             let (qid, dst) = if c_addr.word_id == t_addr.word_id {
                 move_c
-            } else if arch.is_home_position(&t_addr) {
+            } else if index.is_home_position(&t_addr) {
                 move_t
             } else {
                 move_c
@@ -619,7 +617,12 @@ pub(crate) fn solve_nohome(
                     .map(|(qid, loc)| chosen.get(&qid).copied().unwrap_or(loc).encode()),
             );
             let dist_table = &engine.entangling_cache().dist_table;
-            chosen.extend(assign_free_slots(&unpartnered, &claimed, arch, dist_table)?);
+            chosen.extend(assign_free_slots(
+                &unpartnered,
+                &claimed,
+                index,
+                dist_table,
+            )?);
         }
 
         Some(
@@ -754,6 +757,7 @@ mod tests {
     use crate::primitives::lane_index::LaneIndex;
     use crate::search::result::SolveStatus;
     use crate::test_utils::{example_arch_json, loc, storage_gate_arch_json};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     fn make_parts() -> (ArchSpec, LaneIndex) {
         let json = example_arch_json();
@@ -764,8 +768,8 @@ mod tests {
 
     #[test]
     fn test_home_sites_nonempty() {
-        let (arch, _) = make_parts();
-        let sites = entangling::home_sites(&arch);
+        let (arch, index) = make_parts();
+        let sites = entangling::home_sites(&index);
         assert!(!sites.is_empty(), "should have at least one home site");
         let home_words: HashSet<u32> = arch.left_cz_word_ids().into_iter().collect();
         for &enc in &sites {
@@ -787,7 +791,7 @@ mod tests {
     fn test_home_sites_span_every_zone() {
         let arch: ArchSpec =
             serde_json::from_str(crate::test_utils::two_zone_bus_arch_json()).unwrap();
-        let sites: HashSet<LocationAddr> = entangling::home_sites(&arch)
+        let sites: HashSet<LocationAddr> = entangling::home_sites(&LaneIndex::new(arch))
             .into_iter()
             .map(LocationAddr::decode)
             .collect();
@@ -815,8 +819,8 @@ mod tests {
 
     #[test]
     fn test_nearest_home_assigns_all_returners() {
-        let (arch, index) = make_parts();
-        let home_locs = entangling::home_sites(&arch);
+        let (_, index) = make_parts();
+        let home_locs = entangling::home_sites(&index);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at non-home locations (CZ staging).
@@ -854,8 +858,8 @@ mod tests {
 
     #[test]
     fn test_candidate_layouts_all_home_is_identity() {
-        let (arch, index) = make_parts();
-        let home_locs = entangling::home_sites(&arch);
+        let (_, index) = make_parts();
+        let home_locs = entangling::home_sites(&index);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at home — should get identity layout back.
@@ -973,7 +977,7 @@ mod tests {
             let c = result.goal_config.location_of(0).unwrap();
             let t = result.goal_config.location_of(1).unwrap();
             assert_eq!(
-                engine.index().arch_spec().get_cz_partner(&t),
+                engine.index().cz_partner(&t),
                 Some(c),
                 "from {initial:?}: pair ends at {c:?} and {t:?}, not on CZ partner sites",
             );
@@ -1045,9 +1049,8 @@ mod tests {
     #[test]
     fn free_slots_reject_a_shared_half_across_overlapping_pairs() {
         let engine = SearchEngine::from_json_validated(&overlapping_pairs_arch_json()).unwrap();
-        let arch = engine.index().arch_spec();
-        let dist_table =
-            DistanceTable::new(&entangling::all_entangling_locations(arch), engine.index());
+        let index = engine.index();
+        let dist_table = DistanceTable::new(&entangling::all_entangling_locations(index), index);
         let pairs = [
             ((0u32, zloc(0, 0, 0)), (1u32, zloc(0, 0, 0))),
             ((2u32, zloc(0, 0, 0)), (3u32, zloc(0, 0, 0))),
@@ -1055,11 +1058,11 @@ mod tests {
         // Take site 1 of `[1, 2]` so the collision is the cheapest answer.
         let claimed = HashSet::from([zloc(1, 1, 1).encode()]);
 
-        assert!(assign_free_slots(&pairs, &claimed, arch, &dist_table).is_none());
+        assert!(assign_free_slots(&pairs, &claimed, index, &dist_table).is_none());
 
         // With `[2, 3]` at site 0 taken too, the only disjoint choice is left.
         let claimed = HashSet::from([zloc(1, 1, 1).encode(), zloc(1, 3, 0).encode()]);
-        let targets = assign_free_slots(&pairs, &claimed, arch, &dist_table).unwrap();
+        let targets = assign_free_slots(&pairs, &claimed, index, &dist_table).unwrap();
         let distinct: HashSet<LocationAddr> = targets.iter().map(|&(_, l)| l).collect();
         assert_eq!(distinct.len(), 4, "colliding targets: {targets:?}");
     }

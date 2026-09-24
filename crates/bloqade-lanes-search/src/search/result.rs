@@ -581,9 +581,10 @@ mod tests {
 
         assert_eq!(result.status, SolveStatus::Solved);
         // Verify goal config satisfies the entangling constraint.
-        let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
-            serde_json::from_str(example_arch_json()).unwrap();
-        let eset = crate::ops::entangling::build_entangling_set(&arch);
+        let index = crate::primitives::lane_index::LaneIndex::new(
+            serde_json::from_str(example_arch_json()).unwrap(),
+        );
+        let eset = crate::ops::entangling::build_entangling_set(&index);
         let loc_a = result.goal_config.location_of(0).unwrap().encode();
         let loc_b = result.goal_config.location_of(1).unwrap().encode();
         assert!(
@@ -635,9 +636,10 @@ mod tests {
 
         assert_eq!(result.status, SolveStatus::Solved);
         // Verify both pairs satisfy the constraint.
-        let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
-            serde_json::from_str(example_arch_json()).unwrap();
-        let eset = crate::ops::entangling::build_entangling_set(&arch);
+        let index = crate::primitives::lane_index::LaneIndex::new(
+            serde_json::from_str(example_arch_json()).unwrap(),
+        );
+        let eset = crate::ops::entangling::build_entangling_set(&index);
         for &(qa, qb) in &[(0u32, 1u32), (2, 3)] {
             let la = result.goal_config.location_of(qa).unwrap().encode();
             let lb = result.goal_config.location_of(qb).unwrap().encode();

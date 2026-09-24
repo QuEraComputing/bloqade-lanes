@@ -463,15 +463,14 @@ fn count_reversals(
 /// candidate; in release builds it is a zero-cost no-op.
 ///
 /// Do **not** call this from hot production paths outside the search loop
-/// — `ArchSpec::check_lanes` is linear in the group size and allocates.
+/// — `LaneIndex::check_lanes` is linear in the group size and allocates.
 #[inline]
 fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchContext<'_>) {
     #[cfg(debug_assertions)]
     {
-        let arch = ctx.index.arch_spec();
         for candidate in candidates {
             let lanes = candidate.move_set.decode();
-            let errors = arch.check_lanes(&lanes);
+            let errors = ctx.index.check_lanes(&lanes);
             debug_assert!(
                 errors.is_empty(),
                 "generator emitted invalid AOD lane group: {:?} (lanes={:?})",

@@ -388,7 +388,6 @@ impl MoveGenerator for HeuristicGenerator {
         // occupies an entangling position, and the partner site is occupied
         // by another non-target qubit.
         let target_qubits: HashSet<u32> = ctx.targets.iter().map(|&(qid, _)| qid).collect();
-        let arch_spec = ctx.index.arch_spec();
         let mut accidental_cz_qubits: Vec<(u32, u64)> = Vec::new();
         let mut accidental_seen: HashSet<u64> = HashSet::new();
 
@@ -396,7 +395,7 @@ impl MoveGenerator for HeuristicGenerator {
             if target_qubits.contains(&qid) {
                 continue;
             }
-            if let Some(partner_loc) = arch_spec.get_cz_partner(&loc) {
+            if let Some(partner_loc) = ctx.index.cz_partner(&loc) {
                 let partner_enc = partner_loc.encode();
                 if let Some(other_qid) = config.qubit_at(partner_loc)
                     && !target_qubits.contains(&other_qid)
