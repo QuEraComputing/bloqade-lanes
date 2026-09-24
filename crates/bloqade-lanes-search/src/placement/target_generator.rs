@@ -159,8 +159,10 @@ impl std::error::Error for CandidateError {}
 /// 4. All locations are valid positions in the architecture.
 /// 5. No two qubits share a location.
 /// 6. Each (control, target) pair sits at CZ partner locations, in either
-///    direction. A word may belong to more than one entangling pair, and
-///    [`LaneIndex::cz_partner`] reports only the first, so checking one
+///    direction. On a validated spec the partner relation is symmetric, so
+///    one direction would do; but `ArchSpec::validate` is what rules out a
+///    word in two entangling pairs, and on a spec loaded without it
+///    [`LaneIndex::cz_partner`] reports only the first pair, so checking one
 ///    direction would reject a valid pair.
 pub fn validate_candidate(
     candidate: &[(u32, LocationAddr)],
@@ -387,7 +389,9 @@ mod tests {
 
     /// Word 1 belongs to two entangling pairs, `[0, 1]` and `[1, 2]`, so
     /// `cz_partner` of word 1 reports word 0 only. A pair with its control
-    /// on word 2 and its target on word 1 is still a CZ pair.
+    /// on word 2 and its target on word 1 is still a CZ pair. Validation
+    /// rejects such a spec, so this covers callers that load one unvalidated
+    /// (`ArchSpec::from_json` does not validate).
     #[test]
     fn validate_accepts_a_pair_in_either_direction() {
         let arch = bloqade_lanes_bytecode_core::arch::types::ArchSpec::from_json(

@@ -36,7 +36,8 @@ def narrow_kernel(
 
 def test_none():
 
-    @kernel
+    # An empty program no longer passes validation; this pins post-processing.
+    @kernel(verify=False)
     def main():
         return
 

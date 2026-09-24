@@ -71,3 +71,13 @@ class __GeminiLogicalMeasurementValidation(_interp.MethodTable):
             return (interp.lattice.bottom(),)
 
         return (interp.lattice.bottom(),)
+
+    @_interp.impl(operations.stmts.StarRz)
+    def star_rz(
+        self,
+        interp: "_GeminiTerminalMeasurementValidationAnalysis",
+        frame: ForwardFrame,
+        stmt: operations.stmts.StarRz,
+    ):
+        interp.check_gate_after_measurement(stmt)
+        return ()
