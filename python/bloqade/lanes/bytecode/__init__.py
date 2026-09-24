@@ -60,6 +60,7 @@ from bloqade.lanes.bytecode._native import (
     LooseGoalCzPlacement as LooseGoalCzPlacement,
     Mode as Mode,
     MotionModel as MotionModel,
+    MoverSelection as MoverSelection,
     MoveSearch as MoveSearch,
     MovesetMetrics as MovesetMetrics,
     MoveType as MoveType,

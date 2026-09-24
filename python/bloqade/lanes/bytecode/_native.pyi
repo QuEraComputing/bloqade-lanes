@@ -1167,6 +1167,27 @@ class EntanglingOptions:
     def __repr__(self) -> str: ...
 
 @final
+class MoverSelection:
+    """How NoHome's CZ phase chooses, for each pair, which qubit moves.
+
+    ``RULE`` applies a fixed per-pair rule. ``RANKED`` (the default) plans every
+    candidate with Push and Rotate, routes the one with the shortest plan and
+    the rule's, and keeps whichever takes fewer layers, so it is never worse
+    than ``RULE``. ``ROUTE_ALL`` routes every candidate and keeps the one with
+    the fewest move layers.
+    """
+
+    RULE: MoverSelection
+    RANKED: MoverSelection
+    ROUTE_ALL: MoverSelection
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __int__(self) -> int: ...
+
+@final
 class NoHomeOptions:
     """Tuning parameters for the no-home return assignment."""
 
@@ -1177,6 +1198,8 @@ class NoHomeOptions:
         k_candidates: int = 8,
         top_bus_signatures: int = 6,
         bus_reward_rho: int = 1,
+        mover_selection: MoverSelection | None = None,
+        max_mover_candidates: int = 64,
     ) -> None: ...
     @property
     def gamma(self) -> float: ...
@@ -1188,6 +1211,10 @@ class NoHomeOptions:
     def top_bus_signatures(self) -> int: ...
     @property
     def bus_reward_rho(self) -> int: ...
+    @property
+    def mover_selection(self) -> MoverSelection: ...
+    @property
+    def max_mover_candidates(self) -> int: ...
     def __repr__(self) -> str: ...
 
 @final

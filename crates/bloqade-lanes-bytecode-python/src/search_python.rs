@@ -23,7 +23,7 @@ use bloqade_lanes_search::placement::cz_placement::{
     CandidateAttempt, CzPlacement, CzStage, PlacementBudget, PlacementResult,
 };
 use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
-use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
+use bloqade_lanes_search::placement::nohome::{MoverSelection, NoHomeCzPlacement, NoHomeOptions};
 use bloqade_lanes_search::placement::receding_horizon::{
     RecedingHorizonCzPlacement, RecedingHorizonOptions, default_weight_grid,
 };
@@ -1009,6 +1009,62 @@ impl PyEntropyScorer {
 
 // ── No-home options ──
 
+/// How NoHome's CZ phase chooses, for each pair, which qubit moves.
+///
+/// ``RULE`` applies a fixed per-pair rule. ``RANKED`` (the default) plans every
+/// candidate with Push and Rotate, routes the one with the shortest plan and
+/// the rule's, and keeps whichever takes fewer layers, so it is never worse
+/// than ``RULE``. ``ROUTE_ALL`` routes every candidate and keeps the one with
+/// the fewest move layers.
+#[pyclass(
+    from_py_object,
+    name = "MoverSelection",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PyMoverSelection {
+    #[pyo3(name = "RULE")]
+    Rule = 0,
+    #[pyo3(name = "RANKED")]
+    Ranked = 1,
+    #[pyo3(name = "ROUTE_ALL")]
+    RouteAll = 2,
+}
+
+#[pymethods]
+impl PyMoverSelection {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Rule => "RULE",
+            Self::Ranked => "RANKED",
+            Self::RouteAll => "ROUTE_ALL",
+        }
+    }
+}
+
+impl PyMoverSelection {
+    fn from_rs(m: MoverSelection) -> Self {
+        match m {
+            MoverSelection::Rule => Self::Rule,
+            MoverSelection::Ranked => Self::Ranked,
+            MoverSelection::RouteAll => Self::RouteAll,
+        }
+    }
+
+    fn to_rs(self) -> MoverSelection {
+        match self {
+            Self::Rule => MoverSelection::Rule,
+            Self::Ranked => MoverSelection::Ranked,
+            Self::RouteAll => MoverSelection::RouteAll,
+        }
+    }
+}
+
 /// Tuning parameters for the no-home return assignment.
 ///
 /// Controls how displaced qubits are assigned to available home sites
@@ -1027,13 +1083,16 @@ pub struct PyNoHomeOptions {
 #[pymethods]
 impl PyNoHomeOptions {
     #[new]
-    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8, top_bus_signatures=6, bus_reward_rho=1))]
+    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8, top_bus_signatures=6, bus_reward_rho=1, mover_selection=None, max_mover_candidates=64))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         gamma: f64,
         lambda_lookahead: f64,
         k_candidates: usize,
         top_bus_signatures: usize,
         bus_reward_rho: u32,
+        mover_selection: Option<PyMoverSelection>,
+        max_mover_candidates: usize,
     ) -> PyResult<Self> {
         if !gamma.is_finite() || !(0.0..=1.0).contains(&gamma) {
             return Err(PyValueError::new_err(
@@ -1048,6 +1107,10 @@ impl PyNoHomeOptions {
         if k_candidates == 0 {
             return Err(PyValueError::new_err("k_candidates must be >= 1"));
         }
+        if max_mover_candidates == 0 {
+            return Err(PyValueError::new_err("max_mover_candidates must be >= 1"));
+        }
+        let defaults = NoHomeOptions::default();
         Ok(Self {
             inner: NoHomeOptions {
                 gamma,
@@ -1055,6 +1118,9 @@ impl PyNoHomeOptions {
                 k_candidates,
                 top_bus_signatures,
                 bus_reward_rho,
+                mover_selection: mover_selection
+                    .map_or(defaults.mover_selection, PyMoverSelection::to_rs),
+                max_mover_candidates,
             },
         })
     }
@@ -1084,14 +1150,26 @@ impl PyNoHomeOptions {
         self.inner.bus_reward_rho
     }
 
+    #[getter]
+    fn mover_selection(&self) -> PyMoverSelection {
+        PyMoverSelection::from_rs(self.inner.mover_selection)
+    }
+
+    #[getter]
+    fn max_mover_candidates(&self) -> usize {
+        self.inner.max_mover_candidates
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={}, top_bus_signatures={}, bus_reward_rho={})",
+            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={}, top_bus_signatures={}, bus_reward_rho={}, mover_selection=MoverSelection.{}, max_mover_candidates={})",
             self.inner.gamma,
             self.inner.lambda_lookahead,
             self.inner.k_candidates,
             self.inner.top_bus_signatures,
             self.inner.bus_reward_rho,
+            PyMoverSelection::from_rs(self.inner.mover_selection).name(),
+            self.inner.max_mover_candidates,
         )
     }
 }

@@ -14,6 +14,7 @@ from benchmarks.harness.models import (
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch import ArchSpec
 from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.bytecode import MoverSelection
 from bloqade.lanes.heuristics.physical import (
     NoReturnPlacementStrategy,
     RecedingHorizonNoReturnPlacementStrategy,
@@ -84,6 +85,19 @@ def default_strategy_configs(
             ),
             arch_spec_id=arch_spec_id,
             notes="shipped PhysicalPipeline default; knobs intentionally unpinned",
+        ),
+        StrategyConfig(
+            strategy_id="pipeline_route_all",
+            backend="rust",
+            generator_id="rust_solver",
+            # The shipped default with NoHome's opt-in mover selection: route
+            # every candidate mover assignment and keep the cheapest, against
+            # the default's Push-and-Rotate ranking (Epic 4).
+            build_placement_strategy=lambda: make_physical_placement_strategy(
+                arch_spec=factory(), mover_selection=MoverSelection.ROUTE_ALL
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="pipeline_default with mover_selection=ROUTE_ALL",
         ),
         StrategyConfig(
             strategy_id="rust_entropy_1",

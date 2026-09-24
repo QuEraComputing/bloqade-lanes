@@ -76,3 +76,49 @@ def test_nohome_exposes_rust_nodes_expanded():
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
     assert strategy.rust_nodes_expanded_total > before
+
+
+def test_mover_selection_defaults_to_ranked_and_validates():
+    import pytest
+
+    from bloqade.lanes.bytecode import MoverSelection, NoHomeOptions
+
+    default = NoHomeOptions()
+    assert default.mover_selection == MoverSelection.RANKED
+    assert default.max_mover_candidates == 64
+    assert "mover_selection=MoverSelection.RANKED" in repr(default)
+
+    chosen = NoHomeOptions(
+        mover_selection=MoverSelection.ROUTE_ALL, max_mover_candidates=8
+    )
+    assert chosen.mover_selection == MoverSelection.ROUTE_ALL
+    assert chosen.max_mover_candidates == 8
+
+    with pytest.raises(ValueError, match="max_mover_candidates"):
+        NoHomeOptions(max_mover_candidates=0)
+
+
+def test_mover_selection_reaches_the_native_options():
+    """The strategy field, and the pipeline factory's knob, both reach the
+    ``NoHomeOptions`` the Rust placement is built with; ``None`` keeps the
+    native default."""
+    from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
+    from bloqade.lanes.bytecode import MoverSelection
+    from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
+
+    arch = logical.get_arch_spec()
+    for selection in (MoverSelection.RULE, MoverSelection.ROUTE_ALL):
+        strategy = NoHomePlacementStrategy(arch_spec=arch, mover_selection=selection)
+        assert strategy._build_nohome_options().mover_selection == selection
+    assert (
+        NoHomePlacementStrategy(arch_spec=arch)._build_nohome_options().mover_selection
+        == MoverSelection.RANKED
+    )
+
+    built = make_physical_placement_strategy(
+        arch_spec=arch, mover_selection=MoverSelection.RULE
+    )
+    assert isinstance(built, PalindromePlacementStrategy)
+    inner = built.inner
+    assert isinstance(inner, NoHomePlacementStrategy)
+    assert inner.mover_selection == MoverSelection.RULE

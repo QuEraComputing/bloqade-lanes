@@ -19,6 +19,7 @@ from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import (
     BoundStats,
     EntropyTrace,
+    MoverSelection,
     Proof,
     SearchEngine,
     SolveStatus,
@@ -555,6 +556,7 @@ def make_physical_placement_strategy(
     strategy: SearchStrategyName = "entropy",
     arch_spec: ArchSpec | None = None,
     return_moves: bool = True,
+    mover_selection: MoverSelection | None = None,
 ) -> PlacementStrategyABC:
     """Build a physical placement strategy from user-facing search knobs.
 
@@ -563,7 +565,9 @@ def make_physical_placement_strategy(
 
     ``move_solutions_per_layer`` maps to ``k_candidates`` (candidate home
     sites per qubit in the Hungarian assignment).  ``search_budget`` maps to
-    ``max_expansions``.  ``lambda_lookahead`` is fixed at ``0`` because
+    ``max_expansions``.  ``mover_selection`` picks which qubit of each CZ pair
+    moves (see :class:`~bloqade.lanes.bytecode.MoverSelection`); ``None`` keeps
+    NoHome's default, ``RANKED``.  ``lambda_lookahead`` is fixed at ``0`` because
     palindrome return always moves atoms back to their original home position,
     so future-layer proximity penalties carry no signal.
 
@@ -586,9 +590,10 @@ def make_physical_placement_strategy(
 
        The wider consequence is that palindrome reduces
        :class:`~bloqade.lanes.heuristics.physical.nohome.NoHomePlacementStrategy`
-       to a plain fixed-target router, so ``gamma``, ``k_candidates``,
+       to its CZ phase, so ``gamma``, ``k_candidates``,
        ``top_bus_signatures`` and ``bus_reward_rho`` are all inert on that
-       path.
+       path. ``mover_selection`` is not: the CZ phase's choice of which qubit
+       of each pair moves is exactly what it controls.
     """
     from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
 
@@ -613,6 +618,7 @@ def make_physical_placement_strategy(
         # palindrome there is no such guarantee, hence the tie to
         # `return_moves`.
         backwards_search=return_moves,
+        mover_selection=mover_selection,
     )
 
     return PalindromePlacementStrategy(inner=inner) if return_moves else inner

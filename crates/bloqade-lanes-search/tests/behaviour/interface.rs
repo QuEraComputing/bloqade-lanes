@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::placement::nohome::NoHomeOptions;
+use bloqade_lanes_search::placement::nohome::{MoverSelection, NoHomeOptions};
 use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::search::options::{BoundKind, EntanglingOptions, EntropyOptions};
 use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
@@ -36,7 +36,7 @@ use bloqade_lanes_search::{
 };
 
 use crate::spec::{
-    Arch, Attempt, AttemptLog, BoundSummary, Deadlock, Knobs, Loc, Outcome, PartialSummary,
+    Arch, Attempt, AttemptLog, BoundSummary, Deadlock, Knobs, Loc, Mover, Outcome, PartialSummary,
     Placement, Problem, ProblemSpec, Run, Status, Strategy, Termination,
 };
 
@@ -141,7 +141,7 @@ fn run_on(spec: &ProblemSpec, engine: Arc<SearchEngine>) -> Result<Run, String> 
             let initial_addrs: Vec<(u32, LocationAddr)> = addrs(initial).collect();
             let stage =
                 CzStage::new(&initial_addrs, pairs, &blocked_locs).with_future_layers(future);
-            let placed = cz_placement(placement, engine, search)
+            let placed = cz_placement(placement, &spec.knobs, engine, search)
                 .place(&stage, &PlacementBudget::new(spec.budget))
                 .map_err(|e| e.to_string())?;
             let mut run = from_result(&placed.result);
@@ -158,6 +158,7 @@ fn run_on(spec: &ProblemSpec, engine: Arc<SearchEngine>) -> Result<Run, String> 
 /// The placement a case names, behind the `CzPlacement` trait.
 fn cz_placement(
     placement: &Placement,
+    knobs: &Knobs,
     engine: Arc<SearchEngine>,
     search: MoveSearch,
 ) -> Box<dyn CzPlacement> {
@@ -179,11 +180,22 @@ fn cz_placement(
             search,
             EntanglingOptions::default(),
         )),
-        Placement::NoHome => Box::new(NoHomeCzPlacement::new(
-            engine,
-            search,
-            NoHomeOptions::default(),
-        )),
+        Placement::NoHome => {
+            let defaults = NoHomeOptions::default();
+            let mover_selection = match knobs.mover_selection {
+                None => defaults.mover_selection,
+                Some(Mover::Rule) => MoverSelection::Rule,
+                Some(Mover::RouteAll) => MoverSelection::RouteAll,
+            };
+            Box::new(NoHomeCzPlacement::new(
+                engine,
+                search,
+                NoHomeOptions {
+                    mover_selection,
+                    ..defaults
+                },
+            ))
+        }
         Placement::RecedingHorizon => Box::new(RecedingHorizonCzPlacement::new(
             engine,
             search,
