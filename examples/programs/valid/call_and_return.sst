@@ -1,0 +1,59 @@
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: full
+// A program with more than one function, exercising `call`, parameters and
+// `ret <keep>`.
+//
+// Until the calling convention landed, every fixture here was a single flat
+// `@main` — the whole corpus contained one control-flow instruction, a trailing
+// `ret 0`. Nothing executed a `call`, so nothing would have noticed the entry
+// point, the function markers, or the return path breaking.
+//
+// `@main` passes one operand, a zone, with `call 1`. That sets `@measure_zone`'s
+// frame base one below the top of the stack, so the zone *is* its local 0 — the
+// argument is not copied, it becomes the first slot of the callee's locals, and
+// the callee starts with no operands. It loads the zone, measures it, awaits the
+// result, and returns that one value with `ret 1`: everything else in the frame,
+// the argument included, is dropped, so the caller sees exactly the array_ref.
+//
+// This was arity 0 until the stack simulation seeded each function's frame from
+// its declared parameters (#1042). Before that, a callee receiving operands
+// could not validate clean — the simulation started it from an empty stack and
+// reported the argument as an underflow — so it was not checked at all.
+
+fn @main() {
+  // Place two atoms so the program has a non-trivial arrangement.
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.const_loc 0x0000000001000000    // zone 0, word 0, site 1
+  lanes::lanes.initial_fill 2
+
+  // Pass zone 0; the helper leaves one value behind in its place.
+  lanes::lanes.const_zone 0x00000000
+  cpu::cpu.call 1, measure_zone
+
+  // Stack: [array_ref]. Park it in a scratch local — `@main` reserves one,
+  // because this `store` names it — and stop.
+  cpu::cpu.store heap_ref, 0
+  cpu::cpu.halt
+}
+
+// Both halves of the signature are checked, not decorative: `call 1` against
+// the one parameter, `ret 1` against the one result. `heap_ref` is the closest
+// of vihaco's types to an array reference, and is what issue #776 will make it
+// literally.
+fn @measure_zone(zone: u32) -> heap_ref {
+  cpu::cpu.load u32, 0                  // local 0: the zone @main passed
+  lanes::lanes.measure 1
+  lanes::lanes.await_measure            // pops future, pushes array_ref
+
+  // Keep the top value — the array_ref — and drain the rest of the frame,
+  // the argument included.
+  cpu::cpu.ret 1
+}
+.text(root).
+.section(root).

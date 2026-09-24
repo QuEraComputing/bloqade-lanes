@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Optional, final
+from typing import Literal, Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -2053,6 +2053,11 @@ class AtomStateData:
 
 # ── Instruction ──
 
+ValueType = Literal[
+    "undef", "str", "bool", "i64", "u32", "u64", "f64", "fn_ref", "heap_ref"
+]
+"""vihaco's value types, spelled as the ``sst`` text format spells them."""
+
 @final
 class Instruction:
     """A single bytecode instruction.
@@ -2063,7 +2068,8 @@ class Instruction:
     Instruction categories:
 
     - **Constants**: Push typed values onto the stack.
-    - **Stack**: Manipulate the operand stack (pop, dup, swap).
+    - **Stack and locals**: Duplicate the top (dup), and park values in a
+      function's locals and bring them back (store, load).
     - **Atom ops**: Fill sites and move atoms (initial_fill, fill, move).
     - **Gates**: Quantum gate operations (local_r, local_rz, global_r, global_rz, cz).
     - **Measurement**: Measure atoms and await results.
@@ -2150,15 +2156,6 @@ class Instruction:
     # -- Stack manipulation --
 
     @staticmethod
-    def pop() -> Instruction:
-        """Pop and discard the top stack value.
-
-        Returns:
-            Instruction: The pop instruction.
-        """
-        ...
-
-    @staticmethod
     def dup() -> Instruction:
         """Duplicate the top stack value.
 
@@ -2166,13 +2163,52 @@ class Instruction:
             Instruction: The dup instruction.
         """
         ...
+    # -- Locals --
+    #
+    # There is no ``pop`` or ``swap``. A function's locals are slots of their
+    # own below its operands, so ``store`` parks a value out of their way and
+    # ``load`` brings a copy back: ``store(t, 0)`` discards the top, and
+    # ``store(t, 0), store(t, 1), load(t, 0), load(t, 1)`` swaps the top two.
 
     @staticmethod
-    def swap() -> Instruction:
-        """Swap the top two stack values.
+    def load(value_type: str, index: int) -> Instruction:
+        """Push a copy of local ``index``.
+
+        The local must hold a ``value_type``, or the ``Undefined``
+        placeholder — unwritten, or a lanes op's result stored there — which
+        reads as that type's zero. ``"undef"`` reads the placeholder back as
+        itself, and refuses a concrete value.
+
+        Args:
+            value_type: The type the local holds, spelled as in the text
+                format — one of the ``ValueType`` names.
+            index: Local slot, ``u32``.
 
         Returns:
-            Instruction: The swap instruction.
+            Instruction: The load instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
+        """
+        ...
+
+    @staticmethod
+    def store(value_type: str, index: int) -> Instruction:
+        """Pop the top of the stack into local ``index``.
+
+        Args:
+            value_type: The type of the value stored, spelled as in the text
+                format — one of the ``ValueType`` names. A placeholder a lanes
+                op pushed may be stored as any type.
+            index: Local slot, ``u32``.
+
+        Returns:
+            Instruction: The store instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
         """
         ...
     # -- Atom operations --
@@ -2395,17 +2431,36 @@ class Instruction:
 
     @property
     def opcode(self) -> int:
-        """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
+        """Packed 16-bit opcode: ``(device_code << 8) | instruction_code``.
+
+        Device codes are ``0x00`` for the CPU and ``0x01`` for the lanes
+        device. Both halves are assigned by declaration order, so they shift
+        whenever either instruction set gains a variant — compare identity with
+        :meth:`op_name`, not with a literal opcode.
+        """
+        ...
+
+    def device(self) -> str:
+        """The device this instruction belongs to: ``"cpu"`` or ``"lanes"``.
+
+        The stack and arithmetic ops come from vihaco-cpu's CPU component; the
+        atom-movement, gate, measurement and array ops are the lanes device's.
+        In ``.sst`` text this is the prefix before ``::``.
+        """
         ...
 
     def op_name(self) -> str:
-        """Lowercase snake_case opcode name matching the bytecode text-format
-        parser's canonical names (see
-        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
+        """Lowercase snake_case opcode name, without the device prefix or
+        dialect head — ``"move"`` for ``lanes::lanes.move``.
 
         Factory methods use trailing underscores for Python-keyword conflicts
         (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
-        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
+        returns the bare names: ``"move"`` and ``"return"``.
+
+        Two names deliberately differ from the text mnemonic because the
+        decoder depends on them: the constants are ``"const_float"`` /
+        ``"const_int"`` rather than vihaco-cpu's single typed ``const``, and
+        ``"return"`` keeps its spelling rather than vihaco-cpu's ``ret``.
         """
         ...
 
@@ -2492,6 +2547,23 @@ class Instruction:
         """
         ...
 
+    def local_index(self) -> int:
+        """Local slot a ``load`` or ``store`` instruction names.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def value_type(self) -> ValueType:
+        """Type a ``load`` or ``store`` instruction names, spelled as in the
+        text format.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
@@ -2501,8 +2573,8 @@ class Instruction:
 class Program:
     """A bytecode program consisting of a version and instruction sequence.
 
-    Programs can be constructed directly, parsed from SST text assembly,
-    or deserialized from native LANES binary format.
+    Programs can be constructed directly, parsed from vihaco's ``sst v1``
+    text container, or deserialized from its ``VHBC`` binary container.
 
     Args:
         version (tuple[int, int]): Program version as ``(major, minor)``.
@@ -2537,10 +2609,10 @@ class Program:
 
     @staticmethod
     def from_binary(data: bytes) -> Program:
-        """Deserialize a program from native LANES binary format.
+        """Deserialize a program from vihaco's ``VHBC`` binary container.
 
         Args:
-            data (bytes): Raw native LANES binary data.
+            data (bytes): Raw ``VHBC`` container bytes.
 
         Returns:
             Program: The deserialized program.
@@ -2551,10 +2623,15 @@ class Program:
         ...
 
     def to_binary(self) -> bytes:
-        """Serialize the program to native LANES binary format.
+        """Serialize the program to vihaco's ``VHBC`` binary container.
 
         Returns:
-            bytes: The native LANES binary representation.
+            bytes: The ``VHBC`` container bytes.
+
+        Raises:
+            ProgramError: If an instruction has no encodable form. Today
+                that is only a runtime label, whose identifier means
+                nothing outside the parse that produced it.
         """
         ...
 
@@ -2582,6 +2659,12 @@ class Program:
     @property
     def version(self) -> tuple[int, int]:
         """Program version as ``(major, minor)``."""
+        ...
+
+    @property
+    def entry_parameters(self) -> list[ValueType]:
+        """The entry point's declared parameter types, spelled as in the text
+        format. Empty when it takes none, or the program has no entry point."""
         ...
 
     @property

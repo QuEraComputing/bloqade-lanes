@@ -15,6 +15,5 @@ thiserror = "2"
 vihaco = { workspace = true }
 vihaco-cpu = { workspace = true }
 vihaco-parser = { workspace = true }
-vihaco-parser-core = { workspace = true }
 chumsky = { workspace = true }
 eyre = { workspace = true }

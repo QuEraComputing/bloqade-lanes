@@ -4,9 +4,14 @@
 //! [`MoveSearch`](crate::search::move_search::MoveSearch) directly
 //! against an `EntanglingConstraintGoal` (every CZ pair must occupy
 //! *some* valid entangling site, not a pre-decided fixed target).
-//! Internally uses [`LooseTargetGenerator`] which re-runs the
-//! Hungarian assignment per search step so the "target" co-evolves
-//! with the current placement.
+//! Internally uses [`LooseTargetGenerator`], which computes a Hungarian
+//! target assignment once per restart (lazily, on its first `generate`
+//! call) and steers every later expansion in that restart toward the
+//! cached assignment. Diversity comes from the parallel restarts: each
+//! restart's seed perturbs its assignment, and `pick_best` keeps the
+//! best result. Because the goal accepts *any* valid entangling
+//! placement, the final placement can differ from the cached
+//! assignment.
 //!
 //! Unlike [`SingleHeuristicCzPlacement`](super::single_heuristic::SingleHeuristicCzPlacement),
 //! there is *no* [`TargetSolver`](crate::search::target_solver::TargetSolver)
@@ -307,6 +312,11 @@ pub(crate) fn solve_loose_goal(
                 }
             }
 
+            // `max_expansions` caps the whole call, so the cleanup gets only
+            // what the primary search left, and its work counts whether or
+            // not it succeeds.
+            let cleanup_budget =
+                max_expansions.map(|cap| cap.saturating_sub(result.nodes_expanded));
             let cleanup_result = solve_with_engine(
                 engine,
                 opts,
@@ -314,16 +324,17 @@ pub(crate) fn solve_loose_goal(
                 result.goal_config.iter(),
                 cleanup_targets,
                 blocked_locs.iter().copied(),
-                max_expansions,
+                cleanup_budget,
             );
 
-            if let Ok(cleanup) = cleanup_result
-                && cleanup.status == SolveStatus::Solved
-            {
-                result.move_layers.extend(cleanup.move_layers);
-                result.goal_config = cleanup.goal_config;
-                result.cost += cleanup.cost;
-                result.nodes_expanded += cleanup.nodes_expanded;
+            if let Ok(cleanup) = cleanup_result {
+                result.nodes_expanded =
+                    result.nodes_expanded.saturating_add(cleanup.nodes_expanded);
+                if cleanup.status == SolveStatus::Solved {
+                    result.move_layers.extend(cleanup.move_layers);
+                    result.goal_config = cleanup.goal_config;
+                    result.cost += cleanup.cost;
+                }
             }
         }
     }
