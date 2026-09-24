@@ -553,6 +553,41 @@ mod tests {
         assert!(failed.best_partial.is_none());
     }
 
+    /// The cascade bound gate keeps the refinement's answer and never adds
+    /// nodes: every child it drops is one the ungated refinement would have
+    /// inserted, and none of them can lead to a strictly cheaper plan.
+    #[test]
+    fn cascade_bound_gate_keeps_the_plan_and_never_grows_the_graph() {
+        use crate::search::options::{InnerStrategy, Strategy};
+        let engine = make_engine();
+        let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
+        let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(1, i + 5))).collect();
+        let solve = |cascade_bound: bool| {
+            let search = MoveSearch::default().with_options(SolveOptions {
+                strategy: Strategy::Cascade {
+                    inner: InnerStrategy::Ids,
+                },
+                cascade_bound,
+                ..Default::default()
+            });
+            TargetSolver::new(Arc::clone(&engine), search)
+                .solve(
+                    initial.clone(),
+                    target.clone(),
+                    std::iter::empty(),
+                    Some(2000),
+                )
+                .expect("valid config")
+        };
+        let (off, on) = (solve(false), solve(true));
+        assert_eq!(on.status, SolveStatus::Solved);
+        assert_eq!(on.status, off.status);
+        assert_eq!(on.cost.to_bits(), off.cost.to_bits());
+        assert!(on.nodes_generated <= off.nodes_generated);
+        assert!(on.bound_stats.bound_enabled);
+        assert!(!off.bound_stats.bound_enabled);
+    }
+
     #[test]
     fn target_solver_solves_simple_move() {
         let engine = make_engine();

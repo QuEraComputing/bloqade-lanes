@@ -12,7 +12,7 @@
 
 use rayon::prelude::*;
 
-use crate::bounds::{NoBound, WeightedDistanceBound};
+use crate::bounds::{BoundStats, NoBound, WeightedDistanceBound};
 use crate::cost::UniformCost;
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
@@ -155,6 +155,27 @@ pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
             .then(a.cost.total_cmp(&b.cost))
             .then(b.proven().cmp(&a.proven()))
     })
+}
+
+/// A bounded cascade's statistics: both legs' cuts, the tighter of their root
+/// bounds (each is a lower bound on the same instance), and the cost of the
+/// plan the cascade returns as the incumbent.
+fn merge_cascade_bound_stats(
+    inner: BoundStats,
+    refine: BoundStats,
+    returned_cost: f64,
+) -> BoundStats {
+    let mut merged = refine;
+    if inner.bound_enabled {
+        merged.cuts_by_g += inner.cuts_by_g;
+        merged.cuts_by_h += inner.cuts_by_h;
+        merged.cuts_infeasible += inner.cuts_infeasible;
+        merged.cut_depth_sum += inner.cut_depth_sum;
+        merged.cut_depth_g_only_sum += inner.cut_depth_g_only_sum;
+        merged.root_lower_bound = merged.root_lower_bound.max(inner.root_lower_bound);
+    }
+    merged.incumbent_cost = Some(returned_cost);
+    merged
 }
 
 /// Deadlock policy for the plain frontier strategies — A*, BFS, greedy, and the
@@ -417,16 +438,40 @@ where
         let max_cost = Some(inner_result.cost);
         let astar_move_gen = make_generator(0, frontier_deadlock_policy(deadlock_policy));
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
-        let astar_result = run_frontier(
-            &root,
-            &astar_move_gen,
-            goal,
-            ctx,
-            &mut astar_f,
-            max_expansions,
-            None,
-            max_cost,
-        );
+        // The bound gate (`SolveOptions::cascade_bound`), for point goals only:
+        // a set-valued goal has no admissible target-distance bound.
+        let refine_bound = opts
+            .cascade_bound
+            .then(|| goal.exact_targets())
+            .flatten()
+            .map(|targets| WeightedDistanceBound::new(&objective, targets, ctx.index, ctx.blocked));
+        let astar_result = match &refine_bound {
+            Some(bound) => crate::drivers::frontier::run_search_bounded(
+                root.clone(),
+                &astar_move_gen,
+                &DistanceScorer,
+                &objective,
+                goal,
+                &mut astar_f,
+                ctx,
+                &mut SearchState::default(),
+                &mut NoOpObserver,
+                max_expansions,
+                None,
+                max_cost,
+                bound,
+            ),
+            None => run_frontier(
+                &root,
+                &astar_move_gen,
+                goal,
+                ctx,
+                &mut astar_f,
+                max_expansions,
+                None,
+                max_cost,
+            ),
+        };
         let astar_solve = extract(
             astar_result,
             astar_move_gen.deadlock_count(),
@@ -446,6 +491,8 @@ where
             .nodes_generated
             .saturating_add(astar_solve.nodes_generated);
         let deadlocks = inner_result.deadlocks.saturating_add(astar_solve.deadlocks);
+        let (inner_bound_stats, refine_bound_stats) =
+            (inner_result.bound_stats, astar_solve.bound_stats);
 
         let mut best = if astar_solve.status == SolveStatus::Solved {
             // The refinement runs on a frontier driver, which never prunes
@@ -466,6 +513,10 @@ where
         best.nodes_expanded = nodes_expanded;
         best.nodes_generated = nodes_generated;
         best.deadlocks = deadlocks;
+        if refine_bound_stats.bound_enabled {
+            best.bound_stats =
+                merge_cascade_bound_stats(inner_bound_stats, refine_bound_stats, best.cost);
+        }
         return best;
     }
 

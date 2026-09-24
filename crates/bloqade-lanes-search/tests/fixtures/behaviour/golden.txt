@@ -1857,6 +1857,34 @@ status: solved | layers: 35 | lanes: 38 | cost: 35 | expanded: 0 | generated: 0 
 final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
 plan: b826abfd4a216a12
 
+== bound/cascade_gate/logical_cycle/cascade_ids
+status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 180 | generated: 381 | deadlocks: 5 | proven: false | termination: stopped
+final: 0@2.0 1@4.0 2@0.0
+plan: 08a7466065eec7a9
+bound: cuts_g=0 cuts_h=4 cuts_inf=0 root_lb=3 incumbent=6
+
+== bound/cascade_gate/logical_cycle/cascade_entropy_bounded
+status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 383 | generated: 384 | deadlocks: 4 | proven: false | termination: exhausted
+final: 0@2.0 1@4.0 2@0.0
+plan: 736099ff3df4cb19
+bound: cuts_g=0 cuts_h=357 cuts_inf=0 root_lb=3 incumbent=6
+
+== bound/cascade_gate/physical_congested/cascade_ids
+status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 322 | generated: 937 | deadlocks: 3 | proven: false | termination: stopped
+final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
+plan: 558ddf4c13b964f6
+bound: cuts_g=0 cuts_h=0 cuts_inf=0 root_lb=5 incumbent=22
+
+== bound/cascade_gate/loose_goal/off
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 4 | generated: 6 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0 2@4.0 3@5.0
+plan: c4217fa55cc6a885
+
+== bound/cascade_gate/loose_goal/on
+status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 4 | generated: 6 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.0 1@1.0 2@4.0 3@5.0
+plan: c4217fa55cc6a885
+
 == anticipate/candidate_order/move_control_first
 status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | generated: 3 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@3.0 1@2.0 2@4.0 3@6.0
