@@ -20,6 +20,10 @@ pub struct MoveCandidate {
 pub use bloqade_lanes_bytecode_core::arch::AodCapacity;
 
 /// Read-only context built once per solve() invocation.
+///
+/// Outside this crate, build it with [`SearchContext::new`]; the type is
+/// `#[non_exhaustive]` so that adding a field does not break callers.
+#[non_exhaustive]
 pub struct SearchContext<'a> {
     pub index: &'a LaneIndex,
     pub dist_table: &'a DistanceTable,
@@ -28,6 +32,33 @@ pub struct SearchContext<'a> {
     /// CZ pairs for loose-goal search. `None` for fixed-target solves.
     /// Used by the heuristic generator to coordinate pair moves.
     pub cz_pairs: Option<&'a [(u32, u32)]>,
+}
+
+impl<'a> SearchContext<'a> {
+    /// A fixed-target context: route each `(qubit, encoded location)` in
+    /// `targets`, with `blocked` (encoded locations) held occupied throughout.
+    /// Add CZ pairs for a loose-goal search with
+    /// [`with_cz_pairs`](Self::with_cz_pairs).
+    pub fn new(
+        index: &'a LaneIndex,
+        dist_table: &'a DistanceTable,
+        blocked: &'a HashSet<u64>,
+        targets: &'a [(u32, u64)],
+    ) -> Self {
+        Self {
+            index,
+            dist_table,
+            blocked,
+            targets,
+            cz_pairs: None,
+        }
+    }
+
+    /// The CZ pairs a loose-goal search coordinates.
+    pub fn with_cz_pairs(mut self, cz_pairs: &'a [(u32, u32)]) -> Self {
+        self.cz_pairs = Some(cz_pairs);
+        self
+    }
 }
 
 /// Per-node state for entropy-guided search.

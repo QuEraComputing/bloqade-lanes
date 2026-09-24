@@ -899,7 +899,6 @@ pub fn solve_entangling_rh_single_budgeted(
                 deadlocks: 0,
                 entropy_trace: None,
                 bound_stats: crate::bounds::BoundStats::default(),
-                proven: false,
                 termination: crate::drivers::result::Termination::Budget,
             };
         }
@@ -1050,7 +1049,6 @@ pub fn solve_entangling_rh_single_budgeted(
         deadlocks: 0,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
-        proven: false,
         termination: Termination::Stopped,
     }
 }
@@ -1149,7 +1147,6 @@ fn merge_fallback(
             deadlocks: fallback.deadlocks,
             entropy_trace: None,
             bound_stats: crate::bounds::BoundStats::default(),
-            proven: matches!(termination, Termination::Exhausted { proof: true }),
             termination,
         };
     }
@@ -1165,7 +1162,6 @@ fn merge_fallback(
         deadlocks: fallback.deadlocks,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
-        proven: false,
         termination: crate::drivers::result::Termination::Stopped,
     }
 }
@@ -1439,7 +1435,7 @@ mod tests {
             Termination::Exhausted { proof: false },
             "the proof was about the post-prefix state, not the root"
         );
-        assert!(!after_prefix.proven);
+        assert!(!after_prefix.proven());
 
         let no_prefix = merge_fallback(Vec::new(), proven(), 3);
         assert_eq!(
@@ -1447,7 +1443,7 @@ mod tests {
             Termination::Exhausted { proof: true },
             "with no prefix committed the proof is about the root itself"
         );
-        assert!(no_prefix.proven);
+        assert!(no_prefix.proven());
     }
 
     /// Downgrading touches the proof only: a give-up says the same thing from
@@ -1460,7 +1456,7 @@ mod tests {
 
         let merged = merge_fallback(any_layer(), give_up, 1);
         assert_eq!(merged.termination, Termination::Budget);
-        assert!(!merged.proven);
+        assert!(!merged.proven());
     }
 
     /// `proven` is documented as exactly `Exhausted { proof: true }`, so the
@@ -1475,7 +1471,7 @@ mod tests {
             ] {
                 let merged = merge_fallback(prefix.clone(), fallback, 0);
                 assert_eq!(
-                    merged.proven,
+                    merged.proven(),
                     matches!(merged.termination, Termination::Exhausted { proof: true }),
                     "proven disagreed with {:?}",
                     merged.termination

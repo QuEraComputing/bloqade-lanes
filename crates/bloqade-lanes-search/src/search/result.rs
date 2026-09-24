@@ -92,11 +92,17 @@ pub struct SolveResult {
     /// populated either way. The Python surface reports an unbounded run as an
     /// *empty* dict rather than zeros.
     pub bound_stats: BoundStats,
+    /// How the search that produced this result ended.
+    pub termination: Termination,
+}
+
+impl SolveResult {
     /// Whether the verdict is a proof: when `Solved`, the plan is optimal;
     /// when `Unsolvable`, no plan exists.
     ///
-    /// Exactly `matches!(termination, Termination::Exhausted { proof: true })`,
-    /// and `false` on every other path. Two things set it, neither of which
+    /// Derived from [`termination`](Self::termination): exactly
+    /// `matches!(termination, Termination::Exhausted { proof: true })`, and
+    /// `false` on every other path. Two things set it, neither of which
     /// needs an exhaustive walk of the space:
     ///
     /// * the **root certificate** — the incumbent's cost has reached
@@ -111,12 +117,10 @@ pub struct SolveResult {
     /// hardware cannot do it.
     ///
     /// [`solve_push_rotate`]: crate::push_rotate::solver::solve_push_rotate
-    pub proven: bool,
-    /// How the search that produced this result ended.
-    pub termination: Termination,
-}
+    pub fn proven(&self) -> bool {
+        matches!(self.termination, Termination::Exhausted { proof: true })
+    }
 
-impl SolveResult {
     /// Construct a [`SolveStatus::Solved`] result with the given path and counters.
     pub fn solved(
         goal_config: Config,
@@ -134,7 +138,6 @@ impl SolveResult {
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
-            proven: false,
             termination: Termination::Stopped,
         }
     }
@@ -161,7 +164,6 @@ impl SolveResult {
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
-            proven: false,
             termination: match status {
                 SolveStatus::BudgetExceeded => Termination::Budget,
                 _ => Termination::Exhausted { proof: false },
@@ -181,12 +183,11 @@ impl SolveResult {
     /// [`Self::unsolved`] infers `Exhausted { proof: false }` from the status,
     /// which is what a search driver wants — its `Unsolvable` says the
     /// heuristic gave up. A complete method needs the opposite, and every one
-    /// of its proof-bearing exits must agree, or `proven` becomes a property
+    /// of its proof-bearing exits must agree, or [`proven`](Self::proven) becomes a property
     /// of which internal path happened to fire. Hence one constructor rather
     /// than a flag set at each site.
     pub fn proven_unsolvable(root_config: Config) -> Self {
         Self {
-            proven: true,
             termination: Termination::Exhausted { proof: true },
             ..Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
         }
@@ -249,13 +250,13 @@ mod tests {
         let proved = SolveResult::proven_unsolvable(root);
 
         assert_eq!(drained.status, proved.status);
-        assert!(!drained.proven);
+        assert!(!drained.proven());
         assert_eq!(drained.termination, Termination::Exhausted { proof: false });
-        assert!(proved.proven);
+        assert!(proved.proven());
         assert_eq!(proved.termination, Termination::Exhausted { proof: true });
         for result in [&drained, &proved] {
             assert_eq!(
-                result.proven,
+                result.proven(),
                 matches!(result.termination, Termination::Exhausted { proof: true })
             );
         }

@@ -355,7 +355,7 @@ fn from_result(result: &SolveResult) -> Run {
         cost: result.cost,
         nodes_expanded: result.nodes_expanded,
         deadlocks: result.deadlocks,
-        proven: result.proven,
+        proven: result.proven(),
         termination,
         final_placement,
         plan_digest: plan_digest(result),

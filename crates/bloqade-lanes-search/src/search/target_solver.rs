@@ -341,7 +341,7 @@ pub(crate) fn solve_with_engine(
         // the status names the property this promotion actually depends on, so
         // a planner path that ever reports `Unsolvable` without a proof stops
         // being promoted instead of silently borrowing the proof's authority.
-        if fallback.proven {
+        if fallback.proven() {
             return Ok(fallback);
         }
     }
@@ -404,7 +404,7 @@ mod tests {
 
         let stopped = solve(true);
         assert_eq!(stopped.status, SolveStatus::Solved);
-        assert!(stopped.proven, "a plan at h(root) is proven optimal");
+        assert!(stopped.proven(), "a plan at h(root) is proven optimal");
         assert_eq!(
             stopped.termination,
             Termination::Exhausted { proof: true },
@@ -413,7 +413,7 @@ mod tests {
 
         let spun = solve(false);
         assert!(
-            !spun.proven,
+            !spun.proven(),
             "declining to act on the certificate proves nothing"
         );
         assert_eq!(spun.cost.to_bits(), stopped.cost.to_bits());

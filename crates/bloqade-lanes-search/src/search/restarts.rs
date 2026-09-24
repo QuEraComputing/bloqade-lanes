@@ -42,7 +42,6 @@ pub(crate) fn extract(
 ) -> SolveResult {
     let bound_stats = result.bound_stats;
     let termination = result.termination;
-    let proven = matches!(termination, Termination::Exhausted { proof: true });
     match result.goal {
         Some(goal_id) => {
             let move_layers = result.solution_path().unwrap_or_default();
@@ -63,7 +62,6 @@ pub(crate) fn extract(
                 deadlocks,
             );
             solved.bound_stats = bound_stats;
-            solved.proven = proven;
             solved.termination = termination;
             solved
         }
@@ -90,7 +88,6 @@ pub(crate) fn extract(
             let mut unsolved =
                 SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks);
             unsolved.bound_stats = bound_stats;
-            unsolved.proven = proven;
             unsolved.termination = termination;
             unsolved
         }
@@ -113,7 +110,7 @@ pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
         b_solved
             .cmp(&a_solved)
             .then(a.cost.total_cmp(&b.cost))
-            .then(b.proven.cmp(&a.proven))
+            .then(b.proven().cmp(&a.proven()))
     })
 }
 
@@ -552,7 +549,6 @@ mod tests {
         let root = || Config::new([(0, loc(0, 0))]).expect("config");
         let solved = |proven: bool| {
             let mut r = SolveResult::solved(root(), Vec::new(), 5.0, 1, 0);
-            r.proven = proven;
             if proven {
                 r.termination = Termination::Exhausted { proof: true };
             }
@@ -564,7 +560,7 @@ mod tests {
             vec![solved(true), solved(false)],
         ] {
             let best = pick_best(results).expect("non-empty");
-            assert!(best.proven, "the proof was dropped by restart order");
+            assert!(best.proven(), "the proof was dropped by restart order");
             assert_eq!(best.cost, 5.0);
         }
     }
@@ -575,13 +571,12 @@ mod tests {
     fn pick_best_does_not_let_a_proof_outrank_cost() {
         let root = || Config::new([(0, loc(0, 0))]).expect("config");
         let mut proven_expensive = SolveResult::solved(root(), Vec::new(), 9.0, 1, 0);
-        proven_expensive.proven = true;
         proven_expensive.termination = Termination::Exhausted { proof: true };
         let cheap = SolveResult::solved(root(), Vec::new(), 4.0, 1, 0);
 
         let best = pick_best(vec![proven_expensive, cheap]).expect("non-empty");
         assert_eq!(best.cost, 4.0);
-        assert!(!best.proven);
+        assert!(!best.proven());
     }
 
     /// Drive one solve through the real dispatch. Every argument the wiring

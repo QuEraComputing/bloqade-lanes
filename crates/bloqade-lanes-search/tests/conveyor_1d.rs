@@ -569,13 +569,7 @@ fn optimal_distances_from(index: &LaneIndex, start: &Config) -> HashMap<ConfigKe
     let no_targets: Vec<(u32, u64)> = Vec::new();
     let table = DistanceTable::new(&[], index);
     let blocked = HashSet::new();
-    let ctx = SearchContext {
-        index,
-        dist_table: &table,
-        blocked: &blocked,
-        targets: &no_targets,
-        cz_pairs: None,
-    };
+    let ctx = SearchContext::new(index, &table, &blocked, &no_targets);
     let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
     // `NodeId` has no public constructor and the exhaustive generator ignores
     // the one it is handed, so borrow a root id from a throwaway graph.
@@ -596,10 +590,7 @@ fn optimal_distances_from(index: &LaneIndex, start: &Config) -> HashMap<ConfigKe
             start,
             node,
             &mut state,
-            &SearchContext {
-                targets: &[(0u32, 0u64)],
-                ..ctx
-            },
+            &SearchContext::new(ctx.index, ctx.dist_table, ctx.blocked, &[(0u32, 0u64)]),
         ),
         "the oracle's successor relation now depends on the target set, so one \
          BFS per start no longer serves every target"
