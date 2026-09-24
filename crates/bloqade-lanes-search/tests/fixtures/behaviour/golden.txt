@@ -1135,14 +1135,29 @@ plan: cbf29ce484222325
 partial: unresolved=1 layers=0 plan=cbf29ce484222325
 
 == fallback/on_rescues_exhausted_search
-status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 0 | generated: 0 | deadlocks: 0 | proven: false | termination: stopped
+status: solved | layers: 3 | lanes: 3 | cost: 3 | expanded: 1 | generated: 6 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@2.0
 plan: b3d1f88036dd64fc
 
 == fallback/on_promotes_unsolvable_proof
-status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | generated: 0 | deadlocks: 0 | proven: true | termination: exhausted_proof
+status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 15 | generated: 15 | deadlocks: 5 | proven: true | termination: exhausted_proof
 final: 0@0.0
 plan: cbf29ce484222325
+
+== fallback/resume/zoned_six_up/dfs
+status: solved | layers: 32 | lanes: 47 | cost: 32 | expanded: 300 | generated: 313 | deadlocks: 7 | proven: false | termination: stopped
+final: 0@1:4.0 1@1:4.1 2@1:4.2 3@1:5.0 4@1:5.1 5@1:5.2
+plan: b8da9c2d0f46a8ef
+
+== fallback/resume/zoned_six_up/astar
+status: solved | layers: 33 | lanes: 46 | cost: 33 | expanded: 300 | generated: 437 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:4.0 1@1:4.1 2@1:4.2 3@1:5.0 4@1:5.1 5@1:5.2
+plan: 905032cc4d878c8b
+
+== fallback/resume/mirror_restarts/zoned_six_up/dfs
+status: solved | layers: 35 | lanes: 44 | cost: 35 | expanded: 300 | generated: 333 | deadlocks: 15 | proven: false | termination: stopped
+final: 0@1:4.0 1@1:4.1 2@1:4.2 3@1:5.0 4@1:5.1 5@1:5.2
+plan: 3fafd5c723531491
 
 == mirror/solves
 status: solved | layers: 1 | lanes: 2 | cost: 1 | expanded: 1 | generated: 2 | deadlocks: 0 | proven: false | termination: stopped
@@ -1853,7 +1868,7 @@ plan: 736099ff3df4cb19
 bound: cuts_g=0 cuts_h=52 cuts_inf=0 root_lb=3 incumbent=6
 
 == anticipate/pr_resume/restart_from_initial
-status: solved | layers: 35 | lanes: 38 | cost: 35 | expanded: 0 | generated: 0 | deadlocks: 0 | proven: false | termination: stopped
+status: solved | layers: 35 | lanes: 38 | cost: 35 | expanded: 300 | generated: 892 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@2.1 1@2.2 2@3.0 3@0.1 4@0.2 5@1.0
 plan: b826abfd4a216a12
 
