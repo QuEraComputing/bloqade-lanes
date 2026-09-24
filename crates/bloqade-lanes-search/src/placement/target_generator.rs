@@ -4,7 +4,7 @@
 //! configurations for CZ gate placements.  The solver tries each
 //! candidate in order with a shared expansion budget.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
@@ -98,6 +98,10 @@ pub enum CandidateError {
     NotCzPair { control: u32, target: u32 },
     /// Candidate contains duplicate qubit IDs.
     DuplicateQubit(u32),
+    /// A qubit in the candidate is not in the stage's placement.
+    UnexpectedQubit(u32),
+    /// Two qubits in the candidate share a location.
+    DuplicateLocation(LocationAddr),
     /// Controls and targets have different lengths.
     LengthMismatch { controls: usize, targets: usize },
 }
@@ -122,6 +126,16 @@ impl fmt::Display for CandidateError {
             Self::DuplicateQubit(qid) => {
                 write!(f, "duplicate qubit {qid} in candidate")
             }
+            Self::UnexpectedQubit(qid) => {
+                write!(f, "qubit {qid} in candidate is not in the placement")
+            }
+            Self::DuplicateLocation(loc) => {
+                write!(
+                    f,
+                    "two qubits share location ({}, {}, {})",
+                    loc.zone_id, loc.word_id, loc.site_id
+                )
+            }
             Self::LengthMismatch { controls, targets } => {
                 write!(
                     f,
@@ -134,16 +148,23 @@ impl fmt::Display for CandidateError {
 
 impl std::error::Error for CandidateError {}
 
-/// Validate a candidate target configuration.
+/// Validate a candidate target configuration against the stage's
+/// `placement`.
 ///
 /// Checks:
 /// 1. Controls and targets have the same length.
 /// 2. No duplicate qubit IDs in the candidate.
-/// 3. All control and target qubits are present in the candidate.
+/// 3. The candidate places exactly the placement's qubits: every one of
+///    them, and no others.
 /// 4. All locations are valid positions in the architecture.
-/// 5. Each (control, target) pair sits at CZ partner locations.
+/// 5. No two qubits share a location.
+/// 6. Each (control, target) pair sits at CZ partner locations, in either
+///    direction. A word may belong to more than one entangling pair, and
+///    [`LaneIndex::cz_partner`] reports only the first, so checking one
+///    direction would reject a valid pair.
 pub fn validate_candidate(
     candidate: &[(u32, LocationAddr)],
+    placement: &[(u32, LocationAddr)],
     controls: &[u32],
     targets: &[u32],
     index: &LaneIndex,
@@ -166,32 +187,38 @@ pub fn validate_candidate(
 
     let candidate_map: HashMap<u32, LocationAddr> = candidate.iter().copied().collect();
 
-    // Check all control/target qubits are present.
-    for &qid in controls.iter().chain(targets.iter()) {
+    // Check the candidate places exactly the placement's qubits, and that
+    // the CZ qubits are among them.
+    let placed: HashSet<u32> = placement.iter().map(|&(qid, _)| qid).collect();
+    for &qid in placed.iter().chain(controls).chain(targets) {
         if !candidate_map.contains_key(&qid) {
             return Err(CandidateError::MissingQubit(qid));
         }
     }
+    if let Some(&(qid, _)) = candidate.iter().find(|(qid, _)| !placed.contains(qid)) {
+        return Err(CandidateError::UnexpectedQubit(qid));
+    }
 
-    // Check all locations are valid.
+    // Check all locations are valid, and no two qubits share one.
+    let mut occupied = HashSet::with_capacity(candidate.len());
     for &(_, loc) in candidate {
         if index.position(loc).is_none() {
             return Err(CandidateError::InvalidLocation(loc));
         }
+        if !occupied.insert(loc.encode()) {
+            return Err(CandidateError::DuplicateLocation(loc));
+        }
     }
 
-    // Check CZ pair validity.
+    // Check CZ pair validity, in either direction.
     for (&cqid, &tqid) in controls.iter().zip(targets.iter()) {
         let c_loc = candidate_map[&cqid];
         let t_loc = candidate_map[&tqid];
-        match index.cz_partner(&t_loc) {
-            Some(partner) if partner == c_loc => {}
-            _ => {
-                return Err(CandidateError::NotCzPair {
-                    control: cqid,
-                    target: tqid,
-                });
-            }
+        if index.cz_partner(&t_loc) != Some(c_loc) && index.cz_partner(&c_loc) != Some(t_loc) {
+            return Err(CandidateError::NotCzPair {
+                control: cqid,
+                target: tqid,
+            });
         }
     }
 
@@ -262,6 +289,27 @@ mod tests {
         assert!(candidates.is_empty());
     }
 
+    /// A stage placement of qubits 0 and 1; only the qubit IDs matter to
+    /// `validate_candidate`.
+    const PLACED: [(u32, LocationAddr); 2] = [
+        (
+            0,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            },
+        ),
+        (
+            1,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 1,
+            },
+        ),
+    ];
+
     #[test]
     fn validate_accepts_valid_candidate() {
         let index = make_index();
@@ -270,7 +318,7 @@ mod tests {
         let candidate = vec![(0, loc(0, 0, 0)), (1, loc(0, 1, 0))];
         let controls = [0];
         let targets = [1];
-        assert!(validate_candidate(&candidate, &controls, &targets, &index).is_ok());
+        assert!(validate_candidate(&candidate, &PLACED, &controls, &targets, &index).is_ok());
     }
 
     #[test]
@@ -279,7 +327,7 @@ mod tests {
         let candidate = vec![(0, loc(0, 0, 0))]; // qubit 1 missing
         let controls = [0];
         let targets = [1];
-        let err = validate_candidate(&candidate, &controls, &targets, &index).unwrap_err();
+        let err = validate_candidate(&candidate, &PLACED, &controls, &targets, &index).unwrap_err();
         assert!(matches!(err, CandidateError::MissingQubit(1)));
     }
 
@@ -290,7 +338,7 @@ mod tests {
         let candidate = vec![(0, loc(0, 0, 0)), (1, loc(0, 0, 1))];
         let controls = [0];
         let targets = [1];
-        let err = validate_candidate(&candidate, &controls, &targets, &index).unwrap_err();
+        let err = validate_candidate(&candidate, &PLACED, &controls, &targets, &index).unwrap_err();
         assert!(matches!(
             err,
             CandidateError::NotCzPair {
@@ -306,8 +354,64 @@ mod tests {
         let candidate = vec![(0, loc(0, 0, 0)), (0, loc(0, 1, 0))];
         let controls = [0];
         let targets = [1];
-        let err = validate_candidate(&candidate, &controls, &targets, &index).unwrap_err();
+        let err = validate_candidate(&candidate, &PLACED, &controls, &targets, &index).unwrap_err();
         assert!(matches!(err, CandidateError::DuplicateQubit(0)));
+    }
+
+    #[test]
+    fn validate_rejects_a_candidate_missing_a_spectator() {
+        let index = make_index();
+        // Qubit 2 is a spectator in the placement, absent from the candidate.
+        let placed = [PLACED[0], PLACED[1], (2, loc(0, 0, 2))];
+        let candidate = vec![(0, loc(0, 0, 0)), (1, loc(0, 1, 0))];
+        let err = validate_candidate(&candidate, &placed, &[0], &[1], &index).unwrap_err();
+        assert!(matches!(err, CandidateError::MissingQubit(2)));
+    }
+
+    #[test]
+    fn validate_rejects_a_qubit_not_in_the_placement() {
+        let index = make_index();
+        let candidate = vec![(0, loc(0, 0, 0)), (1, loc(0, 1, 0)), (7, loc(0, 0, 3))];
+        let err = validate_candidate(&candidate, &PLACED, &[0], &[1], &index).unwrap_err();
+        assert!(matches!(err, CandidateError::UnexpectedQubit(7)));
+    }
+
+    #[test]
+    fn validate_rejects_two_qubits_on_one_location() {
+        let index = make_index();
+        let placed = [PLACED[0], PLACED[1], (2, loc(0, 0, 2))];
+        let candidate = vec![(0, loc(0, 0, 0)), (1, loc(0, 1, 0)), (2, loc(0, 1, 0))];
+        let err = validate_candidate(&candidate, &placed, &[0], &[1], &index).unwrap_err();
+        assert!(matches!(err, CandidateError::DuplicateLocation(l) if l == loc(0, 1, 0)));
+    }
+
+    /// Word 1 belongs to two entangling pairs, `[0, 1]` and `[1, 2]`, so
+    /// `cz_partner` of word 1 reports word 0 only. A pair with its control
+    /// on word 2 and its target on word 1 is still a CZ pair.
+    #[test]
+    fn validate_accepts_a_pair_in_either_direction() {
+        let arch = bloqade_lanes_bytecode_core::arch::types::ArchSpec::from_json(
+            r#"{
+                "version": "2.0",
+                "words": [{ "sites": [[0, 0]] }, { "sites": [[0, 1]] }, { "sites": [[0, 2]] }],
+                "zones": [{
+                    "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [], "y_spacing": [2.0, 2.0] },
+                    "site_buses": [],
+                    "word_buses": [{ "src": [0, 1], "dst": [1, 2] }],
+                    "words_with_site_buses": [], "sites_with_word_buses": [0],
+                    "entangling_pairs": [[0, 1], [1, 2]]
+                }],
+                "zone_buses": [],
+                "modes": [{ "name": "default", "zones": [0], "bitstring_order": [] }]
+            }"#,
+        )
+        .unwrap();
+        let index = LaneIndex::new(arch);
+        assert_eq!(index.cz_partner(&loc(0, 1, 0)), Some(loc(0, 0, 0)));
+
+        let placed = [(0, loc(0, 2, 0)), (1, loc(0, 1, 0))];
+        let result = validate_candidate(&placed, &placed, &[0], &[1], &index);
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]
@@ -316,7 +420,7 @@ mod tests {
         let candidate = vec![(0, loc(0, 0, 0)), (1, loc(0, 1, 0))];
         let controls = [0, 1];
         let targets = [1];
-        let err = validate_candidate(&candidate, &controls, &targets, &index).unwrap_err();
+        let err = validate_candidate(&candidate, &PLACED, &controls, &targets, &index).unwrap_err();
         assert!(matches!(
             err,
             CandidateError::LengthMismatch {

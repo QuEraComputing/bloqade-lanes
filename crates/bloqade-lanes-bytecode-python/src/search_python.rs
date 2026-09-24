@@ -2043,8 +2043,10 @@ impl PySingleHeuristicCzPlacement {
     /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
     /// ``future_layers`` are later stages, nearest first, for placements that
     /// look ahead. ``candidates``, when given, are the target placements to
-    /// try, in order, instead of ``DefaultTargetGenerator``'s: each maps every
-    /// qubit to its location, and each is validated before it is routed.
+    /// try, in order, instead of ``DefaultTargetGenerator``'s. Each is
+    /// validated before it is routed and skipped if it fails: it must place
+    /// exactly ``initial``'s qubits, at valid and distinct locations, with
+    /// every pair on CZ partner sites (in either direction).
     #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None, candidates=None))]
     #[allow(clippy::too_many_arguments)]
     fn place(

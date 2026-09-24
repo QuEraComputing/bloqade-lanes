@@ -153,3 +153,28 @@ def test_single_heuristic_routes_caller_supplied_candidates_in_order():
     nothing = placement.place(initial, [(0, 1)], [], 2000, candidates=[])
     assert nothing.result.status == SolveStatus.UNSOLVABLE
     assert nothing.attempts == []
+
+
+def test_single_heuristic_skips_candidates_that_misplace_the_stage():
+    """A candidate must place exactly the stage's qubits on distinct locations.
+    One that drops a spectator or stacks two qubits is skipped, not routed to a
+    partial goal or to an error."""
+    engine = _engine()
+    placement = SingleHeuristicCzPlacement(TargetSolver(engine, MoveSearch.astar(1.0)))
+    initial = {0: _loc(0), 1: _loc(3), 2: _loc(6)}
+    good = placement.place(initial, [(0, 1)], [], 2000).result.goal_config
+    missing_spectator = {q: loc for q, loc in good.items() if q != 2}
+    stacked = {**good, 2: good[1]}
+    stray = {**good, 9: _loc(8)}
+
+    placed = placement.place(
+        initial,
+        [(0, 1)],
+        [],
+        2000,
+        candidates=[missing_spectator, stacked, stray, good],
+    )
+    assert placed.result.status == SolveStatus.SOLVED
+    assert placed.chosen == 3
+    assert [a.candidate_index for a in placed.attempts] == [3]
+    assert set(placed.result.goal_config) == {0, 1, 2}
