@@ -21,9 +21,10 @@ use crate::generators::heuristic::DeadlockPolicy;
 use crate::observer::NoOpObserver;
 use crate::primitives::config::Config;
 use crate::primitives::context::{SearchContext, SearchState};
+use crate::primitives::graph::{NodeId, SearchGraph};
 use crate::scorers::DistanceScorer;
 use crate::search::options::{BoundKind, EntropyOptions, InnerStrategy, SolveOptions, Strategy};
-use crate::search::result::{SolveResult, SolveStatus};
+use crate::search::result::{PartialPlan, SolveResult, SolveStatus};
 // No `Objective` import: the cascade now bounds its refinement by cost
 // directly, so nothing here needs `min_shot_cost`.
 use crate::traits::{Goal, Heuristic, MoveGenerator};
@@ -34,14 +35,20 @@ use crate::traits::{Goal, Heuristic, MoveGenerator};
 /// it leaves the solver (see [`crate::search::verify`]): `Config::with_moves`
 /// performs no occupancy validation, so this is where a generator that emits
 /// an inexecutable move set gets caught, rather than downstream in the IR.
+///
+/// On a failed search toward a point goal it also records the
+/// [`best_partial`](SolveResult::best_partial): the graph does not outlive this
+/// function, so this is the last place the partial can be read.
 pub(crate) fn extract(
     result: SearchResult,
     deadlocks: u32,
     max_exp: Option<u32>,
     ctx: &SearchContext,
+    goal: &impl Goal,
 ) -> SolveResult {
     let bound_stats = result.bound_stats;
     let termination = result.termination;
+    let nodes_generated = u32::try_from(result.graph.len()).unwrap_or(u32::MAX);
     match result.goal {
         Some(goal_id) => {
             let move_layers = result.solution_path().unwrap_or_default();
@@ -63,6 +70,7 @@ pub(crate) fn extract(
             );
             solved.bound_stats = bound_stats;
             solved.termination = termination;
+            solved.nodes_generated = nodes_generated;
             solved
         }
         None => {
@@ -89,8 +97,43 @@ pub(crate) fn extract(
                 SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks);
             unsolved.bound_stats = bound_stats;
             unsolved.termination = termination;
+            unsolved.nodes_generated = nodes_generated;
+            unsolved.best_partial = goal
+                .exact_targets()
+                .map(|targets| best_partial(&result.graph, targets));
             unsolved
         }
+    }
+}
+
+/// The node of `graph` with the fewest atoms off `targets`, ties broken by the
+/// lower `g` and then the lower [`NodeId`], with its prefix from the root.
+///
+/// A linear scan over the graph, run only on failed solves.
+fn best_partial(graph: &SearchGraph, targets: &[(u32, u64)]) -> PartialPlan {
+    let unresolved = |config: &Config| -> u32 {
+        targets
+            .iter()
+            .filter(|&&(qubit, target)| {
+                config.location_of(qubit).map(|l| l.encode()) != Some(target)
+            })
+            .count() as u32
+    };
+    let mut best = graph.root();
+    let mut best_key = (unresolved(graph.config(best)), graph.g_score(best));
+    for raw in 1..graph.len() as u32 {
+        let id = NodeId(raw);
+        let key = (unresolved(graph.config(id)), graph.g_score(id));
+        // Strictly better only, so the earlier node keeps a tie.
+        if key.0 < best_key.0 || (key.0 == best_key.0 && key.1.total_cmp(&best_key.1).is_lt()) {
+            best = id;
+            best_key = key;
+        }
+    }
+    PartialPlan {
+        config: graph.config(best).clone(),
+        layers: graph.reconstruct_path(best),
+        unresolved: best_key.0,
     }
 }
 
@@ -268,13 +311,13 @@ where
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = IdsFrontier::new(h_sum);
                 let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
-                extract(result, move_gen.deadlock_count(), budget, ctx)
+                extract(result, move_gen.deadlock_count(), budget, ctx, goal)
             }
             InnerStrategy::Dfs => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = DfsFrontier::new(h_sum);
                 let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
-                extract(result, move_gen.deadlock_count(), budget, ctx)
+                extract(result, move_gen.deadlock_count(), budget, ctx, goal)
             }
             InnerStrategy::Entropy => {
                 let entropy_params = crate::drivers::entropy::EntropyParams {
@@ -329,7 +372,7 @@ where
                         ),
                     }
                 };
-                let mut solve = extract(result, 0, budget, ctx);
+                let mut solve = extract(result, 0, budget, ctx, goal);
                 solve.entropy_trace = entropy_trace;
                 solve
             }
@@ -389,6 +432,7 @@ where
             astar_move_gen.deadlock_count(),
             max_expansions,
             ctx,
+            goal,
         );
 
         if astar_solve.status == SolveStatus::Solved {
@@ -427,7 +471,7 @@ where
                     budget,
                     weight,
                 );
-                extract(result, move_gen.deadlock_count(), budget, ctx)
+                extract(result, move_gen.deadlock_count(), budget, ctx, goal)
             }
         }
     };

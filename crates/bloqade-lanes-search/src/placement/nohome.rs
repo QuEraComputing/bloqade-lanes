@@ -670,6 +670,7 @@ pub(crate) fn solve_nohome(
 
     // Phase 1: route every candidate's return layout.
     let mut total_expanded: u32 = 0;
+    let mut total_generated: u32 = 0;
     let mut best_p1: Option<SolveResult> = None;
     let mut p1_saw_budget_exceeded = false;
     for candidate in &candidates {
@@ -685,6 +686,7 @@ pub(crate) fn solve_nohome(
         )?;
 
         total_expanded += return_result.nodes_expanded;
+        total_generated = total_generated.saturating_add(return_result.nodes_generated);
 
         match return_result.status {
             SolveStatus::Solved => {
@@ -706,17 +708,21 @@ pub(crate) fn solve_nohome(
         } else {
             SolveStatus::Unsolvable
         };
-        return Ok(SolveResult::unsolved(status, root, total_expanded, 0));
+        let mut unsolved = SolveResult::unsolved(status, root, total_expanded, 0);
+        unsolved.nodes_generated = total_generated;
+        return Ok(unsolved);
     };
 
     // Phase 2: simple per-pair target picker, then route once.
     let Some(cz_targets) = resolve_cz_targets(&return_result.goal_config) else {
-        return Ok(SolveResult::unsolved(
+        let mut unsolved = SolveResult::unsolved(
             SolveStatus::Unsolvable,
             root,
             total_expanded,
             return_result.deadlocks,
-        ));
+        );
+        unsolved.nodes_generated = total_generated;
+        return Ok(unsolved);
     };
     let entangling_result = solve_with_engine(
         engine,
@@ -729,26 +735,31 @@ pub(crate) fn solve_nohome(
     )?;
 
     total_expanded += entangling_result.nodes_expanded;
+    total_generated = total_generated.saturating_add(entangling_result.nodes_generated);
 
     if entangling_result.status == SolveStatus::Solved {
         let total_cost = return_result.cost + entangling_result.cost;
         let mut combined_layers = return_result.move_layers;
         combined_layers.extend(entangling_result.move_layers);
-        return Ok(SolveResult::solved(
+        let mut solved = SolveResult::solved(
             entangling_result.goal_config,
             combined_layers,
             total_cost,
             total_expanded,
             return_result.deadlocks + entangling_result.deadlocks,
-        ));
+        );
+        solved.nodes_generated = total_generated;
+        return Ok(solved);
     }
 
-    Ok(SolveResult::unsolved(
+    let mut unsolved = SolveResult::unsolved(
         entangling_result.status,
         root,
         total_expanded,
         return_result.deadlocks + entangling_result.deadlocks,
-    ))
+    );
+    unsolved.nodes_generated = total_generated;
+    Ok(unsolved)
 }
 
 #[cfg(test)]

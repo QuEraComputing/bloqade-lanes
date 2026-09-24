@@ -67,10 +67,12 @@ fn render_all() -> String {
          # is either one `error: <message>` or `panicked: <first line>` line, or:\n\
          #   status: <solved|unsolvable|budget_exceeded> | layers: <AOD shots>\n\
          #     | lanes: <lanes over all shots> | cost: <plan cost> | expanded: <nodes>\n\
-         #     | deadlocks: <n> | proven: <bool>\n\
+         #     | generated: <graph nodes> | deadlocks: <n> | proven: <bool>\n\
          #     | termination: <budget|exhausted|exhausted_proof|stopped>\n\
          #   final: <qubit>@<word>.<site> ...   (zone 0; other zones <zone>:<word>.<site>)\n\
          #   plan: <FNV-1a digest of the move sequence; cbf29ce484222325 = no moves>\n\
+         #   partial: unresolved=<atoms off target> layers=<n> plan=<digest>\n\
+         #     (a failed point-goal search only: the furthest configuration reached)\n\
          #   bound: cuts_g= cuts_h= cuts_inf= root_lb= incumbent=   (a real bound only)\n\
          #   attempts: chosen=<index|none> total=<nodes> [<index>:<status>/<nodes>, ...]\n\
          #     (placements that report candidate attempts only)\n",

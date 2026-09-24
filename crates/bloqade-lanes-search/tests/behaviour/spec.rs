@@ -274,6 +274,9 @@ pub struct Run {
     pub lanes: usize,
     pub cost: f64,
     pub nodes_expanded: u32,
+    /// Nodes the search generated (its graph size), the memory counterpart of
+    /// `nodes_expanded`.
+    pub nodes_generated: u32,
     pub deadlocks: u32,
     pub proven: bool,
     pub termination: Termination,
@@ -285,6 +288,18 @@ pub struct Run {
     pub bound: Option<BoundSummary>,
     /// Present only for placements that report one.
     pub attempts: Option<AttemptLog>,
+    /// Present only on a failed point-goal search: how far it got.
+    pub partial: Option<PartialSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PartialSummary {
+    /// Atoms off their targets at the reached configuration.
+    pub unresolved: u32,
+    /// Layers of the prefix from the root.
+    pub layers: usize,
+    /// Digest of the prefix, as for `Run::plan_digest`.
+    pub plan_digest: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -316,12 +331,13 @@ impl Outcome {
                 };
                 let _ = writeln!(
                     out,
-                    "status: {} | layers: {} | lanes: {} | cost: {} | expanded: {} | deadlocks: {} | proven: {} | termination: {}",
+                    "status: {} | layers: {} | lanes: {} | cost: {} | expanded: {} | generated: {} | deadlocks: {} | proven: {} | termination: {}",
                     run.status.label(),
                     run.layers,
                     run.lanes,
                     run.cost,
                     run.nodes_expanded,
+                    run.nodes_generated,
                     run.deadlocks,
                     run.proven,
                     termination,
@@ -338,6 +354,13 @@ impl Outcome {
                     .collect();
                 let _ = writeln!(out, "final: {}", placement.join(" "));
                 let _ = writeln!(out, "plan: {:016x}", run.plan_digest);
+                if let Some(p) = &run.partial {
+                    let _ = writeln!(
+                        out,
+                        "partial: unresolved={} layers={} plan={:016x}",
+                        p.unresolved, p.layers, p.plan_digest
+                    );
+                }
                 if let Some(b) = &run.bound {
                     let incumbent = b
                         .incumbent_cost
