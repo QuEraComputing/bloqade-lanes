@@ -1227,7 +1227,7 @@ pub struct PyEntropyOptions {
 #[pymethods]
 impl PyEntropyOptions {
     #[new]
-    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None, bound_terminates=true))]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None))]
     fn new(
         max_movesets_per_group: usize,
         max_goal_candidates: usize,
@@ -1235,7 +1235,6 @@ impl PyEntropyOptions {
         collect_entropy_trace: bool,
         seed: u64,
         completion_bound: Option<&str>,
-        bound_terminates: bool,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -1268,18 +1267,12 @@ impl PyEntropyOptions {
                 w_t,
                 collect_entropy_trace,
                 seed,
-                bound_terminates,
+                // Rust-only: an A/B measurement knob, not a user setting.
+                // Python always lets the bound end a search it has proven.
+                bound_terminates: true,
                 completion_bound,
             },
         })
-    }
-
-    /// Whether the completion bound may end the search once it has proven the
-    /// plan optimal. On by default; `False` restores the pre-certificate spin
-    /// to the expansion budget and is useful only for A/B measurement.
-    #[getter]
-    fn bound_terminates(&self) -> bool {
-        self.inner.bound_terminates
     }
 
     /// Completion bound in use: `"weighted_distance"` or `None`.
@@ -1717,7 +1710,7 @@ fn place_stage(
                 &PlacementBudget::new(max_expansions),
             )
         })
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        .map_err(|e| crate::errors::config_error_to_py(py, &e))?;
     PyPlacementResult::from_rs(py, placed)
 }
 
@@ -2008,7 +2001,7 @@ impl PyTargetSolver {
                 self.inner
                     .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
             })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            .map_err(|e| crate::errors::config_error_to_py(py, &e))?;
 
         Ok(PySolveResult { inner: result })
     }

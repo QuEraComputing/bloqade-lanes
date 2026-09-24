@@ -1,10 +1,13 @@
 """The typed placement and bound-statistics surface of the search bindings.
 
 Covers ``*CzPlacement.place`` and its ``PlacementResult`` / ``CandidateAttempt``,
-and ``SolveResult.bound_stats`` as ``BoundStats`` or ``None``.
+``SolveResult.bound_stats`` as ``BoundStats`` or ``None``, and the typed
+``SearchConfigError`` subclasses.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.bytecode._native import (
@@ -20,6 +23,13 @@ from bloqade.lanes.bytecode._native import (
     SingleHeuristicCzPlacement,
     SolveStatus,
     TargetSolver,
+)
+from bloqade.lanes.bytecode.exceptions import (
+    DuplicateOccupancyError,
+    DuplicateQubitIdError,
+    DuplicateTargetLocationError,
+    DuplicateTargetQubitError,
+    SearchConfigError,
 )
 
 
@@ -78,3 +88,46 @@ def test_bound_stats_is_typed_when_bounded_and_none_otherwise():
     if bounded.status == SolveStatus.SOLVED:
         assert stats.incumbent_cost == bounded.cost
         assert stats.optimality_gap is not None
+
+
+def test_an_invalid_request_raises_its_typed_error():
+    """Each ``ConfigError`` variant arrives as its own ``SearchConfigError``
+    subclass, still a ``ValueError``, carrying the variant's fields."""
+    solver = TargetSolver(_engine(), MoveSearch.astar(1.0))
+
+    with pytest.raises(DuplicateTargetLocationError) as info:
+        solver.solve({0: _loc(0), 1: _loc(1)}, {0: _loc(3), 1: _loc(3)}, [], 100)
+    assert isinstance(info.value, SearchConfigError)
+    assert isinstance(info.value, ValueError)
+    assert info.value.qubits in ((0, 1), (1, 0))
+
+    with pytest.raises(DuplicateOccupancyError) as occupancy:
+        TargetSolver(_engine(), MoveSearch.astar(1.0)).solve(
+            {0: _loc(0), 1: _loc(0)}, {0: _loc(3), 1: _loc(4)}, [], 100
+        )
+    assert occupancy.value.location == _loc(0).encode()
+
+
+@pytest.mark.parametrize(
+    ("cls", "args", "fields"),
+    [
+        (DuplicateQubitIdError, ("m", 3), {"qubit_id": 3}),
+        (DuplicateTargetQubitError, ("m", 4), {"qubit_id": 4}),
+        (
+            DuplicateTargetLocationError,
+            ("m", 9, (0, 1)),
+            {"location": 9, "qubits": (0, 1)},
+        ),
+        (DuplicateOccupancyError, ("m", 9, (0, 1)), {"location": 9, "qubits": (0, 1)}),
+    ],
+)
+def test_search_config_errors_carry_their_fields(cls, args, fields):
+    """Every subclass is a ``SearchConfigError`` and a ``ValueError`` carrying
+    its variant's fields. Two of them (duplicate qubit ids) cannot be provoked
+    through the binding, whose dict arguments cannot repeat a key, so the
+    classes are checked directly."""
+    err = cls(*args)
+    assert isinstance(err, SearchConfigError) and isinstance(err, ValueError)
+    assert str(err) == "m"
+    for name, value in fields.items():
+        assert getattr(err, name) == value

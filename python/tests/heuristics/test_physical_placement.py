@@ -803,35 +803,6 @@ def test_rust_proven_total_starts_at_zero_and_is_exposed():
     assert strategy.rust_proven_total == 2
 
 
-def test_bound_terminates_is_forwarded_to_the_native_entropy_options(monkeypatch):
-    """`RustPlacementTraversal.bound_terminates` must reach the native options.
-
-    `MoveSearch` does not read its entropy options back out, and the
-    `cz_placements` path solves CZ pairs against a loose goal where the bound
-    is inert by design -- so there is no behavioural handle on this flag from
-    Python. Recording the constructor call is what is left, and it is the link
-    worth pinning: the flag defaults to the opposite of the interesting value,
-    so a dropped pass-through silently disables the A/B knob.
-    """
-    from bloqade.lanes.heuristics.physical import movement
-
-    seen: list[bool] = []
-    real = movement._native.EntropyOptions
-
-    def _recording(*args, **kwargs):
-        seen.append(kwargs["bound_terminates"])
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(movement._native, "EntropyOptions", _recording)
-
-    for flag in (False, True):
-        movement._move_search_from_traversal(
-            RustPlacementTraversal(bound_terminates=flag),
-            collect_entropy_trace=False,
-        )
-    assert seen == [False, True]
-
-
 def test_fallback_push_rotate_is_forwarded_to_the_native_solve_options():
     """`RustPlacementTraversal.fallback_push_rotate` must reach `SolveOptions`.
 
@@ -858,12 +829,3 @@ def test_fallback_push_rotate_is_forwarded_to_the_native_solve_options():
     rescued = solve(fallback=True)
     assert rescued.status == SolveStatus.SOLVED
     assert len(rescued.move_layers) == 3
-
-
-def test_native_entropy_options_round_trip_bound_terminates():
-    """The native default is on, and an explicit `False` survives the
-    constructor -- the half of the thread that lives in Rust."""
-    from bloqade.lanes.bytecode import _native
-
-    assert _native.EntropyOptions().bound_terminates is True
-    assert _native.EntropyOptions(bound_terminates=False).bound_terminates is False

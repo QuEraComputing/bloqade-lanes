@@ -95,5 +95,6 @@ from bloqade.lanes.bytecode.exceptions import (
     DecodeError as DecodeError,
     ParseError as ParseError,
     ProgramError as ProgramError,
+    SearchConfigError as SearchConfigError,
     ValidationError as ValidationError,
 )

@@ -92,48 +92,34 @@ def test_rust_solver_routes_back_across_zone_bus():
     assert result.status == SolveStatus.SOLVED
 
 
-def test_solve_result_reports_proven_and_termination():
-    """The root certificate reaches Python, and the knob turns it off.
+def test_solve_result_reports_proof_and_termination():
+    """The root certificate reaches Python.
 
     One atom across the zone bus: the plan costs exactly ``h(root)``, so the
-    bound proves it optimal without any complete generator. With
-    ``bound_terminates`` off the driver declines to act on that and reports no
-    proof, while producing the same plan -- the certificate ends a spin over
-    nodes the bound had already cut, so no expansion is skipped.
+    bound proves it optimal without any complete generator, and the driver
+    ends the search there. (Switching that off is a Rust-only A/B knob,
+    covered by the Rust tests.)
     """
     engine = SearchEngine.from_arch_spec(RustArchSpec.from_json(_TWO_ZONE_ARCH_JSON))
     mem = LocationAddress(1, 0, 1)
     gate = LocationAddress(0, 0, 0)
-
-    def solve(bound_terminates: bool):
-        search = MoveSearch.entropy().with_entropy_options(
-            EntropyOptions(
-                completion_bound="weighted_distance",
-                bound_terminates=bound_terminates,
-            )
-        )
-        return _native.TargetSolver(engine, search).solve(
-            {0: mem._inner}, {0: gate._inner}, [], None
-        )
-
-    stopped, spun = solve(True), solve(False)
+    search = MoveSearch.entropy().with_entropy_options(
+        EntropyOptions(completion_bound="weighted_distance")
+    )
+    stopped = _native.TargetSolver(engine, search).solve(
+        {0: mem._inner}, {0: gate._inner}, [], None
+    )
 
     assert stopped.status == SolveStatus.SOLVED
     assert stopped.proof == Proof.OPTIMAL
     assert stopped.termination == Termination.EXHAUSTED
     assert "proof=OPTIMAL" in repr(stopped)
 
-    assert spun.proof is None
-    assert spun.cost == stopped.cost
-    assert spun.nodes_expanded == stopped.nodes_expanded
-
 
 def test_unbounded_solve_is_never_proven():
-    """Without a bound there is nothing to certify, whatever the knob says."""
+    """Without a bound there is nothing to certify."""
     engine = SearchEngine.from_arch_spec(RustArchSpec.from_json(_TWO_ZONE_ARCH_JSON))
-    search = MoveSearch.entropy().with_entropy_options(
-        EntropyOptions(bound_terminates=True)
-    )
+    search = MoveSearch.entropy().with_entropy_options(EntropyOptions())
     result = _native.TargetSolver(engine, search).solve(
         {0: LocationAddress(1, 0, 1)._inner},
         {0: LocationAddress(0, 0, 0)._inner},
