@@ -1,145 +1,145 @@
 case_id,strategy_id,arch_spec_id,backend,generator_id,success,wall_time_ms,move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,max_depth_reached,cuts_by_g,cuts_by_h,cuts_infeasible,cut_depth_sum,cut_depth_g_only_sum,max_optimality_gap,notes
-adder_4,pipeline_default,builtin,rust,rust_solver,True,221.699916,38,50,0.6060197713,60,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
-adder_4,rust_astar,builtin,rust,rust_solver,True,173.633666,38,50,0.6060197713,37,,,,,,,,
-adder_4,rust_astar_fallback,builtin,rust,rust_solver,True,175.584583,38,50,0.6060197713,37,,,,,,,,A* with Push and Rotate as the reliability net on failure
-adder_4,rust_bfs,builtin,rust,rust_solver,True,175.716375,38,50,0.6060197713,51,,,,,,,,
-adder_4,rust_cascade_ids,builtin,rust,rust_solver,True,175.472208,38,50,0.6060197713,48,,0,26,0,92,133,0.500000,"IDS, then an A* refinement gated by the completion bound"
-adder_4,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,174.538541,38,50,0.6060197713,84,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-adder_4,rust_dfs,builtin,rust,rust_solver,True,174.432666,38,50,0.6060197713,19,,,,,,,,
-adder_4,rust_entropy_1,builtin,rust,rust_solver,True,175.527791,38,50,0.6060197713,19,,,,,,,,
-adder_4,rust_entropy_10,builtin,rust,rust_solver,True,237.976875,38,50,0.6060197713,109,,,,,,,,
-adder_4,rust_entropy_20,builtin,rust,rust_solver,True,353.470917,38,50,0.6060197713,109,,,,,,,,
-adder_4,rust_entropy_5,builtin,rust,rust_solver,True,239.545708,38,50,0.6060197713,109,,,,,,,,
-adder_4,rust_greedy,builtin,rust,rust_solver,True,175.860000,38,50,0.6060197713,19,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-adder_4,rust_ids,builtin,rust,rust_solver,True,176.846333,38,50,0.6060197713,19,,,,,,,,
-adder_4,rust_loose_goal,builtin,rust,rust_solver,True,181.743834,27,29,0.6767782475,27,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
-adder_4,rust_push_rotate,builtin,rust,rust_solver,True,175.128042,36,46,0.6186480628,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
-adder_4,rust_receding_horizon,builtin,rust,rust_solver,True,182.980667,19,24,0.7111138657,620,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
-adder_64,pipeline_default,builtin,rust,rust_solver,True,9596.898166,1544,1664,0.0000000000,2757,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+adder_4,pipeline_default,builtin,rust,rust_solver,True,257.433959,38,50,0.6060197713,60,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+adder_4,rust_astar,builtin,rust,rust_solver,True,198.763959,38,50,0.6060197713,37,,,,,,,,
+adder_4,rust_astar_fallback,builtin,rust,rust_solver,True,203.019041,38,50,0.6060197713,37,,,,,,,,A* with Push and Rotate as the reliability net on failure
+adder_4,rust_bfs,builtin,rust,rust_solver,True,199.033875,38,50,0.6060197713,51,,,,,,,,
+adder_4,rust_cascade_ids,builtin,rust,rust_solver,True,199.893375,38,50,0.6060197713,48,,0,26,0,92,133,0.500000,"IDS, then an A* refinement gated by the completion bound"
+adder_4,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,197.758334,38,50,0.6060197713,84,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+adder_4,rust_dfs,builtin,rust,rust_solver,True,202.451458,38,50,0.6060197713,19,,,,,,,,
+adder_4,rust_entropy_1,builtin,rust,rust_solver,True,196.987542,38,50,0.6060197713,19,,,,,,,,
+adder_4,rust_entropy_10,builtin,rust,rust_solver,True,264.690625,38,50,0.6060197713,109,,,,,,,,
+adder_4,rust_entropy_20,builtin,rust,rust_solver,True,373.816875,38,50,0.6060197713,109,,,,,,,,
+adder_4,rust_entropy_5,builtin,rust,rust_solver,True,265.244208,38,50,0.6060197713,109,,,,,,,,
+adder_4,rust_greedy,builtin,rust,rust_solver,True,197.045375,38,50,0.6060197713,19,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+adder_4,rust_ids,builtin,rust,rust_solver,True,198.152583,38,50,0.6060197713,19,,,,,,,,
+adder_4,rust_loose_goal,builtin,rust,rust_solver,True,201.450666,27,29,0.6767782475,27,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+adder_4,rust_push_rotate,builtin,rust,rust_solver,True,196.421583,36,46,0.6186480628,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+adder_4,rust_receding_horizon,builtin,rust,rust_solver,True,204.618833,19,24,0.7111138657,620,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+adder_64,pipeline_default,builtin,rust,rust_solver,True,10820.160750,1544,1664,0.0000000000,2757,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
 adder_64,rust_astar,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-adder_64,rust_astar_fallback,builtin,rust,rust_solver,True,7474.731708,1572,1688,0.0000000000,4259,,,,,,,,A* with Push and Rotate as the reliability net on failure
+adder_64,rust_astar_fallback,builtin,rust,rust_solver,True,8399.988417,1572,1688,0.0000000000,4259,,,,,,,,A* with Push and Rotate as the reliability net on failure
 adder_64,rust_bfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-adder_64,rust_cascade_ids,builtin,rust,rust_solver,True,7363.778875,1550,1668,0.0000000000,4810,,55,1490,0,7169,9639,0.833333,"IDS, then an A* refinement gated by the completion bound"
-adder_64,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,7841.475250,1550,1668,0.0000000000,5611,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-adder_64,rust_dfs,builtin,rust,rust_solver,True,8546.380292,1636,1668,0.0000000000,818,,,,,,,,
-adder_64,rust_entropy_1,builtin,rust,rust_solver,True,8003.876625,1566,1672,0.0000000000,783,,,,,,,,
-adder_64,rust_entropy_10,builtin,rust,rust_solver,True,17742.574125,1532,1660,0.0000000000,22790,,,,,,,,
-adder_64,rust_entropy_20,builtin,rust,rust_solver,True,17909.182834,1532,1660,0.0000000000,25322,,,,,,,,
-adder_64,rust_entropy_5,builtin,rust,rust_solver,True,15972.021084,1540,1664,0.0000000000,15395,,,,,,,,
-adder_64,rust_greedy,builtin,rust,rust_solver,True,7760.520416,1542,1660,0.0000000000,771,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-adder_64,rust_ids,builtin,rust,rust_solver,True,7489.239167,1558,1668,0.0000000000,779,,,,,,,,
+adder_64,rust_cascade_ids,builtin,rust,rust_solver,True,8261.892167,1550,1668,0.0000000000,4810,,55,762,0,3045,4263,0.833333,"IDS, then an A* refinement gated by the completion bound"
+adder_64,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,8406.603500,1550,1668,0.0000000000,5611,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+adder_64,rust_dfs,builtin,rust,rust_solver,True,8406.233292,1636,1668,0.0000000000,818,,,,,,,,
+adder_64,rust_entropy_1,builtin,rust,rust_solver,True,8411.958834,1566,1672,0.0000000000,783,,,,,,,,
+adder_64,rust_entropy_10,builtin,rust,rust_solver,True,18596.972333,1532,1660,0.0000000000,22790,,,,,,,,
+adder_64,rust_entropy_20,builtin,rust,rust_solver,True,18670.764709,1532,1660,0.0000000000,25322,,,,,,,,
+adder_64,rust_entropy_5,builtin,rust,rust_solver,True,17179.848334,1540,1664,0.0000000000,15395,,,,,,,,
+adder_64,rust_greedy,builtin,rust,rust_solver,True,10975.029417,1542,1660,0.0000000000,771,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+adder_64,rust_ids,builtin,rust,rust_solver,True,9761.742875,1558,1668,0.0000000000,779,,,,,,,,
 adder_64,rust_loose_goal,builtin,rust,rust_solver,False,,,,,,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults; error=Compilation did not fully lower to Move IR; place.CZ statements remain."
-adder_64,rust_push_rotate,builtin,rust,rust_solver,True,7376.863167,1672,1720,0.0000000000,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+adder_64,rust_push_rotate,builtin,rust,rust_solver,True,8370.284875,1672,1720,0.0000000000,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
 adder_64,rust_receding_horizon,builtin,rust,rust_solver,False,,,,,,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults; error=Compilation did not fully lower to Move IR; place.CZ statements remain."
-bv_70,pipeline_default,builtin,rust,rust_solver,True,636.200375,198,198,0.0000000000,281,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
-bv_70,rust_astar,builtin,rust,rust_solver,True,240.539625,198,198,0.0000000000,99,,,,,,,,
-bv_70,rust_astar_fallback,builtin,rust,rust_solver,True,240.723709,198,198,0.0000000000,99,,,,,,,,A* with Push and Rotate as the reliability net on failure
-bv_70,rust_bfs,builtin,rust,rust_solver,True,240.995250,198,198,0.0000000000,141,,,,,,,,
-bv_70,rust_cascade_ids,builtin,rust,rust_solver,True,241.577500,198,198,0.0000000000,135,,4,32,0,32,95,0.000000,"IDS, then an A* refinement gated by the completion bound"
-bv_70,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,240.661792,198,198,0.0000000000,271,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-bv_70,rust_dfs,builtin,rust,rust_solver,True,340.723208,198,198,0.0000000000,99,,,,,,,,
-bv_70,rust_entropy_1,builtin,rust,rust_solver,True,323.714084,198,198,0.0000000000,99,,,,,,,,
-bv_70,rust_entropy_10,builtin,rust,rust_solver,True,861.817125,198,198,0.0000000000,538,,,,,,,,
-bv_70,rust_entropy_20,builtin,rust,rust_solver,True,860.458500,198,198,0.0000000000,538,,,,,,,,
-bv_70,rust_entropy_5,builtin,rust,rust_solver,True,874.868250,198,198,0.0000000000,538,,,,,,,,
-bv_70,rust_greedy,builtin,rust,rust_solver,True,320.920541,198,198,0.0000000000,99,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-bv_70,rust_ids,builtin,rust,rust_solver,True,320.138000,198,198,0.0000000000,99,,,,,,,,
-bv_70,rust_loose_goal,builtin,rust,rust_solver,True,356.843000,80,80,0.0000003446,80,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
-bv_70,rust_push_rotate,builtin,rust,rust_solver,True,239.353834,198,198,0.0000000000,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
-bv_70,rust_receding_horizon,builtin,rust,rust_solver,True,278.890333,79,80,0.0000003716,1675,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
-ghz_4,pipeline_default,builtin,rust,rust_solver,True,127.560709,12,14,0.8706036048,21,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
-ghz_4,rust_astar,builtin,rust,rust_solver,True,112.274042,12,14,0.8706036048,6,,,,,,,,
-ghz_4,rust_astar_fallback,builtin,rust,rust_solver,True,112.648291,12,14,0.8706036048,6,,,,,,,,A* with Push and Rotate as the reliability net on failure
-ghz_4,rust_bfs,builtin,rust,rust_solver,True,111.240000,12,14,0.8706036048,6,,,,,,,,
-ghz_4,rust_cascade_ids,builtin,rust,rust_solver,True,112.239333,12,14,0.8706036048,9,,0,3,0,5,9,0.333333,"IDS, then an A* refinement gated by the completion bound"
-ghz_4,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,111.129833,12,14,0.8706036048,14,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-ghz_4,rust_dfs,builtin,rust,rust_solver,True,112.499333,12,14,0.8706036048,6,,,,,,,,
-ghz_4,rust_entropy_1,builtin,rust,rust_solver,True,110.025834,12,14,0.8706036048,6,,,,,,,,
-ghz_4,rust_entropy_10,builtin,rust,rust_solver,True,173.868334,12,14,0.8706036048,38,,,,,,,,
-ghz_4,rust_entropy_20,builtin,rust,rust_solver,True,175.918708,12,14,0.8706036048,38,,,,,,,,
-ghz_4,rust_entropy_5,builtin,rust,rust_solver,True,173.711292,12,14,0.8706036048,38,,,,,,,,
-ghz_4,rust_greedy,builtin,rust,rust_solver,True,201.269500,12,14,0.8706036048,6,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-ghz_4,rust_ids,builtin,rust,rust_solver,True,112.132250,12,14,0.8706036048,6,,,,,,,,
-ghz_4,rust_loose_goal,builtin,rust,rust_solver,True,114.238916,6,6,0.9151208174,6,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
-ghz_4,rust_push_rotate,builtin,rust,rust_solver,True,112.630916,12,14,0.8706036048,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
-ghz_4,rust_receding_horizon,builtin,rust,rust_solver,True,114.739250,6,6,0.9151208174,92,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
-ghz_6,pipeline_default,builtin,rust,rust_solver,True,207.702583,20,26,0.7448158675,51,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
-ghz_6,rust_astar,builtin,rust,rust_solver,True,182.325541,20,26,0.7448158675,11,,,,,,,,
-ghz_6,rust_astar_fallback,builtin,rust,rust_solver,True,182.179666,20,26,0.7448158675,11,,,,,,,,A* with Push and Rotate as the reliability net on failure
-ghz_6,rust_bfs,builtin,rust,rust_solver,True,180.665417,20,26,0.7448158675,13,,,,,,,,
-ghz_6,rust_cascade_ids,builtin,rust,rust_solver,True,180.834792,20,26,0.7448158675,18,,0,7,0,19,28,0.333333,"IDS, then an A* refinement gated by the completion bound"
-ghz_6,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,181.124209,20,26,0.7448158675,26,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-ghz_6,rust_dfs,builtin,rust,rust_solver,True,271.238708,20,26,0.7448158675,10,,,,,,,,
-ghz_6,rust_entropy_1,builtin,rust,rust_solver,True,181.349209,20,26,0.7448158675,10,,,,,,,,
-ghz_6,rust_entropy_10,builtin,rust,rust_solver,True,259.408792,20,26,0.7448158675,50,,,,,,,,
-ghz_6,rust_entropy_20,builtin,rust,rust_solver,True,257.961250,20,26,0.7448158675,50,,,,,,,,
-ghz_6,rust_entropy_5,builtin,rust,rust_solver,True,262.308750,20,26,0.7448158675,50,,,,,,,,
-ghz_6,rust_greedy,builtin,rust,rust_solver,True,200.937917,20,26,0.7448158675,10,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-ghz_6,rust_ids,builtin,rust,rust_solver,True,211.199875,20,26,0.7448158675,10,,,,,,,,
-ghz_6,rust_loose_goal,builtin,rust,rust_solver,True,188.766417,13,14,0.8078748070,13,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
-ghz_6,rust_push_rotate,builtin,rust,rust_solver,True,182.737375,22,26,0.7352457994,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
-ghz_6,rust_receding_horizon,builtin,rust,rust_solver,True,291.871625,12,14,0.8131155176,216,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
-qpe_9,pipeline_default,builtin,rust,rust_solver,True,941.274583,220,224,0.0118758786,262,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
-qpe_9,rust_astar,builtin,rust,rust_solver,True,684.961209,220,224,0.0118758786,110,,,,,,,,
-qpe_9,rust_astar_fallback,builtin,rust,rust_solver,True,804.341459,220,224,0.0118758786,110,,,,,,,,A* with Push and Rotate as the reliability net on failure
-qpe_9,rust_bfs,builtin,rust,rust_solver,True,770.820375,220,224,0.0118758786,118,,,,,,,,
-qpe_9,rust_cascade_ids,builtin,rust,rust_solver,True,772.078042,220,224,0.0118758786,152,,0,42,0,42,110,0.000000,"IDS, then an A* refinement gated by the completion bound"
-qpe_9,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,767.543250,220,224,0.0118758786,254,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-qpe_9,rust_dfs,builtin,rust,rust_solver,True,755.770250,220,224,0.0118758786,110,,,,,,,,
-qpe_9,rust_entropy_1,builtin,rust,rust_solver,True,676.740708,220,224,0.0118758786,110,,,,,,,,
-qpe_9,rust_entropy_10,builtin,rust,rust_solver,True,1297.499125,220,224,0.0118758786,900,,,,,,,,
-qpe_9,rust_entropy_20,builtin,rust,rust_solver,True,1390.261708,220,224,0.0118758786,900,,,,,,,,
-qpe_9,rust_entropy_5,builtin,rust,rust_solver,True,1381.163917,220,224,0.0118758786,900,,,,,,,,
-qpe_9,rust_greedy,builtin,rust,rust_solver,True,773.397500,220,224,0.0118758786,110,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-qpe_9,rust_ids,builtin,rust,rust_solver,True,774.273292,220,224,0.0118758786,110,,,,,,,,
-qpe_9,rust_loose_goal,builtin,rust,rust_solver,True,694.253417,64,64,0.0871536511,68,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
-qpe_9,rust_push_rotate,builtin,rust,rust_solver,True,772.867125,220,224,0.0118758786,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
-qpe_9,rust_receding_horizon,builtin,rust,rust_solver,True,785.549958,80,82,0.0707021112,915,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
-steane_logical_5,pipeline_default,builtin,rust,rust_solver,True,44.829708,18,26,0.7893012402,32,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
-steane_logical_5,rust_astar,builtin,rust,rust_solver,True,23.040458,18,26,0.7893012402,9,,,,,,,,
-steane_logical_5,rust_astar_fallback,builtin,rust,rust_solver,True,22.630458,18,26,0.7893012402,9,,,,,,,,A* with Push and Rotate as the reliability net on failure
-steane_logical_5,rust_bfs,builtin,rust,rust_solver,True,21.957416,18,26,0.7893012402,10,,,,,,,,
-steane_logical_5,rust_cascade_ids,builtin,rust,rust_solver,True,22.398959,18,26,0.7893012402,12,,0,3,0,3,9,0.000000,"IDS, then an A* refinement gated by the completion bound"
-steane_logical_5,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,22.824459,18,26,0.7893012402,21,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-steane_logical_5,rust_dfs,builtin,rust,rust_solver,True,22.233541,18,26,0.7893012402,9,,,,,,,,
-steane_logical_5,rust_entropy_1,builtin,rust,rust_solver,True,22.356667,18,26,0.7893012402,9,,,,,,,,
-steane_logical_5,rust_entropy_10,builtin,rust,rust_solver,True,99.855083,18,26,0.7893012402,58,,,,,,,,
-steane_logical_5,rust_entropy_20,builtin,rust,rust_solver,True,100.475000,18,26,0.7893012402,58,,,,,,,,
-steane_logical_5,rust_entropy_5,builtin,rust,rust_solver,True,99.418584,18,26,0.7893012402,58,,,,,,,,
-steane_logical_5,rust_greedy,builtin,rust,rust_solver,True,112.311875,18,26,0.7893012402,9,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-steane_logical_5,rust_ids,builtin,rust,rust_solver,True,22.198791,18,26,0.7893012402,9,,,,,,,,
-steane_logical_5,rust_loose_goal,builtin,rust,rust_solver,True,25.545583,13,15,0.8380660615,13,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
-steane_logical_5,rust_push_rotate,builtin,rust,rust_solver,True,23.264667,24,26,0.7641909048,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
-steane_logical_5,rust_receding_horizon,builtin,rust,rust_solver,True,26.789375,11,13,0.8522458007,106,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
-steane_physical_35,pipeline_default,builtin,rust,rust_solver,True,88.151959,96,166,0.0105639464,265,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+bv_70,pipeline_default,builtin,rust,rust_solver,True,738.336166,198,198,0.0000000000,281,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+bv_70,rust_astar,builtin,rust,rust_solver,True,265.357458,198,198,0.0000000000,99,,,,,,,,
+bv_70,rust_astar_fallback,builtin,rust,rust_solver,True,268.355042,198,198,0.0000000000,99,,,,,,,,A* with Push and Rotate as the reliability net on failure
+bv_70,rust_bfs,builtin,rust,rust_solver,True,268.983084,198,198,0.0000000000,141,,,,,,,,
+bv_70,rust_cascade_ids,builtin,rust,rust_solver,True,278.232750,198,198,0.0000000000,135,,4,32,0,32,95,0.000000,"IDS, then an A* refinement gated by the completion bound"
+bv_70,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,265.065333,198,198,0.0000000000,271,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+bv_70,rust_dfs,builtin,rust,rust_solver,True,377.414417,198,198,0.0000000000,99,,,,,,,,
+bv_70,rust_entropy_1,builtin,rust,rust_solver,True,360.400500,198,198,0.0000000000,99,,,,,,,,
+bv_70,rust_entropy_10,builtin,rust,rust_solver,True,918.822125,198,198,0.0000000000,538,,,,,,,,
+bv_70,rust_entropy_20,builtin,rust,rust_solver,True,978.142375,198,198,0.0000000000,538,,,,,,,,
+bv_70,rust_entropy_5,builtin,rust,rust_solver,True,925.828292,198,198,0.0000000000,538,,,,,,,,
+bv_70,rust_greedy,builtin,rust,rust_solver,True,385.813459,198,198,0.0000000000,99,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+bv_70,rust_ids,builtin,rust,rust_solver,True,378.226334,198,198,0.0000000000,99,,,,,,,,
+bv_70,rust_loose_goal,builtin,rust,rust_solver,True,522.200042,80,80,0.0000003446,80,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+bv_70,rust_push_rotate,builtin,rust,rust_solver,True,268.133958,198,198,0.0000000000,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+bv_70,rust_receding_horizon,builtin,rust,rust_solver,True,526.262250,79,80,0.0000003716,1675,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+ghz_4,pipeline_default,builtin,rust,rust_solver,True,144.306458,12,14,0.8706036048,21,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+ghz_4,rust_astar,builtin,rust,rust_solver,True,129.736541,12,14,0.8706036048,6,,,,,,,,
+ghz_4,rust_astar_fallback,builtin,rust,rust_solver,True,126.564000,12,14,0.8706036048,6,,,,,,,,A* with Push and Rotate as the reliability net on failure
+ghz_4,rust_bfs,builtin,rust,rust_solver,True,125.564708,12,14,0.8706036048,6,,,,,,,,
+ghz_4,rust_cascade_ids,builtin,rust,rust_solver,True,125.160042,12,14,0.8706036048,9,,0,3,0,5,9,0.333333,"IDS, then an A* refinement gated by the completion bound"
+ghz_4,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,126.602208,12,14,0.8706036048,14,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+ghz_4,rust_dfs,builtin,rust,rust_solver,True,183.616875,12,14,0.8706036048,6,,,,,,,,
+ghz_4,rust_entropy_1,builtin,rust,rust_solver,True,181.874542,12,14,0.8706036048,6,,,,,,,,
+ghz_4,rust_entropy_10,builtin,rust,rust_solver,True,325.786417,12,14,0.8706036048,38,,,,,,,,
+ghz_4,rust_entropy_20,builtin,rust,rust_solver,True,232.789250,12,14,0.8706036048,38,,,,,,,,
+ghz_4,rust_entropy_5,builtin,rust,rust_solver,True,186.186917,12,14,0.8706036048,38,,,,,,,,
+ghz_4,rust_greedy,builtin,rust,rust_solver,True,258.904666,12,14,0.8706036048,6,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+ghz_4,rust_ids,builtin,rust,rust_solver,True,124.270250,12,14,0.8706036048,6,,,,,,,,
+ghz_4,rust_loose_goal,builtin,rust,rust_solver,True,131.442750,6,6,0.9151208174,6,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+ghz_4,rust_push_rotate,builtin,rust,rust_solver,True,130.951958,12,14,0.8706036048,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+ghz_4,rust_receding_horizon,builtin,rust,rust_solver,True,133.506417,6,6,0.9151208174,92,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+ghz_6,pipeline_default,builtin,rust,rust_solver,True,261.257292,20,26,0.7448158675,51,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+ghz_6,rust_astar,builtin,rust,rust_solver,True,217.322417,20,26,0.7448158675,11,,,,,,,,
+ghz_6,rust_astar_fallback,builtin,rust,rust_solver,True,213.795792,20,26,0.7448158675,11,,,,,,,,A* with Push and Rotate as the reliability net on failure
+ghz_6,rust_bfs,builtin,rust,rust_solver,True,211.252625,20,26,0.7448158675,13,,,,,,,,
+ghz_6,rust_cascade_ids,builtin,rust,rust_solver,True,203.873333,20,26,0.7448158675,18,,0,7,0,19,28,0.333333,"IDS, then an A* refinement gated by the completion bound"
+ghz_6,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,205.620833,20,26,0.7448158675,26,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+ghz_6,rust_dfs,builtin,rust,rust_solver,True,313.117833,20,26,0.7448158675,10,,,,,,,,
+ghz_6,rust_entropy_1,builtin,rust,rust_solver,True,209.897791,20,26,0.7448158675,10,,,,,,,,
+ghz_6,rust_entropy_10,builtin,rust,rust_solver,True,293.909500,20,26,0.7448158675,50,,,,,,,,
+ghz_6,rust_entropy_20,builtin,rust,rust_solver,True,291.197709,20,26,0.7448158675,50,,,,,,,,
+ghz_6,rust_entropy_5,builtin,rust,rust_solver,True,298.000125,20,26,0.7448158675,50,,,,,,,,
+ghz_6,rust_greedy,builtin,rust,rust_solver,True,210.731250,20,26,0.7448158675,10,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+ghz_6,rust_ids,builtin,rust,rust_solver,True,211.797083,20,26,0.7448158675,10,,,,,,,,
+ghz_6,rust_loose_goal,builtin,rust,rust_solver,True,212.901459,13,14,0.8078748070,13,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+ghz_6,rust_push_rotate,builtin,rust,rust_solver,True,209.726666,22,26,0.7352457994,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+ghz_6,rust_receding_horizon,builtin,rust,rust_solver,True,317.826333,12,14,0.8131155176,216,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+qpe_9,pipeline_default,builtin,rust,rust_solver,True,1130.280208,220,224,0.0118758786,262,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+qpe_9,rust_astar,builtin,rust,rust_solver,True,771.178750,220,224,0.0118758786,110,,,,,,,,
+qpe_9,rust_astar_fallback,builtin,rust,rust_solver,True,872.500375,220,224,0.0118758786,110,,,,,,,,A* with Push and Rotate as the reliability net on failure
+qpe_9,rust_bfs,builtin,rust,rust_solver,True,873.994375,220,224,0.0118758786,118,,,,,,,,
+qpe_9,rust_cascade_ids,builtin,rust,rust_solver,True,845.050750,220,224,0.0118758786,152,,0,42,0,42,110,0.000000,"IDS, then an A* refinement gated by the completion bound"
+qpe_9,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,837.874875,220,224,0.0118758786,254,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+qpe_9,rust_dfs,builtin,rust,rust_solver,True,897.047042,220,224,0.0118758786,110,,,,,,,,
+qpe_9,rust_entropy_1,builtin,rust,rust_solver,True,896.973250,220,224,0.0118758786,110,,,,,,,,
+qpe_9,rust_entropy_10,builtin,rust,rust_solver,True,1504.618000,220,224,0.0118758786,900,,,,,,,,
+qpe_9,rust_entropy_20,builtin,rust,rust_solver,True,1381.949917,220,224,0.0118758786,900,,,,,,,,
+qpe_9,rust_entropy_5,builtin,rust,rust_solver,True,1545.456416,220,224,0.0118758786,900,,,,,,,,
+qpe_9,rust_greedy,builtin,rust,rust_solver,True,847.313083,220,224,0.0118758786,110,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+qpe_9,rust_ids,builtin,rust,rust_solver,True,877.377625,220,224,0.0118758786,110,,,,,,,,
+qpe_9,rust_loose_goal,builtin,rust,rust_solver,True,879.645875,64,64,0.0871536511,68,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+qpe_9,rust_push_rotate,builtin,rust,rust_solver,True,846.726083,220,224,0.0118758786,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+qpe_9,rust_receding_horizon,builtin,rust,rust_solver,True,782.615958,80,82,0.0707021112,915,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+steane_logical_5,pipeline_default,builtin,rust,rust_solver,True,150.261791,18,26,0.7893012402,32,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+steane_logical_5,rust_astar,builtin,rust,rust_solver,True,25.194750,18,26,0.7893012402,9,,,,,,,,
+steane_logical_5,rust_astar_fallback,builtin,rust,rust_solver,True,25.608250,18,26,0.7893012402,9,,,,,,,,A* with Push and Rotate as the reliability net on failure
+steane_logical_5,rust_bfs,builtin,rust,rust_solver,True,26.757666,18,26,0.7893012402,10,,,,,,,,
+steane_logical_5,rust_cascade_ids,builtin,rust,rust_solver,True,26.268333,18,26,0.7893012402,12,,0,3,0,3,9,0.000000,"IDS, then an A* refinement gated by the completion bound"
+steane_logical_5,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,26.061042,18,26,0.7893012402,21,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+steane_logical_5,rust_dfs,builtin,rust,rust_solver,True,26.148000,18,26,0.7893012402,9,,,,,,,,
+steane_logical_5,rust_entropy_1,builtin,rust,rust_solver,True,26.465917,18,26,0.7893012402,9,,,,,,,,
+steane_logical_5,rust_entropy_10,builtin,rust,rust_solver,True,106.088791,18,26,0.7893012402,58,,,,,,,,
+steane_logical_5,rust_entropy_20,builtin,rust,rust_solver,True,105.934750,18,26,0.7893012402,58,,,,,,,,
+steane_logical_5,rust_entropy_5,builtin,rust,rust_solver,True,106.516709,18,26,0.7893012402,58,,,,,,,,
+steane_logical_5,rust_greedy,builtin,rust,rust_solver,True,27.487666,18,26,0.7893012402,9,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+steane_logical_5,rust_ids,builtin,rust,rust_solver,True,25.600083,18,26,0.7893012402,9,,,,,,,,
+steane_logical_5,rust_loose_goal,builtin,rust,rust_solver,True,29.025000,13,15,0.8380660615,13,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+steane_logical_5,rust_push_rotate,builtin,rust,rust_solver,True,26.467042,24,26,0.7641909048,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+steane_logical_5,rust_receding_horizon,builtin,rust,rust_solver,True,29.261708,11,13,0.8522458007,106,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+steane_physical_35,pipeline_default,builtin,rust,rust_solver,True,97.452959,96,166,0.0105639464,265,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
 steane_physical_35,rust_astar,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-steane_physical_35,rust_astar_fallback,builtin,rust,rust_solver,True,81.909875,148,198,0.0013499242,673,,,,,,,,A* with Push and Rotate as the reliability net on failure
+steane_physical_35,rust_astar_fallback,builtin,rust,rust_solver,True,89.308209,148,198,0.0013499242,673,,,,,,,,A* with Push and Rotate as the reliability net on failure
 steane_physical_35,rust_bfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
 steane_physical_35,rust_cascade_ids,builtin,rust,rust_solver,False,,,,,,,,,,,,,"IDS, then an A* refinement gated by the completion bound; error=Compilation did not fully lower to Move IR; place.CZ statements remain."
 steane_physical_35,rust_cascade_ids_ungated,builtin,rust,rust_solver,False,,,,,,,,,,,,,cascade-ids with the refinement's completion-bound gate off; error=Compilation did not fully lower to Move IR; place.CZ statements remain.
 steane_physical_35,rust_dfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-steane_physical_35,rust_entropy_1,builtin,rust,rust_solver,True,63.914833,138,206,0.0019217411,69,,,,,,,,
-steane_physical_35,rust_entropy_10,builtin,rust,rust_solver,True,225.960542,104,166,0.0078122763,3206,,,,,,,,
-steane_physical_35,rust_entropy_20,builtin,rust,rust_solver,True,253.903125,104,166,0.0078122763,2849,,,,,,,,
-steane_physical_35,rust_entropy_5,builtin,rust,rust_solver,True,93.128000,108,166,0.0067182057,1808,,,,,,,,
+steane_physical_35,rust_entropy_1,builtin,rust,rust_solver,True,71.497500,138,206,0.0019217411,69,,,,,,,,
+steane_physical_35,rust_entropy_10,builtin,rust,rust_solver,True,251.876125,104,166,0.0078122763,3206,,,,,,,,
+steane_physical_35,rust_entropy_20,builtin,rust,rust_solver,True,269.511084,104,166,0.0078122763,2849,,,,,,,,
+steane_physical_35,rust_entropy_5,builtin,rust,rust_solver,True,100.895042,108,166,0.0067182057,1808,,,,,,,,
 steane_physical_35,rust_greedy,builtin,rust,rust_solver,False,,,,,,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output; error=Compilation did not fully lower to Move IR; place.CZ statements remain.
 steane_physical_35,rust_ids,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-steane_physical_35,rust_loose_goal,builtin,rust,rust_solver,True,89.361792,77,102,0.0262100890,78,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
-steane_physical_35,rust_push_rotate,builtin,rust,rust_solver,True,62.072875,172,206,0.0005330137,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
-steane_physical_35,rust_receding_horizon,builtin,rust,rust_solver,True,368.108458,78,117,0.0241290432,6875,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
-trotter_rand_35,pipeline_default,builtin,rust,rust_solver,True,1628.613291,1104,1500,0.0000000000,8350,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+steane_physical_35,rust_loose_goal,builtin,rust,rust_solver,True,98.657417,77,102,0.0262100890,78,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+steane_physical_35,rust_push_rotate,builtin,rust,rust_solver,True,69.975541,172,206,0.0005330137,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+steane_physical_35,rust_receding_horizon,builtin,rust,rust_solver,True,378.658584,78,117,0.0241290432,6875,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+trotter_rand_35,pipeline_default,builtin,rust,rust_solver,True,1800.557500,1104,1500,0.0000000000,8350,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
 trotter_rand_35,rust_astar,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-trotter_rand_35,rust_astar_fallback,builtin,rust,rust_solver,True,1457.329458,1582,1880,0.0000000000,10550,,,,,,,,A* with Push and Rotate as the reliability net on failure
+trotter_rand_35,rust_astar_fallback,builtin,rust,rust_solver,True,1575.597791,1582,1880,0.0000000000,10550,,,,,,,,A* with Push and Rotate as the reliability net on failure
 trotter_rand_35,rust_bfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-trotter_rand_35,rust_cascade_ids,builtin,rust,rust_solver,True,1386.760708,1258,1528,0.0000000000,11165,,0,334,0,2280,2794,0.840000,"IDS, then an A* refinement gated by the completion bound"
-trotter_rand_35,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,1396.038750,1258,1528,0.0000000000,11305,,,,,,,,cascade-ids with the refinement's completion-bound gate off
-trotter_rand_35,rust_dfs,builtin,rust,rust_solver,True,1338.674083,1408,1600,0.0000000000,759,,,,,,,,
-trotter_rand_35,rust_entropy_1,builtin,rust,rust_solver,True,1250.147584,1300,1548,0.0000000000,650,,,,,,,,
-trotter_rand_35,rust_entropy_10,builtin,rust,rust_solver,True,3153.123584,1136,1496,0.0000000000,35538,,,,,,,,
-trotter_rand_35,rust_entropy_20,builtin,rust,rust_solver,True,3702.076000,1120,1480,0.0000000000,61132,,,,,,,,
-trotter_rand_35,rust_entropy_5,builtin,rust,rust_solver,True,2476.406042,1184,1476,0.0000000000,14143,,,,,,,,
+trotter_rand_35,rust_cascade_ids,builtin,rust,rust_solver,True,1654.241334,1258,1528,0.0000000000,11165,,0,168,0,1012,1286,0.840000,"IDS, then an A* refinement gated by the completion bound"
+trotter_rand_35,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,1594.605000,1258,1528,0.0000000000,11305,,,,,,,,cascade-ids with the refinement's completion-bound gate off
+trotter_rand_35,rust_dfs,builtin,rust,rust_solver,True,1476.710667,1408,1600,0.0000000000,759,,,,,,,,
+trotter_rand_35,rust_entropy_1,builtin,rust,rust_solver,True,1410.693291,1300,1548,0.0000000000,650,,,,,,,,
+trotter_rand_35,rust_entropy_10,builtin,rust,rust_solver,True,3499.219000,1136,1496,0.0000000000,35538,,,,,,,,
+trotter_rand_35,rust_entropy_20,builtin,rust,rust_solver,True,3992.004500,1120,1480,0.0000000000,61132,,,,,,,,
+trotter_rand_35,rust_entropy_5,builtin,rust,rust_solver,True,2770.819833,1184,1476,0.0000000000,14143,,,,,,,,
 trotter_rand_35,rust_greedy,builtin,rust,rust_solver,False,,,,,,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output; error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-trotter_rand_35,rust_ids,builtin,rust,rust_solver,True,1396.591916,1262,1528,0.0000000000,643,,,,,,,,
+trotter_rand_35,rust_ids,builtin,rust,rust_solver,True,1365.715792,1262,1528,0.0000000000,643,,,,,,,,
 trotter_rand_35,rust_loose_goal,builtin,rust,rust_solver,False,,,,,,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults; error=Compilation did not fully lower to Move IR; place.CZ statements remain."
-trotter_rand_35,rust_push_rotate,builtin,rust,rust_solver,True,1301.159750,1822,2004,0.0000000000,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+trotter_rand_35,rust_push_rotate,builtin,rust,rust_solver,True,1384.983250,1822,2004,0.0000000000,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
 trotter_rand_35,rust_receding_horizon,builtin,rust,rust_solver,False,,,,,,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults; error=Compilation did not fully lower to Move IR; place.CZ statements remain."
