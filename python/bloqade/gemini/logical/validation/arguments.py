@@ -9,7 +9,7 @@ left to supply. That is what
 decorates sub-kernels too, and a sub-kernel taking arguments is a supported
 pattern, not a mistake::
 
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)  # allocates nothing, so opts out
     def flip(q):            # a sub-kernel -- inlined into its caller
         squin.x(q)
 

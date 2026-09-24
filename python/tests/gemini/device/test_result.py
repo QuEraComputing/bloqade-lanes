@@ -409,7 +409,8 @@ def test_postproc_termmeasure_one():
 
 
 def test_postproc_termmeasure_none():
-    @logical.kernel(aggressive_unroll=True)
+    # An empty program no longer passes validation; this pins post-processing.
+    @logical.kernel(aggressive_unroll=True, verify=False)
     def test_qalloc_4_5():
         _ = logical.qalloc_at(ilist.IList([]))
         # squin.h(qubits[0])

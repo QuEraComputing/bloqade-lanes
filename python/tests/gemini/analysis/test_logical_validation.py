@@ -91,7 +91,7 @@ def test_aggressive_unroll_can_be_disabled():
 
 
 def test_func():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def sub_kernel(q: Qubit):
         squin.x(q)
 
@@ -393,6 +393,53 @@ def test_allocation_at_limit_is_valid():
 
     validator = ValidationSuite([GeminiLogicalValidation])
     validator.validate(main).raise_if_invalid()
+
+
+NO_QUBITS = "kernel allocates no qubits; at least 1 is required"
+
+
+def test_empty_kernel_is_invalid():
+    """bloqade-internal#482: an empty kernel used to pass validation."""
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel(aggressive_unroll=True)
+        def main() -> None:
+            return
+
+    assert NO_QUBITS in _error_messages(exc_info.value)
+
+
+def test_zero_width_allocation_is_invalid():
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel
+        def main():
+            squin.qalloc(0)
+
+    assert NO_QUBITS in _error_messages(exc_info.value)
+
+
+def test_sub_kernel_that_does_not_allocate_is_invalid():
+    """The check does not special-case sub-kernels; they opt out explicitly."""
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel
+        def flip(q: Qubit):
+            squin.x(q)
+
+    assert NO_QUBITS in _error_messages(exc_info.value)
+
+
+def test_sub_kernel_opts_out_with_verify_false():
+    @gemini.logical.kernel(verify=False)
+    def flip(q: Qubit):
+        squin.x(q)
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def main():
+        q = squin.qalloc(2)
+        flip(q[0])
+        gemini.logical.terminal_measure(q)
 
 
 def test_dynamic_call_through_parameter_does_not_crash_validation():
