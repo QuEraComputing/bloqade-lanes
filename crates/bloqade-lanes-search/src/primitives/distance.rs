@@ -586,13 +586,12 @@ mod tests {
     fn make_pair_heuristic(
         index: &LaneIndex,
     ) -> (DistanceTable, crate::ops::entangling::WordPairDistances) {
-        let arch = index.arch_spec();
-        let locs = crate::ops::entangling::all_entangling_locations(arch);
+        let locs = crate::ops::entangling::all_entangling_locations(index);
         let dist_table = DistanceTable::new(&locs, index);
-        let word_pairs = crate::ops::entangling::enumerate_word_pairs(arch);
+        let word_pairs = crate::ops::entangling::enumerate_word_pairs(index);
         let wpd = crate::ops::entangling::WordPairDistances::from_dist_table(
             &word_pairs,
-            arch,
+            index,
             &dist_table,
         );
         (dist_table, wpd)
@@ -659,14 +658,13 @@ mod tests {
         use std::collections::HashSet;
 
         let index = make_index();
-        let arch = index.arch_spec();
-        let eset = crate::ops::entangling::build_entangling_set(arch);
-        let locs = crate::ops::entangling::all_entangling_locations(arch);
+        let eset = crate::ops::entangling::build_entangling_set(&index);
+        let locs = crate::ops::entangling::all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
-        let word_pairs = crate::ops::entangling::enumerate_word_pairs(arch);
+        let word_pairs = crate::ops::entangling::enumerate_word_pairs(&index);
         let wpd = crate::ops::entangling::WordPairDistances::from_dist_table(
             &word_pairs,
-            arch,
+            &index,
             &dist_table,
         );
 
@@ -680,7 +678,7 @@ mod tests {
         let target_encoded = crate::ops::entangling::greedy_assign_pairs(
             &cz_pairs,
             &config,
-            arch,
+            &index,
             &dist_table,
             0,
             None,

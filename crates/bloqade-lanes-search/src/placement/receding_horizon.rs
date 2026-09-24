@@ -21,7 +21,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
 
 use crate::cost::UniformCost;
@@ -232,7 +231,6 @@ impl BranchResult {
 pub(crate) fn generate_k_candidates(
     state: &Config,
     cz_pairs: &[(u32, u32)],
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -254,7 +252,6 @@ pub(crate) fn generate_k_candidates(
             entangling::lookahead_assign_pairs(
                 cz_pairs,
                 state,
-                arch,
                 index,
                 dist_table,
                 blocked,
@@ -269,7 +266,6 @@ pub(crate) fn generate_k_candidates(
             entangling::assign_pairs_with_blockers(
                 cz_pairs,
                 state,
-                arch,
                 index,
                 dist_table,
                 blocked,
@@ -322,7 +318,6 @@ pub(crate) fn generate_k_candidates(
         let targets = entangling::assign_pairs_with_blockers(
             cz_pairs,
             state,
-            arch,
             index,
             dist_table,
             blocked,
@@ -490,7 +485,6 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     root: Config,
     targets: Vec<(u32, u64)>,
     cz_pairs: Vec<(u32, u32)>,
-    arch: Arc<ArchSpec>,
     index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     blocked: &HashSet<u64>,
@@ -517,8 +511,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     // overrides ctx for the inner HeuristicGenerator).
     let targets_for_ctx = targets.clone();
     let cz_pairs_for_ctx = cz_pairs.clone();
-    let generator =
-        LooseTargetGenerator::from_targets(inner, targets, cz_pairs, arch, index, dist_table);
+    let generator = LooseTargetGenerator::from_targets(inner, targets, cz_pairs, index, dist_table);
 
     // ── Phase 1: try cheap greedy walk first (if enabled) ──────────────
     // Most rollouts succeed under greedy at moderate density. We fall
@@ -668,7 +661,6 @@ pub(crate) fn extract_best_leaf(
 pub(crate) fn hungarian_cost_at_leaf(
     leaf: &Config,
     pairs: &[(u32, u32)],
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -680,7 +672,6 @@ pub(crate) fn hungarian_cost_at_leaf(
     let targets = entangling::assign_pairs_with_blockers(
         pairs,
         leaf,
-        arch,
         index,
         dist_table,
         blocked,
@@ -760,7 +751,6 @@ pub(crate) fn pick_best_branch<'a>(
     alpha: f64,
     cz_pairs: &[(u32, u32)],
     future_layers: &[Vec<(u32, u32)>],
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -778,7 +768,6 @@ pub(crate) fn pick_best_branch<'a>(
                     hungarian_cost_at_leaf(
                         leaf_config,
                         &future_layers[0],
-                        arch,
                         index,
                         dist_table,
                         blocked,
@@ -798,7 +787,6 @@ pub(crate) fn pick_best_branch<'a>(
                     hungarian_cost_at_leaf(
                         leaf_config,
                         cz_pairs,
-                        arch,
                         index,
                         dist_table,
                         blocked,
@@ -834,7 +822,6 @@ pub fn solve_entangling_rh_single(
     root: Config,
     cz_pairs: &[(u32, u32)],
     blocked: HashSet<u64>,
-    arch: Arc<ArchSpec>,
     index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     goal: &EntanglingConstraintGoal,
@@ -851,7 +838,6 @@ pub fn solve_entangling_rh_single(
         root,
         cz_pairs,
         blocked,
-        arch,
         index,
         dist_table,
         goal,
@@ -874,7 +860,6 @@ pub fn solve_entangling_rh_single_budgeted(
     root: Config,
     cz_pairs: &[(u32, u32)],
     blocked: HashSet<u64>,
-    arch: Arc<ArchSpec>,
     index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     goal: &EntanglingConstraintGoal,
@@ -938,7 +923,6 @@ pub fn solve_entangling_rh_single_budgeted(
         let candidates = generate_k_candidates(
             &state,
             cz_pairs,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -962,7 +946,6 @@ pub fn solve_entangling_rh_single_budgeted(
                 state.clone(),
                 targets,
                 cz_pairs.to_vec(),
-                arch.clone(),
                 index.clone(),
                 dist_table.clone(),
                 &blocked,
@@ -1013,7 +996,6 @@ pub fn solve_entangling_rh_single_budgeted(
             rh_opts.tier0_next_h_weight,
             cz_pairs,
             future_layers,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -1328,7 +1310,6 @@ pub(crate) fn solve_receding_horizon(
 
     let root = Config::new(initial)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-    let arch = engine.index().arch_spec();
 
     let cache = engine.entangling_cache();
     let dist_table = cache.dist_table.clone();
@@ -1343,7 +1324,6 @@ pub(crate) fn solve_receding_horizon(
     let upgraded_opts = opts.upgraded_for_entangling();
     let opts = &upgraded_opts;
 
-    let arch_arc = Arc::new(arch.clone());
     let index_arc: Arc<LaneIndex> = Arc::new(engine.index().clone());
 
     let restarts = opts.restarts.max(1);
@@ -1376,7 +1356,6 @@ pub(crate) fn solve_receding_horizon(
             root.clone(),
             &cz_pairs_owned,
             blocked_encoded.clone(),
-            arch_arc.clone(),
             index_arc.clone(),
             dist_table.clone(),
             &goal,
@@ -1397,7 +1376,6 @@ pub(crate) fn solve_receding_horizon(
                     root.clone(),
                     &cz_pairs_owned,
                     blocked_encoded.clone(),
-                    arch_arc.clone(),
                     index_arc.clone(),
                     dist_table.clone(),
                     &goal,
@@ -1613,11 +1591,10 @@ mod tests {
     #[test]
     fn hungarian_cost_at_leaf_empty_pairs_returns_zero() {
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
-        let arch = engine.index().arch_spec().clone();
         let lane_index = engine.index();
         let cz_pairs: Vec<(u32, u32)> = vec![(0, 1)];
         // Build a tiny dist table targeting entangling locations.
-        let ent_locs = entangling::all_entangling_locations(&arch);
+        let ent_locs = entangling::all_entangling_locations(engine.index());
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
@@ -1626,7 +1603,6 @@ mod tests {
         let cost = hungarian_cost_at_leaf(
             &config,
             &[],
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1639,7 +1615,6 @@ mod tests {
         let cost = hungarian_cost_at_leaf(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1670,9 +1645,8 @@ mod tests {
     #[test]
     fn generate_k_candidates_caps_at_k() {
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
-        let arch = engine.index().arch_spec().clone();
         let lane_index = engine.index();
-        let ent_locs = entangling::all_entangling_locations(&arch);
+        let ent_locs = entangling::all_entangling_locations(engine.index());
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
         let cz_pairs: Vec<(u32, u32)> = vec![(0, 1)];
@@ -1683,7 +1657,6 @@ mod tests {
         let candidates = generate_k_candidates(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1712,9 +1685,8 @@ mod tests {
         // same candidate set. On a non-trivial instance, distinct seeds
         // should produce at least one distinct candidate signature.
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
-        let arch = engine.index().arch_spec().clone();
         let lane_index = engine.index();
-        let ent_locs = entangling::all_entangling_locations(&arch);
+        let ent_locs = entangling::all_entangling_locations(engine.index());
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
         let cz_pairs: Vec<(u32, u32)> = vec![(0, 1)];
@@ -1724,7 +1696,6 @@ mod tests {
         let cands_seed_1 = generate_k_candidates(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1738,7 +1709,6 @@ mod tests {
         let cands_seed_2 = generate_k_candidates(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1866,7 +1836,6 @@ mod tests {
     fn a_beam_that_falls_through_to_ids_reports_both_phases() {
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
         let cache = engine.entangling_cache();
-        let arch = Arc::new(engine.index().arch_spec().clone());
         let index = Arc::new(engine.index().clone());
         let blocked: HashSet<u64> = HashSet::new();
         let pairs = vec![(0, 1), (2, 3)];
@@ -1894,7 +1863,6 @@ mod tests {
                 root.clone(),
                 targets.clone(),
                 pairs.clone(),
-                arch.clone(),
                 index.clone(),
                 cache.dist_table.clone(),
                 &blocked,

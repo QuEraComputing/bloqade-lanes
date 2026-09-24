@@ -174,7 +174,6 @@ pub(crate) fn solve_loose_goal(
 ) -> Result<SolveResult, ConfigError> {
     let root = Config::new(initial)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-    let arch = engine.index().arch_spec();
 
     // Reuse cached architecture-dependent data (built on first call).
     let cache = engine.entangling_cache();
@@ -196,7 +195,6 @@ pub(crate) fn solve_loose_goal(
         entangling::lookahead_assign_pairs(
             cz_pairs,
             &root,
-            arch,
             engine.index(),
             &dist_table,
             &blocked_encoded,
@@ -211,7 +209,6 @@ pub(crate) fn solve_loose_goal(
         entangling::assign_pairs_with_blockers(
             cz_pairs,
             &root,
-            arch,
             engine.index(),
             &dist_table,
             &blocked_encoded,
@@ -240,7 +237,6 @@ pub(crate) fn solve_loose_goal(
     let opts = &upgraded_opts;
 
     let result = {
-        let arch_arc = Arc::new(arch.clone());
         let index_arc: Arc<LaneIndex> = Arc::new(engine.index().clone());
         let dt_arc = dist_table.clone();
         let congestion_weight = ent_opts.congestion_weight;
@@ -253,7 +249,6 @@ pub(crate) fn solve_loose_goal(
             let mut generator = LooseTargetGenerator::new(
                 inner,
                 cz_pairs_owned.clone(),
-                arch_arc.clone(),
                 index_arc.clone(),
                 dt_arc.clone(),
                 seed,

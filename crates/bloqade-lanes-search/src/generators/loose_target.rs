@@ -21,8 +21,6 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
-
 use crate::Config;
 use crate::generators::heuristic::HeuristicGenerator;
 use crate::ops::entangling;
@@ -46,7 +44,6 @@ use crate::traits::MoveGenerator;
 pub struct LooseTargetGenerator {
     inner: HeuristicGenerator,
     cz_pairs: Vec<(u32, u32)>,
-    arch: Arc<ArchSpec>,
     index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     seed: u64,
@@ -72,9 +69,9 @@ impl LooseTargetGenerator {
     ///
     /// * `inner` — The underlying heuristic generator to delegate to.
     /// * `cz_pairs` — Required CZ pairs for target assignment.
-    /// * `arch` — Architecture spec (shared, immutable).
-    /// * `index` — Lane index used by the iterative blocker detection
-    ///   (Case-B egress check); shared, immutable.
+    /// * `index` — The architecture, read through its lane index: CZ
+    ///   partners for the assignment, and the iterative blocker detection
+    ///   (Case-B egress check). Shared, immutable.
     /// * `dist_table` — Distance table targeting entangling locations (shared).
     /// * `seed` — Seed for greedy-assignment perturbation. Different seeds
     ///   across parallel restarts give different target assignments.
@@ -91,7 +88,6 @@ impl LooseTargetGenerator {
     pub fn new(
         inner: HeuristicGenerator,
         cz_pairs: Vec<(u32, u32)>,
-        arch: Arc<ArchSpec>,
         index: Arc<LaneIndex>,
         dist_table: Arc<DistanceTable>,
         seed: u64,
@@ -102,7 +98,6 @@ impl LooseTargetGenerator {
         Self {
             inner,
             cz_pairs,
-            arch,
             index,
             dist_table,
             seed,
@@ -135,7 +130,7 @@ impl LooseTargetGenerator {
     /// orchestrator, which generates K candidate target assignments at each
     /// stage outside the generator and injects one per branch.
     ///
-    /// `cz_pairs`, `arch`, `index`, and `dist_table` are still required for
+    /// `cz_pairs`, `index`, and `dist_table` are still required for
     /// API parity with [`Self::new`] but are not consulted by `generate`
     /// when `cache_initialized = true` (the [`MoveGenerator::generate`]
     /// implementation uses `ctx.*` for those data, not the struct fields).
@@ -143,14 +138,12 @@ impl LooseTargetGenerator {
         inner: HeuristicGenerator,
         targets: Vec<(u32, u64)>,
         cz_pairs: Vec<(u32, u32)>,
-        arch: Arc<ArchSpec>,
         index: Arc<LaneIndex>,
         dist_table: Arc<DistanceTable>,
     ) -> Self {
         Self {
             inner,
             cz_pairs,
-            arch,
             index,
             dist_table,
             seed: 0,
@@ -195,7 +188,6 @@ impl MoveGenerator for LooseTargetGenerator {
                 entangling::assign_pairs_with_blockers(
                     &self.cz_pairs,
                     config,
-                    &self.arch,
                     &self.index,
                     &self.dist_table,
                     ctx.blocked,
@@ -211,7 +203,6 @@ impl MoveGenerator for LooseTargetGenerator {
                 entangling::lookahead_assign_pairs(
                     &self.cz_pairs,
                     config,
-                    &self.arch,
                     &self.index,
                     &self.dist_table,
                     ctx.blocked,
@@ -261,16 +252,11 @@ mod tests {
         LaneIndex::new(spec)
     }
 
-    fn make_arch() -> ArchSpec {
-        serde_json::from_str(example_arch_json()).unwrap()
-    }
-
     #[test]
     fn loose_target_produces_candidates() {
         let index = make_index();
-        let arch = Arc::new(make_arch());
         let index_arc = Arc::new(index.clone());
-        let locs = entangling::all_entangling_locations(&arch);
+        let locs = entangling::all_entangling_locations(&index);
         let dist_table = Arc::new(DistanceTable::new(&locs, &index));
 
         let cz_pairs = vec![(0u32, 1u32)];
@@ -278,7 +264,6 @@ mod tests {
         let generator = LooseTargetGenerator::new(
             inner,
             cz_pairs.clone(),
-            arch.clone(),
             index_arc.clone(),
             dist_table.clone(),
             0,
@@ -312,9 +297,8 @@ mod tests {
     #[test]
     fn loose_target_adapts_to_config() {
         let index = make_index();
-        let arch = Arc::new(make_arch());
         let index_arc = Arc::new(index.clone());
-        let locs = entangling::all_entangling_locations(&arch);
+        let locs = entangling::all_entangling_locations(&index);
         let dist_table = Arc::new(DistanceTable::new(&locs, &index));
 
         let cz_pairs = vec![(0u32, 1u32)];
@@ -322,7 +306,6 @@ mod tests {
         let generator1 = LooseTargetGenerator::new(
             inner1,
             cz_pairs.clone(),
-            arch.clone(),
             index_arc.clone(),
             dist_table.clone(),
             0,
@@ -334,7 +317,6 @@ mod tests {
         let generator2 = LooseTargetGenerator::new(
             inner2,
             cz_pairs.clone(),
-            arch.clone(),
             index_arc.clone(),
             dist_table.clone(),
             0,

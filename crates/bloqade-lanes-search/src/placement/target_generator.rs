@@ -47,7 +47,6 @@ pub struct DefaultTargetGenerator;
 
 impl TargetGenerator for DefaultTargetGenerator {
     fn generate(&self, ctx: &TargetContext) -> Vec<Vec<(u32, LocationAddr)>> {
-        let arch_spec = ctx.index.arch_spec();
         let placement_map: HashMap<u32, LocationAddr> = ctx.placement.iter().copied().collect();
 
         let mut target = placement_map.clone();
@@ -57,7 +56,7 @@ impl TargetGenerator for DefaultTargetGenerator {
                 Some(loc) => *loc,
                 None => return vec![], // missing qubit
             };
-            let partner = match arch_spec.get_cz_partner(&target_loc) {
+            let partner = match ctx.index.cz_partner(&target_loc) {
                 Some(p) => p,
                 None => return vec![], // no CZ partner
             };
@@ -149,7 +148,6 @@ pub fn validate_candidate(
     }
 
     let candidate_map: HashMap<u32, LocationAddr> = candidate.iter().copied().collect();
-    let arch_spec = index.arch_spec();
 
     // Check all control/target qubits are present.
     for &qid in controls.iter().chain(targets.iter()) {
@@ -169,7 +167,7 @@ pub fn validate_candidate(
     for (&cqid, &tqid) in controls.iter().zip(targets.iter()) {
         let c_loc = candidate_map[&cqid];
         let t_loc = candidate_map[&tqid];
-        match arch_spec.get_cz_partner(&t_loc) {
+        match index.cz_partner(&t_loc) {
             Some(partner) if partner == c_loc => {}
             _ => {
                 return Err(CandidateError::NotCzPair {

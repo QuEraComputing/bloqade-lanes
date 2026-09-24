@@ -240,7 +240,7 @@ pub(crate) fn solve_with_engine(
         crate::search::verify::assert_move_layers_executable(
             &root,
             &layers,
-            engine.index().arch_spec(),
+            engine.index(),
             &blocked_encoded,
             &goal_config,
         );

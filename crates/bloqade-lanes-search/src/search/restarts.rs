@@ -51,7 +51,7 @@ pub(crate) fn extract(
             crate::search::verify::assert_move_layers_executable(
                 result.graph.config(result.graph.root()),
                 &move_layers,
-                ctx.index.arch_spec(),
+                ctx.index,
                 ctx.blocked,
                 &goal_config,
             );

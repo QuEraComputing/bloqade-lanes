@@ -137,17 +137,16 @@ impl SearchEngine {
     /// Get or build the cached entangling precomputation.
     pub(crate) fn entangling_cache(&self) -> &EntanglingCache {
         self.entangling_cache.get_or_init(|| {
-            let arch = self.index.arch_spec();
-            let word_pairs = entangling::enumerate_word_pairs(arch);
-            let ent_locs = entangling::all_entangling_locations(arch);
-            let ent_set = entangling::build_entangling_set(arch);
+            let index = &self.index;
+            let word_pairs = entangling::enumerate_word_pairs(index);
+            let ent_locs = entangling::all_entangling_locations(index);
+            let ent_set = entangling::build_entangling_set(index);
             // Always include time distances — callers with w_t=0.0 just
             // ignore them (hop-count fields are separate).
-            let dist_table = Arc::new(
-                DistanceTable::new(&ent_locs, &self.index).with_time_distances(&self.index),
-            );
+            let dist_table =
+                Arc::new(DistanceTable::new(&ent_locs, index).with_time_distances(index));
             let wpd =
-                entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
+                entangling::WordPairDistances::from_dist_table(&word_pairs, index, &dist_table);
             EntanglingCache {
                 ent_set,
                 dist_table,
@@ -159,8 +158,7 @@ impl SearchEngine {
     /// Get or build the cached no-home precomputation.
     pub(crate) fn nohome_cache(&self) -> &NoHomeCache {
         self.nohome_cache.get_or_init(|| {
-            let arch = self.index.arch_spec();
-            let home_locs = entangling::home_sites(arch);
+            let home_locs = entangling::home_sites(&self.index);
             let home_set: HashSet<u64> = home_locs.iter().copied().collect();
             let dist_table = Arc::new(
                 DistanceTable::new(&home_locs, &self.index).with_time_distances(&self.index),

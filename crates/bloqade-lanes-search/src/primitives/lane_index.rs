@@ -6,9 +6,12 @@
 
 use std::collections::HashMap;
 
+use bloqade_lanes_bytecode_core::arch::ArchSpecError;
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use bloqade_lanes_bytecode_core::arch::metrics::MotionModel;
+use bloqade_lanes_bytecode_core::arch::query::LaneGroupError;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+use bloqade_lanes_bytecode_core::atom_state::{AtomStateData, MoveValidationError, ValidatedMoves};
 
 use crate::primitives::bus_grid_maps::BusGridMaps;
 use crate::primitives::ordering::GroupKey;
@@ -283,9 +286,85 @@ impl LaneIndex {
         self.bus_grid_maps = cache;
     }
 
-    /// Get the underlying architecture specification.
-    pub fn arch_spec(&self) -> &ArchSpec {
+    // ── Architecture queries ────────────────────────────────────────
+    //
+    // The search crate reads the architecture only through `LaneIndex`, so
+    // that the rest of the crate depends on this one interface rather than on
+    // `ArchSpec` itself. Each query below delegates to the spec the index was
+    // built from.
+
+    /// The raw architecture specification. **For the Starlark DSL sidecar
+    /// only** (`crate::dsl`), which hands the spec to policies as a Starlark
+    /// value. Everything else uses the queries on this type; the
+    /// `only_lane_index_reads_the_arch_spec` test enforces that.
+    pub(crate) fn arch_spec(&self) -> &ArchSpec {
         &self.arch_spec
+    }
+
+    /// Number of sites per word. The word template is spec-wide, so this is
+    /// the same for every word in every zone.
+    pub fn sites_per_word(&self) -> usize {
+        self.arch_spec.sites_per_word()
+    }
+
+    /// The CZ partner of `loc`, or `None` if `loc` is not an entangling site.
+    pub fn cz_partner(&self, loc: &LocationAddr) -> Option<LocationAddr> {
+        self.arch_spec.get_cz_partner(loc)
+    }
+
+    /// Every entangling word pair, as `(zone_id, word_a, word_b)`: zones in
+    /// order, and each zone's pairs in spec order.
+    pub fn entangling_word_pairs(&self) -> impl Iterator<Item = (u32, u32, u32)> + '_ {
+        self.arch_spec
+            .zones
+            .iter()
+            .enumerate()
+            .flat_map(|(zone_id, zone)| {
+                zone.entangling_pairs
+                    .iter()
+                    .map(move |pair| (zone_id as u32, pair[0], pair[1]))
+            })
+    }
+
+    /// Whether `loc` is a home position: a site in a word that is not the
+    /// staging (upper) word of an entangling pair *in `loc`'s zone*. See
+    /// [`ArchSpec::is_home_position`].
+    pub fn is_home_position(&self, loc: &LocationAddr) -> bool {
+        self.arch_spec.is_home_position(loc)
+    }
+
+    /// Every home position, across every zone. See
+    /// [`ArchSpec::home_locations`].
+    pub fn home_locations(&self) -> Vec<LocationAddr> {
+        self.arch_spec.home_locations()
+    }
+
+    /// Check a lane group — the lanes one AOD shot would move together —
+    /// against the architecture's lane and AOD-geometry rules. Empty means
+    /// valid. Occupancy is not considered; see
+    /// [`check_move_set`](Self::check_move_set) for that.
+    pub fn check_lanes(&self, lanes: &[LaneAddr]) -> Vec<LaneGroupError> {
+        self.arch_spec.check_lanes(lanes)
+    }
+
+    /// Validate one move layer against `state` under the canonical execution
+    /// model: the lane-group rules of [`check_lanes`](Self::check_lanes) plus
+    /// occupancy (every lane picks up an atom, no destination is held by a
+    /// stationary atom, no two atoms land on one site). On success the token
+    /// feeds [`AtomStateData::apply_validated`].
+    pub fn check_move_set(
+        &self,
+        state: &AtomStateData,
+        lanes: &[LaneAddr],
+    ) -> Result<ValidatedMoves, Vec<MoveValidationError>> {
+        state.validate_moves(lanes, &self.arch_spec)
+    }
+
+    /// Structural validation of the architecture the index was built from.
+    /// [`SearchEngine`](crate::search::engine::SearchEngine) validates on
+    /// construction; a bare `LaneIndex` does not.
+    pub fn validate_arch(&self) -> Result<(), Vec<ArchSpecError>> {
+        self.arch_spec.validate()
     }
 
     /// Number of distinct locations in the architecture.
@@ -626,5 +705,98 @@ mod tests {
         }
 
         assert!(checked > 0, "the fixture spec must contain lanes to check");
+    }
+
+    /// The architecture boundary: outside `LaneIndex` itself, the search crate
+    /// reads the architecture only through `LaneIndex`'s queries.
+    ///
+    /// Non-test code may not call `arch_spec()` (reserved for the Starlark DSL
+    /// sidecar) or take the spec as `&ArchSpec` / `Arc<ArchSpec>`. Building a
+    /// `LaneIndex` or `SearchEngine` from a spec is fine and is not matched.
+    /// Test modules, including whole files declared as `#[cfg(test)] mod x;`,
+    /// are exempt, as are comment lines.
+    #[test]
+    fn only_lane_index_reads_the_arch_spec() {
+        use std::path::{Path, PathBuf};
+
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        let mut stack = vec![src.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("read src dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+
+        // Files that are whole test modules: `#[cfg(test)]` then `mod name;`.
+        let mut test_only: Vec<PathBuf> = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("read source");
+            let lines: Vec<&str> = text.lines().collect();
+            let child_dir = match file.file_stem().and_then(|s| s.to_str()) {
+                Some("mod" | "lib") => file.parent().expect("parent").to_path_buf(),
+                _ => file.with_extension(""),
+            };
+            for pair in lines.windows(2) {
+                if pair[0].trim() != "#[cfg(test)]" {
+                    continue;
+                }
+                let decl = pair[1].trim();
+                let decl = decl.strip_prefix("pub(crate) ").unwrap_or(decl);
+                if let Some(name) = decl.strip_prefix("mod ").and_then(|d| d.strip_suffix(';')) {
+                    test_only.push(child_dir.join(format!("{name}.rs")));
+                    test_only.push(child_dir.join(name).join("mod.rs"));
+                }
+            }
+        }
+
+        let exempt = |rel: &str| rel.starts_with("dsl/") || rel == "primitives/lane_index.rs";
+        let may_hold_spec = |rel: &str| exempt(rel) || rel == "search/engine.rs";
+
+        let mut violations = Vec::new();
+        for file in &files {
+            let rel = file
+                .strip_prefix(&src)
+                .expect("under src")
+                .to_string_lossy()
+                .replace('\\', "/");
+            if exempt(&rel) || test_only.contains(file) {
+                continue;
+            }
+            let text = std::fs::read_to_string(file).expect("read source");
+            let lines: Vec<&str> = text.lines().collect();
+            // Everything from the first inline test module on is test code.
+            let end = lines
+                .windows(2)
+                .position(|w| {
+                    w[0].trim() == "#[cfg(test)]"
+                        && (w[1].starts_with("mod ") || w[1].starts_with("pub(crate) mod "))
+                        && w[1].trim_end().ends_with('{')
+                })
+                .unwrap_or(lines.len());
+            for (i, line) in lines[..end].iter().enumerate() {
+                let code = line.trim_start();
+                if code.starts_with("//") {
+                    continue;
+                }
+                let reaches = code.contains(".arch_spec()");
+                let holds = code.contains("&ArchSpec") || code.contains("Arc<ArchSpec>");
+                if reaches || (holds && !may_hold_spec(&rel)) {
+                    violations.push(format!("{rel}:{}: {}", i + 1, code));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "read the architecture through `LaneIndex`'s queries, not the raw \
+             `ArchSpec`:\n  {}",
+            violations.join("\n  ")
+        );
     }
 }

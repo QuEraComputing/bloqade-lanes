@@ -151,7 +151,7 @@ pub fn solve_push_rotate_with(
     crate::search::verify::assert_move_layers_executable(
         &root,
         &move_layers,
-        index.arch_spec(),
+        index,
         &blocked_set,
         &goal_config,
     );
