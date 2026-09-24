@@ -74,7 +74,9 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyEntropyScorer>()?;
     m.add_class::<search_python::PyMovesetMetrics>()?;
     m.add_class::<search_python::PyDefaultTargetGenerator>()?;
-    m.add_class::<search_python::PyMultiSolveResult>()?;
+    m.add_class::<search_python::PyPlacementResult>()?;
+    m.add_class::<search_python::PyCandidateAttempt>()?;
+    m.add_class::<search_python::PyBoundStats>()?;
 
     // New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers
     m.add_class::<search_python::PySearchEngine>()?;

@@ -689,6 +689,17 @@ Rust-only and typed exceptions; (4) caller-supplied candidates.
 - Core `SolveStatus::as_label` is deleted; the labels were the Python ABI. `policy_status`
   (`PolicyRunner`) is the DSL sidecar's own label and stays out of scope.
 
+**Part 2 — landed notes.**
+- `SolveResult.bound_stats` is a typed `BoundStats` (the eight fields) or `None` when no
+  bound ran, replacing the empty-or-full dict. The Python strategy's running totals stay a
+  dict — they are a Python aggregate, not the binding — and the CSV columns they feed are
+  unchanged (checked by the gate, which now compares the bound columns too).
+- Every placement has `place(initial, pairs, blocked, max_expansions=None,
+  future_layers=None) -> PlacementResult`; `PlacementResult` exposes `result`, `chosen`,
+  typed `attempts` (`CandidateAttempt`, with `score`) and `total_expansions`. The old
+  `solve_pairs`, `solve_with_attempts` and `MultiSolveResult` are gone; the three Python
+  placement strategies call `place(...).result`.
+
 - **A typed status enum replaces the string ABI.**
   - Python comparison sites (paths relative to `python/bloqade/lanes/`):
     - `heuristics/physical/movement.py:454`;

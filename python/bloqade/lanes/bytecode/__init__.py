@@ -43,6 +43,8 @@ from bloqade.lanes.bytecode._clib_path import (
 from bloqade.lanes.bytecode._native import (
     ArchSpec as ArchSpec,
     AtomStateData as AtomStateData,
+    BoundStats as BoundStats,
+    CandidateAttempt as CandidateAttempt,
     DeadlockPolicy as DeadlockPolicy,
     DefaultTargetGenerator as DefaultTargetGenerator,
     Direction as Direction,
@@ -63,6 +65,7 @@ from bloqade.lanes.bytecode._native import (
     MoveType as MoveType,
     NoHomeCzPlacement as NoHomeCzPlacement,
     NoHomeOptions as NoHomeOptions,
+    PlacementResult as PlacementResult,
     PolicyRunner as PolicyRunner,
     PolicySolveResult as PolicySolveResult,
     Program as Program,
