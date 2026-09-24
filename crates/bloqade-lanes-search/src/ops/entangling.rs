@@ -1567,52 +1567,6 @@ pub fn assignment_cost(config: &Config, targets: &[(u32, u64)], dist_table: &Dis
     total
 }
 
-// ── Accidental CZ detection ────────────────────────────────────────
-
-/// Find spectator qubits involved in accidental CZ pairings.
-///
-/// An accidental CZ occurs when two spectator qubits (neither in `cz_qubits`)
-/// occupy partner sites in the entangling set. Only one qubit per accidental
-/// pair is returned (the one with the higher qubit ID).
-///
-/// Returns `(qubit_id, location)` pairs that need to be moved.
-pub fn find_accidental_cz(
-    config: &Config,
-    cz_qubits: &HashSet<u32>,
-    partner_map: &HashMap<u64, u64>,
-) -> Vec<(u32, LocationAddr)> {
-    let mut result = Vec::new();
-    let mut seen_pairs: HashSet<(u64, u64)> = HashSet::new();
-
-    for (qid, loc) in config.iter() {
-        if cz_qubits.contains(&qid) {
-            continue;
-        }
-        let loc_enc = loc.encode();
-        if let Some(&partner_enc) = partner_map.get(&loc_enc)
-            && let Some(other_qid) = config.qubit_at(LocationAddr::decode(partner_enc))
-            && !cz_qubits.contains(&other_qid)
-        {
-            // Both are spectators at partner sites — accidental CZ.
-            let pair = if loc_enc < partner_enc {
-                (loc_enc, partner_enc)
-            } else {
-                (partner_enc, loc_enc)
-            };
-            if seen_pairs.insert(pair) {
-                // Pick the qubit with higher ID to move.
-                let (move_qid, move_loc) = if qid > other_qid {
-                    (qid, loc)
-                } else {
-                    (other_qid, LocationAddr::decode(partner_enc))
-                };
-                result.push((move_qid, move_loc));
-            }
-        }
-    }
-    result
-}
-
 /// Build a partner map from the entangling set: for each encoded location,
 /// its CZ partner location (if any). Used for O(1) accidental CZ checks.
 pub fn build_partner_map(entangling_set: &HashSet<(u64, u64)>) -> HashMap<u64, u64> {
@@ -2520,43 +2474,5 @@ mod tests {
         let b = loc(1, 5).encode();
         assert_eq!(pmap.get(&a), Some(&b));
         assert_eq!(pmap.get(&b), Some(&a));
-    }
-
-    // ── find_accidental_cz ──
-
-    #[test]
-    fn no_accidental_cz_when_partner_empty() {
-        let arch = make_arch();
-        let eset = build_entangling_set(&arch);
-        let pmap = build_partner_map(&eset);
-        // q0 at (word 0, site 5), q1 at (word 0, site 6) — no partner occupied.
-        let config = Config::new([(0, loc(0, 5)), (1, loc(0, 6))]).unwrap();
-        let cz_qubits = HashSet::new();
-        let accidental = find_accidental_cz(&config, &cz_qubits, &pmap);
-        assert!(accidental.is_empty());
-    }
-
-    #[test]
-    fn detects_accidental_cz() {
-        let arch = make_arch();
-        let eset = build_entangling_set(&arch);
-        let pmap = build_partner_map(&eset);
-        // q0 at (word 0, site 5), q1 at (word 1, site 5) — partner sites!
-        let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
-        let cz_qubits = HashSet::new(); // both are spectators
-        let accidental = find_accidental_cz(&config, &cz_qubits, &pmap);
-        assert_eq!(accidental.len(), 1); // one of the pair needs to move
-    }
-
-    #[test]
-    fn no_accidental_cz_when_partner_is_cz_participant() {
-        let arch = make_arch();
-        let eset = build_entangling_set(&arch);
-        let pmap = build_partner_map(&eset);
-        // q0 at (word 0, site 5), q1 at (word 1, site 5) — but q1 is a CZ participant.
-        let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
-        let cz_qubits: HashSet<u32> = [1].into_iter().collect();
-        let accidental = find_accidental_cz(&config, &cz_qubits, &pmap);
-        assert!(accidental.is_empty());
     }
 }

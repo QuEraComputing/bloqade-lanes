@@ -1003,20 +1003,6 @@ mod tests {
         }
     }
 
-    /// The engine computes the verdict once and hands out the same result.
-    #[test]
-    fn engine_caches_the_precondition_verdict() {
-        use crate::search::engine::SearchEngine;
-        let bad = SearchEngine::from_json(crate::test_utils::full_arch_json()).unwrap();
-        assert!(bad.exhaustive_preconditions().is_err());
-        assert!(std::ptr::eq(
-            bad.exhaustive_preconditions(),
-            bad.exhaustive_preconditions()
-        ));
-        let good = SearchEngine::from_json(example_arch_json()).unwrap();
-        assert_eq!(good.exhaustive_preconditions(), &Ok(()));
-    }
-
     /// B1 on the source side: a blocked site may not be a filler. With qubit
     /// 0 at site 0 and site 1 blocked, no emitted shot may contain site 1's
     /// lane — the 2×1 rectangle over sites 0 and 1 would drag the blocked

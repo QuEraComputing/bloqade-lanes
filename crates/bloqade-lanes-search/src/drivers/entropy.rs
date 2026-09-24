@@ -18,8 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::bounds::{BoundStats, CompletionBound, NoBound};
-use crate::cost::UniformCost;
+use crate::bounds::{BoundStats, CompletionBound};
 use crate::drivers::result::{SearchResult, Termination};
 use crate::feasibility::graph::LaneGraph;
 use crate::observer::{SearchEvent, SearchObserver};
@@ -2306,78 +2305,20 @@ fn sequential_fallback(
 
 // ── Main search loop ───────────────────────────────────────────────
 
-/// Run entropy-guided search under the default objective
-/// ([`UniformCost`] — minimize moveset count).
+/// Run entropy-guided search under an explicit [`Objective`] and completion
+/// bound.
 ///
 /// This is a single-path DFS with entropy-based backtracking, NOT a
 /// standard frontier-based search. See module docs for algorithm details.
 ///
-/// Use [`entropy_search_with_objective`] to search under a different
-/// [`Objective`].
-#[allow(clippy::too_many_arguments)]
-pub fn entropy_search(
-    root: Config,
-    goal: &impl Goal,
-    params: &EntropyParams,
-    ctx: &SearchContext,
-    max_expansions: Option<u32>,
-    max_depth: Option<u32>,
-    seed: u64,
-    observer: &mut dyn SearchObserver,
-) -> SearchResult {
-    entropy_search_with_objective(
-        root,
-        goal,
-        params,
-        ctx,
-        max_expansions,
-        max_depth,
-        seed,
-        observer,
-        &UniformCost,
-    )
-}
-
-/// [`entropy_search`] under an explicit [`Objective`].
-///
 /// The objective is the single source of truth for `g`: it prices every shot
 /// the driver appends and therefore defines what the incumbent comparison
-/// means. Swapping it requires no other change to the driver.
+/// means. [`UniformCost`](crate::cost::UniformCost) minimizes the moveset
+/// count. The bound must be admissible for `objective` — see
+/// [`CompletionBound`]. Pass [`NoBound`](crate::bounds::NoBound) to disable
+/// pruning entirely.
 #[allow(clippy::too_many_arguments)]
-pub fn entropy_search_with_objective<O>(
-    root: Config,
-    goal: &impl Goal,
-    params: &EntropyParams,
-    ctx: &SearchContext,
-    max_expansions: Option<u32>,
-    max_depth: Option<u32>,
-    seed: u64,
-    observer: &mut dyn SearchObserver,
-    objective: &O,
-) -> SearchResult
-where
-    O: Objective,
-{
-    entropy_search_with_bound(
-        root,
-        goal,
-        params,
-        ctx,
-        max_expansions,
-        max_depth,
-        seed,
-        observer,
-        objective,
-        &NoBound::for_objective(objective),
-    )
-}
-
-/// [`entropy_search`] under an explicit [`Objective`] and completion bound.
-///
-/// The bound must be admissible for `objective` — see [`CompletionBound`].
-/// Pass [`NoBound`] to disable pruning entirely.
-#[allow(clippy::too_many_arguments)]
-pub fn entropy_search_with_bound<O, B>(
+pub fn entropy_search<O, B>(
     root: Config,
     goal: &impl Goal,
     params: &EntropyParams,
@@ -3137,6 +3078,8 @@ fn get_next_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bounds::NoBound;
+    use crate::cost::UniformCost;
     use crate::test_utils::{example_arch_json, loc};
     use crate::traits::CostFn;
     use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
@@ -3254,6 +3197,8 @@ mod tests {
             None,
             0,
             &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
         )
     }
 
@@ -3290,6 +3235,8 @@ mod tests {
             max_depth,
             0,
             trace,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
         )
     }
 
@@ -3335,6 +3282,8 @@ mod tests {
                 None,
                 0,
                 &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &NoBound::for_objective(&UniformCost),
             );
             (r.goal.is_some(), r.termination, r.nodes_expanded)
         };
@@ -4284,7 +4233,18 @@ mod tests {
         };
         let mut trace = EntropyTrace::default();
 
-        let _ = entropy_search(root, &goal, &params, &ctx, Some(8), None, 0, &mut trace);
+        let _ = entropy_search(
+            root,
+            &goal,
+            &params,
+            &ctx,
+            Some(8),
+            None,
+            0,
+            &mut trace,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
+        );
 
         assert!(
             trace.steps.iter().any(|step| step.event == "descend"
@@ -4358,64 +4318,6 @@ mod tests {
         assert!(lanes_checked > 0, "arch fixture should expose lanes");
     }
 
-    /// The objective is swappable at the driver seam: `entropy_search` and
-    /// `entropy_search_with_objective(.., &UniformCost)` are the same search.
-    ///
-    /// Guards the delegation, so the default entry point cannot drift onto a
-    /// different objective than the one the audit and benchmarks assume.
-    #[test]
-    fn default_entry_point_matches_explicit_uniform_cost_objective() {
-        let index = make_index();
-        let target_encoded = vec![(0u32, loc(1, 5).encode())];
-        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
-        let dist_table = DistanceTable::new(&target_locs, &index);
-        let blocked = HashSet::new();
-        let goal = crate::goals::AllAtTarget::new(&target_encoded);
-        let ctx = SearchContext {
-            index: &index,
-            dist_table: &dist_table,
-            blocked: &blocked,
-            targets: &target_encoded,
-            cz_pairs: None,
-            capacity: None,
-        };
-        let params = EntropyParams::default();
-        let root = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let implicit = entropy_search(
-            root.clone(),
-            &goal,
-            &params,
-            &ctx,
-            Some(200),
-            None,
-            0,
-            &mut crate::observer::NoOpObserver,
-        );
-        let explicit = entropy_search_with_objective(
-            root,
-            &goal,
-            &params,
-            &ctx,
-            Some(200),
-            None,
-            0,
-            &mut crate::observer::NoOpObserver,
-            &UniformCost,
-        );
-
-        assert_eq!(implicit.nodes_expanded, explicit.nodes_expanded);
-        assert_eq!(implicit.max_depth_reached, explicit.max_depth_reached);
-        assert_eq!(
-            implicit.solution_path().map(|p| p.len()),
-            explicit.solution_path().map(|p| p.len())
-        );
-        assert_eq!(
-            implicit.goal.map(|g| implicit.graph.g_score(g)),
-            explicit.goal.map(|g| explicit.graph.g_score(g))
-        );
-    }
-
     /// Swapping the objective requires no driver change, and `g` really is
     /// that objective's cost rather than a moveset count in disguise.
     ///
@@ -4444,7 +4346,7 @@ mod tests {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let objective = WeightedDuration::new(&index, 10.0);
 
-        let result = entropy_search_with_objective(
+        let result = entropy_search(
             root.clone(),
             &goal,
             &EntropyParams::default(),
@@ -4454,6 +4356,7 @@ mod tests {
             0,
             &mut crate::observer::NoOpObserver,
             &objective,
+            &NoBound::for_objective(&objective),
         );
 
         let goal_id = result.goal.expect("instance should solve");
@@ -4508,7 +4411,7 @@ mod tests {
         let params = EntropyParams::default();
         let root = Config::new(initial).unwrap();
 
-        let unbounded = entropy_search_with_bound(
+        let unbounded = entropy_search(
             root.clone(),
             &goal,
             &params,
@@ -4526,7 +4429,7 @@ mod tests {
             &index,
             &blocked,
         );
-        let bounded = entropy_search_with_bound(
+        let bounded = entropy_search(
             root,
             &goal,
             &params,
@@ -4580,7 +4483,7 @@ mod tests {
         };
         let params = EntropyParams::default();
         let mut trace = EntropyTrace::for_params(&params);
-        let result = entropy_search_with_bound(
+        let result = entropy_search(
             Config::new([(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 5))]).unwrap(),
             &goal,
             &params,
@@ -4636,7 +4539,7 @@ mod tests {
         );
         let root = Config::new(initial).unwrap();
         let run = |bound_terminates: bool| {
-            entropy_search_with_bound(
+            entropy_search(
                 root.clone(),
                 &goal,
                 &EntropyParams {
@@ -4717,12 +4620,11 @@ mod tests {
         };
         let params = EntropyParams::default();
         let mut trace = EntropyTrace::for_params(&params);
-        let result = entropy_search_with_bound(
+        let result = entropy_search(
             Config::new([(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 5))]).unwrap(),
             &goal,
             &params,
-            &ctx,
-            // Small enough that the iteration cap (2x this) bites before the
+            &ctx, // Small enough that the iteration cap (2x this) bites before the
             // entropy ramp lets the generator declare itself stuck.
             Some(2),
             None,
@@ -4773,7 +4675,7 @@ mod tests {
             &blocked,
         );
         let run = |max_goal_candidates: usize| {
-            entropy_search_with_bound(
+            entropy_search(
                 Config::new([(0, loc(0, 0))]).unwrap(),
                 &goal,
                 &EntropyParams {
@@ -4828,7 +4730,7 @@ mod tests {
             cz_pairs: None,
             capacity: None,
         };
-        let result = entropy_search_with_bound(
+        let result = entropy_search(
             Config::new([(0, loc(0, 0))]).unwrap(),
             &goal,
             &EntropyParams {
@@ -4873,7 +4775,7 @@ mod tests {
             capacity: None,
         };
         let run = |bound_terminates: bool| {
-            entropy_search_with_bound(
+            entropy_search(
                 Config::new([(0, loc(0, 0))]).unwrap(),
                 &goal,
                 &EntropyParams {
@@ -5103,7 +5005,7 @@ mod tests {
             &blocked,
         );
 
-        let _ = entropy_search_with_bound(
+        let _ = entropy_search(
             Config::new([(0, loc(0, 0))]).unwrap(),
             &goal,
             &EntropyParams::default(),

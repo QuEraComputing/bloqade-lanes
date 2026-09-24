@@ -1,7 +1,8 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** in progress. Epics 0 and 1 are done; the rest has not started.
+**Status:** in progress. Epics 0 and 1 are done. Epic 2A is in progress, as five PRs
+(see its "How it lands" note); the rest has not started.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
 branch that is **not merged into `main`**.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
@@ -179,29 +180,70 @@ plan identity, resume semantics or proof provenance.
   - the golden comparison against `tests/fixtures/behaviour/golden.txt`, regenerated with
     `BEHAVIOUR_BLESS=1`, with a unified diff printed on mismatch;
   - a guard that fails if any module other than `interface.rs` names the crate in code.
-- **The corpus: 122 cases, about 3 s in a debug build.**
-  - Every strategy runs on 7 fixed-target instances, including three where the
+- **The corpus: 361 cases, about 4 s in a debug build.** By group: `route/` 220,
+  `cz/` 45, `bound/` 44, `knobs/` 28, `edge/` 13, `anticipate/` 6, `fallback/` 3,
+  `mirror/` 2.
+  - Every strategy runs on the fixed-target instances, including three where the
     strategies genuinely disagree: `logical_cycle`, `physical_site_cycle`,
-    `physical_congested`.
-  - It also covers the fallback, mirroring, bounds and edge cases, all four placements,
-    and the anticipatory goldens.
+    `physical_congested`. `hand_verified` marks the instances whose optimum was
+    derived by hand, and for which strategies it is asserted.
+  - It also covers the fallback, mirroring, bounds and edge cases, every placement, the
+    knobs (restarts, weight, deadlock policy, lookahead, `top_c`, AOD capacity,
+    `w_t`, …), CZ stages up to four pairs, zoned stages, and the anticipatory goldens.
+- **Nine architectures:** the bundled Gemini logical and physical specs; snapshots of
+  the crate's synthetic unit-test specs (`example`, `chain`, `chain_with_siding`,
+  `two_zone_bus`, `two_zone_aligned_site_bus`, `asymmetric_duration`) under
+  `tests/fixtures/behaviour/arch/`; and a hand-written sparse `two_zone_grid` (a 4×4
+  storage zone and a 4×4 gate zone joined by one zone bus, with up to 6 atoms crossing).
 - **Determinism:** the golden is identical across repeated runs and with
-  `RAYON_NUM_THREADS=1` and `2`. It is recorded in a debug build; the three
+  `RAYON_NUM_THREADS=1` and `2`. It is recorded in a debug build; the
   `debug_assert!`-dependent cases and the golden comparison are skipped under
   `--release`. LF is already pinned repo-wide by `.gitattributes`.
+- **Micro-benchmarks:** `benches/behaviour.rs` (divan, `just bench-search [filter]`)
+  times the search-heavy cases in a release build, about 7 s in all. It includes the
+  net's own files, so every timed case is also pinned by the golden. It is a local A/B
+  tool, not a CI gate; it is CodSpeed-compatible if that is set up later.
+- **Docs:** the "Search behaviour net" section of `AGENT.md`.
 - **The Python candidate-order test:**
   `test_first_solved_candidate_wins_even_when_a_later_one_is_cheaper`, in
   `python/tests/heuristics/test_physical_placement.py`.
 
-**Findings.**
+**Findings, and what became of them.**
 - **The loose-goal accidental-CZ cleanup leg is dead code.** In `solve_loose_goal` it
   runs only on a `Solved` result and calls `find_accidental_cz`. That checks exactly the
   predicate `EntanglingConstraintGoal::is_goal` already rejects — two spectators on
   partner sites — and against the same partner map, since the goal is built from
   `cache.ent_set`. So it can never find anything. Instrumenting it confirmed that no case
   reaches it, including three stages built to provoke it. The coverage item "the two-leg
-  cleanup path" therefore can't be met; Epic 2A deletes the leg instead.
+  cleanup path" therefore can't be met. **Deleted in Epic 2A, part 1.**
 - **The partial-target panic is live and now pinned** (`edge/partial_target/push_rotate`).
+- **NoHome reported unstaged CZ pairs as solved** on zones with no entangling pairs
+  (a "solved in 0 layers" result). **Fixed on `main` by #1052.** The pairs in the
+  affected cases start unpaired, so the old result was genuinely wrong.
+- **Home positions treated `word_zone_map` as word ownership**, so on a multi-zone
+  spec `home_sites` listed a storage word's zone-0 copy instead of the zone it actually
+  sits in, and NoHome treated atoms parked in storage as returners. **Fixed on `main` by
+  #1053**, which decides home positions per zone across every zone
+  (`ArchSpec::home_locations()`). Together with #1052, this moved exactly two goldens
+  (`cz/nohome/zoned_{two,three}_pairs_from_storage`), regenerated when `main` was merged
+  in.
+- **A false `unsolvable` on `zoned_six_up`.** The default `DeadlockPolicy::Skip` leaves
+  the move generator incomplete. Under `AllMoves`, A*, DFS and IDS solve it (23, 25 and
+  23 layers). **Decided 2026-09-23: `AllMoves` stays opt-in**, because it grows the
+  search graph exponentially and its benchmark effect was mixed. The
+  `edge/false_unsolvable/zoned_six_up/*_all_moves` cases pin that it solves. Splitting
+  the "exhausted" status label was dropped, because the typed proof outcomes of Epic 3A
+  supersede it.
+- **Still open: `cz/loose_goal/zoned_two_pairs_from_storage` exhausts its frontier and
+  reports an unproven `unsolvable` under every deadlock policy**, while RecedingHorizon
+  solves the same stage in 11 layers. Hypothesis: the per-restart `LooseTargetGenerator`
+  assignment. Not scheduled; Epic 5 touches this path.
+- **Push-and-Rotate's documented regime is visible:** it returns an unproven
+  `budget_exceeded` on components with fewer than two empty sites, and it ignores the
+  AOD cap.
+- **The default target rules can pick an infeasible candidate.** Both
+  `DefaultTargetGenerator` and NoHome's per-pair rule do so on `example_pairable`.
+  This is evidence for Epic 4.
 
 **Deviations from the scope below.**
 - The cleanup-leg item is replaced by the deletion.
@@ -288,7 +330,55 @@ Epic 4 phases 2–3.
 the two behavioural payoffs, with targeted edits rather than a trait overhaul. The
 Python-facing PyO3 surface stays unchanged throughout this epic.
 
+**Prerequisites done on `main`** (found by the Epic-1 net, fixed by separate sessions,
+merged into the branch at `a1d40721`): #1052, NoHome's false "solved" on pair-less
+zones; and #1053, per-zone home positions.
+
 ### Phase 2A — structural, zero-drift
+
+**How it lands: five PRs, each zero-drift on its own.** Phase 2A is too large to review
+as one PR, so it lands in parts. Each is checked against the benchmarks and the
+behaviour-net golden before merging:
+1. dead-code hygiene (the first bullet below);
+2. the architecture boundary (Rule 2), apart from the AOD capacity;
+3. the AOD capacity moving into the architecture model;
+4. `proven()` as a method, the `SearchContext` constructor, and `EntropyTraceStep`'s
+   domain types;
+5. the best partial and `nodes_generated`.
+
+**Downstream check (2026-09-23), per the Parked note.** `bloqade-internal` consumes the
+search crate only through the Python bindings: `SearchEngine`, `TargetSolver`,
+`MoveSearch`, `SolveOptions`, `EntropyOptions`, and the entropy trace, where it tests
+`step.event == "fallback_start"`. It has no Rust code. Phase 2A keeps the Python-facing
+surface unchanged, so none of it affects that crate, and part 4 must keep the trace's
+string events on the Python side.
+
+**Part 1 — landed notes.**
+- Deleted as planned: `MaxHopHeuristic`, `SumHopHeuristic`, the Rust `EntropyScorer`
+  (the Python `EntropyScorer` is a separate PyO3 class and stays), the loose-goal cleanup
+  leg with `find_accidental_cz`, and the `EntanglingCache.partner_map` only that leg read.
+- **The chain:** `entropy_search` → `_with_objective` → `_with_bound` collapses into one
+  public `entropy_search` that takes the objective and the bound explicitly.
+  `benches/entropy.rs` passes `UniformCost` and `NoBound`, so its search is unchanged.
+- **Deleted rather than demoted:** `MaxBound` and `CompletionBound::as_heuristic`. A
+  `pub(crate)` item with only test callers is dead code to the lint, so "demote" meant
+  "delete". A bound orders a frontier search through a closure instead. `MaxBound` can
+  come back from git if the class bound from `phil/class-completion-bound` needs to be
+  combined with `h0`.
+- **`WeightedDuration` is compiled for tests only** (`cost/weighted_duration.rs`), since
+  its own docs say no production path runs it and the admissibility and objective-contract
+  suites need a genuinely non-uniform objective.
+- **`SearchEngine::exhaustive_preconditions()` and
+  `ConfigError::UnsupportedArchitecture` are deleted.** They were built for a strategy
+  that enumerates the exhaustive space, which was the branch-and-bound driver, closed
+  with #1004. `ExhaustiveGenerator` stays, for the oracle and admissibility tests.
+- **Deviation: `tests/public_bound_api.rs` stays an external integration test.** It is
+  the only check that a downstream crate can implement `CompletionBound` and drive the
+  public entry points, which the Parked extension surface needs. Only its tests of the
+  deleted items went; its `WeightedDuration` test was redundant with the in-crate
+  `driver_accumulates_g_under_a_swapped_objective`.
+
+**Scope.**
 
 - **Dead-code hygiene.** Counts are of *production* callers and are in critique §5.
   Unit tests in each item's own module go with it.
@@ -481,7 +571,8 @@ adapter rebuild.
   - `attempts`: index, status and expansions, plus an **optional evaluator score**. Epic 4
     fills that slot, so the shape doesn't change twice. Placements that don't enumerate
     candidates leave the list empty.
-  - `total_expansions`, summed across every leg, including loose-goal's cleanup leg.
+  - `total_expansions`, summed across every leg and candidate of the placement. (The
+    loose-goal cleanup leg this once had to include was deleted in 2A, part 1.)
 - **P&R evaluations are not budgeted.** Epic 4 records them in the attempt log (the
   evaluator-score slot). Unifying the budget scope, e.g. as a total per `place()` call,
   would change behaviour, so it would be a separately gated change, not part of 3A.0.

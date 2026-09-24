@@ -42,8 +42,7 @@ use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
 use crate::search::options::{EntanglingOptions, SolveOptions};
 use crate::search::restarts::run_with_components;
-use crate::search::result::{SolveResult, SolveStatus};
-use crate::search::target_solver::solve_with_engine;
+use crate::search::result::SolveResult;
 
 /// CZ placement that simultaneously discovers entangling positions and
 /// the routing to reach them.
@@ -151,16 +150,17 @@ impl CzPlacement for LooseGoalCzPlacement {
 /// Phases:
 ///
 /// 1. Pull the cached `EntanglingCache` (Hungarian word-pair distances
-///    + entangling-pair set + partner map) from the engine.
+///    + entangling-pair set) from the engine.
 /// 2. Run a Hungarian assignment (with optional multi-layer lookahead)
 ///    to produce the initial `targets` list the search will steer
 ///    toward.
 /// 3. Drive the search via [`run_with_components`] with a
 ///    [`LooseTargetGenerator`] factory that re-runs Hungarian per
 ///    restart seed.
-/// 4. If the search solved, run an accidental-CZ cleanup pass:
-///    spectator qubits that landed at an entangling-partner site are
-///    nudged off via a follow-on [`solve_with_engine`] call.
+///
+/// There is no post-solve spectator cleanup: [`EntanglingConstraintGoal`]
+/// already rejects any configuration with two spectators on partner sites,
+/// so a solved result never contains an accidental CZ.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_loose_goal(
     engine: &SearchEngine,
@@ -239,7 +239,7 @@ pub(crate) fn solve_loose_goal(
     let upgraded_opts = opts.upgraded_for_entangling();
     let opts = &upgraded_opts;
 
-    let mut result = {
+    let result = {
         let arch_arc = Arc::new(arch.clone());
         let index_arc: Arc<LaneIndex> = Arc::new(engine.index().clone());
         let dt_arc = dist_table.clone();
@@ -280,64 +280,6 @@ pub(crate) fn solve_loose_goal(
             Some(engine.blended_cache()),
         )
     };
-
-    // Post-solve cleanup: move spectator qubits out of accidental CZ positions.
-    if result.status == SolveStatus::Solved {
-        let cz_qubit_set: HashSet<u32> = cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
-        let accidental =
-            entangling::find_accidental_cz(&result.goal_config, &cz_qubit_set, &cache.partner_map);
-
-        if !accidental.is_empty() {
-            let mut cleanup_targets: Vec<(u32, LocationAddr)> = result.goal_config.iter().collect();
-
-            for &(qid, move_loc) in &accidental {
-                for &lane in engine.index().outgoing_lanes(move_loc) {
-                    if let Some((_, dst)) = engine.index().endpoints(&lane) {
-                        if result.goal_config.is_occupied(dst) {
-                            continue;
-                        }
-                        let safe = arch.get_cz_partner(&dst).is_none_or(|p| {
-                            !result.goal_config.is_occupied(p)
-                                || cz_qubit_set
-                                    .contains(&result.goal_config.qubit_at(p).unwrap_or(u32::MAX))
-                        });
-                        if safe {
-                            if let Some(entry) = cleanup_targets.iter_mut().find(|(q, _)| *q == qid)
-                            {
-                                entry.1 = dst;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // `max_expansions` caps the whole call, so the cleanup gets only
-            // what the primary search left, and its work counts whether or
-            // not it succeeds.
-            let cleanup_budget =
-                max_expansions.map(|cap| cap.saturating_sub(result.nodes_expanded));
-            let cleanup_result = solve_with_engine(
-                engine,
-                opts,
-                None,
-                result.goal_config.iter(),
-                cleanup_targets,
-                blocked_locs.iter().copied(),
-                cleanup_budget,
-            );
-
-            if let Ok(cleanup) = cleanup_result {
-                result.nodes_expanded =
-                    result.nodes_expanded.saturating_add(cleanup.nodes_expanded);
-                if cleanup.status == SolveStatus::Solved {
-                    result.move_layers.extend(cleanup.move_layers);
-                    result.goal_config = cleanup.goal_config;
-                    result.cost += cleanup.cost;
-                }
-            }
-        }
-    }
 
     Ok(result)
 }

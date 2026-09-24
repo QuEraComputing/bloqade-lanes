@@ -19,7 +19,7 @@ use bloqade_lanes_search::observer::NoOpObserver;
 use bloqade_lanes_search::primitives::context::SearchContext;
 use bloqade_lanes_search::primitives::distance::DistanceTable;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
-use bloqade_lanes_search::{Config, SearchResult};
+use bloqade_lanes_search::{Config, NoBound, SearchResult, UniformCost};
 
 /// Three-word, two-zone architecture (9 site buses + 1 word bus in zone 0).
 const FULL_ARCH_JSON: &str = include_str!("../../../examples/arch/full.json");
@@ -178,6 +178,8 @@ fn run_driver(index: &LaneIndex, p: &Prepared) -> SearchResult {
         None,
         0,
         &mut NoOpObserver,
+        &UniformCost,
+        &NoBound::for_objective(&UniformCost),
     )
 }
 

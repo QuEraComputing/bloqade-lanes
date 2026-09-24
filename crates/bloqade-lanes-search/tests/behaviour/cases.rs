@@ -1089,10 +1089,10 @@ fn cz_cases() -> Vec<Case> {
     }
     // Loose goal with spectators already facing each other, or facing a pair
     // qubit, across a CZ word pair. The goal itself forbids two spectators on
-    // partner sites, so these cover that rule. They do NOT reach the
-    // accidental-CZ cleanup leg in `solve_loose_goal`: that leg runs only on a
-    // solved result and checks the same predicate against the same partner
-    // map, so it can never find anything (verified by instrumenting it).
+    // partner sites, so these cover that rule. `solve_loose_goal` used to run
+    // an accidental-CZ cleanup leg on solved results; it checked the same
+    // predicate against the same partner map, never fired (verified by
+    // instrumenting it), and was deleted in Epic 2A.
     let loose = |initial: &[(u32, Loc)], arch| ProblemSpec {
         arch,
         problem: Problem::CzStage {
