@@ -999,9 +999,9 @@ mod tests {
         spec["words"]
             .as_array_mut()
             .unwrap()
-            .push(serde_json::json!({ "sites": [[0, 2], [1, 2]] }));
+            .push(serde_json::json!({ "sites": [[0, 3], [1, 3]] }));
         for zone in spec["zones"].as_array_mut().unwrap() {
-            zone["grid"]["y_spacing"] = serde_json::json!([2.0, 2.0]);
+            zone["grid"]["y_spacing"] = serde_json::json!([2.0, 2.0, 2.0]);
         }
         let gate = &mut spec["zones"][1];
         gate["word_buses"] = serde_json::json!([

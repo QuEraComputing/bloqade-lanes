@@ -155,11 +155,13 @@ pub fn two_zone_bus_arch_json() -> &'static str {
 /// A storage zone with **no entangling pairs** feeding a gate zone that has
 /// one.
 ///
-/// Zone 0 ("storage") holds word 0 and has no buses. Zone 1 ("gate") holds
-/// the entangling pair words 1 and 2, joined by a word bus (`1 → 2`) and a
-/// site bus (`0 → 1`) on both words. Each word has two sites. A zone bus
-/// lifts storage word 0 onto gate word 1, site for site, so a CZ pair that
-/// starts in storage must leave the zone to entangle.
+/// Three two-site words, one per row of a 2×3 grid. The word template is
+/// spec-wide, so both zones lay out all three words. Zone 0 ("storage") has
+/// no buses and no entangling pairs; atoms start on its word 0. Zone 1
+/// ("gate") pairs words 1 and 2, joined by a word bus (`1 → 2`) and a site
+/// bus (`0 → 1`) on both words. A zone bus lifts storage word 0 onto gate
+/// word 1, site for site, so a CZ pair that starts in storage must leave the
+/// zone to entangle.
 ///
 /// `get_cz_partner` is `None` for every storage site. Unpaired words count
 /// as home words, so a storage atom is already "home" for the no-home
@@ -170,13 +172,13 @@ pub fn storage_gate_arch_json() -> &'static str {
         "version": "2.0",
         "words": [
             { "sites": [[0, 0], [1, 0]] },
-            { "sites": [[0, 0], [1, 0]] },
-            { "sites": [[0, 1], [1, 1]] }
+            { "sites": [[0, 1], [1, 1]] },
+            { "sites": [[0, 2], [1, 2]] }
         ],
         "zones": [
             {
                 "name": "storage",
-                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [2.0], "y_spacing": [2.0] },
+                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [2.0], "y_spacing": [2.0, 2.0] },
                 "site_buses": [],
                 "word_buses": [],
                 "words_with_site_buses": [],
@@ -185,7 +187,7 @@ pub fn storage_gate_arch_json() -> &'static str {
             },
             {
                 "name": "gate",
-                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [2.0], "y_spacing": [2.0] },
+                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [2.0], "y_spacing": [2.0, 2.0] },
                 "site_buses": [{ "src": [0], "dst": [1] }],
                 "word_buses": [{ "src": [1], "dst": [2] }],
                 "words_with_site_buses": [1, 2],
