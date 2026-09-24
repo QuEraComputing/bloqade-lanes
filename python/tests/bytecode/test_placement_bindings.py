@@ -26,7 +26,9 @@ from bloqade.lanes.bytecode._native import (
 )
 from bloqade.lanes.bytecode.exceptions import (
     DuplicateOccupancyError,
+    DuplicateQubitIdError,
     DuplicateTargetLocationError,
+    DuplicateTargetQubitError,
     SearchConfigError,
 )
 
@@ -104,3 +106,28 @@ def test_an_invalid_request_raises_its_typed_error():
             {0: _loc(0), 1: _loc(0)}, {0: _loc(3), 1: _loc(4)}, [], 100
         )
     assert occupancy.value.location == _loc(0).encode()
+
+
+@pytest.mark.parametrize(
+    ("cls", "args", "fields"),
+    [
+        (DuplicateQubitIdError, ("m", 3), {"qubit_id": 3}),
+        (DuplicateTargetQubitError, ("m", 4), {"qubit_id": 4}),
+        (
+            DuplicateTargetLocationError,
+            ("m", 9, (0, 1)),
+            {"location": 9, "qubits": (0, 1)},
+        ),
+        (DuplicateOccupancyError, ("m", 9, (0, 1)), {"location": 9, "qubits": (0, 1)}),
+    ],
+)
+def test_search_config_errors_carry_their_fields(cls, args, fields):
+    """Every subclass is a ``SearchConfigError`` and a ``ValueError`` carrying
+    its variant's fields. Two of them (duplicate qubit ids) cannot be provoked
+    through the binding, whose dict arguments cannot repeat a key, so the
+    classes are checked directly."""
+    err = cls(*args)
+    assert isinstance(err, SearchConfigError) and isinstance(err, ValueError)
+    assert str(err) == "m"
+    for name, value in fields.items():
+        assert getattr(err, name) == value
