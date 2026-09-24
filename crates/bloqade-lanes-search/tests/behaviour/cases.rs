@@ -543,6 +543,13 @@ fn false_unsolvable_cases() -> Vec<Case> {
     // nothing, so this sparse funnel's deadlocks become dead ends and the
     // frontier drains. `AllMoves` falls back to every legal move there,
     // restoring completeness, and all three drivers then solve it.
+    //
+    // `AllMoves` is deliberately not the default (decided 2026-09-23): it
+    // grows the search graph sharply elsewhere, for example 10x the nodes on
+    // the zoned three-pair loose-goal stage, and costs move events on
+    // `adder_4`. At the production budget of 300 this instance is
+    // budget-exceeded under `Skip`, not drained. So this stays a known
+    // limitation, pinned here.
     for strategy in [Strategy::AStar, Strategy::Dfs, Strategy::Ids] {
         cases.push(
             case(
@@ -685,13 +692,13 @@ fn big_cz_cases() -> Vec<Case> {
         // On the two-zone grid only the gate zone has CZ pairs, so every
         // pair starting in storage has to cross the one zone bus to entangle.
         //
-        // Known false success, pinned: NoHome reports these `solved` in zero
-        // layers with every atom still in storage. Its per-pair target rule
-        // skips a pair whose location has no CZ partner, so each qubit's
-        // target defaults to where it already is. On Gemini every location
-        // has a partner, so this never fires there. (Checked: no starting
-        // location here has a CZ partner, so no pair starts already paired;
-        // only gate words 4-7 have partners.)
+        // NoHome used to report these `solved` in zero layers with every atom
+        // still in storage: its per-pair target rule skipped a pair whose
+        // location has no CZ partner, so each target defaulted to where the
+        // qubit already was. (No starting location here has a partner, so no
+        // pair starts paired; only gate words 4-7 do.) #1052 fixed it: such a
+        // pair now goes to a free entangling slot, and an unplaceable pair
+        // makes the stage unsolvable.
         cases.push(case(
             format!("cz/{name}/zoned_two_pairs_from_storage"),
             stage(

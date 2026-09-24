@@ -1791,14 +1791,14 @@ final: 0@0.0 1@0.1
 plan: cbf29ce484222325
 
 == cz/nohome/zoned_two_pairs_from_storage
-status: solved | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
-final: 0@0.0 1@0.1 2@0.2 3@0.3
-plan: cbf29ce484222325
+status: solved | layers: 17 | lanes: 24 | cost: 17 | expanded: 158 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@1:4.0 1@1:5.0 2@1:4.3 3@1:5.3
+plan: bcc2fc3e0bb48168
 
 == cz/nohome/zoned_three_pairs_from_storage
-status: solved | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | deadlocks: 0 | proven: false | termination: stopped
-final: 0@0.0 1@0.1 2@0.2 3@1.0 4@1.1 5@1.2
-plan: cbf29ce484222325
+status: solved | layers: 54 | lanes: 54 | cost: 54 | expanded: 211 | deadlocks: 0 | proven: false | termination: budget
+final: 0@1:4.0 1@1:5.0 2@1:4.1 3@1:5.1 4@1:4.3 5@1:5.3
+plan: a0f37a34bd9499ac
 
 == cz/receding_horizon/logical_four_pairs
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 30 | deadlocks: 0 | proven: false | termination: stopped
