@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
 **Status:** in progress. Epics 0, 1 and 2A are done (2A as #1059, #1060, #1061, #1063,
-#1065). The rest lands as one stack of PRs, each on the previous; merge them bottom-up.
+#1065). Epics 3A and 2B and Epic 4 phase 1 are in review as one stack of PRs (#1066–#1074
+and the phase-1 PR), each on the previous; merge them bottom-up. Epic 4 phases 2–3 wait on
+decision 2, now informed by phase 1.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
 branch that is **not merged into `main`**.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
@@ -850,6 +852,16 @@ cost of the cheap router's pick over the best candidate in the group.
   stops at the first solve (`movement.py:430-465`).
 - **The Rust `SingleHeuristicCzPlacement`** has the same first-solve rule
   (`placement/single_heuristic.rs:177`), but no Python path uses it.
+
+**Phase 1 — DONE 2026-09-24:** [`specs/2026-09-24-candidate-ranking-phase1.md`](../specs/2026-09-24-candidate-ranking-phase1.md),
+harness `python/benchmarks/ranking.py`. Bar (fixed before running): ≥5% fewer operations
+summed over the kernels, no success regressions, per space. **NoHome's per-pair mover
+choice: GO, marginally** — 1,625 → 1,543 ops (5.05%), 50% of the oracle's win, no
+regressions; concentrated on trotter_rand_35 (9.2%) and adder_64 (4.0%), and worse on
+steane_physical_35 (−4.2%). **The Python generators: NO-GO** (0.4%, −1.3%, 0.4%; a real
+choice on only 52–76 of 409 stages). Recommendation: rank inside `NoHomeCzPlacement`,
+opt-in first, and decide the default from end-to-end benchmark rows, since this is a
+per-stage counterfactual with a thin margin.
 
 **Phases.**
 1. **Re-measure with real candidate sets (go/no-go).** The random-walk candidates may
