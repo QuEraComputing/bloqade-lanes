@@ -9,17 +9,19 @@
 //! returning the first successful route, or the last failure if all
 //! candidates fail.
 //!
-//! Both [`SingleHeuristicCzPlacement::solve_with_attempts`] and the free
-//! [`solve_single_heuristic`] function share the same implementation.
+//! [`SingleHeuristicCzPlacement`]'s [`CzPlacement::place`] delegates to the
+//! free [`solve_single_heuristic`] function.
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
-use crate::placement::cz_placement::CzPlacement;
+use crate::placement::cz_placement::{
+    CandidateAttempt, CzPlacement, CzStage, PlacementBudget, PlacementResult,
+};
 use crate::placement::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::primitives::config::{Config, ConfigError};
 use crate::search::engine::SearchEngine;
 use crate::search::options::{EntropyOptions, SolveOptions};
-use crate::search::result::{CandidateAttempt, MultiSolveResult, SolveResult, SolveStatus};
+use crate::search::result::{SolveResult, SolveStatus};
 use crate::search::target_solver::{TargetSolver, solve_with_engine};
 
 /// CZ placement that uses a [`TargetGenerator`] to propose candidate
@@ -56,58 +58,33 @@ impl SingleHeuristicCzPlacement {
     pub fn target_generator(&self) -> &dyn TargetGenerator {
         self.target_generator.as_ref()
     }
+}
 
-    /// Solve, returning the full per-candidate attempt detail.
-    ///
-    /// The trait-level [`CzPlacement::solve`] returns just the winning
-    /// (or last) [`SolveResult`]; this method exposes the per-candidate
-    /// attempt list, candidate-index of the winner (if any), and
-    /// total-expansion accounting.
-    pub fn solve_with_attempts(
+impl CzPlacement for SingleHeuristicCzPlacement {
+    /// `budget.max_expansions` is shared across candidates: each candidate
+    /// routes on what the earlier ones left (and, inside a solve, each
+    /// restart gets that remainder).
+    fn place(
         &self,
-        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-        controls: &[u32],
-        targets: &[u32],
-        blocked: impl IntoIterator<Item = LocationAddr>,
-        max_expansions: Option<u32>,
-    ) -> Result<MultiSolveResult, ConfigError> {
+        stage: &CzStage<'_>,
+        budget: &PlacementBudget,
+    ) -> Result<PlacementResult, ConfigError> {
         let search = self.target_solver.search();
         solve_single_heuristic(
             self.target_solver.engine(),
             &search.options,
             Some(&search.entropy_options),
             self.target_generator.as_ref(),
-            initial,
-            controls,
-            targets,
-            blocked,
-            max_expansions,
+            stage.initial.iter().copied(),
+            stage.pairs,
+            stage.blocked.iter().copied(),
+            budget.max_expansions,
         )
     }
 }
 
-impl CzPlacement for SingleHeuristicCzPlacement {
-    fn solve(
-        &self,
-        initial: &[(u32, LocationAddr)],
-        controls: &[u32],
-        targets: &[u32],
-        blocked: &[LocationAddr],
-        max_expansions: Option<u32>,
-    ) -> Result<SolveResult, ConfigError> {
-        let multi = self.solve_with_attempts(
-            initial.iter().copied(),
-            controls,
-            targets,
-            blocked.iter().copied(),
-            max_expansions,
-        )?;
-        Ok(multi.result)
-    }
-}
-
-/// Shared implementation backing
-/// [`SingleHeuristicCzPlacement::solve_with_attempts`].
+/// Shared implementation backing [`SingleHeuristicCzPlacement`]'s
+/// [`CzPlacement::place`].
 ///
 /// Generates candidates via `target_generator`, validates each, and
 /// runs them through [`solve_with_engine`] in order with a shared
@@ -120,13 +97,16 @@ pub(crate) fn solve_single_heuristic(
     entropy_opts: Option<&EntropyOptions>,
     target_generator: &dyn TargetGenerator,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-    controls: &[u32],
-    targets: &[u32],
+    pairs: &[(u32, u32)],
     blocked: impl IntoIterator<Item = LocationAddr>,
     max_expansions: Option<u32>,
-) -> Result<MultiSolveResult, ConfigError> {
+) -> Result<PlacementResult, ConfigError> {
     let initial_pairs: Vec<(u32, LocationAddr)> = initial.into_iter().collect();
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+    // `TargetGenerator` still takes parallel slices (the plan's open
+    // decision 8), so the pairs are unzipped for it.
+    let (controls, targets): (Vec<u32>, Vec<u32>) = pairs.iter().copied().unzip();
+    let (controls, targets) = (controls.as_slice(), targets.as_slice());
 
     let ctx = TargetContext {
         placement: &initial_pairs,
@@ -139,12 +119,11 @@ pub(crate) fn solve_single_heuristic(
 
     if candidates.is_empty() {
         let root = Config::new(initial_pairs.iter().copied())?;
-        return Ok(MultiSolveResult {
+        return Ok(PlacementResult {
             result: SolveResult::unsolvable(root),
-            candidate_index: None,
-            total_expansions: 0,
-            candidates_tried: 0,
+            chosen: None,
             attempts: Vec::new(),
+            total_expansions: 0,
         });
     }
 
@@ -173,27 +152,26 @@ pub(crate) fn solve_single_heuristic(
             candidate_index: i,
             status: result.status,
             nodes_expanded: result.nodes_expanded,
+            score: None,
         });
 
         if result.status == SolveStatus::Solved {
-            return Ok(MultiSolveResult {
+            return Ok(PlacementResult {
                 result,
-                candidate_index: Some(i),
-                total_expansions,
-                candidates_tried: attempts.len(),
+                chosen: Some(i),
                 attempts,
+                total_expansions,
             });
         }
 
         if let Some(budget) = remaining_budget.as_mut() {
             *budget = budget.saturating_sub(result.nodes_expanded);
             if *budget == 0 {
-                return Ok(MultiSolveResult {
+                return Ok(PlacementResult {
                     result,
-                    candidate_index: None,
-                    total_expansions,
-                    candidates_tried: attempts.len(),
+                    chosen: None,
                     attempts,
+                    total_expansions,
                 });
             }
         }
@@ -206,12 +184,11 @@ pub(crate) fn solve_single_heuristic(
         SolveResult::unsolvable(root)
     });
 
-    Ok(MultiSolveResult {
+    Ok(PlacementResult {
         result,
-        candidate_index: None,
-        total_expansions,
-        candidates_tried: attempts.len(),
+        chosen: None,
         attempts,
+        total_expansions,
     })
 }
 
@@ -225,33 +202,39 @@ mod tests {
     use crate::test_utils::{example_arch_json, loc};
     use std::sync::Arc;
 
-    /// The trait-level `CzPlacement::solve` returns the same SolveResult
-    /// as `solve_with_attempts(...).result`.
+    /// `place` through `dyn CzPlacement` reports the winning candidate and
+    /// an attempt log whose expansions sum to the total.
     #[test]
-    fn cz_placement_trait_returns_inner_result() {
+    fn place_reports_the_winner_and_the_attempt_log() {
         let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
         let search = MoveSearch::astar(1.0);
         let target_solver = TargetSolver::new(engine, search);
         let placement =
             SingleHeuristicCzPlacement::new(target_solver, Box::new(DefaultTargetGenerator));
 
-        let initial = vec![(0u32, loc(0, 0)), (1u32, loc(0, 1))];
-        let blocked: Vec<LocationAddr> = Vec::new();
-
-        let via_attempts = placement
-            .solve_with_attempts(
-                initial.iter().copied(),
-                &[0],
-                &[1],
-                blocked.iter().copied(),
-                Some(2000),
+        // Qubit 1 sits on qubit 0's CZ partner word, as in
+        // `single_heuristic_default_solves_cz`.
+        let initial = vec![(0u32, loc(0, 0)), (1u32, loc(1, 0))];
+        let placed = (&placement as &dyn CzPlacement)
+            .place(
+                &CzStage::new(&initial, &[(0, 1)], &[]),
+                &PlacementBudget::new(Some(2000)),
             )
             .unwrap();
-        let via_trait = (&placement as &dyn CzPlacement)
-            .solve(&initial, &[0], &[1], &blocked, Some(2000))
-            .unwrap();
 
-        assert_eq!(via_trait.status, via_attempts.result.status);
-        assert_eq!(via_trait.cost.to_bits(), via_attempts.result.cost.to_bits());
+        assert_eq!(placed.result.status, SolveStatus::Solved);
+        assert_eq!(
+            placed.chosen,
+            Some(placed.attempts.last().unwrap().candidate_index)
+        );
+        assert_eq!(
+            placed.total_expansions,
+            placed
+                .attempts
+                .iter()
+                .map(|a| a.nodes_expanded)
+                .sum::<u32>()
+        );
+        assert!(placed.attempts.iter().all(|a| a.score.is_none()));
     }
 }

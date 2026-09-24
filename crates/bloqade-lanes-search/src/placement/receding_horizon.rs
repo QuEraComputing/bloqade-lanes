@@ -1202,7 +1202,7 @@ fn merge_fallback(
 
 // ── CzPlacement composition ─────────────────────────────────────────────
 
-use crate::placement::cz_placement::CzPlacement;
+use crate::placement::cz_placement::{CzPlacement, CzStage, PlacementBudget, PlacementResult};
 use crate::placement::loose_goal::solve_loose_goal;
 use crate::primitives::config::ConfigError;
 use crate::search::engine::SearchEngine;
@@ -1259,65 +1259,34 @@ impl RecedingHorizonCzPlacement {
     pub fn rh_options(&self) -> &RecedingHorizonOptions {
         &self.rh_options
     }
+}
 
-    /// Solve using the receding-horizon MPC loop.
-    ///
-    /// Equivalent to the trait-level
-    /// [`CzPlacement::solve`](super::cz_placement::CzPlacement::solve)
-    /// but accepts `cz_pairs` and an explicit `future_cz_layers`
-    /// lookahead window directly.
-    pub fn solve_pairs(
+impl CzPlacement for RecedingHorizonCzPlacement {
+    /// `budget.max_expansions` caps the whole stage: every rollout of every
+    /// commit step, plus the end-of-trajectory fallback, which gets what is
+    /// left. Each rollout is also capped by
+    /// [`RecedingHorizonOptions::max_expansions_per_rollout`].
+    fn place(
         &self,
-        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-        cz_pairs: &[(u32, u32)],
-        blocked: impl IntoIterator<Item = LocationAddr>,
-        max_expansions: Option<u32>,
-        future_cz_layers: &[Vec<(u32, u32)>],
-    ) -> Result<SolveResult, ConfigError> {
+        stage: &CzStage<'_>,
+        budget: &PlacementBudget,
+    ) -> Result<PlacementResult, ConfigError> {
         solve_receding_horizon(
             &self.engine,
             &self.search.options,
             &self.entangling_options,
             &self.rh_options,
-            initial,
-            cz_pairs,
-            blocked,
-            max_expansions,
-            future_cz_layers,
+            stage.initial.iter().copied(),
+            stage.pairs,
+            stage.blocked.iter().copied(),
+            budget.max_expansions,
+            stage.future_layers,
         )
+        .map(PlacementResult::single)
     }
 }
 
-impl CzPlacement for RecedingHorizonCzPlacement {
-    fn solve(
-        &self,
-        initial: &[(u32, LocationAddr)],
-        controls: &[u32],
-        targets: &[u32],
-        blocked: &[LocationAddr],
-        max_expansions: Option<u32>,
-    ) -> Result<SolveResult, ConfigError> {
-        debug_assert_eq!(
-            controls.len(),
-            targets.len(),
-            "controls and targets must have equal length",
-        );
-        let cz_pairs: Vec<(u32, u32)> = controls
-            .iter()
-            .copied()
-            .zip(targets.iter().copied())
-            .collect();
-        self.solve_pairs(
-            initial.iter().copied(),
-            &cz_pairs,
-            blocked.iter().copied(),
-            max_expansions,
-            &[],
-        )
-    }
-}
-
-/// Shared implementation backing [`RecedingHorizonCzPlacement::solve_pairs`].
+/// Shared implementation backing [`RecedingHorizonCzPlacement`]'s [`CzPlacement::place`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_receding_horizon(
     engine: &SearchEngine,
@@ -1977,7 +1946,7 @@ mod tests {
         assert!(enough.nodes_expanded <= 12);
     }
 
-    /// End-to-end: `RecedingHorizonCzPlacement::solve_pairs` drives qubits
+    /// End-to-end: `RecedingHorizonCzPlacement::place` drives qubits
     /// from non-entangling positions to a feasible configuration via the
     /// trait surface.
     #[test]
@@ -2003,13 +1972,11 @@ mod tests {
         let blocked: [LocationAddr; 0] = [];
 
         let result = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &[],
+            .place(
+                &CzStage::new(&initial, &cz_pairs, &blocked),
+                &PlacementBudget::new(Some(5000)),
             )
+            .map(|placed| placed.result)
             .unwrap();
 
         assert_eq!(result.status, SolveStatus::Solved);

@@ -172,8 +172,8 @@ pub enum Problem {
     CzStage {
         placement: Placement,
         initial: Vec<(u32, Loc)>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
+        /// The stage's CZ pairs, `(control, target)`.
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<Loc>,
         future: Vec<Vec<(u32, u32)>>,
     },
@@ -213,9 +213,6 @@ pub struct Case {
     pub name: String,
     pub spec: ProblemSpec,
     pub expect: Expect,
-    /// The outcome depends on a `debug_assert!`, so it is only recorded in a
-    /// debug build (which is what `cargo test` and CI use).
-    pub debug_only: bool,
 }
 
 // ── Outcomes ───────────────────────────────────────────────────────────────

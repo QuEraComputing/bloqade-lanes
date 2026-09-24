@@ -52,7 +52,9 @@ pub use generators::{
 };
 pub use goals::{AllAtTarget, EntanglingConstraintGoal, PartialPlacementGoal};
 pub use observer::{EntropyReason, NoOpObserver, SearchEvent, SearchObserver};
-pub use placement::cz_placement::CzPlacement;
+pub use placement::cz_placement::{
+    CandidateAttempt, CzPlacement, CzStage, PlacementBudget, PlacementResult,
+};
 pub use placement::loose_goal::LooseGoalCzPlacement;
 pub use placement::nohome::NoHomeCzPlacement;
 pub use placement::receding_horizon::{
@@ -72,6 +74,5 @@ pub use scorers::DistanceScorer;
 pub use search::engine::SearchEngine;
 pub use search::move_search::MoveSearch;
 pub use search::options::{InnerStrategy, SolveOptions, Strategy};
-pub use search::result::{CandidateAttempt, MultiSolveResult};
 pub use search::target_solver::TargetSolver;
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator, Objective, ObjectiveId};

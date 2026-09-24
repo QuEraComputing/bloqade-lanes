@@ -432,7 +432,7 @@ fn assign_free_slots(
 
 // ── CzPlacement composition ─────────────────────────────────────────────
 
-use crate::placement::cz_placement::CzPlacement;
+use crate::placement::cz_placement::{CzPlacement, CzStage, PlacementBudget, PlacementResult};
 use crate::primitives::config::ConfigError;
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
@@ -487,64 +487,32 @@ impl NoHomeCzPlacement {
     pub fn nohome_options(&self) -> &NoHomeOptions {
         &self.nohome_options
     }
+}
 
-    /// Solve a two-phase no-home placement.
-    ///
-    /// Equivalent to the trait-level
-    /// [`CzPlacement::solve`](super::cz_placement::CzPlacement::solve)
-    /// but accepts `cz_pairs` and an explicit `future_cz_layers`
-    /// lookahead window directly.
-    pub fn solve_pairs(
+impl CzPlacement for NoHomeCzPlacement {
+    /// `budget.max_expansions` caps each routing solve separately: every
+    /// return-phase candidate and the CZ phase each get the full cap (and,
+    /// inside a solve, each restart does).
+    fn place(
         &self,
-        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-        cz_pairs: &[(u32, u32)],
-        blocked: impl IntoIterator<Item = LocationAddr>,
-        max_expansions: Option<u32>,
-        future_cz_layers: &[Vec<(u32, u32)>],
-    ) -> Result<SolveResult, ConfigError> {
+        stage: &CzStage<'_>,
+        budget: &PlacementBudget,
+    ) -> Result<PlacementResult, ConfigError> {
         solve_nohome(
             &self.engine,
             &self.search.options,
             &self.nohome_options,
-            initial,
-            cz_pairs,
-            blocked,
-            max_expansions,
-            future_cz_layers,
+            stage.initial.iter().copied(),
+            stage.pairs,
+            stage.blocked.iter().copied(),
+            budget.max_expansions,
+            stage.future_layers,
         )
+        .map(PlacementResult::single)
     }
 }
 
-impl CzPlacement for NoHomeCzPlacement {
-    fn solve(
-        &self,
-        initial: &[(u32, LocationAddr)],
-        controls: &[u32],
-        targets: &[u32],
-        blocked: &[LocationAddr],
-        max_expansions: Option<u32>,
-    ) -> Result<SolveResult, ConfigError> {
-        debug_assert_eq!(
-            controls.len(),
-            targets.len(),
-            "controls and targets must have equal length",
-        );
-        let cz_pairs: Vec<(u32, u32)> = controls
-            .iter()
-            .copied()
-            .zip(targets.iter().copied())
-            .collect();
-        self.solve_pairs(
-            initial.iter().copied(),
-            &cz_pairs,
-            blocked.iter().copied(),
-            max_expansions,
-            &[],
-        )
-    }
-}
-
-/// Shared implementation backing [`NoHomeCzPlacement::solve_pairs`].
+/// Shared implementation backing [`NoHomeCzPlacement`]'s [`CzPlacement::place`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_nohome(
     engine: &SearchEngine,
@@ -906,7 +874,7 @@ mod tests {
         }
     }
 
-    /// End-to-end smoke: `NoHomeCzPlacement::solve_pairs` runs the full
+    /// End-to-end smoke: `NoHomeCzPlacement::place` runs the full
     /// two-phase pipeline (return assignment + entangling routing) and reaches
     /// a deterministic terminal verdict without erroring. The toy
     /// `example_arch_json` lacks the distinct home/staging zones the no-home
@@ -925,13 +893,11 @@ mod tests {
         let blocked: [LocationAddr; 0] = [];
 
         let result = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &[],
+            .place(
+                &CzStage::new(&initial, &cz_pairs, &blocked),
+                &PlacementBudget::new(Some(5000)),
             )
+            .map(|placed| placed.result)
             .unwrap();
 
         assert_eq!(result.status, SolveStatus::Unsolvable);
@@ -955,13 +921,11 @@ mod tests {
         let placement = NoHomeCzPlacement::new(engine.clone(), search, NoHomeOptions::default());
         let blocked: [LocationAddr; 0] = [];
         let result = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &[],
+            .place(
+                &CzStage::new(initial, cz_pairs, &blocked),
+                &PlacementBudget::new(Some(5000)),
             )
+            .map(|placed| placed.result)
             .unwrap();
         (engine, result)
     }

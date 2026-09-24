@@ -21,8 +21,8 @@
 //! differently but both satisfy the same
 //! [`CzPlacement`](super::cz_placement::CzPlacement) trait.
 //!
-//! Both [`LooseGoalCzPlacement::solve_pairs`] and the free
-//! [`solve_loose_goal`] function share the same implementation.
+//! [`LooseGoalCzPlacement`]'s [`CzPlacement::place`] delegates to the free
+//! [`solve_loose_goal`] function.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ use crate::generators::heuristic::DeadlockPolicy;
 use crate::generators::{HeuristicGenerator, LooseTargetGenerator};
 use crate::goals::EntanglingConstraintGoal;
 use crate::ops::entangling::{self, LOOKAHEAD_BETA, MOVE_PENALTY};
-use crate::placement::cz_placement::CzPlacement;
+use crate::placement::cz_placement::{CzPlacement, CzStage, PlacementBudget, PlacementResult};
 use crate::primitives::config::{Config, ConfigError};
 use crate::primitives::context::SearchContext;
 use crate::primitives::distance::PairDistanceHeuristic;
@@ -87,65 +87,32 @@ impl LooseGoalCzPlacement {
     pub fn entangling_options(&self) -> &EntanglingOptions {
         &self.entangling_options
     }
+}
 
-    /// Solve a loose-goal entangling placement + routing problem.
-    ///
-    /// Equivalent to the trait-level
-    /// [`CzPlacement::solve`](super::cz_placement::CzPlacement::solve)
-    /// but accepts `cz_pairs` as a `&[(u32, u32)]` directly and an
-    /// explicit `future_cz_layers` lookahead window (which the trait
-    /// signature doesn't expose).
-    pub fn solve_pairs(
+impl CzPlacement for LooseGoalCzPlacement {
+    /// `budget.max_expansions` caps the loose-goal solve (each restart
+    /// inside it gets the full cap).
+    fn place(
         &self,
-        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-        cz_pairs: &[(u32, u32)],
-        blocked: impl IntoIterator<Item = LocationAddr>,
-        max_expansions: Option<u32>,
-        future_cz_layers: &[Vec<(u32, u32)>],
-    ) -> Result<SolveResult, ConfigError> {
+        stage: &CzStage<'_>,
+        budget: &PlacementBudget,
+    ) -> Result<PlacementResult, ConfigError> {
         solve_loose_goal(
             &self.engine,
             &self.search.options,
             &self.entangling_options,
-            initial,
-            cz_pairs,
-            blocked,
-            max_expansions,
-            future_cz_layers,
+            stage.initial.iter().copied(),
+            stage.pairs,
+            stage.blocked.iter().copied(),
+            budget.max_expansions,
+            stage.future_layers,
         )
+        .map(PlacementResult::single)
     }
 }
 
-impl CzPlacement for LooseGoalCzPlacement {
-    fn solve(
-        &self,
-        initial: &[(u32, LocationAddr)],
-        controls: &[u32],
-        targets: &[u32],
-        blocked: &[LocationAddr],
-        max_expansions: Option<u32>,
-    ) -> Result<SolveResult, ConfigError> {
-        assert_eq!(
-            controls.len(),
-            targets.len(),
-            "controls and targets must have equal length",
-        );
-        let cz_pairs: Vec<(u32, u32)> = controls
-            .iter()
-            .copied()
-            .zip(targets.iter().copied())
-            .collect();
-        self.solve_pairs(
-            initial.iter().copied(),
-            &cz_pairs,
-            blocked.iter().copied(),
-            max_expansions,
-            &[],
-        )
-    }
-}
-
-/// Shared implementation backing [`LooseGoalCzPlacement::solve_pairs`].
+/// Shared implementation backing [`LooseGoalCzPlacement`]'s
+/// [`CzPlacement::place`].
 ///
 /// Phases:
 ///
@@ -284,31 +251,24 @@ mod tests {
     use crate::search::move_search::MoveSearch;
     use crate::test_utils::{example_arch_json, loc};
 
-    /// Trait-level CzPlacement::solve converts (controls, targets) into
-    /// cz_pairs and produces the same result as solve_pairs.
+    /// A placement that routes once reports no candidates, and its total is
+    /// its one solve's expansions.
     #[test]
-    fn cz_placement_trait_matches_solve_pairs() {
+    fn place_reports_a_single_solve() {
         let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
         let placement =
             LooseGoalCzPlacement::new(engine, MoveSearch::default(), EntanglingOptions::default());
 
         let initial = vec![(0u32, loc(0, 0)), (1u32, loc(0, 1))];
-        let blocked: Vec<LocationAddr> = Vec::new();
-
-        let via_pairs = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                &[(0, 1)],
-                blocked.iter().copied(),
-                Some(2000),
-                &[],
+        let placed = (&placement as &dyn CzPlacement)
+            .place(
+                &CzStage::new(&initial, &[(0, 1)], &[]),
+                &PlacementBudget::new(Some(2000)),
             )
             .unwrap();
-        let via_trait = (&placement as &dyn CzPlacement)
-            .solve(&initial, &[0], &[1], &blocked, Some(2000))
-            .unwrap();
 
-        assert_eq!(via_trait.status, via_pairs.status);
-        assert_eq!(via_trait.cost.to_bits(), via_pairs.cost.to_bits());
+        assert_eq!(placed.chosen, None);
+        assert!(placed.attempts.is_empty());
+        assert_eq!(placed.total_expansions, placed.result.nodes_expanded);
     }
 }

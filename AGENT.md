@@ -172,9 +172,8 @@ with a diff.
   snapshots of the crate's synthetic unit-test specs in
   `tests/fixtures/behaviour/arch/`. They are copies, not live links, so a change
   to `src/test_utils.rs` does not move this golden.
-- **Debug only.** The golden is recorded in a debug build. A few cases depend on
-  `debug_assert!`, so under `--release` they, and the golden comparison, are
-  skipped.
+- **Debug only.** The golden is recorded in a debug build, so under `--release`
+  the golden comparison is skipped.
 - **Micro-benchmarks.** `just bench-search [filter]` (`benches/behaviour.rs`, divan)
   times the corpus's search-heavy cases in a release build: the hard instances,
   the four-pair CZ stages and the anticipatory cases, about 7 s in all. It reports
