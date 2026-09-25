@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from bloqade.analysis.tomography import TomographyResult
 from bloqade.decoders import BaseDecoder
 
 from bloqade.gemini.decoding import experiments as experiments_module
@@ -17,7 +18,6 @@ from bloqade.gemini.decoding.postselection import (
     _shots_at_accepted_fraction,
 )
 from bloqade.gemini.decoding.sampling import _BasisDataset
-from bloqade.gemini.decoding.tomography import TomographyResult
 
 
 def _dataset() -> _BasisDataset:
