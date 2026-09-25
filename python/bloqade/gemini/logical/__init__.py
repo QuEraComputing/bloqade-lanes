@@ -25,6 +25,7 @@ from bloqade.squin.stdlib.simple import (
     y as y,
     z as z,
 )
+from kirin.dialects import ilist as ilist
 
 from bloqade.gemini.common.dialects.arrange import move_to as move_to
 from bloqade.lanes.dialects.arch import loc as loc
