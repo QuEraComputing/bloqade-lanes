@@ -109,16 +109,6 @@ class StackMachineFrame:
         popped.reverse()
         return popped
 
-    def peek_value(self) -> ir.SSAValue:
-        """Return the top-of-stack SSA value without popping.
-
-        Raises:
-            StackUnderflowError: when the stack is empty.
-        """
-        if not self.stack:
-            raise StackUnderflowError(snapshot=self.snapshot(), required=1)
-        return self.stack[-1]
-
     def snapshot(self) -> tuple[ir.SSAValue, ...]:
         """Return a tuple snapshot of the stack -- used for error reporting."""
         return tuple(self.stack)
@@ -298,7 +288,8 @@ class BytecodeDecoder:
         )
 
     def _visit_cpu_dup(self, idx: int, instr: Instruction) -> None:
-        top = self.frame.peek_value()
+        # Popped, not peeked: the two copies `Dup` pushes stand in for it.
+        top = self.frame.pop_value()
         self.frame.push(stack_move.Dup(value=top))
 
     def _visit_cpu_store(self, idx: int, instr: Instruction) -> None:

@@ -174,9 +174,10 @@ class RewriteStackMoveToMove(RewriteRule):
 
     @_rewrite.register(stack_move.Dup)
     def _(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
-        # Dup is a semantic identity — redirect all uses of the result to
+        # Dup is a semantic identity — redirect all uses of both copies to
         # the input in place.
-        stmt.result.replace_by(stmt.value)
+        stmt.top.replace_by(stmt.value)
+        stmt.below.replace_by(stmt.value)
         to_delete.append(stmt)
 
     @_rewrite.register(stack_move.StoreLocal)

@@ -172,10 +172,15 @@ Re-assemble any persisted `.bin` from source.
   `undef`, because the value is the placeholder a lanes op pushes in place of a
   result it does not simulate. Slots scale with how many values are live at
   once, and `stackify` raises `ValueError` rather than need more than the 1024
-  a frame may hold. It also raises on two shapes only decoded bytecode has — a
-  `stack_move.Dup`, and a constant operand below a non-constant one — which it
-  would otherwise reorder
+  a frame may hold. Decoded bytecode's `dup`, and a constant operand below a
+  non-constant one, both come out right: the operands above the constant are
+  reloaded above its clone
   ([#1050](https://github.com/QuEraComputing/bloqade-lanes/issues/1050)).
+- **Changed:** `stack_move.Dup` pops its operand and has two results, `top`
+  and `below`, as `dup` (`a -- a a`) does. It used to have one `result`, and
+  the decoder left the operand it copied on the stack beneath it — a use that
+  was not a pop, which no other `stack_move` statement has.
+  `StackMachineFrame.peek_value`, whose one caller that was, is removed.
 - **New:** `Program.entry_parameters` lists the entry point's declared
   parameter types. `BytecodeDecoder.decode` raises `DecodingError` for an entry
   point that declares any: the kernel it builds takes no arguments, and a

@@ -45,7 +45,7 @@ ZoneAddressType = types.PyClass(ZoneAddress)
 # ArrayType and MeasurementFutureType come from bloqade.lanes.types.
 
 # Type variable for the stack-manipulation invariant:
-#   Dup preserves the top-of-stack type (T → T).
+#   Dup preserves the top-of-stack type (T → T, T).
 T = types.TypeVar("T")
 
 # Type variables for the parameterised ArrayType — used by NewArray (result
@@ -120,13 +120,19 @@ class ConstZone(ir.Statement):
 
 @statement(dialect=dialect)
 class Dup(ir.Statement):
-    """Duplicate the top of the virtual stack. Semantically result ≡ value;
-    preserved as an explicit op to give downstream passes a hook for
-    non-cloning invariants."""
+    """Duplicate the top of the virtual stack: bytecode ``dup``, ``(a -- a a)``.
+
+    Like every other statement here it pops its operand and pushes its
+    results — two of them, both ``≡ value``. ``top`` is the copy left on top,
+    ``below`` the one beneath it, per the first-declared-on-top convention.
+    Each is a value of its own with its own consumer, so an operand is only
+    ever used by the statement that pops it.
+    """
 
     traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: ir.SSAValue = info.argument(T)
-    result: ir.ResultValue = info.result(T)
+    top: ir.ResultValue = info.result(T)
+    below: ir.ResultValue = info.result(T)
 
 
 # ── Locals ─────────────────────────────────────────────────────────────

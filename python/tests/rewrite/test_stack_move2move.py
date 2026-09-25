@@ -104,14 +104,17 @@ def test_store_is_dropped():
 def test_dup_redirects_uses_to_input():
     cf = stack_move.ConstFloat(value=1.0)
     dup = stack_move.Dup(value=cf.result)
-    # Downstream consumer that references Dup's result.
-    consumer = stack_move.GlobalRz(rotation_angle=dup.result)
-    block = _build_stack_move_block([cf, dup, consumer])
+    # A downstream consumer for each of Dup's two copies.
+    consumers = [
+        stack_move.GlobalRz(rotation_angle=dup.top),
+        stack_move.GlobalRz(rotation_angle=dup.below),
+    ]
+    block = _build_stack_move_block([cf, dup, *consumers])
     Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
-    # Dup is gone, and the gate reads the constant straight through it.
+    # Dup is gone, and both gates read the constant straight through it.
     assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
-    gate = next(s for s in block.stmts if isinstance(s, move.GlobalRz))
-    assert _constant(gate.rotation_angle) == 1.0
+    gates = [s for s in block.stmts if isinstance(s, move.GlobalRz)]
+    assert [_constant(gate.rotation_angle) for gate in gates] == [1.0, 1.0]
 
 
 def test_load_redirects_uses_to_the_value_last_stored():

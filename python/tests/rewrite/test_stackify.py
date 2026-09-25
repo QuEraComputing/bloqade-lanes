@@ -436,8 +436,7 @@ def _check_stack_discipline(method: ir.Method) -> None:
         assert len(top) == len(expected) and all(
             a is b for a, b in zip(top, expected)
         ), f"{stmt.name} pops {expected}, but the top of the stack is {top}"
-        if not isinstance(stmt, sm.Dup):  # a peek: its operand stays put
-            del stack[len(stack) - len(expected) :]
+        del stack[len(stack) - len(expected) :]
         if isinstance(stmt, sm.StoreLocal):
             slots[stmt.index] = expected[0]
         elif isinstance(stmt, func.Return):
@@ -646,8 +645,8 @@ def _text(instructions: list) -> str:
             I.cz(),
             I.halt(),
         ],
-        # A copied constant below a non-constant operand: on the stack, so it
-        # is not one of the constants that are cloned above the rest.
+        # The copies of a constant below a non-constant operand: they are
+        # `Dup` results, not constants, so they wait on the stack.
         lambda I: [
             I.const_int(7),
             I.dup(),
@@ -658,11 +657,11 @@ def _text(instructions: list) -> str:
             I.halt(),
         ],
     ],
-    ids=["loaded", "constant", "chained", "twice", "constant_below_a_result"],
+    ids=["loaded", "constant", "chained", "twice", "copies_below_a_result"],
 )
 def test_stackify_round_trips_a_decoded_dup(instructions):
-    """``dup`` copies the top and leaves it, so its operand has one consumer
-    besides and stays on the stack for it: decode → stackify → encode gives
+    """``dup`` pops its operand and pushes two copies, each with a consumer of
+    its own, so there is nothing to spill: decode → stackify → encode gives
     back the program it started from."""
     from bloqade.lanes.bytecode import Instruction
 
@@ -672,47 +671,10 @@ def test_stackify_round_trips_a_decoded_dup(instructions):
     _validates(method)
 
 
-def test_stackify_lowers_a_dup_whose_operand_is_spilled():
-    """The measurement array is copied into a local, and is itself above the
-    ``new_array``'s constant, so it has to be spilled. A reload under the
-    ``dup`` would be left behind, so the ``dup`` goes, and the local's store
-    takes a reload of its own."""
-    from bloqade.lanes.bytecode import Instruction as I
-
-    method, text = _round_trip(
-        [
-            I.const_int(7),
-            I.const_zone(0),
-            I.measure(1),
-            I.await_measure(),
-            I.dup(),
-            I.store("undef", 3),
-            I.new_array(1, 2),
-            I.halt(),
-        ]
-    )
-
-    assert sm.Dup not in [type(s) for s in method.callable_region.blocks[0].stmts]
-    assert text == _text(
-        [
-            I.const_zone(0),
-            I.measure(1),
-            I.await_measure(),
-            I.store("undef", 4),
-            I.load("undef", 4),
-            I.store("undef", 3),
-            I.const_int(7),
-            I.load("undef", 4),
-            I.new_array(1, 2),
-            I.halt(),
-        ]
-    )
-    _validates(method)
-
-
-def test_stackify_lowers_a_dup_of_a_constant_above_a_cloned_one():
-    """A copied constant above one that is cloned would have to be spilled;
-    lowered instead, it and its copy are cloned too."""
+def test_stackify_spills_the_copies_of_a_dup_above_a_constant():
+    """Both copies of a constant sit above the ``new_array``'s other constant,
+    which is cloned in front of it, so they are spilled like any other
+    results — typed as the constant they copy — and reloaded above it."""
     from bloqade.lanes.bytecode import Instruction as I
 
     method, text = _round_trip(
@@ -720,38 +682,54 @@ def test_stackify_lowers_a_dup_of_a_constant_above_a_cloned_one():
     )
 
     assert text == _text(
-        [I.const_int(3), I.const_int(7), I.const_int(7), I.new_array(1, 3), I.halt()]
+        [
+            I.const_int(7),
+            I.dup(),
+            I.store("i64", 0),  # the top copy
+            I.store("i64", 1),
+            I.const_int(3),
+            I.load("i64", 1),
+            I.load("i64", 0),
+            I.new_array(1, 3),
+            I.halt(),
+        ]
     )
     _validates(method)
 
 
-def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
-    """A ``Dup`` result with two consumers is spilled like any other value,
-    typed as what it copies — a zone is a ``u32`` — and the constant stays
-    beneath it for its own consumer."""
+def test_stackify_parks_the_top_copy_to_spill_the_one_below():
+    """The copy beneath is the ``new_array``'s element above its constant, so
+    it is spilled; the one on top is parked on the way down and put back for
+    the program's own ``store``."""
     from bloqade.lanes.bytecode import Instruction as I
 
-    zone = sm.ConstZone(value=ZoneAddress(0))
-    copy = sm.Dup(value=zone.result)
-    first, second = sm.CZ(zone=copy.result), sm.CZ(zone=copy.result)
-    last = sm.CZ(zone=zone.result)
-    ci = sm.ConstInt(value=0)
-    method = _make_method(zone, copy, first, second, last, ci, func.Return(ci.result))
+    method, text = _round_trip(
+        [
+            I.const_int(7),
+            I.const_zone(0),
+            I.measure(1),
+            I.await_measure(),
+            I.dup(),
+            I.store("undef", 3),
+            I.new_array(1, 2),
+            I.halt(),
+        ]
+    )
 
-    stackify(method)
-
-    assert dump_program(method).to_text() == _text(
+    assert text == _text(
         [
             I.const_zone(0),
+            I.measure(1),
+            I.await_measure(),
             I.dup(),
-            I.store("u32", 0),
-            I.load("u32", 0),
-            I.cz(),
-            I.load("u32", 0),
-            I.cz(),
-            I.cz(),
-            I.const_int(0),
-            I.return_(),
+            I.store("undef", 4),  # the top copy, parked
+            I.store("undef", 5),
+            I.load("undef", 4),
+            I.store("undef", 3),
+            I.const_int(7),
+            I.load("undef", 5),
+            I.new_array(1, 2),
+            I.halt(),
         ]
     )
     _validates(method)

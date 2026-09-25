@@ -75,10 +75,22 @@ def test_decode_store_consumes_top():
 
 
 def test_decode_dup_duplicates_top():
-    block = _decode([Instruction.const_int(1), Instruction.dup()])
+    """``dup`` pops the top and pushes two copies of it, the first declared on
+    top: the operand is used by the ``Dup`` alone."""
+    block = _decode(
+        [
+            Instruction.const_int(1),
+            Instruction.dup(),
+            Instruction.store("i64", 0),
+            Instruction.store("i64", 1),
+        ]
+    )
     dup = next(s for s in block.stmts if isinstance(s, stack_move.Dup))
     cint = next(s for s in block.stmts if isinstance(s, stack_move.ConstInt))
+    stores = [s for s in block.stmts if isinstance(s, stack_move.StoreLocal)]
     assert dup.value is cint.result
+    assert [use.stmt for use in cint.result.uses] == [dup]
+    assert [store.value for store in stores] == [dup.top, dup.below]
 
 
 def test_decode_load_pushes_a_fresh_value():
