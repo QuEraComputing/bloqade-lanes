@@ -209,6 +209,49 @@ class InsertGates(AtomStateRewriter):
 class InsertMeasurements(rewrite_abc.RewriteRule):
     physical_ssa_values: dict[int, ir.SSAValue]
     move_exec_analysis: ForwardFrame[atom.MoveExecution]
+    batched_results: dict[move.GetFutureResult, tuple[ir.SSAValue, int]] = field(
+        init=False, default_factory=dict
+    )
+
+    def batch_future_results(self, node: move.GetFutureResult) -> None:
+        """Measure the concrete readouts of one future in record order."""
+        future = node.measurement_future
+        if not isinstance(future, ir.ResultValue) or not isinstance(
+            owner := future.owner, move.EndMeasure
+        ):
+            return
+
+        readouts: list[tuple[int, move.GetFutureResult, int]] = []
+        for use in future.uses:
+            if not isinstance(stmt := use.stmt, move.GetFutureResult):
+                return
+            result = self.move_exec_analysis.get(stmt.result)
+            if isinstance(result, atom.MeasureResult):
+                readouts.append((result.measurement_id, stmt, result.qubit_id))
+
+        if len(readouts) < 2:
+            return
+
+        readouts.sort(key=lambda item: item[0])
+        record_ids = [record_id for record_id, _, _ in readouts]
+        qubit_ids = [qubit_id for _, _, qubit_id in readouts]
+        if record_ids != list(range(record_ids[0], record_ids[0] + len(readouts))):
+            return
+        if len(set(qubit_ids)) != len(qubit_ids):
+            return
+        if any(qubit_id not in self.physical_ssa_values for qubit_id in qubit_ids):
+            return
+
+        qubits = ilist.New(
+            tuple(self.physical_ssa_values[qubit_id] for qubit_id in qubit_ids)
+        )
+        qubits.insert_after(owner)
+        measurement = qubit.stmts.Measure(qubits.result)
+        measurement.insert_after(qubits)
+        self.batched_results.update(
+            (stmt, (measurement.result, index))
+            for index, (_, stmt, _) in enumerate(readouts)
+        )
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, move.GetFutureResult):
@@ -217,6 +260,15 @@ class InsertMeasurements(rewrite_abc.RewriteRule):
         result = self.move_exec_analysis.get(node.result)
         if not isinstance(result, atom.MeasureResult):
             return rewrite_abc.RewriteResult()
+
+        if node not in self.batched_results:
+            self.batch_future_results(node)
+
+        if batched := self.batched_results.get(node):
+            measurements, index = batched
+            (index_stmt := py.Constant(index)).insert_before(node)
+            node.replace_by(py.GetItem(measurements, index_stmt.result))
+            return rewrite_abc.RewriteResult(has_done_something=True)
 
         node.replace_by(
             func.Invoke(
