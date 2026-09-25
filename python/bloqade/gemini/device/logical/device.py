@@ -17,6 +17,7 @@ from ...common.validation.const_address import ConstAddressValidation
 from ...common.validation.duplicate_address import DuplicateAddressValidation
 from ...logical.validation.arguments import GeminiLogicalArgumentValidation
 from ...logical.validation.clifford.analysis import GeminiLogicalValidation
+from ...logical.validation.extensions.analysis import NoLogicalExtensionsValidation
 from ...logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
@@ -48,6 +49,12 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
                 # method can be built without it and handed straight to the
                 # device, so submission is its own enforcement point.
                 GeminiLogicalArgumentValidation,
+                # The experimental extensions leave the logical subspace and
+                # are only meaningful with post-selection the user applies
+                # themselves, so they stay available in simulation (which does
+                # not run this suite) and are rejected here, on the way to the
+                # backend.
+                NoLogicalExtensionsValidation,
             ]
         )
     )

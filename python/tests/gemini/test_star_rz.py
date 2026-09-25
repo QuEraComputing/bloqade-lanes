@@ -6,8 +6,8 @@ from kirin.dialects import func, ilist, py
 from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.dialects import operations
-from bloqade.gemini.logical.dialects.operations.stmts import StarRz
+from bloqade.gemini.logical.dialects import extensions
+from bloqade.gemini.logical.dialects.extensions.stmts import StarRz
 from bloqade.gemini.star import (
     VALID_STEANE_STAR_SUPPORTS,
     validate_steane_star_support,
@@ -25,7 +25,7 @@ def test_star_rz_public_api_single_qubit_lowers_to_statement():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(theta, reg[0])
+        gemini.logical.extensions.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
     star_nodes = [
@@ -44,7 +44,7 @@ def test_star_rz_broadcast_lowers_to_statement():
     @gemini.logical.kernel(aggressive_unroll=True)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.broadcast.star_rz(theta, reg)
+        gemini.logical.extensions.broadcast.star_rz(theta, reg)
         gemini.logical.terminal_measure(reg)
 
     star_nodes = [
@@ -64,7 +64,7 @@ def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        operations.star_rz(theta_turns, reg, qubit_indices=support)
+        extensions.star_rz(theta_turns, reg, qubit_indices=support)
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -79,7 +79,7 @@ def test_star_rz_accepts_keyword_support():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        operations.star_rz(theta_turns, reg, qubit_indices=(1, 2, 6))
+        extensions.star_rz(theta_turns, reg, qubit_indices=(1, 2, 6))
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -103,7 +103,7 @@ def test_star_rz_statement_check_rejects_invalid_support():
         @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
         def kernel():
             reg = squin.qalloc(1)
-            operations.star_rz(
+            extensions.star_rz(
                 (math.pi / 16) / math.tau,
                 ilist.IList([reg[0]]),
                 qubit_indices=(0, 1, 2),
@@ -117,7 +117,7 @@ def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite()
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(theta, reg[0])
+        gemini.logical.extensions.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
     physical_move = LogicalPipeline(
@@ -157,7 +157,7 @@ def test_star_rz_pipeline_accepts_parameterized_theta():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel(theta: float):
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(theta, reg[0])
+        gemini.logical.extensions.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
     physical_move = LogicalPipeline(
@@ -184,7 +184,7 @@ def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():
     def kernel():
         reg = squin.qalloc(1)
         squin.h(reg[0])
-        operations.star_rz(theta_turns, ilist.IList([reg[0]]), qubit_indices=(0, 2, 4))
+        extensions.star_rz(theta_turns, ilist.IList([reg[0]]), qubit_indices=(0, 2, 4))
         gemini.logical.terminal_measure(reg)
 
     physical_move = LogicalPipeline(
@@ -210,7 +210,7 @@ def test_star_rz_without_transversal_rewrite_remains_logical_move_statement():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(math.pi / 16, reg[0])
+        gemini.logical.extensions.star_rz(math.pi / 16, reg[0])
         gemini.logical.terminal_measure(reg)
 
     logical_move = LogicalPipeline(

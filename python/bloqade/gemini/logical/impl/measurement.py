@@ -4,7 +4,7 @@ from bloqade.analysis.measure_id.lattice import MeasureIdTuple
 from kirin import interp as _interp, ir
 from kirin.analysis import ForwardFrame
 
-from ..dialects import operations
+from ..dialects import extensions, operations
 
 if TYPE_CHECKING:
     from ..validation.measurement.analysis import (
@@ -72,12 +72,19 @@ class __GeminiLogicalMeasurementValidation(_interp.MethodTable):
 
         return (interp.lattice.bottom(),)
 
-    @_interp.impl(operations.stmts.StarRz)
+
+# NOTE: a separate table because `StarRz` lives in the `extensions` dialect, not
+# in `operations` -- an impl registered above would never be reached for it. It
+# is checked here for the same reason the gates next door are: it acts on qubits,
+# so applying one after the terminal measurement is the same mistake.
+@extensions.dialect.register(key="gemini.validate.terminal_measurement")
+class __GeminiLogicalExtensionsMeasurementValidation(_interp.MethodTable):
+    @_interp.impl(extensions.stmts.StarRz)
     def star_rz(
         self,
         interp: "_GeminiTerminalMeasurementValidationAnalysis",
         frame: ForwardFrame,
-        stmt: operations.stmts.StarRz,
+        stmt: extensions.stmts.StarRz,
     ):
         interp.check_gate_after_measurement(stmt)
         return ()
