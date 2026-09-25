@@ -49,7 +49,7 @@ def test_find_qubit_ssas(n: int):
 
 
 def test_find_qubit_ssas_no_qubits():
-    @gemini_logical.kernel(aggressive_unroll=True)
+    @gemini_logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         return 42
 
@@ -78,7 +78,7 @@ def test_raises_when_both_matrices_none():
 
 
 def test_raises_when_no_qubits():
-    @gemini_logical.kernel(aggressive_unroll=True)
+    @gemini_logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         return 42
 

@@ -514,6 +514,9 @@ fn check_zone_entangling_pairs(
     errors: &mut Vec<ArchSpecError>,
 ) {
     let mut seen: HashSet<[u32; 2]> = HashSet::new();
+    // A word has at most one CZ partner per zone. The same word may still be
+    // paired in other zones: the word template is spec-wide, pairs are per zone.
+    let mut pair_of_word: HashMap<u32, usize> = HashMap::new();
     for (idx, pair) in zone.entangling_pairs.iter().enumerate() {
         let [a, b] = *pair;
         if a as usize >= num_words {
@@ -540,6 +543,22 @@ fn check_zone_entangling_pairs(
                 "zone[{}].entangling_pairs[{}]: duplicate pair [{}, {}]",
                 zone_idx, idx, a, b
             )));
+            // Already reported as a duplicate; don't also flag its words.
+            continue;
+        }
+        if a == b {
+            continue;
+        }
+        for word in [a, b] {
+            if let Some(&first) = pair_of_word.get(&word) {
+                errors.push(ArchSpecError::EntanglingPair(format!(
+                    "zone[{}].entangling_pairs[{}]: word {} is already paired in \
+                     entangling_pairs[{}] (a word has at most one partner per zone)",
+                    zone_idx, idx, word, first
+                )));
+            } else {
+                pair_of_word.insert(word, idx);
+            }
         }
     }
 }
@@ -1070,6 +1089,63 @@ mod tests {
             spec.validate(),
             Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::EntanglingPair(msg) if msg.contains("duplicate")))
         ));
+    }
+
+    /// `make_valid_two_zone_spec` with a third word, so overlapping pairs
+    /// like `[[0, 1], [1, 2]]` can be expressed.
+    fn make_valid_three_word_spec() -> ArchSpec {
+        let mut spec = make_valid_two_zone_spec();
+        spec.words.push(Word {
+            sites: vec![[2, 0], [2, 1]],
+        });
+        spec
+    }
+
+    #[test]
+    fn test_validate_entangling_pair_word_in_two_pairs() {
+        let mut spec = make_valid_three_word_spec();
+        assert!(spec.validate().is_ok());
+        spec.zones[0].entangling_pairs = vec![[0, 1], [1, 2]];
+        let errs = spec.validate().unwrap_err();
+        let overlap: Vec<_> = errs
+            .iter()
+            .filter(|e| matches!(e, ArchSpecError::EntanglingPair(msg) if msg.contains("already paired")))
+            .collect();
+        assert_eq!(overlap.len(), 1, "{errs:?}");
+        assert_eq!(
+            overlap[0].to_string(),
+            "zone[0].entangling_pairs[1]: word 1 is already paired in \
+             entangling_pairs[0] (a word has at most one partner per zone)"
+        );
+    }
+
+    #[test]
+    fn test_validate_entangling_pair_reports_every_overlapping_word() {
+        let mut spec = make_valid_three_word_spec();
+        spec.zones[0].entangling_pairs = vec![[0, 1], [1, 2], [2, 0]];
+        let errs = spec.validate().unwrap_err();
+        let overlap = errs
+            .iter()
+            .filter(|e| matches!(e, ArchSpecError::EntanglingPair(msg) if msg.contains("already paired")))
+            .count();
+        // [1, 2] re-pairs word 1; [2, 0] re-pairs words 2 and 0.
+        assert_eq!(overlap, 3, "{errs:?}");
+    }
+
+    #[test]
+    fn test_validate_entangling_pair_same_word_in_different_zones() {
+        let mut spec = make_valid_three_word_spec();
+        spec.zones[0].entangling_pairs = vec![[0, 1]];
+        spec.zones[1].entangling_pairs = vec![[1, 2]];
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_entangling_pair_duplicate_not_reported_as_overlap() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].entangling_pairs = vec![[0, 1], [1, 0]];
+        let errs = spec.validate().unwrap_err();
+        assert_eq!(errs.len(), 1, "{errs:?}");
     }
 
     #[test]

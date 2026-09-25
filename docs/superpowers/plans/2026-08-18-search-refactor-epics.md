@@ -1,14 +1,14 @@
 # Search-crate refactor — epic breakdown
 
 **Date:** 2026-08-18. **Revised 2026-09-23 (binding-first).**
-**Status:** in progress. Epics 0, 1, 2A, 2B, 3A.0 and 3A and Epic 4 phase 1 are done
-(2A as #1059, #1060, #1061, #1063, #1065; 3A.0 and 3A as #1066–#1070; 2B as #1071–#1074;
-Epic 4 phase 1 as #1076). Epic 4 phases 2–3 land together (decision 2, now decided), and
-decision 8 is decided (keep the slices). Left: Epic 5 (deferred), Epic 4's optional
-extensions and the Parked items. The branch lands on `main` as one squash once the
-refactor is done.
+**Status:** **done (2026-09-24).** Epics 0 (#1048), 1 (#1051), 2A (#1059, #1060, #1061,
+#1063, #1065), 3A.0 and 3A (#1066–#1070), 2B (#1071–#1074) and 4 (phase 1 #1076, phases
+2–3 #1083) are merged into the review branch, and every decision is decided. Not done, and
+now follow-ups outside this plan: Epic 5 (deferred until the loose-goal path needs work),
+Epic 4's optional extensions, the Parked items, and #1084 (proving infeasible CZ stages).
+The branch lands on `main` as one squash.
 **Branch model:** the refactor lives on `claude/search-crate-refactor`, a long-lived review
-branch that is **not merged into `main`**.
+branch that lands on `main` once, as a single squash, when the refactor is done.
 - Each epic phase lands as its own PR into that branch, with Phase A and Phase B as
   separate PRs. Each phase therefore gets its own review and its own CI run: `ci.yml` and
   `lint.yml` run on every pull request, whatever its base, including the benchmark gate.
@@ -921,7 +921,11 @@ extensions (P&R seed incumbent, class-bound pruning over candidates) stay open.
      caller-supplied candidates;
    - generators ported to Rust.
 
-   Optional extensions, each of which needs machinery not on `main`:
+   Optional extensions, each of which needs machinery not on `main`. **Not done; follow-ups
+   outside this refactor (2026-09-24).** The seed incumbent helps only a search that runs
+   a completion bound, which the default pipeline does not; class-bound pruning targets
+   `ROUTE_ALL`'s cost and wants a measurement (how many routings it would skip) before
+   the bound is ported:
    - **Seed incumbent:** use the P&R plan as the search's starting incumbent. There is no
      API today for seeding a search with an outside incumbent; the B&B driver's was
      dropped with PR #1004.
@@ -942,6 +946,9 @@ the default family changes. Update the candidate-order goldens from Epic 1 under
 ---
 
 ## Epic 5 — Placement lift for the loose-goal path (optional, deferred)
+
+**Not done; a follow-up outside this refactor (2026-09-24).** Its trigger has not
+occurred.
 
 The design's §7 is softened per critique F6. Pair coordination (`cz_pairs`,
 `CzCoordination`, loose-goal target assignment) is lifted out of `HeuristicGenerator`.
