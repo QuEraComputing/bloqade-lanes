@@ -436,7 +436,8 @@ def _check_stack_discipline(method: ir.Method) -> None:
         assert len(top) == len(expected) and all(
             a is b for a, b in zip(top, expected)
         ), f"{stmt.name} pops {expected}, but the top of the stack is {top}"
-        del stack[len(stack) - len(expected) :]
+        if not isinstance(stmt, sm.Dup):  # a peek: its operand stays put
+            del stack[len(stack) - len(expected) :]
         if isinstance(stmt, sm.StoreLocal):
             slots[stmt.index] = expected[0]
         elif isinstance(stmt, func.Return):
@@ -596,65 +597,234 @@ def test_stackify_reloads_every_argument_of_a_consumer_that_takes_a_spilled_one(
     _validates(method)
 
 
-def test_stackify_rejects_a_decoded_dup():
-    """``dup`` copies the top without popping it, which Pass 3 does not model
-    (#1050): its operand would be spilled and the reload left behind."""
-    from bloqade.lanes.bytecode import Instruction, Program
+def _round_trip(instructions: list) -> tuple[ir.Method, str]:
+    """Decode ``instructions``, stackify, and encode again: the method and the
+    text it encodes to. The input has to be one the validator accepts."""
+    from bloqade.lanes.bytecode import Program
 
-    method = load_program(
-        Program(
-            version=(1, 0),
-            instructions=[
-                Instruction.const_zone(0),
-                Instruction.dup(),
-                Instruction.cz(),
-                Instruction.cz(),
-                Instruction.halt(),
-            ],
-        )
-    )
-    with pytest.raises(ValueError, match="decoded dup"):
-        stackify(method)
+    program = Program(version=(1, 0), instructions=instructions)
+    program.validate(stack=True)
+    method = load_program(program)
+    stackify(method)
+    return method, dump_program(method).to_text()
+
+
+def _text(instructions: list) -> str:
+    from bloqade.lanes.bytecode import Program
+
+    return Program(version=(1, 0), instructions=instructions).to_text()
 
 
 @pytest.mark.parametrize(
     "instructions",
     [
-        # A constant element beneath a measurement array.
+        # #1050's: two locals loaded and the top one copied.
         lambda I: [
+            I.const_zone(1),
+            I.store("u32", 10),
+            I.const_zone(0),
+            I.store("u32", 11),
+            I.load("u32", 10),
+            I.load("u32", 11),
+            I.dup(),
+            I.cz(),
+            I.cz(),
+            I.cz(),
+            I.halt(),
+        ],
+        # A constant copied: it stays where it was, uncloned.
+        lambda I: [I.const_zone(0), I.dup(), I.cz(), I.cz(), I.halt()],
+        # A copy of a copy.
+        lambda I: [I.const_zone(0), I.dup(), I.dup(), I.cz(), I.cz(), I.cz(), I.halt()],
+        # One value copied twice, with its first copy consumed in between.
+        lambda I: [
+            I.const_zone(0),
+            I.dup(),
+            I.cz(),
+            I.dup(),
+            I.cz(),
+            I.cz(),
+            I.halt(),
+        ],
+        # A copied constant below a non-constant operand: on the stack, so it
+        # is not one of the constants that are cloned above the rest.
+        lambda I: [
+            I.const_int(7),
+            I.dup(),
+            I.const_zone(0),
+            I.measure(1),
+            I.await_measure(),
+            I.new_array(1, 3),
+            I.halt(),
+        ],
+    ],
+    ids=["loaded", "constant", "chained", "twice", "constant_below_a_result"],
+)
+def test_stackify_round_trips_a_decoded_dup(instructions):
+    """``dup`` copies the top and leaves it, so its operand has one consumer
+    besides and stays on the stack for it: decode → stackify → encode gives
+    back the program it started from."""
+    from bloqade.lanes.bytecode import Instruction
+
+    method, text = _round_trip(instructions(Instruction))
+
+    assert text == _text(instructions(Instruction))
+    _validates(method)
+
+
+def test_stackify_lowers_a_dup_whose_operand_is_spilled():
+    """The measurement array is copied into a local, and is itself above the
+    ``new_array``'s constant, so it has to be spilled. A reload under the
+    ``dup`` would be left behind, so the ``dup`` goes, and the local's store
+    takes a reload of its own."""
+    from bloqade.lanes.bytecode import Instruction as I
+
+    method, text = _round_trip(
+        [
             I.const_int(7),
             I.const_zone(0),
             I.measure(1),
             I.await_measure(),
+            I.dup(),
+            I.store("undef", 3),
             I.new_array(1, 2),
             I.halt(),
-        ],
-        # A constant location beneath a `local_r` whose rotation is computed.
-        lambda I: [
-            I.const_loc(0, 0, 0),
-            I.initial_fill(1),
-            I.const_loc(0, 0, 0),
-            I.const_float(0.5),
-            I.new_array(0, 1),
-            I.const_int(0),
-            I.get_item(1),
-            I.const_float(1.0),
-            I.local_r(1),
+        ]
+    )
+
+    assert sm.Dup not in [type(s) for s in method.callable_region.blocks[0].stmts]
+    assert text == _text(
+        [
+            I.const_zone(0),
+            I.measure(1),
+            I.await_measure(),
+            I.store("undef", 4),
+            I.load("undef", 4),
+            I.store("undef", 3),
+            I.const_int(7),
+            I.load("undef", 4),
+            I.new_array(1, 2),
             I.halt(),
-        ],
+        ]
+    )
+    _validates(method)
+
+
+def test_stackify_lowers_a_dup_of_a_constant_above_a_cloned_one():
+    """A copied constant above one that is cloned would have to be spilled;
+    lowered instead, it and its copy are cloned too."""
+    from bloqade.lanes.bytecode import Instruction as I
+
+    method, text = _round_trip(
+        [I.const_int(3), I.const_int(7), I.dup(), I.new_array(1, 3), I.halt()]
+    )
+
+    assert text == _text(
+        [I.const_int(3), I.const_int(7), I.const_int(7), I.new_array(1, 3), I.halt()]
+    )
+    _validates(method)
+
+
+def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
+    """A ``Dup`` result with two consumers is spilled like any other value,
+    typed as what it copies — a zone is a ``u32`` — and the constant stays
+    beneath it for its own consumer."""
+    from bloqade.lanes.bytecode import Instruction as I
+
+    zone = sm.ConstZone(value=ZoneAddress(0))
+    copy = sm.Dup(value=zone.result)
+    first, second = sm.CZ(zone=copy.result), sm.CZ(zone=copy.result)
+    last = sm.CZ(zone=zone.result)
+    ci = sm.ConstInt(value=0)
+    method = _make_method(zone, copy, first, second, last, ci, func.Return(ci.result))
+
+    stackify(method)
+
+    assert dump_program(method).to_text() == _text(
+        [
+            I.const_zone(0),
+            I.dup(),
+            I.store("u32", 0),
+            I.load("u32", 0),
+            I.cz(),
+            I.load("u32", 0),
+            I.cz(),
+            I.cz(),
+            I.const_int(0),
+            I.return_(),
+        ]
+    )
+    _validates(method)
+
+
+@pytest.mark.parametrize(
+    "instructions, expected",
+    [
+        # A constant element beneath a measurement array: the array is parked
+        # and reloaded above the constant's clone.
+        (
+            lambda I: [
+                I.const_int(7),
+                I.const_zone(0),
+                I.measure(1),
+                I.await_measure(),
+                I.new_array(1, 2),
+                I.halt(),
+            ],
+            lambda I: [
+                I.const_zone(0),
+                I.measure(1),
+                I.await_measure(),
+                I.store("undef", 0),
+                I.const_int(7),
+                I.load("undef", 0),
+                I.new_array(1, 2),
+                I.halt(),
+            ],
+        ),
+        # A constant location beneath a `local_r` whose rotation is computed:
+        # the rotation's reload goes between the location and the axis.
+        (
+            lambda I: [
+                I.const_loc(0, 0, 0),
+                I.initial_fill(1),
+                I.const_loc(0, 0, 0),
+                I.const_float(0.5),
+                I.new_array(0, 1),
+                I.const_int(0),
+                I.get_item(1),
+                I.const_float(1.0),
+                I.local_r(1),
+                I.halt(),
+            ],
+            lambda I: [
+                I.const_loc(0, 0, 0),
+                I.initial_fill(1),
+                I.const_float(0.5),
+                I.new_array(0, 1),
+                I.const_int(0),
+                I.get_item(1),
+                I.store("undef", 0),
+                I.const_loc(0, 0, 0),
+                I.load("undef", 0),
+                I.const_float(1.0),
+                I.local_r(1),
+                I.halt(),
+            ],
+        ),
     ],
     ids=["new_array", "local_r"],
 )
-def test_stackify_rejects_a_constant_below_a_non_constant_operand(instructions):
-    """Pass 1 hoists every constant above a consumer's other operands, so one
-    that belongs below them would move (#1050)."""
-    from bloqade.lanes.bytecode import Instruction, Program
+def test_stackify_interleaves_constants_and_reloads(instructions, expected):
+    """A constant below a non-constant operand is cloned in front of the
+    consumer, so what belongs above it is parked and reloaded above the
+    clone: each consumer's operands come out in one deepest-first sequence."""
+    from bloqade.lanes.bytecode import Instruction
 
-    method = load_program(
-        Program(version=(1, 0), instructions=instructions(Instruction))
-    )
-    with pytest.raises(ValueError, match="constant operand below a non-constant"):
-        stackify(method)
+    method, text = _round_trip(instructions(Instruction))
+
+    assert text == _text(expected(Instruction))
+    _validates(method)
 
 
 def _fifo_detectors(count: int) -> ir.Method:
