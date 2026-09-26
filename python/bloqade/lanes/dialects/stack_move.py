@@ -8,7 +8,7 @@ from bloqade.decoders.dialects.annotate.types import (
     MeasurementResultType,
     ObservableType,
 )
-from kirin import ir, lowering, types
+from kirin import interp, ir, lowering, types
 from kirin.decl import info, statement
 from kirin.ir import StmtTrait
 
@@ -399,3 +399,35 @@ class SetObservable(ir.Statement):
 # ``func.Return``, whose type-inference methods come from the ``func``
 # dialect itself. Every other stack_move statement's result type is
 # fully determined by its declaration.
+
+
+# ── Concrete interpretation ────────────────────────────────────────────
+#
+# The statements whose value is known without running the device: the
+# constants and ``Dup``. Kirin's constant propagation falls back to these for a
+# ``Pure`` statement with no ``constprop`` method, so a constant is propagated
+# through a ``Dup`` to its consumers, and ``ConstantFold`` + DCE remove a ``Dup``
+# of a constant from the IR. Every other statement acts on the device, or on
+# the frame's locals, and has no Python value to compute here.
+
+
+@dialect.register
+class Concrete(interp.MethodTable):
+
+    @interp.impl(ConstFloat)
+    @interp.impl(ConstInt)
+    @interp.impl(ConstLoc)
+    @interp.impl(ConstLane)
+    @interp.impl(ConstZone)
+    def const(
+        self,
+        _interp: interp.Interpreter,
+        frame: interp.Frame,
+        stmt: ConstFloat | ConstInt | ConstLoc | ConstLane | ConstZone,
+    ):
+        return (stmt.value,)
+
+    @interp.impl(Dup)
+    def dup(self, _interp: interp.Interpreter, frame: interp.Frame, stmt: Dup):
+        value = frame.get(stmt.value)
+        return (value, value)
