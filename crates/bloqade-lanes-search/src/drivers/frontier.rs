@@ -820,6 +820,15 @@ where
             // distinct configuration counts once however many parents
             // generate it, as `BoundStats` promises.
             if !P::OFF {
+                // A configuration the graph already holds at no higher `g` is
+                // a re-generated duplicate that `insert` drops unchanged, not
+                // a cut: skip it before it is gated or counted.
+                if graph
+                    .seen_id(&candidate.new_config)
+                    .is_some_and(|id| graph.g_score(id) <= new_g)
+                {
+                    continue;
+                }
                 let h = gate.estimate(&candidate.new_config);
                 let child_depth = depth + 1;
                 if h == f64::INFINITY {
@@ -1942,5 +1951,65 @@ mod tests {
             None,
         );
         assert!(result.goal.is_some(), "v2 should find a solution");
+    }
+
+    /// The exact remaining hop count along [`LineGen`]'s line, as a
+    /// completion bound for [`UniformCost`].
+    struct LineBound {
+        objective_id: crate::traits::ObjectiveId,
+        goal_site: u32,
+    }
+
+    impl CompletionBound for LineBound {
+        type Obj = UniformCost;
+
+        fn objective_id(&self) -> crate::traits::ObjectiveId {
+            self.objective_id
+        }
+
+        fn estimate(&self, config: &Config) -> f64 {
+            let site = config.location_of(0).expect("qubit 0").site_id;
+            f64::from(site.abs_diff(self.goal_site))
+        }
+    }
+
+    /// The gate counts a cut only for a child it drops. Walking the line from
+    /// site 0 to site 4 under a cap of 5 re-generates, from every node, the
+    /// node behind it at a higher `g`: a duplicate `insert` would ignore, not
+    /// a cut. Every child that is not a duplicate stays under the cap, so the
+    /// solve cuts nothing.
+    #[test]
+    fn the_gate_does_not_count_duplicates_as_cuts() {
+        let fx = Fixture::new();
+        let objective = UniformCost;
+        let bound = LineBound {
+            objective_id: objective.id(),
+            goal_site: 4,
+        };
+        let mut frontier = PriorityFrontier::astar(manhattan(4), 1.0);
+        let result = run_search_bounded(
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 4 },
+            &ZeroScorer,
+            &objective,
+            &SiteGoal { target: 4 },
+            &mut frontier,
+            &fx.ctx(),
+            &mut SearchState::default(),
+            &mut crate::observer::NoOpObserver,
+            None,
+            None,
+            Some(5.0),
+            &bound,
+        );
+
+        assert!(result.goal.is_some());
+        let stats = result.bound_stats;
+        assert!(stats.bound_enabled);
+        assert_eq!(
+            stats.cuts_by_g + stats.cuts_by_h + stats.cuts_infeasible,
+            0,
+            "{stats:?}"
+        );
     }
 }

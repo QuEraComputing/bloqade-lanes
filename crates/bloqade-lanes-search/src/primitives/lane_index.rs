@@ -307,16 +307,36 @@ impl LaneIndex {
     /// generator emits a shot the hardware cannot drive.
     ///
     /// **Not honoured by Push and Rotate.** The planner's scheduler batches
-    /// rectangles without consulting a capacity, so
-    /// [`Strategy::PushRotate`](crate::search::options::Strategy::PushRotate)
-    /// and the `fallback_push_rotate` path can return a shot wider than the
-    /// cap. The planner does not *grow* rectangles the way the shot assemblers
-    /// do — it packages the moves a plan already needs — so it is not expected
-    /// to exceed a real hardware limit in practice, and threading the cap
-    /// through its scheduler is deliberately left as follow-up. Treat the cap
-    /// as binding on the search strategies only.
+    /// rectangles without consulting a capacity, and packs the largest ready
+    /// batch, so [`Strategy::PushRotate`](crate::search::options::Strategy::PushRotate)
+    /// can return a shot wider than the cap. The search strategies'
+    /// `fallback_push_rotate` path discards such a plan (see
+    /// [`admits_shot`](Self::admits_shot)), so the cap is binding on every
+    /// search strategy's result. Threading the cap through the planner's
+    /// scheduler is left as follow-up.
     pub fn aod_capacity(&self) -> Option<AodCapacity> {
         self.arch_spec.aod_capacity
+    }
+
+    /// Whether `lanes`, moved as one shot, fit [`aod_capacity`](Self::aod_capacity):
+    /// at most `x` distinct source columns and `y` distinct source rows,
+    /// counted by source position as the shot assemblers count them. Always
+    /// true when the architecture sets no capacity.
+    pub fn admits_shot(&self, lanes: &[LaneAddr]) -> bool {
+        let Some(capacity) = self.aod_capacity() else {
+            return true;
+        };
+        let mut columns = std::collections::HashSet::new();
+        let mut rows = std::collections::HashSet::new();
+        for (x, y) in lanes
+            .iter()
+            .filter_map(|lane| self.endpoints(lane))
+            .filter_map(|(src, _)| self.position(src))
+        {
+            columns.insert(x.to_bits());
+            rows.insert(y.to_bits());
+        }
+        capacity.admits(columns.len(), rows.len())
     }
 
     /// Number of sites per word. The word template is spec-wide, so this is

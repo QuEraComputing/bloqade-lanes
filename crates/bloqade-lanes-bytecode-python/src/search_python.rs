@@ -198,8 +198,12 @@ impl PyDeadlockPolicy {
 /// Python equality for a typed result enum: equal to its own members, and a
 /// `TypeError` against a `str`, so code still comparing with the string labels
 /// these replaced fails loudly instead of silently reading `False`.
+///
+/// Each member hashes like the label it replaced, so a hashed lookup against
+/// that label (`status in {"solved"}`, `labels[status]`) reaches `__eq__` and
+/// raises too, rather than silently missing.
 macro_rules! typed_result_enum {
-    ($ty:ident, $pyname:literal, [$($variant:ident => $name:literal),+ $(,)?]) => {
+    ($ty:ident, $pyname:literal, [$($variant:ident => ($name:literal, $label:literal)),+ $(,)?]) => {
         #[pymethods]
         impl $ty {
             /// The member's name.
@@ -210,8 +214,11 @@ macro_rules! typed_result_enum {
                 }
             }
 
-            fn __hash__(&self) -> u64 {
-                *self as u64
+            fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
+                let label = match self {
+                    $(Self::$variant => $label,)+
+                };
+                pyo3::types::PyString::new(py, label).hash()
             }
 
             fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
@@ -262,9 +269,9 @@ pub enum PySolveStatus {
 }
 
 typed_result_enum!(PySolveStatus, "SolveStatus", [
-    Solved => "SOLVED",
-    Unsolvable => "UNSOLVABLE",
-    BudgetExceeded => "BUDGET_EXCEEDED",
+    Solved => ("SOLVED", "solved"),
+    Unsolvable => ("UNSOLVABLE", "unsolvable"),
+    BudgetExceeded => ("BUDGET_EXCEEDED", "budget_exceeded"),
 ]);
 
 impl PySolveStatus {
@@ -299,9 +306,9 @@ pub enum PyTermination {
 }
 
 typed_result_enum!(PyTermination, "Termination", [
-    Budget => "BUDGET",
-    Exhausted => "EXHAUSTED",
-    Stopped => "STOPPED",
+    Budget => ("BUDGET", "budget"),
+    Exhausted => ("EXHAUSTED", "exhausted"),
+    Stopped => ("STOPPED", "stopped"),
 ]);
 
 /// What a result proves, when it proves anything.
@@ -322,9 +329,10 @@ pub enum PyProof {
     NoPlan = 1,
 }
 
+// `Proof` replaced a bool rather than labels, so it hashes like its names.
 typed_result_enum!(PyProof, "Proof", [
-    Optimal => "OPTIMAL",
-    NoPlan => "NO_PLAN",
+    Optimal => ("OPTIMAL", "OPTIMAL"),
+    NoPlan => ("NO_PLAN", "NO_PLAN"),
 ]);
 
 /// The proof a result carries: optimal when solved, no plan when unsolvable,
@@ -1014,8 +1022,9 @@ impl PyEntropyScorer {
 /// ``RULE`` applies a fixed per-pair rule. ``RANKED`` (the default) plans every
 /// candidate with Push and Rotate, routes the one with the shortest plan and
 /// the rule's, and keeps whichever takes fewer layers, so it is never worse
-/// than ``RULE``. ``ROUTE_ALL`` routes every candidate and keeps the one with
-/// the fewest move layers.
+/// than ``RULE``; when the rule's candidate does not route, the ranked
+/// candidates are routed in order until one does. ``ROUTE_ALL`` routes every
+/// candidate and keeps the one with the fewest move layers.
 #[pyclass(
     from_py_object,
     name = "MoverSelection",
@@ -2190,8 +2199,8 @@ impl PySingleHeuristicCzPlacement {
 ///
 /// Simultaneously discovers the entangling placement and the routing path
 /// using ``EntanglingConstraintGoal``. Faster than the two-phase heuristic
-/// approach for small atom counts; may need ``solve_pairs`` when future-layer
-/// lookahead is required.
+/// approach for small atom counts; pass ``future_layers`` to ``place`` for
+/// multi-layer lookahead.
 #[pyclass(
     name = "LooseGoalCzPlacement",
     frozen,

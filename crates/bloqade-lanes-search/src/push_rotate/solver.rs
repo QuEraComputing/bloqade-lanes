@@ -85,6 +85,21 @@ pub fn solve_push_rotate_with(
     // that cannot be expressed, so report it as unsolvable rather than
     // erroring.
     let Some(initial_v) = to_vertices(&graph, initial) else {
+        // Except an atom starting on a blocked site: that is a legal start
+        // (the atom only moves off it), which the lane graph simply has no
+        // vertex for. The planner cannot represent it, so it gives up, and
+        // giving up proves nothing.
+        if initial
+            .iter()
+            .any(|(_, loc)| blocked_set.contains(&loc.encode()))
+        {
+            return Ok(SolveResult::unsolved(
+                SolveStatus::BudgetExceeded,
+                root,
+                0,
+                0,
+            ));
+        }
         return Ok(SolveResult::proven_unsolvable(root));
     };
     let Some(target_v) = to_vertices(&graph, target) else {

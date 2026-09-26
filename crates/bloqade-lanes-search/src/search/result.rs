@@ -562,6 +562,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
@@ -592,6 +593,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 5)), (1, loc(1, 5))],
             &[(0, 1)],
@@ -612,6 +614,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [
                 (0, loc(0, 0)),
@@ -649,6 +652,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 3))],
             &[(0, 1)],
@@ -672,6 +676,7 @@ mod tests {
                 strategy: Strategy::Ids,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
@@ -695,6 +700,7 @@ mod tests {
                 },
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],

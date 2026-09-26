@@ -747,6 +747,71 @@ fn big_cz_cases() -> Vec<Case> {
             ));
         }
     }
+    // `Ranked`'s own paths, which the stages above never reach: the rule's
+    // candidate routes but Push and Rotate ranks another first, so the
+    // ranked pick is routed too. It wins on fewer layers here...
+    cases.push(case(
+        "cz/nohome/ranked/logical_ranked_pick_wins",
+        stage(
+            Arch::GeminiLogical,
+            Placement::NoHome,
+            Strategy::Entropy,
+            &[
+                (0, loc(16, 0)),
+                (1, loc(10, 0)),
+                (2, loc(12, 0)),
+                (3, loc(4, 0)),
+            ],
+            &[(0, 1), (2, 3)],
+        ),
+    ));
+    // ...and here it fails to route, which ends the phase on the rule's plan
+    // rather than sending it down the ranked list...
+    cases.push(case(
+        "cz/nohome/ranked/physical_ranked_pick_fails_after_rule",
+        stage(
+            Arch::GeminiPhysical,
+            Placement::NoHome,
+            Strategy::AStar,
+            &[
+                (0, loc(6, 1)),
+                (1, loc(0, 7)),
+                (2, loc(0, 3)),
+                (3, loc(10, 6)),
+                (4, loc(12, 5)),
+                (5, loc(14, 0)),
+                (6, loc(18, 6)),
+            ],
+            &[(0, 1), (2, 3), (4, 5)],
+        ),
+    ));
+    // ...and with seven pairs, over `max_mover_candidates`, the winner is one
+    // of the seeded samples rather than the rule or a single-pair flip.
+    cases.push(case(
+        "cz/nohome/ranked/physical_seven_pairs_sampled",
+        stage(
+            Arch::GeminiPhysical,
+            Placement::NoHome,
+            Strategy::Entropy,
+            &[
+                (0, loc(0, 6)),
+                (1, loc(8, 3)),
+                (2, loc(2, 5)),
+                (3, loc(18, 7)),
+                (4, loc(8, 4)),
+                (5, loc(4, 3)),
+                (6, loc(6, 7)),
+                (7, loc(8, 2)),
+                (8, loc(12, 7)),
+                (9, loc(16, 1)),
+                (10, loc(10, 0)),
+                (11, loc(6, 0)),
+                (12, loc(10, 7)),
+                (13, loc(12, 6)),
+            ],
+            &[(0, 1), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11), (12, 13)],
+        ),
+    ));
     cases
 }
 
@@ -1032,18 +1097,16 @@ fn edge_cases() -> Vec<Case> {
             logical(&[(0, loc(0, 0)), (1, loc(2, 0))], &[(0, loc(4, 0))]),
         ),
         // Push and Rotate builds its goal from the target list alone, so an
-        // untargeted atom is missing from it and the replay check panics.
+        // untargeted atom is missing from it and the replay check panics. A
+        // known bug: the golden records the panic, but it is not an
+        // expectation, so a fix only moves the golden.
         case(
             "edge/partial_target/push_rotate",
             ProblemSpec {
                 strategy: Strategy::PushRotate,
                 ..logical(&[(0, loc(0, 0)), (1, loc(2, 0))], &[(0, loc(4, 0))])
             },
-        )
-        .expect(Expect {
-            panic: true,
-            ..Expect::default()
-        }),
+        ),
     ]
 }
 

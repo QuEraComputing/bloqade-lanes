@@ -37,7 +37,7 @@ use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
-use crate::search::options::{EntanglingOptions, SolveOptions};
+use crate::search::options::{EntanglingOptions, EntropyOptions, SolveOptions};
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
@@ -1274,6 +1274,7 @@ impl CzPlacement for RecedingHorizonCzPlacement {
         solve_receding_horizon(
             &self.engine,
             &self.search.options,
+            Some(&self.search.entropy_options),
             &self.entangling_options,
             &self.rh_options,
             stage.initial.iter().copied(),
@@ -1291,6 +1292,7 @@ impl CzPlacement for RecedingHorizonCzPlacement {
 pub(crate) fn solve_receding_horizon(
     engine: &SearchEngine,
     opts: &SolveOptions,
+    entropy_opts: Option<&EntropyOptions>,
     ent_opts: &EntanglingOptions,
     rh_opts: &RecedingHorizonOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
@@ -1334,6 +1336,7 @@ pub(crate) fn solve_receding_horizon(
         solve_loose_goal(
             engine,
             &single_opts,
+            entropy_opts,
             ent_opts,
             initial,
             cz_pairs,
@@ -1746,6 +1749,7 @@ mod tests {
                 restarts: 1,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             &RecedingHorizonOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
@@ -1771,6 +1775,7 @@ mod tests {
                 restarts: 1,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             &RecedingHorizonOptions {
                 k_candidates: 3,
@@ -1799,6 +1804,7 @@ mod tests {
                 restarts: 2,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             &RecedingHorizonOptions {
                 k_candidates: 3,
@@ -1896,6 +1902,7 @@ mod tests {
                 restarts: 1,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             &RecedingHorizonOptions {
                 k_candidates: 3,

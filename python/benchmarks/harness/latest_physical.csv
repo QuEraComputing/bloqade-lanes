@@ -21,7 +21,7 @@ adder_64,pipeline_route_all,builtin,rust,rust_solver,True,19049.380792,1420,1660
 adder_64,rust_astar,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
 adder_64,rust_astar_fallback,builtin,rust,rust_solver,True,8314.578833,1572,1688,0.0000000000,4259,,,,,,,,A* with Push and Rotate as the reliability net on failure
 adder_64,rust_bfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-adder_64,rust_cascade_ids,builtin,rust,rust_solver,True,8376.583792,1550,1668,0.0000000000,4810,,55,762,0,3045,4263,0.833333,"IDS, then an A* refinement gated by the completion bound"
+adder_64,rust_cascade_ids,builtin,rust,rust_solver,True,8376.583792,1550,1668,0.0000000000,4810,,55,698,0,2640,3756,0.833333,"IDS, then an A* refinement gated by the completion bound"
 adder_64,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,8364.827000,1550,1668,0.0000000000,5611,,,,,,,,cascade-ids with the refinement's completion-bound gate off
 adder_64,rust_dfs,builtin,rust,rust_solver,True,8258.259334,1636,1668,0.0000000000,818,,,,,,,,
 adder_64,rust_entropy_1,builtin,rust,rust_solver,True,8381.147875,1566,1672,0.0000000000,783,,,,,,,,
@@ -140,7 +140,7 @@ trotter_rand_35,pipeline_route_all,builtin,rust,rust_solver,True,15383.275667,89
 trotter_rand_35,rust_astar,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
 trotter_rand_35,rust_astar_fallback,builtin,rust,rust_solver,True,1672.742458,1582,1880,0.0000000000,10550,,,,,,,,A* with Push and Rotate as the reliability net on failure
 trotter_rand_35,rust_bfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-trotter_rand_35,rust_cascade_ids,builtin,rust,rust_solver,True,1610.784542,1258,1528,0.0000000000,11165,,0,168,0,1012,1286,0.840000,"IDS, then an A* refinement gated by the completion bound"
+trotter_rand_35,rust_cascade_ids,builtin,rust,rust_solver,True,1610.784542,1258,1528,0.0000000000,11165,,0,156,0,924,1180,0.840000,"IDS, then an A* refinement gated by the completion bound"
 trotter_rand_35,rust_cascade_ids_ungated,builtin,rust,rust_solver,True,1606.233042,1258,1528,0.0000000000,11305,,,,,,,,cascade-ids with the refinement's completion-bound gate off
 trotter_rand_35,rust_dfs,builtin,rust,rust_solver,True,1481.077375,1408,1600,0.0000000000,759,,,,,,,,
 trotter_rand_35,rust_entropy_1,builtin,rust,rust_solver,True,1477.107916,1300,1548,0.0000000000,650,,,,,,,,

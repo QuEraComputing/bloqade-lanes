@@ -127,6 +127,10 @@ pub struct SolveOptions {
     ///   completeness regime, or when its proof checks come up short, it
     ///   reports `BudgetExceeded` and the search's own result stands.
     ///
+    /// The planner does not honour the architecture's AOD capacity, so on an
+    /// architecture that sets one, a planner schedule with a shot over the
+    /// cap is discarded and the search's own result stands.
+    ///
     /// The planner starts from the search's best partial when the search got
     /// anywhere, so the schedule is the search's prefix followed by the
     /// planner's layers; if that run cannot finish, the planner reruns from

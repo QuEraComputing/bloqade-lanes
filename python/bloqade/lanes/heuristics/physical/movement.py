@@ -118,8 +118,9 @@ class RustPlacementTraversal:
     schedule or proves that none exists. Only the failure path pays for it.
     Push and Rotate starts from the furthest configuration the search reached,
     so the schedule is the search's prefix plus its own layers; if that cannot
-    finish, it reruns from the original placement. It does not honour an AOD
-    capacity.
+    finish, it reruns from the original placement. Push and Rotate does not
+    honour an AOD capacity, so on an architecture that sets one, a schedule
+    with a shot over it is discarded and the search's own result stands.
     """
     cascade_bound: bool = True
     """Gate a cascade strategy's A* refinement with the completion bound.

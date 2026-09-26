@@ -258,19 +258,19 @@ plan: 04b2f842ca25b743
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 180 | generated: 381 | deadlocks: 5 | proven: false | termination: stopped
 final: 0@2.0 1@4.0 2@0.0
 plan: 08a7466065eec7a9
-bound: cuts_g=0 cuts_h=4 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=3 cuts_inf=0 root_lb=3 incumbent=6
 
 == route/logical_cycle/cascade_dfs
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 178 | generated: 388 | deadlocks: 4 | proven: false | termination: stopped
 final: 0@2.0 1@4.0 2@0.0
 plan: 08a7466065eec7a9
-bound: cuts_g=0 cuts_h=4 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=3 cuts_inf=0 root_lb=3 incumbent=6
 
 == route/logical_cycle/cascade_entropy
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 197 | generated: 381 | deadlocks: 4 | proven: false | termination: stopped
 final: 0@2.0 1@4.0 2@0.0
 plan: 08a7466065eec7a9
-bound: cuts_g=0 cuts_h=4 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=3 cuts_inf=0 root_lb=3 incumbent=6
 
 == route/logical_cycle/entropy
 status: solved | layers: 7 | lanes: 8 | cost: 7 | expanded: 26 | generated: 27 | deadlocks: 0 | proven: false | termination: stopped
@@ -1739,16 +1739,19 @@ plan: c5c76942abe198d5
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 24 | generated: 25 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@4.0 3@5.0
 plan: c4217fa55cc6a885
+attempts: chosen=0 total=24 [0:solved/24]
 
 == cz/nohome/physical
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 12 | generated: 13 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@0.2
 plan: c5c76942abe198d5
+attempts: chosen=0 total=12 [0:solved/12]
 
 == cz/nohome/physical_with_future
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 12 | generated: 13 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@0.2
 plan: c5c76942abe198d5
+attempts: chosen=0 total=12 [0:solved/12]
 
 == cz/receding_horizon/logical
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 18 | generated: 22 | deadlocks: 0 | proven: false | termination: stopped
@@ -1784,11 +1787,13 @@ plan: cbf29ce484222325
 status: solved | layers: 3 | lanes: 5 | cost: 3 | expanded: 28 | generated: 33 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@0.0 1@1.0 2@4.0 3@5.0
 plan: 7b01094b79ce1f44
+attempts: chosen=0 total=28 [0:solved/24]
 
 == cz/nohome/logical_mirrored
 status: solved | layers: 2 | lanes: 4 | cost: 2 | expanded: 2 | generated: 3 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@4.0 3@5.0
 plan: c4217fa55cc6a885
+attempts: chosen=0 total=2 [0:solved/2]
 
 == cz/single_heuristic/logical_four_pairs
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 2 | generated: 3 | deadlocks: 0 | proven: false | termination: stopped
@@ -1862,32 +1867,38 @@ plan: bd71efc338fb8ffc
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 40 | generated: 41 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@4.0 3@5.0 4@8.0 5@9.0 6@12.0 7@13.0
 plan: 8171b1e16dc631d5
+attempts: chosen=0 total=40 [0:solved/40]
 
 == cz/nohome/physical_four_pairs_spectators
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 24 | generated: 25 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@4.0 5@5.0 6@4.1 7@5.1 8@0.2 9@2.2
 plan: 766d4d243c89b805
+attempts: chosen=0 total=24 [0:solved/24]
 
 == cz/nohome/example_pairable
 status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | generated: 4 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0
 plan: 45e1b13bb22bfc19
+attempts: chosen=1 total=2 [0:unsolvable/0, 1:solved/2]
 
 == cz/nohome/example_unpairable
 status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | generated: 1 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@0.1
 plan: cbf29ce484222325
 partial: unresolved=1 layers=0 plan=cbf29ce484222325
+attempts: chosen=none total=0 [0:unsolvable/0]
 
 == cz/nohome/zoned_two_pairs_from_storage
 status: solved | layers: 17 | lanes: 24 | cost: 17 | expanded: 158 | generated: 159 | deadlocks: 0 | proven: false | termination: stopped
 final: 0@1:4.0 1@1:5.0 2@1:4.3 3@1:5.3
 plan: bcc2fc3e0bb48168
+attempts: chosen=0 total=158 [0:solved/158]
 
 == cz/nohome/zoned_three_pairs_from_storage
 status: solved | layers: 54 | lanes: 54 | cost: 54 | expanded: 211 | generated: 212 | deadlocks: 0 | proven: false | termination: budget
 final: 0@1:4.0 1@1:5.0 2@1:4.1 3@1:5.1 4@1:4.3 5@1:5.3
 plan: a0f37a34bd9499ac
+attempts: chosen=0 total=211 [0:solved/211]
 
 == cz/receding_horizon/logical_four_pairs
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 30 | generated: 33 | deadlocks: 0 | proven: false | termination: stopped
@@ -1923,44 +1934,68 @@ plan: b7244b42913ed978
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 40 | generated: 41 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@4.0 3@5.0 4@8.0 5@9.0 6@12.0 7@13.0
 plan: 8171b1e16dc631d5
+attempts: chosen=0 total=40 [0:solved/40]
 
 == cz/nohome/rule/physical_four_pairs_spectators
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 24 | generated: 25 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@4.0 5@5.0 6@4.1 7@5.1 8@0.2 9@2.2
 plan: 766d4d243c89b805
+attempts: chosen=0 total=24 [0:solved/24]
 
 == cz/nohome/rule/example_pairable
 status: unsolvable | layers: 0 | lanes: 0 | cost: 0 | expanded: 0 | generated: 1 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@0.5
 plan: cbf29ce484222325
 partial: unresolved=1 layers=0 plan=cbf29ce484222325
+attempts: chosen=none total=0 [0:unsolvable/0]
 
 == cz/nohome/route_all/logical_four_pairs
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 3495 | generated: 3511 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@4.0 3@5.0 4@8.0 5@9.0 6@12.0 7@13.0
 plan: 8171b1e16dc631d5
+attempts: chosen=0 total=3495 [0:solved/40, 1:solved/40, 2:solved/220, 3:solved/226, 4:solved/239, 5:solved/231, 6:solved/246, 7:solved/288, 8:solved/245, 9:solved/246, 10:solved/300, 11:solved/246, 12:solved/231, 13:solved/246, 14:solved/226, 15:solved/225]
 
 == cz/nohome/route_all/physical_four_pairs_spectators
 status: solved | layers: 2 | lanes: 8 | cost: 2 | expanded: 3058 | generated: 3074 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0 2@0.1 3@1.1 4@4.0 5@5.0 6@4.1 7@5.1 8@0.2 9@2.2
 plan: 766d4d243c89b805
+attempts: chosen=0 total=3058 [0:solved/24, 1:solved/24, 2:solved/300, 3:solved/300, 4:solved/83, 5:solved/300, 6:solved/202, 7:solved/20, 8:solved/300, 9:solved/300, 10:solved/20, 11:solved/202, 12:solved/300, 13:solved/83, 14:solved/300, 15:solved/300]
 
 == cz/nohome/route_all/example_pairable
 status: solved | layers: 2 | lanes: 2 | cost: 2 | expanded: 2 | generated: 4 | deadlocks: 0 | proven: false | termination: exhausted
 final: 0@0.0 1@1.0
 plan: 45e1b13bb22bfc19
+attempts: chosen=1 total=2 [0:unsolvable/0, 1:solved/2]
+
+== cz/nohome/ranked/logical_ranked_pick_wins
+status: solved | layers: 2 | lanes: 3 | cost: 2 | expanded: 71 | generated: 73 | deadlocks: 0 | proven: false | termination: exhausted
+final: 0@11.0 1@10.0 2@5.0 3@4.0
+plan: 448af05ed10b3be9
+attempts: chosen=1 total=71 [0:solved/45, 1:solved/26]
+
+== cz/nohome/ranked/physical_ranked_pick_fails_after_rule
+status: solved | layers: 9 | lanes: 18 | cost: 9 | expanded: 549 | generated: 972 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@6.1 1@7.1 2@0.3 3@1.3 4@12.5 5@13.5 6@18.6
+plan: a129dfcee1e236ff
+attempts: chosen=0 total=549 [0:solved/249, 3:budget_exceeded/300]
+
+== cz/nohome/ranked/physical_seven_pairs_sampled
+status: solved | layers: 12 | lanes: 31 | cost: 12 | expanded: 60 | generated: 62 | deadlocks: 0 | proven: false | termination: stopped
+final: 0@0.6 1@1.6 2@19.7 3@18.7 4@8.4 5@9.4 6@9.2 7@8.2 8@17.1 9@16.1 10@7.0 11@6.0 12@13.6 13@12.6
+plan: a49adbd6c0574442
+attempts: chosen=43 total=60 [0:solved/26, 43:solved/34]
 
 == anticipate/cascade_memory/ids
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 180 | generated: 381 | deadlocks: 5 | proven: false | termination: stopped
 final: 0@2.0 1@4.0 2@0.0
 plan: 08a7466065eec7a9
-bound: cuts_g=0 cuts_h=4 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=3 cuts_inf=0 root_lb=3 incumbent=6
 
 == anticipate/cascade_memory/entropy_bounded
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 383 | generated: 384 | deadlocks: 4 | proven: false | termination: exhausted
 final: 0@2.0 1@4.0 2@0.0
 plan: 736099ff3df4cb19
-bound: cuts_g=0 cuts_h=257 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=238 cuts_inf=0 root_lb=3 incumbent=6
 
 == anticipate/pr_resume/restart_from_initial
 status: solved | layers: 35 | lanes: 38 | cost: 35 | expanded: 300 | generated: 892 | deadlocks: 0 | proven: false | termination: stopped
@@ -1971,13 +2006,13 @@ plan: b826abfd4a216a12
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 180 | generated: 381 | deadlocks: 5 | proven: false | termination: stopped
 final: 0@2.0 1@4.0 2@0.0
 plan: 08a7466065eec7a9
-bound: cuts_g=0 cuts_h=4 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=3 cuts_inf=0 root_lb=3 incumbent=6
 
 == bound/cascade_gate/logical_cycle/cascade_entropy_bounded
 status: solved | layers: 6 | lanes: 8 | cost: 6 | expanded: 383 | generated: 384 | deadlocks: 4 | proven: false | termination: exhausted
 final: 0@2.0 1@4.0 2@0.0
 plan: 736099ff3df4cb19
-bound: cuts_g=0 cuts_h=257 cuts_inf=0 root_lb=3 incumbent=6
+bound: cuts_g=0 cuts_h=238 cuts_inf=0 root_lb=3 incumbent=6
 
 == bound/cascade_gate/physical_congested/cascade_ids
 status: solved | layers: 22 | lanes: 30 | cost: 22 | expanded: 322 | generated: 937 | deadlocks: 3 | proven: false | termination: stopped

@@ -80,7 +80,8 @@ class NoHomePlacementStrategy(NoReturnStrategyBase):
         :py:attr:`MoverSelection.RANKED` (the default, via ``None``) plans
         every candidate with Push and Rotate, routes the one with the
         shortest plan and the rule's, and keeps whichever takes fewer layers,
-        so it is never worse than ``RULE``;
+        so it is never worse than ``RULE`` (when the rule's candidate does not
+        route, the ranked ones are routed in order until one does);
         :py:attr:`MoverSelection.ROUTE_ALL` routes every
         candidate and keeps the one with the fewest move layers, at one
         routing solve per candidate; :py:attr:`MoverSelection.RULE` applies a

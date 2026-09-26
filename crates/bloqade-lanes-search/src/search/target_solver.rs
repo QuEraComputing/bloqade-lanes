@@ -391,6 +391,12 @@ fn solve_with_engine_impl(
 /// Whatever is returned keeps the search's counters, trace and bound
 /// statistics: Push and Rotate is not a search and expands nothing, so its
 /// own zeros would erase the work the search did.
+///
+/// The planner batches shots without consulting the architecture's AOD
+/// capacity, but a search strategy's plan must fit it, so a planner plan with
+/// a shot over the cap is not used (see [`LaneIndex::admits_shot`]).
+///
+/// [`LaneIndex::admits_shot`]: crate::primitives::lane_index::LaneIndex::admits_shot
 #[allow(clippy::too_many_arguments)]
 fn finish_with_push_rotate(
     engine: &SearchEngine,
@@ -410,6 +416,11 @@ fn finish_with_push_rotate(
         finished.bound_stats = search.bound_stats;
         finished
     };
+    let fits_capacity = |plan: &SolveResult| {
+        plan.move_layers
+            .iter()
+            .all(|layer| engine.index().admits_shot(&layer.decode()))
+    };
 
     let partial = match (fallback_start, &search.best_partial) {
         (FallbackStart::BestPartial, Some(partial)) if !partial.layers.is_empty() => {
@@ -426,7 +437,7 @@ fn finish_with_push_rotate(
             blocked_locs,
             DEFAULT_MOVE_BUDGET,
         )?;
-        if resumed.status == SolveStatus::Solved {
+        if resumed.status == SolveStatus::Solved && fits_capacity(&resumed) {
             let mut layers = partial.layers;
             layers.extend(resumed.move_layers);
             crate::search::verify::assert_move_layers_executable(
@@ -456,7 +467,7 @@ fn finish_with_push_rotate(
         blocked_locs,
         DEFAULT_MOVE_BUDGET,
     )?;
-    if fallback.status == SolveStatus::Solved {
+    if fallback.status == SolveStatus::Solved && fits_capacity(&fallback) {
         return Ok(keep_search_counters(fallback, search));
     }
     // Both failed. Prefer the planner's verdict when it is a *proof* of
@@ -591,6 +602,45 @@ mod tests {
             vec![1, 1, 1],
             "a 1x1 AOD cannot carry more than one atom per shot"
         );
+    }
+
+    /// A search strategy's Push-and-Rotate fallback never returns a shot over
+    /// the architecture's AOD capacity. With no budget the search gives up at
+    /// once and the planner batches the row into wider shots: used when
+    /// nothing caps them, discarded under a 1x1 cap.
+    #[test]
+    fn the_push_rotate_fallback_honours_the_aod_capacity() {
+        let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
+        let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i + 5))).collect();
+        let solve = |capacity: Option<AodCapacity>| {
+            let spec: bloqade_lanes_bytecode_core::arch::ArchSpec =
+                serde_json::from_str(example_arch_json()).unwrap();
+            let engine = SearchEngine::from_arch_spec(&spec.with_aod_capacity(capacity)).unwrap();
+            solve_with_engine(
+                &engine,
+                &SolveOptions {
+                    fallback_push_rotate: true,
+                    ..SolveOptions::default()
+                },
+                None,
+                initial.clone(),
+                target.clone(),
+                std::iter::empty(),
+                Some(0),
+            )
+            .unwrap()
+        };
+
+        let uncapped = solve(None);
+        assert_eq!(uncapped.status, SolveStatus::Solved);
+        assert!(
+            uncapped.move_layers.iter().any(|m| m.decode().len() > 1),
+            "the planner should batch the row"
+        );
+
+        let capped = solve(AodCapacity::new(1, 1));
+        assert_ne!(capped.status, SolveStatus::Solved);
+        assert!(capped.move_layers.is_empty());
     }
 
     /// Atoms 0 and 1 are one site-bus hop from their targets; atom 2 also
@@ -1131,5 +1181,42 @@ mod tests {
             once, forward.move_layers,
             "a single application must actually change the plan"
         );
+    }
+
+    /// An atom may start on a blocked site (it only moves off), but Push and
+    /// Rotate's lane graph has no vertex there. Its giving up must not be
+    /// promoted to a proof over the search's own verdict: the instance is
+    /// solvable, as the unbudgeted search shows.
+    #[test]
+    fn a_start_on_a_blocked_site_is_not_a_fallback_proof() {
+        let engine = make_engine();
+        let solve = |strategy: Strategy, fallback_push_rotate: bool, budget: Option<u32>| {
+            solve_with_engine(
+                &engine,
+                &SolveOptions {
+                    strategy,
+                    fallback_push_rotate,
+                    ..SolveOptions::default()
+                },
+                None,
+                [(0, loc(0, 0))],
+                [(0, loc(0, 5))],
+                [loc(0, 0)],
+                budget,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            solve(Strategy::AStar, false, None).status,
+            SolveStatus::Solved
+        );
+        for result in [
+            solve(Strategy::AStar, true, Some(0)),
+            solve(Strategy::PushRotate, false, None),
+        ] {
+            assert_eq!(result.status, SolveStatus::BudgetExceeded);
+            assert!(!result.proven(), "{:?}", result.termination);
+        }
     }
 }

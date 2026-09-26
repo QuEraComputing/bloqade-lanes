@@ -1173,8 +1173,9 @@ class MoverSelection:
     ``RULE`` applies a fixed per-pair rule. ``RANKED`` (the default) plans every
     candidate with Push and Rotate, routes the one with the shortest plan and
     the rule's, and keeps whichever takes fewer layers, so it is never worse
-    than ``RULE``. ``ROUTE_ALL`` routes every candidate and keeps the one with
-    the fewest move layers.
+    than ``RULE``; when the rule's candidate does not route, the ranked
+    candidates are routed in order until one does. ``ROUTE_ALL`` routes every
+    candidate and keeps the one with the fewest move layers.
     """
 
     RULE: MoverSelection

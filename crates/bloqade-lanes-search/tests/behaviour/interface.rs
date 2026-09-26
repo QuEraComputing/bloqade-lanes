@@ -145,9 +145,13 @@ fn run_on(spec: &ProblemSpec, engine: Arc<SearchEngine>) -> Result<Run, String> 
                 .place(&stage, &PlacementBudget::new(spec.budget))
                 .map_err(|e| e.to_string())?;
             let mut run = from_result(&placed.result);
-            // Only the single-heuristic placement enumerates candidates; the
-            // others report an empty log, which the golden does not record.
-            if let Placement::SingleHeuristic { .. } = placement {
+            // The single-heuristic placement enumerates candidates, and so
+            // does NoHome's CZ phase; the others report an empty log, which
+            // the golden does not record.
+            if matches!(
+                placement,
+                Placement::SingleHeuristic { .. } | Placement::NoHome
+            ) {
                 run.attempts = Some(attempt_log(&placed));
             }
             Ok(run)

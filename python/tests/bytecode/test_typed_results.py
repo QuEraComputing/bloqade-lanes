@@ -57,6 +57,29 @@ def test_members_compare_by_identity_and_are_unordered(member, pyname, name):
         _ = member < getattr(enum, name)  # type: ignore[operator]
 
 
+RETIRED_LABELS = [
+    (SolveStatus.SOLVED, "solved"),
+    (SolveStatus.UNSOLVABLE, "unsolvable"),
+    (SolveStatus.BUDGET_EXCEEDED, "budget_exceeded"),
+    (Termination.BUDGET, "budget"),
+    (Termination.EXHAUSTED, "exhausted"),
+    (Termination.STOPPED, "stopped"),
+]
+
+
+@pytest.mark.parametrize(
+    "member, label", [pytest.param(m, lab, id=lab) for m, lab in RETIRED_LABELS]
+)
+def test_hashed_lookup_against_the_retired_label_raises(member, label):
+    """Set and dict lookups hash before they compare, so each member hashes
+    like the label it replaced: the stale lookup reaches ``==`` and raises,
+    rather than silently missing."""
+    with pytest.raises(TypeError):
+        _ = member in {label}
+    with pytest.raises(TypeError):
+        _ = {label: 1}.get(member)
+
+
 def test_push_rotate_proves_no_plan():
     """A target held by an immovable atom has no plan, and Push and Rotate,
     unlike a search, proves it: ``UNSOLVABLE`` with ``Proof.NO_PLAN``."""

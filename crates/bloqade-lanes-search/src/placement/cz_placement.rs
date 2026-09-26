@@ -18,8 +18,29 @@
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
+use crate::drivers::result::Termination;
 use crate::primitives::config::ConfigError;
 use crate::search::result::{SolveResult, SolveStatus};
+
+/// The verdict for a stage in which no candidate routed.
+///
+/// It describes the stage, not any one candidate's target:
+/// [`SolveStatus::BudgetExceeded`] if any candidate ran out of budget, since
+/// more budget may solve it; otherwise [`SolveStatus::Unsolvable`]. Never a
+/// proof. A candidate's proof is about its own target, and the candidates a
+/// placement generates are not every way to stage the pairs (a pair can also
+/// be staged on any free entangling slot), so even every candidate proving
+/// itself unroutable says nothing about the stage.
+pub(crate) fn failed_stage_verdict(any_budget: bool) -> (SolveStatus, Termination) {
+    if any_budget {
+        (SolveStatus::BudgetExceeded, Termination::Budget)
+    } else {
+        (
+            SolveStatus::Unsolvable,
+            Termination::Exhausted { proof: false },
+        )
+    }
+}
 
 /// One CZ stage: where the atoms are, which pairs must end up entangled, and
 /// what else is in the way.
@@ -150,4 +171,26 @@ pub trait CzPlacement {
         stage: &CzStage<'_>,
         budget: &PlacementBudget,
     ) -> Result<PlacementResult, ConfigError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One candidate out of budget makes the stage `BudgetExceeded`, however
+    /// the others failed, and the verdict is never a proof.
+    #[test]
+    fn a_failed_stage_verdict_describes_the_stage() {
+        assert_eq!(
+            failed_stage_verdict(true),
+            (SolveStatus::BudgetExceeded, Termination::Budget)
+        );
+        assert_eq!(
+            failed_stage_verdict(false),
+            (
+                SolveStatus::Unsolvable,
+                Termination::Exhausted { proof: false }
+            )
+        );
+    }
 }

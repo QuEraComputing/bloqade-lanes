@@ -588,11 +588,15 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         let raw_scored = unpack_scored_list(scored)?;
         let raw_groups = pipeline_group_by_triplet(raw_scored);
 
-        // Uncapped: `LibMove` carries the index and blocked set but no
-        // `SearchContext`, and `PolicyRunner.solve` does not take an AOD
-        // capacity yet. Exposing one is a DSL follow-up.
-        let candidates =
-            pipeline_pack_aod_rectangles(raw_groups, &config.0, &this.index, &this.blocked, None);
+        // Capped by the architecture's AOD capacity, as every other shot
+        // assembler is.
+        let candidates = pipeline_pack_aod_rectangles(
+            raw_groups,
+            &config.0,
+            &this.index,
+            &this.blocked,
+            this.index.aod_capacity(),
+        );
         let items: Vec<Value<'v>> = candidates
             .into_iter()
             .map(|c| heap.alloc(StarlarkPackedCandidate(c)))

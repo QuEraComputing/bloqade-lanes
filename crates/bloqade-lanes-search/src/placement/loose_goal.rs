@@ -40,7 +40,7 @@ use crate::primitives::distance::PairDistanceHeuristic;
 use crate::primitives::lane_index::LaneIndex;
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::{EntanglingOptions, SolveOptions};
+use crate::search::options::{EntanglingOptions, EntropyOptions, SolveOptions};
 use crate::search::restarts::run_with_components;
 use crate::search::result::SolveResult;
 
@@ -100,6 +100,7 @@ impl CzPlacement for LooseGoalCzPlacement {
         solve_loose_goal(
             &self.engine,
             &self.search.options,
+            Some(&self.search.entropy_options),
             &self.entangling_options,
             stage.initial.iter().copied(),
             stage.pairs,
@@ -132,6 +133,7 @@ impl CzPlacement for LooseGoalCzPlacement {
 pub(crate) fn solve_loose_goal(
     engine: &SearchEngine,
     opts: &SolveOptions,
+    entropy_opts: Option<&EntropyOptions>,
     ent_opts: &EntanglingOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
     cz_pairs: &[(u32, u32)],
@@ -237,7 +239,7 @@ pub(crate) fn solve_loose_goal(
             &ctx,
             max_expansions,
             opts,
-            None,
+            entropy_opts,
             Some(engine.blended_cache()),
         )
     };

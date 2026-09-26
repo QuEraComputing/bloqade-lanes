@@ -33,9 +33,10 @@ check-visualization-js:
 
 # ── Rust Coverage ───────────────────────────────────────────────────
 
-# Run Rust tests with coverage and generate Cobertura XML
+# Run Rust tests with coverage and generate Cobertura XML. This is the Rust
+# test step PR CI runs, so it covers the same crates as `test-rust`.
 coverage-rust:
-    cargo llvm-cov --cobertura --output-path rust-coverage.xml -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
+    cargo llvm-cov --cobertura --output-path rust-coverage.xml -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli -p bloqade-lanes-search -p bloqade-lanes-dsl-core
 
 # ── Combined Coverage ──────────────────────────────────────────────
 
