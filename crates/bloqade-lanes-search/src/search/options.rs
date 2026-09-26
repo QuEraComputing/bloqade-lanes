@@ -137,8 +137,8 @@ pub struct SolveOptions {
     /// `initial`, and only that run can report a proof. A mirrored solve
     /// (`backwards_search`) always starts from its own initial placement. The
     /// result keeps the search's counters. The recovered schedule uses more
-    /// AOD operations than a search would have, but it only ever applies where
-    /// the search produced nothing at all.
+    /// AOD operations than a search would have, but it only applies when the
+    /// search fails to finish a schedule.
     ///
     /// Cheap to leave on: the planner is rule-based and runs in well under a
     /// millisecond on Gemini-sized instances, and it only runs after a
