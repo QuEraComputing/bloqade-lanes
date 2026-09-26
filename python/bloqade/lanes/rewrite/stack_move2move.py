@@ -19,11 +19,13 @@ from functools import singledispatchmethod
 from typing import Any, TypeVar
 
 from kirin import ir
+from kirin.rewrite import Walk
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, stack_move
+from bloqade.lanes.rewrite.inline_dup import InlineDup
 from bloqade.lanes.utils import no_none_elements_tuple
 
 # Generic TypeVar used by the _lift_attrs helper to propagate the concrete
@@ -96,6 +98,9 @@ class RewriteStackMoveToMove(RewriteRule):
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
         self.local_values = {}
+        # `move` keeps no stack, so a `Dup`'s copies are just its operand:
+        # canonicalise them away before any handler sees an argument.
+        Walk(InlineDup()).rewrite(node)
         # Insert the initial move.Load at block start.
         load = move.Load()
         first = next(iter(node.stmts), None)
@@ -170,14 +175,6 @@ class RewriteStackMoveToMove(RewriteRule):
         out.insert_before(stmt)
         stmt.result.replace_by(out.result)
         self.ssa_to_attr[out.result] = stmt.value
-        to_delete.append(stmt)
-
-    @_rewrite.register(stack_move.Dup)
-    def _(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
-        # Dup is a semantic identity — redirect all uses of both copies to
-        # the input in place.
-        stmt.top.replace_by(stmt.value)
-        stmt.below.replace_by(stmt.value)
         to_delete.append(stmt)
 
     @_rewrite.register(stack_move.StoreLocal)

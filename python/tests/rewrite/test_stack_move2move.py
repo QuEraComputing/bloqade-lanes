@@ -117,6 +117,24 @@ def test_dup_redirects_uses_to_input():
     assert [_constant(gate.rotation_angle) for gate in gates] == [1.0, 1.0]
 
 
+def test_a_copy_of_a_copy_redirects_to_the_input():
+    """``InlineDup`` runs before the lowering proper, so a ``Dup`` of a
+    ``Dup``'s copy reads the constant too."""
+    cf = stack_move.ConstFloat(value=1.0)
+    first = stack_move.Dup(value=cf.result)
+    second = stack_move.Dup(value=first.top)
+    consumers = [
+        stack_move.GlobalRz(rotation_angle=second.top),
+        stack_move.GlobalRz(rotation_angle=second.below),
+        stack_move.GlobalRz(rotation_angle=first.below),
+    ]
+    block = _build_stack_move_block([cf, first, second, *consumers])
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+    assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
+    gates = [s for s in block.stmts if isinstance(s, move.GlobalRz)]
+    assert [_constant(gate.rotation_angle) for gate in gates] == [1.0] * 3
+
+
 def test_load_redirects_uses_to_the_value_last_stored():
     """A load is the value the last store to its index wrote: two stores to
     one slot, and each load reads the one before it."""

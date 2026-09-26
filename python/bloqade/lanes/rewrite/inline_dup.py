@@ -6,11 +6,11 @@ not, so this rule gives each copy's consumers the operand itself and deletes
 the ``Dup`` — as kirin's ``InlineAlias`` does for ``py.Alias``. It works for
 any operand, where ``ConstantFold`` + DCE only remove a ``Dup`` of a constant.
 
-What the ``Dup`` did on the stack is ``stackify``'s to redo: the operand now
-has a consumer per copy, so it is spilled to a local and reloaded for each.
-That is correct but is not the program that was decoded, which is why
-``stackify`` does not run this itself; run it where the IR should say what a
-program computes rather than how it keeps its stack.
+``RewriteStackMoveToMove`` runs it first: ``move`` keeps no stack, so a copy
+means nothing there. ``stackify`` does not — it would still be correct, since
+the operand now has a consumer per copy and is spilled to a local and
+reloaded for each, but a decoded ``dup`` would no longer come back out as
+itself.
 """
 
 from dataclasses import dataclass
