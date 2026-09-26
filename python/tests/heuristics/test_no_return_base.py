@@ -24,6 +24,7 @@ from bloqade.lanes.analysis.placement import (
     UserMoved,
 )
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode._native import SolveStatus
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.no_return import NoReturnPlacementStrategy
 
@@ -71,11 +72,11 @@ def test_cz_placements_returns_top_for_non_concrete_input():
 
 
 def test_cz_placements_raises_when_inner_solver_fails(monkeypatch):
-    """``result.status != "solved"`` raises PlacementError while still
+    """``result.status != SolveStatus.SOLVED`` raises PlacementError while still
     accumulating nodes_expanded into the observability counter first."""
     strategy = _make_strategy()
     fake_result = SimpleNamespace(
-        status="budget_exceeded",
+        status=SolveStatus.BUDGET_EXCEEDED,
         nodes_expanded=7,
         move_layers=[],
         goal_config={},

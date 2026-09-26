@@ -59,10 +59,14 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Search / move synthesis
     m.add_class::<search_python::PySearchStrategy>()?;
+    m.add_class::<search_python::PySolveStatus>()?;
+    m.add_class::<search_python::PyTermination>()?;
+    m.add_class::<search_python::PyProof>()?;
     m.add_class::<search_python::PyDeadlockPolicy>()?;
     m.add_class::<search_python::PySolveOptions>()?;
     m.add_class::<search_python::PyEntropyOptions>()?;
     m.add_class::<search_python::PyEntanglingOptions>()?;
+    m.add_class::<search_python::PyMoverSelection>()?;
     m.add_class::<search_python::PyNoHomeOptions>()?;
     m.add_class::<search_python::PyRecedingHorizonOptions>()?;
     m.add_class::<search_python::PySolveResult>()?;
@@ -71,7 +75,9 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyEntropyScorer>()?;
     m.add_class::<search_python::PyMovesetMetrics>()?;
     m.add_class::<search_python::PyDefaultTargetGenerator>()?;
-    m.add_class::<search_python::PyMultiSolveResult>()?;
+    m.add_class::<search_python::PyPlacementResult>()?;
+    m.add_class::<search_python::PyCandidateAttempt>()?;
+    m.add_class::<search_python::PyBoundStats>()?;
 
     // New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers
     m.add_class::<search_python::PySearchEngine>()?;

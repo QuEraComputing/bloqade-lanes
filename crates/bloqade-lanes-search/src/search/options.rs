@@ -7,7 +7,6 @@
 
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::ops::entangling::OCCUPANCY_PENALTY_DEFAULT;
-use crate::primitives::context::AodCapacity;
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,9 +127,18 @@ pub struct SolveOptions {
     ///   completeness regime, or when its proof checks come up short, it
     ///   reports `BudgetExceeded` and the search's own result stands.
     ///
-    /// The recovered schedule uses more AOD operations than a search would
-    /// have, but it only ever applies where the search produced nothing at
-    /// all.
+    /// The planner does not honour the architecture's AOD capacity, so on an
+    /// architecture that sets one, a planner schedule with a shot over the
+    /// cap is discarded and the search's own result stands.
+    ///
+    /// The planner starts from the search's best partial when the search got
+    /// anywhere, so the schedule is the search's prefix followed by the
+    /// planner's layers; if that run cannot finish, the planner reruns from
+    /// `initial`, and only that run can report a proof. A mirrored solve
+    /// (`backwards_search`) always starts from its own initial placement. The
+    /// result keeps the search's counters. The recovered schedule uses more
+    /// AOD operations than a search would have, but it only ever applies where
+    /// the search produced nothing at all.
     ///
     /// Cheap to leave on: the planner is rule-based and runs in well under a
     /// millisecond on Gemini-sized instances, and it only runs after a
@@ -164,25 +172,22 @@ pub struct SolveOptions {
     /// found. That is deliberate: a request to solve backwards returns the
     /// backwards solve's answer rather than silently searching twice.
     pub backwards_search: bool,
-    /// The AOD tone limit per axis for every shot in the plan; `None` is
-    /// unlimited.
+    /// Gate a cascade's A* refinement with the completion bound. **On by
+    /// default** (the refactor plan's decision 7: opted in, measured, flipped).
     ///
-    /// Copied onto the solve's `SearchContext`, where every shot assembler
-    /// reads it. This is a property of the hardware and will move to the
-    /// architecture spec once that carries one; it is a solve option in the
-    /// meantime so that a caller who knows the value can already route within
-    /// it. The default reproduces the uncapped behaviour of every existing
-    /// path.
+    /// The refinement looks for a plan strictly cheaper than the inner
+    /// strategy's, so a child whose `g + h` already reaches that cost, or whose
+    /// bound is `+∞`, can be dropped before it takes a node
+    /// ([`run_search_bounded`](crate::drivers::frontier::run_search_bounded)).
+    /// Without the gate the cost cap only stops *expansion*, so every such
+    /// child still fills the graph and the frontier — the cascade's memory
+    /// cost. The prune never discards a strictly cheaper plan, but it can
+    /// change which of two equal-cost plans a tie resolves to.
     ///
-    /// **Not honoured by Push and Rotate.** The planner's scheduler batches
-    /// rectangles without consulting a capacity, so [`Strategy::PushRotate`]
-    /// and the `fallback_push_rotate` path can return a shot wider than the
-    /// cap. The planner does not *grow* rectangles the way the shot
-    /// assemblers do — it packages the moves a plan already needs — so it is
-    /// not expected to exceed a real hardware limit in practice, and
-    /// threading the cap through its scheduler is deliberately left as
-    /// follow-up. Treat the cap as binding on the search strategies only.
-    pub aod_capacity: Option<AodCapacity>,
+    /// Point goals only: a set-valued goal (the loose-goal placements) has no
+    /// admissible target-distance bound, so it is never gated. Only
+    /// [`Strategy::Cascade`] reads this.
+    pub cascade_bound: bool,
 }
 
 impl Default for SolveOptions {
@@ -196,7 +201,7 @@ impl Default for SolveOptions {
             top_c: None,
             fallback_push_rotate: false,
             backwards_search: false,
-            aod_capacity: None,
+            cascade_bound: true,
         }
     }
 }
@@ -372,11 +377,6 @@ impl EntanglingOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn aod_capacity_is_unlimited_by_default() {
-        assert!(SolveOptions::default().aod_capacity.is_none());
-    }
 
     #[test]
     fn backwards_search_is_off_by_default() {

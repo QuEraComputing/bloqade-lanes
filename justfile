@@ -33,9 +33,10 @@ check-visualization-js:
 
 # ── Rust Coverage ───────────────────────────────────────────────────
 
-# Run Rust tests with coverage and generate Cobertura XML
+# Run Rust tests with coverage and generate Cobertura XML. This is the Rust
+# test step PR CI runs, so it covers the same crates as `test-rust`.
 coverage-rust:
-    cargo llvm-cov --cobertura --output-path rust-coverage.xml -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
+    cargo llvm-cov --cobertura --output-path rust-coverage.xml -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli -p bloqade-lanes-search -p bloqade-lanes-dsl-core
 
 # ── Combined Coverage ──────────────────────────────────────────────
 
@@ -202,6 +203,11 @@ benchmark-physical:
 # Run benchmark harness in logical architecture mode
 benchmark-logical:
     uv run --locked --no-sync python -m benchmarks.cli --architecture logical --compare python/benchmarks/harness/latest_logical.csv
+
+# Time the search crate on the behaviour-net corpus (local A/B, not a CI gate).
+# Pass a name filter to narrow it, e.g. `just bench-search congested`.
+bench-search *filter:
+    cargo bench -p bloqade-lanes-search --bench behaviour -- {{filter}}
 
 # Run fast Python tests only (skip slow integration tests)
 test-python-fast:

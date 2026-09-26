@@ -4,6 +4,7 @@ import pytest
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import (
+    ArchSpec as _RustArchSpec,
     Grid as RustGrid,
     LocationAddress as RustLocAddr,
     Mode as RustMode,
@@ -164,6 +165,34 @@ def test_capability_flags_from_components():
     )
     assert spec.feed_forward is True
     assert spec.atom_reloading is True
+
+
+def test_aod_capacity_defaults_to_unlimited():
+    assert arch_spec.aod_capacity is None
+    assert "aod_capacity" not in arch_spec.to_json()
+
+
+def test_aod_capacity_from_components_roundtrips_through_json():
+    spec = ArchSpec.from_components(
+        words=(word, word),
+        zones=(rust_zone,),
+        modes=[rust_mode],
+        aod_capacity=(4, 2),
+    )
+    assert spec.aod_capacity == (4, 2)
+    assert '"aod_capacity":{"x":4,"y":2}' in spec.to_json()
+    assert ArchSpec(_RustArchSpec.from_json(spec.to_json())).aod_capacity == (4, 2)
+
+
+@pytest.mark.parametrize("capacity", [(0, 1), (1, 0)])
+def test_aod_capacity_rejects_a_zero_axis(capacity):
+    with pytest.raises(ValueError, match="aod_capacity"):
+        ArchSpec.from_components(
+            words=(word, word),
+            zones=(rust_zone,),
+            modes=[rust_mode],
+            aod_capacity=capacity,
+        )
 
 
 def test_try_get_position_returns_none_for_invalid_address():

@@ -228,7 +228,7 @@ impl GroupTables {
 pub struct ExhaustiveGenerator {
     seed: SeedPolicy,
     /// The generator's own capacity; the effective cap at a node is
-    /// `AodCapacity::tighten(self.cap, ctx.capacity)`.
+    /// `AodCapacity::tighten(self.cap, ctx.index.aod_capacity())`.
     cap: Option<AodCapacity>,
     /// One entry per bus group with lanes, sorted by [`GroupKey`].
     groups: Vec<GroupTables>,
@@ -312,7 +312,7 @@ impl ExhaustiveGenerator {
     /// Runs [`Self::check_preconditions`] on `ctx.index`, then precomputes
     /// every bus group's cells and the cells `ctx.blocked` kills. `seed` and
     /// `cap` are the generator's level; a `cap` of `None` is unlimited, and
-    /// the solve's own `ctx.capacity` still applies on top.
+    /// the solve's own `ctx.index.aod_capacity()` still applies on top.
     pub fn for_solve(
         ctx: &SearchContext<'_>,
         seed: SeedPolicy,
@@ -368,7 +368,7 @@ impl MoveGenerator for ExhaustiveGenerator {
         _state: &mut SearchState,
         out: &mut Vec<MoveCandidate>,
     ) {
-        let cap = AodCapacity::tighten(self.cap, ctx.capacity);
+        let cap = AodCapacity::tighten(self.cap, ctx.index.aod_capacity());
         let cap = (
             cap.map_or(usize::MAX, |c| c.x()),
             cap.map_or(usize::MAX, |c| c.y()),
@@ -818,7 +818,6 @@ mod tests {
             blocked,
             targets,
             cz_pairs: None,
-            capacity: None,
         }
     }
 
@@ -1001,20 +1000,6 @@ mod tests {
             let dead = src.word_id == 0 && (src.site_id == 2 || src.site_id == 1);
             assert_eq!(group.dead_static[i], dead, "dead_static of {src:?}");
         }
-    }
-
-    /// The engine computes the verdict once and hands out the same result.
-    #[test]
-    fn engine_caches_the_precondition_verdict() {
-        use crate::search::engine::SearchEngine;
-        let bad = SearchEngine::from_json(crate::test_utils::full_arch_json()).unwrap();
-        assert!(bad.exhaustive_preconditions().is_err());
-        assert!(std::ptr::eq(
-            bad.exhaustive_preconditions(),
-            bad.exhaustive_preconditions()
-        ));
-        let good = SearchEngine::from_json(example_arch_json()).unwrap();
-        assert_eq!(good.exhaustive_preconditions(), &Ok(()));
     }
 
     /// B1 on the source side: a blocked site may not be a filler. With qubit

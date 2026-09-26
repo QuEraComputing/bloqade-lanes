@@ -11,7 +11,6 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::ops::entangling;
 use crate::primitives::config::Config;
@@ -30,7 +29,58 @@ type EdgeScore = (f64, usize, u32, HashSet<LaneSig>);
 /// `((control, location), (target, location))`.
 type StagePair = ((u32, LocationAddr), (u32, LocationAddr));
 
+/// A candidate CZ-staging target: every qubit's location.
+type CzTarget = Vec<(u32, LocationAddr)>;
+
+/// The CZ phase's candidate targets.
+struct CzCandidates {
+    /// The candidates, the rule's first when `has_rule`.
+    targets: Vec<CzTarget>,
+    /// Whether `targets[0]` is the rule's candidate. It is not when, under
+    /// `Ranked` or `RouteAll`, the rule's assignment cannot be placed or puts
+    /// two qubits on one location, and another assignment can.
+    has_rule: bool,
+}
+
+/// The CZ phase's outcome: its routing result and every candidate it routed.
+struct CzPhase {
+    result: SolveResult,
+    attempts: Vec<CandidateAttempt>,
+    /// The winning candidate's index into [`CzCandidates::targets`].
+    chosen: Option<usize>,
+}
+
 // ── Options ───────────────────────────────────────────────────────
+
+/// How the CZ phase chooses, for each pair, which qubit moves.
+///
+/// A pair whose qubits both have a CZ partner can be staged two ways: the
+/// control moves to the target's partner site, or the target moves to the
+/// control's. Over a stage's `k` such pairs that is up to `2^k` candidate
+/// targets. Pairs without a partner go to a free entangling slot under every
+/// variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MoverSelection {
+    /// A fixed per-pair rule, with no comparison: the control moves if both
+    /// qubits share a word, else the target if it sits on a home site, else
+    /// the control. One routing solve.
+    Rule,
+    /// Plan every candidate with Push and Rotate, which is fast and always
+    /// finishes but is not shortest, and route the candidate with the
+    /// shortest plan. The plan's length is an upper bound on the candidate's
+    /// cost, but not always a good predictor of the router's, so the rule's
+    /// candidate is routed too and the ranked pick is kept only if it takes
+    /// fewer layers: never worse than [`Self::Rule`]. Two routing solves, or
+    /// one when the rule's candidate is ranked first, whenever the rule's
+    /// candidate routes. When it does not, the ranked candidates are routed in
+    /// order until one does, up to [`NoHomeOptions::max_mover_candidates`].
+    #[default]
+    Ranked,
+    /// Route every candidate and keep the one with the fewest move layers,
+    /// the rule's on ties. The most thorough, and one routing solve per
+    /// candidate.
+    RouteAll,
+}
 
 /// Tuning knobs for the no-home return assignment.
 #[derive(Debug, Clone)]
@@ -50,6 +100,14 @@ pub struct NoHomeOptions {
     /// Per-edge hop-count discount applied to edges using a top signature
     /// when building bus-reward variant cost matrices (default 1).
     pub bus_reward_rho: u32,
+    /// How the CZ phase picks which qubit of each pair moves (default
+    /// [`MoverSelection::Ranked`]).
+    pub mover_selection: MoverSelection,
+    /// Most candidate targets [`MoverSelection::Ranked`] and
+    /// [`MoverSelection::RouteAll`] compare (default 64). A stage with more
+    /// mover assignments than this compares the rule's, every single-pair
+    /// flip of it, and a seeded sample of the rest.
+    pub max_mover_candidates: usize,
 }
 
 impl Default for NoHomeOptions {
@@ -60,8 +118,60 @@ impl Default for NoHomeOptions {
             k_candidates: 8,
             top_bus_signatures: 6,
             bus_reward_rho: 1,
+            mover_selection: MoverSelection::default(),
+            max_mover_candidates: 64,
         }
     }
+}
+
+/// Whether [`mover_assignments`] returns every assignment of `k` pairs under
+/// `cap`, rather than a sample.
+fn enumerates_all(k: usize, cap: usize) -> bool {
+    k < usize::BITS as usize && (1usize << k) <= cap.max(1)
+}
+
+/// Mover assignments to compare, the rule's first: `true` moves the pair's
+/// target, `false` its control.
+///
+/// Every assignment when there are at most `cap`; otherwise the rule's, every
+/// single-pair flip of it, then distinct assignments drawn from a fixed seed,
+/// up to `cap` (or fewer, when the draws keep repeating).
+fn mover_assignments(rule: &[bool], cap: usize) -> Vec<Vec<bool>> {
+    use rand::rngs::SmallRng;
+    use rand::{Rng, SeedableRng};
+
+    let k = rule.len();
+    let cap = cap.max(1);
+    if enumerates_all(k, cap) {
+        let mut all = vec![rule.to_vec()];
+        all.extend(
+            (0..1usize << k)
+                .map(|bits| (0..k).map(|i| bits >> i & 1 == 1).collect::<Vec<_>>())
+                .filter(|a| a != rule),
+        );
+        return all;
+    }
+    let mut seen: HashSet<Vec<bool>> = HashSet::new();
+    let mut out = Vec::with_capacity(cap);
+    let mut push = |a: Vec<bool>, out: &mut Vec<Vec<bool>>| {
+        if out.len() < cap && seen.insert(a.clone()) {
+            out.push(a);
+        }
+    };
+    push(rule.to_vec(), &mut out);
+    for i in 0..k {
+        let mut flip = rule.to_vec();
+        flip[i] = !flip[i];
+        push(flip, &mut out);
+    }
+    let mut rng = SmallRng::seed_from_u64(0x4E0_40E5);
+    for _ in 0..cap.saturating_mul(8) {
+        if out.len() >= cap {
+            break;
+        }
+        push((0..k).map(|_| rng.random_bool(0.5)).collect(), &mut out);
+    }
+    out
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -369,11 +479,11 @@ fn build_full_layout(
 fn assign_free_slots(
     pairs: &[StagePair],
     claimed: &HashSet<u64>,
-    arch: &ArchSpec,
+    index: &LaneIndex,
     dist_table: &DistanceTable,
 ) -> Option<Vec<(u32, LocationAddr)>> {
-    let sites_per_word = arch.sites_per_word() as u32;
-    let slots: Vec<(LocationAddr, LocationAddr)> = entangling::enumerate_word_pairs(arch)
+    let sites_per_word = index.sites_per_word() as u32;
+    let slots: Vec<(LocationAddr, LocationAddr)> = entangling::enumerate_word_pairs(index)
         .into_iter()
         .flat_map(|wp| {
             (0..sites_per_word).map(move |site_id| {
@@ -434,11 +544,13 @@ fn assign_free_slots(
 
 // ── CzPlacement composition ─────────────────────────────────────────────
 
-use crate::placement::cz_placement::CzPlacement;
+use crate::placement::cz_placement::{
+    CandidateAttempt, CzPlacement, CzStage, PlacementBudget, PlacementResult, failed_stage_verdict,
+};
 use crate::primitives::config::ConfigError;
 use crate::search::engine::SearchEngine;
 use crate::search::move_search::MoveSearch;
-use crate::search::options::SolveOptions;
+use crate::search::options::{EntropyOptions, SolveOptions, Strategy};
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::search::target_solver::solve_with_engine;
 use std::sync::Arc;
@@ -449,12 +561,28 @@ use std::sync::Arc;
 /// generates `1 + nohome_opts.top_bus_signatures` candidate home
 /// layouts (Hungarian with lane-signature reward variants), routes
 /// each via [`solve_with_engine`], and keeps the candidate whose
-/// return-routing produces the fewest move layers. Phase 2 picks one
-/// CZ-staging target per pair via a deterministic per-pair rule, then
-/// routes once. A pair with a qubit that has no CZ partner (e.g. in a
-/// storage zone with no entangling pairs) goes to a free entangling slot
-/// instead. If some pair cannot be placed at all, the result is
-/// [`SolveStatus::Unsolvable`].
+/// return-routing produces the fewest move layers. Phase 2 stages each pair
+/// by moving one qubit to the other's CZ partner site, and
+/// [`NoHomeOptions::mover_selection`] picks which:
+///
+/// - [`MoverSelection::Rule`]: a fixed per-pair rule, routed once.
+/// - [`MoverSelection::Ranked`] (the default): every candidate mover
+///   assignment (up to [`NoHomeOptions::max_mover_candidates`]) is planned
+///   with Push and Rotate; the best-ranked candidate and the rule's are
+///   routed, and the ranked pick is kept only if it takes fewer layers.
+/// - [`MoverSelection::RouteAll`]: every candidate is routed and the one
+///   with the fewest layers kept.
+///
+/// The Phase 2 candidates routed are the [`PlacementResult`]'s `attempts`,
+/// and the winner is its `chosen`.
+///
+/// A pair with a qubit that has no CZ partner (e.g. in a storage zone with
+/// no entangling pairs) goes to a free entangling slot instead. If some pair
+/// cannot be placed at all, or a qubit is in more than one pair, the result
+/// is [`SolveStatus::Unsolvable`]. When no candidate routes, the result is
+/// [`SolveStatus::BudgetExceeded`] if any ran out of budget, and never a
+/// no-plan proof: the candidates vary only which qubit of each pair moves,
+/// which is not every way to stage the pairs.
 pub struct NoHomeCzPlacement {
     engine: Arc<SearchEngine>,
     search: MoveSearch,
@@ -489,83 +617,62 @@ impl NoHomeCzPlacement {
     pub fn nohome_options(&self) -> &NoHomeOptions {
         &self.nohome_options
     }
-
-    /// Solve a two-phase no-home placement.
-    ///
-    /// Equivalent to the trait-level
-    /// [`CzPlacement::solve`](super::cz_placement::CzPlacement::solve)
-    /// but accepts `cz_pairs` and an explicit `future_cz_layers`
-    /// lookahead window directly.
-    pub fn solve_pairs(
-        &self,
-        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-        cz_pairs: &[(u32, u32)],
-        blocked: impl IntoIterator<Item = LocationAddr>,
-        max_expansions: Option<u32>,
-        future_cz_layers: &[Vec<(u32, u32)>],
-    ) -> Result<SolveResult, ConfigError> {
-        solve_nohome(
-            &self.engine,
-            &self.search.options,
-            &self.nohome_options,
-            initial,
-            cz_pairs,
-            blocked,
-            max_expansions,
-            future_cz_layers,
-        )
-    }
 }
 
 impl CzPlacement for NoHomeCzPlacement {
-    fn solve(
+    /// `budget.max_expansions` caps each routing solve separately: every
+    /// return-phase candidate and the CZ phase each get the full cap (and,
+    /// inside a solve, each restart does).
+    fn place(
         &self,
-        initial: &[(u32, LocationAddr)],
-        controls: &[u32],
-        targets: &[u32],
-        blocked: &[LocationAddr],
-        max_expansions: Option<u32>,
-    ) -> Result<SolveResult, ConfigError> {
-        debug_assert_eq!(
-            controls.len(),
-            targets.len(),
-            "controls and targets must have equal length",
-        );
-        let cz_pairs: Vec<(u32, u32)> = controls
-            .iter()
-            .copied()
-            .zip(targets.iter().copied())
-            .collect();
-        self.solve_pairs(
-            initial.iter().copied(),
-            &cz_pairs,
-            blocked.iter().copied(),
-            max_expansions,
-            &[],
+        stage: &CzStage<'_>,
+        budget: &PlacementBudget,
+    ) -> Result<PlacementResult, ConfigError> {
+        solve_nohome(
+            &self.engine,
+            &self.search.options,
+            Some(&self.search.entropy_options),
+            &self.nohome_options,
+            stage.initial.iter().copied(),
+            stage.pairs,
+            stage.blocked.iter().copied(),
+            budget.max_expansions,
+            stage.future_layers,
         )
     }
 }
 
-/// Shared implementation backing [`NoHomeCzPlacement::solve_pairs`].
+/// Shared implementation backing [`NoHomeCzPlacement`]'s [`CzPlacement::place`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_nohome(
     engine: &SearchEngine,
     opts: &SolveOptions,
+    entropy_opts: Option<&EntropyOptions>,
     nohome_opts: &NoHomeOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
     cz_pairs: &[(u32, u32)],
     blocked: impl IntoIterator<Item = LocationAddr>,
     max_expansions: Option<u32>,
     future_cz_layers: &[Vec<(u32, u32)>],
-) -> Result<SolveResult, ConfigError> {
+) -> Result<PlacementResult, ConfigError> {
     // Both phases route under entangling-style contention.
     let upgraded_opts = opts.upgraded_for_entangling();
     let opts = &upgraded_opts;
 
     let root = Config::new(initial)?;
+    // A qubit in two pairs (or paired with itself) cannot sit on two partner
+    // sites at once, so no target stages every pair. Refuse it here, before
+    // one pair's destination can overwrite the other's in a candidate.
+    let mut paired: HashSet<u32> = HashSet::with_capacity(2 * cz_pairs.len());
+    if !cz_pairs
+        .iter()
+        .all(|&(c, t)| paired.insert(c) && paired.insert(t))
+    {
+        return Ok(PlacementResult::single(SolveResult::unsolvable(root)));
+    }
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
     let nh_cache = engine.nohome_cache();
-    let arch = engine.index().arch_spec();
+    let index = engine.index();
 
     let has_returners = root
         .iter()
@@ -573,77 +680,257 @@ pub(crate) fn solve_nohome(
 
     let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
 
-    // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
+    // Helper: the candidate CZ-staging targets for Phase 2 from a config, the
+    // rule's first.
     //
-    // A pair whose qubits both have a CZ partner takes the per-pair rule:
-    // one qubit moves to the other's partner site. A pair with a qubit
-    // anywhere else (e.g. a storage zone with no entangling pairs) has no
-    // such move, so it goes to a free entangling slot instead. `None`
-    // means some pair cannot be placed at all.
-    let resolve_cz_targets = |from: &Config| -> Option<Vec<(u32, LocationAddr)>> {
-        let mut chosen: HashMap<u32, LocationAddr> = HashMap::with_capacity(cz_pairs.len());
+    // A pair whose qubits both have a CZ partner is staged by moving one
+    // qubit to the other's partner site; the rule picks which, and the other
+    // candidates (under `Ranked` and `RouteAll`) vary that choice. A pair
+    // with a qubit anywhere else (e.g. a storage zone with no entangling
+    // pairs) has no such move, so it goes to a free entangling slot instead.
+    //
+    // A candidate that cannot be placed, or that puts two qubits on one
+    // location, is dropped, and the others are still generated: another
+    // assignment moves other qubits, so it can free a slot or avoid a clash.
+    // `Rule` has only the rule's candidate, and keeps its historical
+    // handling: an unplaceable one makes the stage unplaceable, and a clash
+    // is not checked here (the router rejects it). `None` means no candidate
+    // can be placed.
+    let cz_target_candidates = |from: &Config| -> Option<CzCandidates> {
+        let rule_only = nohome_opts.mover_selection == MoverSelection::Rule;
+        let mut options: Vec<((u32, LocationAddr), (u32, LocationAddr))> = Vec::new();
+        let mut rule: Vec<bool> = Vec::new();
         let mut unpartnered: Vec<StagePair> = Vec::new();
         for &(c, t) in cz_pairs {
             let c_addr = from.location_of(c)?;
             let t_addr = from.location_of(t)?;
-            let (Some(c_dst), Some(t_dst)) =
-                (arch.get_cz_partner(&t_addr), arch.get_cz_partner(&c_addr))
+            let (Some(c_dst), Some(t_dst)) = (index.cz_partner(&t_addr), index.cz_partner(&c_addr))
             else {
                 unpartnered.push(((c, c_addr), (t, t_addr)));
                 continue;
             };
-
-            let move_c = (c, c_dst);
-            let move_t = (t, t_dst);
-
-            let (qid, dst) = if c_addr.word_id == t_addr.word_id {
-                move_c
-            } else if arch.is_home_position(&t_addr) {
-                move_t
-            } else {
-                move_c
-            };
-            chosen.insert(qid, dst);
+            options.push(((c, c_dst), (t, t_dst)));
+            rule.push(c_addr.word_id != t_addr.word_id && index.is_home_position(&t_addr));
         }
 
-        if !unpartnered.is_empty() {
-            // A slot is taken if another atom ends on either half, or either
-            // half is blocked.
-            let slotted: HashSet<u32> = unpartnered
+        let assignments = match nohome_opts.mover_selection {
+            MoverSelection::Rule => vec![rule],
+            MoverSelection::Ranked | MoverSelection::RouteAll => {
+                mover_assignments(&rule, nohome_opts.max_mover_candidates)
+            }
+        };
+
+        let mut candidates = Vec::with_capacity(assignments.len());
+        let mut has_rule = false;
+        for (n, assignment) in assignments.iter().enumerate() {
+            let mut chosen: HashMap<u32, LocationAddr> = HashMap::with_capacity(cz_pairs.len());
+            for (&moves_target, &(move_c, move_t)) in assignment.iter().zip(&options) {
+                let (qid, dst) = if moves_target { move_t } else { move_c };
+                chosen.insert(qid, dst);
+            }
+
+            if !unpartnered.is_empty() {
+                // A slot is taken if another atom ends on either half, or
+                // either half is blocked.
+                let slotted: HashSet<u32> = unpartnered
+                    .iter()
+                    .flat_map(|&((c, _), (t, _))| [c, t])
+                    .collect();
+                let mut claimed = blocked_set.clone();
+                claimed.extend(
+                    from.iter()
+                        .filter(|(qid, _)| !slotted.contains(qid))
+                        .map(|(qid, loc)| chosen.get(&qid).copied().unwrap_or(loc).encode()),
+                );
+                let dist_table = &engine.entangling_cache().dist_table;
+                match assign_free_slots(&unpartnered, &claimed, index, dist_table) {
+                    Some(slots) => chosen.extend(slots),
+                    None if rule_only => return None,
+                    None => continue,
+                }
+            }
+
+            let target: Vec<(u32, LocationAddr)> = from
                 .iter()
-                .flat_map(|&((c, _), (t, _))| [c, t])
-                .collect();
-            let mut claimed = blocked_set.clone();
-            claimed.extend(
-                from.iter()
-                    .filter(|(qid, _)| !slotted.contains(qid))
-                    .map(|(qid, loc)| chosen.get(&qid).copied().unwrap_or(loc).encode()),
-            );
-            let dist_table = &engine.entangling_cache().dist_table;
-            chosen.extend(assign_free_slots(&unpartnered, &claimed, arch, dist_table)?);
-        }
-
-        Some(
-            from.iter()
                 .map(|(qid, loc)| (qid, chosen.get(&qid).copied().unwrap_or(loc)))
-                .collect(),
-        )
+                .collect();
+            if !rule_only {
+                let mut ends = HashSet::with_capacity(target.len());
+                if !target.iter().all(|(_, loc)| ends.insert(loc.encode())) {
+                    continue;
+                }
+            }
+            has_rule |= n == 0;
+            candidates.push(target);
+        }
+        if candidates.is_empty() {
+            return None;
+        }
+        Some(CzCandidates {
+            targets: candidates,
+            has_rule,
+        })
+    };
+
+    // Helper: route Phase 2 from `from` to one of the candidates, chosen per
+    // `mover_selection`. Under `Rule` this is exactly one routing solve to the
+    // rule's target. The result is the chosen candidate's, with the search
+    // counters of every routing solve summed in, and every routed candidate is
+    // logged. When none routes, the result describes the stage rather than
+    // any one target; see `failed_stage_verdict`.
+    let route_cz_phase = |from: &Config, cands: CzCandidates| -> Result<CzPhase, ConfigError> {
+        let CzCandidates {
+            targets: candidates,
+            has_rule,
+        } = cands;
+        let route = |target: &[(u32, LocationAddr)]| {
+            solve_with_engine(
+                engine,
+                opts,
+                entropy_opts,
+                from.iter(),
+                target.iter().copied(),
+                blocked_locs.iter().copied(),
+                max_expansions,
+            )
+        };
+        // Push and Rotate's plan length for each candidate `Ranked` planned.
+        let mut scores: Vec<Option<f64>> = vec![None; candidates.len()];
+        // The routing order, the rule's candidate always first, and whether
+        // one routed candidate is enough.
+        let (order, first_solve_wins): (Vec<usize>, bool) = match nohome_opts.mover_selection {
+            MoverSelection::Rule => (vec![0], true),
+            MoverSelection::RouteAll => ((0..candidates.len()).collect(), false),
+            MoverSelection::Ranked => {
+                let plan_opts = SolveOptions {
+                    strategy: Strategy::PushRotate,
+                    backwards_search: false,
+                    ..opts.clone()
+                };
+                let mut planned: Vec<(usize, usize)> = Vec::new();
+                for (i, target) in candidates.iter().enumerate() {
+                    let plan = solve_with_engine(
+                        engine,
+                        &plan_opts,
+                        None,
+                        from.iter(),
+                        target.iter().copied(),
+                        blocked_locs.iter().copied(),
+                        None,
+                    )?;
+                    if plan.status == SolveStatus::Solved {
+                        scores[i] = Some(plan.move_layers.len() as f64);
+                        planned.push((plan.move_layers.len(), i));
+                    }
+                }
+                planned.sort_unstable();
+                if has_rule {
+                    // When Push and Rotate ranks the rule's candidate first,
+                    // routing it alone is enough. Otherwise the rule's
+                    // candidate is routed too, so the ranked pick is kept
+                    // only if it routes in fewer layers: ranking never does
+                    // worse than the rule.
+                    let rule_ranked_first = planned.first().is_some_and(|&(_, i)| i == 0);
+                    let mut order = vec![0];
+                    order.extend(planned.into_iter().map(|(_, i)| i).filter(|&i| i != 0));
+                    (order, rule_ranked_first)
+                } else if planned.is_empty() {
+                    // No rule's candidate to fall back on, and nothing
+                    // ranked: try them in order.
+                    ((0..candidates.len()).collect(), true)
+                } else {
+                    (planned.into_iter().map(|(_, i)| i).collect(), true)
+                }
+            }
+        };
+
+        let mut expanded: u32 = 0;
+        let mut generated: u32 = 0;
+        let mut best: Option<(usize, SolveResult)> = None;
+        let mut first_failure: Option<SolveResult> = None;
+        let mut any_budget = false;
+        let mut attempts = Vec::with_capacity(order.len());
+        for i in order {
+            let result = route(&candidates[i])?;
+            expanded = expanded.saturating_add(result.nodes_expanded);
+            generated = generated.saturating_add(result.nodes_generated);
+            attempts.push(CandidateAttempt {
+                candidate_index: i,
+                status: result.status,
+                nodes_expanded: result.nodes_expanded,
+                score: scores[i],
+            });
+            if result.status == SolveStatus::Solved {
+                // Strictly fewer layers: a tie keeps the earlier candidate,
+                // and the rule's is routed first.
+                if best
+                    .as_ref()
+                    .is_none_or(|(_, b)| result.move_layers.len() < b.move_layers.len())
+                {
+                    best = Some((i, result));
+                }
+                // `Ranked` stops at its ranked pick: the first routed
+                // candidate other than the rule's, or the rule's itself when
+                // it was ranked first.
+                let is_rule = has_rule && i == 0;
+                if nohome_opts.mover_selection == MoverSelection::Ranked
+                    && (!is_rule || first_solve_wins)
+                {
+                    break;
+                }
+            } else {
+                any_budget |= result.status == SolveStatus::BudgetExceeded;
+                // `Ranked` holding the rule's plan compares it with the
+                // ranked pick alone: a pick that fails to route ends the phase
+                // rather than sending it down the ranked list.
+                if nohome_opts.mover_selection == MoverSelection::Ranked && best.is_some() {
+                    break;
+                }
+                if first_failure.is_none() {
+                    first_failure = Some(result);
+                }
+            }
+        }
+        let (chosen, mut result) = match best {
+            Some((i, solved)) => (Some(i), solved),
+            None => {
+                // Something was routed and nothing solved, so a failure is
+                // set: the rule's, when it has a candidate, since that is
+                // routed first. It keeps the stage's starting configuration
+                // and that candidate's partial.
+                let failed = first_failure.expect("a candidate is routed when none solves");
+                let (status, termination) = failed_stage_verdict(any_budget);
+                (
+                    None,
+                    SolveResult {
+                        status,
+                        termination,
+                        ..failed
+                    },
+                )
+            }
+        };
+        result.nodes_expanded = expanded;
+        result.nodes_generated = generated;
+        Ok(CzPhase {
+            result,
+            attempts,
+            chosen,
+        })
     };
 
     if !has_returners {
         // Skip the return phase — go directly to fixed-target entangling.
-        let Some(cz_targets) = resolve_cz_targets(&root) else {
-            return Ok(SolveResult::unsolvable(root));
+        let Some(cz_targets) = cz_target_candidates(&root) else {
+            return Ok(PlacementResult::single(SolveResult::unsolvable(root)));
         };
-        return solve_with_engine(
-            engine,
-            opts,
-            None,
-            root.iter(),
-            cz_targets,
-            blocked_locs.iter().copied(),
-            max_expansions,
-        );
+        let cz = route_cz_phase(&root, cz_targets)?;
+        return Ok(PlacementResult {
+            total_expansions: cz.result.nodes_expanded,
+            result: cz.result,
+            chosen: cz.chosen,
+            attempts: cz.attempts,
+        });
     }
 
     let occupied_set: HashSet<u64> = root.iter().map(|(_, loc)| loc.encode()).collect();
@@ -668,6 +955,7 @@ pub(crate) fn solve_nohome(
 
     // Phase 1: route every candidate's return layout.
     let mut total_expanded: u32 = 0;
+    let mut total_generated: u32 = 0;
     let mut best_p1: Option<SolveResult> = None;
     let mut p1_saw_budget_exceeded = false;
     for candidate in &candidates {
@@ -675,7 +963,7 @@ pub(crate) fn solve_nohome(
         let return_result = solve_with_engine(
             engine,
             opts,
-            None,
+            entropy_opts,
             root.iter(),
             return_target,
             blocked_locs.iter().copied(),
@@ -683,6 +971,7 @@ pub(crate) fn solve_nohome(
         )?;
 
         total_expanded += return_result.nodes_expanded;
+        total_generated = total_generated.saturating_add(return_result.nodes_generated);
 
         match return_result.status {
             SolveStatus::Solved => {
@@ -704,49 +993,60 @@ pub(crate) fn solve_nohome(
         } else {
             SolveStatus::Unsolvable
         };
-        return Ok(SolveResult::unsolved(status, root, total_expanded, 0));
+        let mut unsolved = SolveResult::unsolved(status, root, total_expanded, 0);
+        unsolved.nodes_generated = total_generated;
+        return Ok(PlacementResult::single(unsolved));
     };
 
-    // Phase 2: simple per-pair target picker, then route once.
-    let Some(cz_targets) = resolve_cz_targets(&return_result.goal_config) else {
-        return Ok(SolveResult::unsolved(
+    // Phase 2: pick the CZ-staging target per `mover_selection`, and route it.
+    let Some(cz_targets) = cz_target_candidates(&return_result.goal_config) else {
+        let mut unsolved = SolveResult::unsolved(
             SolveStatus::Unsolvable,
             root,
             total_expanded,
             return_result.deadlocks,
-        ));
+        );
+        unsolved.nodes_generated = total_generated;
+        return Ok(PlacementResult::single(unsolved));
     };
-    let entangling_result = solve_with_engine(
-        engine,
-        opts,
-        None,
-        return_result.goal_config.iter(),
-        cz_targets,
-        blocked_locs.iter().copied(),
-        max_expansions,
-    )?;
+    let CzPhase {
+        result: entangling_result,
+        attempts,
+        chosen,
+    } = route_cz_phase(&return_result.goal_config, cz_targets)?;
 
     total_expanded += entangling_result.nodes_expanded;
+    total_generated = total_generated.saturating_add(entangling_result.nodes_generated);
 
-    if entangling_result.status == SolveStatus::Solved {
+    let result = if entangling_result.status == SolveStatus::Solved {
         let total_cost = return_result.cost + entangling_result.cost;
         let mut combined_layers = return_result.move_layers;
         combined_layers.extend(entangling_result.move_layers);
-        return Ok(SolveResult::solved(
+        let mut solved = SolveResult::solved(
             entangling_result.goal_config,
             combined_layers,
             total_cost,
             total_expanded,
             return_result.deadlocks + entangling_result.deadlocks,
-        ));
-    }
-
-    Ok(SolveResult::unsolved(
-        entangling_result.status,
-        root,
-        total_expanded,
-        return_result.deadlocks + entangling_result.deadlocks,
-    ))
+        );
+        solved.nodes_generated = total_generated;
+        solved
+    } else {
+        let mut unsolved = SolveResult::unsolved(
+            entangling_result.status,
+            root,
+            total_expanded,
+            return_result.deadlocks + entangling_result.deadlocks,
+        );
+        unsolved.nodes_generated = total_generated;
+        unsolved
+    };
+    Ok(PlacementResult {
+        total_expansions: result.nodes_expanded,
+        result,
+        chosen,
+        attempts,
+    })
 }
 
 #[cfg(test)]
@@ -755,6 +1055,7 @@ mod tests {
     use crate::primitives::lane_index::LaneIndex;
     use crate::search::result::SolveStatus;
     use crate::test_utils::{example_arch_json, loc, storage_gate_arch_json};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     fn make_parts() -> (ArchSpec, LaneIndex) {
         let json = example_arch_json();
@@ -764,9 +1065,37 @@ mod tests {
     }
 
     #[test]
+    fn mover_assignments_enumerates_all_when_under_the_cap() {
+        let rule = [true, false, true];
+        let all = mover_assignments(&rule, 8);
+        assert_eq!(all.len(), 8);
+        assert_eq!(all[0], rule);
+        let distinct: HashSet<_> = all.iter().cloned().collect();
+        assert_eq!(distinct.len(), 8);
+    }
+
+    #[test]
+    fn mover_assignments_samples_over_the_cap() {
+        let rule = vec![false; 10];
+        let some = mover_assignments(&rule, 20);
+        assert_eq!(some.len(), 20);
+        assert_eq!(some[0], rule);
+        // Every single-pair flip comes right after the rule.
+        for (i, flip) in some[1..=10].iter().enumerate() {
+            assert!(flip.iter().enumerate().all(|(j, &b)| b == (j == i)));
+        }
+        let distinct: HashSet<_> = some.iter().cloned().collect();
+        assert_eq!(distinct.len(), 20);
+        // Deterministic.
+        assert_eq!(some, mover_assignments(&rule, 20));
+        // A cap below the flips keeps the rule and the first flips.
+        assert_eq!(mover_assignments(&rule, 3).len(), 3);
+    }
+
+    #[test]
     fn test_home_sites_nonempty() {
-        let (arch, _) = make_parts();
-        let sites = entangling::home_sites(&arch);
+        let (arch, index) = make_parts();
+        let sites = entangling::home_sites(&index);
         assert!(!sites.is_empty(), "should have at least one home site");
         let home_words: HashSet<u32> = arch.left_cz_word_ids().into_iter().collect();
         for &enc in &sites {
@@ -788,7 +1117,7 @@ mod tests {
     fn test_home_sites_span_every_zone() {
         let arch: ArchSpec =
             serde_json::from_str(crate::test_utils::two_zone_bus_arch_json()).unwrap();
-        let sites: HashSet<LocationAddr> = entangling::home_sites(&arch)
+        let sites: HashSet<LocationAddr> = entangling::home_sites(&LaneIndex::new(arch))
             .into_iter()
             .map(LocationAddr::decode)
             .collect();
@@ -816,8 +1145,8 @@ mod tests {
 
     #[test]
     fn test_nearest_home_assigns_all_returners() {
-        let (arch, index) = make_parts();
-        let home_locs = entangling::home_sites(&arch);
+        let (_, index) = make_parts();
+        let home_locs = entangling::home_sites(&index);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at non-home locations (CZ staging).
@@ -855,8 +1184,8 @@ mod tests {
 
     #[test]
     fn test_candidate_layouts_all_home_is_identity() {
-        let (arch, index) = make_parts();
-        let home_locs = entangling::home_sites(&arch);
+        let (_, index) = make_parts();
+        let home_locs = entangling::home_sites(&index);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at home — should get identity layout back.
@@ -892,7 +1221,7 @@ mod tests {
         }
     }
 
-    /// End-to-end smoke: `NoHomeCzPlacement::solve_pairs` runs the full
+    /// End-to-end smoke: `NoHomeCzPlacement::place` runs the full
     /// two-phase pipeline (return assignment + entangling routing) and reaches
     /// a deterministic terminal verdict without erroring. The toy
     /// `example_arch_json` lacks the distinct home/staging zones the no-home
@@ -911,16 +1240,137 @@ mod tests {
         let blocked: [LocationAddr; 0] = [];
 
         let result = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &[],
+            .place(
+                &CzStage::new(&initial, &cz_pairs, &blocked),
+                &PlacementBudget::new(Some(5000)),
             )
+            .map(|placed| placed.result)
             .unwrap();
 
         assert_eq!(result.status, SolveStatus::Unsolvable);
+    }
+
+    /// One CZ stage on the example arch under `selection`, routed with
+    /// `strategy` and a `budget` per solve.
+    fn place_example(
+        initial: &[(u32, LocationAddr)],
+        selection: MoverSelection,
+        strategy: Strategy,
+        budget: u32,
+    ) -> SolveResult {
+        let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
+        let search = MoveSearch::new(
+            SolveOptions {
+                strategy,
+                ..SolveOptions::default()
+            },
+            Default::default(),
+        );
+        let options = NoHomeOptions {
+            mover_selection: selection,
+            ..NoHomeOptions::default()
+        };
+        let blocked: [LocationAddr; 0] = [];
+        NoHomeCzPlacement::new(engine, search, options)
+            .place(
+                &CzStage::new(initial, &[(0, 1)], &blocked),
+                &PlacementBudget::new(Some(budget)),
+            )
+            .unwrap()
+            .result
+    }
+
+    /// A failed stage never claims that no plan exists. The candidates vary
+    /// only which qubit of each pair moves, which is not every way to stage
+    /// it: a pair can also go to any free entangling slot. Sites 0 and 1 can
+    /// never pair on the example arch, and Push and Rotate proves each
+    /// candidate unroutable, yet no selection reports that as the stage's
+    /// proof.
+    #[test]
+    fn a_failed_stage_never_claims_no_plan() {
+        let initial = [(0u32, loc(0, 0)), (1u32, loc(0, 1))];
+        for selection in [
+            MoverSelection::Rule,
+            MoverSelection::Ranked,
+            MoverSelection::RouteAll,
+        ] {
+            let result = place_example(&initial, selection, Strategy::PushRotate, 5000);
+            assert_eq!(result.status, SolveStatus::Unsolvable, "{selection:?}");
+            assert!(!result.proven(), "{selection:?}: {:?}", result.termination);
+        }
+    }
+
+    /// A qubit in two pairs, or paired with itself, cannot be staged for
+    /// both, so the stage is refused as unsolvable before anything routes,
+    /// rather than routed to a target that stages only one of them.
+    #[test]
+    fn a_qubit_in_two_pairs_is_refused() {
+        let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
+        let initial = [(0u32, loc(0, 0)), (1u32, loc(0, 5)), (2u32, loc(0, 1))];
+        let blocked: [LocationAddr; 0] = [];
+        let overlapping: [&[(u32, u32)]; 2] = [&[(0, 1), (0, 2)], &[(0, 0)]];
+        for pairs in overlapping {
+            for selection in [
+                MoverSelection::Rule,
+                MoverSelection::Ranked,
+                MoverSelection::RouteAll,
+            ] {
+                let options = NoHomeOptions {
+                    mover_selection: selection,
+                    ..NoHomeOptions::default()
+                };
+                let placed =
+                    NoHomeCzPlacement::new(engine.clone(), MoveSearch::astar(1.0), options)
+                        .place(
+                            &CzStage::new(&initial, pairs, &blocked),
+                            &PlacementBudget::new(Some(1000)),
+                        )
+                        .unwrap();
+                let at = format!("{pairs:?} under {selection:?}");
+                assert_eq!(placed.result.status, SolveStatus::Unsolvable, "{at}");
+                assert_eq!(placed.total_expansions, 0, "{at}");
+                assert!(placed.attempts.is_empty(), "{at}");
+            }
+        }
+    }
+
+    /// The CZ phase's routed candidates are the placement's attempt log: its
+    /// expansions add up to the total, the winner is `chosen`, and `Ranked`
+    /// scores each candidate it planned with Push and Rotate's plan length.
+    #[test]
+    fn the_cz_phase_reports_its_attempt_log() {
+        let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
+        // The rule moves the control, which cannot pass the target on its
+        // site column; the flipped assignment routes, so two candidates are
+        // tried and the second wins.
+        let initial = [(0u32, loc(0, 0)), (1u32, loc(0, 5))];
+        let blocked: [LocationAddr; 0] = [];
+        for selection in [MoverSelection::Ranked, MoverSelection::RouteAll] {
+            let options = NoHomeOptions {
+                mover_selection: selection,
+                ..NoHomeOptions::default()
+            };
+            let placed = NoHomeCzPlacement::new(engine.clone(), MoveSearch::astar(1.0), options)
+                .place(
+                    &CzStage::new(&initial, &[(0, 1)], &blocked),
+                    &PlacementBudget::new(Some(1000)),
+                )
+                .unwrap();
+            assert_eq!(placed.result.status, SolveStatus::Solved, "{selection:?}");
+            assert_eq!(placed.candidates_tried(), 2, "{selection:?}");
+            assert_eq!(placed.chosen, Some(1), "{selection:?}");
+            assert_eq!(
+                placed.total_expansions,
+                placed
+                    .attempts
+                    .iter()
+                    .map(|a| a.nodes_expanded)
+                    .sum::<u32>(),
+                "{selection:?}"
+            );
+            let scored = placed.attempts.iter().any(|a| a.score.is_some());
+            assert_eq!(scored, selection == MoverSelection::Ranked, "{selection:?}");
+        }
     }
 
     fn zloc(zone_id: u32, word_id: u32, site_id: u32) -> LocationAddr {
@@ -941,13 +1391,11 @@ mod tests {
         let placement = NoHomeCzPlacement::new(engine.clone(), search, NoHomeOptions::default());
         let blocked: [LocationAddr; 0] = [];
         let result = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &[],
+            .place(
+                &CzStage::new(initial, cz_pairs, &blocked),
+                &PlacementBudget::new(Some(5000)),
             )
+            .map(|placed| placed.result)
             .unwrap();
         (engine, result)
     }
@@ -974,7 +1422,7 @@ mod tests {
             let c = result.goal_config.location_of(0).unwrap();
             let t = result.goal_config.location_of(1).unwrap();
             assert_eq!(
-                engine.index().arch_spec().get_cz_partner(&t),
+                engine.index().cz_partner(&t),
                 Some(c),
                 "from {initial:?}: pair ends at {c:?} and {t:?}, not on CZ partner sites",
             );
@@ -1050,9 +1498,8 @@ mod tests {
     #[test]
     fn free_slots_reject_a_shared_half_across_overlapping_pairs() {
         let engine = SearchEngine::from_json(&overlapping_pairs_arch_json()).unwrap();
-        let arch = engine.index().arch_spec();
-        let dist_table =
-            DistanceTable::new(&entangling::all_entangling_locations(arch), engine.index());
+        let index = engine.index();
+        let dist_table = DistanceTable::new(&entangling::all_entangling_locations(index), index);
         let pairs = [
             ((0u32, zloc(0, 0, 0)), (1u32, zloc(0, 0, 0))),
             ((2u32, zloc(0, 0, 0)), (3u32, zloc(0, 0, 0))),
@@ -1060,11 +1507,11 @@ mod tests {
         // Take site 1 of `[1, 2]` so the collision is the cheapest answer.
         let claimed = HashSet::from([zloc(1, 1, 1).encode()]);
 
-        assert!(assign_free_slots(&pairs, &claimed, arch, &dist_table).is_none());
+        assert!(assign_free_slots(&pairs, &claimed, index, &dist_table).is_none());
 
         // With `[2, 3]` at site 0 taken too, the only disjoint choice is left.
         let claimed = HashSet::from([zloc(1, 1, 1).encode(), zloc(1, 3, 0).encode()]);
-        let targets = assign_free_slots(&pairs, &claimed, arch, &dist_table).unwrap();
+        let targets = assign_free_slots(&pairs, &claimed, index, &dist_table).unwrap();
         let distinct: HashSet<LocationAddr> = targets.iter().map(|&(_, l)| l).collect();
         assert_eq!(distinct.len(), 4, "colliding targets: {targets:?}");
     }

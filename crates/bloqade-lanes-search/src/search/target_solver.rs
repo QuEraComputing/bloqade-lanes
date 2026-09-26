@@ -135,6 +135,40 @@ pub(crate) fn solve_with_engine(
     blocked: impl IntoIterator<Item = LocationAddr>,
     max_expansions: Option<u32>,
 ) -> Result<SolveResult, ConfigError> {
+    solve_with_engine_impl(
+        engine,
+        opts,
+        entropy_opts,
+        initial,
+        target,
+        blocked,
+        max_expansions,
+        FallbackStart::BestPartial,
+    )
+}
+
+/// Where the Push and Rotate fallback starts when the search fails.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FallbackStart {
+    /// From the search's best partial, when it got anywhere; see
+    /// [`finish_with_push_rotate`].
+    BestPartial,
+    /// From the caller's `initial`. The mirrored solve behind
+    /// `backwards_search` uses this, per the refactor plan (critique F2).
+    Initial,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn solve_with_engine_impl(
+    engine: &SearchEngine,
+    opts: &SolveOptions,
+    entropy_opts: Option<&EntropyOptions>,
+    initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+    target: impl IntoIterator<Item = (u32, LocationAddr)>,
+    blocked: impl IntoIterator<Item = LocationAddr>,
+    max_expansions: Option<u32>,
+    fallback_start: FallbackStart,
+) -> Result<SolveResult, ConfigError> {
     let root = Config::new(initial)?;
     validate_initial_placement(&root)?;
     let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -175,7 +209,7 @@ pub(crate) fn solve_with_engine(
             backwards_search: false,
             ..opts.clone()
         };
-        let mirrored = solve_with_engine(
+        let mirrored = solve_with_engine_impl(
             engine,
             &mirrored_opts,
             entropy_opts,
@@ -183,12 +217,16 @@ pub(crate) fn solve_with_engine(
             initial_pairs.iter().copied(),
             blocked_locs.iter().copied(),
             max_expansions,
+            FallbackStart::Initial,
         )?;
         if mirrored.status != SolveStatus::Solved {
             // An unsolved result reports the configuration the *caller's*
-            // solve started from, not the mirror's.
+            // solve started from, not the mirror's. The mirror's partial is
+            // a suffix of the reversed problem, not a prefix from `root`, so
+            // it cannot be resumed from and is dropped.
             return Ok(SolveResult {
                 goal_config: root,
+                best_partial: None,
                 ..mirrored
             });
         }
@@ -240,7 +278,7 @@ pub(crate) fn solve_with_engine(
         crate::search::verify::assert_move_layers_executable(
             &root,
             &layers,
-            engine.index().arch_spec(),
+            engine.index(),
             &blocked_encoded,
             &goal_config,
         );
@@ -296,7 +334,6 @@ pub(crate) fn solve_with_engine(
         blocked: &blocked_encoded,
         targets: &target_encoded,
         cz_pairs: None,
-        capacity: opts.aod_capacity,
     };
 
     let lookahead = opts.lookahead;
@@ -326,27 +363,123 @@ pub(crate) fn solve_with_engine(
     // "the search gave up" into either a schedule or a proof that none
     // exists. Only the *failure* path pays for it.
     if opts.fallback_push_rotate && result.status != SolveStatus::Solved {
-        let fallback = solve_push_rotate(
-            engine.index(),
+        return finish_with_push_rotate(
+            engine,
+            &root,
             &initial_pairs,
             &target_pairs,
             &blocked_locs,
-            DEFAULT_MOVE_BUDGET,
-        )?;
-        if fallback.status == SolveStatus::Solved {
-            return Ok(fallback);
-        }
-        // Both failed. Prefer the planner's verdict when it is a *proof* of
-        // unsolvability; the search's `Unsolvable` only means its frontier
-        // drained, which says nothing. Selecting on `proven` rather than on
-        // the status names the property this promotion actually depends on, so
-        // a planner path that ever reports `Unsolvable` without a proof stops
-        // being promoted instead of silently borrowing the proof's authority.
-        if fallback.proven {
-            return Ok(fallback);
-        }
+            &blocked_encoded,
+            result,
+            fallback_start,
+        );
     }
     Ok(result)
+}
+
+/// The search failed: finish with Push and Rotate.
+///
+/// With [`FallbackStart::BestPartial`] and a best partial past the root, Push
+/// and Rotate runs from the partial's configuration, and a solve returns the
+/// chained plan — the search's prefix, then Push and Rotate's layers —
+/// replayed from `root`. Otherwise, or when the resumed run fails, it runs
+/// from `initial` as before. That second run is also the proof policy (the
+/// plan's decision 1): a resumed `Unsolvable` is a claim about the partial
+/// configuration, not about the caller's instance, so only a run from
+/// `initial` may report a proof.
+///
+/// Whatever is returned keeps the search's counters, trace and bound
+/// statistics: Push and Rotate is not a search and expands nothing, so its
+/// own zeros would erase the work the search did.
+///
+/// The planner batches shots without consulting the architecture's AOD
+/// capacity, but a search strategy's plan must fit it, so a planner plan with
+/// a shot over the cap is not used (see [`LaneIndex::admits_shot`]).
+///
+/// [`LaneIndex::admits_shot`]: crate::primitives::lane_index::LaneIndex::admits_shot
+#[allow(clippy::too_many_arguments)]
+fn finish_with_push_rotate(
+    engine: &SearchEngine,
+    root: &Config,
+    initial_pairs: &[(u32, LocationAddr)],
+    target_pairs: &[(u32, LocationAddr)],
+    blocked_locs: &[LocationAddr],
+    blocked_encoded: &HashSet<u64>,
+    search: SolveResult,
+    fallback_start: FallbackStart,
+) -> Result<SolveResult, ConfigError> {
+    let keep_search_counters = |mut finished: SolveResult, search: SolveResult| {
+        finished.nodes_expanded = search.nodes_expanded;
+        finished.nodes_generated = search.nodes_generated;
+        finished.deadlocks = search.deadlocks;
+        finished.entropy_trace = search.entropy_trace;
+        finished.bound_stats = search.bound_stats;
+        finished
+    };
+    let fits_capacity = |plan: &SolveResult| {
+        plan.move_layers
+            .iter()
+            .all(|layer| engine.index().admits_shot(&layer.decode()))
+    };
+
+    let partial = match (fallback_start, &search.best_partial) {
+        (FallbackStart::BestPartial, Some(partial)) if !partial.layers.is_empty() => {
+            Some(partial.clone())
+        }
+        _ => None,
+    };
+    if let Some(partial) = partial {
+        let from: Vec<(u32, LocationAddr)> = partial.config.iter().collect();
+        let resumed = solve_push_rotate(
+            engine.index(),
+            &from,
+            target_pairs,
+            blocked_locs,
+            DEFAULT_MOVE_BUDGET,
+        )?;
+        if resumed.status == SolveStatus::Solved && fits_capacity(&resumed) {
+            let mut layers = partial.layers;
+            layers.extend(resumed.move_layers);
+            crate::search::verify::assert_move_layers_executable(
+                root,
+                &layers,
+                engine.index(),
+                blocked_encoded,
+                &resumed.goal_config,
+            );
+            // Every layer is one shot under the objective the search and the
+            // planner both report, so the chained cost is the layer count.
+            let chained = SolveResult::solved(
+                resumed.goal_config,
+                layers.clone(),
+                layers.len() as f64,
+                0,
+                0,
+            );
+            return Ok(keep_search_counters(chained, search));
+        }
+    }
+
+    let fallback = solve_push_rotate(
+        engine.index(),
+        initial_pairs,
+        target_pairs,
+        blocked_locs,
+        DEFAULT_MOVE_BUDGET,
+    )?;
+    if fallback.status == SolveStatus::Solved && fits_capacity(&fallback) {
+        return Ok(keep_search_counters(fallback, search));
+    }
+    // Both failed. Prefer the planner's verdict when it is a *proof* of
+    // unsolvability; the search's `Unsolvable` only means its frontier
+    // drained, which says nothing. Selecting on `proven` rather than on the
+    // status names the property this promotion actually depends on, so a
+    // planner path that ever reports `Unsolvable` without a proof stops being
+    // promoted instead of silently borrowing the proof's authority.
+    if fallback.proven() {
+        return Ok(keep_search_counters(fallback, search));
+    }
+    Ok(search)
 }
 
 #[cfg(test)]
@@ -405,7 +538,7 @@ mod tests {
 
         let stopped = solve(true);
         assert_eq!(stopped.status, SolveStatus::Solved);
-        assert!(stopped.proven, "a plan at h(root) is proven optimal");
+        assert!(stopped.proven(), "a plan at h(root) is proven optimal");
         assert_eq!(
             stopped.termination,
             Termination::Exhausted { proof: true },
@@ -414,13 +547,13 @@ mod tests {
 
         let spun = solve(false);
         assert!(
-            !spun.proven,
+            !spun.proven(),
             "declining to act on the certificate proves nothing"
         );
         assert_eq!(spun.cost.to_bits(), stopped.cost.to_bits());
     }
 
-    /// `SolveOptions::aod_capacity` reaches the shot generator through the
+    /// The spec's `aod_capacity` reaches the shot generator through the
     /// public entry point.
     ///
     /// Three atoms in one row of the example arch move together in a single
@@ -429,22 +562,21 @@ mod tests {
     /// assertion is on the emitted *widths* rather than the layer count, so it
     /// pins the capacity rather than any particular plan length.
     ///
-    /// This covers the wiring, not the generator: the option has to survive
-    /// `solve` building its `SearchContext`. That thread is exactly what the
-    /// loose-target generator got wrong before this test's sibling fix, so it
-    /// is worth an assertion of its own.
+    /// This covers the wiring, not the generator: the capacity has to reach
+    /// every shot assembler from the architecture spec, through the engine's
+    /// `LaneIndex`.
     #[test]
-    fn solve_honours_the_aod_capacity_from_options() {
-        let engine = make_engine();
+    fn solve_honours_the_aod_capacity_from_the_arch_spec() {
         let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
         let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i + 5))).collect();
 
         let widths = |capacity: Option<AodCapacity>| -> Vec<usize> {
-            let search = MoveSearch::default().with_options(SolveOptions {
-                aod_capacity: capacity,
-                ..Default::default()
-            });
-            let result = TargetSolver::new(Arc::clone(&engine), search)
+            let spec: bloqade_lanes_bytecode_core::arch::ArchSpec =
+                serde_json::from_str(example_arch_json()).unwrap();
+            let engine =
+                Arc::new(SearchEngine::from_arch_spec(&spec.with_aod_capacity(capacity)).unwrap());
+            let search = MoveSearch::default();
+            let result = TargetSolver::new(engine, search)
                 .solve(
                     initial.clone(),
                     target.clone(),
@@ -470,6 +602,239 @@ mod tests {
             vec![1, 1, 1],
             "a 1x1 AOD cannot carry more than one atom per shot"
         );
+    }
+
+    /// A search strategy's Push-and-Rotate fallback never returns a shot over
+    /// the architecture's AOD capacity. With no budget the search gives up at
+    /// once and the planner batches the row into wider shots: used when
+    /// nothing caps them, discarded under a 1x1 cap.
+    #[test]
+    fn the_push_rotate_fallback_honours_the_aod_capacity() {
+        let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
+        let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i + 5))).collect();
+        let solve = |capacity: Option<AodCapacity>| {
+            let spec: bloqade_lanes_bytecode_core::arch::ArchSpec =
+                serde_json::from_str(example_arch_json()).unwrap();
+            let engine = SearchEngine::from_arch_spec(&spec.with_aod_capacity(capacity)).unwrap();
+            solve_with_engine(
+                &engine,
+                &SolveOptions {
+                    fallback_push_rotate: true,
+                    ..SolveOptions::default()
+                },
+                None,
+                initial.clone(),
+                target.clone(),
+                std::iter::empty(),
+                Some(0),
+            )
+            .unwrap()
+        };
+
+        let uncapped = solve(None);
+        assert_eq!(uncapped.status, SolveStatus::Solved);
+        assert!(
+            uncapped.move_layers.iter().any(|m| m.decode().len() > 1),
+            "the planner should batch the row"
+        );
+
+        let capped = solve(AodCapacity::new(1, 1));
+        assert_ne!(capped.status, SolveStatus::Solved);
+        assert!(capped.move_layers.is_empty());
+    }
+
+    /// Atoms 0 and 1 are one site-bus hop from their targets; atom 2 also
+    /// needs a word-bus hop. One expansion is enough to reach a node with
+    /// two atoms home but not the goal.
+    type Placement = Vec<(u32, LocationAddr)>;
+
+    fn two_of_three_in_one_hop() -> (Placement, Placement) {
+        (
+            vec![(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))],
+            vec![(0, loc(0, 5)), (1, loc(0, 6)), (2, loc(1, 7))],
+        )
+    }
+
+    fn unresolved(config: &Config, target: &[(u32, LocationAddr)]) -> u32 {
+        target
+            .iter()
+            .filter(|&&(q, t)| config.location_of(q) != Some(t))
+            .count() as u32
+    }
+
+    /// A failed point-goal solve reports how far it got, and the reported
+    /// prefix replays from the caller's root to exactly the reported
+    /// configuration, which is what a resume needs.
+    #[test]
+    fn a_failed_solve_reports_a_replayable_best_partial() {
+        let engine = make_engine();
+        let (initial, target) = two_of_three_in_one_hop();
+        let result = TargetSolver::new(Arc::clone(&engine), MoveSearch::astar(1.0))
+            .solve(initial.clone(), target.clone(), std::iter::empty(), Some(1))
+            .expect("valid config");
+        assert_ne!(result.status, SolveStatus::Solved);
+        assert!(
+            result.nodes_generated > 1,
+            "the root's children were generated"
+        );
+
+        let partial = result
+            .best_partial
+            .expect("a failed point-goal solve has a partial");
+        assert_eq!(partial.unresolved, unresolved(&partial.config, &target));
+        let root = Config::new(initial).unwrap();
+        assert!(
+            partial.unresolved < unresolved(&root, &target),
+            "the search got closer than the root"
+        );
+        let replayed = crate::search::verify::replay_move_layers(
+            &root,
+            &partial.layers,
+            engine.index(),
+            &HashSet::new(),
+        )
+        .expect("the prefix executes");
+        let reached: std::collections::HashMap<u32, LocationAddr> = partial.config.iter().collect();
+        assert_eq!(replayed, reached);
+    }
+
+    /// A solved result has no partial, and neither does a failed mirrored
+    /// solve: the mirror's partial is a suffix of the reversed problem, not a
+    /// prefix from the caller's root.
+    #[test]
+    fn best_partial_is_absent_when_solved_or_mirrored() {
+        let engine = make_engine();
+        let (initial, target) = two_of_three_in_one_hop();
+        let solved = TargetSolver::new(Arc::clone(&engine), MoveSearch::astar(1.0))
+            .solve(initial.clone(), target.clone(), std::iter::empty(), None)
+            .expect("valid config");
+        assert_eq!(solved.status, SolveStatus::Solved);
+        assert!(solved.best_partial.is_none());
+        assert!(solved.nodes_generated >= solved.nodes_expanded);
+
+        let mirrored = MoveSearch::astar(1.0).with_options(SolveOptions {
+            backwards_search: true,
+            ..Default::default()
+        });
+        let failed = TargetSolver::new(engine, mirrored)
+            .solve(initial, target, std::iter::empty(), Some(1))
+            .expect("valid config");
+        assert_ne!(failed.status, SolveStatus::Solved);
+        assert!(failed.best_partial.is_none());
+    }
+
+    /// The cascade bound gate keeps the refinement's answer and never adds
+    /// nodes: every child it drops is one the ungated refinement would have
+    /// inserted, and none of them can lead to a strictly cheaper plan.
+    #[test]
+    fn cascade_bound_gate_keeps_the_plan_and_never_grows_the_graph() {
+        use crate::search::options::{InnerStrategy, Strategy};
+        let engine = make_engine();
+        let initial: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(0, i))).collect();
+        let target: Vec<(u32, LocationAddr)> = (0..3).map(|i| (i, loc(1, i + 5))).collect();
+        let solve = |cascade_bound: bool| {
+            let search = MoveSearch::default().with_options(SolveOptions {
+                strategy: Strategy::Cascade {
+                    inner: InnerStrategy::Ids,
+                },
+                cascade_bound,
+                ..Default::default()
+            });
+            TargetSolver::new(Arc::clone(&engine), search)
+                .solve(
+                    initial.clone(),
+                    target.clone(),
+                    std::iter::empty(),
+                    Some(2000),
+                )
+                .expect("valid config")
+        };
+        let (off, on) = (solve(false), solve(true));
+        assert_eq!(on.status, SolveStatus::Solved);
+        assert_eq!(on.status, off.status);
+        assert_eq!(on.cost.to_bits(), off.cost.to_bits());
+        assert!(on.nodes_generated <= off.nodes_generated);
+        assert!(on.bound_stats.bound_enabled);
+        assert!(!off.bound_stats.bound_enabled);
+    }
+
+    /// A failed search's fallback resumes Push and Rotate from the best
+    /// partial: the returned plan starts with the search's prefix, and keeps
+    /// the search's counters.
+    #[test]
+    fn fallback_resumes_push_rotate_from_the_best_partial() {
+        let engine = make_engine();
+        let (initial, target) = two_of_three_in_one_hop();
+        let solve = |fallback_push_rotate: bool| {
+            let search = MoveSearch::astar(1.0).with_options(SolveOptions {
+                fallback_push_rotate,
+                ..Default::default()
+            });
+            TargetSolver::new(Arc::clone(&engine), search)
+                .solve(initial.clone(), target.clone(), std::iter::empty(), Some(1))
+                .expect("valid config")
+        };
+        let failed = solve(false);
+        let partial = failed.best_partial.expect("the search got past the root");
+        assert!(!partial.layers.is_empty());
+
+        let finished = solve(true);
+        assert_eq!(finished.status, SolveStatus::Solved);
+        assert_eq!(
+            finished.move_layers[..partial.layers.len()],
+            partial.layers[..],
+            "the plan starts with the search's prefix"
+        );
+        assert_eq!(finished.nodes_expanded, failed.nodes_expanded);
+        assert_eq!(finished.nodes_generated, failed.nodes_generated);
+        assert_eq!(finished.cost, finished.move_layers.len() as f64);
+    }
+
+    /// Decision 1: a resumed run's verdict is about the partial, not the
+    /// instance, so when it cannot finish, Push and Rotate reruns from
+    /// `initial` and only that run is reported. The partial here parks an atom
+    /// on a blocked site, where Push and Rotate cannot start.
+    #[test]
+    fn a_failed_resume_reruns_push_rotate_from_initial() {
+        use crate::search::result::PartialPlan;
+        let engine = make_engine();
+        let initial = vec![(0u32, loc(0, 0))];
+        let target = vec![(0u32, loc(1, 5))];
+        let blocked = vec![loc(0, 9)];
+        let root = Config::new(initial.clone()).unwrap();
+        let blocked_encoded: HashSet<u64> = blocked.iter().map(|l| l.encode()).collect();
+
+        let mut search = SolveResult::unsolved(SolveStatus::BudgetExceeded, root.clone(), 7, 2);
+        search.nodes_generated = 11;
+        search.best_partial = Some(PartialPlan {
+            config: Config::new([(0u32, loc(0, 9))]).unwrap(),
+            layers: vec![crate::primitives::graph::MoveSet::from_encoded(vec![])],
+            unresolved: 1,
+        });
+
+        let finished = finish_with_push_rotate(
+            &engine,
+            &root,
+            &initial,
+            &target,
+            &blocked,
+            &blocked_encoded,
+            search,
+            FallbackStart::BestPartial,
+        )
+        .expect("valid request");
+        let from_initial = solve_push_rotate(
+            engine.index(),
+            &initial,
+            &target,
+            &blocked,
+            DEFAULT_MOVE_BUDGET,
+        )
+        .unwrap();
+
+        assert_eq!(finished.status, SolveStatus::Solved);
+        assert_eq!(finished.move_layers, from_initial.move_layers);
+        assert_eq!((finished.nodes_expanded, finished.nodes_generated), (7, 11));
     }
 
     #[test]
@@ -816,5 +1181,42 @@ mod tests {
             once, forward.move_layers,
             "a single application must actually change the plan"
         );
+    }
+
+    /// An atom may start on a blocked site (it only moves off), but Push and
+    /// Rotate's lane graph has no vertex there. Its giving up must not be
+    /// promoted to a proof over the search's own verdict: the instance is
+    /// solvable, as the unbudgeted search shows.
+    #[test]
+    fn a_start_on_a_blocked_site_is_not_a_fallback_proof() {
+        let engine = make_engine();
+        let solve = |strategy: Strategy, fallback_push_rotate: bool, budget: Option<u32>| {
+            solve_with_engine(
+                &engine,
+                &SolveOptions {
+                    strategy,
+                    fallback_push_rotate,
+                    ..SolveOptions::default()
+                },
+                None,
+                [(0, loc(0, 0))],
+                [(0, loc(0, 5))],
+                [loc(0, 0)],
+                budget,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            solve(Strategy::AStar, false, None).status,
+            SolveStatus::Solved
+        );
+        for result in [
+            solve(Strategy::AStar, true, Some(0)),
+            solve(Strategy::PushRotate, false, None),
+        ] {
+            assert_eq!(result.status, SolveStatus::BudgetExceeded);
+            assert!(!result.proven(), "{:?}", result.termination);
+        }
     }
 }

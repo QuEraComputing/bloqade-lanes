@@ -14,7 +14,12 @@ from benchmarks.harness.models import (
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch import ArchSpec
 from bloqade.lanes.arch.gemini import physical
-from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
+from bloqade.lanes.bytecode import MoverSelection
+from bloqade.lanes.heuristics.physical import (
+    NoReturnPlacementStrategy,
+    RecedingHorizonNoReturnPlacementStrategy,
+    make_physical_placement_strategy,
+)
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
@@ -80,6 +85,19 @@ def default_strategy_configs(
             ),
             arch_spec_id=arch_spec_id,
             notes="shipped PhysicalPipeline default; knobs intentionally unpinned",
+        ),
+        StrategyConfig(
+            strategy_id="pipeline_route_all",
+            backend="rust",
+            generator_id="rust_solver",
+            # The shipped default with NoHome's opt-in mover selection: route
+            # every candidate mover assignment and keep the cheapest, against
+            # the default's Push-and-Rotate ranking (Epic 4).
+            build_placement_strategy=lambda: make_physical_placement_strategy(
+                arch_spec=factory(), mover_selection=MoverSelection.ROUTE_ALL
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="pipeline_default with mover_selection=ROUTE_ALL",
         ),
         StrategyConfig(
             strategy_id="rust_entropy_1",
@@ -204,6 +222,84 @@ def default_strategy_configs(
                 "first-solution Rust solve (non-optimal); "
                 "Rust solver nodes_explored captured from solver output"
             ),
+        ),
+        StrategyConfig(
+            strategy_id="rust_push_rotate",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(strategy="push-rotate"),
+                )
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="complete rule-based router, not a search; expands no nodes",
+        ),
+        StrategyConfig(
+            strategy_id="rust_cascade_ids",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(strategy="cascade-ids"),
+                )
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="IDS, then an A* refinement gated by the completion bound",
+        ),
+        StrategyConfig(
+            strategy_id="rust_cascade_ids_ungated",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="cascade-ids", cascade_bound=False
+                    ),
+                )
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="cascade-ids with the refinement's completion-bound gate off",
+        ),
+        StrategyConfig(
+            strategy_id="rust_astar_fallback",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="astar", fallback_push_rotate=True
+                    ),
+                )
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="A* with Push and Rotate as the reliability net on failure",
+        ),
+        StrategyConfig(
+            strategy_id="rust_loose_goal",
+            backend="rust",
+            generator_id="rust_solver",
+            # No palindrome: the no-return family carries each layer's output
+            # layout into the next layer instead of moving atoms back home.
+            build_placement_strategy=lambda: NoReturnPlacementStrategy(
+                arch_spec=factory()
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="loose-goal entangling solver (LooseGoalCzPlacement), defaults",
+        ),
+        StrategyConfig(
+            strategy_id="rust_receding_horizon",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: RecedingHorizonNoReturnPlacementStrategy(
+                arch_spec=factory()
+            ),
+            arch_spec_id=arch_spec_id,
+            notes="receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults",
         ),
     ) + (
         (

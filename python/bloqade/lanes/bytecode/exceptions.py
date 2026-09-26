@@ -682,3 +682,50 @@ class EncodeErrorInProgram(ProgramError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(f"cannot encode program: {message}")
+
+
+# ── Search request errors ──
+
+
+class SearchConfigError(ValueError):
+    """Base class for an invalid search request: the initial placement or the
+    target assignment is not a valid configuration.
+
+    Subclasses ``ValueError``, which the search bindings raised before these
+    classes existed, so ``except ValueError`` still catches them. Locations are
+    reported in their encoded form.
+    """
+
+
+class DuplicateQubitIdError(SearchConfigError):
+    """A qubit ID appears more than once in a placement."""
+
+    def __init__(self, message: str, qubit_id: int):
+        self.qubit_id = qubit_id
+        super().__init__(message)
+
+
+class DuplicateTargetLocationError(SearchConfigError):
+    """Two qubits were assigned the same target location."""
+
+    def __init__(self, message: str, location: int, qubits: tuple[int, int]):
+        self.location = location
+        self.qubits = qubits
+        super().__init__(message)
+
+
+class DuplicateTargetQubitError(SearchConfigError):
+    """One qubit was assigned more than one target location."""
+
+    def __init__(self, message: str, qubit_id: int):
+        self.qubit_id = qubit_id
+        super().__init__(message)
+
+
+class DuplicateOccupancyError(SearchConfigError):
+    """Two qubits were placed on the same initial location."""
+
+    def __init__(self, message: str, location: int, qubits: tuple[int, int]):
+        self.location = location
+        self.qubits = qubits
+        super().__init__(message)

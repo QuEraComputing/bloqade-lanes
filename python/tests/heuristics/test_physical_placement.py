@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from types import SimpleNamespace
+from typing import ClassVar, cast
 
 import pytest
 
@@ -12,6 +13,7 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode._native import BoundStats, SolveStatus
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
@@ -53,6 +55,32 @@ def test_rust_traversal_default_params():
     assert t.strategy == "entropy"
     assert t.max_movesets_per_group == 3
     assert t.max_expansions == 300
+
+
+def test_cascade_bound_defaults_on_and_is_forwarded(monkeypatch):
+    """The cascade gate is on by default at both layers, an explicit ``False``
+    opts out, and the traversal forwards its value to the ``SolveOptions`` it
+    builds (``MoveSearch`` does not expose the flag, so the call is observed)."""
+    from bloqade.lanes.bytecode import _native
+    from bloqade.lanes.heuristics.physical import movement
+
+    assert _native.SolveOptions().cascade_bound is True
+    assert _native.SolveOptions(cascade_bound=False).cascade_bound is False
+    assert RustPlacementTraversal().cascade_bound is True
+    assert RustPlacementTraversal(cascade_bound=False).cascade_bound is False
+
+    built: list[bool] = []
+    real = _native.SolveOptions
+
+    def spy(*args, **kwargs):
+        options = real(*args, **kwargs)
+        built.append(options.cascade_bound)
+        return options
+
+    monkeypatch.setattr(movement._native, "SolveOptions", spy)
+    movement._move_search_from_traversal(RustPlacementTraversal())
+    movement._move_search_from_traversal(RustPlacementTraversal(cascade_bound=False))
+    assert built == [True, False]
 
 
 def test_rust_traversal_dispatches_to_rust_path(monkeypatch):
@@ -100,10 +128,10 @@ def test_cz_placements_rust_raises_on_failure(monkeypatch):
     state = _make_state()
 
     class _FakeResult:
-        status = "unsolvable"
+        status = SolveStatus.UNSOLVABLE
         nodes_expanded = 0
-        bound_stats: ClassVar[dict[str, float]] = {}
-        proven = False
+        bound_stats = None
+        proof = None
 
     class _FakeSolver:
         def solve(self, *_args):
@@ -183,10 +211,10 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     )
 
     class _FakeResult:
-        status = "solved"
+        status = SolveStatus.SOLVED
         nodes_expanded = 1
-        bound_stats: ClassVar[dict[str, float]] = {}
-        proven = False
+        bound_stats = None
+        proof = None
         # move_layers: list[list[LaneAddress]] — MoveType.ZONE variant
         move_layers: ClassVar = [
             [NativeLane(MoveType.ZONE, 0, 0, 0, 0, BytecodeDirection.FORWARD)]
@@ -227,10 +255,10 @@ def test_cz_placements_counts_entropy_fallback_trace(monkeypatch):
         steps: ClassVar = [_FakeTraceStep()]
 
     class _FakeResult:
-        status = "solved"
+        status = SolveStatus.SOLVED
         nodes_expanded = 1
-        bound_stats: ClassVar[dict[str, float]] = {}
-        proven = False
+        bound_stats = None
+        proof = None
         move_layers: ClassVar = []
         goal_config: ClassVar = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
         entropy_trace = _FakeTrace()
@@ -281,10 +309,10 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
 
     class _FakeResult:
         def __init__(self):
-            self.status = "unsolvable"
+            self.status = SolveStatus.UNSOLVABLE
             self.nodes_expanded = consumed
-            self.bound_stats: dict[str, float] = {}
-            self.proven = False
+            self.bound_stats = None
+            self.proof = None
 
     class _FakeSolver:
         def solve(self, _initial, _target, _blocked, max_expansions):
@@ -302,6 +330,47 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
         strategy.cz_placements(state, controls=(0,), targets=(1,))
     # alt candidate first with full 10; default candidate second with 6.
     assert budgets_seen == [10, 6]
+
+
+def test_first_solved_candidate_wins_even_when_a_later_one_is_cheaper():
+    """Characterizes the candidate loop's first-solve-wins rule.
+
+    The plugin offers one costly candidate: both atoms travel to the distant
+    word pair (8, 9). The strategy appends the default candidate after it,
+    where one atom steps to its partner. Both are solvable, and the loop keeps
+    the first that solves, so the costly candidate wins at four move layers
+    over the default's two.
+
+    Candidate ranking (Epic 4 of the search-crate refactor) is meant to change
+    this rule. When it lands, update this test on purpose; until then a change
+    here is a regression. The Rust `SingleHeuristicCzPlacement` loop has the
+    same rule and is pinned by the Rust behaviour net
+    (`anticipate/candidate_order/*`).
+    """
+    arch_spec = logical.get_arch_spec()
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    far = {0: LocationAddress(8, 0), 1: LocationAddress(9, 0)}
+
+    def place(candidates):
+        strategy = PhysicalPlacementStrategy(
+            arch_spec=arch_spec,
+            traversal=RustPlacementTraversal(strategy="astar"),
+            target_generator=lambda ctx: candidates,
+        )
+        result = strategy.cz_placements(state, controls=(0,), targets=(1,))
+        assert isinstance(result, ExecuteCZ)
+        return result
+
+    costly_first = place([far])
+    default_only = place([])
+
+    assert costly_first.layout == (LocationAddress(8, 0), LocationAddress(9, 0))
+    assert len(costly_first.move_layers) == 4
+    assert len(default_only.move_layers) == 2
 
 
 def test_rust_path_cz_counter_increments():
@@ -535,6 +604,33 @@ def _strategy() -> PhysicalPlacementStrategy:
     )
 
 
+_ZERO_COUNTERS = {
+    "cuts_by_g": 0,
+    "cuts_by_h": 0,
+    "cuts_infeasible": 0,
+    "cut_depth_sum": 0,
+    "cut_depth_g_only_sum": 0,
+}
+
+
+def _bs(**fields: float | None) -> BoundStats:
+    """A stand-in for one bounded solve's ``BoundStats``.
+
+    Rust reports every counter on a bounded solve, so unnamed counters are
+    zero, as they would be from the binding; ``root_lower_bound`` defaults to
+    0.0 and the two optional fields to ``None``.
+    """
+    base: dict[str, float | None] = {
+        **_ZERO_COUNTERS,
+        "root_lower_bound": 0.0,
+        "incumbent_cost": None,
+        "optimality_gap": None,
+    }
+    base.update(fields)
+    # The accumulator only reads these attributes, so a namespace stands in.
+    return cast(BoundStats, SimpleNamespace(**base))
+
+
 def test_bound_stats_start_empty():
     """Absence of a measurement must read as absence, not as a zeroed one."""
     assert _strategy().rust_bound_stats_total == {}
@@ -546,22 +642,22 @@ def test_bound_stats_counters_sum_across_solves():
     overwritten."""
     strategy = _strategy()
     strategy._accumulate_bound_stats(
-        {
-            "cuts_by_g": 1,
-            "cuts_by_h": 2,
-            "cuts_infeasible": 3,
-            "cut_depth_sum": 10,
-            "cut_depth_g_only_sum": 14,
-        }
+        _bs(
+            cuts_by_g=1,
+            cuts_by_h=2,
+            cuts_infeasible=3,
+            cut_depth_sum=10,
+            cut_depth_g_only_sum=14,
+        )
     )
     strategy._accumulate_bound_stats(
-        {
-            "cuts_by_g": 4,
-            "cuts_by_h": 5,
-            "cuts_infeasible": 6,
-            "cut_depth_sum": 20,
-            "cut_depth_g_only_sum": 26,
-        }
+        _bs(
+            cuts_by_g=4,
+            cuts_by_h=5,
+            cuts_infeasible=6,
+            cut_depth_sum=20,
+            cut_depth_g_only_sum=26,
+        )
     )
     assert strategy.rust_bound_stats_total == {
         "cuts_by_g": 5,
@@ -576,7 +672,7 @@ def test_bound_stats_counters_are_ints():
     """The native layer hands these across as floats; they are counts, and a
     CSV column of ``3.0`` would diff against a baseline of ``3``."""
     strategy = _strategy()
-    strategy._accumulate_bound_stats({"cuts_by_h": 2.0, "cut_depth_sum": 7.0})
+    strategy._accumulate_bound_stats(_bs(cuts_by_h=2.0, cut_depth_sum=7.0))
     for key in ("cuts_by_h", "cut_depth_sum"):
         assert isinstance(strategy.rust_bound_stats_total[key], int)
 
@@ -586,7 +682,7 @@ def test_bound_stats_keeps_the_widest_optimality_gap():
     widest one observed is what bounds the whole pass."""
     strategy = _strategy()
     for gap in (0.25, 0.75, 0.5):
-        strategy._accumulate_bound_stats({"optimality_gap": gap})
+        strategy._accumulate_bound_stats(_bs(optimality_gap=gap))
     assert strategy.rust_bound_stats_total["max_optimality_gap"] == 0.75
 
 
@@ -597,8 +693,11 @@ def test_bound_stats_records_a_zero_gap():
     a pass that proved optimality indistinguishable from one that never ran a
     bound at all."""
     strategy = _strategy()
-    strategy._accumulate_bound_stats({"optimality_gap": 0.0})
-    assert strategy.rust_bound_stats_total == {"max_optimality_gap": 0.0}
+    strategy._accumulate_bound_stats(_bs(optimality_gap=0.0))
+    assert strategy.rust_bound_stats_total == {
+        **_ZERO_COUNTERS,
+        "max_optimality_gap": 0.0,
+    }
 
 
 def test_bound_stats_preserves_a_negative_gap_as_the_first_reading():
@@ -607,7 +706,7 @@ def test_bound_stats_preserves_a_negative_gap_as_the_first_reading():
     the aggregate's ``max`` with ``0.0`` would mask a negative first reading
     outright; it must survive instead."""
     strategy = _strategy()
-    strategy._accumulate_bound_stats({"optimality_gap": -0.5})
+    strategy._accumulate_bound_stats(_bs(optimality_gap=-0.5))
     assert strategy.rust_bound_stats_total["max_optimality_gap"] == -0.5
 
 
@@ -617,24 +716,25 @@ def test_bound_stats_a_negative_gap_dominates_a_later_positive_one():
     non-negative one regardless of order, and the most negative (worst) wins."""
     ascending = _strategy()
     for gap in (-0.2, 0.9, -0.6, 0.3):
-        ascending._accumulate_bound_stats({"optimality_gap": gap})
+        ascending._accumulate_bound_stats(_bs(optimality_gap=gap))
     assert ascending.rust_bound_stats_total["max_optimality_gap"] == -0.6
 
     # Order-independent: a positive gap seen first is still overridden.
     positive_first = _strategy()
     for gap in (0.9, -0.4):
-        positive_first._accumulate_bound_stats({"optimality_gap": gap})
+        positive_first._accumulate_bound_stats(_bs(optimality_gap=gap))
     assert positive_first.rust_bound_stats_total["max_optimality_gap"] == -0.4
 
 
 def test_bound_stats_ignore_an_unbounded_solve():
-    """``SolveResult.bound_stats`` is an empty dict when bounding is off, so an
+    """``SolveResult.bound_stats`` is ``None`` when bounding is off, so an
     unbounded solve mixed in with bounded ones must contribute nothing rather
     than folding in zeros or raising."""
     strategy = _strategy()
-    strategy._accumulate_bound_stats({"cuts_by_h": 3, "optimality_gap": 0.4})
-    strategy._accumulate_bound_stats({})
+    strategy._accumulate_bound_stats(_bs(cuts_by_h=3, optimality_gap=0.4))
+    strategy._accumulate_bound_stats(None)
     assert strategy.rust_bound_stats_total == {
+        **_ZERO_COUNTERS,
         "cuts_by_h": 3,
         "max_optimality_gap": 0.4,
     }
@@ -644,10 +744,10 @@ def test_bound_stats_total_is_a_copy():
     """The property hands out a snapshot; mutating it must not corrupt the
     running totals."""
     strategy = _strategy()
-    strategy._accumulate_bound_stats({"cuts_by_h": 1})
+    strategy._accumulate_bound_stats(_bs(cuts_by_h=1))
     snapshot = strategy.rust_bound_stats_total
     snapshot["cuts_by_h"] = 999
-    assert strategy.rust_bound_stats_total == {"cuts_by_h": 1}
+    assert strategy.rust_bound_stats_total == {**_ZERO_COUNTERS, "cuts_by_h": 1}
 
 
 def test_bound_stats_records_zero_counters():
@@ -656,8 +756,8 @@ def test_bound_stats_records_zero_counters():
     ``cuts_by_h`` — so a truthiness check would drop the column entirely and
     make "the cost bound never fired" indistinguishable from "no bound ran"."""
     strategy = _strategy()
-    strategy._accumulate_bound_stats({"cuts_by_g": 0, "cuts_by_h": 4})
-    assert strategy.rust_bound_stats_total == {"cuts_by_g": 0, "cuts_by_h": 4}
+    strategy._accumulate_bound_stats(_bs(cuts_by_g=0, cuts_by_h=4))
+    assert strategy.rust_bound_stats_total == {**_ZERO_COUNTERS, "cuts_by_h": 4}
 
 
 def _bounded_strategy() -> PhysicalPlacementStrategy:
@@ -676,10 +776,10 @@ def test_accumulate_bound_stats_sums_root_bound_against_cost():
     """
     strategy = _bounded_strategy()
     strategy._accumulate_bound_stats(
-        {"optimality_gap": 0.2, "root_lower_bound": 8.0, "incumbent_cost": 10.0}
+        _bs(optimality_gap=0.2, root_lower_bound=8.0, incumbent_cost=10.0)
     )
     strategy._accumulate_bound_stats(
-        {"optimality_gap": 0.0, "root_lower_bound": 5.0, "incumbent_cost": 5.0}
+        _bs(optimality_gap=0.0, root_lower_bound=5.0, incumbent_cost=5.0)
     )
     totals = strategy._bound_stats_total
     assert totals["measured_solves"] == 2
@@ -699,13 +799,13 @@ def test_accumulate_bound_stats_counts_only_a_vanishing_gap_as_a_certificate():
     strategy = _bounded_strategy()
     for gap in (1e-6, 0.5, -1e-6):
         strategy._accumulate_bound_stats(
-            {"optimality_gap": gap, "root_lower_bound": 1.0, "incumbent_cost": 2.0}
+            _bs(optimality_gap=gap, root_lower_bound=1.0, incumbent_cost=2.0)
         )
     assert strategy._bound_stats_total["measured_solves"] == 3
     assert strategy._bound_stats_total.get("certificates", 0) == 0
 
     strategy._accumulate_bound_stats(
-        {"optimality_gap": -1e-12, "root_lower_bound": 2.0, "incumbent_cost": 2.0}
+        _bs(optimality_gap=-1e-12, root_lower_bound=2.0, incumbent_cost=2.0)
     )
     assert strategy._bound_stats_total["certificates"] == 1
 
@@ -715,7 +815,7 @@ def test_accumulate_bound_stats_skips_the_sums_without_a_gap():
     the bound measured -- otherwise the denominator of `certs` grows for rows
     that never had a bound at all."""
     strategy = _bounded_strategy()
-    strategy._accumulate_bound_stats({"cuts_by_g": 3})
+    strategy._accumulate_bound_stats(_bs(cuts_by_g=3))
     assert "measured_solves" not in strategy._bound_stats_total
     assert strategy._bound_stats_total["cuts_by_g"] == 3
 
@@ -729,39 +829,29 @@ def test_rust_proven_total_starts_at_zero_and_is_exposed():
     assert strategy.rust_proven_total == 2
 
 
-def test_bound_terminates_is_forwarded_to_the_native_entropy_options(monkeypatch):
-    """`RustPlacementTraversal.bound_terminates` must reach the native options.
+def test_fallback_push_rotate_is_forwarded_to_the_native_solve_options():
+    """`RustPlacementTraversal.fallback_push_rotate` must reach `SolveOptions`.
 
-    `MoveSearch` does not read its entropy options back out, and the
-    `cz_placements` path solves CZ pairs against a loose goal where the bound
-    is inert by design -- so there is no behavioural handle on this flag from
-    Python. Recording the constructor call is what is left, and it is the link
-    worth pinning: the flag defaults to the opposite of the interesting value,
-    so a dropped pass-through silently disables the A/B knob.
+    On the logical arch an atom keeps its site and changes word, and word 0 to
+    word 2 takes three layers. A one-expansion budget cannot finish that, so
+    A* alone reports an exhausted budget; with the fallback on, Push and Rotate
+    finishes the route. The verdict flips only if the flag gets through.
     """
+    from bloqade.lanes.bytecode import _native
     from bloqade.lanes.heuristics.physical import movement
 
-    seen: list[bool] = []
-    real = movement._native.EntropyOptions
+    engine = _native.SearchEngine.from_arch_spec(logical.get_arch_spec()._inner)
 
-    def _recording(*args, **kwargs):
-        seen.append(kwargs["bound_terminates"])
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(movement._native, "EntropyOptions", _recording)
-
-    for flag in (False, True):
-        movement._move_search_from_traversal(
-            RustPlacementTraversal(bound_terminates=flag),
-            collect_entropy_trace=False,
+    def solve(fallback: bool):
+        search = movement._move_search_from_traversal(
+            RustPlacementTraversal(strategy="astar", fallback_push_rotate=fallback)
         )
-    assert seen == [False, True]
+        return _native.TargetSolver(engine, search).solve(
+            {0: LocationAddress(0, 0)._inner}, {0: LocationAddress(2, 0)._inner}, [], 1
+        )
 
-
-def test_native_entropy_options_round_trip_bound_terminates():
-    """The native default is on, and an explicit `False` survives the
-    constructor -- the half of the thread that lives in Rust."""
-    from bloqade.lanes.bytecode import _native
-
-    assert _native.EntropyOptions().bound_terminates is True
-    assert _native.EntropyOptions(bound_terminates=False).bound_terminates is False
+    assert RustPlacementTraversal().fallback_push_rotate is False
+    assert solve(fallback=False).status == SolveStatus.BUDGET_EXCEEDED
+    rescued = solve(fallback=True)
+    assert rescued.status == SolveStatus.SOLVED
+    assert len(rescued.move_layers) == 3
