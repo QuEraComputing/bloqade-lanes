@@ -1,0 +1,22 @@
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: simple
+// expect: LocalTypeMismatch
+// Invalid: a typed `store` of a value of another type.
+//
+// `load` and `store` name a vihaco type, and vihaco-cpu checks it: `store u32`
+// refuses the `f64` on top. A placeholder — what a lanes op pushes for a result
+// it does not simulate — would pass under any type; a constant does not.
+
+fn @main() {
+  cpu::cpu.const f64, 1.5
+  cpu::cpu.store u32, 0
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).

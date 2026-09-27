@@ -147,7 +147,9 @@ def ghz3():
 # === tests ===
 
 
-def test_e2e_single_kernel_task(tasks_client, results_client):
+def test_e2e_single_kernel_task(
+    tasks_client, results_client, assert_called_with_kwargs
+):
     """Mirrors the workflow in debug/api_integration_squin_submission.py:
     submit a single-kernel task, wait, fetch, read back shots."""
     storage = DictStorage()
@@ -172,7 +174,7 @@ def test_e2e_single_kernel_task(tasks_client, results_client):
     assert storage.task_ids() == {"task-1"}
     # Submission was a real TaskCreationRequest, polling used the returned id
     tasks_client.create.assert_called_once()
-    tasks_client.get.assert_called_with(id="task-1")
+    assert_called_with_kwargs(tasks_client.get, id="task-1")
 
     shot_results = result.shot_results()
     assert len(shot_results) == 1  # one subtask
@@ -265,7 +267,9 @@ def test_e2e_two_tasks_in_same_storage(tasks_client, results_client):
         make_task_response("task-b"),
     ]
     # Status polling: respond by id so each future polls its own task
-    tasks_client.get.side_effect = lambda *, id: make_task_response(id)
+    # **_ absorbs the kwargs bloqade-core threads through to the qlam client
+    # (``qpu_mode``, ...), which are not this test's concern.
+    tasks_client.get.side_effect = lambda *, id, **_: make_task_response(id)
     results_client.get.side_effect = [
         # first future fetches (task-a) — one page suffices
         make_results_page([make_subtask(0, shots=[(False, False)])]),

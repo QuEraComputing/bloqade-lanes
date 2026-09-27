@@ -5,8 +5,8 @@ sees N ``Rz(0.25)`` layers ends up with axis angles 0.25, 0.5, ... 0.25*N --
 each a distinct ``py.Constant``, growing without bound with circuit depth.
 
 Nothing downstream rejects an out-of-range angle: the Rust bytecode core
-pushes ``local_r``/``global_r`` operands as plain ``const.f64``, and
-``move2squin`` lowers ``move.LocalR`` to a ``U3`` that is periodic in phi and
+pushes ``local_r``/``global_r`` operands as a plain ``cpu::cpu.const f64``,
+and ``move2squin`` lowers ``move.LocalR`` to a ``U3`` that is periodic in phi and
 lam anyway. The cost is sharing, not correctness. The checks that let two
 gates fuse or reorder together are **identity**-based, not value-based --
 ``fuse_gates`` compares ``stmt.axis_angle is head.axis_angle`` and

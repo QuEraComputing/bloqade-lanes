@@ -107,23 +107,25 @@ pub fn chain_with_siding_arch_json() -> &'static str {
 
 /// Minimal two-zone architecture with a single inter-zone `zone_bus`.
 ///
-/// Zone 0 ("gate") holds word 0 and zone 1 ("memory") holds word 1, each a
-/// single-site word. A one-to-one `zone_bus` connects (zone 1, word 1) ->
-/// (zone 0, word 0). There are no intra-zone buses, so the only edges in the
-/// search graph come from the zone bus — making this arch a focused regression
-/// fixture for inter-zone graph construction (issue #845).
+/// Two single-site words on a 2×1 grid (word 0 at column 0, word 1 at
+/// column 1). The word template is spec-wide, so both zones lay out both
+/// words; zone 0 is "gate" and zone 1 "memory". A one-to-one `zone_bus`
+/// connects (zone 1, word 1) -> (zone 0, word 0). There are no intra-zone
+/// buses, so the only edges in the search graph come from the zone bus —
+/// making this arch a focused regression fixture for inter-zone graph
+/// construction (issue #845).
 #[allow(dead_code)]
 pub fn two_zone_bus_arch_json() -> &'static str {
     r#"{
         "version": "2.0",
         "words": [
             { "sites": [[0, 0]] },
-            { "sites": [[0, 0]] }
+            { "sites": [[1, 0]] }
         ],
         "zones": [
             {
                 "name": "gate",
-                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [], "y_spacing": [] },
+                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0], "y_spacing": [] },
                 "site_buses": [],
                 "word_buses": [],
                 "words_with_site_buses": [],
@@ -132,7 +134,7 @@ pub fn two_zone_bus_arch_json() -> &'static str {
             },
             {
                 "name": "memory",
-                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [], "y_spacing": [] },
+                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [1.0], "y_spacing": [] },
                 "site_buses": [],
                 "word_buses": [],
                 "words_with_site_buses": [],
@@ -144,6 +146,61 @@ pub fn two_zone_bus_arch_json() -> &'static str {
             {
                 "src": [{ "zone_id": 1, "word_id": 1 }],
                 "dst": [{ "zone_id": 0, "word_id": 0 }]
+            }
+        ],
+        "modes": [
+            { "name": "default", "zones": [0, 1], "bitstring_order": [] }
+        ]
+    }"#
+}
+
+/// A storage zone with **no entangling pairs** feeding a gate zone that has
+/// one.
+///
+/// Three two-site words, one per row of a 2×3 grid. The word template is
+/// spec-wide, so both zones lay out all three words. Zone 0 ("storage") has
+/// no buses and no entangling pairs; atoms start on its word 0. Zone 1
+/// ("gate") pairs words 1 and 2, joined by a word bus (`1 → 2`) and a site
+/// bus (`0 → 1`) on both words. A zone bus lifts storage word 0 onto gate
+/// word 1, site for site, so a CZ pair that starts in storage must leave the
+/// zone to entangle.
+///
+/// `get_cz_partner` is `None` for every storage site. Unpaired words count
+/// as home words, so a storage atom is already "home" for the no-home
+/// placement.
+#[allow(dead_code)]
+pub fn storage_gate_arch_json() -> &'static str {
+    r#"{
+        "version": "2.0",
+        "words": [
+            { "sites": [[0, 0], [1, 0]] },
+            { "sites": [[0, 1], [1, 1]] },
+            { "sites": [[0, 2], [1, 2]] }
+        ],
+        "zones": [
+            {
+                "name": "storage",
+                "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [2.0], "y_spacing": [2.0, 2.0] },
+                "site_buses": [],
+                "word_buses": [],
+                "words_with_site_buses": [],
+                "sites_with_word_buses": [],
+                "entangling_pairs": []
+            },
+            {
+                "name": "gate",
+                "grid": { "x_start": 0.0, "y_start": 10.0, "x_spacing": [2.0], "y_spacing": [2.0, 2.0] },
+                "site_buses": [{ "src": [0], "dst": [1] }],
+                "word_buses": [{ "src": [1], "dst": [2] }],
+                "words_with_site_buses": [1, 2],
+                "sites_with_word_buses": [0, 1],
+                "entangling_pairs": [[1, 2]]
+            }
+        ],
+        "zone_buses": [
+            {
+                "src": [{ "zone_id": 0, "word_id": 0 }],
+                "dst": [{ "zone_id": 1, "word_id": 1 }]
             }
         ],
         "modes": [
@@ -343,7 +400,7 @@ mod tests {
     /// through.
     #[test]
     fn every_fixture_is_a_valid_spec() {
-        let fixtures: [(&str, String); 7] = [
+        let fixtures: [(&str, String); 8] = [
             ("example", example_arch_json().to_string()),
             ("full (P1 negative)", full_arch_json().to_string()),
             ("chain", chain_arch_json()),
@@ -352,6 +409,7 @@ mod tests {
                 chain_with_siding_arch_json().to_string(),
             ),
             ("two-zone bus", two_zone_bus_arch_json().to_string()),
+            ("storage and gate", storage_gate_arch_json().to_string()),
             (
                 "two-zone aligned site buses",
                 two_zone_aligned_site_bus_arch_json().to_string(),

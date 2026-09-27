@@ -181,8 +181,13 @@ def test_inlined_error_names_the_call_site():
         assert "'default_post_processing'" in message
         # The call site is in *this* file, which is the whole point.
         assert __file__ in message
-        assert "aggressive_unroll=True" in message
-        assert "verify=False" in message
+        # Unrolling is the fix for the loop, and only for the loop: the
+        # measurement-ID error it cascades into is not itself about unrolling.
+        if "Non-constant iterable in for loop" in message:
+            assert "aggressive_unroll=True" in message
+            assert "verify=False" in message
+        else:
+            assert "aggressive_unroll" not in message
 
 
 def test_inlined_error_excerpt_matches_the_reported_file():
@@ -217,6 +222,82 @@ def test_inlined_error_excerpt_matches_the_reported_file():
         marked = err.lines[err.source.lineno - 1]
         absolute = err.source.lineno + err.source.lineno_begin
         assert marked.strip() == file_lines[absolute - 1].strip()
+
+
+@pytest.mark.parametrize("aggressive_unroll", [False, True])
+def test_inlined_error_unrolling_cannot_fix_gets_no_unroll_hint(aggressive_unroll):
+    """The call site is still named, but the unroll advice would be wrong.
+
+    `squin.ccz` inlines to a gate Gemini does not support; unrolling leaves it
+    exactly as unsupported, so telling the user to unroll -- least of all when
+    they already did -- sends them the wrong way.
+    """
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel(aggressive_unroll=aggressive_unroll)
+        def main():
+            q = squin.qalloc(3)
+            squin.ccz(q[0], q[1], q[2])
+            gemini.logical.terminal_measure(q)
+
+    messages = _messages(exc_info.value)
+    ccz = [m for m in messages if "Gate ccz is not supported" in m]
+    assert ccz, messages
+    for message in ccz:
+        assert "inlined from 'ccz'" in message
+        assert __file__ in message
+
+    for message in messages:
+        assert "aggressive_unroll" not in message
+        assert "verify=False" not in message
+
+
+def test_unroll_hint_is_dropped_when_the_kernel_already_unrolls():
+    """An unroll-fixable error under `aggressive_unroll=True` stays dynamic.
+
+    The loop in the helper runs over a runtime length, so unrolling was already
+    tried and could not flatten it; repeating the advice would be circular. The
+    kernel group cannot build this case (a Gemini kernel with arguments is
+    rejected first), so drive `InlineOrigins` directly.
+    """
+    from kirin.passes.inline import InlinePass
+
+    @gemini.logical.kernel(verify=False)
+    def dynamic_loop(qubits):
+        for i in range(1, len(qubits)):
+            squin.x(qubits[i])
+
+    def origins_and_result():
+        @gemini.logical.kernel(verify=False, inline=False, aggressive_unroll=False)
+        def caller(qbs):
+            dynamic_loop(qbs)
+
+        origins = InlineOrigins.collect(caller)
+        InlinePass(caller.dialects).fixpoint(caller)
+        origins.snapshot(caller)
+        result = ValidationSuite([GeminiLogicalValidation]).validate(caller)
+        return caller, origins, result
+
+    def loop_messages(result):
+        return [
+            e.args[0]
+            for errors in result.errors.values()
+            for e in errors
+            if "Non-constant iterable" in e.args[0]
+        ]
+
+    caller, origins, result = origins_and_result()
+    unrolled = loop_messages(origins.annotate(caller, result, aggressive_unroll=True))
+    assert unrolled
+    for message in unrolled:
+        assert "inlined from 'dynamic_loop'" in message
+        assert "aggressive_unroll" not in message
+
+    # Same error without unrolling: the advice applies, so it is given.
+    caller, origins, result = origins_and_result()
+    plain = loop_messages(origins.annotate(caller, result))
+    assert plain
+    assert all("aggressive_unroll=True" in m for m in plain)
 
 
 def test_aggressive_unroll_compiles_the_same_kernel():

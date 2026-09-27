@@ -1,7 +1,25 @@
-.version 1
-; Invalid: initial_fill must be the first non-constant instruction
-; halt is a non-constant instruction before initial_fill
+sst v1
 
-halt
-const_loc 0x0000000000000000    ; zone 0, word 0, site 0
-initial_fill 1
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: simple
+// expect: InitialFillNotFirst
+// Invalid: initial_fill must be the first non-constant instruction
+// halt is a non-constant instruction before initial_fill
+
+fn @main() {
+  // `cz` is non-constant, so `initial_fill` is no longer first. It is used
+  // here rather than `halt` — a terminator would make the rest of the program
+  // unreachable, adding errors that have nothing to do with the ordering rule.
+  lanes::lanes.const_zone 0x00000000
+  lanes::lanes.cz
+
+  lanes::lanes.const_loc 0x0000000000000000    // zone 0, word 0, site 0
+  lanes::lanes.initial_fill 1
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).

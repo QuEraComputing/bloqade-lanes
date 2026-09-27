@@ -142,3 +142,66 @@ def test_emit_fails_fast_on_unlowered_move_stmt():
     method = _move_kernel_with_unlowered_stmt()
     with pytest.raises(ValueError, match="ConstZone"):
         MoveToStackMove(arch_spec=_ARCH).emit(method, no_raise=False)
+
+
+def _shared_detector_kernel() -> ir.Method:
+    """A move kernel shaped like real compiler output: one measurement, and
+    two detectors that share a result, both built before either is set.
+
+    The measurement array is read three times, the shared result feeds two
+    detectors, and the first detector's array sits under the second's when it
+    is set — every reason the compiler spills to a local, in one program.
+    """
+    from bloqade.decoders.dialects import annotate
+    from kirin.dialects import ilist
+
+    from bloqade.lanes.prelude import kernel
+
+    zone = ZoneAddress(0)
+    sites = list(_ARCH.yield_zone_locations(zone))[:3]
+    load = move.Load()
+    fill = move.Fill(load.result, location_addresses=tuple(sites))
+    measure = move.Measure(fill.result, zone_addresses=(zone,))
+    results = [
+        move.GetFutureResult(measure.future, zone_address=zone, location_address=site)
+        for site in sites
+    ]
+    d0 = ilist.New(values=(results[0].result, results[1].result))
+    d1 = ilist.New(values=(results[1].result, results[2].result))
+    coordinates = py.Constant(ilist.IList([0.0]))
+    det0 = annotate.stmts.SetDetector(d0.result, coordinates.result)
+    det1 = annotate.stmts.SetDetector(d1.result, coordinates.result)
+    both = ilist.New(values=(det0.result, det1.result))
+    store = move.Store(measure.result)
+    ret = func.Return(both.result)
+
+    block = ir.Block(argtypes=(types.MethodType,))
+    for s in [load, fill, measure, *results, d0, d1, coordinates, det0, det1, both]:
+        block.stmts.append(s)
+    block.stmts.append(store)
+    block.stmts.append(ret)
+    function = func.Function(
+        sym_name="main",
+        signature=func.Signature((), types.Any),
+        slots=(),
+        body=ir.Region(blocks=block),
+    )
+    return ir.Method(
+        dialects=kernel.union([annotate.dialect]),
+        code=function,
+        sym_name="main",
+        arg_names=[],
+    )
+
+
+def test_emit_bytecode_spills_shared_measurements_and_validates():
+    """The whole compile path, on the shape the spill pass exists for: the
+    bytecode parks values in locals, and the Rust stack simulation — which
+    checks every operand's tag and every typed `load`/`store` — accepts it."""
+    prog = MoveToStackMove(arch_spec=_ARCH).emit_bytecode(
+        _shared_detector_kernel(), no_raise=False
+    )
+    ops = [i.op_name() for i in prog.instructions]
+    assert "store" in ops and "load" in ops
+    assert "dup" not in ops
+    prog.validate(stack=True)

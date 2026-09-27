@@ -12,15 +12,52 @@
 //!
 //! ## Capability checks
 //!
-//! - **`feed_forward` → CPU control flow.** Without mid-circuit classical
-//!   feedback the hardware can only run straight-line code, so any nested
-//!   [`vihaco_cpu`] branch/call (`br`, `cond_br`, `call`, `call_indirect`) is
-//!   rejected. (This rule exists because the [`Cpu`](super::Instruction::Cpu)
-//!   variant makes those opcodes representable in a lanes program.)
-//! - **`feed_forward` → multiple measurements.** Without feed-forward at most
-//!   one `measure` may appear.
+//! - **`feed_forward` → multiple measurements.** Without mid-circuit classical
+//!   feedback the hardware can only run straight-line code, so at most one
+//!   `measure` may appear.
+//!
+//!   The companion rule against branch/call instructions
+//!   ([`ControlFlowRequiresFeedForward`](ValidationError::ControlFlowRequiresFeedForward))
+//!   rejects control flow for the same reason. It was unreachable for as long
+//!   as the ISA had no such instructions; adopting the calling convention
+//!   brought it back.
 //! - **`atom_reloading` → `fill`.** Without atom reloading, refilling atoms
 //!   after the initial fill is unsupported.
+//!
+//! ## The stack simulation is a dataflow over each function
+//!
+//! [`simulate_stack`] is abstract interpretation over the operand stack, the
+//! way WASM validation and JVM bytecode verification work. Each function is
+//! walked over its control-flow graph from an entry state holding its locals —
+//! its declared parameters, then the scratch slots its body names — and no
+//! operands. Where edges merge, the incoming states are joined: a slot the
+//! paths disagree on widens to "unknown", and differing operand *depths* are
+//! an error ([`StackDepthMismatch`](ValidationError::StackDepthMismatch)), so a
+//! loop whose body changes the depth is rejected at its back edge.
+//!
+//! The frame is vihaco#110's, which [`LanesMachine`](super::machine) runs on
+//! 0.4.1 as well: the locals are their own slots below the operands, reached
+//! only by `load` and `store`, so a scratch value can wait out any number of
+//! pushes and pops. An operand op that finds no operand left is an error
+//! rather than a read of the locals.
+//!
+//! The analysis is intraprocedural. A `call` is a pure stack effect read off
+//! the callee's declaration — pop its parameters, push its results — and the
+//! callee is never descended into; its own walk checks it. What makes that
+//! sound is the frame rule: a function may not pop past its own operands
+//! ([`PopBelowFrameBase`](ValidationError::PopBelowFrameBase)), so a caller's
+//! post-call depth never depends on what the callee does.
+//!
+//! What it still cannot see: `call_indirect` takes its target and arity off
+//! the stack, so the frame after one is unknowable. That state wins every
+//! join, so it never reports a false error — but everything downstream goes
+//! unchecked, including errors on *other* paths that merge with it: a `pop`
+//! that underflows on the arm without the call is not reported. A branch
+//! condition's type (`bool` has no lanes [`tag`]) is not checked either, only
+//! its presence. And a join keeps only what every incoming path agrees on:
+//! two paths pushing different locations leave a location of unknown address,
+//! so a group check that would fail on only one of those paths — a duplicate
+//! in one arm's `fill` — is not reported.
 //!
 //! ## Address checks
 //!
@@ -30,16 +67,18 @@
 //! [`check_zone`](ArchSpec::check_zone) — invalid zones, words, sites, lanes,
 //! and AOD constraints are reported with the arch layer's own message.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
-use vihaco::value::Value;
-use vihaco_cpu::Instruction as Cpu;
-
-use super::{Instruction, Program};
+use super::device::LanesInstruction as L;
+use super::machine::MachineInstruction as M;
+use super::program::{Program, entry_function};
 use crate::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
 use crate::arch::query::{LaneGroupError, LocationGroupError};
 use crate::arch::types::ArchSpec;
+use vihaco::module::FunctionInfo;
+use vihaco::{Type, Value};
+use vihaco_cpu::RuntimeInstruction as C;
 
 /// Value type tags tracked by the [`simulate_stack`] type simulator. These
 /// mirror the stack value kinds the runtime distinguishes.
@@ -60,7 +99,13 @@ pub mod tag {
 /// instruction's program counter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
-    /// A CPU control-flow instruction appears but `feed_forward` is disabled.
+    /// A `br`, `cond_br`, `call` or `call_indirect` appears but
+    /// `feed_forward` is disabled.
+    ///
+    /// Without mid-circuit classical feedback the hardware can only run
+    /// straight-line code. This was documented as unreachable for as long as
+    /// the ISA had no control flow to reject; adopting the calling convention
+    /// brought it back.
     ControlFlowRequiresFeedForward {
         pc: usize,
         /// The offending mnemonic (e.g. `"cond_br"`).
@@ -82,20 +127,112 @@ pub enum ValidationError {
     NewArrayZeroDim0 { pc: usize },
     /// `new_array` type_tag exceeds the maximum value tag.
     NewArrayInvalidTypeTag { pc: usize, type_tag: u32 },
+    /// `new_array` declares more elements than [`MAX_ARRAY_ELEMENTS`].
+    NewArrayTooManyElements { pc: usize, count: u64 },
+    /// `get_item` takes an index count outside `1..=`[`MAX_GET_ITEM_DIMS`].
+    GetItemInvalidDims { pc: usize, ndims: u32 },
+    /// `load`/`store` names a local past [`MAX_LOCAL_INDEX`].
+    LocalIndexOutOfRange {
+        pc: usize,
+        /// The offending mnemonic (`"load"` or `"store"`).
+        mnemonic: &'static str,
+        index: u32,
+    },
+    /// A function declares more parameters than a frame may hold locals
+    /// ([`MAX_LOCAL_COUNT`]). Every parameter is a local, so the machine
+    /// refuses to enter it, and every call to it fails. `pc` is the function's
+    /// `func_start`.
+    TooManyParameters { pc: usize, count: usize },
+    /// An instruction sits outside every function's extent — after the last
+    /// `func_end`, or in a stream with no markers at all. Unreachable, and
+    /// unrenderable: [`super::text::to_text`] emits it after the closing brace.
+    CodeOutsideFunction { pc: usize },
+    /// A `br`/`cond_br` names an address outside the code, or a `call` names
+    /// one that does not begin a function.
+    InvalidControlFlowTarget {
+        pc: usize,
+        target: u32,
+        /// What the target should have been: `"an address in the code"` or
+        /// `"a function entry"`.
+        expected: &'static str,
+    },
+    /// A `call`'s arity operand disagrees with the callee's declared
+    /// parameter count.
+    ///
+    /// The operand is not a hint: it sets `base = stack.len() - arity`, so an
+    /// unchecked one redefines the callee's frame per call site.
+    CallArityMismatch {
+        pc: usize,
+        target: u32,
+        declared: u32,
+        got: u32,
+    },
+    /// A `ret`'s keep count disagrees with the enclosing function's declared
+    /// return count.
+    ///
+    /// Two `ret`s that disagree make the caller's post-call stack depth
+    /// path-dependent, which is the same defect as a branch whose arms leave
+    /// different depths. Checking both against the declaration catches it
+    /// without having to compare them to each other.
+    ReturnCountMismatch { pc: usize, declared: u32, got: u32 },
     /// `initial_fill` is not the first non-constant instruction.
     InitialFillNotFirst { pc: usize },
     /// The program has no instructions (and therefore no terminator).
     EmptyProgram,
-    /// The final instruction is neither `return` nor `halt`.
+    /// Some path through a function runs off its end instead of reaching
+    /// `return` or `halt`. Per function, not per program: `func_end` is a
+    /// no-op, so falling off it runs whatever was laid out next.
     MissingTerminator { pc: usize },
     /// An instruction follows a `return`/`halt` and is unreachable.
     UnreachableInstruction { pc: usize },
 
     // ---- stack-type simulation (only via `simulate_stack`) ----
-    /// An instruction popped from an empty stack.
+    /// The entry function popped with no operands left.
+    ///
+    /// Its locals sit below the operands, and no operand op reaches them —
+    /// not even a parameter's: a value in a local comes back with `load`.
     StackUnderflow { pc: usize },
+    /// A function other than the entry popped with no operands left, reaching
+    /// for its own locals and, below them, values its caller owns.
+    ///
+    /// An error even when the machine's stack is not empty: the callee would
+    /// be corrupting its frame, or its caller's, rather than underflowing. It
+    /// is also what keeps the stack simulation intraprocedural — without it a
+    /// caller could not know its own post-call depth without descending into
+    /// the callee. The entry function has no caller, so the same condition
+    /// there is a plain [`StackUnderflow`](Self::StackUnderflow) — unless
+    /// something also calls it.
+    PopBelowFrameBase { pc: usize },
+    /// Two paths reach `pc` with different stack depths.
+    ///
+    /// The depth after a merge would depend on which edge was taken. `expected`
+    /// is the depth the first path to reach `pc` arrived with, `got` the depth
+    /// of the one that disagrees. A loop whose body changes the depth reports
+    /// this at its header.
+    StackDepthMismatch {
+        pc: usize,
+        expected: usize,
+        got: usize,
+    },
     /// A popped value had the wrong type tag (see [`tag`]).
     TypeMismatch { pc: usize, expected: u8, got: u8 },
+    /// A typed `load`/`store` names a vihaco type the value does not have, so
+    /// the machine refuses it.
+    ///
+    /// vihaco-cpu 0.4.1 checks both: `store <ty>` refuses a value of another
+    /// type, and `load <ty>` a local holding one. The placeholder a lanes op
+    /// pushes for a result it does not simulate — and that an unwritten local
+    /// holds — passes either, except that `load undef` refuses every concrete
+    /// value. Types are spelled as in the text format.
+    LocalTypeMismatch {
+        pc: usize,
+        /// `"load"` or `"store"`.
+        mnemonic: &'static str,
+        /// The type the instruction names.
+        declared: &'static str,
+        /// The type of the value it found.
+        got: &'static str,
+    },
     /// A `local_r`/`local_rz`/`fill`/`initial_fill` location group is invalid.
     LocationGroupValidation {
         pc: usize,
@@ -105,8 +242,107 @@ pub enum ValidationError {
     LaneGroupValidation { pc: usize, error: LaneGroupError },
 }
 
-/// Maximum valid `new_array` element type tag (`TAG_OBSERVABLE_REF = 0x8`).
-const MAX_TYPE_TAG: u32 = 0x8;
+/// Maximum valid `new_array` element type tag ([`tag::MEASUREMENT_RESULT`]).
+const MAX_TYPE_TAG: u32 = tag::MEASUREMENT_RESULT as u32;
+
+/// Maximum number of elements a `new_array` may declare.
+///
+/// `dim0` and `dim1` are attacker-controlled `u32`s read straight out of the
+/// instruction word, and their product drives a pop loop. Without a bound, a
+/// 28-byte program can make the validator pop four billion times, and the
+/// product itself overflows `u32`. An array holds one element per measured
+/// site, so a million is already orders of magnitude past any physical
+/// architecture — the bound exists to make a malformed word a diagnosis
+/// rather than a hang.
+pub const MAX_ARRAY_ELEMENTS: u64 = 1 << 20;
+
+/// Maximum number of indices a `get_item` may take.
+///
+/// `new_array` carries exactly two dimension fields, so an array is at most
+/// 2-D and one or two indices is the only well-formed shape. The Python
+/// `stack_move.GetItem` documents the same invariant and defers enforcement
+/// here.
+pub const MAX_GET_ITEM_DIMS: u32 = 2;
+
+/// Highest local index a `load` or `store` may name, so a frame reserves at
+/// most [`MAX_LOCAL_COUNT`] locals.
+///
+/// A frame reserves a slot for every local its body names — `local_count` is
+/// `max(arity, every index + 1)`, see [`super::program::local_count`] — and
+/// every `call` reserves them before the callee's first instruction. The
+/// index is therefore a memory request read straight out of the instruction
+/// word: at the 16 bytes per slot measured in #1032, `store u64, 4294967295`
+/// would reserve about 68 GB from a 12-byte program. (Under vihaco 0.4.1's
+/// own model the same `store` did it directly, by growing the stack to reach
+/// its index. The frame model closes that road and opens this one, so the
+/// bound stays.)
+///
+/// It is not a bound that only a malformed program meets. The compiler spills
+/// a value to a local when it cannot wait on the stack for its consumer, and
+/// a slot is free again only after its value's last reload, so a function
+/// needs as many slots as it has spilled values live at once. That scales
+/// with the program: detectors built after every result of a measurement has
+/// been read keep each result live, which is 160 slots for one full
+/// measurement on the bundled physical spec. `stackify` refuses to emit past
+/// the bound rather than produce bytecode that fails here.
+///
+/// A frame of the full 1024 costs 16 KB of stack. Recursion reserves one per
+/// level, so the machine also bounds the whole stack
+/// ([`MAX_STACK_SLOTS`](super::machine::MAX_STACK_SLOTS)).
+pub const MAX_LOCAL_INDEX: u32 = 1023;
+
+/// Most locals a frame may reserve: one for every index up to
+/// [`MAX_LOCAL_INDEX`]. The machine refuses a larger frame whether or not the
+/// program was validated.
+pub const MAX_LOCAL_COUNT: u32 = MAX_LOCAL_INDEX + 1;
+/// Record a `br`/`cond_br` target that leaves the branch's own function.
+///
+/// Testing only `target < code.len()` let a branch land anywhere in the
+/// stream: a trailing `cpu::cpu.label` resolves to the function's own
+/// `func_end`, and a target past it enters the *next* function's body without
+/// a frame — the caller's locals still in place, no `ret` to come back to.
+/// A branch is intra-procedural; leaving the function is what `call` is for.
+fn check_branch_target(
+    errors: &mut Vec<ValidationError>,
+    owner: &[Option<usize>],
+    pc: usize,
+    target: u32,
+) {
+    let same_function = owner
+        .get(target as usize)
+        .copied()
+        .flatten()
+        .is_some_and(|t| owner.get(pc).copied().flatten() == Some(t));
+    if !same_function {
+        errors.push(ValidationError::InvalidControlFlowTarget {
+            pc,
+            target,
+            expected: "an address in the same function",
+        });
+    }
+}
+
+/// Element count of a `new_array`, in `u64` so the product cannot overflow.
+/// `dim1 == 0` means a 1-D array.
+pub(crate) fn array_element_count(dim0: u32, dim1: u32) -> u64 {
+    dim0 as u64 * if dim1 == 0 { 1 } else { dim1 as u64 }
+}
+
+/// Record a `load`/`store` local index past [`MAX_LOCAL_INDEX`].
+fn check_local_index(
+    errors: &mut Vec<ValidationError>,
+    pc: usize,
+    mnemonic: &'static str,
+    index: u32,
+) {
+    if index > MAX_LOCAL_INDEX {
+        errors.push(ValidationError::LocalIndexOutOfRange {
+            pc,
+            mnemonic,
+            index,
+        });
+    }
+}
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -140,6 +376,50 @@ impl fmt::Display for ValidationError {
             ValidationError::NewArrayInvalidTypeTag { pc, type_tag } => {
                 write!(f, "pc {pc}: invalid new_array type tag {type_tag}")
             }
+            ValidationError::NewArrayTooManyElements { pc, count } => write!(
+                f,
+                "pc {pc}: new_array declares {count} elements, more than the \
+                 maximum of {MAX_ARRAY_ELEMENTS}"
+            ),
+            ValidationError::GetItemInvalidDims { pc, ndims } => write!(
+                f,
+                "pc {pc}: get_item takes 1..={MAX_GET_ITEM_DIMS} indices, got {ndims}"
+            ),
+            ValidationError::LocalIndexOutOfRange {
+                pc,
+                mnemonic,
+                index,
+            } => write!(
+                f,
+                "pc {pc}: {mnemonic} takes a local index 0..={MAX_LOCAL_INDEX}, got {index}"
+            ),
+            ValidationError::TooManyParameters { pc, count } => write!(
+                f,
+                "pc {pc}: function declares {count} parameters, more than the \
+                 {MAX_LOCAL_COUNT} locals a frame may hold"
+            ),
+            ValidationError::CodeOutsideFunction { pc } => {
+                write!(f, "pc {pc}: instruction is outside any function")
+            }
+            ValidationError::InvalidControlFlowTarget {
+                pc,
+                target,
+                expected,
+            } => write!(f, "pc {pc}: control-flow target {target} is not {expected}"),
+            ValidationError::CallArityMismatch {
+                pc,
+                target,
+                declared,
+                got,
+            } => write!(
+                f,
+                "pc {pc}: call passes {got} operand(s) but the function at {target} \
+                 declares {declared}"
+            ),
+            ValidationError::ReturnCountMismatch { pc, declared, got } => write!(
+                f,
+                "pc {pc}: ret keeps {got} value(s) but the function declares {declared}"
+            ),
             ValidationError::InitialFillNotFirst { pc } => write!(
                 f,
                 "pc {pc}: initial_fill must be the first non-constant instruction"
@@ -151,15 +431,33 @@ impl fmt::Display for ValidationError {
                 )
             }
             ValidationError::MissingTerminator { pc } => {
-                write!(f, "pc {pc}: program must end with return or halt")
+                write!(f, "pc {pc}: function must end with return or halt")
             }
             ValidationError::UnreachableInstruction { pc } => {
                 write!(f, "pc {pc}: unreachable instruction after return or halt")
             }
             ValidationError::StackUnderflow { pc } => write!(f, "pc {pc}: stack underflow"),
+            ValidationError::PopBelowFrameBase { pc } => write!(
+                f,
+                "pc {pc}: pops past its operands, into its locals and its caller's values"
+            ),
+            ValidationError::StackDepthMismatch { pc, expected, got } => write!(
+                f,
+                "pc {pc}: paths reach this instruction with different stack depths \
+                 ({expected} and {got})"
+            ),
             ValidationError::TypeMismatch { pc, expected, got } => write!(
                 f,
                 "pc {pc}: type mismatch: expected tag 0x{expected:x}, got 0x{got:x}"
+            ),
+            ValidationError::LocalTypeMismatch {
+                pc,
+                mnemonic,
+                declared,
+                got,
+            } => write!(
+                f,
+                "pc {pc}: {mnemonic} names type {declared}, but the value is {got}"
             ),
             ValidationError::LocationGroupValidation { pc, error } => {
                 write!(f, "pc {pc}: {error}")
@@ -170,21 +468,6 @@ impl fmt::Display for ValidationError {
 }
 
 impl std::error::Error for ValidationError {}
-
-/// If `cpu` is a control-flow instruction, return its canonical mnemonic.
-///
-/// `Return` is deliberately excluded: it is a terminator, not a feed-forward
-/// branch (and lanes uses its own [`Return`](super::Instruction::Return)
-/// rather than the nested CPU one).
-fn control_flow_mnemonic(cpu: &Cpu) -> Option<&'static str> {
-    match cpu {
-        Cpu::Branch(_) => Some("br"),
-        Cpu::ConditionalBranch(_, _) => Some("cond_br"),
-        Cpu::Call(_, _) => Some("call"),
-        Cpu::IndirectCall => Some("call_indirect"),
-        _ => None,
-    }
-}
 
 /// Validate a program's arch-dependent constraints (capabilities + addresses).
 ///
@@ -198,37 +481,86 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
 
     let mut errors = Vec::new();
     let mut measure_count = 0u32;
+    let mut initial_fill_count = 0u32;
+
+    // The capability rules describe *the run*, so they are scoped to the code
+    // that runs. With `feed_forward` off the control-flow arm below rejects
+    // every `call`, so only the entry function can execute — counting within
+    // its span is exact wherever the measure rule is active, and stops an
+    // uncallable function's `measure` from condemning a program that measures
+    // once.
+    let entry = entry_function(program)
+        .ok()
+        .map(|f| (f.start_address as usize, f.end_address as usize));
+    let runs = |pc: usize| entry.is_none_or(|(start, end)| pc >= start && pc < end);
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
             // ---- capability checks ----
-            Instruction::Cpu(cpu) if !arch.feed_forward => {
-                if let Some(mnemonic) = control_flow_mnemonic(cpu) {
-                    errors.push(ValidationError::ControlFlowRequiresFeedForward { pc, mnemonic });
+            // Without mid-circuit classical feedback the hardware runs
+            // straight-line code only, so a branch or a call is unrunnable.
+            // This arm did not exist while the ISA had no such instructions;
+            // now that a program can declare functions and branch between
+            // them, its absence let every one of them through.
+            //
+            // Guarded on [`is_control_flow`] rather than re-listing the
+            // variants, so a new control-flow op is gated here the moment it
+            // joins that predicate, instead of silently passing the rule that
+            // exists to reject it.
+            inst if is_control_flow(inst) && !arch.feed_forward => {
+                errors.push(ValidationError::ControlFlowRequiresFeedForward {
+                    pc,
+                    mnemonic: super::machine::op_name(inst),
+                });
+            }
+            M::Lanes(L::Measure(_)) => {
+                // A textual count over the code stream, which is exact only
+                // because the arm above rejects every branch and call when
+                // `feed_forward` is false: without control flow the code runs
+                // once, top to bottom. With `feed_forward` on, repeats are
+                // allowed anyway, so the count does not have to be exact.
+                if runs(pc) {
+                    measure_count += 1;
+                    if !arch.feed_forward && measure_count > 1 {
+                        errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
+                    }
                 }
             }
-            Instruction::Measure(_) => {
-                measure_count += 1;
-                if !arch.feed_forward && measure_count > 1 {
-                    errors.push(ValidationError::MultipleMeasuresRequireFeedForward { pc });
-                }
-            }
-            Instruction::Fill(_) if !arch.atom_reloading => {
+            M::Lanes(L::Fill(_)) if !arch.atom_reloading => {
                 errors.push(ValidationError::FillRequiresAtomReloading { pc });
+            }
+            // A *second* `initial_fill` is a refill, whatever it is spelled.
+            // The whole-program "must be first" ordering rule used to make
+            // that unreachable; scoping it to a function did not, so a helper
+            // could reload atoms on hardware that cannot.
+            //
+            // Counted across the whole program, unlike `measure` above. The
+            // measure rule is only active when `feed_forward` is off, which
+            // bans `call` and leaves the entry function as the only code that
+            // runs — so entry-scoping is exact there. This rule is active with
+            // `feed_forward` *on*, where a called function does run, and
+            // deciding which functions are callable needs a call-graph walk.
+            // Counting all of them can only over-report, which is the right
+            // way for a capability gate to be wrong.
+            M::Lanes(L::InitialFill(_)) => {
+                initial_fill_count += 1;
+                if !arch.atom_reloading && initial_fill_count > 1 {
+                    errors.push(ValidationError::FillRequiresAtomReloading { pc });
+                }
             }
 
             // ---- address checks ----
-            Instruction::ConstLoc(bits) => {
+            M::Lanes(L::ConstLoc(bits)) => {
                 if let Some(message) = arch.check_location(&LocationAddr::decode(*bits)) {
                     errors.push(ValidationError::InvalidLocation { pc, message });
                 }
             }
-            Instruction::ConstLane(bits) => {
+            M::Lanes(L::ConstLane(bits)) => {
                 for message in arch.check_lane(&LaneAddr::decode_u64(*bits)) {
                     errors.push(ValidationError::InvalidLane { pc, message });
                 }
             }
-            Instruction::ConstZone(bits) => {
+            M::Lanes(L::ConstZone(bits)) => {
                 if let Some(message) = arch.check_zone(&ZoneAddr::decode(*bits)) {
                     errors.push(ValidationError::InvalidZone { pc, message });
                 }
@@ -241,19 +573,30 @@ pub fn validate(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationErr
     errors
 }
 
+/// True if `inst` transfers control elsewhere: a branch or a call. Without
+/// `feed_forward` the hardware runs straight-line code only, so the capability
+/// rule rejects every one.
+fn is_control_flow(inst: &M) -> bool {
+    matches!(
+        inst,
+        M::Cpu(C::Branch(_) | C::ConditionalBranch(_, _) | C::Call(_, _) | C::IndirectCall)
+    )
+}
+
 /// True if `inst` terminates execution (`return` or `halt`).
-fn is_terminator(inst: &Instruction) -> bool {
-    matches!(inst, Instruction::Return | Instruction::Cpu(Cpu::Halt))
+fn is_terminator(inst: &M) -> bool {
+    matches!(inst, M::Cpu(C::Return(_)) | M::Cpu(C::Halt))
 }
 
 /// True if `inst` only pushes a constant (and so may precede `initial_fill`).
-fn is_constant_push(inst: &Instruction) -> bool {
+fn is_constant_push(inst: &M) -> bool {
     matches!(
         inst,
-        Instruction::ConstLoc(_)
-            | Instruction::ConstLane(_)
-            | Instruction::ConstZone(_)
-            | Instruction::Cpu(Cpu::Const(_))
+        M::Lanes(L::ConstLoc(_))
+            | M::Lanes(L::ConstLane(_))
+            | M::Lanes(L::ConstZone(_))
+            | M::Cpu(C::Const(Type::F64, Value::F64(_)))
+            | M::Cpu(C::Const(Type::I64, Value::I64(_)))
     )
 }
 
@@ -263,10 +606,28 @@ fn is_constant_push(inst: &Instruction) -> bool {
 pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let mut seen_non_constant = false;
+    let spans = function_spans(&program.code);
+
+    // Which function owns each address, so a branch can be constrained to its
+    // own. `pc -> span index`; `None` for code outside every function.
+    let mut owner = vec![None; program.code.len()];
+    for (i, span) in spans.iter().enumerate() {
+        for slot in owner.iter_mut().take(span.end).skip(span.start) {
+            *slot = Some(i);
+        }
+    }
+
+    // The declaration of the function owning each address, where it has one.
+    let functions = functions_by_start(program);
+    let declared = |pc: usize| {
+        owner[pc]
+            .and_then(|i| spans.get(i))
+            .and_then(|span| functions.get(&span.start).copied())
+    };
 
     for (pc, inst) in program.code.iter().enumerate() {
         match inst {
-            Instruction::NewArray(type_tag, dim0, _dim1) => {
+            M::Lanes(L::NewArray(type_tag, dim0, dim1)) => {
                 if *dim0 == 0 {
                     errors.push(ValidationError::NewArrayZeroDim0 { pc });
                 }
@@ -276,99 +637,682 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
                         type_tag: *type_tag,
                     });
                 }
+                // Bound the element count here, where the operands are read,
+                // so neither the stack simulator nor the machine has to guard
+                // its own pop loop against a four-billion-element array.
+                let count = array_element_count(*dim0, *dim1);
+                if count > MAX_ARRAY_ELEMENTS {
+                    errors.push(ValidationError::NewArrayTooManyElements { pc, count });
+                }
                 seen_non_constant = true;
             }
-            Instruction::InitialFill(_) => {
+            M::Lanes(L::GetItem(ndims)) => {
+                if *ndims == 0 || *ndims > MAX_GET_ITEM_DIMS {
+                    errors.push(ValidationError::GetItemInvalidDims { pc, ndims: *ndims });
+                }
+                seen_non_constant = true;
+            }
+            // Bound the local index here, where the operand is read, so one
+            // `load` or `store` cannot size its function's frame at gigabytes
+            // (see [`MAX_LOCAL_INDEX`]). Reads and writes size it alike.
+            M::Cpu(C::Load(_, index)) => {
+                check_local_index(&mut errors, pc, "load", *index);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Store(_, index)) => {
+                check_local_index(&mut errors, pc, "store", *index);
+                seen_non_constant = true;
+            }
+            M::Lanes(L::InitialFill(_)) => {
                 if seen_non_constant {
                     errors.push(ValidationError::InitialFillNotFirst { pc });
                 }
                 seen_non_constant = true;
             }
+            // Branch and call targets are addresses, and nothing has checked
+            // them: a `br` past the end of the code, or a `call` to an address
+            // that begins no function, is a program the renderer cannot even
+            // name — it has to invent `@L9` / `@F1`, producing text that will
+            // not re-read.
+            M::Cpu(C::Branch(t)) => {
+                check_branch_target(&mut errors, &owner, pc, *t);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::ConditionalBranch(t, f)) => {
+                check_branch_target(&mut errors, &owner, pc, *t);
+                check_branch_target(&mut errors, &owner, pc, *f);
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Call(arity, target)) => {
+                if !matches!(
+                    program.code.get(*target as usize),
+                    Some(M::Cpu(C::FunctionStart))
+                ) {
+                    errors.push(ValidationError::InvalidControlFlowTarget {
+                        pc,
+                        target: *target,
+                        expected: "a function entry",
+                    });
+                } else if let Some(callee) = functions.get(&(*target as usize)).copied() {
+                    // `call <arity>` sets `base = stack.len() - arity`, so the
+                    // operand decides where the callee's frame begins. Checked
+                    // against the declaration, that is a claim about the
+                    // callee; unchecked, it silently *redefines* the callee's
+                    // shape per call site, and two sites could disagree with
+                    // nothing to notice.
+                    let declared = callee.signature.params.len() as u32;
+                    if *arity != declared {
+                        errors.push(ValidationError::CallArityMismatch {
+                            pc,
+                            target: *target,
+                            declared,
+                            got: *arity,
+                        });
+                    }
+                }
+                seen_non_constant = true;
+            }
+            M::Cpu(C::Return(keep)) => {
+                // Checked against the enclosing function's declaration rather
+                // than against its other `ret`s. Same outcome when they
+                // disagree, but it names the offender: a `ret` that does not
+                // match what the function promised, rather than a pair that
+                // happens to differ.
+                if let Some(declared) = declared(pc).map(|f| f.signature.ret.len() as u32)
+                    && *keep != declared
+                {
+                    errors.push(ValidationError::ReturnCountMismatch {
+                        pc,
+                        declared,
+                        got: *keep,
+                    });
+                }
+                seen_non_constant = true;
+            }
+            // A function boundary resets the ordering rule: `initial_fill`
+            // must lead its own function, not the whole code stream.
+            M::Cpu(C::FunctionStart) => seen_non_constant = false,
+            M::Cpu(C::FunctionEnd) => {}
             inst if is_constant_push(inst) => {}
             _ => seen_non_constant = true,
         }
     }
 
-    // Any instruction after the first terminator is unreachable. If there are
-    // unreachable instructions they explain a non-terminal last instruction, so
-    // `MissingTerminator` would be a redundant second error.
-    let mut found_terminator = false;
-    let mut unreachable = Vec::new();
-    for (pc, inst) in program.code.iter().enumerate() {
-        if found_terminator {
-            unreachable.push(ValidationError::UnreachableInstruction { pc });
+    // Reachability and terminators are per *function*, and reachability
+    // follows branches rather than latching on the first terminator.
+    //
+    // The latch this replaces was right while a program was one flat `@main`.
+    // It condemned `cond_br`'s second arm — the `halt` ending the first arm
+    // set the latch — and it could not see code a `br` jumped over. Following
+    // the edges gets both right, and the edge extraction already exists for
+    // the target checks above.
+    let spans = function_spans(&program.code);
+
+    // An instruction outside every function is unreachable *and* unrenderable:
+    // `to_text` emits it after the last `}`, producing text that will not
+    // re-read.
+    let mut covered = vec![false; program.code.len()];
+    for span in &spans {
+        for slot in covered.iter_mut().take(span.end).skip(span.start) {
+            *slot = true;
         }
-        if is_terminator(inst) {
-            found_terminator = true;
+    }
+    for (pc, inside) in covered.iter().enumerate() {
+        if !inside {
+            errors.push(ValidationError::CodeOutsideFunction { pc });
         }
     }
 
-    if unreachable.is_empty() {
-        match program.code.last() {
-            None => errors.push(ValidationError::EmptyProgram),
-            Some(last) if !is_terminator(last) => errors.push(ValidationError::MissingTerminator {
-                pc: program.code.len() - 1,
-            }),
-            Some(_) => {}
+    // A label names a position in a function's *body*. One sitting on a
+    // `func_start` cannot be written down: the only spot before a function's
+    // first instruction is the header line, so `to_text` emits it as the first
+    // body label and it re-reads one address later — a different binary, no
+    // error. One on a `func_end`, or outside every function, has no
+    // instruction to mark at all.
+    for label in &program.labels {
+        let body = spans.iter().any(|span| {
+            let body_end = if span.closed { span.end - 1 } else { span.end };
+            (label.address as usize) > span.start && (label.address as usize) < body_end
+        });
+        if !body {
+            errors.push(ValidationError::InvalidControlFlowTarget {
+                pc: label.address as usize,
+                target: label.address,
+                expected: "an instruction inside a function body",
+            });
         }
-    } else {
-        errors.extend(unreachable);
+    }
+
+    // Every parameter is a local, so a parameter list past the frame bound
+    // is a function the machine refuses to enter. An index past the bound is
+    // reported where it is named; this is the one way to exceed it without
+    // naming an index at all.
+    for span in &spans {
+        if let Some(f) = functions.get(&span.start)
+            && f.signature.params.len() > MAX_LOCAL_COUNT as usize
+        {
+            errors.push(ValidationError::TooManyParameters {
+                pc: span.start,
+                count: f.signature.params.len(),
+            });
+        }
+    }
+
+    // "Empty" means no *body*: a program that is nothing but markers has
+    // nothing to run, however many functions it declares.
+    if !program.code.iter().any(|i| !is_marker(i)) {
+        errors.push(ValidationError::EmptyProgram);
+        return errors;
+    }
+
+    for span in &spans {
+        walk_function(program, span, &mut errors);
     }
 
     errors
 }
 
-// ── Stack-type simulation ──────────────────────────────────────────────────
-
-/// One tracked stack value: its type tag and (when known) concrete bits.
-#[derive(Debug, Clone)]
-struct SimEntry {
-    tag: u8,
-    value: Option<u64>,
+/// One function's extent in the code stream.
+struct Span {
+    /// Address of the `func_start`.
+    start: usize,
+    /// One past the last address the function owns.
+    end: usize,
+    /// Whether a `func_end` closed it. An unclosed final function still owns
+    /// the rest of the code, and falls off its own end.
+    closed: bool,
 }
 
-/// Type-level stack simulator: walks the instruction stream tracking value
-/// types, reporting underflow and type mismatches, and — when given an
-/// [`ArchSpec`] — validating `move` lane groups and `fill`/`local_*` location
-/// groups (duplicates only without an arch).
+impl Span {
+    /// One past the last *body* address: the `func_end`, where there is one.
+    fn body_end(&self) -> usize {
+        if self.closed { self.end - 1 } else { self.end }
+    }
+}
+
+fn is_marker(inst: &M) -> bool {
+    matches!(inst, M::Cpu(C::FunctionStart) | M::Cpu(C::FunctionEnd))
+}
+
+/// Every declared function, by the address of its `func_start`. Built once per
+/// pass, so a lookup per `call` and `ret` is not a scan of the table; where
+/// two entries claim one address, the first wins, as a scan would have it.
+fn functions_by_start(program: &Program) -> HashMap<usize, &FunctionInfo<Type>> {
+    let mut functions = HashMap::new();
+    for f in &program.functions {
+        functions.entry(f.start_address as usize).or_insert(f);
+    }
+    functions
+}
+
+/// Split the code into function extents, delimited by the markers.
+fn function_spans(code: &[M]) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let mut open: Option<usize> = None;
+    for (pc, inst) in code.iter().enumerate() {
+        match inst {
+            M::Cpu(C::FunctionStart) => {
+                // A nested `func_start` closes nothing; the outer function
+                // runs up to it and `resolve` rejects the construct anyway.
+                if let Some(start) = open.replace(pc) {
+                    spans.push(Span {
+                        start,
+                        end: pc,
+                        closed: false,
+                    });
+                }
+            }
+            M::Cpu(C::FunctionEnd) => {
+                if let Some(start) = open.take() {
+                    spans.push(Span {
+                        start,
+                        end: pc + 1,
+                        closed: true,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(start) = open {
+        spans.push(Span {
+            start,
+            end: code.len(),
+            closed: false,
+        });
+    }
+    spans
+}
+
+// ── Per-function dataflow ──────────────────────────────────────────────────
+
+/// A forward analysis over one function's control-flow graph.
+///
+/// [`walk`] owns the traversal — successors, the worklist, the fixpoint — and
+/// an implementation supplies only what it tracks per address. The structural
+/// pass tracks nothing, so for it the walk is reachability; the stack
+/// simulation tracks an [`AbstractStack`]. One walker serves both, so the two
+/// cannot disagree about which code runs.
+///
+/// Nothing here is lanes-specific except the implementations, which is the
+/// seam #1042 proposes upstreaming to vihaco behind.
+trait Dataflow {
+    type State: Clone + PartialEq;
+
+    /// Apply the effect of `inst`, at `pc`, to `state`.
+    fn transfer(&mut self, pc: usize, inst: &M, state: &mut Self::State);
+
+    /// Merge `incoming` into `existing`, the state already recorded at the
+    /// merge point `pc`, and report whether `existing` changed.
+    ///
+    /// Only a strict change requeues `pc`. That is what terminates the
+    /// fixpoint, and what a plain `seen` flag gets wrong at exactly the joins
+    /// this exists for.
+    fn join(&mut self, pc: usize, existing: &mut Self::State, incoming: &Self::State) -> bool;
+}
+
+/// What [`walk`] learned about one function.
+struct Walk<S> {
+    /// Which addresses of the span begin a basic block — see [`leaders`].
+    leaders: Vec<bool>,
+    /// The converged state on entry to each leader, indexed from
+    /// `span.start`; `None` at every other address, and at leaders no path
+    /// reaches.
+    states: Vec<Option<S>>,
+    /// Which addresses of the span some path reaches.
+    reached: Vec<bool>,
+    /// Whether some path runs off the end of the function.
+    falls_off: bool,
+}
+
+/// Where control can go after `inst` at `pc`, and whether it runs off the
+/// end of `span` instead.
+///
+/// A target outside the span is not followed: the control-flow target checks
+/// report it, and following it would attribute another function's code to
+/// this one. A `call` falls through — the callee's code is its own.
+fn successors(inst: &M, pc: usize, span: &Span) -> ([Option<usize>; 2], bool) {
+    let inside = |target: u32| Some(target as usize).filter(|t| (span.start..span.end).contains(t));
+    match inst {
+        M::Cpu(C::FunctionEnd) => ([None, None], true),
+        M::Cpu(C::Branch(t)) => ([inside(*t), None], false),
+        M::Cpu(C::ConditionalBranch(t, f)) => ([inside(*t), inside(*f)], false),
+        inst if is_terminator(inst) => ([None, None], false),
+        _ => {
+            let next = pc + 1;
+            (
+                [Some(next).filter(|&n| n < span.end), None],
+                next >= span.body_end(),
+            )
+        }
+    }
+}
+
+/// The addresses of `span` that begin a basic block: its entry, and every
+/// branch target inside it.
+///
+/// Every other address has at most one predecessor, the one before it, so its
+/// state is that predecessor's after one transfer and is never stored. Every
+/// merge point is a leader, so joins happen only there. That is what keeps a
+/// straight-line function at one stored state rather than one per
+/// instruction — each of which is a copy of the stack.
+fn leaders(program: &Program, span: &Span) -> Vec<bool> {
+    let mut leaders = vec![false; span.end - span.start];
+    leaders[0] = true;
+    for pc in span.start..span.end {
+        let inst = &program.code[pc];
+        if matches!(inst, M::Cpu(C::Branch(_) | C::ConditionalBranch(..))) {
+            for target in successors(inst, pc, span).0.into_iter().flatten() {
+                leaders[target - span.start] = true;
+            }
+        }
+    }
+    leaders
+}
+
+/// Transfer `state` through the basic block that begins at `leader`, marking
+/// each address reached. Returns where control leaves the block — each
+/// successor is a leader — and whether it runs off the function on the way.
+fn run_block<D: Dataflow>(
+    program: &Program,
+    span: &Span,
+    leaders: &[bool],
+    leader: usize,
+    state: &mut D::State,
+    flow: &mut D,
+    reached: &mut [bool],
+) -> ([Option<usize>; 2], bool) {
+    let mut pc = leader;
+    let mut falls_off = false;
+    loop {
+        reached[pc - span.start] = true;
+        let inst = &program.code[pc];
+        flow.transfer(pc, inst, state);
+        let (next, off) = successors(inst, pc, span);
+        falls_off |= off;
+        match next {
+            [Some(n), None] if !leaders[n - span.start] => pc = n,
+            _ => return (next, falls_off),
+        }
+    }
+}
+
+/// Run `flow` over one function to a fixpoint, from `entry` at its
+/// `func_start`.
+fn walk<D: Dataflow>(
+    program: &Program,
+    span: &Span,
+    entry: D::State,
+    flow: &mut D,
+) -> Walk<D::State> {
+    let leaders = leaders(program, span);
+    let mut states: Vec<Option<D::State>> = vec![None; span.end - span.start];
+    let mut reached = vec![false; span.end - span.start];
+    states[0] = Some(entry);
+    let mut work = vec![span.start];
+    let mut falls_off = false;
+
+    while let Some(leader) = work.pop() {
+        let mut state = states[leader - span.start]
+            .clone()
+            .expect("queued only once a state exists");
+        let (next, off) = run_block(
+            program,
+            span,
+            &leaders,
+            leader,
+            &mut state,
+            flow,
+            &mut reached,
+        );
+        falls_off |= off;
+        for succ in next.into_iter().flatten() {
+            let slot = &mut states[succ - span.start];
+            if let Some(existing) = slot {
+                if flow.join(succ, existing, &state) {
+                    work.push(succ);
+                }
+            } else {
+                *slot = Some(state.clone());
+                work.push(succ);
+            }
+        }
+    }
+
+    Walk {
+        leaders,
+        states,
+        reached,
+        falls_off,
+    }
+}
+
+/// The dataflow that tracks nothing: walking it is reachability.
+struct Reachability;
+
+impl Dataflow for Reachability {
+    type State = ();
+
+    fn transfer(&mut self, _pc: usize, _inst: &M, _state: &mut ()) {}
+
+    fn join(&mut self, _pc: usize, _existing: &mut (), _incoming: &()) -> bool {
+        false
+    }
+}
+
+/// Check one function's reachability and termination.
+///
+/// Reports every body address no path reaches, and a missing terminator when
+/// any path runs off the end instead of hitting `ret`/`halt`. Both are
+/// per-function: a second function's dead code no longer hides a first
+/// function's missing terminator, which the old single either/or gate did.
+fn walk_function(program: &Program, span: &Span, errors: &mut Vec<ValidationError>) {
+    let body_end = span.body_end();
+    let walked = walk(program, span, (), &mut Reachability);
+
+    for pc in span.start + 1..body_end {
+        if !walked.reached[pc - span.start] {
+            errors.push(ValidationError::UnreachableInstruction { pc });
+        }
+    }
+    if walked.falls_off {
+        // Point at the last body instruction where there is one; an empty
+        // function has only its marker to name. An empty function is not
+        // exempt: `func_end` is a no-op, so falling off it runs whatever was
+        // laid out next rather than returning.
+        errors.push(ValidationError::MissingTerminator {
+            pc: body_end.saturating_sub(1).max(span.start),
+        });
+    }
+}
+
+// ── Stack-type simulation ──────────────────────────────────────────────────
+
+/// One slot of the abstract stack: an operand or a local.
+///
+/// Two independent facts. `tag` is what the value *means* to the lanes
+/// device — a location, a zone, an array — which is what the operand checks
+/// read. `rep` is what the machine actually *holds*, which is what vihaco-cpu's
+/// typed `load`/`store` check, and the tag does not determine it: `FLOAT` is
+/// both a `const f64` (an `F64`) and a `get_item` result (a placeholder).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Slot {
+    /// The lanes type (see [`tag`]); `None` where none is known. Earned, not
+    /// invented: a declared parameter, a call's result, an untagged vihaco-cpu
+    /// value and two paths disagreeing all leave it `None`.
+    tag: Option<u8>,
+    /// The bits, where the tag is known and every path agrees on them — the
+    /// lane and location group checks need the address.
+    value: Option<u64>,
+    rep: Rep,
+}
+
+/// What a slot holds at run time, as far as a typed `load`/`store` cares.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Rep {
+    /// A value of this type: a constant, an address, a host argument.
+    Concrete(Type),
+    /// `Undefined`: the placeholder a lanes op pushes for a result it does not
+    /// simulate, or a local nothing has written. A typed `store` accepts it
+    /// under any type, and a typed `load` of it reads that type's zero.
+    Placeholder,
+    /// Either: a call's result, a callee's argument, two paths disagreeing.
+    Unknown,
+}
+
+impl Slot {
+    /// Nothing known.
+    const UNKNOWN: Slot = Slot {
+        tag: None,
+        value: None,
+        rep: Rep::Unknown,
+    };
+
+    /// A value of vihaco type `ty`, meaning `tag` to the lanes device.
+    fn concrete(tag: Option<u8>, value: Option<u64>, ty: Type) -> Slot {
+        Slot {
+            tag,
+            value,
+            rep: Rep::Concrete(ty),
+        }
+    }
+
+    /// A lanes op's result that the machine does not simulate.
+    fn placeholder(tag: u8) -> Slot {
+        Slot {
+            tag: Some(tag),
+            value: None,
+            rep: Rep::Placeholder,
+        }
+    }
+
+    /// The least slot both `self` and `other` refine. Finite height — bits,
+    /// then tag, then nothing; a representation, then unknown — so a fixpoint
+    /// over these terminates.
+    fn join(&self, other: &Slot) -> Slot {
+        let tag = if self.tag == other.tag {
+            self.tag
+        } else {
+            None
+        };
+        Slot {
+            tag,
+            value: if tag.is_some() && self.value == other.value {
+                self.value
+            } else {
+                None
+            },
+            rep: if self.rep == other.rep {
+                self.rep
+            } else {
+                Rep::Unknown
+            },
+        }
+    }
+}
+
+/// The lanes tag a value of vihaco type `ty` is known to have, where there is
+/// one. Only the two numeric types imply one; a `u32` is what a zone is at run
+/// time, so guessing one would be wrong in both directions.
+fn tag_of(ty: Type) -> Option<u8> {
+    match ty {
+        Type::F64 => Some(tag::FLOAT),
+        Type::I64 => Some(tag::INT),
+        _ => None,
+    }
+}
+
+/// One function's frame, as the stack simulation sees it: its locals, then
+/// the operands above them.
+///
+/// Depth is the operands' alone, measured from the first one, which is what
+/// makes the analysis intraprocedural: an operand op cannot reach the locals,
+/// let alone the caller's values below them.
+#[derive(Debug, Clone, PartialEq)]
+struct AbstractFrame {
+    /// Local 0 first. Fixed length for the whole function — every path
+    /// reserves the same `local_count` — so joining two is slot by slot.
+    locals: Vec<Slot>,
+    /// Bottom first.
+    operands: Vec<Slot>,
+}
+
+/// What the stack simulation knows about a frame at one address.
+#[derive(Debug, Clone, PartialEq)]
+enum AbstractStack {
+    Known(AbstractFrame),
+    /// Past a `call_indirect`, whose arity comes off the stack: the depth
+    /// cannot be known, so nothing downstream is checked. It absorbs every
+    /// join, so a path merging with this one goes unchecked too.
+    ///
+    /// TODO(vihaco#110): once the port resolves each `fn_ref` to its
+    /// `FunctionInfo`, give `call_indirect` a declared signature (a WASM-style
+    /// type operand, proposed upstream) and model it as a direct call, so this
+    /// state is no longer needed.
+    Unknown,
+}
+
+/// Type-level stack simulator: runs the [`Dataflow`] over each function,
+/// tracking value types, reporting underflow and type mismatches, and — when
+/// given an [`ArchSpec`] — validating `move` lane groups and
+/// `fill`/`local_*` location groups (duplicates only without an arch).
 struct StackSimulator<'a> {
-    stack: Vec<SimEntry>,
-    errors: Vec<ValidationError>,
+    program: &'a Program,
     arch: Option<&'a ArchSpec>,
+    /// The function table by entry address, for a `call`'s declared results.
+    functions: HashMap<usize, &'a FunctionInfo<Type>>,
+    /// Whether to run the group checks. Off during the fixpoint, whose
+    /// errors are discarded: a group check never changes a state, and the
+    /// arch's is the costliest thing a transfer does.
+    reporting: bool,
+    /// The operands of the frame being transferred. [`Dataflow::transfer`]
+    /// moves each state's slots in here and back out, so the per-instruction
+    /// effects stay methods on one stack rather than threading it through
+    /// every helper.
+    stack: Vec<Slot>,
+    /// The same frame's locals, moved in and out alongside.
+    locals: Vec<Slot>,
+    errors: Vec<ValidationError>,
+    /// Depth mismatches found at merge points, by `pc`, first one wins. Kept
+    /// apart from `errors` because they are found during the fixpoint, whose
+    /// other errors are discarded.
+    mismatches: BTreeMap<usize, (usize, usize)>,
+    /// Whether the function being walked is the entry and nothing calls it,
+    /// so its frame base is the bottom of the stack — see
+    /// [`ValidationError::PopBelowFrameBase`].
+    entry: bool,
     pc: usize,
+    /// What each function's `ret` hands back, by `func_start` — the join, over
+    /// every `ret` its walk reaches, of the slots it keeps. A `call` pushes
+    /// these rather than unknown slots, because a typed `store` of the result
+    /// is checked against what the callee really returns: the declared return
+    /// type is not enforced at run time, so a `-> i64` function can return
+    /// the placeholder a lanes op pushed, or an `i64` the caller then stores
+    /// as `undef`. Filled callees first by [`Self::summarise_returns`];
+    /// a function absent here (recursion) returns unknown slots.
+    returns: HashMap<usize, Vec<Slot>>,
+    /// The join of what the `ret`s of the function being walked keep.
+    kept: Option<Vec<Slot>>,
 }
 
 impl<'a> StackSimulator<'a> {
-    fn new(arch: Option<&'a ArchSpec>) -> Self {
+    fn new(program: &'a Program, arch: Option<&'a ArchSpec>) -> Self {
         Self {
-            stack: Vec::new(),
-            errors: Vec::new(),
+            program,
             arch,
+            functions: functions_by_start(program),
+            reporting: true,
+            stack: Vec::new(),
+            locals: Vec::new(),
+            errors: Vec::new(),
+            mismatches: BTreeMap::new(),
+            returns: HashMap::new(),
+            kept: None,
+            entry: false,
             pc: 0,
         }
     }
 
-    fn pop_any(&mut self) {
-        if self.stack.pop().is_none() {
-            self.errors
-                .push(ValidationError::StackUnderflow { pc: self.pc });
+    /// Record that a pop found the frame empty.
+    ///
+    /// The error carries nothing but the `pc`, so a second one for the same
+    /// instruction is a literally identical value and says nothing new. Group
+    /// pops (`fill 40`, `new_array`) would otherwise emit one per missing
+    /// operand — a million lines of `pc 0: stack underflow` for a single
+    /// malformed word. All pops for one instruction are consecutive, so
+    /// checking the last error is enough.
+    fn underflow(&mut self) {
+        let pc = self.pc;
+        let error = if self.entry {
+            ValidationError::StackUnderflow { pc }
+        } else {
+            ValidationError::PopBelowFrameBase { pc }
+        };
+        if self.errors.last() != Some(&error) {
+            self.errors.push(error);
+        }
+    }
+
+    fn pop(&mut self) -> Option<Slot> {
+        let slot = self.stack.pop();
+        if slot.is_none() {
+            self.underflow();
+        }
+        slot
+    }
+
+    /// Pop `count` values of any type.
+    ///
+    /// Bounded by the depth plus one: `count` is an operand, and the extra pop
+    /// is what records the single underflow when it exceeds the frame.
+    fn pop_n(&mut self, count: u32) {
+        for _ in 0..(count as usize).min(self.stack.len() + 1) {
+            self.pop();
         }
     }
 
     fn pop_typed(&mut self, expected: u8) {
-        match self.stack.pop() {
-            Some(entry) if entry.tag != expected => {
-                self.errors.push(ValidationError::TypeMismatch {
-                    pc: self.pc,
-                    expected,
-                    got: entry.tag,
-                })
-            }
-            Some(_) => {}
-            None => self
-                .errors
-                .push(ValidationError::StackUnderflow { pc: self.pc }),
-        }
+        self.pop_addr(expected);
     }
 
     fn pop_typed_n(&mut self, expected: u8, count: u32) {
@@ -378,46 +1322,81 @@ impl<'a> StackSimulator<'a> {
     }
 
     /// Pop one value expected to have `expected` tag, returning its concrete
-    /// bits when the type matches.
+    /// bits when the type matches and every path agrees on them. An unknown
+    /// slot passes: nothing justifies rejecting it.
     fn pop_addr(&mut self, expected: u8) -> Option<u64> {
-        match self.stack.pop() {
-            Some(entry) if entry.tag == expected => entry.value,
-            Some(entry) => {
+        let slot = self.pop()?;
+        match slot.tag {
+            Some(tag) if tag == expected => slot.value,
+            Some(tag) => {
                 self.errors.push(ValidationError::TypeMismatch {
                     pc: self.pc,
                     expected,
-                    got: entry.tag,
+                    got: tag,
                 });
                 None
             }
-            None => {
-                self.errors
-                    .push(ValidationError::StackUnderflow { pc: self.pc });
-                None
-            }
+            None => None,
         }
     }
 
-    fn push(&mut self, tag: u8, value: Option<u64>) {
-        self.stack.push(SimEntry { tag, value });
+    /// Push a constant: a value of vihaco type `ty`, meaning `tag`.
+    fn push_constant(&mut self, tag: u8, value: u64, ty: Type) {
+        self.stack.push(Slot::concrete(Some(tag), Some(value), ty));
+    }
+
+    /// Push the placeholder a lanes op leaves for a result it does not
+    /// simulate.
+    fn push_placeholder(&mut self, tag: u8) {
+        self.stack.push(Slot::placeholder(tag));
+    }
+
+    /// Report a typed `load`/`store` the machine would refuse.
+    fn local_type_mismatch(&mut self, mnemonic: &'static str, declared: Type, got: Type) {
+        self.errors.push(ValidationError::LocalTypeMismatch {
+            pc: self.pc,
+            mnemonic,
+            declared: super::machine::cpu_type_text(declared),
+            got: super::machine::cpu_type_text(got),
+        });
+    }
+
+    /// What `load <ty>` pushes from a local holding `slot`, reporting a load
+    /// the machine would refuse.
+    ///
+    /// The machine's rule, exactly: a local holding the placeholder reads as
+    /// `ty`'s zero (see [`super::machine`]), a concrete value of `ty` reads as
+    /// itself, and a concrete value of another type is 0.4.1's type error.
+    /// `load undef` is the one that reads a placeholder as itself, and refuses
+    /// every concrete value.
+    fn sim_load(&mut self, ty: Type, slot: Slot) -> Slot {
+        let zero = Slot::concrete(tag_of(ty), None, ty);
+        match (ty, slot.rep) {
+            (Type::Undefined, Rep::Concrete(got)) => {
+                self.local_type_mismatch("load", ty, got);
+                Slot::UNKNOWN
+            }
+            (Type::Undefined, _) => slot,
+            (_, Rep::Placeholder) => zero,
+            (_, Rep::Concrete(got)) if got == ty => slot,
+            (_, Rep::Concrete(got)) => {
+                self.local_type_mismatch("load", ty, got);
+                zero
+            }
+            // Itself or the zero, whichever it holds: a `ty` either way.
+            (_, Rep::Unknown) => Slot {
+                rep: Rep::Concrete(ty),
+                ..slot
+            }
+            .join(&zero),
+        }
     }
 
     fn sim_dup(&mut self) {
-        if let Some(top) = self.stack.last().cloned() {
+        if let Some(top) = self.stack.last().copied() {
             self.stack.push(top);
         } else {
-            self.errors
-                .push(ValidationError::StackUnderflow { pc: self.pc });
-        }
-    }
-
-    fn sim_swap(&mut self) {
-        let len = self.stack.len();
-        if len >= 2 {
-            self.stack.swap(len - 1, len - 2);
-        } else {
-            self.errors
-                .push(ValidationError::StackUnderflow { pc: self.pc });
+            self.underflow();
         }
     }
 
@@ -455,6 +1434,9 @@ impl<'a> StackSimulator<'a> {
     /// Pop `arity` locations and validate them as a group.
     fn pop_and_validate_locations(&mut self, arity: u32) {
         let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LOCATION)).collect();
+        if !self.reporting {
+            return;
+        }
         let locations: Vec<LocationAddr> = bits
             .iter()
             .filter_map(|v| v.map(LocationAddr::decode))
@@ -473,6 +1455,9 @@ impl<'a> StackSimulator<'a> {
     /// Pop `arity` lanes and validate them as a group.
     fn sim_move(&mut self, arity: u32) {
         let bits: Vec<Option<u64>> = (0..arity).map(|_| self.pop_addr(tag::LANE)).collect();
+        if !self.reporting {
+            return;
+        }
         let lanes: Vec<LaneAddr> = bits
             .iter()
             .filter_map(|v| v.map(LaneAddr::decode_u64))
@@ -488,105 +1473,464 @@ impl<'a> StackSimulator<'a> {
         }
     }
 
-    fn dispatch(&mut self, inst: &Instruction) {
+    fn dispatch(&mut self, inst: &M) {
         match inst {
             // constants push a typed value
-            Instruction::Cpu(Cpu::Const(Value::F64(v))) => self.push(tag::FLOAT, Some(v.to_bits())),
-            Instruction::Cpu(Cpu::Const(Value::I64(v))) => self.push(tag::INT, Some(*v as u64)),
-            Instruction::ConstLoc(v) => self.push(tag::LOCATION, Some(*v)),
-            Instruction::ConstLane(v) => self.push(tag::LANE, Some(*v)),
-            Instruction::ConstZone(v) => self.push(tag::ZONE, Some(*v as u64)),
+            M::Cpu(C::Const(Type::F64, Value::F64(v))) => {
+                self.push_constant(tag::FLOAT, v.to_bits(), Type::F64)
+            }
+            M::Cpu(C::Const(Type::I64, Value::I64(v))) => {
+                self.push_constant(tag::INT, *v as u64, Type::I64)
+            }
+            // Every other constant — `bool`, `u32`, `str`, … — has no lanes
+            // tag. A `u32` is what a zone is at run time, so guessing one
+            // would be wrong in both directions. Its vihaco type is certain,
+            // though, and `const undef` is the placeholder itself.
+            M::Cpu(C::Const(Type::Undefined, _)) => self.stack.push(Slot {
+                rep: Rep::Placeholder,
+                ..Slot::UNKNOWN
+            }),
+            M::Cpu(C::Const(ty, _)) => self.stack.push(Slot::concrete(None, None, *ty)),
+            M::Lanes(L::ConstLoc(v)) => self.push_constant(tag::LOCATION, *v, Type::U64),
+            M::Lanes(L::ConstLane(v)) => self.push_constant(tag::LANE, *v, Type::U64),
+            M::Lanes(L::ConstZone(v)) => self.push_constant(tag::ZONE, *v as u64, Type::U32),
 
             // stack manipulation
-            Instruction::Pop => self.pop_any(),
-            Instruction::Cpu(Cpu::Dup) => self.sim_dup(),
-            Instruction::Swap => self.sim_swap(),
+            M::Cpu(C::Dup) => self.sim_dup(),
+
+            // Locals are their own slots, below the operands: a `load` copies
+            // one up, a `store` moves the top operand down into one. Neither
+            // changes the other slots, and neither can reach past the locals,
+            // so they are how a value outlives the op that would consume it.
+            //
+            // A local past the tracked ones is one no `store` in the function
+            // writes (see [`Self::entry_state`]), so it holds the placeholder
+            // on every path. The function table's count covers every index
+            // the body names, so none is past the frame.
+            //
+            // Both are typed, and checked the way vihaco-cpu checks them:
+            // see [`Self::sim_load`], and a `store` refuses a concrete value
+            // of another type while taking a placeholder under any.
+            M::Cpu(C::Load(ty, index)) => {
+                let slot = self.locals.get(*index as usize).copied().unwrap_or(Slot {
+                    rep: Rep::Placeholder,
+                    ..Slot::UNKNOWN
+                });
+                let loaded = self.sim_load(*ty, slot);
+                self.stack.push(loaded);
+            }
+            M::Cpu(C::Store(ty, index)) => {
+                let value = self.pop().unwrap_or(Slot::UNKNOWN);
+                if let Rep::Concrete(got) = value.rep
+                    && got != *ty
+                {
+                    self.local_type_mismatch("store", *ty, got);
+                }
+                if let Some(slot) = self.locals.get_mut(*index as usize) {
+                    *slot = value;
+                }
+            }
 
             // atom arrangement
-            Instruction::InitialFill(arity) | Instruction::Fill(arity) => {
+            M::Lanes(L::InitialFill(arity)) | M::Lanes(L::Fill(arity)) => {
                 self.pop_and_validate_locations(*arity)
             }
-            Instruction::Move(arity) => self.sim_move(*arity),
+            M::Lanes(L::Move(arity)) => self.sim_move(*arity),
 
             // gates
-            Instruction::LocalR(arity) => {
+            M::Lanes(L::LocalR(arity)) => {
                 self.pop_typed_n(tag::FLOAT, 2);
                 self.pop_and_validate_locations(*arity);
             }
-            Instruction::LocalRz(arity) => {
+            M::Lanes(L::LocalRz(arity)) => {
                 self.pop_typed_n(tag::FLOAT, 1);
                 self.pop_and_validate_locations(*arity);
             }
-            Instruction::GlobalR => self.pop_typed_n(tag::FLOAT, 2),
-            Instruction::GlobalRz => self.pop_typed_n(tag::FLOAT, 1),
-            Instruction::Cz => self.pop_typed(tag::ZONE),
+            M::Lanes(L::GlobalR) => self.pop_typed_n(tag::FLOAT, 2),
+            M::Lanes(L::GlobalRz) => self.pop_typed_n(tag::FLOAT, 1),
+            M::Lanes(L::Cz) => self.pop_typed(tag::ZONE),
 
             // measurement
-            Instruction::Measure(arity) => {
+            M::Lanes(L::Measure(arity)) => {
                 self.pop_typed_n(tag::ZONE, *arity);
                 for _ in 0..*arity {
-                    self.push(tag::MEASURE_FUTURE, None);
+                    self.push_placeholder(tag::MEASURE_FUTURE);
                 }
             }
-            Instruction::AwaitMeasure => {
+            // `await_measure` yields an *array* of measurement results — the
+            // same value `set_detector`/`set_observable` consume, and the type
+            // `stack_move.AwaitMeasure` is declared to produce. The distinct
+            // `MEASUREMENT_RESULT` tag is that array's *element* type, which a
+            // one-tag-per-slot simulator cannot express; it exists so
+            // `new_array` can name the element type (#547). Giving the whole
+            // array that tag broke `measure -> await_measure -> set_detector`.
+            M::Lanes(L::AwaitMeasure) => {
                 self.pop_typed(tag::MEASURE_FUTURE);
-                self.push(tag::MEASUREMENT_RESULT, None);
+                self.push_placeholder(tag::ARRAY_REF);
             }
 
             // arrays
-            Instruction::NewArray(_type_tag, dim0, dim1) => {
-                let count = dim0 * if *dim1 == 0 { 1 } else { *dim1 };
+            M::Lanes(L::NewArray(_type_tag, dim0, dim1)) => {
+                // `validate_structure` rejects counts past the cap, so the
+                // clamp here only keeps a rejected program from also driving
+                // an unbounded loop before its diagnosis is reported.
+                let count = array_element_count(*dim0, *dim1).min(MAX_ARRAY_ELEMENTS);
                 for _ in 0..count {
-                    self.pop_any();
+                    self.pop();
                 }
-                self.push(tag::ARRAY_REF, None);
+                self.push_placeholder(tag::ARRAY_REF);
             }
-            Instruction::GetItem(ndims) => {
-                self.pop_typed_n(tag::INT, *ndims);
+            M::Lanes(L::GetItem(ndims)) => {
+                // Clamped for the same reason as `new_array`: an out-of-range
+                // index count is already reported by `validate_structure`.
+                self.pop_typed_n(tag::INT, (*ndims).min(MAX_GET_ITEM_DIMS));
                 self.pop_typed(tag::ARRAY_REF);
                 // Element type is not tracked; assume float.
-                self.push(tag::FLOAT, None);
+                self.push_placeholder(tag::FLOAT);
             }
 
             // detectors / observables
-            Instruction::SetDetector => {
+            M::Lanes(L::SetDetector) => {
                 self.pop_typed(tag::ARRAY_REF);
-                self.push(tag::DETECTOR_REF, None);
+                self.push_placeholder(tag::DETECTOR_REF);
             }
-            Instruction::SetObservable => {
+            M::Lanes(L::SetObservable) => {
                 self.pop_typed(tag::ARRAY_REF);
-                self.push(tag::OBSERVABLE_REF, None);
+                self.push_placeholder(tag::OBSERVABLE_REF);
             }
 
             // control
-            Instruction::Return => self.pop_any(),
-            Instruction::Cpu(Cpu::Halt) => {}
+            // `ret <keep>` keeps the top `keep` values as the function's
+            // return values and drains the rest of the frame; it does not pop
+            // exactly one. Modelling it as one made `ret 0` — the spelling
+            // every function the compiler emits uses — report a spurious
+            // underflow on an empty stack.
+            M::Cpu(C::Return(keep)) => {
+                let keep = *keep as usize;
+                if let Some(top) = self.stack.len().checked_sub(keep) {
+                    let kept = &self.stack[top..];
+                    self.kept = Some(match self.kept.take() {
+                        Some(before) if before.len() == keep => {
+                            before.iter().zip(kept).map(|(a, b)| a.join(b)).collect()
+                        }
+                        _ => kept.to_vec(),
+                    });
+                }
+                self.pop_n(keep as u32);
+            }
+            // A call is a pure stack effect. Arguments come off by the
+            // operand, as `op_call` takes them; results come back by the
+            // callee's declaration, which its every `ret` is checked against,
+            // with what its `ret`s were seen to keep where that is known. The
+            // callee is never descended into — its own walk checks it.
+            M::Cpu(C::Call(arity, target)) => {
+                self.pop_n(*arity);
+                let declared = self
+                    .functions
+                    .get(&(*target as usize))
+                    .map_or(0, |f| f.signature.ret.len());
+                match self.returns.get(&(*target as usize)) {
+                    Some(slots) if slots.len() == declared => {
+                        self.stack.extend(slots.iter().copied())
+                    }
+                    _ => self
+                        .stack
+                        .extend(std::iter::repeat_n(Slot::UNKNOWN, declared)),
+                }
+            }
+            // Target, arity and function reference, popped in that order.
+            // vihaco 0.4.1 can take the first two from a `FunctionInfo`
+            // message instead, but `LanesMachine` executes CPU ops without
+            // one, so all three come off the program's stack. (vihaco#110
+            // moves both into the message for good, leaving only the
+            // reference.) What the callee then does to the frame is
+            // unknowable; `transfer` gives up on the path.
+            //
+            // TODO(vihaco#110): at the port this becomes one fixed operand,
+            // the reference, with the arguments and results taken from a
+            // declared signature — see `AbstractStack::Unknown`.
+            M::Cpu(C::IndirectCall) => self.pop_n(3),
+            // The condition. Its type, `bool`, has no lanes tag, so only its
+            // presence is checked.
+            M::Cpu(C::ConditionalBranch(..)) => {
+                self.pop();
+            }
+            M::Cpu(
+                C::Branch(_)
+                | C::Halt
+                | C::Label(_)
+                | C::Span(..)
+                | C::Breakpoint
+                | C::FunctionStart
+                | C::FunctionEnd,
+            ) => {}
 
-            // Other reused vihaco-cpu ops (arithmetic, etc.) are not emitted by
-            // the lanes pipeline and are not modeled here.
-            Instruction::Cpu(_) => {}
+            // The rest of vihaco-cpu is never emitted by the lanes pipeline,
+            // but it is reachable in a decoded program and, past control flow,
+            // its depth matters: a comparison feeding a `cond_br` left as a
+            // no-op would make every such branch look unbalanced. So each has
+            // its real arity, with an untyped result.
+            M::Cpu(C::Print | C::HeapDealloc) => {
+                self.pop();
+            }
+            M::Cpu(C::HeapAlloc(n)) => {
+                self.pop_n(*n);
+                self.stack.push(Slot::UNKNOWN);
+            }
+            M::Cpu(C::Neg(_) | C::Not) => {
+                self.pop();
+                self.stack.push(Slot::UNKNOWN);
+            }
+            M::Cpu(
+                C::GetItem
+                | C::Add(_)
+                | C::Sub(_)
+                | C::Mul(_)
+                | C::Div(_)
+                | C::Rem(_)
+                | C::Shl(_)
+                | C::Shr(_)
+                | C::Rol(_)
+                | C::Ror(_)
+                | C::BitAnd(_)
+                | C::BitOr(_)
+                | C::BitXor(_)
+                | C::And
+                | C::Or
+                | C::Xor
+                | C::Eq(_)
+                | C::Ne(_)
+                | C::Lt(_)
+                | C::Gt(_)
+                | C::Le(_)
+                | C::Ge(_),
+            ) => {
+                self.pop_n(2);
+                self.stack.push(Slot::UNKNOWN);
+            }
         }
     }
 
-    fn run(mut self, program: &Program) -> Vec<ValidationError> {
-        for (pc, inst) in program.code.iter().enumerate() {
-            self.pc = pc;
-            self.dispatch(inst);
+    /// The state `span` is entered with: its locals, and no operands.
+    ///
+    /// The locals are what the machine reserves: the declared parameters,
+    /// which every `call` is checked against (`CallArityMismatch`), then the
+    /// scratch slots the body names. A scratch slot starts as the placeholder,
+    /// and the host's arguments to an uncalled entry point (`self.entry`) are
+    /// checked against their declared types (`LanesMachine::run_with_args`).
+    /// A callee's arguments are whatever its caller passed — nothing checks
+    /// them against the declaration — so they are unknown.
+    ///
+    /// Only the slots some `store` writes are tracked, past the parameters:
+    /// one no path writes holds the placeholder on every path, and a `load`
+    /// of it needs no slot to say so (see [`StackSimulator::dispatch`]).
+    /// Every state carries its locals, so sizing them by the highest index
+    /// *named* made one `load u64, 1023` behind ten thousand branches cost a
+    /// quarter of a gigabyte. Clamped as well, so a table claiming more than
+    /// any frame may reserve is not an allocation here either: every slot
+    /// past the clamp is stored by an index, or declared by a parameter list,
+    /// that `validate_structure` rejects.
+    fn entry_state(&self, span: &Span) -> AbstractStack {
+        let stored = self.program.code[span.start..span.end]
+            .iter()
+            .filter_map(|inst| match inst {
+                M::Cpu(C::Store(_, index)) => Some(*index as usize + 1),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let locals = self.functions.get(&span.start).map_or_else(Vec::new, |f| {
+            let params = &f.signature.params;
+            let count = stored.max(params.len()).min(MAX_LOCAL_COUNT as usize);
+            (0..count)
+                .map(|i| match params.get(i) {
+                    Some(param) if self.entry && param.ty != Type::Undefined => {
+                        Slot::concrete(None, None, param.ty)
+                    }
+                    Some(_) if !self.entry => Slot::UNKNOWN,
+                    _ => Slot {
+                        rep: Rep::Placeholder,
+                        ..Slot::UNKNOWN
+                    },
+                })
+                .collect()
+        });
+        AbstractStack::Known(AbstractFrame {
+            locals,
+            operands: Vec::new(),
+        })
+    }
+
+    /// Fill [`Self::returns`] for the function at `start`, after every
+    /// function it calls: each callee is summarised first, so its caller's
+    /// walk sees what it returns. A callee already in progress is a cycle, and
+    /// is left out — its calls push unknown slots.
+    fn summarise_returns(
+        &mut self,
+        start: usize,
+        spans: &HashMap<usize, &Span>,
+        entry_point: &dyn Fn(usize) -> bool,
+        started: &mut HashSet<usize>,
+    ) {
+        let Some(&span) = spans.get(&start) else {
+            return;
+        };
+        if !started.insert(start) {
+            return;
+        }
+        let program = self.program;
+        for inst in &program.code[span.start..span.end] {
+            if let M::Cpu(C::Call(_, target)) = inst {
+                self.summarise_returns(*target as usize, spans, entry_point, started);
+            }
+        }
+
+        // Silently: its errors are reported by its own walk in `run`.
+        self.entry = entry_point(start);
+        let entry = self.entry_state(span);
+        let reported = self.errors.len();
+        self.reporting = false;
+        self.kept = None;
+        walk(program, span, entry, self);
+        self.errors.truncate(reported);
+        self.mismatches.clear();
+        self.reporting = true;
+        if let Some(kept) = self.kept.take() {
+            self.returns.insert(start, kept);
+        }
+    }
+
+    fn run(mut self) -> Vec<ValidationError> {
+        let program = self.program;
+        let main = entry_function(program)
+            .ok()
+            .map(|f| f.start_address as usize);
+        // A `call` gives the callee a caller below its base, `@main` included.
+        let called: HashSet<usize> = program
+            .code
+            .iter()
+            .filter_map(|inst| match inst {
+                M::Cpu(C::Call(_, target)) => Some(*target as usize),
+                _ => None,
+            })
+            .collect();
+        let entry_point = |start: usize| main == Some(start) && !called.contains(&start);
+
+        let spans = function_spans(&program.code);
+        let by_start: HashMap<usize, &Span> = spans.iter().map(|s| (s.start, s)).collect();
+        let mut started = HashSet::new();
+        for span in &spans {
+            self.summarise_returns(span.start, &by_start, &entry_point, &mut started);
+        }
+
+        for span in &spans {
+            self.entry = entry_point(span.start);
+            let entry = self.entry_state(span);
+
+            // Reach the fixpoint first, discarding what intermediate states
+            // report: a block is transferred once per change to its input,
+            // and all but the last of those see a state that has not
+            // converged yet.
+            let reported = self.errors.len();
+            self.reporting = false;
+            let Walk {
+                leaders, states, ..
+            } = walk(program, span, entry, &mut self);
+            self.errors.truncate(reported);
+            self.reporting = true;
+
+            // Then report once, in address order, against the final states:
+            // each block replayed from its leader's, in leader order.
+            let mut reached = vec![false; span.end - span.start];
+            for (offset, state) in states.into_iter().enumerate() {
+                let Some(mut state) = state else { continue };
+                let pc = span.start + offset;
+                if let Some(&(expected, got)) = self.mismatches.get(&pc) {
+                    self.errors
+                        .push(ValidationError::StackDepthMismatch { pc, expected, got });
+                }
+                run_block(
+                    program,
+                    span,
+                    &leaders,
+                    pc,
+                    &mut state,
+                    &mut self,
+                    &mut reached,
+                );
+            }
+            self.mismatches.clear();
         }
         self.errors
     }
 }
 
-/// Run the type-level stack simulation over a program. Collects underflow and
-/// type-mismatch errors, plus lane/location group errors (validated against
-/// `arch` when provided, else duplicate-only).
+impl Dataflow for StackSimulator<'_> {
+    type State = AbstractStack;
+
+    fn transfer(&mut self, pc: usize, inst: &M, state: &mut AbstractStack) {
+        let AbstractStack::Known(frame) = state else {
+            return;
+        };
+        self.pc = pc;
+        self.stack = std::mem::take(&mut frame.operands);
+        self.locals = std::mem::take(&mut frame.locals);
+        self.dispatch(inst);
+        frame.operands = std::mem::take(&mut self.stack);
+        frame.locals = std::mem::take(&mut self.locals);
+        if matches!(inst, M::Cpu(C::IndirectCall)) {
+            *state = AbstractStack::Unknown;
+        }
+    }
+
+    fn join(&mut self, pc: usize, existing: &mut AbstractStack, incoming: &AbstractStack) -> bool {
+        match (existing, incoming) {
+            (AbstractStack::Unknown, _) => false,
+            (existing, AbstractStack::Unknown) => {
+                *existing = AbstractStack::Unknown;
+                true
+            }
+            (AbstractStack::Known(have), AbstractStack::Known(got)) => {
+                // Path-dependent depth: rejected, as WASM and the JVM do. The
+                // state already recorded stands, so the walk still covers
+                // everything downstream and the fixpoint cannot oscillate.
+                // The locals cannot disagree in number — one function, one
+                // count — only in what they hold.
+                let (depth, incoming) = (have.operands.len(), got.operands.len());
+                if depth != incoming {
+                    self.mismatches.entry(pc).or_insert((depth, incoming));
+                    return false;
+                }
+                let mut changed = false;
+                let slots = have.locals.iter_mut().chain(have.operands.iter_mut());
+                for (h, g) in slots.zip(got.locals.iter().chain(&got.operands)) {
+                    let merged = h.join(g);
+                    if merged != *h {
+                        *h = merged;
+                        changed = true;
+                    }
+                }
+                changed
+            }
+        }
+    }
+}
+
+/// Run the type-level stack simulation over a program. Collects underflow,
+/// frame, depth-mismatch and type-mismatch errors, plus lane/location group
+/// errors (validated against `arch` when provided, else duplicate-only).
+///
+/// Every function is checked over its whole control-flow graph, from a frame
+/// holding its declared parameters — see the module docs for what that does
+/// and does not see.
 pub fn simulate_stack(program: &Program, arch: Option<&ArchSpec>) -> Vec<ValidationError> {
-    StackSimulator::new(arch).run(program)
+    StackSimulator::new(program, arch).run()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::isa::bytecode::tests_support::sst_module;
     use crate::version::Version;
 
     /// A small, valid arch: one word of 5 sites, one zone.
@@ -612,8 +1956,8 @@ mod tests {
         }
     }
 
-    fn program(instructions: Vec<Instruction>) -> Program {
-        crate::isa::program::from_code(Version::new(1, 0), instructions)
+    fn program(instructions: Vec<M>) -> Program {
+        crate::isa::program::from_code(Version::new(1, 0), instructions).unwrap()
     }
 
     fn loc(zone_id: u32, word_id: u32, site_id: u32) -> u64 {
@@ -630,83 +1974,89 @@ mod tests {
     #[test]
     fn no_arch_skips_all_checks() {
         let p = program(vec![
-            Instruction::Cpu(Cpu::ConditionalBranch(0, 1)),
-            Instruction::Fill(1),
-            Instruction::Measure(1),
-            Instruction::Measure(1),
-            Instruction::ConstZone(99), // also an invalid address
+            M::Lanes(L::Fill(1)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::ConstZone(99)), // also an invalid address
         ]);
         assert!(validate(&p, None).is_empty());
     }
 
     #[test]
-    fn branching_rejected_without_feed_forward() {
-        let p = program(vec![
-            Instruction::Cpu(Cpu::Branch(0)),
-            Instruction::Cpu(Cpu::ConditionalBranch(0, 1)),
-            Instruction::Cpu(Cpu::Call(1, 0)),
-            Instruction::Cpu(Cpu::IndirectCall),
-        ]);
-        let errors = validate(&p, Some(&caps_arch(false, false)));
-        assert_eq!(
-            errors,
-            vec![
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 0,
-                    mnemonic: "br"
-                },
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 1,
-                    mnemonic: "cond_br"
-                },
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 2,
-                    mnemonic: "call"
-                },
-                ValidationError::ControlFlowRequiresFeedForward {
-                    pc: 3,
-                    mnemonic: "call_indirect"
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn branching_allowed_with_feed_forward() {
-        let p = program(vec![
-            Instruction::Cpu(Cpu::ConditionalBranch(0, 1)),
-            Instruction::Measure(1),
-            Instruction::Measure(1),
-        ]);
+    fn repeated_measures_allowed_with_feed_forward() {
+        let p = program(vec![M::Lanes(L::Measure(1)), M::Lanes(L::Measure(1))]);
         assert!(validate(&p, Some(&caps_arch(true, false))).is_empty());
     }
 
     #[test]
-    fn non_control_flow_cpu_ops_are_fine() {
-        use vihaco::value::Value;
+    fn stack_ops_need_no_capability() {
         let p = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(1))),
-            Instruction::Cpu(Cpu::Dup),
-            Instruction::Cpu(Cpu::Halt),
+            M::Cpu(C::Const(Type::I64, Value::I64(1))),
+            M::Cpu(C::Dup),
+            M::Cpu(C::Halt),
         ]);
         assert!(validate(&p, Some(&caps_arch(false, false))).is_empty());
     }
 
+    /// Control flow needs `feed_forward`, and the arm that says so exists.
+    ///
+    /// The variant was declared, formatted, mapped to a Python exception and
+    /// unit-tested — but never constructed, because it was written when the
+    /// ISA had no control flow. Adopting the calling convention made every
+    /// `br`/`cond_br`/`call` reachable from `.sst` with the gate wide open.
+    #[test]
+    fn control_flow_requires_feed_forward() {
+        use vihaco_parser::Ident;
+
+        for (inst, mnemonic) in [
+            (M::Cpu(C::Branch(1)), "br"),
+            (M::Cpu(C::ConditionalBranch(1, 1)), "cond_br"),
+            (M::Cpu(C::Call(0, 0)), "call"),
+            (M::Cpu(C::IndirectCall), "call_indirect"),
+        ] {
+            let p = program(vec![inst, M::Cpu(C::Halt)]);
+            assert!(
+                validate(&p, Some(&caps_arch(false, false)))
+                    .contains(&ValidationError::ControlFlowRequiresFeedForward { pc: 1, mnemonic }),
+                "{mnemonic}: got {:?}",
+                validate(&p, Some(&caps_arch(false, false)))
+            );
+            // With the capability, it is allowed.
+            assert!(
+                !validate(&p, Some(&caps_arch(true, false)))
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::ControlFlowRequiresFeedForward { .. })),
+                "{mnemonic} should pass with feed_forward"
+            );
+        }
+
+        // A label is not control flow, and neither is `ret`.
+        let p = program(vec![
+            M::Cpu(C::Label(Ident("x".into()))),
+            M::Cpu(C::Return(0)),
+        ]);
+        assert!(
+            !validate(&p, Some(&caps_arch(false, false)))
+                .iter()
+                .any(|e| matches!(e, ValidationError::ControlFlowRequiresFeedForward { .. }))
+        );
+    }
+
     #[test]
     fn single_measure_ok_but_second_rejected_without_feed_forward() {
-        let p = program(vec![Instruction::Measure(1), Instruction::Measure(1)]);
+        let p = program(vec![M::Lanes(L::Measure(1)), M::Lanes(L::Measure(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
-            vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 1 }]
+            vec![ValidationError::MultipleMeasuresRequireFeedForward { pc: 2 }]
         );
     }
 
     #[test]
     fn fill_requires_atom_reloading() {
-        let p = program(vec![Instruction::Fill(1)]);
+        let p = program(vec![M::Lanes(L::Fill(1))]);
         assert_eq!(
             validate(&p, Some(&caps_arch(false, false))),
-            vec![ValidationError::FillRequiresAtomReloading { pc: 0 }]
+            vec![ValidationError::FillRequiresAtomReloading { pc: 1 }]
         );
         assert!(validate(&p, Some(&caps_arch(false, true))).is_empty());
     }
@@ -718,9 +2068,9 @@ mod tests {
         let arch = simple_arch();
         // zone 0, word 0, sites 0 and 4 are in range; zone 0 exists.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 4)),
-            Instruction::ConstZone(ZoneAddr { zone_id: 0 }.encode()),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 4))),
+            M::Lanes(L::ConstZone(ZoneAddr { zone_id: 0 }.encode())),
         ]);
         assert!(validate(&p, Some(&arch)).is_empty(), "expected no errors");
     }
@@ -729,12 +2079,12 @@ mod tests {
     fn invalid_location_rejected() {
         let arch = simple_arch();
         // site 99 is out of range for a 5-site word.
-        let p = program(vec![Instruction::ConstLoc(loc(0, 0, 99))]);
+        let p = program(vec![M::Lanes(L::ConstLoc(loc(0, 0, 99)))]);
         let errors = validate(&p, Some(&arch));
         assert!(
             matches!(
                 errors.as_slice(),
-                [ValidationError::InvalidLocation { pc: 0, .. }]
+                [ValidationError::InvalidLocation { pc: 1, .. }]
             ),
             "got {errors:?}"
         );
@@ -744,14 +2094,14 @@ mod tests {
     fn invalid_zone_rejected() {
         let arch = simple_arch();
         // zone 5 does not exist (only zone 0).
-        let p = program(vec![Instruction::ConstZone(
+        let p = program(vec![M::Lanes(L::ConstZone(
             ZoneAddr { zone_id: 5 }.encode(),
-        )]);
+        ))]);
         let errors = validate(&p, Some(&arch));
         assert!(
             matches!(
                 errors.as_slice(),
-                [ValidationError::InvalidZone { pc: 0, .. }]
+                [ValidationError::InvalidZone { pc: 1, .. }]
             ),
             "got {errors:?}"
         );
@@ -769,12 +2119,12 @@ mod tests {
             site_id: 0,
             bus_id: 0,
         };
-        let p = program(vec![Instruction::ConstLane(bad.encode_u64())]);
+        let p = program(vec![M::Lanes(L::ConstLane(bad.encode_u64()))]);
         let errors = validate(&p, Some(&arch));
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, ValidationError::InvalidLane { pc: 0, .. })),
+                .any(|e| matches!(e, ValidationError::InvalidLane { pc: 1, .. })),
             "got {errors:?}"
         );
     }
@@ -784,9 +2134,9 @@ mod tests {
     #[test]
     fn well_formed_program_has_no_structural_errors() {
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(1),
-            Instruction::Return,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(1)),
+            M::Cpu(C::Return(0)),
         ]);
         assert!(validate_structure(&p).is_empty());
     }
@@ -802,27 +2152,27 @@ mod tests {
     #[test]
     fn missing_terminator_rejected() {
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(1),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(1)),
         ]);
         assert_eq!(
             validate_structure(&p),
-            vec![ValidationError::MissingTerminator { pc: 1 }]
+            vec![ValidationError::MissingTerminator { pc: 2 }]
         );
     }
 
     #[test]
     fn halt_is_a_valid_terminator() {
-        let p = program(vec![Instruction::Cpu(Cpu::Halt)]);
+        let p = program(vec![M::Cpu(C::Halt)]);
         assert!(validate_structure(&p).is_empty());
     }
 
     #[test]
     fn unreachable_after_terminator_rejected() {
-        let p = program(vec![Instruction::Return, Instruction::Cpu(Cpu::Halt)]);
+        let p = program(vec![M::Cpu(C::Return(0)), M::Cpu(C::Halt)]);
         assert_eq!(
             validate_structure(&p),
-            vec![ValidationError::UnreachableInstruction { pc: 1 }]
+            vec![ValidationError::UnreachableInstruction { pc: 2 }]
         );
     }
 
@@ -830,27 +2180,27 @@ mod tests {
     fn initial_fill_must_be_first_non_constant() {
         // A const push before initial_fill is fine; a gate before it is not.
         let ok = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(1),
-            Instruction::Return,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(1)),
+            M::Cpu(C::Return(0)),
         ]);
         assert!(validate_structure(&ok).is_empty());
 
         let bad = program(vec![
-            Instruction::GlobalR,
-            Instruction::InitialFill(1),
-            Instruction::Return,
+            M::Lanes(L::GlobalR),
+            M::Lanes(L::InitialFill(1)),
+            M::Cpu(C::Return(0)),
         ]);
-        assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 1 }));
+        assert!(validate_structure(&bad).contains(&ValidationError::InitialFillNotFirst { pc: 2 }));
     }
 
     #[test]
     fn new_array_bounds_checked() {
-        let p = program(vec![Instruction::NewArray(99, 0, 0), Instruction::Return]);
+        let p = program(vec![M::Lanes(L::NewArray(99, 0, 0)), M::Cpu(C::Return(0))]);
         let errors = validate_structure(&p);
-        assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 0 }));
+        assert!(errors.contains(&ValidationError::NewArrayZeroDim0 { pc: 1 }));
         assert!(errors.contains(&ValidationError::NewArrayInvalidTypeTag {
-            pc: 0,
+            pc: 1,
             type_tag: 99
         }));
     }
@@ -860,14 +2210,14 @@ mod tests {
         // The composition consumers run: structural + arch-dependent checks
         // both fire and collect. Missing terminator (structural) + bad zone (arch).
         let arch = simple_arch();
-        let p = program(vec![Instruction::ConstZone(
+        let p = program(vec![M::Lanes(L::ConstZone(
             ZoneAddr { zone_id: 5 }.encode(),
-        )]);
+        ))]);
         let errors: Vec<_> = validate_structure(&p)
             .into_iter()
             .chain(validate(&p, Some(&arch)))
             .collect();
-        assert!(errors.contains(&ValidationError::MissingTerminator { pc: 0 }));
+        assert!(errors.contains(&ValidationError::MissingTerminator { pc: 1 }));
         assert!(
             errors
                 .iter()
@@ -879,34 +2229,29 @@ mod tests {
     fn capability_and_address_errors_collected_together() {
         let arch = simple_arch(); // feed_forward = false, atom_reloading = false
         let p = program(vec![
-            Instruction::Cpu(Cpu::Branch(0)), // pc 0: control flow
-            Instruction::Fill(1),             // pc 1: reloading
-            Instruction::ConstZone(ZoneAddr { zone_id: 5 }.encode()), // pc 2: bad zone
+            M::Lanes(L::Fill(1)),                                     // pc 0: reloading
+            M::Lanes(L::ConstZone(ZoneAddr { zone_id: 5 }.encode())), // pc 1: bad zone
         ]);
         let errors = validate(&p, Some(&arch));
         assert_eq!(
             errors.len(),
-            3,
+            2,
             "one error per violation, in pc order: {errors:?}"
         );
         assert!(matches!(
             errors[0],
-            ValidationError::ControlFlowRequiresFeedForward { pc: 0, .. }
-        ));
-        assert!(matches!(
-            errors[1],
             ValidationError::FillRequiresAtomReloading { pc: 1 }
         ));
         assert!(matches!(
-            errors[2],
+            errors[1],
             ValidationError::InvalidZone { pc: 2, .. }
         ));
     }
 
     // ---- stack simulation ----
 
-    fn cpu_float(v: f64) -> Instruction {
-        Instruction::Cpu(Cpu::Const(Value::F64(v)))
+    fn cpu_float(v: f64) -> M {
+        M::Cpu(C::Const(Type::F64, Value::F64(v)))
     }
 
     #[test]
@@ -914,13 +2259,13 @@ mod tests {
         // const_loc, const_loc, initial_fill 2, const_zone, measure 1,
         // await_measure, return — all types line up.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 1)),
-            Instruction::InitialFill(2),
-            Instruction::ConstZone(0),
-            Instruction::Measure(1),
-            Instruction::AwaitMeasure,
-            Instruction::Return,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),
+            M::Lanes(L::InitialFill(2)),
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::AwaitMeasure),
+            M::Cpu(C::Return(0)),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -931,23 +2276,23 @@ mod tests {
 
     #[test]
     fn stack_underflow_detected() {
-        let p = program(vec![Instruction::Pop]);
+        let p = program(vec![M::Cpu(C::Store(Type::Undefined, 0))]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
     #[test]
     fn type_mismatch_detected() {
         // initial_fill expects locations; a float is on the stack instead.
-        let p = program(vec![cpu_float(1.0), Instruction::InitialFill(1)]);
+        let p = program(vec![cpu_float(1.0), M::Lanes(L::InitialFill(1))]);
         let errors = simulate_stack(&p, None);
         assert!(
             errors.iter().any(|e| matches!(
                 e,
                 ValidationError::TypeMismatch {
-                    pc: 1,
+                    pc: 2,
                     expected,
                     got
                 } if *expected == tag::LOCATION && *got == tag::FLOAT
@@ -959,12 +2304,12 @@ mod tests {
     #[test]
     fn measure_pushes_future_consumed_by_await() {
         // A measure future left dangling is fine; awaiting a non-future is not.
-        let p = program(vec![cpu_float(1.0), Instruction::AwaitMeasure]);
+        let p = program(vec![cpu_float(1.0), M::Lanes(L::AwaitMeasure)]);
         let errors = simulate_stack(&p, None);
         assert!(
             errors.iter().any(|e| matches!(
                 e,
-                ValidationError::TypeMismatch { pc: 1, expected, .. } if *expected == tag::MEASURE_FUTURE
+                ValidationError::TypeMismatch { pc: 2, expected, .. } if *expected == tag::MEASURE_FUTURE
             )),
             "got {errors:?}"
         );
@@ -974,10 +2319,10 @@ mod tests {
     fn local_r_pops_two_floats_then_locations() {
         // const_loc, const_float, const_float, local_r 1 — well typed.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
             cpu_float(1.5),
             cpu_float(0.5),
-            Instruction::LocalR(1),
+            M::Lanes(L::LocalR(1)),
         ]);
         assert!(simulate_stack(&p, None).is_empty());
     }
@@ -986,9 +2331,9 @@ mod tests {
     fn duplicate_locations_flagged_without_arch() {
         // Two identical locations into a single fill group.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(2),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(2)),
         ]);
         let errors = simulate_stack(&p, None);
         assert!(
@@ -1012,8 +2357,8 @@ mod tests {
             bus_id: 0,
         };
         let p = program(vec![
-            Instruction::ConstLane(bad.encode_u64()),
-            Instruction::Move(1),
+            M::Lanes(L::ConstLane(bad.encode_u64())),
+            M::Lanes(L::Move(1)),
         ]);
         let errors = simulate_stack(&p, Some(&arch));
         assert!(
@@ -1024,23 +2369,862 @@ mod tests {
         );
     }
 
+    /// The whole measurement pipeline must type-check, not just its first half.
+    ///
+    /// The previous version of this test stopped at `await_measure` and only
+    /// asserted the tag's numeric value, so it stayed green while
+    /// `set_detector` could no longer consume what `await_measure` produced —
+    /// the state the canonical `stack_full_pipeline.sst` fixture shipped in.
     #[test]
-    fn await_measure_pushes_measurement_result() {
-        // const_zone, measure 1, await_measure — the awaited value carries the
-        // measurement-result tag, so a following set_detector (wants ARRAY_REF)
-        // now type-mismatches on MEASUREMENT_RESULT rather than silently matching.
+    fn measure_await_set_detector_type_checks_end_to_end() {
         let p = program(vec![
-            Instruction::ConstZone(0),
-            Instruction::Measure(1),
-            Instruction::AwaitMeasure,
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::AwaitMeasure),
+            M::Lanes(L::SetDetector),
+            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Halt),
         ]);
-        // await_measure must push the measurement-result tag.
-        assert_eq!(tag::MEASUREMENT_RESULT, 0x9);
-        // Sanity: simulate cleanly (no underflow/mismatch) for the measure→await chain.
-        assert!(simulate_stack(&p, None).iter().all(|e| !matches!(
-            e,
-            ValidationError::StackUnderflow { .. } | ValidationError::TypeMismatch { .. }
-        )));
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    /// `MEASUREMENT_RESULT` is an array *element* type (#547), so it has to be
+    /// accepted where `new_array` names one.
+    #[test]
+    fn measurement_result_is_a_valid_new_array_element_tag() {
+        let p = program(vec![
+            M::Cpu(C::Const(Type::I64, Value::I64(1))),
+            M::Lanes(L::NewArray(tag::MEASUREMENT_RESULT as u32, 1, 0)),
+            M::Lanes(L::SetObservable),
+            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    #[test]
+    fn await_measure_pushes_an_array_ref() {
+        // Pin the tag the awaited value carries, by observing what rejects it:
+        // `cz` wants a zone, and says what it got instead.
+        let p = program(vec![
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Measure(1)),
+            M::Lanes(L::AwaitMeasure),
+            M::Lanes(L::Cz),
+        ]);
+        assert!(
+            simulate_stack(&p, None).contains(&ValidationError::TypeMismatch {
+                pc: 4,
+                expected: tag::ZONE,
+                got: tag::ARRAY_REF,
+            }),
+            "got {:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    #[test]
+    fn new_array_element_count_is_bounded() {
+        // dim0 * dim1 = 2^32, which wraps to 0 in `u32` — the operands are
+        // read straight out of the instruction word, so nothing stops a
+        // program from carrying them.
+        let p = program(vec![
+            M::Lanes(L::NewArray(0, 65536, 65536)),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
+                pc: 1,
+                count: 1 << 32,
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // And a count that does not wrap but would still drive a four-billion
+        // iteration pop loop.
+        let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::NewArrayTooManyElements {
+                pc: 1,
+                count: u32::MAX as u64,
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+    }
+
+    /// Simulating a rejected program terminates promptly *and* says something
+    /// useful: the element count is clamped, and the group pop reports one
+    /// underflow rather than one per missing operand.
+    #[test]
+    fn simulating_an_oversized_new_array_reports_one_underflow() {
+        let p = program(vec![M::Lanes(L::NewArray(0, u32::MAX, 0)), M::Cpu(C::Halt)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    /// A group pop off an empty stack is one diagnosis, not `arity` of them.
+    #[test]
+    fn a_group_pop_reports_a_single_underflow() {
+        let p = program(vec![M::Lanes(L::InitialFill(40)), M::Cpu(C::Halt)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+
+        // Distinct instructions still report separately.
+        let p = program(vec![
+            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![
+                ValidationError::StackUnderflow { pc: 1 },
+                ValidationError::StackUnderflow { pc: 2 },
+            ]
+        );
+    }
+
+    /// Branch and call targets are addresses, and nothing checked them.
+    ///
+    /// An unnameable target is not just invalid, it is unrenderable: `to_text`
+    /// has to invent `@L9` / `@F1`, and the text it emits does not re-read.
+    /// Catching it here means the renderer is only ever asked to name targets
+    /// that have a name.
+    /// Reachability follows branches instead of latching on a terminator.
+    ///
+    /// The latch condemned `cond_br`'s second arm — the `halt` ending the
+    /// first arm set it — and could not see code a `br` jumped over.
+    /// Each function is simulated from its own frame, independently.
+    ///
+    /// Breaking at the first control flow lost every multi-function program's
+    /// tail — `call` is the only way to reach a second function — and with no
+    /// control flow at all, one function's leftover operands were still on the
+    /// stack when the next began. A callee that pops past its frame is
+    /// reported as doing that, not as underflowing: its caller's values are
+    /// below it.
+    #[test]
+    fn the_stack_is_simulated_per_function() {
+        use crate::isa::text::parse_text;
+
+        // (a) A callee's unconditional underflow, behind a `call`.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  lanes::lanes.const_zone 0x00000000\n                     cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n                   fn @helper() {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n                   .text(root).\n.section(root).\n";
+        let p = parse_text(src).unwrap();
+        assert!(
+            simulate_stack(&p, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::PopBelowFrameBase { .. })),
+            "@helper's underflow should be reported: {:?}",
+            simulate_stack(&p, None)
+        );
+
+        // (b) One function must not consume what the previous left behind.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  lanes::lanes.const_zone 0x00000000\n                     cpu::cpu.halt\n}\n                   fn @helper() {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n                   .text(root).\n.section(root).\n";
+        let p = parse_text(src).unwrap();
+        assert!(
+            simulate_stack(&p, None)
+                .iter()
+                .any(|e| matches!(e, ValidationError::PopBelowFrameBase { .. })),
+            "@helper starts from an empty frame: {:?}",
+            simulate_stack(&p, None)
+        );
+    }
+
+    /// `ret <keep>` keeps the top `keep` values; it does not pop exactly one.
+    ///
+    /// Modelling it as one made `ret 0` — what every function the compiler
+    /// emits uses — report a spurious underflow on an empty stack.
+    #[test]
+    fn ret_pops_its_keep_count() {
+        let p = program(vec![M::Cpu(C::Return(0))]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        let p = program(vec![M::Cpu(C::Return(1))]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+
+        // An implausible keep count is one diagnosis, not four billion.
+        let p = program(vec![M::Cpu(C::Return(u32::MAX))]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    /// A callee's frame starts with its declared parameters, not empty (gap 1
+    /// of #1042).
+    ///
+    /// `call <arity>` does not clear the stack — it sets
+    /// `base = stack.len() - arity`, so the arguments the caller pushed become
+    /// the callee's first locals, where `load` finds them. Simulating `@helper`
+    /// with no locals reported the argument `@main` legitimately passed as
+    /// missing, so every nonzero-arity function used to be skipped rather than
+    /// checked.
+    #[test]
+    fn a_callee_taking_operands_is_checked_from_its_declared_frame() {
+        let p = sst_module(
+            "fn @main() {\n  lanes::lanes.const_loc 0x0000000000000000\n  \
+             lanes::lanes.initial_fill 1\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 1, helper\n  cpu::cpu.store undef, 0\n  cpu::cpu.halt\n}\n\n\
+             fn @helper(z: u32) -> heap_ref {\n  cpu::cpu.load u32, 0\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  cpu::cpu.ret 1\n}\n",
+        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        // The machine is the authority the assertions above agree with.
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&p, 10_000)
+            .expect("the program should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+    }
+
+    /// The callee *is* checked, so an underflow inside its frame is caught.
+    #[test]
+    fn a_callee_popping_past_its_empty_frame_is_reported() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.measure 1\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::PopBelowFrameBase { pc: 5 }]
+        );
+    }
+
+    /// Popping past its operands is an error even when the machine's stack
+    /// is not empty: the callee would be consuming a value its caller owns.
+    ///
+    /// This is the rule that keeps the analysis intraprocedural — without it a
+    /// caller could not know its own post-call depth without descending. The
+    /// machine refuses the same pop at run time.
+    #[test]
+    fn a_callee_popping_its_callers_values_is_reported() {
+        let p = sst_module(
+            "fn @main() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 0, helper\n  lanes::lanes.cz\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.cz\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::PopBelowFrameBase { pc: 7 }],
+            "@main's own cz is fine: the call left its zone alone"
+        );
+        assert!(
+            crate::isa::machine::LanesMachine::new()
+                .run(&p, 10_000)
+                .is_err(),
+            "the machine's operand floor refuses the same pop"
+        );
+    }
+
+    /// `@main`'s base is the bottom of the stack only when nothing calls it.
+    /// Reached by a `call`, it has a caller below it like any other function,
+    /// and an over-pop takes that caller's value rather than underflowing.
+    #[test]
+    fn a_called_entry_point_pops_below_its_frame_base() {
+        let p = sst_module(
+            "fn @main() {\n  lanes::lanes.cz\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() {\n  lanes::lanes.const_zone 0x00000000\n  \
+             cpu::cpu.call 0, main\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::PopBelowFrameBase { pc: 1 }]
+        );
+    }
+
+    /// A call is a pure stack effect: pop the arguments, push the callee's
+    /// *declared* results. Nothing else about the callee is consulted.
+    #[test]
+    fn a_call_pushes_its_callees_declared_results() {
+        // `@helper` declares one result, so `@main` has exactly one to pop.
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.call 0, helper\n  cpu::cpu.store i64, 0\n  \
+             cpu::cpu.store i64, 0\n  cpu::cpu.halt\n}\n\n\
+             fn @helper() -> i64 {\n  cpu::cpu.const i64, 7\n  cpu::cpu.ret 1\n}\n",
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 3 }]
+        );
+    }
+
+    /// `load`/`store` address the callee's parameters as slots of its frame.
+    #[test]
+    fn locals_are_the_callees_parameters() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.const i64, 1\n  cpu::cpu.const i64, 2\n  \
+             cpu::cpu.call 2, reader\n  cpu::cpu.halt\n}\n\n\
+             fn @reader(a: i64, b: i64) {\n  cpu::cpu.load i64, 1\n  \
+             cpu::cpu.store i64, 0\n  cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&p, 10_000)
+            .expect("the program should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+    }
+
+    // ---- stack simulation: the CFG walk ----
+
+    fn cpu_bool(v: bool) -> M {
+        M::Cpu(C::Const(Type::Bool, Value::Bool(v)))
+    }
+
+    #[test]
+    fn slot_join_widens_to_what_both_paths_agree_on() {
+        let loc_a = Slot::concrete(Some(tag::LOCATION), Some(1), Type::U64);
+        let loc_b = Slot::concrete(Some(tag::LOCATION), Some(2), Type::U64);
+        let zone = Slot::concrete(Some(tag::ZONE), Some(0), Type::U32);
+        assert_eq!(loc_a.join(&loc_a), loc_a, "agreement keeps the bits");
+        assert_eq!(
+            loc_a.join(&loc_b),
+            Slot::concrete(Some(tag::LOCATION), None, Type::U64),
+            "same type, different bits: keep the type"
+        );
+        assert_eq!(loc_a.join(&zone), Slot::UNKNOWN);
+        assert_eq!(zone.join(&Slot::UNKNOWN), Slot::UNKNOWN);
+
+        // The tag and the representation widen independently: a `const f64`
+        // and a `get_item` result are both floats, only one of them an `F64`.
+        let constant = Slot::concrete(Some(tag::FLOAT), Some(0), Type::F64);
+        let element = Slot::placeholder(tag::FLOAT);
+        assert_eq!(
+            constant.join(&element),
+            Slot {
+                tag: Some(tag::FLOAT),
+                value: None,
+                rep: Rep::Unknown
+            }
+        );
+    }
+
+    #[test]
+    fn stack_join_rejects_differing_depths_and_widens_slots() {
+        let p = program(vec![M::Cpu(C::Halt)]);
+        let mut sim = StackSimulator::new(&p, None);
+        let loc = |v| Slot::concrete(Some(tag::LOCATION), Some(v), Type::U64);
+
+        let frame = |locals: Vec<Slot>, operands: Vec<Slot>| {
+            AbstractStack::Known(AbstractFrame { locals, operands })
+        };
+        let any_loc = Slot::concrete(Some(tag::LOCATION), None, Type::U64);
+
+        // Equal states: no change, nothing to requeue.
+        let mut have = frame(vec![loc(5)], vec![loc(1)]);
+        assert!(!sim.join(9, &mut have, &frame(vec![loc(5)], vec![loc(1)])));
+
+        // A disagreeing slot widens, which is a change — an operand or a
+        // local alike.
+        assert!(sim.join(9, &mut have, &frame(vec![loc(5)], vec![loc(2)])));
+        assert_eq!(have, frame(vec![loc(5)], vec![any_loc]));
+        assert!(sim.join(9, &mut have, &frame(vec![loc(6)], vec![loc(2)])));
+        assert_eq!(have, frame(vec![any_loc], vec![any_loc]));
+
+        // A differing depth is recorded, once, and leaves the state alone.
+        let before = have.clone();
+        assert!(!sim.join(9, &mut have, &frame(vec![loc(5)], vec![])));
+        assert!(!sim.join(9, &mut have, &frame(vec![loc(5)], vec![loc(1), loc(1)])));
+        assert_eq!(have, before);
+        assert_eq!(sim.mismatches.get(&9), Some(&(1, 0)));
+
+        // An unknowable frame absorbs everything.
+        assert!(sim.join(9, &mut have, &AbstractStack::Unknown));
+        assert!(!sim.join(9, &mut have, &frame(vec![], vec![])));
+        assert_eq!(have, AbstractStack::Unknown);
+    }
+
+    /// Both arms of a diamond reach the join at the same depth: clean. This is
+    /// `branch_two_arms.sst`, reduced.
+    #[test]
+    fn a_balanced_diamond_is_clean() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1
+            M::Cpu(C::ConditionalBranch(3, 6)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Lanes(L::Cz),                    // 4
+            M::Cpu(C::Branch(7)),               // 5
+            M::Cpu(C::Branch(7)),               // 6
+            M::Cpu(C::Halt),                    // 7
+        ]);
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    #[test]
+    fn an_unbalanced_diamond_is_a_depth_mismatch() {
+        // The taken arm leaves a zone behind; the other leaves nothing.
+        let p = program(vec![
+            cpu_bool(true),                     // 1
+            M::Cpu(C::ConditionalBranch(3, 5)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Cpu(C::Branch(6)),               // 4
+            M::Cpu(C::Branch(6)),               // 5
+            M::Cpu(C::Halt),                    // 6
+        ]);
+        let errors = simulate_stack(&p, None);
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [ValidationError::StackDepthMismatch { pc: 6, .. }]
+            ),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_loop_with_zero_depth_delta_is_clean() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1: loop header
+            M::Cpu(C::ConditionalBranch(3, 6)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Lanes(L::Cz),                    // 4
+            M::Cpu(C::Branch(1)),               // 5: back edge
+            M::Cpu(C::Halt),                    // 6
+        ]);
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    /// `load` and `store` each move the depth by one; only a matched pair
+    /// nets out. Treating either as a no-op — as the old catch-all did —
+    /// makes this counter loop look unbalanced at its header.
+    #[test]
+    fn load_and_store_move_the_depth() {
+        let p = sst_module(
+            "fn @main() {\n  cpu::cpu.const i64, 0\n  cpu::cpu.call 1, count\n  \
+             cpu::cpu.halt\n}\n\n\
+             fn @count(n: i64) {\n\
+               cpu::cpu.label @loop\n\
+               cpu::cpu.load i64, 0\n  cpu::cpu.const i64, 3\n  cpu::cpu.lt i64\n  \
+               cpu::cpu.cond_br @body, @done\n\
+               cpu::cpu.label @body\n\
+               cpu::cpu.load i64, 0\n  cpu::cpu.const i64, 1\n  cpu::cpu.add i64\n  \
+               cpu::cpu.store i64, 0\n  cpu::cpu.br @loop\n\
+               cpu::cpu.label @done\n\
+               cpu::cpu.ret 0\n}\n",
+        );
+        assert_eq!(validate_structure(&p), vec![]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&p, 10_000)
+            .expect("the program should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+    }
+
+    /// A body that grows the stack never converges; it is caught at the back
+    /// edge, as WASM does, rather than iterated.
+    #[test]
+    fn a_loop_with_nonzero_depth_delta_is_rejected() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1: loop header
+            M::Cpu(C::ConditionalBranch(3, 5)), // 2
+            M::Lanes(L::ConstZone(0)),          // 3
+            M::Cpu(C::Branch(1)),               // 4: back edge, one deeper
+            M::Cpu(C::Halt),                    // 5
+        ]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackDepthMismatch {
+                pc: 1,
+                expected: 0,
+                got: 1
+            }]
+        );
+    }
+
+    /// An instruction transferred once per change to its input still reports
+    /// once, against the converged state.
+    #[test]
+    fn an_error_inside_a_loop_is_reported_once() {
+        // The back edge brings a different location, so the header widens and
+        // the body is walked a second time.
+        let p = program(vec![
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),        // 1
+            cpu_bool(true),                             // 2: loop header
+            M::Cpu(C::ConditionalBranch(4, 9)),         // 3
+            M::Cpu(C::Store(Type::U64, 0)),             // 4
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),        // 5
+            M::Cpu(C::Const(Type::I64, Value::I64(0))), // 6
+            M::Lanes(L::Cz),                            // 7: wrong type, every time
+            M::Cpu(C::Branch(2)),                       // 8
+            M::Cpu(C::Halt),                            // 9
+        ]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::TypeMismatch {
+                pc: 7,
+                expected: tag::ZONE,
+                got: tag::INT
+            }]
+        );
+    }
+
+    /// Where the paths disagree about a value's type, what follows cannot be
+    /// rejected for it; where they agree, it can.
+    #[test]
+    fn a_merge_widens_disagreeing_slots() {
+        let diamond = |then: M, other: M, consume: M| {
+            program(vec![
+                cpu_bool(true),                     // 1
+                M::Cpu(C::ConditionalBranch(3, 5)), // 2
+                then,                               // 3
+                M::Cpu(C::Branch(6)),               // 4
+                other,                              // 5
+                consume,                            // 6: the join
+                M::Cpu(C::Halt),                    // 7
+            ])
+        };
+
+        // A location or a zone: `cz` might be right, so it is not rejected.
+        let p = diamond(
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Cz),
+        );
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        // Two different locations: still a location, so `cz` is wrong.
+        let p = diamond(
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),
+            M::Lanes(L::Cz),
+        );
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::TypeMismatch {
+                pc: 6,
+                expected: tag::ZONE,
+                got: tag::LOCATION
+            }]
+        );
+    }
+
+    /// Reachability comes out of the same walk, so dead code after a merge is
+    /// still reported.
+    #[test]
+    fn an_unreachable_block_after_a_merge_is_reported() {
+        let p = program(vec![
+            cpu_bool(true),                     // 1
+            M::Cpu(C::ConditionalBranch(3, 4)), // 2
+            M::Cpu(C::Branch(4)),               // 3
+            M::Cpu(C::Halt),                    // 4: the join
+            M::Lanes(L::Cz),                    // 5: after the terminator
+        ]);
+        assert_eq!(
+            validate_structure(&p),
+            vec![ValidationError::UnreachableInstruction { pc: 5 }]
+        );
+        assert_eq!(simulate_stack(&p, None), vec![], "and is not simulated");
+    }
+
+    /// `call_indirect` takes its arity off the stack, so what follows it on
+    /// that path cannot be checked — and is not guessed at.
+    #[test]
+    fn nothing_after_a_call_indirect_is_checked() {
+        let p = program(vec![
+            M::Cpu(C::Const(Type::U32, Value::U32(0))), // 1: fn_ref stand-in
+            M::Cpu(C::Const(Type::U32, Value::U32(0))), // 2: arity
+            M::Cpu(C::Const(Type::U32, Value::U32(0))), // 3: target
+            M::Cpu(C::IndirectCall),                    // 4
+            M::Cpu(C::Store(Type::Undefined, 0)),       // 5: unknowable
+            M::Cpu(C::Halt),                            // 6
+        ]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+
+        // Its own three operands are still required.
+        let p = program(vec![M::Cpu(C::IndirectCall), M::Cpu(C::Halt)]);
+        assert_eq!(
+            simulate_stack(&p, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    /// `call_indirect` takes three operands on this machine — function
+    /// reference, arity, target — not two. Pinned against execution, since
+    /// the count depends on how the machine dispatches the op: with two,
+    /// vihaco pops the function reference as the arity.
+    #[test]
+    fn a_call_indirect_takes_three_operands() {
+        const HELPER: &str = "fn @helper() {\n  cpu::cpu.ret 0\n}\n";
+        let three = sst_module(&format!(
+            "fn @main() {{\n  cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 0\n  \
+             cpu::cpu.const u32, 7\n  cpu::cpu.call_indirect\n  cpu::cpu.halt\n}}\n\n{HELPER}"
+        ));
+        assert_eq!(simulate_stack(&three, None), vec![]);
+        let run = crate::isa::machine::LanesMachine::new()
+            .run(&three, 100)
+            .expect("a three-operand call_indirect should run");
+        assert_eq!(run.stopped, crate::isa::machine::Stopped::Halted);
+
+        let two = sst_module(&format!(
+            "fn @main() {{\n  cpu::cpu.const fn_ref, 1\n  cpu::cpu.const u32, 0\n  \
+             cpu::cpu.call_indirect\n  cpu::cpu.halt\n}}\n\n{HELPER}"
+        ));
+        assert_eq!(
+            simulate_stack(&two, None),
+            vec![ValidationError::StackUnderflow { pc: 3 }]
+        );
+        let error = crate::isa::machine::LanesMachine::new()
+            .run(&two, 100)
+            .expect_err("two operands leave call_indirect short of one");
+        assert!(
+            error
+                .to_string()
+                .contains("call_indirect takes 3 operand(s), and the frame has 2"),
+            "got: {error}"
+        );
+    }
+
+    /// The vihaco-cpu ops have their real arity. A comparison feeding a
+    /// `cond_br` left as a no-op would make the branch look unbalanced.
+    #[test]
+    fn a_comparison_feeds_a_branch_without_unbalancing_it() {
+        let p = program(vec![
+            M::Cpu(C::Const(Type::I64, Value::I64(1))), // 1
+            M::Cpu(C::Const(Type::I64, Value::I64(2))), // 2
+            M::Cpu(C::Lt(Type::I64)),                   // 3: two in, one out
+            M::Cpu(C::ConditionalBranch(5, 5)),         // 4: pops it
+            M::Cpu(C::Halt),                            // 5
+        ]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    #[test]
+    fn reachability_follows_branch_edges() {
+        // Both arms of a `cond_br` are reachable.
+        let p = program(vec![
+            M::Cpu(C::ConditionalBranch(2, 4)),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(
+            validate_structure(&p)
+                .iter()
+                .filter(|e| matches!(e, ValidationError::UnreachableInstruction { .. }))
+                .count(),
+            0,
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // And code a branch jumps over is still reported.
+        let p = program(vec![M::Cpu(C::Branch(3)), M::Lanes(L::Cz), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::UnreachableInstruction { pc: 2 }),
+            "the jumped-over cz should be reported: {:?}",
+            validate_structure(&p)
+        );
+    }
+
+    /// Every function must terminate, and one function's dead code must not
+    /// hide another's missing terminator.
+    #[test]
+    fn terminators_are_checked_per_function() {
+        use crate::isa::text::parse_text;
+
+        // @main has unreachable code; @helper has no terminator. The old
+        // either/or gate reported only the first.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.halt\n  lanes::lanes.cz\n}\n                   fn @helper() {\n  lanes::lanes.cz\n}\n.text(root).\n.section(root).\n";
+        let errors = validate_structure(&parse_text(src).unwrap());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UnreachableInstruction { .. })),
+            "got {errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingTerminator { .. })),
+            "got {errors:?}"
+        );
+
+        // An empty function is not exempt: `func_end` is a no-op, so falling
+        // off it runs whatever was laid out next rather than returning.
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.halt\n}\n                   fn @helper() {\n}\n.text(root).\n.section(root).\n";
+        assert!(
+            validate_structure(&parse_text(src).unwrap())
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingTerminator { .. })),
+            "an empty function still falls through"
+        );
+    }
+
+    /// A branch is intra-procedural; leaving the function is what `call` is
+    /// for. A trailing label resolves to the function's own `func_end`, and a
+    /// target past it enters the next function with no frame.
+    #[test]
+    fn a_branch_cannot_leave_its_function() {
+        use crate::isa::text::parse_text;
+
+        let src = "sst v1\n\n.section(root):\n.header(root):\nversion 1.0\n.header(root).\n                   .text(root):\nfn @main() {\n  cpu::cpu.br @far\n  cpu::cpu.halt\n}\n                   fn @helper() {\n  cpu::cpu.label @far\n  cpu::cpu.halt\n}\n                   .text(root).\n.section(root).\n";
+        assert!(
+            validate_structure(&parse_text(src).unwrap())
+                .iter()
+                .any(|e| matches!(
+                    e,
+                    ValidationError::InvalidControlFlowTarget {
+                        expected: "an address in the same function",
+                        ..
+                    }
+                )),
+            "a cross-function branch should be rejected"
+        );
+    }
+
+    #[test]
+    fn control_flow_targets_are_checked() {
+        // A branch past the end of the code.
+        let p = program(vec![M::Cpu(C::Branch(99)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InvalidControlFlowTarget {
+                pc: 1,
+                target: 99,
+                expected: "an address in the same function",
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // Both arms of a `cond_br`.
+        let p = program(vec![M::Cpu(C::ConditionalBranch(99, 98)), M::Cpu(C::Halt)]);
+        assert_eq!(
+            validate_structure(&p)
+                .iter()
+                .filter(|e| matches!(e, ValidationError::InvalidControlFlowTarget { .. }))
+                .count(),
+            2,
+            "both arms should be reported"
+        );
+
+        // A call to an address that begins no function. Address 1 is the
+        // `halt` inside `@main`, not a `func_start`.
+        let p = program(vec![M::Cpu(C::Call(0, 2)), M::Cpu(C::Halt)]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InvalidControlFlowTarget {
+                pc: 1,
+                target: 2,
+                expected: "a function entry",
+            }),
+            "got {:?}",
+            validate_structure(&p)
+        );
+
+        // A branch inside the same function is fine.
+        let p = program(vec![M::Cpu(C::Branch(2)), M::Cpu(C::Halt)]);
+        assert!(
+            !validate_structure(&p)
+                .iter()
+                .any(|e| matches!(e, ValidationError::InvalidControlFlowTarget { .. })),
+            "got {:?}",
+            validate_structure(&p)
+        );
+    }
+
+    #[test]
+    fn get_item_index_count_is_bounded() {
+        // Arrays are at most 2-D, so three indices is structurally wrong —
+        // and `u32::MAX` indices would overflow the `n + 1` the machine pops.
+        for ndims in [0, 3, u32::MAX] {
+            let p = program(vec![M::Lanes(L::GetItem(ndims)), M::Cpu(C::Halt)]);
+            assert!(
+                validate_structure(&p)
+                    .contains(&ValidationError::GetItemInvalidDims { pc: 1, ndims }),
+                "ndims={ndims}: got {:?}",
+                validate_structure(&p)
+            );
+        }
+        // One or two indices are the well-formed shapes.
+        for ndims in [1, 2] {
+            let p = program(vec![M::Lanes(L::GetItem(ndims)), M::Cpu(C::Halt)]);
+            assert!(
+                !validate_structure(&p)
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::GetItemInvalidDims { .. })),
+                "ndims={ndims} should be accepted"
+            );
+        }
+    }
+
+    /// A `store` index is a memory request, so it has to be bounded where it is
+    /// read rather than where it is spent.
+    ///
+    /// `op_store` resizes the operand stack to reach its index and writes every
+    /// new slot, so `store u64, 4294967295` touches ~68 GB from a three-
+    /// instruction program. The assertion is on the *bound* — that the
+    /// validator names the operand — and not on the allocator refusing, because
+    /// a `resize` this size succeeds on a lazily-committing platform and the
+    /// two earlier bounds of this class only failed on Linux CI.
+    #[test]
+    fn local_index_is_bounded() {
+        let over = MAX_LOCAL_INDEX + 1;
+        for (inst, mnemonic, index) in [
+            (C::Store(Type::U64, u32::MAX), "store", u32::MAX),
+            (C::Load(Type::U64, u32::MAX), "load", u32::MAX),
+            // The first index past the bound, so the boundary is pinned from
+            // both sides rather than only at an absurd operand.
+            (C::Store(Type::U64, over), "store", over),
+            (C::Load(Type::U64, over), "load", over),
+        ] {
+            let p = program(vec![M::Cpu(inst.clone()), M::Cpu(C::Halt)]);
+            assert!(
+                validate_structure(&p).contains(&ValidationError::LocalIndexOutOfRange {
+                    // Address 0 is `@main`'s `func_start`.
+                    pc: 1,
+                    mnemonic,
+                    index,
+                }),
+                "{inst:?}: got {:?}",
+                validate_structure(&p)
+            );
+        }
+
+        // The ceiling itself, and the indices a real frame uses, are accepted.
+        for index in [0, 1, 7, MAX_LOCAL_INDEX] {
+            let p = program(vec![
+                M::Cpu(C::Store(Type::U64, index)),
+                M::Cpu(C::Load(Type::U64, index)),
+                M::Cpu(C::Halt),
+            ]);
+            assert!(
+                !validate_structure(&p)
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::LocalIndexOutOfRange { .. })),
+                "index={index} should be accepted, got {:?}",
+                validate_structure(&p)
+            );
+        }
+    }
+
+    /// `load`/`store` are ordinary instructions, so one still closes the window
+    /// in which `initial_fill` may appear. Adding their own match arms could
+    /// have dropped them out of the `_ => seen_non_constant = true` fallback.
+    #[test]
+    fn a_local_access_is_a_non_constant_instruction() {
+        let p = program(vec![
+            M::Cpu(C::Store(Type::U64, 0)),
+            M::Lanes(L::InitialFill(0)),
+            M::Cpu(C::Halt),
+        ]);
+        assert!(
+            validate_structure(&p).contains(&ValidationError::InitialFillNotFirst { pc: 2 }),
+            "got {:?}",
+            validate_structure(&p)
+        );
     }
 
     // ---- Display ----
@@ -1098,6 +3282,14 @@ mod tests {
                 "pc 0: invalid new_array type tag 99".into(),
             ),
             (
+                ValidationError::LocalIndexOutOfRange {
+                    pc: 1,
+                    mnemonic: "store",
+                    index: 200_000_000,
+                },
+                "pc 1: store takes a local index 0..=1023, got 200000000".into(),
+            ),
+            (
                 ValidationError::InitialFillNotFirst { pc: 4 },
                 "pc 4: initial_fill must be the first non-constant instruction".into(),
             ),
@@ -1107,7 +3299,7 @@ mod tests {
             ),
             (
                 ValidationError::MissingTerminator { pc: 7 },
-                "pc 7: program must end with return or halt".into(),
+                "pc 7: function must end with return or halt".into(),
             ),
             (
                 ValidationError::UnreachableInstruction { pc: 8 },
@@ -1116,6 +3308,18 @@ mod tests {
             (
                 ValidationError::StackUnderflow { pc: 1 },
                 "pc 1: stack underflow".into(),
+            ),
+            (
+                ValidationError::PopBelowFrameBase { pc: 7 },
+                "pc 7: pops past its operands, into its locals and its caller's values".into(),
+            ),
+            (
+                ValidationError::StackDepthMismatch {
+                    pc: 6,
+                    expected: 1,
+                    got: 0,
+                },
+                "pc 6: paths reach this instruction with different stack depths (1 and 0)".into(),
             ),
             (
                 ValidationError::TypeMismatch {
@@ -1154,39 +3358,246 @@ mod tests {
 
     // ---- stack simulation: dispatch coverage ----
 
+    /// Every parameter is a local, so a parameter list past what a frame may
+    /// hold is a function the machine refuses to enter — reported here, where
+    /// the stack simulation would otherwise clamp the frame and pass it.
     #[test]
-    fn stack_sim_int_const_and_pop() {
-        // `const.i64` pushes an INT; `pop` discards it. Well typed.
-        let p = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(7))),
-            Instruction::Pop,
-        ]);
-        assert!(simulate_stack(&p, None).is_empty());
+    fn a_parameter_list_past_the_frame_bound_is_reported() {
+        let params = |n: usize| {
+            (0..n)
+                .map(|i| format!("p{i}: u32"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let module = |n: usize| {
+            sst_module(&format!(
+                "fn @main() {{\n  cpu::cpu.halt\n}}\n\nfn @wide({}) {{\n  cpu::cpu.ret 0\n}}\n",
+                params(n)
+            ))
+        };
+        let at_the_bound = module(MAX_LOCAL_COUNT as usize);
+        assert_eq!(validate_structure(&at_the_bound), vec![]);
+
+        let past_it = module(MAX_LOCAL_COUNT as usize + 1);
+        assert_eq!(
+            validate_structure(&past_it),
+            vec![ValidationError::TooManyParameters {
+                pc: past_it.functions[1].start_address as usize,
+                count: MAX_LOCAL_COUNT as usize + 1,
+            }]
+        );
     }
 
+    /// Typed locals are checked the way the machine checks them, so every
+    /// program here validates clean exactly when it runs.
+    ///
+    /// vihaco-cpu 0.4.1 refuses a `store` of a concrete value of another type
+    /// and a `load` of one, while a placeholder — a lanes result it does not
+    /// simulate, or an unwritten local — passes under any type and reads as
+    /// that type's zero. `load undef` refuses every concrete value. Before the
+    /// simulator modelled any of this, `const i64 7; store undef, 0` validated
+    /// clean and failed at `run`.
     #[test]
-    fn stack_sim_swap_needs_two_entries() {
-        let ok = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 1)),
-            Instruction::Swap,
-        ]);
-        assert!(simulate_stack(&ok, None).is_empty());
+    fn typed_locals_are_checked_as_the_machine_runs_them() {
+        use crate::isa::machine::LanesMachine;
 
-        // Only one entry: swap underflows.
-        let bad = program(vec![Instruction::ConstLoc(loc(0, 0, 0)), Instruction::Swap]);
+        // (what it is, body of `@main` plus any helper, validates and runs)
+        let cases = [
+            (
+                "an i64 stored as undef",
+                "cpu::cpu.const i64, 7\n  cpu::cpu.store undef, 0",
+                false,
+            ),
+            (
+                "a zone stored as f64",
+                "lanes::lanes.const_zone 0x00000000\n  cpu::cpu.store f64, 0",
+                false,
+            ),
+            (
+                "a location stored as undef, via dup",
+                "lanes::lanes.const_loc 0x0000000000000000\n  cpu::cpu.dup\n  \
+                 cpu::cpu.store undef, 0\n  cpu::cpu.store undef, 0",
+                false,
+            ),
+            (
+                "a stored zone loaded as undef",
+                "lanes::lanes.const_zone 0x00000000\n  cpu::cpu.store u32, 0\n  \
+                 cpu::cpu.load undef, 0\n  lanes::lanes.cz",
+                false,
+            ),
+            (
+                "a stored zone loaded as itself",
+                "lanes::lanes.const_zone 0x00000000\n  cpu::cpu.store u32, 0\n  \
+                 cpu::cpu.load u32, 0\n  lanes::lanes.cz",
+                true,
+            ),
+            (
+                "an unwritten local loaded as f64 is a zero float, not a zone",
+                "cpu::cpu.load f64, 0\n  lanes::lanes.cz",
+                false,
+            ),
+            (
+                "a future stored as u64 and loaded as f64",
+                "lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+                 cpu::cpu.store u64, 0\n  cpu::cpu.load f64, 0\n  lanes::lanes.cz",
+                false,
+            ),
+            (
+                "a placeholder stored under any type",
+                "lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+                 lanes::lanes.await_measure\n  cpu::cpu.store f64, 0",
+                true,
+            ),
+            (
+                "a placeholder loaded back as itself",
+                "lanes::lanes.const_zone 0x00000000\n  lanes::lanes.measure 1\n  \
+                 lanes::lanes.await_measure\n  cpu::cpu.store undef, 0\n  \
+                 cpu::cpu.load undef, 0\n  lanes::lanes.set_detector\n  \
+                 cpu::cpu.store undef, 0",
+                true,
+            ),
+            (
+                "a callee's concrete result stored as undef",
+                "cpu::cpu.call 0, helper\n  cpu::cpu.store undef, 0",
+                false,
+            ),
+            (
+                "a callee's placeholder result stored as its declared type",
+                "cpu::cpu.call 0, placeholder\n  cpu::cpu.store heap_ref, 0",
+                true,
+            ),
+        ];
+        // What the calls above reach. The declared return types are not
+        // enforced at run time; what each `ret` keeps is what matters.
+        const CALLEES: &str = "fn @helper() -> i64 {\n  cpu::cpu.const i64, 7\n  \
+             cpu::cpu.ret 1\n}\n\n\
+             fn @placeholder() -> heap_ref {\n  lanes::lanes.const_zone 0x00000000\n  \
+             lanes::lanes.measure 1\n  lanes::lanes.await_measure\n  cpu::cpu.ret 1\n}\n";
+        for (what, body, ok) in cases {
+            let program = sst_module(&format!(
+                "fn @main() {{\n  {body}\n  cpu::cpu.halt\n}}\n\n{CALLEES}"
+            ));
+            let mut errors = validate_structure(&program);
+            errors.extend(simulate_stack(&program, None));
+            let ran = LanesMachine::new().run(&program, 1_000);
+            assert_eq!(errors.is_empty(), ok, "{what}: validated as {errors:?}");
+            assert_eq!(
+                ran.is_ok(),
+                ok,
+                "{what}: ran as {:?}",
+                ran.map(|r| r.stopped).map_err(|e| format!("{e:#}"))
+            );
+        }
+
+        // And the mismatch is named for what it is.
+        let program = sst_module(
+            "fn @main() {\n  cpu::cpu.const i64, 7\n  cpu::cpu.store undef, 0\n  \
+             cpu::cpu.halt\n}\n",
+        );
         assert_eq!(
-            simulate_stack(&bad, None),
-            vec![ValidationError::StackUnderflow { pc: 1 }]
+            simulate_stack(&program, None),
+            vec![ValidationError::LocalTypeMismatch {
+                pc: 2,
+                mnemonic: "store",
+                declared: "undef",
+                got: "i64",
+            }]
         );
     }
 
     #[test]
+    fn stack_sim_int_const_and_store() {
+        // `cpu::cpu.const i64` pushes an INT; `store` parks it. Well typed.
+        let p = program(vec![
+            M::Cpu(C::Const(Type::I64, Value::I64(7))),
+            M::Cpu(C::Store(Type::I64, 0)),
+        ]);
+        assert!(simulate_stack(&p, None).is_empty());
+    }
+
+    /// A value parked in a local is out of the operands' reach until it is
+    /// loaded back: the frame still holds the zone, but `cz` does not find it.
+    #[test]
+    fn stack_sim_a_stored_value_is_not_an_operand() {
+        let ok = program(vec![
+            M::Lanes(L::ConstZone(0)),
+            M::Cpu(C::Store(Type::U32, 0)),
+            M::Cpu(C::Load(Type::U32, 0)),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(simulate_stack(&ok, None), vec![]);
+
+        let bad = program(vec![
+            M::Lanes(L::ConstZone(0)),
+            M::Cpu(C::Store(Type::U32, 0)),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(
+            simulate_stack(&bad, None),
+            vec![ValidationError::StackUnderflow { pc: 3 }]
+        );
+    }
+
+    /// A local keeps the type of what was stored, so a `load` is checked like
+    /// the push it stands for — the `swap` spelled through two locals puts
+    /// the zone back on top, and without it `cz` gets the angle.
+    #[test]
+    fn stack_sim_locals_carry_their_types() {
+        let zone_then_angle = [M::Lanes(L::ConstZone(0)), cpu_float(0.5)];
+        let swapped = program(
+            zone_then_angle
+                .iter()
+                .cloned()
+                .chain([
+                    M::Cpu(C::Store(Type::F64, 0)),
+                    M::Cpu(C::Store(Type::U32, 1)),
+                    M::Cpu(C::Load(Type::F64, 0)),
+                    M::Cpu(C::Load(Type::U32, 1)),
+                    M::Lanes(L::Cz),
+                    M::Lanes(L::GlobalRz),
+                    M::Cpu(C::Halt),
+                ])
+                .collect(),
+        );
+        assert_eq!(simulate_stack(&swapped, None), vec![]);
+
+        let unswapped = program(
+            zone_then_angle
+                .iter()
+                .cloned()
+                .chain([M::Lanes(L::Cz), M::Lanes(L::GlobalRz), M::Cpu(C::Halt)])
+                .collect(),
+        );
+        assert_eq!(
+            simulate_stack(&unswapped, None)[0],
+            ValidationError::TypeMismatch {
+                pc: 3,
+                expected: tag::ZONE,
+                got: tag::FLOAT
+            }
+        );
+    }
+
+    /// A local nothing wrote reads as the zero of whatever loads it, so its
+    /// type is unknown rather than wrong — and unknown passes.
+    #[test]
+    fn stack_sim_an_unwritten_local_is_unknown() {
+        let p = program(vec![
+            M::Cpu(C::Load(Type::U32, 0)),
+            M::Lanes(L::Cz),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(simulate_stack(&p, None), vec![]);
+    }
+
+    #[test]
     fn stack_sim_dup_underflow_on_empty() {
-        let p = program(vec![Instruction::Cpu(Cpu::Dup)]);
+        let p = program(vec![M::Cpu(C::Dup)]);
         assert_eq!(
             simulate_stack(&p, None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1195,10 +3606,10 @@ mod tests {
         // `dup` on a non-empty stack pushes a copy of the top entry; popping
         // both leaves an empty, well-typed stack.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::Cpu(Cpu::Dup),
-            Instruction::Pop,
-            Instruction::Pop,
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Cpu(C::Dup),
+            M::Cpu(C::Store(Type::U64, 0)),
+            M::Cpu(C::Store(Type::U64, 0)),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -1211,16 +3622,16 @@ mod tests {
     fn stack_sim_gate_ops_are_well_typed() {
         // Exercises the LocalRz / GlobalR / GlobalRz / Cz dispatch arms.
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
             cpu_float(0.5),
-            Instruction::LocalRz(1),
+            M::Lanes(L::LocalRz(1)),
             cpu_float(0.5),
-            Instruction::GlobalRz,
+            M::Lanes(L::GlobalRz),
             cpu_float(0.5),
             cpu_float(0.25),
-            Instruction::GlobalR,
-            Instruction::ConstZone(0),
-            Instruction::Cz,
+            M::Lanes(L::GlobalR),
+            M::Lanes(L::ConstZone(0)),
+            M::Lanes(L::Cz),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -1233,13 +3644,13 @@ mod tests {
     fn stack_sim_gate_underflow_on_empty_stack() {
         // GlobalRz pops one float via `pop_typed`; empty stack -> underflow.
         assert_eq!(
-            simulate_stack(&program(vec![Instruction::GlobalRz]), None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            simulate_stack(&program(vec![M::Lanes(L::GlobalRz)]), None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
         // Move pops a lane via `pop_addr`; empty stack -> underflow.
         assert_eq!(
-            simulate_stack(&program(vec![Instruction::Move(1)]), None),
-            vec![ValidationError::StackUnderflow { pc: 0 }]
+            simulate_stack(&program(vec![M::Lanes(L::Move(1))]), None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
         );
     }
 
@@ -1248,11 +3659,11 @@ mod tests {
         // new_array pops `dim0` elements and pushes an ARRAY_REF; get_item pops
         // `ndims` INT indices plus the ARRAY_REF and pushes the element.
         let p = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(1))),
-            Instruction::Cpu(Cpu::Const(Value::I64(2))),
-            Instruction::NewArray(tag::INT as u32, 2, 0),
-            Instruction::Cpu(Cpu::Const(Value::I64(0))),
-            Instruction::GetItem(1),
+            M::Cpu(C::Const(Type::I64, Value::I64(1))),
+            M::Cpu(C::Const(Type::I64, Value::I64(2))),
+            M::Lanes(L::NewArray(tag::INT as u32, 2, 0)),
+            M::Cpu(C::Const(Type::I64, Value::I64(0))),
+            M::Lanes(L::GetItem(1)),
         ]);
         assert!(
             simulate_stack(&p, None).is_empty(),
@@ -1265,9 +3676,9 @@ mod tests {
     fn stack_sim_set_detector_and_observable() {
         // Each consumes an ARRAY_REF (produced by a 1-element new_array).
         let det = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(0))),
-            Instruction::NewArray(tag::INT as u32, 1, 0),
-            Instruction::SetDetector,
+            M::Cpu(C::Const(Type::I64, Value::I64(0))),
+            M::Lanes(L::NewArray(tag::INT as u32, 1, 0)),
+            M::Lanes(L::SetDetector),
         ]);
         assert!(
             simulate_stack(&det, None).is_empty(),
@@ -1276,9 +3687,9 @@ mod tests {
         );
 
         let obs = program(vec![
-            Instruction::Cpu(Cpu::Const(Value::I64(0))),
-            Instruction::NewArray(tag::INT as u32, 1, 0),
-            Instruction::SetObservable,
+            M::Cpu(C::Const(Type::I64, Value::I64(0))),
+            M::Lanes(L::NewArray(tag::INT as u32, 1, 0)),
+            M::Lanes(L::SetObservable),
         ]);
         assert!(
             simulate_stack(&obs, None).is_empty(),
@@ -1287,15 +3698,37 @@ mod tests {
         );
     }
 
+    /// The walk used to stop at the first branch, so a program with control
+    /// flow got strictly less checking than one without (gap 2 of #1042).
     #[test]
-    fn stack_sim_halt_and_other_cpu_ops_are_noops() {
-        // `halt` and any other reused vihaco-cpu op (here `print`, and a
-        // non-int/float `const`) are untracked no-ops in the type simulator.
-        let p = program(vec![
-            Instruction::Cpu(Cpu::Print),
-            Instruction::Cpu(Cpu::Const(Value::Bool(true))),
-            Instruction::Cpu(Cpu::Halt),
+    fn stack_sim_checks_past_control_flow() {
+        // An underflow behind a branch is now reached, and reported.
+        let behind_branch = program(vec![
+            M::Cpu(C::Branch(2)),
+            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Halt),
         ]);
+        assert_eq!(
+            simulate_stack(&behind_branch, None),
+            vec![ValidationError::StackUnderflow { pc: 2 }]
+        );
+
+        // Ahead of it, as before.
+        let before_branch = program(vec![
+            M::Cpu(C::Store(Type::Undefined, 0)),
+            M::Cpu(C::Branch(3)),
+            M::Cpu(C::Halt),
+        ]);
+        assert_eq!(
+            simulate_stack(&before_branch, None),
+            vec![ValidationError::StackUnderflow { pc: 1 }]
+        );
+    }
+
+    #[test]
+    fn stack_sim_halt_is_a_noop() {
+        // `halt` neither pushes nor pops, so it cannot underflow an empty stack.
+        let p = program(vec![M::Cpu(C::Halt)]);
         assert!(simulate_stack(&p, None).is_empty());
     }
 
@@ -1306,9 +3739,9 @@ mod tests {
         // locations produce no group error.
         let arch = simple_arch();
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 1)),
-            Instruction::InitialFill(2),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 1))),
+            M::Lanes(L::InitialFill(2)),
         ]);
         let errors = simulate_stack(&p, Some(&arch));
         assert!(
@@ -1327,9 +3760,9 @@ mod tests {
         // group is invalid.
         let arch = simple_arch();
         let p = program(vec![
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::ConstLoc(loc(0, 0, 0)),
-            Instruction::InitialFill(2),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::ConstLoc(loc(0, 0, 0))),
+            M::Lanes(L::InitialFill(2)),
         ]);
         let errors = simulate_stack(&p, Some(&arch));
         assert!(
@@ -1352,9 +3785,9 @@ mod tests {
             bus_id: 0,
         };
         let p = program(vec![
-            Instruction::ConstLane(lane.encode_u64()),
-            Instruction::ConstLane(lane.encode_u64()),
-            Instruction::Move(2),
+            M::Lanes(L::ConstLane(lane.encode_u64())),
+            M::Lanes(L::ConstLane(lane.encode_u64())),
+            M::Lanes(L::Move(2)),
         ]);
         let errors = simulate_stack(&p, None);
         assert!(

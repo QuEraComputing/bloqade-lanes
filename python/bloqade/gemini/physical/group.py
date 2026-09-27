@@ -12,6 +12,7 @@ from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
 from bloqade.gemini import common as gemini_common
+from bloqade.gemini.common.validation.const_address import ConstAddressValidation
 from bloqade.gemini.common.validation.duplicate_address import (
     DuplicateAddressValidation,
 )
@@ -106,12 +107,15 @@ def kernel(self):
             validator = ValidationSuite(
                 [
                     FlatKernelNoCloningValidation,
+                    ConstAddressValidation,
                     DuplicateAddressValidation,
                     PhysicalTerminalMeasurementValidation,
                 ]
             )
             origins.snapshot(mt)
-            validation_result = origins.annotate(mt, validator.validate(mt))
+            validation_result = origins.annotate(
+                mt, validator.validate(mt), aggressive_unroll=aggressive_unroll
+            )
             validation_result.raise_if_invalid()
             mt.verify()
 
