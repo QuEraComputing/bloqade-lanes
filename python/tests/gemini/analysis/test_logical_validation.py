@@ -13,6 +13,7 @@ from bloqade.gemini.logical.validation.clifford.analysis import (
 )
 from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
+    _GeminiTerminalMeasurementValidationAnalysis,
 )
 
 
@@ -91,7 +92,7 @@ def test_aggressive_unroll_can_be_disabled():
 
 
 def test_func():
-    @gemini.logical.kernel
+    @gemini.logical.kernel(verify=False)
     def sub_kernel(q: Qubit):
         squin.x(q)
 
@@ -304,6 +305,11 @@ def test_unsupported_gate_is_a_validation_error():
         assert len(messages) == 2, messages
         assert any("Gate ccz is not supported" in m for m in messages), messages
         assert any("Non-clifford gate u3" in m for m in messages), messages
+        # Both come from inlined stdlib kernels, so the call site is named; but
+        # the kernel already unrolls and neither error is about unrolling, so the
+        # unroll advice must not be tacked on.
+        assert all("inlined from" in m for m in messages), messages
+        assert not any("aggressive_unroll" in m for m in messages), messages
     else:
         pytest.fail("expected a ValidationErrorGroup")
 
@@ -395,6 +401,53 @@ def test_allocation_at_limit_is_valid():
     validator.validate(main).raise_if_invalid()
 
 
+NO_QUBITS = "kernel allocates no qubits; at least 1 is required"
+
+
+def test_empty_kernel_is_invalid():
+    """bloqade-internal#482: an empty kernel used to pass validation."""
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel(aggressive_unroll=True)
+        def main() -> None:
+            return
+
+    assert NO_QUBITS in _error_messages(exc_info.value)
+
+
+def test_zero_width_allocation_is_invalid():
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel
+        def main():
+            squin.qalloc(0)
+
+    assert NO_QUBITS in _error_messages(exc_info.value)
+
+
+def test_sub_kernel_that_does_not_allocate_is_invalid():
+    """The check does not special-case sub-kernels; they opt out explicitly."""
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel
+        def flip(q: Qubit):
+            squin.x(q)
+
+    assert NO_QUBITS in _error_messages(exc_info.value)
+
+
+def test_sub_kernel_opts_out_with_verify_false():
+    @gemini.logical.kernel(verify=False)
+    def flip(q: Qubit):
+        squin.x(q)
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def main():
+        q = squin.qalloc(2)
+        flip(q[0])
+        gemini.logical.terminal_measure(q)
+
+
 def test_dynamic_call_through_parameter_does_not_crash_validation():
     """A dynamic `func.Call` must not blow up the terminal measurement pass.
 
@@ -432,3 +485,68 @@ def test_dynamic_call_through_parameter_does_not_crash_validation():
 
     validator = ValidationSuite([GeminiTerminalMeasurementValidation])
     validator.validate(higher_order).raise_if_invalid()
+
+
+def test_gate_after_terminal_measurement_is_invalid():
+    """bloqade-internal#479: a gate after the terminal measurement was accepted."""
+    with pytest.raises(ValidationErrorGroup, match="Gate h is applied after"):
+
+        @gemini.logical.kernel(aggressive_unroll=True, verify=True)
+        def gate_after_measurement() -> tuple:
+            register = squin.qalloc(2)
+            result = gemini.logical.default_post_processing(register)
+            squin.h(register[0])
+            return result
+
+
+def test_every_gate_after_terminal_measurement_is_reported():
+    @gemini.logical.kernel(verify=False, aggressive_unroll=True)
+    def main():
+        q = squin.qalloc(2)
+        squin.h(q[0])
+        gemini.logical.terminal_measure(q)
+        squin.x(q[0])
+        squin.cz(q[0], q[1])
+        gemini.logical.star_rz(0.125, q[1])
+
+    validation_result = ValidationSuite([GeminiTerminalMeasurementValidation]).validate(
+        main
+    )
+    errors = [str(e) for errs in validation_result.errors.values() for e in errs]
+    assert len(errors) == 3, errors
+    assert all("after the terminal measurement" in e for e in errors)
+    assert any("Gate x " in e for e in errors)
+    assert any("Gate cz " in e for e in errors)
+    assert any("Gate star_rz " in e for e in errors)
+
+
+def test_gate_after_terminal_measurement_in_non_inlined_callee_is_invalid():
+    @gemini.logical.kernel(verify=False, aggressive_unroll=False, inline=False)
+    def apply_x(q: Qubit):
+        squin.x(q)
+
+    @gemini.logical.kernel(verify=False, aggressive_unroll=False, inline=False)
+    def main():
+        q = squin.qalloc(1)
+        gemini.logical.terminal_measure(q)
+        apply_x(q[0])
+
+    # Guard the premise: the gate must still sit behind a call.
+    assert any(isinstance(stmt, func.Invoke) for stmt in main.code.walk())
+
+    with pytest.raises(ValidationErrorGroup, match="Gate x is applied after"):
+        ValidationSuite([GeminiTerminalMeasurementValidation]).validate(
+            main
+        ).raise_if_invalid()
+
+
+def test_every_gate_statement_is_checked_after_terminal_measurement():
+    """A gate missing from the impl table would be accepted after measurement."""
+    from bloqade.squin import gate
+
+    registry = gemini.logical.kernel.registry.interpreter(
+        keys=_GeminiTerminalMeasurementValidationAnalysis.keys
+    )
+    covered = {sig.head for sig in registry}
+    missing = {stmt.__name__ for stmt in gate.dialect.stmts if stmt not in covered}
+    assert not missing, f"gates without a post-measurement check: {missing}"

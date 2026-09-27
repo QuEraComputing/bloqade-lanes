@@ -45,6 +45,16 @@ UNROLL_HELP = (
 )
 
 
+class UnrollFixableError(ir.ValidationError):
+    """A validation error that ``aggressive_unroll=True`` can make go away.
+
+    Only these get ``UNROLL_HELP`` appended when ``InlineOrigins`` attributes
+    them to a call site. Most errors -- a non-Clifford gate, a gate after the
+    terminal measurement -- survive unrolling unchanged, and telling the user to
+    unroll them sends them the wrong way.
+    """
+
+
 def _callee_name(stmt: ir.Statement) -> str:
     trait = stmt.get_trait(ir.StaticCall)
     if trait is None:  # pragma: no cover - callers filter on the trait first
@@ -61,8 +71,8 @@ class NoStaticCallValidation(ValidationPass):
         return "Gemini Static Call Validation"
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
-        errors = [
-            ir.ValidationError(
+        errors: list[ir.ValidationError] = [
+            UnrollFixableError(
                 stmt,
                 f"call to '{_callee_name(stmt)}' was not inlined; Gemini kernels "
                 "must be flat, so every call has to be resolved at compile time",
