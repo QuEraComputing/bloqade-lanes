@@ -18,6 +18,10 @@ from bloqade.gemini.common.dialects.qubit import stmts as gemini_qubit
 from bloqade.gemini.common.dialects.qubit._dialect import (
     dialect as gemini_qubit_dialect,
 )
+from bloqade.gemini.logical.dialects.extensions import stmts as logical_extensions
+from bloqade.gemini.logical.dialects.extensions._dialect import (
+    dialect as logical_extensions_dialect,
+)
 from bloqade.gemini.logical.dialects.operations import stmts as logical_ops
 from bloqade.gemini.logical.dialects.operations._dialect import (
     dialect as logical_dialect,
@@ -207,9 +211,19 @@ class _LogicalCirqMethods(interp.MethodTable):
         return (None,)
 
     @interp.impl(logical_ops.Initialize)
-    @interp.impl(logical_ops.StarRz)
     def unsupported(
         self, emit: EmitCirq, frame: EmitCirqFrame, stmt: ir.Statement
+    ) -> tuple[Any, ...]:
+        raise interp.exceptions.InterpreterError(
+            f"Cirq emission does not yet support {stmt.name}"
+        )
+
+
+@logical_extensions_dialect.register(key="emit.cirq")
+class _LogicalExtensionsCirqMethods(interp.MethodTable):
+    @interp.impl(logical_extensions.StarRz)
+    def unsupported(
+        self, emit: EmitCirq, frame: EmitCirqFrame, stmt: logical_extensions.StarRz
     ) -> tuple[Any, ...]:
         raise interp.exceptions.InterpreterError(
             f"Cirq emission does not yet support {stmt.name}"

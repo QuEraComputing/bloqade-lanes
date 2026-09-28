@@ -24,4 +24,4 @@ def _get_cirq_loader():
 
 
 # Keep Cirq optional: load its Gemini integration only when conversion is used.
-_register_cirq_loader(dialects.operations.dialect, _get_cirq_loader)
+_register_cirq_loader(dialects=kernel, factory=_get_cirq_loader)
