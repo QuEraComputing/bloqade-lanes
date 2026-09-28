@@ -6,7 +6,7 @@ computes the sequence of move layers using the Rust TargetSolver.
 
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode._native import SearchEngine, TargetSolver
+from bloqade.lanes.bytecode._native import SearchEngine, SolveStatus, TargetSolver
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.heuristics.physical.movement import (
     RustPlacementTraversal,
@@ -44,7 +44,7 @@ def compute_move_layers(
     )
     solver = TargetSolver(engine, move_search)
     result = solver.solve(initial_native, target_native, blocked_native, None)
-    if result.status != "solved":
+    if result.status != SolveStatus.SOLVED:
         raise RuntimeError(f"move synthesis failed with status={result.status!r}")
     return convert_move_layers(result.move_layers)
 

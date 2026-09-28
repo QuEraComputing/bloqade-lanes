@@ -1,0 +1,77 @@
+{
+  "version": "2.0",
+  "words": [
+    {
+      "sites": [
+        [
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "sites": [
+        [
+          0,
+          0
+        ]
+      ]
+    }
+  ],
+  "zones": [
+    {
+      "name": "gate",
+      "grid": {
+        "x_start": 0.0,
+        "y_start": 0.0,
+        "x_spacing": [],
+        "y_spacing": []
+      },
+      "site_buses": [],
+      "word_buses": [],
+      "words_with_site_buses": [],
+      "sites_with_word_buses": [],
+      "entangling_pairs": []
+    },
+    {
+      "name": "memory",
+      "grid": {
+        "x_start": 0.0,
+        "y_start": 10.0,
+        "x_spacing": [],
+        "y_spacing": []
+      },
+      "site_buses": [],
+      "word_buses": [],
+      "words_with_site_buses": [],
+      "sites_with_word_buses": [],
+      "entangling_pairs": []
+    }
+  ],
+  "zone_buses": [
+    {
+      "src": [
+        {
+          "zone_id": 1,
+          "word_id": 1
+        }
+      ],
+      "dst": [
+        {
+          "zone_id": 0,
+          "word_id": 0
+        }
+      ]
+    }
+  ],
+  "modes": [
+    {
+      "name": "default",
+      "zones": [
+        0,
+        1
+      ],
+      "bitstring_order": []
+    }
+  ]
+}

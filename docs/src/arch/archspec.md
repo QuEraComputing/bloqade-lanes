@@ -16,7 +16,8 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
   "paths": [...],                 // optional
   "feed_forward": false,          // optional, default false
   "atom_reloading": false,        // optional, default false
-  "blockade_radius": 2.0          // optional
+  "blockade_radius": 2.0,         // optional
+  "aod_capacity": {"x": 4, "y": 4} // optional, default unlimited
 }
 ```
 
@@ -31,6 +32,7 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
 | `feed_forward` | bool | *(optional, default `false`)* Whether the device supports mid-circuit measurement with classical feedback. |
 | `atom_reloading` | bool | *(optional, default `false`)* Whether the device supports reloading atoms after initial fill. |
 | `blockade_radius` | float | *(optional)* Rydberg blockade radius in micrometers — metadata for interpreting entangling pairs. |
+| `aod_capacity` | AodCapacity | *(optional, default unlimited)* The largest AOD rectangle one move may drive. See [AOD Capacity](#aod-capacity-optional). |
 
 ---
 
@@ -214,6 +216,22 @@ Both fields are optional in the JSON — existing arch spec files that omit them
   "atom_reloading": false
 }
 ```
+
+---
+
+## AOD Capacity (Optional)
+
+`aod_capacity` is the largest AOD rectangle a single move may drive, as a tone count per axis: at most `x` distinct source columns and `y` distinct source rows move together.
+
+```jsonc
+{
+  "aod_capacity": {"x": 4, "y": 4}
+}
+```
+
+Both axes must be at least 1; a spec with a zero axis fails to load. When the field is absent, the capacity is unlimited.
+
+The router's search strategies honour the capacity. The Push-and-Rotate router does not, so it can emit a wider move. The bytecode validator does not check it.
 
 ---
 

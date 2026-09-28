@@ -207,7 +207,9 @@ mod tests {
 
     fn example_entangling_set() -> HashSet<(u64, u64)> {
         crate::ops::entangling::build_entangling_set(
-            &serde_json::from_str(crate::test_utils::example_arch_json()).unwrap(),
+            &crate::primitives::lane_index::LaneIndex::new(
+                serde_json::from_str(crate::test_utils::example_arch_json()).unwrap(),
+            ),
         )
     }
 

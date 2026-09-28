@@ -388,7 +388,6 @@ pub(super) fn generator_output(
         blocked,
         targets: &[],
         cz_pairs: None,
-        capacity: None,
     };
     exhaustive_in(&ctx, SeedPolicy::Any, cap, config)
 }
@@ -898,7 +897,6 @@ mod tests {
             blocked: &blocked,
             targets: &[],
             cz_pairs: None,
-            capacity: None,
         };
         let err = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None)
             .expect_err("full.json must be rejected");
@@ -914,7 +912,6 @@ mod tests {
     fn other_generators(
         ctx: &SearchContext<'_>,
         inst: &Instance,
-        arch: &std::sync::Arc<ArchSpec>,
         index: &std::sync::Arc<LaneIndex>,
         dist_table: &std::sync::Arc<DistanceTable>,
     ) -> Vec<(&'static str, Vec<MoveCandidate>)> {
@@ -972,7 +969,6 @@ mod tests {
                 inner,
                 inst.targets.clone(),
                 inst.cz_pairs.clone(),
-                arch.clone(),
                 index.clone(),
                 dist_table.clone(),
             );
@@ -999,7 +995,7 @@ mod tests {
             &inst.config,
             index,
             &inst.blocked,
-            ctx.capacity,
+            ctx.index.aod_capacity(),
         );
         all.push((
             "pack_aod_rectangles",
@@ -1016,34 +1012,36 @@ mod tests {
 
     /// One instance's context, owned so the generators can borrow it.
     struct Owned {
-        arch: std::sync::Arc<ArchSpec>,
         index: std::sync::Arc<LaneIndex>,
         dist_table: std::sync::Arc<DistanceTable>,
         inst: Instance,
     }
 
     impl Owned {
-        fn ctx(&self, capacity: Option<AodCapacity>) -> SearchContext<'_> {
+        fn ctx(&self) -> SearchContext<'_> {
             SearchContext {
                 index: &self.index,
                 dist_table: &self.dist_table,
                 blocked: &self.inst.blocked,
                 targets: &self.inst.targets,
                 cz_pairs: Some(&self.inst.cz_pairs),
-                capacity,
             }
         }
     }
 
-    fn owned_instance(json: &str, rng: &mut SmallRng, oracle: &Oracle) -> Owned {
+    /// `cap` goes on the spec, so it binds every generator run in the context.
+    fn owned_instance(
+        json: &str,
+        rng: &mut SmallRng,
+        oracle: &Oracle,
+        cap: Option<AodCapacity>,
+    ) -> Owned {
         let spec: ArchSpec = serde_json::from_str(json).expect("spec json parses");
-        let arch = std::sync::Arc::new(spec.clone());
-        let index = std::sync::Arc::new(LaneIndex::new(spec));
+        let index = std::sync::Arc::new(LaneIndex::new(spec.with_aod_capacity(cap)));
         let inst = random_instance(rng, &oracle.endpoints());
         let target_locs: Vec<u64> = inst.targets.iter().map(|&(_, l)| l).collect();
         let dist_table = std::sync::Arc::new(DistanceTable::new(&target_locs, &index));
         Owned {
-            arch,
             index,
             dist_table,
             inst,
@@ -1067,8 +1065,8 @@ mod tests {
             let mut violations: BTreeMap<&str, usize> = BTreeMap::new();
             let mut examples: Vec<String> = Vec::new();
             for _ in 0..configs {
-                let owned = owned_instance(&json, &mut rng, &oracle);
-                let ctx = owned.ctx(cap);
+                let owned = owned_instance(&json, &mut rng, &oracle, cap);
+                let ctx = owned.ctx();
                 let exhaustive = shots_of(&exhaustive_in(
                     &ctx,
                     SeedPolicy::Any,
@@ -1077,13 +1075,9 @@ mod tests {
                 ));
                 let exhaustive_keys: HashSet<(Group, Shot)> =
                     exhaustive.iter().map(|(g, s, _)| (*g, s.clone())).collect();
-                for (gen_name, cands) in other_generators(
-                    &ctx,
-                    &owned.inst,
-                    &owned.arch,
-                    &owned.index,
-                    &owned.dist_table,
-                ) {
+                for (gen_name, cands) in
+                    other_generators(&ctx, &owned.inst, &owned.index, &owned.dist_table)
+                {
                     for cand in &cands {
                         if cand.move_set.is_empty() {
                             continue;
@@ -1159,7 +1153,7 @@ mod tests {
 
     /// `Unresolved ⊆ Any`, equal when no atom is resolved; caps nest
     /// componentwise; the tightest cap admitting every group's full grid
-    /// equals `None`; a cap on the context composes like the generator's own.
+    /// equals `None`; a cap on the spec composes like the generator's own.
     #[test]
     fn levels_nest() {
         for (name, json) in all_specs() {
@@ -1188,7 +1182,6 @@ mod tests {
                     blocked: &inst.blocked,
                     targets: &inst.targets,
                     cz_pairs: None,
-                    capacity: None,
                 };
                 let any = shots_of(&exhaustive_in(&ctx, SeedPolicy::Any, None, &inst.config));
                 let unresolved = shots_of(&exhaustive_in(
@@ -1233,13 +1226,17 @@ mod tests {
                     any,
                     "{name}: the full-grid cap must equal None"
                 );
+                let capped_index = LaneIndex::new(
+                    serde_json::from_str::<ArchSpec>(&json)
+                        .expect("spec json parses")
+                        .with_aod_capacity(AodCapacity::new(2, 2)),
+                );
                 let capped_ctx = SearchContext {
-                    index: &index,
+                    index: &capped_index,
                     dist_table: &dist_table,
                     blocked: &inst.blocked,
                     targets: &inst.targets,
                     cz_pairs: None,
-                    capacity: Some(AodCapacity::new(2, 2).unwrap()),
                 };
                 let via_ctx = shots_of(&exhaustive_in(
                     &capped_ctx,
