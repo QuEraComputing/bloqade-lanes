@@ -118,7 +118,7 @@ impl TargetPolicyRunner {
         let arch_wrap = StarlarkArchSpec(arch_spec_arc);
         let ctx = StarlarkTargetContext::new(
             arch_wrap.clone(),
-            StarlarkPlacement::from_pairs(placement),
+            StarlarkPlacement::from_pairs(placement.clone()),
             controls.clone(),
             targets.clone(),
             lookahead_cz_layers,
@@ -181,7 +181,7 @@ impl TargetPolicyRunner {
         let result: Result<Vec<Vec<(u32, LocationAddr)>>, TargetPolicyError> = {
             let mut validated = Vec::with_capacity(candidates.len());
             for cand in candidates {
-                validate_candidate(&cand, &controls, &targets, &index)
+                validate_candidate(&cand, &placement, &controls, &targets, &index)
                     .map_err(|error| TargetPolicyError::InvalidCandidate { error })?;
                 validated.push(cand);
             }
