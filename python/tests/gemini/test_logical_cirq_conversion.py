@@ -1,7 +1,8 @@
 import cirq
 import pytest
 from bloqade.cirq_utils import emit_circuit, load_circuit
-from kirin import interp, lowering
+from bloqade.cirq_utils.emit.base import EmitCirq, EmitCirqFrame
+from kirin import interp, ir, lowering
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
@@ -9,7 +10,13 @@ from bloqade.gemini import logical
 from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.common.dialects.qubit.stmts import NewAt
 from bloqade.gemini.device import GeminiLogicalSimulator
-from bloqade.gemini.logical.cirq_conversion import GeminiLogicalQubit
+from bloqade.gemini.logical.cirq_conversion import (
+    GeminiLogicalCirqLowerer,
+    GeminiLogicalQubit,
+    _GeminiQubitCirqMethods,
+    _LogicalCirqMethods,
+)
+from bloqade.gemini.logical.dialects.operations import stmts as logical_ops
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
@@ -163,3 +170,59 @@ def test_emit_compiled_bell_has_one_physical_measurement():
     ]
     assert len(cirq_measurements) == 1
     assert len(cirq_measurements[0].qubits) == 14
+
+
+def test_logical_qid_rejects_negative_index_and_invalid_pin():
+    with pytest.raises(ValueError, match="nonnegative"):
+        GeminiLogicalQubit(-1)
+    with pytest.raises(ValueError, match="three integer coordinates"):
+        GeminiLogicalQubit(0, (0, 1))  # type: ignore[arg-type]
+
+
+def test_logical_qid_has_readable_pinned_and_unpinned_names():
+    unpinned = GeminiLogicalQubit(0)
+    pinned = GeminiLogicalQubit(1, (0, 2, 3))
+
+    assert str(unpinned) == "L0"
+    assert str(pinned) == "L1@(0,2,3)"
+    assert repr(pinned) == "GeminiLogicalQubit(index=1, pin=(0, 2, 3))"
+
+
+def test_logical_loader_rejects_unsupported_qid_type():
+    with pytest.raises(lowering.BuildError, match="Unsupported logical qubit"):
+        GeminiLogicalCirqLowerer._logical_index(cirq.GridQubit(0, 0))
+
+
+def test_logical_loader_rejects_mixed_qid_types():
+    pinned = GeminiLogicalQubit(0, (0, 0, 0))
+    grid = cirq.GridQubit(0, 1)
+    circuit = cirq.Circuit(cirq.measure(pinned, grid))
+
+    with pytest.raises(lowering.BuildError, match="cannot be mixed"):
+        load_circuit(circuit, dialects=logical.kernel)
+
+
+def test_logical_loader_requires_contiguous_logical_indices():
+    qid = GeminiLogicalQubit(1)
+    circuit = cirq.Circuit(cirq.measure(qid))
+
+    with pytest.raises(lowering.BuildError, match="contiguous from zero"):
+        load_circuit(circuit, dialects=logical.kernel)
+
+
+def test_pinned_emission_rejects_noninteger_address():
+    zone, word, site = (ir.TestValue() for _ in range(3))
+    stmt = NewAt(zone, word, site)
+    frame = EmitCirqFrame(stmt, entries={zone: 0, word: 1.5, site: 0}, qubit_index=0)
+
+    with pytest.raises(
+        interp.exceptions.InterpreterError, match="compile-time integers"
+    ):
+        _GeminiQubitCirqMethods().new_at(EmitCirq(), frame, stmt)
+
+
+def test_emit_rejects_logical_initialize_statement():
+    stmt = logical_ops.Initialize(*(ir.TestValue() for _ in range(4)))
+
+    with pytest.raises(interp.exceptions.InterpreterError, match="initialize"):
+        _LogicalCirqMethods().unsupported(EmitCirq(), EmitCirqFrame(stmt), stmt)

@@ -150,8 +150,6 @@ class GeminiLogicalCirqLowerer(Squin):
                     "Gemini logical terminal measurement does not support "
                     "Cirq invert masks or confusion maps"
                 )
-        elif measurements:
-            raise lowering.BuildError("Cannot measure an empty logical register")
         return super().visit_Circuit(state, node)
 
     def visit_MeasurementGate(

@@ -1,6 +1,7 @@
 import math
 from typing import Any
 
+import pytest
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.analysis import forward
@@ -529,3 +530,86 @@ def test_insert_measurements_batches_concrete_future_results_in_record_order():
         indices.append(stmt.index.owner.value.unwrap())
     assert indices == [1, 0]
     assert empty_readout in test_block.stmts
+
+
+def test_insert_measurements_does_not_batch_a_future_with_other_uses():
+    zone = ZoneAddress(0)
+    location = LocationAddress(0, 0)
+    future = move.EndMeasure(ir.TestValue(), zone_addresses=(zone,))
+    readout = move.GetFutureResult(
+        future.result, zone_address=zone, location_address=location
+    )
+    return_future = func.Return(future.result)
+    ir.Block([future, readout, return_future])
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        future,
+        entries={readout.result: atom.MeasureResult(0, 0, location)},
+    )
+    rule = gates.InsertMeasurements(
+        physical_ssa_values={0: ir.TestValue()}, move_exec_analysis=frame
+    )
+
+    rule.batch_future_results(readout)
+
+    assert rule.batched_results == {}
+
+
+def test_insert_measurements_does_not_batch_one_readout():
+    zone = ZoneAddress(0)
+    location = LocationAddress(0, 0)
+    future = move.EndMeasure(ir.TestValue(), zone_addresses=(zone,))
+    readout = move.GetFutureResult(
+        future.result, zone_address=zone, location_address=location
+    )
+    ir.Block([future, readout])
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        future,
+        entries={readout.result: atom.MeasureResult(0, 0, location)},
+    )
+    rule = gates.InsertMeasurements(
+        physical_ssa_values={0: ir.TestValue()}, move_exec_analysis=frame
+    )
+
+    rule.batch_future_results(readout)
+
+    assert rule.batched_results == {}
+
+
+@pytest.mark.parametrize(
+    "record_ids,qubit_ids",
+    [
+        ((0, 2), (0, 1)),  # Noncontiguous measurement records.
+        ((0, 1), (0, 0)),  # One qubit cannot supply two distinct readouts.
+        ((0, 1), (0, 2)),  # Qubit 2 has no physical SSA value.
+    ],
+)
+def test_insert_measurements_does_not_batch_invalid_readout_groups(
+    record_ids: tuple[int, int], qubit_ids: tuple[int, int]
+):
+    zone = ZoneAddress(0)
+    locations = (LocationAddress(0, 0), LocationAddress(0, 1))
+    future = move.EndMeasure(ir.TestValue(), zone_addresses=(zone,))
+    readouts = [
+        move.GetFutureResult(
+            future.result, zone_address=zone, location_address=location
+        )
+        for location in locations
+    ]
+    ir.Block([future, *readouts])
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        future,
+        entries={
+            readout.result: atom.MeasureResult(record_id, qubit_id, location)
+            for readout, record_id, qubit_id, location in zip(
+                readouts, record_ids, qubit_ids, locations, strict=True
+            )
+        },
+    )
+    rule = gates.InsertMeasurements(
+        physical_ssa_values={0: ir.TestValue(), 1: ir.TestValue()},
+        move_exec_analysis=frame,
+    )
+
+    rule.batch_future_results(readouts[0])
+
+    assert rule.batched_results == {}
