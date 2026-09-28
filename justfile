@@ -89,7 +89,10 @@ demo-qalloc-at:
 demo-extend-site-buses:
     uv run --locked --no-sync python demo/extend_gemini_site_buses.py
 
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at demo-extend-site-buses
+demo-arch-cust-vis:
+    uv run --locked --no-sync python demo/arch_cust_vis_demo.py
+
+demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at demo-extend-site-buses demo-arch-cust-vis
 
 # Install mdBook at the pinned version
 install-mdbook:
