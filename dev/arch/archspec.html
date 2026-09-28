@@ -193,7 +193,8 @@
   &quot;paths&quot;: [...],                 // optional
   &quot;feed_forward&quot;: false,          // optional, default false
   &quot;atom_reloading&quot;: false,        // optional, default false
-  &quot;blockade_radius&quot;: 2.0          // optional
+  &quot;blockade_radius&quot;: 2.0,         // optional
+  &quot;aod_capacity&quot;: {&quot;x&quot;: 4, &quot;y&quot;: 4} // optional, default unlimited
 }
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
@@ -206,6 +207,7 @@
 <tr><td><code>feed_forward</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports mid-circuit measurement with classical feedback.</td></tr>
 <tr><td><code>atom_reloading</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports reloading atoms after initial fill.</td></tr>
 <tr><td><code>blockade_radius</code></td><td>float</td><td><em>(optional)</em> Rydberg blockade radius in micrometers — metadata for interpreting entangling pairs.</td></tr>
+<tr><td><code>aod_capacity</code></td><td>AodCapacity</td><td><em>(optional, default unlimited)</em> The largest AOD rectangle one move may drive. See <a href="#aod-capacity-optional">AOD Capacity</a>.</td></tr>
 </tbody></table>
 </div>
 <hr />
@@ -335,6 +337,15 @@
   &quot;atom_reloading&quot;: false
 }
 </code></pre>
+<hr />
+<h2 id="aod-capacity-optional"><a class="header" href="#aod-capacity-optional">AOD Capacity (Optional)</a></h2>
+<p><code>aod_capacity</code> is the largest AOD rectangle a single move may drive, as a tone count per axis: at most <code>x</code> distinct source columns and <code>y</code> distinct source rows move together.</p>
+<pre><code class="language-jsonc">{
+  &quot;aod_capacity&quot;: {&quot;x&quot;: 4, &quot;y&quot;: 4}
+}
+</code></pre>
+<p>Both axes must be at least 1; a spec with a zero axis fails to load. When the field is absent, the capacity is unlimited.</p>
+<p>The router's search strategies honour the capacity. The Push-and-Rotate router does not, so it can emit a wider move. The bytecode validator does not check it.</p>
 <hr />
 <h2 id="validation-rules"><a class="header" href="#validation-rules">Validation Rules</a></h2>
 <p>The <code>ArchSpec::validate()</code> method checks all structural rules in a single pass, collecting every error rather than failing fast. Errors are grouped into coarse <code>ArchSpecError</code> categories, each carrying a descriptive message; the <strong>Error</strong> column below names the category (Rust enum variant). Through the Python bindings the categories map onto exception classes:</p>
