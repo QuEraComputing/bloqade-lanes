@@ -5,6 +5,7 @@ from math import hypot
 
 import bloqade.squin as squin
 import pytest
+from kirin import interp
 
 import bloqade.gemini as gemini
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -116,6 +117,95 @@ def test_inactive_qubits_fill_lexicographically_and_pins_hold() -> None:
         homes[4],
         homes[2],
     )
+
+
+def test_fully_pinned_pairs_share_one_cross_column_move_group() -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    homes, routes = heuristic._geometry()
+    placement = homes[:4]
+    stages = [((0, 1), (2, 3))]
+
+    assert routes[0][1].group == routes[2][3].group
+    assert _reference_score(homes, routes, stages, placement) == (
+        routes[0][1].depth,
+        routes[0][1].distance,
+    )
+    assert (
+        heuristic.compute_layout((0, 1, 2, 3), stages, dict(enumerate(placement)))
+        == placement
+    )
+
+
+@pytest.mark.parametrize(
+    "stages,message",
+    [
+        ([((0, 2),)], "absent from all_qubits"),
+        ([((0, 0),)], "cannot pair a qubit with itself"),
+    ],
+)
+def test_invalid_cz_stages_are_rejected(stages, message) -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+
+    with pytest.raises(ValueError, match=message):
+        heuristic.compute_layout((0, 1), stages)
+
+
+def test_more_qubits_than_architecture_supports_are_rejected() -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    qubits = tuple(range(heuristic.arch_spec.max_qubits + 1))
+
+    with pytest.raises(interp.InterpreterError, match="exceeds maximum supported"):
+        heuristic.compute_layout(qubits, [])
+
+
+def test_not_enough_home_sites_are_rejected(monkeypatch) -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    homes, routes = heuristic._geometry()
+    monkeypatch.setattr(heuristic, "_geometry", lambda: (homes[:4], routes[:4]))
+
+    with pytest.raises(ValueError, match="not enough logical home sites"):
+        heuristic.compute_layout((0, 1, 2, 3, 4), [])
+
+
+def test_geometry_requires_two_distinct_columns(monkeypatch) -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    homes = tuple(sorted(heuristic.arch_spec.home_sites))
+    monkeypatch.setattr(heuristic.arch_spec, "home_sites", frozenset(homes[::2]))
+
+    with pytest.raises(ValueError, match="two-column, one-zone"):
+        heuristic._geometry()
+
+
+def test_geometry_rejects_duplicate_home_positions(monkeypatch) -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    homes = tuple(sorted(heuristic.arch_spec.home_sites))
+    get_position = heuristic.arch_spec.get_position
+    monkeypatch.setattr(
+        heuristic.arch_spec,
+        "get_position",
+        lambda home: get_position(homes[0] if home == homes[1] else home),
+    )
+
+    with pytest.raises(ValueError, match="two-column, one-zone"):
+        heuristic._geometry()
+
+
+def test_geometry_requires_cz_staging_partners(monkeypatch) -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    monkeypatch.setattr(heuristic.arch_spec, "get_cz_partner", lambda _home: None)
+
+    with pytest.raises(ValueError, match="CZ staging partner"):
+        heuristic._geometry()
+
+
+def test_geometry_requires_transport_lanes(monkeypatch) -> None:
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    monkeypatch.setattr(
+        heuristic.arch_spec, "get_lane_address", lambda _source, _target: None
+    )
+
+    with pytest.raises(ValueError, match="has no lane"):
+        heuristic._geometry()
 
 
 def test_pipeline_exposes_opt_in_without_changing_default() -> None:
