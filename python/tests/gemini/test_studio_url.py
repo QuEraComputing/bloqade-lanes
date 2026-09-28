@@ -5,6 +5,9 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import logical
+from bloqade.gemini.logical import studio
+
+INF = float("inf")
 
 
 @logical.kernel(aggressive_unroll=True)
@@ -76,3 +79,152 @@ def test_initial_state_and_adjoint_gate() -> None:
 def test_unsupported_nonclifford_does_not_disappear() -> None:
     with pytest.raises(ValueError, match="cannot represent.*T"):
         logical.to_studio_url(unsupported_t)
+
+
+def test_kernel_arguments_are_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def parameterized(n: int):
+        qubits = squin.qalloc(n)
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="without arguments"):
+        logical.to_studio_url(parameterized)
+
+
+@pytest.mark.parametrize("count", [0, 11])
+def test_unsupported_qubit_counts_are_rejected(count: int) -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def bad_count():
+        qubits = squin.qalloc(count)
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="supports 1–10 logical qubits"):
+        logical.to_studio_url(bad_count)
+
+
+def test_missing_terminal_measurement_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def unmeasured():
+        qubits = squin.qalloc(1)
+        squin.x(qubits[0])
+        return qubits
+
+    with pytest.raises(ValueError, match="require terminal logical measurement"):
+        logical.to_studio_url(unmeasured)
+
+
+def test_invalid_home_slot_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def bad_home():
+        qubits = logical.qalloc_at(ilist.IList([10]))
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="logical home slots 0–9"):
+        logical.to_studio_url(bad_home)
+
+
+def test_preparation_after_gate_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def late_preparation():
+        qubits = squin.qalloc(1)
+        squin.x(qubits[0])
+        squin.u3(0.25, 0.0, 0.0, qubits[0])
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="preparation before gates"):
+        logical.to_studio_url(late_preparation)
+
+
+def test_repeated_preparation_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def repeated_preparation():
+        qubits = squin.qalloc(1)
+        squin.u3(0.25, 0.0, 0.0, qubits[0])
+        squin.u3(0.5, 0.0, 0.0, qubits[0])
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="repeated preparation"):
+        logical.to_studio_url(repeated_preparation)
+
+
+def test_nonfinite_preparation_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def nonfinite_preparation():
+        qubits = squin.qalloc(1)
+        squin.u3(INF, 0.0, 0.0, qubits[0])
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="angles must be finite"):
+        logical.to_studio_url(nonfinite_preparation)
+
+
+def test_partial_terminal_measurement_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def partial_measurement():
+        qubits = squin.qalloc(2)
+        logical.terminal_measure(qubits[0:1])
+
+    with pytest.raises(ValueError, match="measurement of all qubits"):
+        logical.to_studio_url(partial_measurement)
+
+
+def test_column_limit_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(studio, "_MAX_COLUMNS", 2)
+
+    with pytest.raises(ValueError, match="1000-column limit"):
+        logical.to_studio_url(bell)
+
+
+def test_repeated_single_qubit_broadcast_operand_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def repeated_h():
+        qubits = squin.qalloc(1)
+        squin.broadcast.h(ilist.IList([qubits[0], qubits[0]]))
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="broadcast gate repeats a qubit"):
+        logical.to_studio_url(repeated_h)
+
+
+def test_repeated_adjoint_broadcast_operand_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def repeated_s():
+        qubits = squin.qalloc(1)
+        squin.broadcast.s(ilist.IList([qubits[0], qubits[0]]))
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="broadcast gate repeats a qubit"):
+        logical.to_studio_url(repeated_s)
+
+
+def test_overlapping_two_qubit_broadcast_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def overlapping_cz():
+        qubits = squin.qalloc(3)
+        squin.broadcast.cz(qubits[0:2], qubits[1:3])
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="must be disjoint"):
+        logical.to_studio_url(overlapping_cz)
+
+
+def test_unequal_two_qubit_broadcast_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def unequal_cz():
+        qubits = squin.qalloc(3)
+        squin.broadcast.cz(qubits[0:2], qubits[2:3])
+        return logical.default_post_processing(qubits)
+
+    with pytest.raises(ValueError, match="unequal operand lengths"):
+        logical.to_studio_url(unequal_cz)
+
+
+def test_gate_after_measurement_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def late_gate():
+        qubits = squin.qalloc(1)
+        logical.terminal_measure(qubits)
+        squin.x(qubits[0])
+
+    with pytest.raises(ValueError, match="gates after measurement"):
+        logical.to_studio_url(late_gate)
