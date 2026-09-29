@@ -49,7 +49,6 @@ from typing import NamedTuple
 from kirin import ir, types
 from kirin.dialects import ilist, py
 
-from bloqade.lanes.arch.geometry import ArchSpecGeometry
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
@@ -63,8 +62,8 @@ N_ROWS = 5
 QUARTER_TURN = 0.25
 """Offset (turns) from the ``phi`` Euler angle to the rotation-axis angle."""
 
-_COLUMNS_PER_PERIOD = 4
-"""Grid columns per repeat of the ``left0, right0, left1, right1`` pattern."""
+_N_LOGICAL_COLUMNS = 4
+"""Columns of the Gemini logical zone grid: ``left0, right0, left1, right1``."""
 
 
 class CZWindow(NamedTuple):
@@ -108,25 +107,42 @@ def _match_index(
 def resolve_col_group_and_row(
     arch_spec: ArchSpec, location: LocationAddress, *, atol: float = 1e-6
 ) -> tuple[int, int]:
-    """Resolve a location to its Gemini ``(col_group, row)``.
+    """Resolve a Gemini *logical*-spec location to its ``(col_group, row)``.
 
-    The Gemini grid repeats a four-column pattern along ``x``: the left and
-    right sites of a column-group-0 word pair, then the left and right sites
-    of a column-group-1 word pair. ``col_group`` is which of the two
-    interleaved groups the location's column falls in (irrespective of
-    left/right), and ``row`` is the index of its ``y`` position in the zone
-    grid. Works for both the logical and the physical Gemini specs since they
-    share this column pattern.
+    The Gemini logical zone grid has four columns, ``left0, right0, left1,
+    right1``: the left and right sites of a column-group-0 word pair, then
+    those of a column-group-1 pair. ``col_group`` is the pair the location's
+    column belongs to and ``row`` is the index of its ``y`` position.
+
+    The state-injection pulse only addresses the *left* site of each pair,
+    so a right-site location is rejected rather than silently mapped onto
+    its left partner. Physical-spec locations are rejected too: one logical
+    qubit spans many physical sites, so a single physical site has no slot.
 
     Raises:
-        ValueError: if ``location`` is not a valid site of ``arch_spec`` or
-            its position is not on the zone grid.
+        ValueError: if ``arch_spec`` does not have the Gemini logical grid
+            shape, ``location`` is not a valid site, its position is off the
+            zone grid, or it is a right site.
     """
+    zones = arch_spec.zones
+    if not 0 <= location.zone_id < len(zones):
+        raise ValueError(f"{location!r} names a zone that {arch_spec!r} lacks")
+    grid = zones[location.zone_id].grid
+    xs, ys = tuple(grid.x_positions), tuple(grid.y_positions)
+    if len(xs) != _N_LOGICAL_COLUMNS:
+        raise ValueError(
+            f"state injection expects the Gemini logical grid of "
+            f"{_N_LOGICAL_COLUMNS} columns, got {len(xs)}; pass the logical arch spec"
+        )
     x, y = arch_spec.get_position(location)
-    grid = ArchSpecGeometry(arch_spec).get_zone_grid(location.zone_id)
-    col = _match_index(tuple(grid.x_positions), x, atol, "x")
-    row = _match_index(tuple(grid.y_positions), y, atol, "y")
-    col_group = (col % _COLUMNS_PER_PERIOD) // (_COLUMNS_PER_PERIOD // N_COL_GROUPS)
+    col = _match_index(xs, x, atol, "x")
+    row = _match_index(ys, y, atol, "y")
+    col_group, side = divmod(col, _N_LOGICAL_COLUMNS // N_COL_GROUPS)
+    if side:
+        raise ValueError(
+            f"{location!r} is the right site of its word pair; the state-injection "
+            "pulse only addresses left sites"
+        )
     return col_group, row
 
 
@@ -175,23 +191,37 @@ def logical_initialize_to_state_injection_args(
 
     Args:
         node: the ``move.LogicalInitialize`` to bridge.
-        arch_spec: the Gemini arch spec ``node``'s addresses were placed on.
+        arch_spec: the Gemini logical arch spec ``node`` was placed on.
         cz_window: CZ top-hat window in the pulse kernels' frame.
         n_rows: rows per column group expected by the pulse kernel.
         atol: tolerance for matching site positions to the zone grid.
 
     Raises:
-        ValueError: if two addresses resolve to the same ``(col_group, row)``,
-            a row is outside ``range(n_rows)``, or the window is malformed.
+        ValueError: if the node is empty, spans several zones, has
+            mismatched argument lengths, holds a location
+            :func:`resolve_col_group_and_row` rejects, puts two qubits in one
+            ``(col_group, row)`` slot, has a row outside ``range(n_rows)``, or
+            the window is malformed. Validation completes before any IR is
+            inserted.
     """
     cz_window.validate()
 
-    slots: dict[tuple[int, int], LocationAddress] = {}
-    angles: dict[tuple[int, int], tuple[ir.SSAValue, ir.SSAValue]] = {}
-    axis_by_phi: dict[ir.SSAValue, ir.SSAValue] = {}
-    quarter_turn: ir.SSAValue | None = None
+    addresses = node.location_addresses
+    if not addresses:
+        raise ValueError("LogicalInitialize has no locations; nothing to inject")
+    zone_ids = sorted({location.zone_id for location in addresses})
+    if len(zone_ids) > 1:
+        raise ValueError(
+            f"state injection addresses a single zone, but the node spans zones {zone_ids}"
+        )
 
-    for location, theta, phi in zip(node.location_addresses, node.thetas, node.phis):
+    # Resolve and validate every location before touching the IR, so a
+    # rejected node leaves the caller's block unchanged.
+    resolved: dict[tuple[int, int], tuple[LocationAddress, ir.SSAValue, ir.SSAValue]]
+    resolved = {}
+    for location, theta, phi, _lam in zip(
+        addresses, node.thetas, node.phis, node.lams, strict=True
+    ):
         col_group, row = resolve_col_group_and_row(arch_spec, location, atol=atol)
         if row >= n_rows:
             raise ValueError(
@@ -199,23 +229,25 @@ def logical_initialize_to_state_injection_args(
                 f"kernel only addresses {n_rows} rows"
             )
         slot = (col_group, row)
-        if slot in slots:
+        if slot in resolved:
             raise ValueError(
-                f"{location!r} and {slots[slot]!r} both resolve to column group "
-                f"{col_group}, row {row}; a LogicalInitialize may hold at most "
-                "one logical qubit per slot"
+                f"{location!r} and {resolved[slot][0]!r} both resolve to column "
+                f"group {col_group}, row {row}; a LogicalInitialize may hold at "
+                "most one logical qubit per slot"
             )
-        slots[slot] = location
+        resolved[slot] = (location, theta, phi)
 
-        if (axis_angle := axis_by_phi.get(phi)) is None:
-            if quarter_turn is None:
-                (quarter_stmt := py.Constant(QUARTER_TURN)).insert_before(node)
-                quarter_turn = quarter_stmt.result
-            axis_angle, _ = theta_phi_to_axis_rotation_angle(
-                theta, phi, node, quarter_turn=quarter_turn
+    (quarter_stmt := py.Constant(QUARTER_TURN)).insert_before(node)
+    converted: dict[
+        tuple[ir.SSAValue, ir.SSAValue], tuple[ir.SSAValue, ir.SSAValue]
+    ] = {}
+    angles: dict[tuple[int, int], tuple[ir.SSAValue, ir.SSAValue]] = {}
+    for slot, (_, theta, phi) in resolved.items():
+        if (theta, phi) not in converted:
+            converted[(theta, phi)] = theta_phi_to_axis_rotation_angle(
+                theta, phi, node, quarter_turn=quarter_stmt.result
             )
-            axis_by_phi[phi] = axis_angle
-        angles[slot] = (axis_angle, theta)
+        angles[slot] = converted[(theta, phi)]
 
     zero: ir.SSAValue | None = None
 

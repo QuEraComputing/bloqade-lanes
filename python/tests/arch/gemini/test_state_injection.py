@@ -4,10 +4,12 @@ from typing import Any
 
 import bloqade.squin as squin
 import pytest
-from kirin import ir
+from kirin import ir, rewrite
+from kirin.analysis import forward
 from kirin.dialects import ilist, py
 
 import bloqade.gemini as gemini
+from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.arch.gemini.state_injection import (
     N_ROWS,
@@ -15,9 +17,11 @@ from bloqade.lanes.arch.gemini.state_injection import (
     logical_initialize_to_state_injection_args,
     make_state_injection_args_getter,
     resolve_col_group_and_row,
+    theta_phi_to_axis_rotation_angle,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
+from bloqade.lanes.rewrite.move2squin import gates
 from bloqade.lanes.transform import LogicalPipeline
 
 WINDOW = CZWindow.from_bounds(-20.0, 20.0, keep_out_buffer=10.0)
@@ -64,13 +68,11 @@ def _make_node(
     "word_id, expected",
     [
         (0, (0, 0)),  # column group 0, left site
-        (1, (0, 0)),  # column group 0, right site (same slot)
         (2, (1, 0)),  # column group 1, left site
-        (3, (1, 0)),  # column group 1, right site
-        (5, (0, 1)),
+        (4, (0, 1)),
         (10, (1, 2)),
         (16, (0, 4)),
-        (19, (1, 4)),
+        (18, (1, 4)),
     ],
 )
 def test_resolve_col_group_and_row_logical_spec(word_id, expected):
@@ -78,23 +80,30 @@ def test_resolve_col_group_and_row_logical_spec(word_id, expected):
     assert resolve_col_group_and_row(spec, LocationAddress(word_id, 0)) == expected
 
 
+@pytest.mark.parametrize("word_id", [1, 3, 5, 19])
+def test_resolve_col_group_and_row_rejects_right_site(word_id):
+    """The pulse only addresses left sites; a right site must not alias its
+    left partner's slot."""
+    with pytest.raises(ValueError, match="right site"):
+        resolve_col_group_and_row(logical.get_arch_spec(), LocationAddress(word_id, 0))
+
+
 @pytest.mark.parametrize(
-    "location, expected",
-    [
-        (LocationAddress(0, 0), (0, 0)),
-        (LocationAddress(0, 7), (0, 0)),  # x = 140: still column group 0
-        (LocationAddress(6, 3), (1, 1)),  # x = 70, y = 10
-        (LocationAddress(17, 2), (0, 4)),  # x = 42, y = 40
-    ],
+    "location", [LocationAddress(0, 0), LocationAddress(0, 7), LocationAddress(6, 3)]
 )
-def test_resolve_col_group_and_row_physical_spec(location, expected):
-    spec = physical.get_arch_spec()
-    assert resolve_col_group_and_row(spec, location) == expected
+def test_resolve_col_group_and_row_rejects_physical_spec(location):
+    with pytest.raises(ValueError, match="Gemini logical grid"):
+        resolve_col_group_and_row(physical.get_arch_spec(), location)
 
 
 def test_resolve_col_group_and_row_rejects_invalid_location():
     with pytest.raises(ValueError):
         resolve_col_group_and_row(logical.get_arch_spec(), LocationAddress(99, 0))
+
+
+def test_resolve_col_group_and_row_rejects_unknown_zone():
+    with pytest.raises(ValueError, match="zone"):
+        resolve_col_group_and_row(logical.get_arch_spec(), LocationAddress(0, 0, 1))
 
 
 # --- angle convention ---------------------------------------------------------
@@ -143,6 +152,72 @@ def test_shared_phi_reuses_axis_angle_statement():
     assert len([s for s in block.stmts if isinstance(s, py.Add)]) == 1
 
 
+def test_standalone_helper_inserts_own_quarter_turn():
+    block = ir.Block()
+    block.stmts.append(theta := py.Constant(0.125))
+    block.stmts.append(phi := py.Constant(0.3))
+    block.stmts.append(anchor := py.Constant(0.0))
+
+    axis, rotation = theta_phi_to_axis_rotation_angle(theta.result, phi.result, anchor)
+
+    assert rotation is theta.result
+    add = axis.owner
+    assert isinstance(add, py.Add)
+    quarter = add.rhs.owner
+    assert isinstance(quarter, py.Constant) and quarter.value.unwrap() == 0.25
+    # Both new statements land before the insertion point, constant first.
+    stmts = list(block.stmts)
+    assert stmts.index(quarter) < stmts.index(add) < stmts.index(anchor)
+
+
+def _eval(ssa: ir.SSAValue) -> float:
+    owner = ssa.owner
+    if isinstance(owner, py.Constant):
+        return owner.value.unwrap()
+    if isinstance(owner, py.Add):
+        return _eval(owner.lhs) + _eval(owner.rhs)
+    if isinstance(owner, py.Sub):
+        return _eval(owner.lhs) - _eval(owner.rhs)
+    raise AssertionError(f"cannot evaluate {owner!r}")
+
+
+@pytest.mark.parametrize("theta_value, phi_value", [(0.5, 0.0), (0.2, 0.35)])
+def test_axis_angle_round_trips_through_move2squin_global_r(theta_value, phi_value):
+    """Pin the bridge to move2squin's GlobalR mapping (phi = axis - 0.25): feeding
+    the bridge's (axis, rotation) back through it must recover (theta, phi)."""
+    block = ir.Block()
+    block.stmts.append(theta := py.Constant(theta_value))
+    block.stmts.append(phi := py.Constant(phi_value))
+    gate = move.GlobalR(
+        current_state=ir.TestValue(),
+        rotation_angle=theta.result,
+        axis_angle=theta.result,  # placeholder, replaced below
+    )
+    block.stmts.append(gate)
+    axis, rotation = theta_phi_to_axis_rotation_angle(theta.result, phi.result, gate)
+    gate.axis_angle = axis
+    gate.rotation_angle = rotation
+
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        gate,
+        entries={
+            gate.result: atom.AtomState(
+                atom.AtomStateData.new({0: LocationAddress(0, 0)})
+            )
+        },
+    )
+    rule = gates.InsertGates(
+        arch_spec=logical.get_arch_spec(),
+        physical_ssa_values={0: ir.TestValue()},  # type: ignore
+        move_exec_analysis=frame,
+    )
+    rewrite.Walk(rule).rewrite(block)
+
+    (u3,) = [s for s in block.stmts if isinstance(s, squin.gate.stmts.U3)]
+    assert _eval(u3.theta) == pytest.approx(theta_value)
+    assert _eval(u3.phi) == pytest.approx(phi_value)
+
+
 # --- argument layout ----------------------------------------------------------
 
 
@@ -151,8 +226,8 @@ def test_args_layout_covers_both_column_groups():
     locations = (
         LocationAddress(0, 0),  # group 0, row 0
         LocationAddress(2, 0),  # group 1, row 0
-        LocationAddress(9, 0),  # group 0, row 2
-        LocationAddress(19, 0),  # group 1, row 4
+        LocationAddress(8, 0),  # group 0, row 2
+        LocationAddress(18, 0),  # group 1, row 4
     )
     thetas = tuple(ir.TestValue() for _ in locations)
     phis = tuple(ir.TestValue() for _ in locations)
@@ -200,7 +275,7 @@ def test_duplicate_slot_raises():
     block = ir.Block()
     node = _make_node(
         block,
-        (LocationAddress(0, 0), LocationAddress(1, 0)),
+        (LocationAddress(0, 0), LocationAddress(0, 0)),
         (ir.TestValue(), ir.TestValue()),
         (ir.TestValue(), ir.TestValue()),
     )
@@ -210,10 +285,63 @@ def test_duplicate_slot_raises():
         )
 
 
+def test_rejected_node_leaves_block_untouched():
+    """A failure on a later address must not leave IR from earlier ones."""
+    block = ir.Block()
+    node = _make_node(
+        block,
+        (LocationAddress(0, 0), LocationAddress(1, 0)),  # second is a right site
+        (ir.TestValue(), ir.TestValue()),
+        (ir.TestValue(), ir.TestValue()),
+    )
+    with pytest.raises(ValueError, match="right site"):
+        logical_initialize_to_state_injection_args(
+            node, logical.get_arch_spec(), WINDOW
+        )
+    assert list(block.stmts) == [node]
+
+
+def test_empty_node_raises():
+    block = ir.Block()
+    node = _make_node(block, (), (), ())
+    with pytest.raises(ValueError, match="no locations"):
+        logical_initialize_to_state_injection_args(
+            node, logical.get_arch_spec(), WINDOW
+        )
+
+
+def test_multi_zone_node_raises():
+    block = ir.Block()
+    node = _make_node(
+        block,
+        (LocationAddress(0, 0, 0), LocationAddress(0, 0, 1)),
+        (ir.TestValue(), ir.TestValue()),
+        (ir.TestValue(), ir.TestValue()),
+    )
+    with pytest.raises(ValueError, match="single zone"):
+        logical_initialize_to_state_injection_args(
+            node, logical.get_arch_spec(), WINDOW
+        )
+
+
+def test_mismatched_argument_lengths_raise():
+    block = ir.Block()
+    node = _make_node(
+        block,
+        (LocationAddress(0, 0), LocationAddress(2, 0)),
+        (ir.TestValue(),),
+        (ir.TestValue(), ir.TestValue()),
+    )
+    with pytest.raises(ValueError):
+        logical_initialize_to_state_injection_args(
+            node, logical.get_arch_spec(), WINDOW
+        )
+
+
 def test_row_beyond_kernel_rows_raises():
     block = ir.Block()
     node = _make_node(
-        block, (LocationAddress(19, 0),), (ir.TestValue(),), (ir.TestValue(),)
+        block, (LocationAddress(18, 0),), (ir.TestValue(),), (ir.TestValue(),)
     )
     with pytest.raises(ValueError, match="only addresses 2 rows"):
         logical_initialize_to_state_injection_args(
