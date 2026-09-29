@@ -77,7 +77,7 @@ def test_uninlined_callee_measurement_is_reported_not_raised():
     def subroutine(reg):
         return gemini.logical.terminal_measure(reg)
 
-    @gemini.logical.kernel(verify=False, inline=False)
+    @gemini.logical.kernel(verify=False, inline=False, aggressive_unroll=False)
     def main():
         qbs = ilist.IList([squin.qubit.new(), squin.qubit.new()])
         squin.cz(qbs[0], qbs[1])
@@ -101,7 +101,7 @@ def test_kernel_group_reports_every_violation_together():
     """
     with pytest.raises(ValidationErrorGroup) as exc_info:
 
-        @gemini.logical.kernel(inline=False)
+        @gemini.logical.kernel(inline=False, aggressive_unroll=False)
         def main():
             qbs = ilist.IList([squin.qubit.new(), squin.qubit.new()])
             squin.cz(qbs[0], qbs[1])

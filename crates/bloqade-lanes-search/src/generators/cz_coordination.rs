@@ -21,7 +21,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::generators::heuristic::ScoredTriple;
-use crate::primitives::ordering::TripletKey;
+use crate::primitives::ordering::GroupKey;
 
 /// Policy controlling how CZ pairing influences candidate scoring/selection.
 ///
@@ -52,7 +52,7 @@ pub(crate) trait CzCoordination {
     ///
     /// Default: no-op (fixed-target). [`EntanglingCoordination`] applies the
     /// `+1` boost.
-    fn boost_coordinated_pairs(&self, _selected: &mut Vec<(TripletKey, ScoredTriple)>) {}
+    fn boost_coordinated_pairs(&self, _selected: &mut Vec<(GroupKey, ScoredTriple)>) {}
 }
 
 /// Legacy single-target coordination: no penalty, width 1, no boost.
@@ -75,11 +75,11 @@ impl CzCoordination for EntanglingCoordination<'_> {
         3
     }
 
-    fn boost_coordinated_pairs(&self, selected: &mut Vec<(TripletKey, ScoredTriple)>) {
+    fn boost_coordinated_pairs(&self, selected: &mut Vec<(GroupKey, ScoredTriple)>) {
         let pairs = self.pairs;
 
         // Build qubit → set of selected triplet keys.
-        let mut keys_by_qubit: HashMap<u32, HashSet<TripletKey>> = HashMap::new();
+        let mut keys_by_qubit: HashMap<u32, HashSet<GroupKey>> = HashMap::new();
         for entry in selected.iter() {
             keys_by_qubit
                 .entry(entry.1.qubit_id)
@@ -88,7 +88,7 @@ impl CzCoordination for EntanglingCoordination<'_> {
         }
 
         // Find shared triplet keys for each CZ pair.
-        let mut boost_set: HashSet<(TripletKey, u32)> = HashSet::new();
+        let mut boost_set: HashSet<(GroupKey, u32)> = HashSet::new();
         for &(qa, qb) in pairs {
             if let (Some(keys_a), Some(keys_b)) = (keys_by_qubit.get(&qa), keys_by_qubit.get(&qb)) {
                 for key in keys_a.intersection(keys_b) {
@@ -117,11 +117,11 @@ mod tests {
 
     // Two distinct bus triplets for boost tests; the specific variants are
     // irrelevant — only triplet equality/inequality matters.
-    fn key_a() -> TripletKey {
-        TripletKey::new(MoveType::WordBus, 1, Direction::Backward)
+    fn key_a() -> GroupKey {
+        GroupKey::new(MoveType::WordBus, 1, 0, Direction::Backward)
     }
-    fn key_b() -> TripletKey {
-        TripletKey::new(MoveType::ZoneBus, 2, Direction::Backward)
+    fn key_b() -> GroupKey {
+        GroupKey::new(MoveType::ZoneBus, 2, 0, Direction::Backward)
     }
 
     fn triple(qubit_id: u32, score: i32) -> ScoredTriple {

@@ -28,6 +28,18 @@ pub enum ConfigError {
     DuplicateTargetQubit { qubit_id: u32 },
     /// Two qubits were placed on the same initial location.
     DuplicateOccupancy { location: u64, qubits: (u32, u32) },
+    /// The requested strategy's model does not fit this architecture.
+    ///
+    /// Raised at the solve entry points for strategies whose search space is
+    /// only well defined under an architecture precondition the spec does not
+    /// enforce at build time (the exhaustive generator's P1/P2, see
+    /// [`ExhaustivePrecondition`](crate::generators::ExhaustivePrecondition)).
+    /// A property of the spec, not of the request, so it is reported once per
+    /// engine rather than discovered mid-search.
+    UnsupportedArchitecture {
+        strategy: &'static str,
+        reason: String,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -49,6 +61,10 @@ impl fmt::Display for ConfigError {
                 f,
                 "invalid request: qubits {} and {} are both placed at location {location:#x}",
                 qubits.0, qubits.1
+            ),
+            Self::UnsupportedArchitecture { strategy, reason } => write!(
+                f,
+                "strategy {strategy} does not support this architecture: {reason}"
             ),
         }
     }

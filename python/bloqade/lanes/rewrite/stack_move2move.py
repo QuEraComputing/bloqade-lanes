@@ -31,6 +31,32 @@ from bloqade.lanes.utils import no_none_elements_tuple
 T = TypeVar("T")
 
 
+def _representation(value: ir.SSAValue) -> str:
+    """What ``value`` is at run time, spelled as the text format spells
+    vihaco's types: the type a constant pushes, or ``"undef"`` for the
+    placeholder a lanes op leaves for a result the machine does not simulate.
+
+    Read off values this rewrite has already lowered, walking in block order:
+    ``ConstFloat``/``ConstInt`` are ``py.Constant`` by then, and the address
+    constants are still in place (DCE removes them afterwards).
+    """
+    from kirin.dialects import py
+
+    if isinstance(value, ir.ResultValue):
+        owner = value.owner
+        if isinstance(owner, py.Constant):
+            data = owner.value.unwrap()
+            if isinstance(data, float):
+                return "f64"
+            if isinstance(data, int) and not isinstance(data, bool):
+                return "i64"
+        if isinstance(owner, (stack_move.ConstLoc, stack_move.ConstLane)):
+            return "u64"
+        if isinstance(owner, stack_move.ConstZone):
+            return "u32"
+    return "undef"
+
+
 @dataclass
 class RewriteStackMoveToMove(RewriteRule):
     """Rewrite a stack_move block into a multi-dialect block in place.
@@ -51,6 +77,10 @@ class RewriteStackMoveToMove(RewriteRule):
       explicit mapping. The value type is Any because the lifted values
       span heterogeneous scalar and address types.
     - state: the current StateType SSA value in the target IR.
+    - local_values: local index → the SSA value the last StoreLocal to it
+      wrote, and what that value is at run time (see ``_representation``),
+      so each LoadLocal can be resolved to the value it copies. The walk is
+      in block order and a block is straight-line, so "last" is exact.
 
     For SSA-valued outputs (arrays, futures, detectors, observables,
     constants that emit py.Constant), we use the Kirin idiom
@@ -62,8 +92,10 @@ class RewriteStackMoveToMove(RewriteRule):
     arch_spec: ArchSpec
     ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
     state: ir.SSAValue | None = None
+    local_values: dict[int, tuple[ir.SSAValue, str]] = field(default_factory=dict)
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
+        self.local_values = {}
         # Insert the initial move.Load at block start.
         load = move.Load()
         first = next(iter(node.stmts), None)
@@ -140,13 +172,6 @@ class RewriteStackMoveToMove(RewriteRule):
         self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
-    @_rewrite.register(stack_move.Pop)
-    def _(self, stmt: stack_move.Pop, to_delete: list[ir.Statement]) -> None:
-        # Pop collapses — no target emission. The popped SSA value remains
-        # on its definition; if nothing else references it, it becomes
-        # dead and a later DCE pass cleans it up.
-        to_delete.append(stmt)
-
     @_rewrite.register(stack_move.Dup)
     def _(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
         # Dup is a semantic identity — redirect all uses of the result to
@@ -154,11 +179,56 @@ class RewriteStackMoveToMove(RewriteRule):
         stmt.result.replace_by(stmt.value)
         to_delete.append(stmt)
 
-    @_rewrite.register(stack_move.Swap)
-    def _(self, stmt: stack_move.Swap, to_delete: list[ir.Statement]) -> None:
-        # Swap is a permutation — out_top ≡ in_bot, out_bot ≡ in_top.
-        stmt.out_top.replace_by(stmt.in_bot)
-        stmt.out_bot.replace_by(stmt.in_top)
+    @_rewrite.register(stack_move.StoreLocal)
+    def _(self, stmt: stack_move.StoreLocal, to_delete: list[ir.Statement]) -> None:
+        # A store collapses — no target emission. It only records which SSA
+        # value the local now holds; a value nothing loads back becomes dead
+        # and a later DCE pass cleans it up.
+        #
+        # A typed store of a concrete value of another type is one the machine
+        # refuses, so there is no program to lower.
+        representation = _representation(stmt.value)
+        if representation != "undef" and stmt.value_type != representation:
+            raise ValueError(
+                f"store {stmt.value_type} into local {stmt.index} of a "
+                f"{representation}, which the machine refuses"
+            )
+        self.local_values[stmt.index] = (stmt.value, representation)
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.LoadLocal)
+    def _(self, stmt: stack_move.LoadLocal, to_delete: list[ir.Statement]) -> None:
+        # A load is a semantic identity with the value last stored at its
+        # index — redirect all uses of the result to that value in place —
+        # but only when it reads that value back as itself: `load undef` of
+        # the placeholder a lanes op leaves, or `load <ty>` of a `<ty>`.
+        #
+        # Anything else means something different on the machine. A typed load
+        # of a placeholder reads that type's zero, which is not the array or
+        # future the placeholder stands for and has no counterpart here, and a
+        # load of a concrete value as another type fails. So does a local
+        # nothing stored, which reads as zero with no value to redirect to.
+        # None of the compiler's code produces any of these.
+        entry = self.local_values.get(stmt.index)
+        if entry is None:
+            raise ValueError(
+                f"load of local {stmt.index}, which nothing has stored to: "
+                f"an unwritten local has no value to lower to"
+            )
+        stored, representation = entry
+        if stmt.value_type != representation:
+            if representation == "undef":
+                meaning = (
+                    f"a placeholder, which the machine reads as the zero of "
+                    f"{stmt.value_type} rather than as the value it stands for; "
+                    f"only `load undef` reads that value back"
+                )
+            else:
+                meaning = f"a {representation}, which the machine refuses"
+            raise ValueError(
+                f"load {stmt.value_type} of local {stmt.index}, which holds {meaning}"
+            )
+        stmt.result.replace_by(stored)
         to_delete.append(stmt)
 
     # ── Attribute lifting ─────────────────────────────────────────────

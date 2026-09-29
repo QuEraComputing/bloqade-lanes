@@ -15,6 +15,7 @@ use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::graph::{MoveSet, NodeId};
+use crate::primitives::ordering::GroupKey;
 use crate::primitives::path::find_path_occupied;
 use crate::traits::MoveGenerator;
 
@@ -72,14 +73,15 @@ impl MoveGenerator for GreedyGenerator {
             return;
         }
 
-        // 3. Group first lanes by (move_type, bus_id, direction) — zone-independent.
-        let mut groups: HashMap<(MoveType, u32, Direction), HashMap<u64, u64>> = HashMap::new();
+        // 3. Group first lanes by bus group (move type, bus, zone, direction).
+        let mut groups: HashMap<(MoveType, u32, u32, Direction), HashMap<u64, u64>> =
+            HashMap::new();
 
         // Build reverse lookup for resolving qubit → source location.
         let loc_to_qubit = config.location_to_qubit_map();
 
         for &(_qid, lane) in &first_lanes {
-            let key = (lane.move_type, lane.bus_id, lane.direction);
+            let key = (lane.move_type, lane.bus_id, lane.zone_id, lane.direction);
             let Some((src, _dst)) = index.endpoints(&lane) else {
                 continue;
             };
@@ -89,8 +91,13 @@ impl MoveGenerator for GreedyGenerator {
         }
 
         // 4. For each group, build AOD grids and emit candidates.
-        for ((mt, bus_id, dir), entries) in &groups {
-            let grid_ctx = BusGridContext::new(index, *mt, *bus_id, None, *dir, &occupied);
+        for ((mt, bus_id, zone_id, dir), entries) in &groups {
+            let grid_ctx = BusGridContext::new(
+                index,
+                GroupKey::new(*mt, *bus_id, *zone_id, *dir),
+                &occupied,
+                ctx.capacity,
+            );
             let grids = grid_ctx.build_aod_grids(entries);
 
             for grid in grids {
@@ -151,6 +158,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
+            capacity: None,
         };
         let mut state = SearchState::default();
 
@@ -192,6 +200,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
+            capacity: None,
         };
         let mut state = SearchState::default();
 

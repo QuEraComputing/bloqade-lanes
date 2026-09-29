@@ -73,7 +73,7 @@ use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
-use bloqade_lanes_search::generators::exhaustive::ExhaustiveGenerator;
+use bloqade_lanes_search::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
 use bloqade_lanes_search::primitives::config::Config;
 use bloqade_lanes_search::primitives::context::{SearchContext, SearchState};
 use bloqade_lanes_search::primitives::distance::DistanceTable;
@@ -575,8 +575,9 @@ fn optimal_distances_from(index: &LaneIndex, start: &Config) -> HashMap<ConfigKe
         blocked: &blocked,
         targets: &no_targets,
         cz_pairs: None,
+        capacity: None,
     };
-    let generator = ExhaustiveGenerator::new(None, None);
+    let generator = ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap();
     // `NodeId` has no public constructor and the exhaustive generator ignores
     // the one it is handed, so borrow a root id from a throwaway graph.
     let scratch = SearchGraph::new(start.clone());

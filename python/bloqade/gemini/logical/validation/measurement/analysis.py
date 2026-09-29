@@ -17,6 +17,23 @@ class _GeminiTerminalMeasurementValidationAnalysis(Forward[EmptyLattice]):
     terminal_measurement_encountered: bool = False
     lattice = EmptyLattice
 
+    def check_gate_after_measurement(self, stmt: ir.Statement) -> None:
+        """Report ``stmt`` if the terminal measurement has already been seen.
+
+        The terminal measurement consumes every allocated qubit, so any gate
+        evaluated after it acts on a measured qubit, whichever qubit it names.
+        """
+        if self.terminal_measurement_encountered:
+            self.add_validation_error(
+                stmt,
+                ir.ValidationError(
+                    stmt,
+                    f"Gate {stmt.name} is applied after the terminal measurement; "
+                    "no gates are allowed after terminal_measure in Gemini "
+                    "logical programs!",
+                ),
+            )
+
     # boilerplate, not really worried about these right now
     def eval_fallback(self, frame: ForwardFrame, node: ir.Statement):
         return tuple(self.lattice.bottom() for _ in range(len(node.results)))

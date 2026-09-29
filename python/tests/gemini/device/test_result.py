@@ -48,7 +48,7 @@ def _kernel_b():
     return logical.terminal_measure(q)
 
 
-@logical.kernel(num_physical_qubits=1, aggressive_unroll=True)
+@logical.kernel(aggressive_unroll=True)
 def _kernel_with_postprocessing():
     q = squin.qalloc(2)
     measurements = logical.terminal_measure(q)
@@ -409,7 +409,8 @@ def test_postproc_termmeasure_one():
 
 
 def test_postproc_termmeasure_none():
-    @logical.kernel(aggressive_unroll=True)
+    # An empty program no longer passes validation; this pins post-processing.
+    @logical.kernel(aggressive_unroll=True, verify=False)
     def test_qalloc_4_5():
         _ = logical.qalloc_at(ilist.IList([]))
         # squin.h(qubits[0])

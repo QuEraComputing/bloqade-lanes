@@ -77,6 +77,18 @@ class RustPlacementTraversal:
     lookahead: bool = False
     collect_entropy_trace: bool = False
     seed: int = 0
+    bound_terminates: bool = True
+    """Let the completion bound end the search once the plan is proven optimal.
+
+    On by default. The proof is the root certificate -- the plan's cost has
+    reached ``h(root)``, which lower-bounds every legal plan -- so it holds
+    without a complete generator, and the solve reports ``proven``.
+
+    Stopping skips no expansion: a cut root cannot be expanded from, so what
+    it ends is a spin over already-cut nodes. ``False`` restores that spin and
+    is useful only for A/B measurement. Requires ``completion_bound``; inert
+    without one.
+    """
     completion_bound: str | None = None
     """Admissible completion bound for branch-and-bound pruning.
 
@@ -126,6 +138,7 @@ def _move_search_from_traversal(
         collect_entropy_trace=collect_entropy_trace,
         seed=traversal.seed,
         completion_bound=traversal.completion_bound,
+        bound_terminates=traversal.bound_terminates,
     )
     return (
         _native.MoveSearch.entropy()
@@ -148,6 +161,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
+    _rust_proven_total: int = field(default=0, init=False, repr=False)
     _rust_entropy_fallback_count: int = field(default=0, init=False, repr=False)
     _bound_stats_total: dict[str, float] = field(
         default_factory=dict, init=False, repr=False
@@ -271,6 +285,15 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         """
         return dict(self._bound_stats_total)
 
+    @property
+    def rust_proven_total(self) -> int:
+        """Solves whose plan the bound proved optimal.
+
+        Read against the solve count rather than alone: `False` on a solve
+        means unproven, not suboptimal.
+        """
+        return self._rust_proven_total
+
     def _accumulate_bound_stats(self, stats: dict[str, float | None]) -> None:
         """Fold one solve's bound statistics into the running totals."""
         for key in (
@@ -288,6 +311,31 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         gap = stats.get("optimality_gap")
         if gap is not None:
             gap = float(gap)
+            # `optimality_gap` is `(incumbent - h(root)) / incumbent`, and Rust
+            # only reports it when both are finite and the solve produced a
+            # plan. That is exactly the set over which a root bound is
+            # comparable to a cost, so all four of these accumulate together
+            # and stay consistent with one another.
+            root = stats.get("root_lower_bound")
+            cost = stats.get("incumbent_cost")
+            if root is not None and cost is not None:
+                self._bound_stats_total["measured_solves"] = (
+                    self._bound_stats_total.get("measured_solves", 0) + 1
+                )
+                self._bound_stats_total["root_lower_bound_sum"] = (
+                    self._bound_stats_total.get("root_lower_bound_sum", 0.0)
+                    + float(root)
+                )
+                self._bound_stats_total["incumbent_cost_sum"] = (
+                    self._bound_stats_total.get("incumbent_cost_sum", 0.0) + float(cost)
+                )
+                # A zero gap is the root optimality certificate: the plan's
+                # cost has reached a bound valid for *every* legal plan, so it
+                # is optimal regardless of what the generator ever proposed.
+                if abs(gap) <= 1e-9:
+                    self._bound_stats_total["certificates"] = (
+                        self._bound_stats_total.get("certificates", 0) + 1
+                    )
             prev = self._bound_stats_total.get("max_optimality_gap")
             # A negative gap means h(root) > incumbent: the bound overestimated
             # the true remaining cost, so it is inadmissible and pruning may have
@@ -394,6 +442,8 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             self._accumulate_bound_stats(result.bound_stats)
+            if result.proven:
+                self._rust_proven_total += 1
             if remaining is not None:
                 # The search strategies expand ≥ 1 node per call (even when
                 # unsolvable), but PUSH_ROTATE is not a search and always

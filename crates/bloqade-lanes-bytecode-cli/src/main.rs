@@ -8,6 +8,7 @@ mod policy;
 
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
 use bloqade_lanes_bytecode_core::isa::Program;
+use bloqade_lanes_bytecode_core::isa::machine::{LanesMachine, Stopped};
 use bloqade_lanes_bytecode_core::isa::program::{from_binary, to_binary};
 use bloqade_lanes_bytecode_core::isa::validate;
 use bloqade_lanes_bytecode_core::isa::{parse_text, to_text};
@@ -50,6 +51,21 @@ enum Command {
         /// Run stack type simulation.
         #[arg(long)]
         simulate_stack: bool,
+    },
+    /// Execute a program on the composite machine.
+    Run {
+        /// Input file (text .sst or binary .bin).
+        input: PathBuf,
+        /// Architecture spec JSON file. `move` cannot resolve a lane into
+        /// endpoints without one, so a program that moves atoms needs it.
+        #[arg(long)]
+        arch: Option<PathBuf>,
+        /// Maximum instructions to execute before giving up.
+        #[arg(long, default_value_t = 1_000_000)]
+        max_steps: u64,
+        /// Print every effect the lanes device reported, in order.
+        #[arg(long)]
+        effects: bool,
     },
     /// Architecture spec commands (pretty-print or validate).
     #[command(args_conflicts_with_subcommands = true)]
@@ -118,6 +134,12 @@ fn main() {
             arch,
             simulate_stack,
         } => cmd_validate(&input, arch.as_deref(), simulate_stack),
+        Command::Run {
+            input,
+            arch,
+            max_steps,
+            effects,
+        } => cmd_run(&input, arch.as_deref(), max_steps, effects),
         Command::Arch { command, input } => match (command, input) {
             (Some(ArchCommand::Validate { input }), _) => cmd_validate_arch_spec(&input),
             (None, Some(input)) => cmd_show_arch_spec(&input),
@@ -171,7 +193,7 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
     let program = parse_text(&source).map_err(|e| e.to_string())?;
-    let binary = to_binary(&program);
+    let binary = to_binary(&program).map_err(|e| e.to_string())?;
     fs::write(output, &binary).map_err(|e| format!("writing {}: {}", output.display(), e))?;
     eprintln!(
         "assembled {} instructions -> {}",
@@ -184,6 +206,23 @@ fn cmd_assemble(input: &PathBuf, output: &PathBuf) -> Result<(), String> {
 fn cmd_disassemble(input: &PathBuf, output: Option<&std::path::Path>) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|e| format!("reading {}: {}", input.display(), e))?;
     let program = from_binary(&bytes).map_err(|e| e.to_string())?;
+
+    // Only the failures that make the program *unwritable* — a target with no
+    // name, an instruction with no function to sit in. A program with dead
+    // code or a missing terminator renders fine, and is exactly the kind you
+    // disassemble in order to look at; `validate` is the subcommand for
+    // judging it.
+    let errors = bloqade_lanes_bytecode_core::isa::text::render_blockers(&program);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("  {e}");
+        }
+        return Err(format!(
+            "{} structural error(s): this binary cannot be rendered as text",
+            errors.len()
+        ));
+    }
+
     let text_out = to_text(&program);
     match output {
         Some(path) => {
@@ -351,6 +390,58 @@ fn print_arch_spec(spec: &ArchSpec) {
                 println!("    [{}, {}]", wp[0], wp[1]);
             }
         }
+    }
+}
+
+/// Execute a program and report how it ended.
+///
+/// The atom arrangement is the part the machine actually simulates, so that is
+/// what it prints. The quantum, array and measurement ops are reported as
+/// effects rather than interpreted — `--effects` shows them; see
+/// <https://github.com/QuEraComputing/bloqade-lanes/issues/1022>.
+fn cmd_run(
+    input: &PathBuf,
+    arch_path: Option<&std::path::Path>,
+    max_steps: u64,
+    show_effects: bool,
+) -> Result<(), String> {
+    let program = load_program(input)?;
+
+    let mut machine = LanesMachine::new();
+    if let Some(path) = arch_path {
+        let json =
+            fs::read_to_string(path).map_err(|e| format!("reading {}: {}", path.display(), e))?;
+        machine =
+            machine.with_arch(ArchSpec::from_json_validated(&json).map_err(|e| e.to_string())?);
+    }
+
+    let run = machine
+        .run(&program, max_steps)
+        .map_err(|e| e.to_string())?;
+
+    if show_effects {
+        for effect in &run.effects {
+            eprintln!("  {effect:?}");
+        }
+    }
+
+    let atoms = machine.atoms();
+    eprintln!(
+        "{} after {} instruction(s); {} atom(s) placed",
+        match run.stopped {
+            Stopped::Halted => "halted",
+            Stopped::Returned => "returned",
+            Stopped::RanOff => "ran off the end of the program",
+            Stopped::OutOfSteps => "out of steps",
+        },
+        run.steps,
+        atoms.qubit_to_locations.len(),
+    );
+
+    match run.stopped {
+        Stopped::Halted | Stopped::Returned => Ok(()),
+        Stopped::RanOff => Err("program has no terminator".to_string()),
+        Stopped::OutOfSteps => Err(format!("exceeded the {max_steps}-instruction budget")),
     }
 }
 

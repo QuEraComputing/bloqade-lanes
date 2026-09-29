@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Optional, final
+from typing import Literal, Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -909,14 +909,33 @@ class ArchSpec:
         ...
 
     def word_zone_map(self) -> dict[int, int]:
-        """Map each word_id to the zone_id that owns it.
+        """Map each word_id to a preferred zone_id.
 
-        Derived from each zone's ``entangling_pairs``, ``word_buses``,
-        and ``words_with_site_buses``. Words not referenced by any zone
-        default to zone 0.
+        Not ownership: the word template is spec-wide, so every word exists
+        in every zone and a ``LocationAddress`` carries its zone explicitly.
+        This is the first zone whose ``entangling_pairs``, ``word_buses`` or
+        ``words_with_site_buses`` reference the word, else zone 0.
 
         Returns:
             dict[int, int]: word_id → zone_id.
+        """
+        ...
+
+    def home_locations(self) -> list[LocationAddress]:
+        """Every home (non-staging) location, sorted by (zone, word, site).
+
+        One entry per site of each word in each zone, except where the word
+        is a staging word of that zone's entangling pairs.
+        """
+        ...
+
+    def is_home_position(self, loc: LocationAddress) -> bool:
+        """Whether ``loc`` is a home (non-staging) position.
+
+        True when the location's word is not the upper, staging word of an
+        entangling pair in the location's own zone. A zone with no
+        entangling pairs has no staging positions. False for an
+        out-of-range zone or word.
         """
         ...
 
@@ -1086,7 +1105,22 @@ class EntropyOptions:
         collect_entropy_trace: bool = False,
         seed: int = 0,
         completion_bound: str | None = None,
+        bound_terminates: bool = True,
     ) -> None: ...
+    @property
+    def bound_terminates(self) -> bool:
+        """Whether the completion bound may end the search. On by default.
+
+        The driver stops once the bound has proven the plan optimal instead of
+        running on to its expansion budget, and reports
+        ``SolveResult.proven``. The proof is the root certificate: the plan's
+        cost reached ``h(root)``, a lower bound on *every* legal plan, so none
+        is cheaper -- including plans the generator would never have proposed.
+        Stopping skips no expansion, because a cut root cannot be expanded
+        from. Requires ``completion_bound``; inert without one.
+        """
+        ...
+
     @property
     def completion_bound(self) -> str | None:
         """Admissible completion bound for branch-and-bound pruning.
@@ -1257,6 +1291,35 @@ class SolveResult:
         how much earlier the bound cut), ``root_lower_bound`` (a certified
         lower bound on the instance optimum), ``incumbent_cost``, and
         ``optimality_gap`` (``None`` when unsolved).
+        """
+        ...
+
+    @property
+    def proven(self) -> bool:
+        """Whether this plan is *proven* optimal.
+
+        ``True`` means the search drained everything that could still have
+        beaten this plan, and its branching was complete enough for that to
+        mean something. On the entropy driver it is the root certificate: the
+        plan's cost reached ``h(root)``, a lower bound on every legal plan, so
+        none is cheaper -- including plans the generator would never have
+        proposed.
+
+        ``False`` is not "suboptimal", it is "unproven": most solves end on
+        their expansion budget. Read it to tell a solver giving up from an
+        instance that is genuinely this expensive, which is what an escalation
+        policy needs to know.
+        """
+        ...
+
+    @property
+    def termination(self) -> str:
+        """How the search ended, as the driver's own account.
+
+        ``"budget"`` ran out of expansions; ``"stopped"`` ended on a rule of
+        its own, such as collecting its goal quota; ``"exhausted"`` drained
+        its space without that being a proof; ``"exhausted_proof"`` drained it
+        and the result is optimal, which is the case ``proven`` reports.
         """
         ...
 
@@ -2009,6 +2072,11 @@ class AtomStateData:
 
 # ── Instruction ──
 
+ValueType = Literal[
+    "undef", "str", "bool", "i64", "u32", "u64", "f64", "fn_ref", "heap_ref"
+]
+"""vihaco's value types, spelled as the ``sst`` text format spells them."""
+
 @final
 class Instruction:
     """A single bytecode instruction.
@@ -2019,7 +2087,8 @@ class Instruction:
     Instruction categories:
 
     - **Constants**: Push typed values onto the stack.
-    - **Stack**: Manipulate the operand stack (pop, dup, swap).
+    - **Stack and locals**: Duplicate the top (dup), and park values in a
+      function's locals and bring them back (store, load).
     - **Atom ops**: Fill sites and move atoms (initial_fill, fill, move).
     - **Gates**: Quantum gate operations (local_r, local_rz, global_r, global_rz, cz).
     - **Measurement**: Measure atoms and await results.
@@ -2106,15 +2175,6 @@ class Instruction:
     # -- Stack manipulation --
 
     @staticmethod
-    def pop() -> Instruction:
-        """Pop and discard the top stack value.
-
-        Returns:
-            Instruction: The pop instruction.
-        """
-        ...
-
-    @staticmethod
     def dup() -> Instruction:
         """Duplicate the top stack value.
 
@@ -2122,13 +2182,52 @@ class Instruction:
             Instruction: The dup instruction.
         """
         ...
+    # -- Locals --
+    #
+    # There is no ``pop`` or ``swap``. A function's locals are slots of their
+    # own below its operands, so ``store`` parks a value out of their way and
+    # ``load`` brings a copy back: ``store(t, 0)`` discards the top, and
+    # ``store(t, 0), store(t, 1), load(t, 0), load(t, 1)`` swaps the top two.
 
     @staticmethod
-    def swap() -> Instruction:
-        """Swap the top two stack values.
+    def load(value_type: str, index: int) -> Instruction:
+        """Push a copy of local ``index``.
+
+        The local must hold a ``value_type``, or the ``Undefined``
+        placeholder — unwritten, or a lanes op's result stored there — which
+        reads as that type's zero. ``"undef"`` reads the placeholder back as
+        itself, and refuses a concrete value.
+
+        Args:
+            value_type: The type the local holds, spelled as in the text
+                format — one of the ``ValueType`` names.
+            index: Local slot, ``u32``.
 
         Returns:
-            Instruction: The swap instruction.
+            Instruction: The load instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
+        """
+        ...
+
+    @staticmethod
+    def store(value_type: str, index: int) -> Instruction:
+        """Pop the top of the stack into local ``index``.
+
+        Args:
+            value_type: The type of the value stored, spelled as in the text
+                format — one of the ``ValueType`` names. A placeholder a lanes
+                op pushed may be stored as any type.
+            index: Local slot, ``u32``.
+
+        Returns:
+            Instruction: The store instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
         """
         ...
     # -- Atom operations --
@@ -2351,17 +2450,36 @@ class Instruction:
 
     @property
     def opcode(self) -> int:
-        """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
+        """Packed 16-bit opcode: ``(device_code << 8) | instruction_code``.
+
+        Device codes are ``0x00`` for the CPU and ``0x01`` for the lanes
+        device. Both halves are assigned by declaration order, so they shift
+        whenever either instruction set gains a variant — compare identity with
+        :meth:`op_name`, not with a literal opcode.
+        """
+        ...
+
+    def device(self) -> str:
+        """The device this instruction belongs to: ``"cpu"`` or ``"lanes"``.
+
+        The stack and arithmetic ops come from vihaco-cpu's CPU component; the
+        atom-movement, gate, measurement and array ops are the lanes device's.
+        In ``.sst`` text this is the prefix before ``::``.
+        """
         ...
 
     def op_name(self) -> str:
-        """Lowercase snake_case opcode name matching the bytecode text-format
-        parser's canonical names (see
-        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
+        """Lowercase snake_case opcode name, without the device prefix or
+        dialect head — ``"move"`` for ``lanes::lanes.move``.
 
         Factory methods use trailing underscores for Python-keyword conflicts
         (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
-        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
+        returns the bare names: ``"move"`` and ``"return"``.
+
+        Two names deliberately differ from the text mnemonic because the
+        decoder depends on them: the constants are ``"const_float"`` /
+        ``"const_int"`` rather than vihaco-cpu's single typed ``const``, and
+        ``"return"`` keeps its spelling rather than vihaco-cpu's ``ret``.
         """
         ...
 
@@ -2448,6 +2566,23 @@ class Instruction:
         """
         ...
 
+    def local_index(self) -> int:
+        """Local slot a ``load`` or ``store`` instruction names.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def value_type(self) -> ValueType:
+        """Type a ``load`` or ``store`` instruction names, spelled as in the
+        text format.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
@@ -2457,8 +2592,8 @@ class Instruction:
 class Program:
     """A bytecode program consisting of a version and instruction sequence.
 
-    Programs can be constructed directly, parsed from SST text assembly,
-    or deserialized from native LANES binary format.
+    Programs can be constructed directly, parsed from vihaco's ``sst v1``
+    text container, or deserialized from its ``VHBC`` binary container.
 
     Args:
         version (tuple[int, int]): Program version as ``(major, minor)``.
@@ -2493,10 +2628,10 @@ class Program:
 
     @staticmethod
     def from_binary(data: bytes) -> Program:
-        """Deserialize a program from native LANES binary format.
+        """Deserialize a program from vihaco's ``VHBC`` binary container.
 
         Args:
-            data (bytes): Raw native LANES binary data.
+            data (bytes): Raw ``VHBC`` container bytes.
 
         Returns:
             Program: The deserialized program.
@@ -2507,10 +2642,15 @@ class Program:
         ...
 
     def to_binary(self) -> bytes:
-        """Serialize the program to native LANES binary format.
+        """Serialize the program to vihaco's ``VHBC`` binary container.
 
         Returns:
-            bytes: The native LANES binary representation.
+            bytes: The ``VHBC`` container bytes.
+
+        Raises:
+            ProgramError: If an instruction has no encodable form. Today
+                that is only a runtime label, whose identifier means
+                nothing outside the parse that produced it.
         """
         ...
 
@@ -2538,6 +2678,12 @@ class Program:
     @property
     def version(self) -> tuple[int, int]:
         """Program version as ``(major, minor)``."""
+        ...
+
+    @property
+    def entry_parameters(self) -> list[ValueType]:
+        """The entry point's declared parameter types, spelled as in the text
+        format. Empty when it takes none, or the program has no entry point."""
         ...
 
     @property

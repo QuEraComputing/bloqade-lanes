@@ -42,38 +42,22 @@ pub(crate) struct BusGridMaps {
 impl BusGridMaps {
     /// Build the maps for one bus group from the given lanes.
     ///
-    /// Shared by the [`LaneIndex`] all-zones precompute and the per-zone
-    /// fallback in `BusGridContext::new`. Lanes whose endpoints or source
-    /// position are unknown are skipped (matches the legacy behaviour).
+    /// Built by the [`LaneIndex`] per-group precompute (one entry per
+    /// `(move_type, bus_id, zone_id, direction)`) and by tests. Lanes whose
+    /// endpoints or source position are unknown are skipped (matches the
+    /// legacy behaviour).
     ///
-    /// The all-zones precompute merges every zone's lanes for a
-    /// `(move_type, bus_id, direction)` group, so dropping `zone_id` from the
-    /// group key could in principle collapse two lanes that share a source
-    /// location but point at different destinations. That is the *source*-keyed
-    /// direction (`src_to_lane`, `src_to_dst`, `src_to_pos`):
-    ///
-    /// * SiteBus / WordBus never collide, because a source's *encoded* location
-    ///   already carries its `zone_id` (and `word_id`/`site_id`), so lanes from
-    ///   different zones map to distinct source keys.
-    /// * ZoneBus (registered since #846) is the interesting case: a *backward*
-    ///   ZoneBus lane's source is the forward destination, which lives in the
-    ///   destination zone, so two lanes whose forward moves target the same word
-    ///   would share a source key. That only happens for a non-injective
-    ///   (many-to-one) zone bus; the AOD-rectangle zone buses in the current
-    ///   specs are injective, so no collision occurs.
-    ///
-    /// [`insert_unique`] pins this with a `debug_assert!` on the source-keyed
-    /// maps, so a non-injective zone bus surfaces loudly instead of resolving to
-    /// a silent last-insert-wins over `HashMap` order. The search test suite —
-    /// including the ZoneBus coverage added by #846 — runs with these
-    /// assertions active.
-    ///
-    /// `pos_to_src` is deliberately *not* guarded: distinct sources can
-    /// legitimately share a physical position in some geometries (e.g. the
-    /// `full.json` test fixture stacks every word at identical grid
-    /// coordinates), so a position collision is a pre-existing, tolerated
-    /// property of the arch — unrelated to the zone-merge hazard — that the old
-    /// per-call `BusGridContext::new` also resolved by last-insert-wins.
+    /// The source-keyed maps (`src_to_lane`, `src_to_dst`, `src_to_pos`) are
+    /// guarded by [`insert_unique`]: within one group a source has one lane, so
+    /// a collision is a bug rather than an ambiguity to resolve by insertion
+    /// order. (Groups used to merge every zone's lanes under a zone-less key,
+    /// where a backward zone-bus lane could share a source key with another
+    /// zone's lane; per-zone grouping removed that hazard, and the guard stays
+    /// as a cheap invariant.) `pos_to_src` is deliberately *not* guarded:
+    /// distinct sources can share a physical position in some geometries (the
+    /// `full.json` fixture stacks every word at identical grid coordinates),
+    /// which is the P1 precondition the exhaustive generator checks and the
+    /// grid builder tolerates by last-insert-wins.
     pub(crate) fn from_lanes(index: &LaneIndex, lanes: impl IntoIterator<Item = LaneAddr>) -> Self {
         let mut maps = Self::default();
         for lane in lanes {

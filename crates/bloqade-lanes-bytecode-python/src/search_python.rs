@@ -19,6 +19,7 @@ use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::drivers::entropy::{
     EntropyParams, EntropyTrace, EntropyTraceStep, MovesetMetrics, compute_moveset_metrics,
 };
+use bloqade_lanes_search::drivers::result::Termination;
 use bloqade_lanes_search::placement::cz_placement::CzPlacement;
 use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
 use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
@@ -270,6 +271,41 @@ impl PySolveResult {
         self.inner.deadlocks
     }
 
+    /// Whether this plan is *proven* optimal.
+    ///
+    /// `True` means the search drained everything that could still have
+    /// beaten this plan, and its branching was complete enough for that to
+    /// mean something. On the entropy driver it is the root certificate: the
+    /// plan's cost reached `h(root)`, a lower bound on every legal plan, so
+    /// none is cheaper -- including plans the generator would never have
+    /// proposed.
+    ///
+    /// `False` is not "suboptimal", it is "unproven": most solves end on
+    /// their expansion budget. Read it to tell a solver giving up from an
+    /// instance that is genuinely this expensive, which is what an escalation
+    /// policy needs to know.
+    #[getter]
+    fn proven(&self) -> bool {
+        self.inner.proven
+    }
+
+    /// How the search ended, as the driver's own account rather than an
+    /// inference from the expansion count.
+    ///
+    /// `"budget"` ran out of expansions; `"stopped"` ended on a rule of its
+    /// own, such as collecting its goal quota; `"exhausted"` drained its
+    /// space without that being a proof; `"exhausted_proof"` drained it and
+    /// the result is optimal, which is the case `proven` reports.
+    #[getter]
+    fn termination(&self) -> &'static str {
+        match self.inner.termination {
+            Termination::Budget => "budget",
+            Termination::Exhausted { proof: false } => "exhausted",
+            Termination::Exhausted { proof: true } => "exhausted_proof",
+            Termination::Stopped => "stopped",
+        }
+    }
+
     /// Branch-and-bound pruning statistics as a dict.
     ///
     /// **Empty** unless `EntropyOptions.completion_bound` was set — an
@@ -320,12 +356,13 @@ impl PySolveResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={})",
+            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={}, proven={})",
             self.inner.status.as_label(),
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
             self.inner.deadlocks,
+            self.inner.proven,
         )
     }
 }
@@ -689,6 +726,7 @@ impl PyEntropyScorer {
             blocked: &self.blocked,
             targets: &self.targets,
             cz_pairs: None,
+            capacity: None,
         };
         let inner =
             compute_moveset_metrics(&old_config, &new_config, &occupied, &ctx, &self.params);
@@ -868,6 +906,8 @@ impl PySolveOptions {
                 top_c,
                 fallback_push_rotate,
                 backwards_search,
+                // Not exposed to Python yet (Task 3.4 of the B&B plan).
+                aod_capacity: None,
             },
         })
     }
@@ -952,7 +992,7 @@ pub struct PyEntropyOptions {
 #[pymethods]
 impl PyEntropyOptions {
     #[new]
-    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None))]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None, bound_terminates=true))]
     fn new(
         max_movesets_per_group: usize,
         max_goal_candidates: usize,
@@ -960,6 +1000,7 @@ impl PyEntropyOptions {
         collect_entropy_trace: bool,
         seed: u64,
         completion_bound: Option<&str>,
+        bound_terminates: bool,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -992,9 +1033,18 @@ impl PyEntropyOptions {
                 w_t,
                 collect_entropy_trace,
                 seed,
+                bound_terminates,
                 completion_bound,
             },
         })
+    }
+
+    /// Whether the completion bound may end the search once it has proven the
+    /// plan optimal. On by default; `False` restores the pre-certificate spin
+    /// to the expansion budget and is useful only for A/B measurement.
+    #[getter]
+    fn bound_terminates(&self) -> bool {
+        self.inner.bound_terminates
     }
 
     /// Completion bound in use: `"weighted_distance"` or `None`.

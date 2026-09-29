@@ -71,6 +71,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
+            capacity: None,
         };
 
         let from = Config::new([(0, loc(0, 0))]).unwrap();
@@ -103,6 +104,7 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
+            capacity: None,
         };
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();

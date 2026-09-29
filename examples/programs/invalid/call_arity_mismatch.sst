@@ -1,0 +1,26 @@
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: full
+// expect: CallArityMismatch
+// A `call` whose arity operand disagrees with the callee's declaration.
+//
+// The operand is not a hint: `call <arity>` sets `base = stack.len() - arity`,
+// so an unchecked one silently redefines the callee's frame per call site.
+// Here `@takes_one` declares a single parameter and the call passes none, so
+// the callee's `load 0` would read whatever the caller left below its frame.
+
+fn @main() {
+  cpu::cpu.call 0, takes_one
+  cpu::cpu.halt
+}
+
+fn @takes_one(x: u64) {
+  cpu::cpu.ret 0
+}
+.text(root).
+.section(root).

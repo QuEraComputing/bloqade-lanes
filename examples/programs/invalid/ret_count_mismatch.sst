@@ -1,0 +1,26 @@
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: full
+// expect: ReturnCountMismatch
+// A `ret` that keeps more values than its function declares returning.
+//
+// Two `ret`s that disagree with each other make the caller's post-call depth
+// path-dependent; checking each against the declaration catches that without
+// having to compare them pairwise, and names the offender.
+
+fn @main() {
+  cpu::cpu.call 0, promises_nothing
+  cpu::cpu.halt
+}
+
+fn @promises_nothing() {
+  cpu::cpu.const i64, 7
+  cpu::cpu.ret 1
+}
+.text(root).
+.section(root).

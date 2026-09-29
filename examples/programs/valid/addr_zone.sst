@@ -1,6 +1,17 @@
-.version 1
-; Valid zone address
-; full.json has zone 0
+sst v1
 
-const_zone 0x00000000   ; zone 0
-halt
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: simple
+// Valid zone address
+// full.json has zone 0
+
+fn @main() {
+  lanes::lanes.const_zone 0x00000000    // zone 0
+  cpu::cpu.halt
+}
+.text(root).
+.section(root).

@@ -19,40 +19,111 @@
 //! The replay is O(layers × lanes) per solve, negligible next to the search
 //! that produced the plan, and runs in every build: the invariant it protects
 //! (issue #866) is a correctness property, not a debugging aid.
+//!
+//! Blocked locations take part in the replay as **phantom atoms**: an
+//! immovable atom is exactly what a blocked site is to the router, so placing
+//! one there lets the execution model apply its own rules — a lane may not
+//! land on a blocked site (its destination is held by a stationary atom) and
+//! may not pick one up (this module's own check, since the execution model has
+//! no notion of an immovable atom). Phantoms are stripped from the reported
+//! placement.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
-use bloqade_lanes_bytecode_core::atom_state::AtomStateData;
+use bloqade_lanes_bytecode_core::atom_state::{AtomStateData, MoveValidationError};
 
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 
-/// Replay `layers` from `root` through the canonical execution model.
+/// Replay `layers` from `root` through the canonical execution model, with
+/// every location in `blocked` held by an immovable phantom atom.
 ///
 /// Returns the placement the plan actually lands on — `qubit → location`, as
 /// resolved by lane endpoints rather than by [`Config::with_moves`] — or a
 /// diagnostic naming the first layer that cannot execute.
+///
+/// Phantom qubit ids are drawn from `u32::MAX` downward, one per blocked
+/// location; a root qubit id inside that range is reported as an error rather
+/// than confused with a phantom. A blocked location that already holds a root
+/// atom gets no phantom (the atom itself occupies it, and a state cannot hold
+/// two atoms on one site), so the replay does not guard such a site once its
+/// atom has left it — every generator treats `blocked` as occupied
+/// throughout, so no plan is expected to re-enter one.
 pub(crate) fn replay_move_layers(
     root: &Config,
     layers: &[MoveSet],
     arch: &ArchSpec,
+    blocked: &HashSet<u64>,
 ) -> Result<HashMap<u32, LocationAddr>, String> {
-    let atoms: Vec<_> = root.iter().collect();
+    let mut atoms: Vec<(u32, LocationAddr)> = root.iter().collect();
+
+    // Phantoms occupy the reserved id range `(first_phantom, u32::MAX]` —
+    // exclusive at the bottom, matching `is_phantom` below. With no blocked
+    // sites `first_phantom` is `u32::MAX`, the range is empty, and every id is
+    // a real qubit.
+    let occupied_at_root: HashSet<u64> = atoms.iter().map(|(_, loc)| loc.encode()).collect();
+    let mut phantom_sites: Vec<u64> = blocked
+        .iter()
+        .copied()
+        .filter(|enc| !occupied_at_root.contains(enc))
+        .collect();
+    phantom_sites.sort_unstable();
+    let phantom_count = u32::try_from(phantom_sites.len()).map_err(|_| {
+        format!(
+            "{} blocked sites exceed the phantom id range",
+            phantom_sites.len()
+        )
+    })?;
+    let first_phantom = u32::MAX - phantom_count;
+    let is_phantom = |qubit: u32| qubit > first_phantom;
+
+    if let Some(&(qubit, loc)) = atoms.iter().find(|&&(q, _)| is_phantom(q)) {
+        return Err(format!(
+            "qubit id {qubit} (at {loc:?}) falls in the range [{}, {}] reserved for the \
+             replay's blocked-site phantoms; the plan cannot be verified",
+            first_phantom + 1,
+            u32::MAX
+        ));
+    }
+    atoms.extend(
+        phantom_sites
+            .iter()
+            .enumerate()
+            .map(|(i, &enc)| (u32::MAX - i as u32, LocationAddr::decode(enc))),
+    );
     let mut state = AtomStateData::from_locations(&atoms);
 
     for (layer_idx, move_set) in layers.iter().enumerate() {
         let lanes = move_set.decode();
+        let describe = |errors: &[MoveValidationError]| {
+            format_layer_error(layer_idx, layers.len(), errors, first_phantom)
+        };
         let validated = state
             .validate_moves(&lanes, arch)
-            .map_err(|errors| format_layer_error(layer_idx, layers.len(), &errors))?;
+            .map_err(|errors| describe(&errors))?;
+        // B1: a blocked site is immovable. The execution model resolves a
+        // lane whose source holds any atom as a mover, phantom or not, so the
+        // immovability rule is this module's to enforce.
+        if let Some(&(_, src, _, lane)) = validated.movers().iter().find(|&&(q, ..)| is_phantom(q))
+        {
+            return Err(format!(
+                "move layer {layer_idx} of {} cannot execute:\n  - lane {lane:?} picks up \
+                 {src:?}, which is a blocked site",
+                layers.len()
+            ));
+        }
         state = state
             .apply_validated(&validated)
-            .map_err(|errors| format_layer_error(layer_idx, layers.len(), &errors))?;
+            .map_err(|errors| describe(&errors))?;
     }
 
-    Ok(state.qubit_to_locations)
+    Ok(state
+        .qubit_to_locations
+        .into_iter()
+        .filter(|&(qubit, _)| !is_phantom(qubit))
+        .collect())
 }
 
 /// Replay `layers` from `root` and check the result against the placement the
@@ -70,9 +141,10 @@ pub(crate) fn verify_move_layers(
     root: &Config,
     layers: &[MoveSet],
     arch: &ArchSpec,
+    blocked: &HashSet<u64>,
     expected_goal: &Config,
 ) -> Result<(), String> {
-    let replayed = replay_move_layers(root, layers, arch)?;
+    let replayed = replay_move_layers(root, layers, arch, blocked)?;
 
     let claimed: HashMap<u32, LocationAddr> = expected_goal.iter().collect();
     if replayed == claimed {
@@ -97,10 +169,26 @@ pub(crate) fn verify_move_layers(
     ))
 }
 
-fn format_layer_error<E: std::fmt::Display>(idx: usize, total: usize, errors: &[E]) -> String {
+/// Render a layer's validation errors, describing a phantom occupant as the
+/// blocked site it stands for rather than as a qubit with a reserved id.
+fn format_layer_error(
+    idx: usize,
+    total: usize,
+    errors: &[MoveValidationError],
+    first_phantom: u32,
+) -> String {
     let details = errors
         .iter()
-        .map(|e| format!("\n  - {e}"))
+        .map(|e| match e {
+            MoveValidationError::DestinationOccupiedByStationaryAtom {
+                lane,
+                dst,
+                occupant,
+            } if *occupant > first_phantom => {
+                format!("\n  - lane {lane:?} targets {dst:?}, which is a blocked site")
+            }
+            other => format!("\n  - {other}"),
+        })
         .collect::<Vec<_>>()
         .join("");
     format!("move layer {idx} of {total} cannot execute:{details}")
@@ -116,9 +204,10 @@ pub(crate) fn assert_move_layers_executable(
     root: &Config,
     layers: &[MoveSet],
     arch: &ArchSpec,
+    blocked: &HashSet<u64>,
     expected_goal: &Config,
 ) {
-    if let Err(diagnostic) = verify_move_layers(root, layers, arch, expected_goal) {
+    if let Err(diagnostic) = verify_move_layers(root, layers, arch, blocked, expected_goal) {
         panic!(
             "solver produced an invalid plan (this is a bug in the move \
              generator, not in the request): {diagnostic}"
@@ -136,6 +225,16 @@ mod tests {
     fn index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).expect("arch json parses");
         LaneIndex::new(spec)
+    }
+
+    /// No blocked sites.
+    fn none() -> HashSet<u64> {
+        HashSet::new()
+    }
+
+    /// Blocked sites, encoded.
+    fn blocked(locs: &[LocationAddr]) -> HashSet<u64> {
+        locs.iter().map(|l| l.encode()).collect()
     }
 
     /// Site bus 0 on the example arch maps sites 0..5 → 5..10 within a word.
@@ -158,7 +257,7 @@ mod tests {
         // Site bus 0 maps site 0 → site 5.
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
         assert_eq!(
-            verify_move_layers(&root, &layers, index.arch_spec(), &goal),
+            verify_move_layers(&root, &layers, index.arch_spec(), &none(), &goal),
             Ok(())
         );
     }
@@ -168,7 +267,7 @@ mod tests {
         let index = index();
         let root = Config::new([(0, loc(0, 0))]).expect("config");
         assert_eq!(
-            verify_move_layers(&root, &[], index.arch_spec(), &root),
+            verify_move_layers(&root, &[], index.arch_spec(), &none(), &root),
             Ok(())
         );
     }
@@ -182,7 +281,7 @@ mod tests {
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         // Executability is checked before the placement comparison, so the
         // expected goal passed here is irrelevant — use the root.
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &root)
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &root)
             .expect_err("landing on a stationary atom must be rejected");
         assert!(err.contains("move layer 0 of 1"), "{err}");
         assert!(err.contains("occupied by qubit 1"), "{err}");
@@ -198,7 +297,7 @@ mod tests {
             MoveSet::new(vec![site_lane(0, 0)]),
             MoveSet::new(vec![site_lane(0, 1)]),
         ];
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &root)
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &root)
             .expect_err("second layer must be rejected");
         assert!(err.contains("move layer 1 of 2"), "{err}");
     }
@@ -215,7 +314,7 @@ mod tests {
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         let wrong_goal = Config::new([(0, loc(0, 6))]).expect("config");
 
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &wrong_goal)
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &wrong_goal)
             .expect_err("a misreported goal placement must be rejected");
         assert!(
             err.contains("does not reproduce the reported goal"),
@@ -233,8 +332,123 @@ mod tests {
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
 
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &goal)
+        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &goal)
             .expect_err("a dropped qubit must be rejected");
         assert!(err.contains("qubit 1"), "{err}");
+    }
+
+    // ── Blocked sites (B1: immovable; a lane may neither land on nor pick up one) ──
+
+    /// A filler lane whose source is a blocked site would drag the external
+    /// atom along: rejected, naming the layer. `validate_moves` alone accepts
+    /// this — the phantom is just an atom at a source — so the check is the
+    /// replay's own.
+    #[test]
+    fn rejects_a_filler_lane_over_a_blocked_source() {
+        let index = index();
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        // Site 1 is blocked; the rectangle {site 0, site 1} would pick it up.
+        let layers = vec![MoveSet::new(vec![site_lane(0, 0), site_lane(0, 1)])];
+        let goal = Config::new([(0, loc(0, 5))]).expect("config");
+        let err = verify_move_layers(
+            &root,
+            &layers,
+            index.arch_spec(),
+            &blocked(&[loc(0, 1)]),
+            &goal,
+        )
+        .expect_err("picking up a blocked site must be rejected");
+        assert!(err.contains("move layer 0 of 1"), "{err}");
+        assert!(err.contains("blocked site"), "{err}");
+    }
+
+    /// A lane landing on a blocked site hits the execution model's own
+    /// stationary-occupant rule, reported as the blocked site rather than as a
+    /// phantom qubit id.
+    #[test]
+    fn rejects_a_lane_landing_on_a_blocked_destination() {
+        let index = index();
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
+        let goal = Config::new([(0, loc(0, 5))]).expect("config");
+        let err = verify_move_layers(
+            &root,
+            &layers,
+            index.arch_spec(),
+            &blocked(&[loc(0, 5)]),
+            &goal,
+        )
+        .expect_err("landing on a blocked site must be rejected");
+        assert!(err.contains("move layer 0 of 1"), "{err}");
+        assert!(err.contains("targets"), "{err}");
+        assert!(err.contains("blocked site"), "{err}");
+        assert!(
+            !err.contains(&u32::MAX.to_string()),
+            "phantom id leaked: {err}"
+        );
+    }
+
+    /// Blocked sites the plan never touches change nothing: the replay
+    /// accepts the plan and reports the same placement, phantoms stripped.
+    #[test]
+    fn untouched_blocked_sites_leave_the_replay_unchanged() {
+        let index = index();
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
+        let goal = Config::new([(0, loc(0, 5))]).expect("config");
+        let sites = blocked(&[loc(1, 0), loc(1, 5), loc(0, 9)]);
+        assert_eq!(
+            verify_move_layers(&root, &layers, index.arch_spec(), &sites, &goal),
+            Ok(())
+        );
+        let placement =
+            replay_move_layers(&root, &layers, index.arch_spec(), &sites).expect("plan replays");
+        assert_eq!(placement, HashMap::from([(0, loc(0, 5))]));
+    }
+
+    /// A blocked site that holds a root atom gets no phantom, so the plan
+    /// moving that atom still replays.
+    #[test]
+    fn a_root_atom_on_a_blocked_site_is_not_doubled() {
+        let index = index();
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
+        let goal = Config::new([(0, loc(0, 5))]).expect("config");
+        assert_eq!(
+            verify_move_layers(
+                &root,
+                &layers,
+                index.arch_spec(),
+                &blocked(&[loc(0, 0)]),
+                &goal
+            ),
+            Ok(())
+        );
+    }
+
+    /// A root qubit id inside the reserved phantom range is reported as such,
+    /// not silently treated as a blocked site.
+    #[test]
+    fn reports_a_root_qubit_id_in_the_reserved_range() {
+        let index = index();
+        let root = Config::new([(u32::MAX, loc(0, 0))]).expect("config");
+        let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
+        let goal = Config::new([(u32::MAX, loc(0, 5))]).expect("config");
+        let err = verify_move_layers(
+            &root,
+            &layers,
+            index.arch_spec(),
+            &blocked(&[loc(0, 1)]),
+            &goal,
+        )
+        .expect_err("a reserved qubit id must be reported");
+        assert!(err.contains("reserved"), "{err}");
+        assert!(err.contains(&u32::MAX.to_string()), "{err}");
+
+        // With no blocked sites the range is empty and the id is ordinary.
+        assert_eq!(
+            verify_move_layers(&root, &layers, index.arch_spec(), &none(), &goal),
+            Ok(())
+        );
     }
 }

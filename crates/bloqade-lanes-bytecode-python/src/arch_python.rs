@@ -1179,11 +1179,28 @@ impl PyArchSpec {
         self.inner.word_partner_map()
     }
 
-    /// Map each word_id to the zone_id that owns it.
+    /// Map each word_id to a preferred zone_id.
     ///
-    /// Returns a dict mapping word_id → zone_id.
+    /// Not ownership: the word template is spec-wide, so every word exists
+    /// in every zone. Returns the first zone that references the word, else 0.
     fn word_zone_map(&self) -> std::collections::HashMap<u32, u32> {
         self.inner.word_zone_map()
+    }
+
+    /// Every home (non-staging) location, sorted by (zone, word, site).
+    fn home_locations(&self) -> Vec<PyLocationAddr> {
+        self.inner
+            .home_locations()
+            .into_iter()
+            .map(|inner| PyLocationAddr { inner })
+            .collect()
+    }
+
+    /// Whether ``loc`` is a home position: its word is not the staging word
+    /// of an entangling pair in its own zone.
+    #[pyo3(text_signature = "(self, loc)")]
+    fn is_home_position(&self, loc: &PyLocationAddr) -> bool {
+        self.inner.is_home_position(&loc.inner)
     }
 
     /// Return sorted left-CZ word IDs (lower word of each CZ pair + unpaired).
