@@ -44,8 +44,10 @@ Pass 2 — DCE
     Pass 1, to a fixpoint: a dead ``Pure`` consumer takes the clones placed
     in front of it with it. So does a constant nothing consumes: the
     bytecode leaves it on the stack and never reads it, so dropping it
-    changes nothing the program computes. A ``Dup`` is not ``Pure``, so one
-    whose copies nothing reads stays, as the ``dup`` it was.
+    changes nothing the program computes. A ``Dup`` is not ``Pure``, so DCE
+    leaves one whose copies nothing reads, as the ``dup`` it was — unless it
+    copies a constant: that ``Dup`` was already inlined before Pass 1, and
+    its constant, now read by nothing, goes here with the rest.
 
 Pass 3 — move out-of-order values to locals
     A value is in stack order when it has one consumer and waits on the stack

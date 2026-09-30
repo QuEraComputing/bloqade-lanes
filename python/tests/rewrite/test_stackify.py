@@ -886,6 +886,31 @@ def test_stackify_stores_a_spilled_copy_as_what_it_copies():
     _validates(method)
 
 
+def test_stackify_drops_an_unread_copy_of_a_constant():
+    """In a block ``stackify`` repairs, a ``Dup`` of a constant is inlined
+    before Pass 1 — read by nothing, its copies leave the constant read by
+    nothing, and DCE removes it. The array it covered is on top again, so the
+    ``set_detector`` takes it from the stack, with no local."""
+    zone = sm.ConstZone(value=ZoneAddress(0))
+    measure = sm.Measure(zones=(zone.result,))
+    array = sm.AwaitMeasure(future=measure.results[0])
+    other = sm.ConstZone(value=ZoneAddress(1))
+    unread = sm.Dup(value=other.result)
+    detector = sm.SetDetector(array=array.result)
+    ci = sm.ConstInt(value=0)
+    method = _make_method(
+        zone, measure, array, other, unread, detector, ci, func.Return(ci.result)
+    )
+    assert not _is_stack_program(list(method.callable_region.blocks[0].stmts))
+
+    stmts = _stackify(method)
+
+    assert not any(isinstance(s, (sm.Dup, sm.StoreLocal)) for s in stmts)
+    assert [s.value for s in stmts if isinstance(s, sm.ConstZone)] == [ZoneAddress(0)]
+    assert detector.array is array.result
+    _validates(method)
+
+
 def test_stackify_takes_what_an_unread_dup_covers_from_a_local():
     """A ``Dup`` is not ``Pure``, so one nothing reads stays, its copies left
     on the stack above the first array. The ``set_detector`` reads that
