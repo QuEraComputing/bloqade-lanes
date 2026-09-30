@@ -183,15 +183,18 @@ Re-assemble any persisted `.bin` from source.
   `StackMachineFrame.peek_value` is removed: the decoder's `dup` was its only
   caller, and now pops instead.
 - **Changed:** `stack_move.Dup` is no longer `Pure`, so DCE and `ConstantFold`
-  leave it: a decoded `dup` re-encodes as itself even when nothing reads a
-  copy.
+  leave it, even when nothing reads a copy.
 - **New:** `bloqade.lanes.rewrite.inline_dup.InlineDup` canonicalises `Dup`
   out of `stack_move` IR, giving each copy's consumers the operand itself.
-  `RewriteStackMoveToMove` uses it to lower `Dup`; `stackify` does not.
+  `RewriteStackMoveToMove` uses it to lower `Dup`.
 - **New:** `load_program(..., inline_dup=True)` runs `InlineDup` on the
   decoded kernel. The default, `False`, keeps the 1:1 SSA image of the
-  program, which `stackify` + `dump_program` give back as it was; with `True`,
-  a re-encoded kernel holds each duplicated value in a local instead.
+  program, with every `dup` a `Dup`.
+- **Behaviour:** `stackify` keeps a `Dup` as the `dup` it was, with one
+  exception: a `Dup` of a constant whose copies it would otherwise spill to
+  locals becomes a clone of the constant per consumer. On a kernel decoded
+  with `inline_dup=True`, it clones a duplicated constant the same way and
+  holds any other duplicated value in a local.
 - **New:** `stack_move`'s constants and `Dup` have a concrete (`main`)
   interpretation, and `Dup` a `constprop` one. Kirin's constant propagation
   used to see every `stack_move` value as unknown; it now propagates

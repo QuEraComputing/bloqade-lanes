@@ -456,11 +456,15 @@ def load_program(
 
     ``inline_dup`` chooses between the two SSA forms of a ``dup``. Off (the
     default), every ``dup`` stays a ``stack_move.Dup``: the method is the
-    program's 1:1 SSA image, and ``stackify`` + ``dump_program`` give the
-    program back. On, ``InlineDup`` takes them out, so each copy's consumers
-    read the operand itself — what the program computes rather than how it
-    keeps its stack. Re-encoded, such a method holds the operand in a local
-    where the program used ``dup``.
+    program's 1:1 SSA image. On, ``InlineDup`` takes them out, so each copy's
+    consumers read the operand itself — what the program computes rather than
+    how it keeps its stack.
+
+    That is the decode alone. ``stackify`` keeps a ``Dup`` as the ``dup`` it
+    was, with one exception: a ``Dup`` of a constant whose copies it would
+    otherwise spill to locals, which it replaces by a clone of the constant
+    per consumer. Re-encoding an inlined method, it clones a duplicated
+    constant the same way and holds any other duplicated value in a local.
     """
     from kirin.passes.typeinfer import TypeInfer
     from kirin.rewrite import Walk

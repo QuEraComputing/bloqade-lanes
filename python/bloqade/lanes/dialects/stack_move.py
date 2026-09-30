@@ -152,9 +152,10 @@ class Dup(ir.Statement):
     ever used by the statement that pops it.
 
     Not ``Pure``: a ``Dup`` is part of the program the bytecode spells, so
-    DCE and ``ConstantFold`` leave it, and a decoded ``dup`` re-encodes as
-    itself even when nothing reads a copy. ``InlineDup`` is what takes it
-    out — ``load_program(..., inline_dup=True)`` or the lowering to ``move``.
+    DCE and ``ConstantFold`` leave it, even when nothing reads a copy.
+    ``InlineDup`` is what takes it out: ``load_program(..., inline_dup=True)``,
+    the lowering to ``move``, and ``stackify`` for a ``Dup`` of a constant
+    whose copies it would otherwise spill.
     """
 
     traits = frozenset({lowering.FromPythonCall()})

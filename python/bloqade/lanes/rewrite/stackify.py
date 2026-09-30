@@ -28,6 +28,12 @@ Pass 2 — DCE
     re-encode to itself. A ``Dup`` is not ``Pure``, so one whose copies
     nothing reads stays, as the ``dup`` it was.
 
+    Between Pass 2 and Pass 3, a ``Dup`` of a constant whose copies would be
+    spilled is inlined — its consumers given the constant, which Passes 1 and
+    2 then clone for each — since a copy of a constant is that constant and a
+    clone needs no local. That is the one ``Dup`` a decoded program does not
+    get back; every other stays the ``dup`` it was.
+
 Pass 3 — spill to locals
     An operand is consumed by the op that pops it, so a non-constant value
     with more than one consumer (e.g. an ``AwaitMeasure`` result read by N
