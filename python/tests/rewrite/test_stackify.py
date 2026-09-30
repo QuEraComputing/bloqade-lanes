@@ -656,8 +656,10 @@ def _text(instructions: list) -> str:
             I.new_array(1, 3),
             I.halt(),
         ],
+        # Neither copy read: a `Dup` is not `Pure`, so DCE leaves it.
+        lambda I: [I.const_zone(0), I.dup(), I.halt()],
     ],
-    ids=["loaded", "constant", "chained", "twice", "copies_below_a_result"],
+    ids=["loaded", "constant", "chained", "twice", "copies_below_a_result", "unread"],
 )
 def test_stackify_round_trips_a_decoded_dup(instructions):
     """``dup`` pops its operand and pushes two copies, each with a consumer of
@@ -722,21 +724,10 @@ def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
     _validates(method)
 
 
-def test_stackify_drops_a_dup_nothing_reads():
-    """A ``Dup`` is ``Pure``: with neither copy read, it goes with its
-    operand, as any value nothing consumes does."""
-    from bloqade.lanes.bytecode import Instruction as I
-
-    method, text = _round_trip([I.const_zone(0), I.dup(), I.halt()])
-
-    assert text == _text([I.halt()])
-    _validates(method)
-
-
-def test_stackify_drops_the_clones_of_a_dead_consumer():
-    """The ``Dup`` has no reader, so the DCE after Pass 1 deletes it — after
-    the clone of its zone was placed in front of it. That clone has to go
-    too, or the ``set_detector`` below pops it instead of its array."""
+def test_stackify_takes_what_an_unread_dup_covers_from_a_local():
+    """A ``Dup`` is not ``Pure``, so one nothing reads stays, its copies left
+    on the stack above the array. The ``set_detector`` reads that array, so it
+    is parked in a local and reloaded above them."""
     zone = sm.ConstZone(value=ZoneAddress(0))
     measure = sm.Measure(zones=(zone.result,))
     array = sm.AwaitMeasure(future=measure.results[0])
@@ -750,8 +741,9 @@ def test_stackify_drops_the_clones_of_a_dead_consumer():
 
     stmts = _stackify(method)
 
-    assert unread not in stmts
-    assert sum(isinstance(s, sm.ConstZone) for s in stmts) == 1
+    assert unread in stmts
+    load = stmts[stmts.index(detector) - 1]
+    assert isinstance(load, sm.LoadLocal) and detector.array is load.result
     _validates(method)
 
 

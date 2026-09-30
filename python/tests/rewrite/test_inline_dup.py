@@ -42,8 +42,8 @@ def test_inline_dup_forwards_every_copy_to_the_operand():
 
 
 def test_inline_dup_removes_a_dup_of_a_non_constant():
-    """Unlike ``ConstantFold`` + DCE, which need a constant to fold, this
-    removes a ``Dup`` of anything — here a measurement array."""
+    """It removes a ``Dup`` of anything, not just of a constant — here a
+    measurement array."""
     method = _decoded(
         [
             I.const_zone(0),

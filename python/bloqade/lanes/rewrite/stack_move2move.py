@@ -44,8 +44,9 @@ def _representation(value: ir.SSAValue) -> str:
 
     Read off values this rewrite has already lowered, walking in block order:
     ``ConstFloat``/``ConstInt`` are ``py.Constant`` by then, and the address
-    constants are still in place (DCE removes them afterwards). A constant
-    ``ConstantFold`` folded is a ``py.Constant`` too, address or not.
+    constants are still in place (DCE removes them afterwards). A
+    ``py.Constant`` this rewrite did not make is read the same way, address
+    or not.
     """
     if not isinstance(value, ir.ResultValue):
         return "undef"
@@ -251,9 +252,9 @@ class RewriteStackMoveToMove(RewriteRule):
            to clean up afterwards), so they never appear in
            ``ssa_to_attr``. Fall back to walking the SSA def chain and
            reading ``.value`` directly off the defining statement.
-        3. A constant ``ConstantFold`` folded — a ``Dup``'s copy of one,
-           say — is a ``py.Constant`` this rewrite did not make, so it is
-           read off the statement too, address or scalar.
+        3. A ``py.Constant`` this rewrite did not make — from a fold, or
+           hand-built IR — is read off the statement too, address or
+           scalar.
         """
         data: Any = self.ssa_to_attr.get(v)
         if data is None and isinstance(v, ir.ResultValue):

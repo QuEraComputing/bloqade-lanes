@@ -1,5 +1,3 @@
-from typing import cast
-
 from kirin import interp, ir
 from kirin.analysis import const
 from kirin.dialects import py, ssacfg
@@ -41,10 +39,10 @@ def test_concrete_dup_returns_its_operand_twice():
     assert result == 7
 
 
-def test_a_dup_of_a_constant_folds_out():
-    """Constant propagation goes through ``Dup`` by its concrete method, so
-    ``ConstantFold`` gives each consumer the constant and DCE removes the
-    ``Dup``."""
+def test_constants_propagate_through_a_dup_that_does_not_fold():
+    """Constant propagation goes through ``Dup``, so its copies are known to be
+    the constant. But a ``Dup`` is not ``Pure``: ``ConstantFold`` + DCE leave it
+    where it is, for ``InlineDup`` to take out if anything should."""
     method = _decoded(
         [
             Instruction.const_float(0.5),
@@ -68,8 +66,11 @@ def test_a_dup_of_a_constant_folds_out():
     Fixpoint(Walk(Chain(ConstantFold(), DeadCodeElimination()))).rewrite(method.code)
 
     stmts = list(method.callable_region.walk())
-    assert not any(isinstance(s, stack_move.Dup) for s in stmts)
+    assert dup in stmts
     gates = [s for s in stmts if isinstance(s, stack_move.GlobalRz)]
-    assert [
-        cast(py.Constant, g.rotation_angle.owner).value.unwrap() for g in gates
-    ] == [0.5, 0.5]
+    assert [g.rotation_angle for g in gates] == [dup.top, dup.below]
+
+
+def test_dup_is_not_pure():
+    """Part of the program the bytecode spells: DCE must not drop one."""
+    assert not stack_move.Dup.has_trait(ir.Pure)

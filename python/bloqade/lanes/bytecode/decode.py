@@ -444,17 +444,32 @@ class BytecodeDecoder:
         )
 
 
-def load_program(program: Program, kernel_name: str = "main") -> ir.Method:
+def load_program(
+    program: Program, kernel_name: str = "main", *, inline_dup: bool = False
+) -> ir.Method:
     """Decode a bytecode Program into a stack_move ir.Method and run
     Kirin's type-inference pass on the result.
 
     The returned method carries inferred types on every SSA value,
     including the method's overall return type -- useful for downstream
     passes (analysis, rewrites) that rely on type information.
+
+    ``inline_dup`` chooses between the two SSA forms of a ``dup``. Off (the
+    default), every ``dup`` stays a ``stack_move.Dup``: the method is the
+    program's 1:1 SSA image, and ``stackify`` + ``dump_program`` give the
+    program back. On, ``InlineDup`` takes them out, so each copy's consumers
+    read the operand itself — what the program computes rather than how it
+    keeps its stack. Re-encoded, such a method holds the operand in a local
+    where the program used ``dup``.
     """
     from kirin.passes.typeinfer import TypeInfer
+    from kirin.rewrite import Walk
+
+    from bloqade.lanes.rewrite.inline_dup import InlineDup
 
     decoder = BytecodeDecoder()
     method = decoder.decode(program, kernel_name)
+    if inline_dup:
+        Walk(InlineDup()).rewrite(method.code)
     TypeInfer(method.dialects).unsafe_run(method)
     return method

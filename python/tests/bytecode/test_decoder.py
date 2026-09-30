@@ -93,6 +93,62 @@ def test_decode_dup_duplicates_top():
     assert [store.value for store in stores] == [dup.top, dup.below]
 
 
+def test_load_program_keeps_every_dup_by_default():
+    """The 1:1 SSA image: ``stackify`` + ``dump_program`` give the program
+    back, ``dup`` and all."""
+    from bloqade.lanes.bytecode.encode import dump_program
+    from bloqade.lanes.rewrite.stackify import stackify
+
+    program = Program(
+        version=(1, 0),
+        instructions=[
+            Instruction.const_zone(0),
+            Instruction.dup(),
+            Instruction.cz(),
+            Instruction.cz(),
+            Instruction.halt(),
+        ],
+    )
+    method = load_program(program)
+
+    assert any(isinstance(s, stack_move.Dup) for s in method.callable_region.walk())
+    stackify(method)
+    assert dump_program(method).to_text() == program.to_text()
+
+
+def test_load_program_inline_dup_gives_the_consumers_the_operand():
+    """With ``inline_dup``, no ``Dup`` is left: each copy's consumer reads the
+    measurement array itself, and re-encoded, the array is held in a local
+    where the program used ``dup``."""
+    from bloqade.lanes.bytecode.encode import dump_program
+    from bloqade.lanes.rewrite.stackify import stackify
+
+    program = Program(
+        version=(1, 0),
+        instructions=[
+            Instruction.const_zone(0),
+            Instruction.measure(1),
+            Instruction.await_measure(),
+            Instruction.dup(),
+            Instruction.store("undef", 0),
+            Instruction.store("undef", 1),
+            Instruction.halt(),
+        ],
+    )
+    method = load_program(program, inline_dup=True)
+
+    stmts = list(method.callable_region.walk())
+    assert not any(isinstance(s, stack_move.Dup) for s in stmts)
+    array = next(s for s in stmts if isinstance(s, stack_move.AwaitMeasure))
+    stores = [s for s in stmts if isinstance(s, stack_move.StoreLocal)]
+    assert [s.value for s in stores] == [array.result] * 2
+
+    stackify(method)
+    reencoded = dump_program(method)
+    reencoded.validate(stack=True)
+    assert "cpu::cpu.dup" not in reencoded.to_text()
+
+
 def test_decode_load_pushes_a_fresh_value():
     """Which value a load copies is a question about the locals, not the
     stack, so the decoder gives it a fresh SSA value and the lowering to

@@ -182,17 +182,20 @@ Re-assemble any persisted `.bin` from source.
   was not a pop, which no other `stack_move` statement has.
   `StackMachineFrame.peek_value` is removed: the decoder's `dup` was its only
   caller, and now pops instead.
+- **Changed:** `stack_move.Dup` is no longer `Pure`, so DCE and `ConstantFold`
+  leave it: a decoded `dup` re-encodes as itself even when nothing reads a
+  copy.
 - **New:** `bloqade.lanes.rewrite.inline_dup.InlineDup` canonicalises `Dup`
   out of `stack_move` IR, giving each copy's consumers the operand itself.
-  `RewriteStackMoveToMove` uses it to lower `Dup`; `stackify` does not, so a
-  decoded `dup` still re-encodes as itself.
+  `RewriteStackMoveToMove` uses it to lower `Dup`; `stackify` does not.
+- **New:** `load_program(..., inline_dup=True)` runs `InlineDup` on the
+  decoded kernel. The default, `False`, keeps the 1:1 SSA image of the
+  program, which `stackify` + `dump_program` give back as it was; with `True`,
+  a re-encoded kernel holds each duplicated value in a local instead.
 - **New:** `stack_move`'s constants and `Dup` have a concrete (`main`)
-  interpretation. Kirin's constant propagation used to see every `stack_move`
-  value as unknown; it now propagates constants, through `Dup` too, so
-  `ConstantFold` + DCE can fold a `Dup` of a constant away. The fold leaves
-  `py.Constant`s, which `RewriteStackMoveToMove` lowers but the bytecode
-  encoder does not: fold on the way to `move`, and use `InlineDup` on IR that
-  is still to be encoded.
+  interpretation, and `Dup` a `constprop` one. Kirin's constant propagation
+  used to see every `stack_move` value as unknown; it now propagates
+  constants, through `Dup` too.
 - **New:** `Program.entry_parameters` lists the entry point's declared
   parameter types. `BytecodeDecoder.decode` raises `DecodingError` for an entry
   point that declares any: the kernel it builds takes no arguments, and a

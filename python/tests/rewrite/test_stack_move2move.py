@@ -135,48 +135,22 @@ def test_a_copy_of_a_copy_redirects_to_the_input():
     assert [_constant(gate.rotation_angle) for gate in gates] == [1.0] * 3
 
 
-def test_a_folded_copy_of_an_address_is_lifted():
-    """``ConstantFold`` folds a ``Dup``'s copies of a zone to ``py.Constant``,
-    which the lowering did not make: it still lifts them to the ``cz``'s
-    attribute, and still knows a store of one holds a ``u32``."""
-    from kirin.analysis import const
-    from kirin.dialects import ssacfg
-    from kirin.rewrite import Chain, ConstantFold, DeadCodeElimination, Fixpoint
+def test_a_py_constant_address_is_lifted():
+    """An address held by a ``py.Constant`` — one this rewrite did not make —
+    still lifts to a ``cz``'s attribute, and a store of one still holds a
+    ``u32``, so the load of it back resolves."""
+    zone = py.Constant(EncodingZoneAddress(1))
+    store = stack_move.StoreLocal(value=zone.result, index=0, value_type="u32")
+    first = stack_move.CZ(zone=zone.result)
+    load = stack_move.LoadLocal(index=0, value_type="u32")
+    second = stack_move.CZ(zone=load.result)
+    block = _build_stack_move_block([zone, store, first, load, second])
 
-    from bloqade.lanes.bytecode import Instruction as I, Program
-    from bloqade.lanes.bytecode.decode import load_program
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
 
-    method = load_program(
-        Program(
-            version=(1, 0),
-            instructions=[
-                I.const_zone(1),
-                I.dup(),
-                I.store("u32", 0),
-                I.cz(),
-                I.load("u32", 0),
-                I.cz(),
-                I.halt(),
-            ],
-        )
-    )
-    method = method.similar(
-        method.dialects.union([ssacfg.dialect, py.constant.dialect])
-    )
-    frame, _ = const.Propagate(method.dialects).run(method)
-    for stmt in method.callable_region.walk():
-        for result in stmt.results:
-            if result in frame.entries:
-                result.hints["const"] = frame.entries[result]
-    Fixpoint(Walk(Chain(ConstantFold(), DeadCodeElimination()))).rewrite(method.code)
-    assert not any(isinstance(s, stack_move.Dup) for s in method.callable_region.walk())
-
-    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(method.code)
-
-    stmts = list(method.callable_region.walk())
-    gates = [s for s in stmts if isinstance(s, move.CZ)]
+    gates = [s for s in block.stmts if isinstance(s, move.CZ)]
     assert [g.zone_address for g in gates] == [EncodingZoneAddress(1)] * 2
-    assert not any(isinstance(s, stack_move.CZ) for s in stmts)
+    assert not any(isinstance(s, stack_move.CZ) for s in block.stmts)
 
 
 def test_load_redirects_uses_to_the_value_last_stored():

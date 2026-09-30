@@ -21,12 +21,12 @@ Pass 1 — ``CloneConstants`` (``RewriteRule`` via ``Walk``)
 
 Pass 2 — DCE
     Removes the now-dead original constant definitions left behind by
-    Pass 1, to a fixpoint: a dead consumer takes the clones placed in front
-    of it with it. So does any other ``Pure`` value nothing consumes — a
-    constant, or a ``Dup`` whose copies nothing reads. Such a value is left on
-    the stack by the bytecode and never read, so dropping it changes nothing
-    the program computes, but a program that has one does not re-encode to
-    itself.
+    Pass 1, to a fixpoint: a dead ``Pure`` consumer takes the clones placed
+    in front of it with it. So does a constant nothing consumes: the
+    bytecode leaves it on the stack and never reads it, so dropping it
+    changes nothing the program computes, but a program that has one does not
+    re-encode to itself. A ``Dup`` is not ``Pure``, so one whose copies
+    nothing reads stays, as the ``dup`` it was.
 
 Pass 3 — spill to locals
     An operand is consumed by the op that pops it, so a non-constant value
@@ -144,9 +144,8 @@ def stackify(method: ir.Method) -> None:
             f"stackify only supports single-block methods; got {len(blocks)} blocks"
         )
     # Pass 1 + 2: clone constants into correct stack-depth order, then DCE —
-    # to a fixpoint, because a dead consumer's clones die with it. A `Dup`
-    # whose copies nothing reads is one; they would otherwise be left on the
-    # stack for the next operand to pop.
+    # to a fixpoint, because a dead `Pure` consumer's clones die with it; they
+    # would otherwise be left on the stack for the next operand to pop.
     Walk(CloneConstants()).rewrite(method.code)
     Fixpoint(Walk(DeadCodeElimination())).rewrite(method.code)
     if _inline_spilled_copies_of_constants(blocks[0]):
@@ -177,9 +176,10 @@ def _inline_spilled_copies_of_constants(block: ir.Block) -> bool:
 
     A copy of a constant is that constant. Spilled, each copy costs a local
     and a store and load; inlined, each consumer gets a clone of its own and
-    needs none. Only when no copy stays on the stack, though: one that does
-    would become a clone in front of its consumer, and whatever sits above it
-    there would have to be spilled instead.
+    needs none. Only when some copy is spilled and none stays on the stack,
+    though: one that stays would become a clone in front of its consumer, and
+    whatever sits above it there would have to be spilled instead — and a
+    ``Dup`` nothing reads at all is kept, as the ``dup`` it was.
     """
     stmts = list(block.stmts)
     dups = [
@@ -192,7 +192,10 @@ def _inline_spilled_copies_of_constants(block: ir.Block) -> bool:
     spilled = _values_to_spill(stmts, _spillable)
     inlined = False
     for dup in dups:
-        if all(copy in spilled or not copy.uses for copy in dup.results):
+        copies = dup.results
+        if any(copy in spilled for copy in copies) and all(
+            copy in spilled or not copy.uses for copy in copies
+        ):
             InlineDup().rewrite_Statement(dup)
             inlined = True
     return inlined

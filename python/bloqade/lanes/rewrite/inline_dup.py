@@ -3,8 +3,9 @@
 A ``Dup`` is an identity: both of its results, ``top`` and ``below``, are its
 operand. In SSA form that copy says nothing a second use of the operand does
 not, so this rule gives each copy's consumers the operand itself and deletes
-the ``Dup`` — as kirin's ``InlineAlias`` does for ``py.Alias``. It works for
-any operand, where ``ConstantFold`` + DCE only remove a ``Dup`` of a constant.
+the ``Dup`` — as kirin's ``InlineAlias`` does for ``py.Alias``. It is the
+one thing that does: a ``Dup`` is not ``Pure``, so DCE and ``ConstantFold``
+leave it. ``load_program(..., inline_dup=True)`` runs it on a decoded kernel.
 
 ``RewriteStackMoveToMove`` lowers each ``Dup`` with it: ``move`` keeps no
 stack, so a copy means nothing there. ``stackify`` does not — it would still

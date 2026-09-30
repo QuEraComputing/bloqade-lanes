@@ -9,6 +9,7 @@ from bloqade.decoders.dialects.annotate.types import (
     ObservableType,
 )
 from kirin import interp, ir, lowering, types
+from kirin.analysis import const
 from kirin.decl import info, statement
 from kirin.ir import StmtTrait
 
@@ -149,9 +150,14 @@ class Dup(ir.Statement):
     ``below`` the one beneath it, per the first-declared-on-top convention.
     Each is a value of its own with its own consumer, so an operand is only
     ever used by the statement that pops it.
+
+    Not ``Pure``: a ``Dup`` is part of the program the bytecode spells, so
+    DCE and ``ConstantFold`` leave it, and a decoded ``dup`` re-encodes as
+    itself even when nothing reads a copy. ``InlineDup`` is what takes it
+    out — ``load_program(..., inline_dup=True)`` or the lowering to ``move``.
     """
 
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall()})
     value: ir.SSAValue = info.argument(T)
     top: ir.ResultValue = info.result(T)
     below: ir.ResultValue = info.result(T)
@@ -426,16 +432,14 @@ class SetObservable(ir.Statement):
 # ── Concrete interpretation ────────────────────────────────────────────
 #
 # The statements whose value is known without running the device: the
-# constants and ``Dup``. Kirin's constant propagation falls back to these for a
-# ``Pure`` statement with no ``constprop`` method, so a constant is propagated
-# through a ``Dup`` to its consumers, and ``ConstantFold`` + DCE remove a ``Dup``
-# of a constant from the IR. Every other statement acts on the device, or on
-# the frame's locals, and has no Python value to compute here.
+# constants and ``Dup``. Every other statement acts on the device, or on the
+# frame's locals, and has no Python value to compute here.
 #
-# ``ConstantFold`` folds to ``py.Constant``, which ``RewriteStackMoveToMove``
-# lowers — addresses included — but the bytecode encoder does not: fold on the
-# way to ``move``. To take a ``Dup`` out of IR that is still to be encoded, use
-# ``InlineDup``, which leaves the constants as they are.
+# Kirin's constant propagation falls back to the concrete methods for a
+# ``Pure`` statement, which the constants are. ``Dup`` is not (see its
+# docstring), so it has a ``constprop`` method of its own: a constant is
+# propagated through a ``Dup`` to its consumers, but nothing folds the ``Dup``
+# away — ``InlineDup`` does that.
 
 
 @dialect.register
@@ -456,5 +460,19 @@ class Concrete(interp.MethodTable):
 
     @interp.impl(Dup)
     def dup(self, _interp: interp.Interpreter, frame: interp.Frame, stmt: Dup):
+        value = frame.get(stmt.value)
+        return (value, value)
+
+
+@dialect.register(key="constprop")
+class ConstProp(interp.MethodTable):
+
+    @interp.impl(Dup)
+    def dup(
+        self,
+        _interp: const.Propagate,
+        frame: const.Frame,
+        stmt: Dup,
+    ):
         value = frame.get(stmt.value)
         return (value, value)
