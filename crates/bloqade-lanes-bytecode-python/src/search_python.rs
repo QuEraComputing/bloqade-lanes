@@ -8,36 +8,38 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
-
-// `PyObject` was removed from pyo3 0.29's exports; keep the historical alias
-// so the attempts-list getter's return signature stays legible.
-pub(crate) type PyObject = Py<PyAny>;
+use pyo3::pyclass::CompareOp;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
+use bloqade_lanes_search::bounds::BoundStats;
 use bloqade_lanes_search::drivers::entropy::{
-    EntropyParams, EntropyTrace, EntropyTraceStep, MovesetMetrics, compute_moveset_metrics,
+    EntropyParams, EntropyTrace, EntropyTraceEvent, EntropyTraceStep, MovesetMetrics,
+    compute_moveset_metrics,
 };
 use bloqade_lanes_search::drivers::result::Termination;
-use bloqade_lanes_search::placement::cz_placement::CzPlacement;
+use bloqade_lanes_search::observer::EntropyReason;
+use bloqade_lanes_search::placement::cz_placement::{
+    CandidateAttempt, CzPlacement, CzStage, PlacementBudget, PlacementResult,
+};
 use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
-use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
+use bloqade_lanes_search::placement::nohome::{MoverSelection, NoHomeCzPlacement, NoHomeOptions};
 use bloqade_lanes_search::placement::receding_horizon::{
     RecedingHorizonCzPlacement, RecedingHorizonOptions, default_weight_grid,
 };
 use bloqade_lanes_search::placement::single_heuristic::SingleHeuristicCzPlacement;
-use bloqade_lanes_search::placement::target_generator::DefaultTargetGenerator;
+use bloqade_lanes_search::placement::target_generator::{CandidateList, DefaultTargetGenerator};
 use bloqade_lanes_search::primitives::config::Config;
 use bloqade_lanes_search::primitives::context::SearchContext;
 use bloqade_lanes_search::primitives::distance::DistanceTable;
+use bloqade_lanes_search::primitives::graph::MoveSet;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::search::engine::SearchEngine;
 use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::options::{
     BoundKind, EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
 };
-use bloqade_lanes_search::search::result::{MultiSolveResult, SolveResult};
+use bloqade_lanes_search::search::result::{SolveResult, SolveStatus};
 use bloqade_lanes_search::search::target_solver::TargetSolver;
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
@@ -191,7 +193,233 @@ impl PyDeadlockPolicy {
     }
 }
 
+// ── Typed result enums ──
+
+/// Python equality for a typed result enum: equal to its own members, and a
+/// `TypeError` against a `str`, so code still comparing with the string labels
+/// these replaced fails loudly instead of silently reading `False`.
+///
+/// Each member hashes like the label it replaced, so a hashed lookup against
+/// that label (`status in {"solved"}`, `labels[status]`) reaches `__eq__` and
+/// raises too, rather than silently missing.
+macro_rules! typed_result_enum {
+    ($ty:ident, $pyname:literal, [$($variant:ident => ($name:literal, $label:literal)),+ $(,)?]) => {
+        #[pymethods]
+        impl $ty {
+            /// The member's name.
+            #[getter]
+            fn name(&self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+
+            fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
+                let label = match self {
+                    $(Self::$variant => $label,)+
+                };
+                pyo3::types::PyString::new(py, label).hash()
+            }
+
+            fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+                if other.is_instance_of::<pyo3::types::PyString>() {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        concat!(
+                            "cannot compare ", $pyname, " with the string {}: results now ",
+                            "report ", $pyname, " members, e.g. ", $pyname, ".{}"
+                        ),
+                        other.repr()?,
+                        self.name(),
+                    )));
+                }
+                let equal = other.extract::<Self>().is_ok_and(|o| o == *self);
+                match op {
+                    CompareOp::Eq => Ok(equal),
+                    CompareOp::Ne => Ok(!equal),
+                    _ => Err(pyo3::exceptions::PyTypeError::new_err(concat!(
+                        $pyname,
+                        " members are not ordered"
+                    ))),
+                }
+            }
+        }
+    };
+}
+
+/// How a solve ended: solved, proven or given up as unsolvable, or out of budget.
+///
+/// ``UNSOLVABLE`` is a *proof* only when the result's ``proof`` is
+/// ``Proof.NO_PLAN``. From a search strategy it usually means the search
+/// exhausted the moves its generator offered, which is less than the
+/// architecture allows.
+#[pyclass(
+    from_py_object,
+    name = "SolveStatus",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PySolveStatus {
+    #[pyo3(name = "SOLVED")]
+    Solved = 0,
+    #[pyo3(name = "UNSOLVABLE")]
+    Unsolvable = 1,
+    #[pyo3(name = "BUDGET_EXCEEDED")]
+    BudgetExceeded = 2,
+}
+
+typed_result_enum!(PySolveStatus, "SolveStatus", [
+    Solved => ("SOLVED", "solved"),
+    Unsolvable => ("UNSOLVABLE", "unsolvable"),
+    BudgetExceeded => ("BUDGET_EXCEEDED", "budget_exceeded"),
+]);
+
+impl PySolveStatus {
+    fn from_rs(status: SolveStatus) -> Self {
+        match status {
+            SolveStatus::Solved => Self::Solved,
+            SolveStatus::Unsolvable => Self::Unsolvable,
+            SolveStatus::BudgetExceeded => Self::BudgetExceeded,
+        }
+    }
+}
+
+/// How the search behind a result ended, as the driver's own account.
+///
+/// ``BUDGET`` ran out of expansions; ``STOPPED`` ended on a rule of its own,
+/// such as collecting its goal quota; ``EXHAUSTED`` drained its space. Whether
+/// that is a proof is the result's ``proof``, not this.
+#[pyclass(
+    from_py_object,
+    name = "Termination",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PyTermination {
+    #[pyo3(name = "BUDGET")]
+    Budget = 0,
+    #[pyo3(name = "EXHAUSTED")]
+    Exhausted = 1,
+    #[pyo3(name = "STOPPED")]
+    Stopped = 2,
+}
+
+typed_result_enum!(PyTermination, "Termination", [
+    Budget => ("BUDGET", "budget"),
+    Exhausted => ("EXHAUSTED", "exhausted"),
+    Stopped => ("STOPPED", "stopped"),
+]);
+
+/// What a result proves, when it proves anything.
+///
+/// ``OPTIMAL``: the plan is optimal (no legal plan is cheaper).
+/// ``NO_PLAN``: no plan exists for the instance.
+#[pyclass(
+    from_py_object,
+    name = "Proof",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PyProof {
+    #[pyo3(name = "OPTIMAL")]
+    Optimal = 0,
+    #[pyo3(name = "NO_PLAN")]
+    NoPlan = 1,
+}
+
+// `Proof` replaced a bool rather than labels, so it hashes like its names.
+typed_result_enum!(PyProof, "Proof", [
+    Optimal => ("OPTIMAL", "OPTIMAL"),
+    NoPlan => ("NO_PLAN", "NO_PLAN"),
+]);
+
+/// The proof a result carries: optimal when solved, no plan when unsolvable,
+/// and nothing unless the termination is a proof.
+fn result_proof(result: &SolveResult) -> Option<PyProof> {
+    if !result.proven() {
+        return None;
+    }
+    match result.status {
+        SolveStatus::Solved => Some(PyProof::Optimal),
+        SolveStatus::Unsolvable => Some(PyProof::NoPlan),
+        SolveStatus::BudgetExceeded => None,
+    }
+}
+
 // ── Solve results ──
+
+/// Branch-and-bound pruning statistics from one solve.
+#[pyclass(name = "BoundStats", frozen, module = "bloqade.lanes.bytecode._native")]
+pub struct PyBoundStats {
+    inner: BoundStats,
+}
+
+#[pymethods]
+impl PyBoundStats {
+    /// Cuts the accumulated cost alone could make.
+    #[getter]
+    fn cuts_by_g(&self) -> u64 {
+        self.inner.cuts_by_g
+    }
+
+    /// Cuts only the bound could make.
+    #[getter]
+    fn cuts_by_h(&self) -> u64 {
+        self.inner.cuts_by_h
+    }
+
+    /// Branches cut because the bound proved them infeasible.
+    #[getter]
+    fn cuts_infeasible(&self) -> u64 {
+        self.inner.cuts_infeasible
+    }
+
+    /// Sum of the depths at which the bound cut.
+    #[getter]
+    fn cut_depth_sum(&self) -> u64 {
+        self.inner.cut_depth_sum
+    }
+
+    /// Sum of the depths at which the cost alone would have cut; against
+    /// ``cut_depth_sum`` it measures how much earlier the bound fired.
+    #[getter]
+    fn cut_depth_g_only_sum(&self) -> u64 {
+        self.inner.cut_depth_g_only_sum
+    }
+
+    /// A certified lower bound on the instance optimum.
+    #[getter]
+    fn root_lower_bound(&self) -> f64 {
+        self.inner.root_lower_bound
+    }
+
+    /// Cost of the best plan found, or None if none was.
+    #[getter]
+    fn incumbent_cost(&self) -> Option<f64> {
+        // A `Some` is always a finite `g_score`; the filter keeps a non-finite
+        // cost from ever reaching Python as a misleading float.
+        self.inner.incumbent_cost.filter(|c| c.is_finite())
+    }
+
+    /// ``(incumbent - root_lower_bound) / incumbent``, or None when unsolved.
+    #[getter]
+    fn optimality_gap(&self) -> Option<f64> {
+        self.inner.optimality_gap()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BoundStats(cuts_by_g={}, cuts_by_h={}, cuts_infeasible={}, root_lower_bound={}, incumbent_cost={:?})",
+            self.inner.cuts_by_g,
+            self.inner.cuts_by_h,
+            self.inner.cuts_infeasible,
+            self.inner.root_lower_bound,
+            self.inner.incumbent_cost,
+        )
+    }
+}
 
 /// Result of a move synthesis solve.
 ///
@@ -208,15 +436,10 @@ pub struct PySolveResult {
 
 #[pymethods]
 impl PySolveResult {
-    /// Status of the solve: "solved", "unsolvable", or "budget_exceeded".
-    ///
-    /// ``"unsolvable"`` is a *proof* only from the ``push_rotate`` strategy. From
-    /// a search strategy it means the search exhausted the moves its generator
-    /// offered, which is less than the architecture allows — see
-    /// ``SolveStatus::Unsolvable`` in the Rust docs for why (issue #910).
+    /// How the solve ended; see ``SolveStatus``.
     #[getter]
-    fn status(&self) -> &'static str {
-        self.inner.status.as_label()
+    fn status(&self) -> PySolveStatus {
+        PySolveStatus::from_rs(self.inner.status)
     }
 
     /// Move layers: list of move steps, each a list of lane address tuples.
@@ -271,76 +494,46 @@ impl PySolveResult {
         self.inner.deadlocks
     }
 
-    /// Whether this plan is *proven* optimal.
+    /// What the result proves, or ``None``.
     ///
-    /// `True` means the search drained everything that could still have
-    /// beaten this plan, and its branching was complete enough for that to
-    /// mean something. On the entropy driver it is the root certificate: the
-    /// plan's cost reached `h(root)`, a lower bound on every legal plan, so
-    /// none is cheaper -- including plans the generator would never have
-    /// proposed.
+    /// ``Proof.OPTIMAL``: the plan is optimal. On the entropy driver that is
+    /// the root certificate: the plan's cost reached `h(root)`, a lower bound on
+    /// every legal plan, so none is cheaper -- including plans the generator
+    /// would never have proposed. ``Proof.NO_PLAN``: no plan exists, as Push
+    /// and Rotate's completeness or an infinite root bound shows.
     ///
-    /// `False` is not "suboptimal", it is "unproven": most solves end on
-    /// their expansion budget. Read it to tell a solver giving up from an
-    /// instance that is genuinely this expensive, which is what an escalation
-    /// policy needs to know.
+    /// ``None`` is not "suboptimal" or "solvable", it is "unproven": most
+    /// solves end on their expansion budget. Read it to tell a solver giving
+    /// up from an instance that is genuinely this hard.
     #[getter]
-    fn proven(&self) -> bool {
-        self.inner.proven
+    fn proof(&self) -> Option<PyProof> {
+        result_proof(&self.inner)
     }
 
-    /// How the search ended, as the driver's own account rather than an
-    /// inference from the expansion count.
-    ///
-    /// `"budget"` ran out of expansions; `"stopped"` ended on a rule of its
-    /// own, such as collecting its goal quota; `"exhausted"` drained its
-    /// space without that being a proof; `"exhausted_proof"` drained it and
-    /// the result is optimal, which is the case `proven` reports.
+    /// How the search ended; see ``Termination``.
     #[getter]
-    fn termination(&self) -> &'static str {
+    fn termination(&self) -> PyTermination {
         match self.inner.termination {
-            Termination::Budget => "budget",
-            Termination::Exhausted { proof: false } => "exhausted",
-            Termination::Exhausted { proof: true } => "exhausted_proof",
-            Termination::Stopped => "stopped",
+            Termination::Budget => PyTermination::Budget,
+            Termination::Exhausted { .. } => PyTermination::Exhausted,
+            Termination::Stopped => PyTermination::Stopped,
         }
     }
 
-    /// Branch-and-bound pruning statistics as a dict.
-    ///
-    /// **Empty** unless `EntropyOptions.completion_bound` was set — an
+    /// Branch-and-bound pruning statistics, or ``None`` when no bound ran: an
     /// unbounded solve measured nothing, and zeros would advertise a
-    /// `root_lower_bound` of 0.0 as if it were a measurement. Key-check rather
-    /// than expecting zeros. Keys:
-    /// `cuts_by_g` (cuts `g` alone could make), `cuts_by_h` (cuts only the
-    /// bound could make), `cuts_infeasible`, `cut_depth_sum` /
-    /// `cut_depth_g_only_sum` (the depth ratio measuring how much earlier the
-    /// bound fired), `root_lower_bound` (a certified lower bound on the
-    /// instance optimum), `incumbent_cost`, and `optimality_gap`
-    /// (`None` when unsolved).
+    /// ``root_lower_bound`` of 0.0 as if it were a measurement. A bound runs
+    /// when ``EntropyOptions.completion_bound`` is set, or when a cascade
+    /// strategy's refinement is gated (``SolveOptions.cascade_bound``), which
+    /// needs no ``completion_bound``.
     #[getter]
-    fn bound_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let s = &self.inner.bound_stats;
-        let dict = PyDict::new(py);
-        // No bound in use: return an empty dict rather than a wall of zeros, so
-        // "bounding was off" stays distinguishable from "bounding was on and
-        // pruned nothing" — and so no spurious gap of 1.0 is reported for a
-        // run that measured no lower bound at all.
-        if !s.bound_enabled {
-            return Ok(dict);
-        }
-        dict.set_item("cuts_by_g", s.cuts_by_g)?;
-        dict.set_item("cuts_by_h", s.cuts_by_h)?;
-        dict.set_item("cuts_infeasible", s.cuts_infeasible)?;
-        dict.set_item("cut_depth_sum", s.cut_depth_sum)?;
-        dict.set_item("cut_depth_g_only_sum", s.cut_depth_g_only_sum)?;
-        dict.set_item("root_lower_bound", s.root_lower_bound)?;
-        // `None` ("no solution found") maps to Python `None`. The `filter`
-        // guards the invariant that a `Some` is always a finite `g_score`, so a
-        // non-finite cost could never round-trip as a misleading Python float.
-        dict.set_item("incumbent_cost", s.incumbent_cost.filter(|c| c.is_finite()))?;
-        dict.set_item("optimality_gap", s.optimality_gap())?;
-        Ok(dict)
+    fn bound_stats(&self) -> Option<PyBoundStats> {
+        self.inner
+            .bound_stats
+            .bound_enabled
+            .then_some(PyBoundStats {
+                inner: self.inner.bound_stats,
+            })
     }
 
     /// Optional entropy trace (present when `collect_entropy_trace=True`).
@@ -356,13 +549,13 @@ impl PySolveResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={}, proven={})",
-            self.inner.status.as_label(),
+            "SolveResult(status=SolveStatus.{}, steps={}, cost={}, expanded={}, deadlocks={}, proof={})",
+            PySolveStatus::from_rs(self.inner.status).name(),
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
             self.inner.deadlocks,
-            self.inner.proven,
+            result_proof(&self.inner).map_or("None", |p| p.name()),
         )
     }
 }
@@ -414,6 +607,55 @@ impl PyEntropyTrace {
     }
 }
 
+/// The visualizer's label for a trace event.
+fn trace_event_label(event: EntropyTraceEvent) -> &'static str {
+    match event {
+        EntropyTraceEvent::Descend => "descend",
+        EntropyTraceEvent::Goal => "goal",
+        EntropyTraceEvent::EntropyBump => "entropy_bump",
+        EntropyTraceEvent::Revert => "revert",
+        EntropyTraceEvent::FallbackStart => "fallback_start",
+    }
+}
+
+/// The visualizer's label for a trace reason.
+fn trace_reason_label(reason: EntropyReason) -> &'static str {
+    match reason {
+        EntropyReason::NoValidMoves => "no-valid-moves",
+        EntropyReason::StateSeen => "state-seen",
+        EntropyReason::StateSeenGoal => "state-seen-goal",
+        EntropyReason::DeadlockBreaker => "deadlock-breaker",
+        EntropyReason::EntropyLimit => "entropy",
+    }
+}
+
+/// A moveset as the visualizer's lane tuples:
+/// `(direction, move_type, zone, word, site, bus)`.
+fn trace_moveset(moveset: &MoveSet) -> Vec<(u8, u8, u32, u32, u32, u32)> {
+    moveset
+        .decode()
+        .into_iter()
+        .map(|lane| {
+            (
+                lane.direction as u8,
+                lane.move_type as u8,
+                lane.zone_id,
+                lane.word_id,
+                lane.site_id,
+                lane.bus_id,
+            )
+        })
+        .collect()
+}
+
+/// A configuration as the visualizer's `(qubit, zone, word, site)` tuples.
+fn trace_configuration(config: &Config) -> Vec<(u32, u32, u32, u32)> {
+    config
+        .iter()
+        .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
+        .collect()
+}
+
 /// One step in an entropy-search trace.
 #[pyclass(
     name = "EntropyTraceStep",
@@ -428,7 +670,7 @@ pub struct PyEntropyTraceStep {
 impl PyEntropyTraceStep {
     #[getter]
     fn event(&self) -> String {
-        self.inner.event.clone()
+        trace_event_label(self.inner.event).to_string()
     }
 
     #[getter]
@@ -459,13 +701,17 @@ impl PyEntropyTraceStep {
     #[getter]
     #[allow(clippy::type_complexity)]
     fn moveset(&self) -> Option<Vec<(u8, u8, u32, u32, u32, u32)>> {
-        self.inner.moveset.clone()
+        self.inner.moveset.as_ref().map(trace_moveset)
     }
 
     #[getter]
     #[allow(clippy::type_complexity)]
     fn candidate_movesets(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
-        self.inner.candidate_movesets.clone()
+        self.inner
+            .candidate_movesets
+            .iter()
+            .map(trace_moveset)
+            .collect()
     }
 
     #[getter]
@@ -475,7 +721,9 @@ impl PyEntropyTraceStep {
 
     #[getter]
     fn reason(&self) -> Option<String> {
-        self.inner.reason.clone()
+        self.inner
+            .reason
+            .map(|reason| trace_reason_label(reason).to_string())
     }
 
     #[getter]
@@ -495,12 +743,15 @@ impl PyEntropyTraceStep {
 
     #[getter]
     fn configuration(&self) -> Vec<(u32, u32, u32, u32)> {
-        self.inner.configuration.clone()
+        trace_configuration(&self.inner.configuration)
     }
 
     #[getter]
     fn parent_configuration(&self) -> Option<Vec<(u32, u32, u32, u32)>> {
-        self.inner.parent_configuration.clone()
+        self.inner
+            .parent_configuration
+            .as_ref()
+            .map(trace_configuration)
     }
 
     #[getter]
@@ -516,7 +767,10 @@ impl PyEntropyTraceStep {
     fn __repr__(&self) -> String {
         format!(
             "EntropyTraceStep(event='{}', node_id={}, depth={}, entropy={})",
-            self.inner.event, self.inner.node_id, self.inner.depth, self.inner.entropy,
+            trace_event_label(self.inner.event),
+            self.inner.node_id,
+            self.inner.depth,
+            self.inner.entropy,
         )
     }
 }
@@ -720,14 +974,7 @@ impl PyEntropyScorer {
             occupied.insert(loc.encode());
         }
 
-        let ctx = SearchContext {
-            index: &self.index,
-            dist_table: &self.dist_table,
-            blocked: &self.blocked,
-            targets: &self.targets,
-            cz_pairs: None,
-            capacity: None,
-        };
+        let ctx = SearchContext::new(&self.index, &self.dist_table, &self.blocked, &self.targets);
         let inner =
             compute_moveset_metrics(&old_config, &new_config, &occupied, &ctx, &self.params);
         Ok(PyMovesetMetrics {
@@ -770,6 +1017,63 @@ impl PyEntropyScorer {
 
 // ── No-home options ──
 
+/// How NoHome's CZ phase chooses, for each pair, which qubit moves.
+///
+/// ``RULE`` applies a fixed per-pair rule. ``RANKED`` (the default) plans every
+/// candidate with Push and Rotate, routes the one with the shortest plan and
+/// the rule's, and keeps whichever takes fewer layers, so it is never worse
+/// than ``RULE``; when the rule's candidate does not route, the ranked
+/// candidates are routed in order until one does. ``ROUTE_ALL`` routes every
+/// candidate and keeps the one with the fewest move layers.
+#[pyclass(
+    from_py_object,
+    name = "MoverSelection",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PyMoverSelection {
+    #[pyo3(name = "RULE")]
+    Rule = 0,
+    #[pyo3(name = "RANKED")]
+    Ranked = 1,
+    #[pyo3(name = "ROUTE_ALL")]
+    RouteAll = 2,
+}
+
+#[pymethods]
+impl PyMoverSelection {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Rule => "RULE",
+            Self::Ranked => "RANKED",
+            Self::RouteAll => "ROUTE_ALL",
+        }
+    }
+}
+
+impl PyMoverSelection {
+    fn from_rs(m: MoverSelection) -> Self {
+        match m {
+            MoverSelection::Rule => Self::Rule,
+            MoverSelection::Ranked => Self::Ranked,
+            MoverSelection::RouteAll => Self::RouteAll,
+        }
+    }
+
+    fn to_rs(self) -> MoverSelection {
+        match self {
+            Self::Rule => MoverSelection::Rule,
+            Self::Ranked => MoverSelection::Ranked,
+            Self::RouteAll => MoverSelection::RouteAll,
+        }
+    }
+}
+
 /// Tuning parameters for the no-home return assignment.
 ///
 /// Controls how displaced qubits are assigned to available home sites
@@ -788,13 +1092,16 @@ pub struct PyNoHomeOptions {
 #[pymethods]
 impl PyNoHomeOptions {
     #[new]
-    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8, top_bus_signatures=6, bus_reward_rho=1))]
+    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8, top_bus_signatures=6, bus_reward_rho=1, mover_selection=None, max_mover_candidates=64))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         gamma: f64,
         lambda_lookahead: f64,
         k_candidates: usize,
         top_bus_signatures: usize,
         bus_reward_rho: u32,
+        mover_selection: Option<PyMoverSelection>,
+        max_mover_candidates: usize,
     ) -> PyResult<Self> {
         if !gamma.is_finite() || !(0.0..=1.0).contains(&gamma) {
             return Err(PyValueError::new_err(
@@ -809,6 +1116,10 @@ impl PyNoHomeOptions {
         if k_candidates == 0 {
             return Err(PyValueError::new_err("k_candidates must be >= 1"));
         }
+        if max_mover_candidates == 0 {
+            return Err(PyValueError::new_err("max_mover_candidates must be >= 1"));
+        }
+        let defaults = NoHomeOptions::default();
         Ok(Self {
             inner: NoHomeOptions {
                 gamma,
@@ -816,6 +1127,9 @@ impl PyNoHomeOptions {
                 k_candidates,
                 top_bus_signatures,
                 bus_reward_rho,
+                mover_selection: mover_selection
+                    .map_or(defaults.mover_selection, PyMoverSelection::to_rs),
+                max_mover_candidates,
             },
         })
     }
@@ -845,14 +1159,26 @@ impl PyNoHomeOptions {
         self.inner.bus_reward_rho
     }
 
+    #[getter]
+    fn mover_selection(&self) -> PyMoverSelection {
+        PyMoverSelection::from_rs(self.inner.mover_selection)
+    }
+
+    #[getter]
+    fn max_mover_candidates(&self) -> usize {
+        self.inner.max_mover_candidates
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={}, top_bus_signatures={}, bus_reward_rho={})",
+            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={}, top_bus_signatures={}, bus_reward_rho={}, mover_selection=MoverSelection.{}, max_mover_candidates={})",
             self.inner.gamma,
             self.inner.lambda_lookahead,
             self.inner.k_candidates,
             self.inner.top_bus_signatures,
             self.inner.bus_reward_rho,
+            PyMoverSelection::from_rs(self.inner.mover_selection).name(),
+            self.inner.max_mover_candidates,
         )
     }
 }
@@ -874,7 +1200,7 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None, fallback_push_rotate=false, backwards_search=false, cascade_bound=true))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,
@@ -885,6 +1211,7 @@ impl PySolveOptions {
         top_c: Option<usize>,
         fallback_push_rotate: bool,
         backwards_search: bool,
+        cascade_bound: bool,
     ) -> PyResult<Self> {
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
@@ -906,8 +1233,7 @@ impl PySolveOptions {
                 top_c,
                 fallback_push_rotate,
                 backwards_search,
-                // Not exposed to Python yet (Task 3.4 of the B&B plan).
-                aod_capacity: None,
+                cascade_bound,
             },
         })
     }
@@ -952,6 +1278,12 @@ impl PySolveOptions {
         self.inner.backwards_search
     }
 
+    /// Whether a cascade's A* refinement is gated by the completion bound.
+    #[getter]
+    fn cascade_bound(&self) -> bool {
+        self.inner.cascade_bound
+    }
+
     /// Every constructor field, in constructor order.
     ///
     /// Keep this exhaustive: a `SolveOptions` that prints fewer options than
@@ -959,7 +1291,7 @@ impl PySolveOptions {
     /// someone is printing the options to find one.
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?}, fallback_push_rotate={}, backwards_search={})",
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?}, fallback_push_rotate={}, backwards_search={}, cascade_bound={})",
             self.strategy().name(),
             self.inner.weight,
             self.inner.restarts,
@@ -968,6 +1300,7 @@ impl PySolveOptions {
             self.inner.top_c,
             self.inner.fallback_push_rotate,
             self.inner.backwards_search,
+            self.inner.cascade_bound,
         )
     }
 }
@@ -992,7 +1325,7 @@ pub struct PyEntropyOptions {
 #[pymethods]
 impl PyEntropyOptions {
     #[new]
-    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None, bound_terminates=true))]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0, completion_bound=None))]
     fn new(
         max_movesets_per_group: usize,
         max_goal_candidates: usize,
@@ -1000,7 +1333,6 @@ impl PyEntropyOptions {
         collect_entropy_trace: bool,
         seed: u64,
         completion_bound: Option<&str>,
-        bound_terminates: bool,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -1033,18 +1365,12 @@ impl PyEntropyOptions {
                 w_t,
                 collect_entropy_trace,
                 seed,
-                bound_terminates,
+                // Rust-only: an A/B measurement knob, not a user setting.
+                // Python always lets the bound end a search it has proven.
+                bound_terminates: true,
                 completion_bound,
             },
         })
-    }
-
-    /// Whether the completion bound may end the search once it has proven the
-    /// plan optimal. On by default; `False` restores the pre-certificate spin
-    /// to the expansion budget and is useful only for A/B measurement.
-    #[getter]
-    fn bound_terminates(&self) -> bool {
-        self.inner.bound_terminates
     }
 
     /// Completion bound in use: `"weighted_distance"` or `None`.
@@ -1331,110 +1657,159 @@ impl PyDefaultTargetGenerator {
     }
 }
 
-/// Result of a multi-candidate solve via
-/// `SingleHeuristicCzPlacement.solve_with_attempts()`.
+/// One candidate a placement tried, in order.
 #[pyclass(
-    name = "MultiSolveResult",
+    name = "CandidateAttempt",
     frozen,
     module = "bloqade.lanes.bytecode._native"
 )]
-pub struct PyMultiSolveResult {
-    inner: MultiSolveResult,
+pub struct PyCandidateAttempt {
+    inner: CandidateAttempt,
 }
 
 #[pymethods]
-impl PyMultiSolveResult {
-    /// Status of the winning solve: "solved", "unsolvable", or "budget_exceeded".
+impl PyCandidateAttempt {
+    /// Index of the candidate in the order the placement generated them.
     #[getter]
-    fn status(&self) -> &'static str {
-        self.inner.result.status.as_label()
-    }
-
-    /// Index of the candidate that succeeded, or None if all failed.
-    #[getter]
-    fn candidate_index(&self) -> Option<usize> {
+    fn candidate_index(&self) -> usize {
         self.inner.candidate_index
     }
 
-    /// Total nodes expanded across all candidates.
+    /// How routing the candidate ended.
     #[getter]
-    fn total_expansions(&self) -> u32 {
-        self.inner.total_expansions
+    fn status(&self) -> PySolveStatus {
+        PySolveStatus::from_rs(self.inner.status)
     }
 
-    /// Number of candidates actually attempted (excludes validation failures).
+    /// Nodes expanded routing it.
     #[getter]
-    fn candidates_tried(&self) -> usize {
-        self.inner.candidates_tried
+    fn nodes_expanded(&self) -> u32 {
+        self.inner.nodes_expanded
     }
 
-    /// Per-candidate attempt details: list of dicts with
-    /// `candidate_index`, `status`, `nodes_expanded`.
+    /// The score a candidate evaluator gave it, or None if nothing ranked
+    /// the candidates.
     #[getter]
-    fn attempts(&self) -> PyResult<Vec<PyObject>> {
-        Python::attach(|py| {
-            self.inner
-                .attempts
-                .iter()
-                .map(|a| {
-                    let dict = pyo3::types::PyDict::new(py);
-                    dict.set_item("candidate_index", a.candidate_index)?;
-                    dict.set_item("status", a.status.as_label())?;
-                    dict.set_item("nodes_expanded", a.nodes_expanded)?;
-                    Ok(dict.into_any().unbind())
-                })
-                .collect()
-        })
-    }
-
-    /// Move layers from the winning candidate (same format as SolveResult.move_layers).
-    #[getter]
-    fn move_layers(&self) -> Vec<Vec<PyLaneAddr>> {
-        self.inner
-            .result
-            .move_layers
-            .iter()
-            .map(|ms| {
-                ms.decode()
-                    .into_iter()
-                    .map(|lane| PyLaneAddr { inner: lane })
-                    .collect()
-            })
-            .collect()
-    }
-
-    /// Goal configuration from the winning candidate.
-    #[getter]
-    fn goal_config(&self) -> std::collections::HashMap<u32, PyLocationAddr> {
-        self.inner
-            .result
-            .goal_config
-            .iter()
-            .map(|(qid, loc)| (qid, PyLocationAddr { inner: loc }))
-            .collect()
-    }
-
-    /// Total path cost from the winning candidate.
-    #[getter]
-    fn cost(&self) -> f64 {
-        self.inner.result.cost
-    }
-
-    /// Number of deadlocks from the winning candidate.
-    #[getter]
-    fn deadlocks(&self) -> u32 {
-        self.inner.result.deadlocks
+    fn score(&self) -> Option<f64> {
+        self.inner.score
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "MultiSolveResult(status='{}', candidate={:?}, tried={}, expansions={})",
-            self.inner.result.status.as_label(),
+            "CandidateAttempt(candidate_index={}, status=SolveStatus.{}, nodes_expanded={})",
             self.inner.candidate_index,
-            self.inner.candidates_tried,
-            self.inner.total_expansions,
+            PySolveStatus::from_rs(self.inner.status).name(),
+            self.inner.nodes_expanded,
         )
     }
+}
+
+/// The outcome of placing one CZ stage (``CzPlacement.place``).
+#[pyclass(
+    name = "PlacementResult",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyPlacementResult {
+    result: Py<PySolveResult>,
+    chosen: Option<usize>,
+    attempts: Vec<CandidateAttempt>,
+    total_expansions: u32,
+}
+
+impl PyPlacementResult {
+    fn from_rs(py: Python<'_>, placed: PlacementResult) -> PyResult<Self> {
+        Ok(Self {
+            result: Py::new(
+                py,
+                PySolveResult {
+                    inner: placed.result,
+                },
+            )?,
+            chosen: placed.chosen,
+            attempts: placed.attempts,
+            total_expansions: placed.total_expansions,
+        })
+    }
+}
+
+#[pymethods]
+impl PyPlacementResult {
+    /// The routing result. On success its ``goal_config`` is the chosen
+    /// placement. On failure it is usually the stage's starting
+    /// configuration, but a placement that commits layers before failing
+    /// (``RecedingHorizonCzPlacement``) returns those layers and the
+    /// configuration they reach instead: read ``move_layers`` and
+    /// ``goal_config`` together.
+    #[getter]
+    fn result(&self, py: Python<'_>) -> Py<PySolveResult> {
+        self.result.clone_ref(py)
+    }
+
+    /// Which candidate won, for placements that enumerate candidates; None
+    /// when none won or the placement does not enumerate them.
+    #[getter]
+    fn chosen(&self) -> Option<usize> {
+        self.chosen
+    }
+
+    /// Every candidate tried, in order. Empty for placements that do not
+    /// enumerate candidates.
+    #[getter]
+    fn attempts(&self) -> Vec<PyCandidateAttempt> {
+        self.attempts
+            .iter()
+            .map(|a| PyCandidateAttempt { inner: a.clone() })
+            .collect()
+    }
+
+    /// Expansions across every leg and candidate of the placement.
+    #[getter]
+    fn total_expansions(&self) -> u32 {
+        self.total_expansions
+    }
+
+    /// Candidates actually routed (validation failures are not counted).
+    #[getter]
+    fn candidates_tried(&self) -> usize {
+        self.attempts.len()
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        format!(
+            "PlacementResult(status=SolveStatus.{}, chosen={:?}, tried={}, expansions={})",
+            PySolveStatus::from_rs(self.result.borrow(py).inner.status).name(),
+            self.chosen,
+            self.attempts.len(),
+            self.total_expansions,
+        )
+    }
+}
+
+/// Place one stage through a `CzPlacement`, with the GIL released.
+#[allow(clippy::too_many_arguments)]
+fn place_stage(
+    py: Python<'_>,
+    placement: &(impl CzPlacement + Sync),
+    initial: &std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+    pairs: &[(u32, u32)],
+    blocked: &[PyRef<'_, PyLocationAddr>],
+    max_expansions: Option<u32>,
+    future_layers: Option<Vec<Vec<(u32, u32)>>>,
+) -> PyResult<PyPlacementResult> {
+    let initial: Vec<(u32, LocationAddr)> =
+        initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+    let blocked: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+    let future = future_layers.unwrap_or_default();
+    let placed = py
+        .detach(|| {
+            placement.place(
+                &CzStage::new(&initial, pairs, &blocked).with_future_layers(&future),
+                &PlacementBudget::new(max_expansions),
+            )
+        })
+        .map_err(|e| crate::errors::config_error_to_py(py, &e))?;
+    PyPlacementResult::from_rs(py, placed)
 }
 
 // ── New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers ──
@@ -1724,7 +2099,7 @@ impl PyTargetSolver {
                 self.inner
                     .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
             })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            .map_err(|e| crate::errors::config_error_to_py(py, &e))?;
 
         Ok(PySolveResult { inner: result })
     }
@@ -1761,64 +2136,58 @@ impl PySingleHeuristicCzPlacement {
         }
     }
 
-    /// Solve and return the best result across all candidates.
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead. ``candidates``, when given, are the target placements to
+    /// try, in order, instead of ``DefaultTargetGenerator``'s. Each is
+    /// validated before it is routed and skipped if it fails: it must place
+    /// exactly ``initial``'s qubits, at valid and distinct locations, with
+    /// every pair on CZ partner sites (in either direction).
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None, candidates=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve and return per-candidate attempt details.
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve_with_attempts(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PyMultiSolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve_with_attempts(
-                    initial_pairs,
-                    &controls,
-                    &targets,
-                    blocked_locs,
-                    max_expansions,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PyMultiSolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+        candidates: Option<Vec<std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>>>,
+    ) -> PyResult<PyPlacementResult> {
+        let Some(candidates) = candidates else {
+            return place_stage(
+                py,
+                &self.inner,
+                &initial,
+                &pairs,
+                &blocked,
+                max_expansions,
+                future_layers,
+            );
+        };
+        let list = CandidateList(
+            candidates
+                .iter()
+                .map(|c| c.iter().map(|(&qid, loc)| (qid, loc.inner)).collect())
+                .collect(),
+        );
+        let solver = self.inner.target_solver();
+        let placement = SingleHeuristicCzPlacement::new(
+            TargetSolver::new(solver.engine().clone(), solver.search().clone()),
+            Box::new(list),
+        );
+        place_stage(
+            py,
+            &placement,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {
@@ -1830,8 +2199,8 @@ impl PySingleHeuristicCzPlacement {
 ///
 /// Simultaneously discovers the entangling placement and the routing path
 /// using ``EntanglingConstraintGoal``. Faster than the two-phase heuristic
-/// approach for small atom counts; may need ``solve_pairs`` when future-layer
-/// lookahead is required.
+/// approach for small atom counts; pass ``future_layers`` to ``place`` for
+/// multi-layer lookahead.
 #[pyclass(
     name = "LooseGoalCzPlacement",
     frozen,
@@ -1858,65 +2227,30 @@ impl PyLooseGoalCzPlacement {
         }
     }
 
-    /// Solve using CZ pair constraints (with optional future-layer lookahead).
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
-    fn solve_pairs(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead.
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve_pairs(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PyPlacementResult> {
+        place_stage(
+            py,
+            &self.inner,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {
@@ -1963,65 +2297,30 @@ impl PyRecedingHorizonCzPlacement {
         }
     }
 
-    /// Solve via receding-horizon MPC (with optional future-layer lookahead).
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
-    fn solve_pairs(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead.
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve_pairs(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PyPlacementResult> {
+        place_stage(
+            py,
+            &self.inner,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {
@@ -2057,65 +2356,30 @@ impl PyNoHomeCzPlacement {
         }
     }
 
-    /// Solve via two-phase no-home placement (with optional future-layer lookahead).
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
-    fn solve_pairs(
+    /// Place and route one CZ stage.
+    ///
+    /// ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+    /// ``future_layers`` are later stages, nearest first, for placements that
+    /// look ahead.
+    #[pyo3(signature = (initial, pairs, blocked, max_expansions=None, future_layers=None))]
+    fn place(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
+        pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve_pairs(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
-    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-
-        let result = py
-            .detach(|| {
-                self.inner.solve(
-                    &initial_pairs,
-                    &controls,
-                    &targets,
-                    &blocked_locs,
-                    max_expansions,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
+        future_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PyPlacementResult> {
+        place_stage(
+            py,
+            &self.inner,
+            &initial,
+            &pairs,
+            &blocked,
+            max_expansions,
+            future_layers,
+        )
     }
 
     fn __repr__(&self) -> &'static str {

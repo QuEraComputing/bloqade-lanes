@@ -985,7 +985,7 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=None))]
+    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=None, aod_capacity=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
@@ -997,7 +997,17 @@ impl PyArchSpec {
         feed_forward: bool,
         atom_reloading: bool,
         blockade_radius: Option<f64>,
+        aod_capacity: Option<(usize, usize)>,
     ) -> PyResult<Self> {
+        let aod_capacity = aod_capacity
+            .map(|(x, y)| {
+                rs::AodCapacity::new(x, y).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "aod_capacity must be at least 1 on both axes, got ({x}, {y})"
+                    ))
+                })
+            })
+            .transpose()?;
         Ok(Self {
             inner: rs::ArchSpec {
                 version: Version::new(version.0, version.1),
@@ -1009,6 +1019,7 @@ impl PyArchSpec {
                 feed_forward,
                 atom_reloading,
                 blockade_radius,
+                aod_capacity,
             },
         })
     }
@@ -1097,6 +1108,13 @@ impl PyArchSpec {
     #[getter]
     fn blockade_radius(&self) -> Option<f64> {
         self.inner.blockade_radius
+    }
+
+    /// The largest AOD rectangle one shot may drive, as `(x, y)` tone counts;
+    /// `None` is unlimited.
+    #[getter]
+    fn aod_capacity(&self) -> Option<(usize, usize)> {
+        self.inner.aod_capacity.map(|c| (c.x(), c.y()))
     }
 
     #[getter]

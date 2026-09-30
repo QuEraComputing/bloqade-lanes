@@ -18,7 +18,7 @@
 //!   `nohome`, `receding_horizon` (and forthcoming `single_heuristic` /
 //!   `loose_goal` peers).
 //! - [`dsl`] — Starlark policy DSL sidecar (Move / Target).
-//! - Top-level small modules (`cost`, `goals`, `heuristics`, `scorers`,
+//! - Top-level small modules (`cost`, `goals`, `scorers`,
 //!   `generators`, `observer`, `traits`) — too small to warrant subdirs.
 
 pub mod bounds;
@@ -28,7 +28,6 @@ pub mod dsl;
 pub mod feasibility;
 pub mod generators;
 pub mod goals;
-pub mod heuristics;
 pub mod observer;
 pub mod ops;
 pub mod placement;
@@ -40,11 +39,11 @@ pub mod search;
 pub(crate) mod test_utils;
 pub mod traits;
 
-pub use bounds::{CompletionBound, MaxBound, NoBound, WeightedDistanceBound};
+pub use bounds::{CompletionBound, NoBound, WeightedDistanceBound};
 // `assert_objective_contract` is deliberately not re-exported here: it is a
 // test-only assertion helper, reachable as `bounds::assert_objective_contract`
 // under `cfg(test)` or the `test-util` feature.
-pub use cost::{UniformCost, WeightedDuration};
+pub use cost::UniformCost;
 pub use drivers::result::{SearchResult, Termination};
 pub use feasibility::{Feasibility, Obstruction, check as check_feasibility};
 pub use generators::{
@@ -52,9 +51,10 @@ pub use generators::{
     HeuristicGenerator, LooseTargetGenerator, SeedPolicy,
 };
 pub use goals::{AllAtTarget, EntanglingConstraintGoal, PartialPlacementGoal};
-pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
-pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
-pub use placement::cz_placement::CzPlacement;
+pub use observer::{EntropyReason, NoOpObserver, SearchEvent, SearchObserver};
+pub use placement::cz_placement::{
+    CandidateAttempt, CzPlacement, CzStage, PlacementBudget, PlacementResult,
+};
 pub use placement::loose_goal::LooseGoalCzPlacement;
 pub use placement::nohome::NoHomeCzPlacement;
 pub use placement::receding_horizon::{
@@ -62,7 +62,7 @@ pub use placement::receding_horizon::{
 };
 pub use placement::single_heuristic::SingleHeuristicCzPlacement;
 pub use placement::target_generator::{
-    CandidateError, DefaultTargetGenerator, TargetContext, TargetGenerator,
+    CandidateError, CandidateList, DefaultTargetGenerator, TargetContext, TargetGenerator,
 };
 pub use primitives::config::{Config, ConfigError};
 pub use primitives::context::{AodCapacity, MoveCandidate, SearchContext, SearchState};
@@ -70,10 +70,9 @@ pub use primitives::distance::PairDistanceHeuristic;
 pub use primitives::graph::{MoveSet, NodeId, SearchGraph};
 pub use primitives::lane_index::LaneIndex;
 pub use push_rotate::{solve_push_rotate, solve_push_rotate_with};
-pub use scorers::{DistanceScorer, EntropyScorer};
+pub use scorers::DistanceScorer;
 pub use search::engine::SearchEngine;
 pub use search::move_search::MoveSearch;
 pub use search::options::{InnerStrategy, SolveOptions, Strategy};
-pub use search::result::{CandidateAttempt, MultiSolveResult};
 pub use search::target_solver::TargetSolver;
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator, Objective, ObjectiveId};

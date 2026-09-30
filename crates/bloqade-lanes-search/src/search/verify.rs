@@ -31,11 +31,11 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_bytecode_core::atom_state::{AtomStateData, MoveValidationError};
 
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
+use crate::primitives::lane_index::LaneIndex;
 
 /// Replay `layers` from `root` through the canonical execution model, with
 /// every location in `blocked` held by an immovable phantom atom.
@@ -54,7 +54,7 @@ use crate::primitives::graph::MoveSet;
 pub(crate) fn replay_move_layers(
     root: &Config,
     layers: &[MoveSet],
-    arch: &ArchSpec,
+    index: &LaneIndex,
     blocked: &HashSet<u64>,
 ) -> Result<HashMap<u32, LocationAddr>, String> {
     let mut atoms: Vec<(u32, LocationAddr)> = root.iter().collect();
@@ -100,8 +100,8 @@ pub(crate) fn replay_move_layers(
         let describe = |errors: &[MoveValidationError]| {
             format_layer_error(layer_idx, layers.len(), errors, first_phantom)
         };
-        let validated = state
-            .validate_moves(&lanes, arch)
+        let validated = index
+            .check_move_set(&state, &lanes)
             .map_err(|errors| describe(&errors))?;
         // B1: a blocked site is immovable. The execution model resolves a
         // lane whose source holds any atom as a mover, phantom or not, so the
@@ -140,11 +140,11 @@ pub(crate) fn replay_move_layers(
 pub(crate) fn verify_move_layers(
     root: &Config,
     layers: &[MoveSet],
-    arch: &ArchSpec,
+    index: &LaneIndex,
     blocked: &HashSet<u64>,
     expected_goal: &Config,
 ) -> Result<(), String> {
-    let replayed = replay_move_layers(root, layers, arch, blocked)?;
+    let replayed = replay_move_layers(root, layers, index, blocked)?;
 
     let claimed: HashMap<u32, LocationAddr> = expected_goal.iter().collect();
     if replayed == claimed {
@@ -203,11 +203,11 @@ fn format_layer_error(
 pub(crate) fn assert_move_layers_executable(
     root: &Config,
     layers: &[MoveSet],
-    arch: &ArchSpec,
+    index: &LaneIndex,
     blocked: &HashSet<u64>,
     expected_goal: &Config,
 ) {
-    if let Err(diagnostic) = verify_move_layers(root, layers, arch, blocked, expected_goal) {
+    if let Err(diagnostic) = verify_move_layers(root, layers, index, blocked, expected_goal) {
         panic!(
             "solver produced an invalid plan (this is a bug in the move \
              generator, not in the request): {diagnostic}"
@@ -218,9 +218,9 @@ pub(crate) fn assert_move_layers_executable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     fn index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).expect("arch json parses");
@@ -257,7 +257,7 @@ mod tests {
         // Site bus 0 maps site 0 → site 5.
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
         assert_eq!(
-            verify_move_layers(&root, &layers, index.arch_spec(), &none(), &goal),
+            verify_move_layers(&root, &layers, &index, &none(), &goal),
             Ok(())
         );
     }
@@ -267,7 +267,7 @@ mod tests {
         let index = index();
         let root = Config::new([(0, loc(0, 0))]).expect("config");
         assert_eq!(
-            verify_move_layers(&root, &[], index.arch_spec(), &none(), &root),
+            verify_move_layers(&root, &[], &index, &none(), &root),
             Ok(())
         );
     }
@@ -281,7 +281,7 @@ mod tests {
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         // Executability is checked before the placement comparison, so the
         // expected goal passed here is irrelevant — use the root.
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &root)
+        let err = verify_move_layers(&root, &layers, &index, &none(), &root)
             .expect_err("landing on a stationary atom must be rejected");
         assert!(err.contains("move layer 0 of 1"), "{err}");
         assert!(err.contains("occupied by qubit 1"), "{err}");
@@ -297,7 +297,7 @@ mod tests {
             MoveSet::new(vec![site_lane(0, 0)]),
             MoveSet::new(vec![site_lane(0, 1)]),
         ];
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &root)
+        let err = verify_move_layers(&root, &layers, &index, &none(), &root)
             .expect_err("second layer must be rejected");
         assert!(err.contains("move layer 1 of 2"), "{err}");
     }
@@ -314,7 +314,7 @@ mod tests {
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         let wrong_goal = Config::new([(0, loc(0, 6))]).expect("config");
 
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &wrong_goal)
+        let err = verify_move_layers(&root, &layers, &index, &none(), &wrong_goal)
             .expect_err("a misreported goal placement must be rejected");
         assert!(
             err.contains("does not reproduce the reported goal"),
@@ -332,7 +332,7 @@ mod tests {
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
 
-        let err = verify_move_layers(&root, &layers, index.arch_spec(), &none(), &goal)
+        let err = verify_move_layers(&root, &layers, &index, &none(), &goal)
             .expect_err("a dropped qubit must be rejected");
         assert!(err.contains("qubit 1"), "{err}");
     }
@@ -350,14 +350,8 @@ mod tests {
         // Site 1 is blocked; the rectangle {site 0, site 1} would pick it up.
         let layers = vec![MoveSet::new(vec![site_lane(0, 0), site_lane(0, 1)])];
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
-        let err = verify_move_layers(
-            &root,
-            &layers,
-            index.arch_spec(),
-            &blocked(&[loc(0, 1)]),
-            &goal,
-        )
-        .expect_err("picking up a blocked site must be rejected");
+        let err = verify_move_layers(&root, &layers, &index, &blocked(&[loc(0, 1)]), &goal)
+            .expect_err("picking up a blocked site must be rejected");
         assert!(err.contains("move layer 0 of 1"), "{err}");
         assert!(err.contains("blocked site"), "{err}");
     }
@@ -371,14 +365,8 @@ mod tests {
         let root = Config::new([(0, loc(0, 0))]).expect("config");
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
-        let err = verify_move_layers(
-            &root,
-            &layers,
-            index.arch_spec(),
-            &blocked(&[loc(0, 5)]),
-            &goal,
-        )
-        .expect_err("landing on a blocked site must be rejected");
+        let err = verify_move_layers(&root, &layers, &index, &blocked(&[loc(0, 5)]), &goal)
+            .expect_err("landing on a blocked site must be rejected");
         assert!(err.contains("move layer 0 of 1"), "{err}");
         assert!(err.contains("targets"), "{err}");
         assert!(err.contains("blocked site"), "{err}");
@@ -398,11 +386,10 @@ mod tests {
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
         let sites = blocked(&[loc(1, 0), loc(1, 5), loc(0, 9)]);
         assert_eq!(
-            verify_move_layers(&root, &layers, index.arch_spec(), &sites, &goal),
+            verify_move_layers(&root, &layers, &index, &sites, &goal),
             Ok(())
         );
-        let placement =
-            replay_move_layers(&root, &layers, index.arch_spec(), &sites).expect("plan replays");
+        let placement = replay_move_layers(&root, &layers, &index, &sites).expect("plan replays");
         assert_eq!(placement, HashMap::from([(0, loc(0, 5))]));
     }
 
@@ -415,13 +402,7 @@ mod tests {
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         let goal = Config::new([(0, loc(0, 5))]).expect("config");
         assert_eq!(
-            verify_move_layers(
-                &root,
-                &layers,
-                index.arch_spec(),
-                &blocked(&[loc(0, 0)]),
-                &goal
-            ),
+            verify_move_layers(&root, &layers, &index, &blocked(&[loc(0, 0)]), &goal),
             Ok(())
         );
     }
@@ -434,20 +415,14 @@ mod tests {
         let root = Config::new([(u32::MAX, loc(0, 0))]).expect("config");
         let layers = vec![MoveSet::new(vec![site_lane(0, 0)])];
         let goal = Config::new([(u32::MAX, loc(0, 5))]).expect("config");
-        let err = verify_move_layers(
-            &root,
-            &layers,
-            index.arch_spec(),
-            &blocked(&[loc(0, 1)]),
-            &goal,
-        )
-        .expect_err("a reserved qubit id must be reported");
+        let err = verify_move_layers(&root, &layers, &index, &blocked(&[loc(0, 1)]), &goal)
+            .expect_err("a reserved qubit id must be reported");
         assert!(err.contains("reserved"), "{err}");
         assert!(err.contains(&u32::MAX.to_string()), "{err}");
 
         // With no blocked sites the range is empty and the id is ordinary.
         assert_eq!(
-            verify_move_layers(&root, &layers, index.arch_spec(), &none(), &goal),
+            verify_move_layers(&root, &layers, &index, &none(), &goal),
             Ok(())
         );
     }
