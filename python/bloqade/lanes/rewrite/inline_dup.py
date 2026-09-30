@@ -7,10 +7,10 @@ the ``Dup`` — as kirin's ``InlineAlias`` does for ``py.Alias``. It works for
 any operand, where ``ConstantFold`` + DCE only remove a ``Dup`` of a constant.
 
 ``RewriteStackMoveToMove`` lowers each ``Dup`` with it: ``move`` keeps no
-stack, so a copy means nothing there. ``stackify`` does not — it would still be correct, since
-the operand now has a consumer per copy and is spilled to a local and
-reloaded for each, but a decoded ``dup`` would no longer come back out as
-itself.
+stack, so a copy means nothing there. ``stackify`` does not — it would still
+be correct, since the operand now has a consumer per copy and is spilled to a
+local and reloaded for each, but a decoded ``dup`` would no longer come back
+out as itself.
 """
 
 from dataclasses import dataclass
