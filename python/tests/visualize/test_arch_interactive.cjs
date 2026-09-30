@@ -72,7 +72,7 @@ function fixture(occupied) {
     window: {setTimeout: (callback) => callback()}
   });
   return {
-    plot, siteData, atomData,
+    plot, siteData, atomData, domEvents,
     emit: (name, event) => events[name].forEach((handler) => handler(event)),
     move: (event) => domEvents.mousemove.forEach((handler) => handler(event)),
     leave: () => domEvents.mouseleave.forEach((handler) => handler()),
@@ -88,6 +88,18 @@ test('pointer proximity previews a site even when another overlay captures hover
   assert.equal(f.lanes().length, 1);
   f.move({clientX: 300, clientY: 300});
   assert.equal(f.lanes().length, 0);
+});
+
+test('only pinch (ctrl+wheel) reaches Plotly wheel zoom', () => {
+  const f = fixture(false);
+  const wheel = (ctrlKey) => {
+    const event = {ctrlKey, stopped: false,
+      stopPropagation() { this.stopped = true; }};
+    f.domEvents.wheel.forEach((handler) => handler(event));
+    return event.stopped;
+  };
+  assert.equal(wheel(false), true);
+  assert.equal(wheel(true), false);
 });
 
 for (const kind of ['empty site', 'occupied site', 'atom']) {
