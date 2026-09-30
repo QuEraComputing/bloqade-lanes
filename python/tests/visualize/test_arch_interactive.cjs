@@ -59,8 +59,10 @@ function fixture(occupied) {
     return null;
   };
   plot.on = (name, handler) => { (events[name] ??= []).push(handler); };
-  plot.addEventListener = (name, handler) => {
+  const domOptions = {};
+  plot.addEventListener = (name, handler, options) => {
     (domEvents[name] ??= []).push(handler);
+    (domOptions[name] ??= []).push(options);
   };
   plot.getBoundingClientRect = () => ({left: 0, top: 0});
   vm.runInNewContext(source, {
@@ -72,7 +74,7 @@ function fixture(occupied) {
     window: {setTimeout: (callback) => callback()}
   });
   return {
-    plot, siteData, atomData, domEvents,
+    plot, siteData, atomData, domEvents, domOptions,
     emit: (name, event) => events[name].forEach((handler) => handler(event)),
     move: (event) => domEvents.mousemove.forEach((handler) => handler(event)),
     leave: () => domEvents.mouseleave.forEach((handler) => handler()),
@@ -92,6 +94,9 @@ test('pointer proximity previews a site even when another overlay captures hover
 
 test('only pinch (ctrl+wheel) reaches Plotly wheel zoom', () => {
   const f = fixture(false);
+  // Plotly's wheel handler sits on a descendant drag layer. Only a capture
+  // listener on the plot runs before it; a bubbling one would run too late.
+  assert.deepEqual(f.domOptions.wheel, [true]);
   const wheel = (ctrlKey) => {
     const event = {ctrlKey, stopped: false,
       stopPropagation() { this.stopped = true; }};
