@@ -80,6 +80,28 @@ TYPE_TAG: dict[int, types.TypeAttribute] = {
 # ── Constants ──────────────────────────────────────────────────────────
 
 
+def constant_value_type(value: typing.Any) -> str | None:
+    """The vihaco type a constant holding ``value`` pushes, spelled as the
+    text format spells it (see ``Instruction.load``) — what the Rust
+    validator's stack simulation gives each ``const``. ``None`` for a value
+    no bytecode constant holds.
+
+    Keyed on the value rather than the statement, so it answers for a
+    ``Const*`` statement's ``value`` and a folded ``py.Constant`` alike.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float):
+        return "f64"
+    if isinstance(value, int):
+        return "i64"
+    if isinstance(value, (LocationAddress, LaneAddress)):
+        return "u64"
+    if isinstance(value, ZoneAddress):
+        return "u32"
+    return None
+
+
 @statement(dialect=dialect)
 class ConstFloat(ir.Statement):
     traits = frozenset({lowering.FromPythonCall(), ir.Pure(), ir.ConstantLike()})
@@ -409,6 +431,11 @@ class SetObservable(ir.Statement):
 # through a ``Dup`` to its consumers, and ``ConstantFold`` + DCE remove a ``Dup``
 # of a constant from the IR. Every other statement acts on the device, or on
 # the frame's locals, and has no Python value to compute here.
+#
+# ``ConstantFold`` folds to ``py.Constant``, which ``RewriteStackMoveToMove``
+# lowers — addresses included — but the bytecode encoder does not: fold on the
+# way to ``move``. To take a ``Dup`` out of IR that is still to be encoded, use
+# ``InlineDup``, which leaves the constants as they are.
 
 
 @dialect.register

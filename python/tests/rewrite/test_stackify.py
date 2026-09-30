@@ -671,10 +671,11 @@ def test_stackify_round_trips_a_decoded_dup(instructions):
     _validates(method)
 
 
-def test_stackify_spills_the_copies_of_a_dup_above_a_constant():
+def test_stackify_clones_a_constant_whose_copies_would_all_be_spilled():
     """Both copies of a constant sit above the ``new_array``'s other constant,
-    which is cloned in front of it, so they are spilled like any other
-    results — typed as the constant they copy — and reloaded above it."""
+    which is cloned in front of it, so both would be spilled. A copy of a
+    constant is that constant, so the ``Dup`` goes and each is cloned
+    instead: no locals."""
     from bloqade.lanes.bytecode import Instruction as I
 
     method, text = _round_trip(
@@ -682,18 +683,75 @@ def test_stackify_spills_the_copies_of_a_dup_above_a_constant():
     )
 
     assert text == _text(
+        [I.const_int(3), I.const_int(7), I.const_int(7), I.new_array(1, 3), I.halt()]
+    )
+    _validates(method)
+
+
+def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
+    """One copy is stored by the program itself and so stays on the stack;
+    the other sits above the ``new_array``'s constant and is spilled — typed
+    as the constant it copies, where a lanes op's result would be ``undef``."""
+    from bloqade.lanes.bytecode import Instruction as I
+
+    method, text = _round_trip(
         [
+            I.const_int(3),
             I.const_int(7),
             I.dup(),
-            I.store("i64", 0),  # the top copy
-            I.store("i64", 1),
-            I.const_int(3),
-            I.load("i64", 1),
-            I.load("i64", 0),
-            I.new_array(1, 3),
+            I.store("i64", 5),
+            I.new_array(1, 2),
             I.halt(),
         ]
     )
+
+    assert text == _text(
+        [
+            I.const_int(7),
+            I.dup(),
+            I.store("i64", 6),  # the top copy, parked
+            I.store("i64", 7),
+            I.load("i64", 6),
+            I.store("i64", 5),
+            I.const_int(3),
+            I.load("i64", 7),
+            I.new_array(1, 2),
+            I.halt(),
+        ]
+    )
+    _validates(method)
+
+
+def test_stackify_drops_a_dup_nothing_reads():
+    """A ``Dup`` is ``Pure``: with neither copy read, it goes with its
+    operand, as any value nothing consumes does."""
+    from bloqade.lanes.bytecode import Instruction as I
+
+    method, text = _round_trip([I.const_zone(0), I.dup(), I.halt()])
+
+    assert text == _text([I.halt()])
+    _validates(method)
+
+
+def test_stackify_drops_the_clones_of_a_dead_consumer():
+    """The ``Dup`` has no reader, so the DCE after Pass 1 deletes it — after
+    the clone of its zone was placed in front of it. That clone has to go
+    too, or the ``set_detector`` below pops it instead of its array."""
+    zone = sm.ConstZone(value=ZoneAddress(0))
+    measure = sm.Measure(zones=(zone.result,))
+    array = sm.AwaitMeasure(future=measure.results[0])
+    other = sm.ConstZone(value=ZoneAddress(0))
+    unread = sm.Dup(value=other.result)
+    detector = sm.SetDetector(array=array.result)
+    ci = sm.ConstInt(value=0)
+    method = _make_method(
+        zone, measure, array, other, unread, detector, ci, func.Return(ci.result)
+    )
+
+    stmts = _stackify(method)
+
+    assert unread not in stmts
+    assert sum(isinstance(s, sm.ConstZone) for s in stmts) == 1
     _validates(method)
 
 

@@ -19,7 +19,7 @@ from functools import singledispatchmethod
 from typing import Any, TypeVar
 
 from kirin import ir
-from kirin.rewrite import Walk
+from kirin.dialects import py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.arch.spec import ArchSpec
@@ -27,6 +27,10 @@ from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAd
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.inline_dup import InlineDup
 from bloqade.lanes.utils import no_none_elements_tuple
+
+# The constants this rewrite leaves in place, read by the attributes they lift
+# to (see ``_try_lift``).
+_ADDRESS_CONSTANTS = (stack_move.ConstLoc, stack_move.ConstLane, stack_move.ConstZone)
 
 # Generic TypeVar used by the _lift_attrs helper to propagate the concrete
 # attribute type through runtime isinstance checks.
@@ -40,23 +44,19 @@ def _representation(value: ir.SSAValue) -> str:
 
     Read off values this rewrite has already lowered, walking in block order:
     ``ConstFloat``/``ConstInt`` are ``py.Constant`` by then, and the address
-    constants are still in place (DCE removes them afterwards).
+    constants are still in place (DCE removes them afterwards). A constant
+    ``ConstantFold`` folded is a ``py.Constant`` too, address or not.
     """
-    from kirin.dialects import py
-
-    if isinstance(value, ir.ResultValue):
-        owner = value.owner
-        if isinstance(owner, py.Constant):
-            data = owner.value.unwrap()
-            if isinstance(data, float):
-                return "f64"
-            if isinstance(data, int) and not isinstance(data, bool):
-                return "i64"
-        if isinstance(owner, (stack_move.ConstLoc, stack_move.ConstLane)):
-            return "u64"
-        if isinstance(owner, stack_move.ConstZone):
-            return "u32"
-    return "undef"
+    if not isinstance(value, ir.ResultValue):
+        return "undef"
+    owner = value.owner
+    if isinstance(owner, py.Constant):
+        data = owner.value.unwrap()
+    elif isinstance(owner, _ADDRESS_CONSTANTS):
+        data = owner.value
+    else:
+        return "undef"
+    return stack_move.constant_value_type(data) or "undef"
 
 
 @dataclass
@@ -98,9 +98,6 @@ class RewriteStackMoveToMove(RewriteRule):
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
         self.local_values = {}
-        # `move` keeps no stack, so a `Dup`'s copies are just its operand:
-        # canonicalise them away before any handler sees an argument.
-        Walk(InlineDup()).rewrite(node)
         # Insert the initial move.Load at block start.
         load = move.Load()
         first = next(iter(node.stmts), None)
@@ -177,6 +174,13 @@ class RewriteStackMoveToMove(RewriteRule):
         self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
+    @_rewrite.register(stack_move.Dup)
+    def _(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
+        # `move` keeps no stack, so a `Dup`'s copies are just its operand.
+        # Producers come before consumers in the walk, so a copy of a copy
+        # is forwarded by the time its own `Dup` is reached.
+        InlineDup().rewrite_Statement(stmt)
+
     @_rewrite.register(stack_move.StoreLocal)
     def _(self, stmt: stack_move.StoreLocal, to_delete: list[ir.Statement]) -> None:
         # A store collapses — no target emission. It only records which SSA
@@ -247,15 +251,17 @@ class RewriteStackMoveToMove(RewriteRule):
            to clean up afterwards), so they never appear in
            ``ssa_to_attr``. Fall back to walking the SSA def chain and
            reading ``.value`` directly off the defining statement.
+        3. A constant ``ConstantFold`` folded — a ``Dup``'s copy of one,
+           say — is a ``py.Constant`` this rewrite did not make, so it is
+           read off the statement too, address or scalar.
         """
         data: Any = self.ssa_to_attr.get(v)
         if data is None and isinstance(v, ir.ResultValue):
             owner = v.owner
-            if isinstance(
-                owner,
-                (stack_move.ConstLoc, stack_move.ConstLane, stack_move.ConstZone),
-            ):
+            if isinstance(owner, _ADDRESS_CONSTANTS):
                 data = owner.value
+            elif isinstance(owner, py.Constant):
+                data = owner.value.unwrap()
         if data is None:
             return None
         return data if isinstance(data, attr_type) else None

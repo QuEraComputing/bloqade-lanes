@@ -118,8 +118,8 @@ def test_dup_redirects_uses_to_input():
 
 
 def test_a_copy_of_a_copy_redirects_to_the_input():
-    """``InlineDup`` runs before the lowering proper, so a ``Dup`` of a
-    ``Dup``'s copy reads the constant too."""
+    """Producers are lowered before consumers, so the first ``Dup``'s copy
+    is the constant by the time the ``Dup`` of it is reached."""
     cf = stack_move.ConstFloat(value=1.0)
     first = stack_move.Dup(value=cf.result)
     second = stack_move.Dup(value=first.top)
@@ -133,6 +133,50 @@ def test_a_copy_of_a_copy_redirects_to_the_input():
     assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
     gates = [s for s in block.stmts if isinstance(s, move.GlobalRz)]
     assert [_constant(gate.rotation_angle) for gate in gates] == [1.0] * 3
+
+
+def test_a_folded_copy_of_an_address_is_lifted():
+    """``ConstantFold`` folds a ``Dup``'s copies of a zone to ``py.Constant``,
+    which the lowering did not make: it still lifts them to the ``cz``'s
+    attribute, and still knows a store of one holds a ``u32``."""
+    from kirin.analysis import const
+    from kirin.dialects import ssacfg
+    from kirin.rewrite import Chain, ConstantFold, DeadCodeElimination, Fixpoint
+
+    from bloqade.lanes.bytecode import Instruction as I, Program
+    from bloqade.lanes.bytecode.decode import load_program
+
+    method = load_program(
+        Program(
+            version=(1, 0),
+            instructions=[
+                I.const_zone(1),
+                I.dup(),
+                I.store("u32", 0),
+                I.cz(),
+                I.load("u32", 0),
+                I.cz(),
+                I.halt(),
+            ],
+        )
+    )
+    method = method.similar(
+        method.dialects.union([ssacfg.dialect, py.constant.dialect])
+    )
+    frame, _ = const.Propagate(method.dialects).run(method)
+    for stmt in method.callable_region.walk():
+        for result in stmt.results:
+            if result in frame.entries:
+                result.hints["const"] = frame.entries[result]
+    Fixpoint(Walk(Chain(ConstantFold(), DeadCodeElimination()))).rewrite(method.code)
+    assert not any(isinstance(s, stack_move.Dup) for s in method.callable_region.walk())
+
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(method.code)
+
+    stmts = list(method.callable_region.walk())
+    gates = [s for s in stmts if isinstance(s, move.CZ)]
+    assert [g.zone_address for g in gates] == [EncodingZoneAddress(1)] * 2
+    assert not any(isinstance(s, stack_move.CZ) for s in stmts)
 
 
 def test_load_redirects_uses_to_the_value_last_stored():

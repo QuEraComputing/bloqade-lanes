@@ -21,7 +21,12 @@ Pass 1 — ``CloneConstants`` (``RewriteRule`` via ``Walk``)
 
 Pass 2 — DCE
     Removes the now-dead original constant definitions left behind by
-    Pass 1.
+    Pass 1, to a fixpoint: a dead consumer takes the clones placed in front
+    of it with it. So does any other ``Pure`` value nothing consumes — a
+    constant, or a ``Dup`` whose copies nothing reads. Such a value is left on
+    the stack by the bytecode and never read, so dropping it changes nothing
+    the program computes, but a program that has one does not re-encode to
+    itself.
 
 Pass 3 — spill to locals
     An operand is consumed by the op that pops it, so a non-constant value
@@ -29,15 +34,16 @@ Pass 3 — spill to locals
     ``GetItem`` statements) cannot stay where it was pushed. It is spilled
     instead: a ``StoreLocal`` right after its producer parks it in a local,
     out of every operand op's reach, and a ``LoadLocal`` before each consumer
-    brings a copy back where the consumer expects it — below the constants
-    Pass 1 placed:
+    brings a copy back where the consumer expects it — in stack order among
+    the constants Pass 1 placed, above every one that belongs deeper:
 
         v = AwaitMeasure(...)
         StoreLocal(v, k)          ← off the operand stack
         ...                       ← anything at all; local k is untouched
+        <const args of c_i below v>
         LoadLocal(k)              ← one reload per consumer
-        <const args of c_i>       ← placed by Pass 1
-        c_i(reload, …)
+        <const args of c_i above v>
+        c_i(…, reload, …)
 
     A consumer that takes a spilled value takes its other non-constant
     arguments from locals too, reloaded in stack order. A reload lands on
@@ -76,11 +82,12 @@ from collections.abc import Callable
 from typing import cast
 
 from kirin import ir
-from kirin.rewrite import Walk
+from kirin.rewrite import Fixpoint, Walk
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 from kirin.rewrite.dce import DeadCodeElimination
 
 from bloqade.lanes.dialects import stack_move
+from bloqade.lanes.rewrite.inline_dup import InlineDup
 
 
 class CloneConstants(RewriteRule):
@@ -136,9 +143,16 @@ def stackify(method: ir.Method) -> None:
         raise ValueError(
             f"stackify only supports single-block methods; got {len(blocks)} blocks"
         )
-    # Pass 1 + 2: clone constants into correct stack-depth order, then DCE.
+    # Pass 1 + 2: clone constants into correct stack-depth order, then DCE —
+    # to a fixpoint, because a dead consumer's clones die with it. A `Dup`
+    # whose copies nothing reads is one; they would otherwise be left on the
+    # stack for the next operand to pop.
     Walk(CloneConstants()).rewrite(method.code)
-    Walk(DeadCodeElimination()).rewrite(method.code)
+    Fixpoint(Walk(DeadCodeElimination())).rewrite(method.code)
+    if _inline_spilled_copies_of_constants(blocks[0]):
+        # The constant now has a consumer per copy: clone it for each.
+        Walk(CloneConstants()).rewrite(method.code)
+        Fixpoint(Walk(DeadCodeElimination())).rewrite(method.code)
 
     # Pass 3: spill every value that more than one statement consumes.
     _spill_to_locals(blocks[0])
@@ -149,19 +163,39 @@ def stackify(method: ir.Method) -> None:
 _MAX_LOCAL_INDEX = 1023
 
 
-# The vihaco type each constant pushes, spelled for ``StoreLocal``: what the
-# Rust validator's stack simulation gives each ``const``.
-_CONSTANT_TYPE: dict[type[ir.Statement], str] = {
-    stack_move.ConstFloat: "f64",
-    stack_move.ConstInt: "i64",
-    stack_move.ConstLoc: "u64",
-    stack_move.ConstLane: "u64",
-    stack_move.ConstZone: "u32",
-}
-
-
 def _is_constant(value: ir.SSAValue) -> bool:
     return isinstance(value, ir.ResultValue) and value.owner.has_trait(ir.ConstantLike)
+
+
+def _spillable(arg: ir.SSAValue) -> bool:
+    return isinstance(arg, ir.ResultValue) and not arg.owner.has_trait(ir.ConstantLike)
+
+
+def _inline_spilled_copies_of_constants(block: ir.Block) -> bool:
+    """Take out every ``Dup`` of a constant none of whose copies waits on the
+    stack, giving their consumers the constant; say whether there was one.
+
+    A copy of a constant is that constant. Spilled, each copy costs a local
+    and a store and load; inlined, each consumer gets a clone of its own and
+    needs none. Only when no copy stays on the stack, though: one that does
+    would become a clone in front of its consumer, and whatever sits above it
+    there would have to be spilled instead.
+    """
+    stmts = list(block.stmts)
+    dups = [
+        stmt
+        for stmt in stmts
+        if isinstance(stmt, stack_move.Dup) and _is_constant(stmt.value)
+    ]
+    if not dups:
+        return False
+    spilled = _values_to_spill(stmts, _spillable)
+    inlined = False
+    for dup in dups:
+        if all(copy in spilled or not copy.uses for copy in dup.results):
+            InlineDup().rewrite_Statement(dup)
+            inlined = True
+    return inlined
 
 
 def _value_type(value: ir.SSAValue) -> str:
@@ -179,10 +213,13 @@ def _value_type(value: ir.SSAValue) -> str:
     while isinstance(value, ir.ResultValue) and isinstance(value.owner, stack_move.Dup):
         value = value.owner.value
     if isinstance(value, ir.ResultValue):
-        if isinstance(value.owner, stack_move.LoadLocal):
-            return value.owner.value_type
-        if type(value.owner) in _CONSTANT_TYPE:
-            return _CONSTANT_TYPE[type(value.owner)]
+        owner = value.owner
+        if isinstance(owner, stack_move.LoadLocal):
+            return owner.value_type
+        if owner.has_trait(ir.ConstantLike):
+            constant = stack_move.constant_value_type(getattr(owner, "value", None))
+            if constant is not None:
+                return constant
     return "undef"
 
 
@@ -270,12 +307,7 @@ def _spill_to_locals(block: ir.Block) -> None:
     consumers in a local, and reload it for each (see the module docs)."""
     stmts: list[ir.Statement] = list(block.stmts)
 
-    def spillable(arg: ir.SSAValue) -> bool:
-        return isinstance(arg, ir.ResultValue) and not arg.owner.has_trait(
-            ir.ConstantLike
-        )
-
-    spilled = _values_to_spill(stmts, spillable)
+    spilled = _values_to_spill(stmts, _spillable)
     if not spilled:
         return
 
