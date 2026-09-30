@@ -1,5 +1,6 @@
 """Tests for stackify stackification rewrite."""
 
+import random
 from typing import cast
 
 import pytest
@@ -1242,3 +1243,93 @@ def test_stackify_encode_two_consumers():
 
     encoded = dump_program(method)
     assert encoded.to_text() == Program(version=(1, 0), instructions=expected).to_text()
+
+
+# ── Fuzzing ───────────────────────────────────────────────────────────────────
+
+
+def _random_block(rng: random.Random) -> ir.Method:
+    """A random straight-line block of stack_move statements, in no stack
+    order at all: operands drawn from whatever has been produced, so values
+    are shared, consumed out of order, left unread, copied by ``Dup`` —
+    constants included — and parked in the program's own locals.
+
+    Only the stack is under test, so operand types are not kept apart."""
+    stmts: list[ir.Statement] = []
+    zones: list[ir.SSAValue] = []
+    futures: list[ir.SSAValue] = []
+    arrays: list[ir.SSAValue] = []
+    items: list[ir.SSAValue] = []
+    anything: list[ir.SSAValue] = []
+    stored: list[int] = []
+
+    def add(stmt: ir.Statement, *pools: list[ir.SSAValue]) -> ir.Statement:
+        stmts.append(stmt)
+        for pool in (*pools, anything):
+            pool.extend(stmt.results)
+        return stmt
+
+    def zone() -> ir.SSAValue:
+        if zones and rng.random() < 0.75:
+            return rng.choice(zones)
+        return add(sm.ConstZone(value=ZoneAddress(rng.randrange(2))), zones).results[0]
+
+    def constant() -> ir.SSAValue:
+        return add(sm.ConstInt(value=rng.randrange(3))).results[0]
+
+    for _ in range(rng.randrange(3, 25)):
+        kind = rng.random()
+        if kind < 0.15:
+            zone()
+        elif kind < 0.25:
+            zs = tuple(zone() for _ in range(rng.randrange(1, 3)))
+            add(sm.Measure(zones=zs), futures)
+        elif kind < 0.35 and futures:
+            add(sm.AwaitMeasure(future=rng.choice(futures)), arrays)
+        elif kind < 0.5 and arrays:
+            index = (constant(),)
+            add(sm.GetItem(array=rng.choice(arrays), indices=index), items)
+        elif kind < 0.6 and items:
+            values = tuple(
+                rng.choice(items + [constant()]) for _ in range(rng.randrange(1, 4))
+            )
+            new_array = sm.NewArray(values=values, type_tag=1, dim0=len(values), dim1=0)
+            add(new_array, arrays)
+        elif kind < 0.7 and anything:
+            add(sm.Dup(value=rng.choice(anything)))
+        elif kind < 0.78 and zones:
+            add(sm.CZ(zone=rng.choice(zones)))
+        elif kind < 0.84 and arrays:
+            add(sm.SetDetector(array=rng.choice(arrays)))
+        elif kind < 0.9 and anything:
+            index = rng.randrange(3)
+            add(
+                sm.StoreLocal(
+                    value=rng.choice(anything), index=index, value_type="undef"
+                )
+            )
+            stored.append(index)
+        elif stored:
+            add(sm.LoadLocal(index=rng.choice(stored), value_type="undef"))
+    ci = sm.ConstInt(value=0)
+    return _make_method(*stmts, ci, func.Return(ci.result))
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_stackify_fuzz(seed):
+    """200 random blocks per seed. Each comes out a stack program in which
+    every statement pops exactly its own operands, and ``stackify`` again —
+    on the method, and on its bytecode decoded afresh — changes nothing.
+
+    A failure names its seed and block: the ``index``-th block (from 0) that
+    ``_random_block`` draws from ``random.Random(seed)``."""
+    rng = random.Random(seed)
+    for index in range(200):
+        method = _random_block(rng)
+        try:
+            stackify(method)
+            _check_stack_discipline(method)
+            assert _is_stack_program(list(method.callable_region.blocks[0].stmts))
+            _is_a_fixed_point(method, dump_program(method))
+        except Exception as error:
+            raise AssertionError(f"seed {seed}, block {index}: {error}") from error
