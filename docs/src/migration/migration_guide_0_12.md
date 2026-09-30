@@ -190,11 +190,19 @@ Re-assemble any persisted `.bin` from source.
 - **New:** `load_program(..., inline_dup=True)` runs `InlineDup` on the
   decoded kernel. The default, `False`, keeps the 1:1 SSA image of the
   program, with every `dup` a `Dup`.
-- **Behaviour:** `stackify` keeps a `Dup` as the `dup` it was, with one
-  exception: a `Dup` of a constant whose copies it would otherwise spill to
-  locals becomes a clone of the constant per consumer. On a kernel decoded
-  with `inline_dup=True`, it clones a duplicated constant the same way and
-  holds any other duplicated value in a local.
+- **Behaviour:** `stackify` leaves a block that already is a stack program —
+  every statement finds its arguments on top of the operand stack, in the
+  order it pops them — exactly as it is. Its own output is one, so running it
+  again changes nothing, and so is every kernel `load_program` decodes by
+  default, so `stackify` + `dump_program` give the program back unchanged. It
+  used to move each constant to just before its consumer and drop constants
+  nothing read even there.
+- **Behaviour:** In a block it does rework, `stackify` keeps each `Dup` as
+  the `dup` it was, except a `Dup` of a constant whose copies it would
+  otherwise spill to locals, which becomes a clone of the constant per
+  consumer. A kernel decoded with `inline_dup=True` is such a block wherever a
+  value was duplicated: a duplicated constant is cloned for each consumer, and
+  any other duplicated value held in a local.
 - **New:** `stack_move`'s constants and `Dup` have a concrete (`main`)
   interpretation, and `Dup` a `constprop` one. Kirin's constant propagation
   used to see every `stack_move` value as unknown; it now propagates

@@ -10,7 +10,12 @@ from bloqade.lanes.bytecode.decode import load_program
 from bloqade.lanes.bytecode.encode import dump_program
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import stack_move as sm
-from bloqade.lanes.rewrite.stackify import _MAX_LOCAL_INDEX, _stack_order, stackify
+from bloqade.lanes.rewrite.stackify import (
+    _MAX_LOCAL_INDEX,
+    _is_stack_program,
+    _stack_order,
+    stackify,
+)
 
 
 def _make_method(*stmts) -> ir.Method:
@@ -456,7 +461,20 @@ def _validates(method: ir.Method) -> None:
     walk knows nothing of types.
     """
     _check_stack_discipline(method)
-    dump_program(method).validate(stack=True)
+    program = dump_program(method)
+    program.validate(stack=True)
+    _is_a_fixed_point(method, program)
+
+
+def _is_a_fixed_point(method: ir.Method, program) -> None:
+    """``stackify`` again changes nothing: its output is a stack program,
+    which it leaves as it is. Run on the method itself, and on the bytecode
+    it encodes to, decoded afresh."""
+    stackify(method)
+    assert dump_program(method).to_text() == program.to_text()
+    again = load_program(program)
+    stackify(again)
+    assert dump_program(again).to_text() == program.to_text()
 
 
 def test_stackify_spills_nothing_for_a_single_consumer():
@@ -608,6 +626,27 @@ def _round_trip(instructions: list) -> tuple[ir.Method, str]:
     return method, dump_program(method).to_text()
 
 
+def _reworked(instructions: list) -> tuple[ir.Method, str]:
+    """Like ``_round_trip``, but with each constant moved to right before its
+    consumer first — where Pass 1 puts it, and where the compiler's own IR
+    has it. Decoded, the block is a stack program, which ``stackify`` leaves
+    as it is; moved, it is not, so ``stackify`` has to rework it."""
+    from bloqade.lanes.bytecode import Program
+
+    program = Program(version=(1, 0), instructions=instructions)
+    program.validate(stack=True)
+    method = load_program(program)
+    block = method.callable_region.blocks[0]
+    for stmt in list(block.stmts):
+        if stmt.has_trait(ir.ConstantLike) and len(stmt.results[0].uses) == 1:
+            (use,) = stmt.results[0].uses
+            stmt.detach()
+            stmt.insert_before(use.stmt)
+    assert not _is_stack_program(list(block.stmts))
+    stackify(method)
+    return method, dump_program(method).to_text()
+
+
 def _text(instructions: list) -> str:
     from bloqade.lanes.bytecode import Program
 
@@ -673,6 +712,94 @@ def test_stackify_round_trips_a_decoded_dup(instructions):
     _validates(method)
 
 
+@pytest.mark.parametrize(
+    "instructions",
+    [
+        # A constant below a measurement array: stackify would park the array.
+        lambda I: [
+            I.const_int(7),
+            I.const_zone(0),
+            I.measure(1),
+            I.await_measure(),
+            I.new_array(1, 2),
+            I.halt(),
+        ],
+        # A constant location below a computed rotation.
+        lambda I: [
+            I.const_loc(0, 0, 0),
+            I.initial_fill(1),
+            I.const_loc(0, 0, 0),
+            I.const_float(0.5),
+            I.new_array(0, 1),
+            I.const_int(0),
+            I.get_item(1),
+            I.const_float(1.0),
+            I.local_r(1),
+            I.halt(),
+        ],
+        # A constant pushed long before its consumer: stackify would move it.
+        lambda I: [
+            I.const_zone(0),
+            I.const_int(1),
+            I.store("i64", 0),
+            I.cz(),
+            I.halt(),
+        ],
+        # A constant nothing reads: DCE would drop it.
+        lambda I: [I.const_zone(0), I.halt()],
+        # A constant's copies above another constant: stackify would clone it.
+        lambda I: [
+            I.const_int(3),
+            I.const_int(7),
+            I.dup(),
+            I.new_array(1, 3),
+            I.halt(),
+        ],
+    ],
+    ids=[
+        "constant_below_a_result",
+        "constant_below_a_rotation",
+        "constant_pushed_early",
+        "constant_nothing_reads",
+        "copies_above_a_constant",
+    ],
+)
+def test_stackify_leaves_a_stack_program_as_it_was(instructions):
+    """Decoded, every valid program is a stack program — each statement finds
+    its arguments on top, in order — so ``stackify`` leaves it as it is, even
+    where it would rework the same block laid out another way."""
+    from bloqade.lanes.bytecode import Instruction
+
+    method, text = _round_trip(instructions(Instruction))
+
+    assert _is_stack_program(list(method.callable_region.blocks[0].stmts))
+    assert text == _text(instructions(Instruction))
+    _validates(method)
+
+
+def test_stackify_does_not_grow_its_own_output():
+    """A constant below a non-constant used to be spilled again on every run:
+    Pass 1 cloned the constant back above the reload the last run put above
+    it. Its output is a stack program now, so every later run is a no-op."""
+    from bloqade.lanes.bytecode import Instruction as I
+
+    method, text = _reworked(
+        [
+            I.const_int(7),
+            I.const_zone(0),
+            I.measure(1),
+            I.await_measure(),
+            I.new_array(1, 2),
+            I.halt(),
+        ]
+    )
+
+    for _ in range(3):
+        stackify(method)
+        assert dump_program(method).to_text() == text
+    assert _is_stack_program(list(method.callable_region.blocks[0].stmts))
+
+
 def test_stackify_clones_a_constant_whose_copies_would_all_be_spilled():
     """Both copies of a constant sit above the ``new_array``'s other constant,
     which is cloned in front of it, so both would be spilled. A copy of a
@@ -680,7 +807,7 @@ def test_stackify_clones_a_constant_whose_copies_would_all_be_spilled():
     instead: no locals."""
     from bloqade.lanes.bytecode import Instruction as I
 
-    method, text = _round_trip(
+    method, text = _reworked(
         [I.const_int(3), I.const_int(7), I.dup(), I.new_array(1, 3), I.halt()]
     )
 
@@ -696,7 +823,7 @@ def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
     as the constant it copies, where a lanes op's result would be ``undef``."""
     from bloqade.lanes.bytecode import Instruction as I
 
-    method, text = _round_trip(
+    method, text = _reworked(
         [
             I.const_int(3),
             I.const_int(7),
@@ -753,7 +880,7 @@ def test_stackify_parks_the_top_copy_to_spill_the_one_below():
     the program's own ``store``."""
     from bloqade.lanes.bytecode import Instruction as I
 
-    method, text = _round_trip(
+    method, text = _reworked(
         [
             I.const_int(7),
             I.const_zone(0),
@@ -849,7 +976,7 @@ def test_stackify_interleaves_constants_and_reloads(instructions, expected):
     clone: each consumer's operands come out in one deepest-first sequence."""
     from bloqade.lanes.bytecode import Instruction
 
-    method, text = _round_trip(instructions(Instruction))
+    method, text = _reworked(instructions(Instruction))
 
     assert text == _text(expected(Instruction))
     _validates(method)

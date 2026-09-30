@@ -9,6 +9,14 @@ branches or back-edges.  This is enforced at runtime.  All IR produced
 by the current compiler pipeline (Move → StackMove → Bytecode) satisfies
 this invariant.
 
+A block that already is a stack program — every statement finds its
+arguments on top of the operand stack, in the order it pops them, so each
+value is popped exactly where it was pushed — is left exactly as it is (see
+``_is_stack_program``). That makes ``stackify`` idempotent, since its own
+output is one, and gives decoded bytecode back as it was: the decoder builds
+every statement by popping a simulated stack, so what it produces is one too.
+Only a block that is not goes through the passes, and comes out rewritten.
+
 Three sub-passes run in sequence:
 
 Pass 1 — ``CloneConstants`` (``RewriteRule`` via ``Walk``)
@@ -31,8 +39,7 @@ Pass 2 — DCE
     Between Pass 2 and Pass 3, a ``Dup`` of a constant whose copies would be
     spilled is inlined — its consumers given the constant, which Passes 1 and
     2 then clone for each — since a copy of a constant is that constant and a
-    clone needs no local. That is the one ``Dup`` a decoded program does not
-    get back; every other stays the ``dup`` it was.
+    clone needs no local. Every other ``Dup`` stays the ``dup`` it was.
 
 Pass 3 — spill to locals
     An operand is consumed by the op that pops it, so a non-constant value
@@ -137,7 +144,8 @@ def stackify(method: ir.Method) -> None:
 
     Applies all three stackification sub-passes in sequence (CloneConstants,
     DCE, spilling to locals) so that ``dump_program`` can walk the block in
-    statement order and emit correct bytecode.
+    statement order and emit correct bytecode — unless the block already is a
+    stack program, which is left unchanged.
 
     Raises ``ValueError`` if the method contains more than one block, or if
     it keeps more values spilled at once than a frame has locals. All IR
@@ -149,6 +157,9 @@ def stackify(method: ir.Method) -> None:
         raise ValueError(
             f"stackify only supports single-block methods; got {len(blocks)} blocks"
         )
+    if _is_stack_program(list(blocks[0].stmts)):
+        return
+
     # Pass 1 + 2: clone constants into correct stack-depth order, then DCE —
     # to a fixpoint, because a dead `Pure` consumer's clones die with it; they
     # would otherwise be left on the stack for the next operand to pop.
@@ -170,6 +181,28 @@ _MAX_LOCAL_INDEX = 1023
 
 def _is_constant(value: ir.SSAValue) -> bool:
     return isinstance(value, ir.ResultValue) and value.owner.has_trait(ir.ConstantLike)
+
+
+def _is_stack_program(stmts: list[ir.Statement]) -> bool:
+    """Whether ``stmts`` already run as they stand on the operand stack.
+
+    Walks the stack with SSA identities, the layout the decoder builds and
+    ``dump_program`` emits: each statement pops its arguments deepest first
+    by ``_stack_order`` and pushes its results with the first declared on
+    top. True when every statement finds its arguments exactly on top, which
+    also means each value is popped once, where it was pushed. A value
+    nothing pops may stay: ``halt`` and ``ret`` discard what is left.
+    """
+    stack: list[ir.SSAValue] = []
+    for stmt in stmts:
+        order = [stmt.args[i] for i in _stack_order(stmt)]
+        if order:
+            top = stack[len(stack) - len(order) :] if len(order) <= len(stack) else []
+            if len(top) != len(order) or any(a is not b for a, b in zip(top, order)):
+                return False
+            del stack[len(stack) - len(order) :]
+        stack.extend(reversed(stmt.results))
+    return True
 
 
 def _spillable(arg: ir.SSAValue) -> bool:

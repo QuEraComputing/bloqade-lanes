@@ -460,11 +460,11 @@ def load_program(
     consumers read the operand itself — what the program computes rather than
     how it keeps its stack.
 
-    That is the decode alone. ``stackify`` keeps a ``Dup`` as the ``dup`` it
-    was, with one exception: a ``Dup`` of a constant whose copies it would
-    otherwise spill to locals, which it replaces by a clone of the constant
-    per consumer. Re-encoding an inlined method, it clones a duplicated
-    constant the same way and holds any other duplicated value in a local.
+    Off, the method is a stack program, which ``stackify`` leaves as it is:
+    ``stackify`` + ``dump_program`` give back the program decoded. On, a value
+    that was duplicated has a consumer per copy, so ``stackify`` reworks the
+    block: it clones a duplicated constant for each consumer and holds any
+    other duplicated value in a local.
     """
     from kirin.passes.typeinfer import TypeInfer
     from kirin.rewrite import Walk
