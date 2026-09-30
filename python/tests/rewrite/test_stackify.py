@@ -802,9 +802,9 @@ def test_stackify_does_not_grow_its_own_output():
 
 def test_stackify_clones_a_constant_whose_copies_would_all_be_spilled():
     """Both copies of a constant sit above the ``new_array``'s other constant,
-    which is cloned in front of it, so both would be spilled. A copy of a
-    constant is that constant, so the ``Dup`` goes and each is cloned
-    instead: no locals."""
+    which is cloned in front of it, so as values they would both be moved to
+    locals. But a copy of a constant is that constant: the ``Dup`` goes and
+    each is cloned instead, with no locals."""
     from bloqade.lanes.bytecode import Instruction as I
 
     method, text = _reworked(
@@ -817,10 +817,10 @@ def test_stackify_clones_a_constant_whose_copies_would_all_be_spilled():
     _validates(method)
 
 
-def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
-    """One copy is stored by the program itself and so stays on the stack;
-    the other sits above the ``new_array``'s constant and is spilled — typed
-    as the constant it copies, where a lanes op's result would be ``undef``."""
+def test_stackify_re_creates_every_copy_of_a_constant():
+    """A copy of a constant is that constant, so in a block ``stackify``
+    reworks, a ``Dup`` of one goes and each consumer gets a clone — the one
+    the program stores itself included, in order though it is."""
     from bloqade.lanes.bytecode import Instruction as I
 
     method, text = _reworked(
@@ -837,6 +837,40 @@ def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
     assert text == _text(
         [
             I.const_int(7),
+            I.store("i64", 5),
+            I.const_int(3),
+            I.const_int(7),
+            I.new_array(1, 2),
+            I.halt(),
+        ]
+    )
+    _validates(method)
+
+
+def test_stackify_stores_a_spilled_copy_as_what_it_copies():
+    """The copy beneath sits above the ``new_array``'s constant, so it is
+    moved to a local — typed as the ``load`` it copies, where a lanes op's
+    result would be ``undef`` — and the one on top is parked on the way."""
+    from bloqade.lanes.bytecode import Instruction as I
+
+    method, text = _reworked(
+        [
+            I.const_int(7),
+            I.store("i64", 0),
+            I.const_int(3),
+            I.load("i64", 0),
+            I.dup(),
+            I.store("i64", 5),
+            I.new_array(1, 2),
+            I.halt(),
+        ]
+    )
+
+    assert text == _text(
+        [
+            I.const_int(7),
+            I.store("i64", 0),
+            I.load("i64", 0),
             I.dup(),
             I.store("i64", 6),  # the top copy, parked
             I.store("i64", 7),
@@ -853,18 +887,21 @@ def test_stackify_stores_a_spilled_copy_of_a_constant_as_its_type():
 
 def test_stackify_takes_what_an_unread_dup_covers_from_a_local():
     """A ``Dup`` is not ``Pure``, so one nothing reads stays, its copies left
-    on the stack above the array. The ``set_detector`` reads that array, so it
-    is parked in a local and reloaded above them."""
+    on the stack above the first array. The ``set_detector`` reads that
+    array, so it is moved to a local and reloaded above them."""
     zone = sm.ConstZone(value=ZoneAddress(0))
     measure = sm.Measure(zones=(zone.result,))
     array = sm.AwaitMeasure(future=measure.results[0])
-    other = sm.ConstZone(value=ZoneAddress(0))
+    other_zone = sm.ConstZone(value=ZoneAddress(0))
+    other_measure = sm.Measure(zones=(other_zone.result,))
+    other = sm.AwaitMeasure(future=other_measure.results[0])
     unread = sm.Dup(value=other.result)
     detector = sm.SetDetector(array=array.result)
     ci = sm.ConstInt(value=0)
     method = _make_method(
-        zone, measure, array, other, unread, detector, ci, func.Return(ci.result)
-    )
+        zone, measure, array, other_zone, other_measure, other, unread,
+        detector, ci, func.Return(ci.result),
+    )  # fmt: skip
 
     stmts = _stackify(method)
 
@@ -979,6 +1016,34 @@ def test_stackify_interleaves_constants_and_reloads(instructions, expected):
     method, text = _reworked(instructions(Instruction))
 
     assert text == _text(expected(Instruction))
+    _validates(method)
+
+
+def test_stackify_keeps_the_arguments_below_a_moved_one_on_the_stack():
+    """A measurement shared by two detectors, *above* its neighbour in the
+    first. Its reload goes on top, where it belongs, so the neighbour —
+    used once and in order — stays on the stack. Only what sits above an
+    argument that has to be supplied has to be supplied too."""
+    cz, measure, await_m = _measure_await_chain()
+    idx0 = sm.ConstInt(value=0)
+    gi0 = sm.GetItem(array=await_m.result, indices=(idx0.result,))
+    idx1 = sm.ConstInt(value=1)
+    gi1 = sm.GetItem(array=await_m.result, indices=(idx1.result,))
+    # gi1 appears in both detectors; in the first it is the top element.
+    na0 = sm.NewArray(values=(gi0.result, gi1.result), type_tag=1, dim0=2, dim1=0)
+    na1 = sm.NewArray(values=(gi1.result,), type_tag=1, dim0=1, dim1=0)
+    ci = sm.ConstInt(value=0)
+    ret = func.Return(ci.result)
+    method = _make_method(cz, measure, await_m, idx0, gi0, idx1, gi1, na0, na1, ci, ret)
+
+    stmts = _stackify(method)
+
+    stored = {s.value for s in stmts if isinstance(s, sm.StoreLocal)}
+    assert stored == {await_m.result, gi1.result}
+    assert na0.values[0] is gi0.result
+    reload = na0.values[1]
+    assert isinstance(reload, ir.ResultValue)
+    assert isinstance(reload.owner, sm.LoadLocal)
     _validates(method)
 
 

@@ -173,8 +173,7 @@ Re-assemble any persisted `.bin` from source.
   result it does not simulate. Slots scale with how many values are live at
   once, and `stackify` raises `ValueError` rather than need more than the 1024
   a frame may hold. Decoded bytecode's `dup`, and a constant operand below a
-  non-constant one, both come out right: the operands above the constant are
-  reloaded above its clone
+  non-constant one, both come out right
   ([#1050](https://github.com/QuEraComputing/bloqade-lanes/issues/1050)).
 - **Changed:** `stack_move.Dup` pops its operand and has two results, `top`
   and `below`, as `dup` (`a -- a a`) does. It used to have one `result`, and
@@ -197,12 +196,15 @@ Re-assemble any persisted `.bin` from source.
   default, so `stackify` + `dump_program` give the program back unchanged. It
   used to move each constant to just before its consumer and drop constants
   nothing read even there.
-- **Behaviour:** In a block it does rework, `stackify` keeps each `Dup` as
-  the `dup` it was, except a `Dup` of a constant whose copies it would
-  otherwise spill to locals, which becomes a clone of the constant per
-  consumer. A kernel decoded with `inline_dup=True` is such a block wherever a
-  value was duplicated: a duplicated constant is cloned for each consumer, and
-  any other duplicated value held in a local.
+- **Behaviour:** A block that is not a stack program, `stackify` repairs by
+  two rules. A constant is always re-created, cloned in front of each
+  consumer — a `Dup` of one is inlined, so its copies are too. Any other value
+  stays on the stack while it is in stack order, and is moved to a local
+  otherwise: one used more than once, or not where its consumer pops it. It
+  used to also move every other argument of a consumer that took a shared
+  value, which it no longer does for the ones below it, so a program may
+  need fewer locals than before. A kernel decoded with `inline_dup=True` is
+  such a block wherever a value was duplicated.
 - **New:** `stack_move`'s constants and `Dup` have a concrete (`main`)
   interpretation, and `Dup` a `constprop` one. Kirin's constant propagation
   used to see every `stack_move` value as unknown; it now propagates

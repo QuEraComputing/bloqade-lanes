@@ -155,7 +155,7 @@ class Dup(ir.Statement):
     DCE and ``ConstantFold`` leave it, even when nothing reads a copy.
     ``InlineDup`` is what takes it out: ``load_program(..., inline_dup=True)``,
     the lowering to ``move``, and ``stackify`` — in a block it has to rework —
-    for a ``Dup`` of a constant whose copies it would otherwise spill.
+    for a ``Dup`` of a constant.
     """
 
     traits = frozenset({lowering.FromPythonCall()})

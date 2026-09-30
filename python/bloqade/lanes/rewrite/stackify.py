@@ -9,15 +9,27 @@ branches or back-edges.  This is enforced at runtime.  All IR produced
 by the current compiler pipeline (Move → StackMove → Bytecode) satisfies
 this invariant.
 
-A block that already is a stack program — every statement finds its
-arguments on top of the operand stack, in the order it pops them, so each
-value is popped exactly where it was pushed — is left exactly as it is (see
-``_is_stack_program``). That makes ``stackify`` idempotent, since its own
-output is one, and gives decoded bytecode back as it was: the decoder builds
-every statement by popping a simulated stack, so what it produces is one too.
-Only a block that is not goes through the passes, and comes out rewritten.
+The target is SSA stack ordering: a block in which every statement finds its
+arguments on top of the operand stack, in the order it pops them, and pushes
+its results there — so each value is popped exactly once, where it was
+pushed. Such a block is a stack program (see ``_is_stack_program``), and
+``stackify`` leaves one exactly as it is. The decoder builds every statement
+by popping a simulated stack, so a decoded block is one, and so is
+``stackify``'s own output: decoded bytecode comes back as it was, and a
+second run changes nothing.
 
-Three sub-passes run in sequence:
+A block that is not one is repaired by two rules, one per kind of value:
+
+- A constant is always re-created: cloned in front of each of its consumers,
+  in stack order (Pass 1), so it never waits on the stack. A ``Dup`` of a
+  constant is inlined first — a copy of a constant is that constant — so its
+  copies are re-created the same way. Every instruction is one 14-byte word
+  and a constant is one instruction, as a ``load`` is, so re-creating one is
+  never dearer than keeping it in a local.
+- Any other value stays on the stack while it is in stack order, and is
+  moved to a local otherwise (Pass 3): stored right after its producer, and
+  loaded again in front of each consumer, where that consumer's arguments
+  have it.
 
 Pass 1 — ``CloneConstants`` (``RewriteRule`` via ``Walk``)
     For each consuming statement, clones every ``ConstantLike`` (``Const*``)
@@ -32,56 +44,35 @@ Pass 2 — DCE
     Pass 1, to a fixpoint: a dead ``Pure`` consumer takes the clones placed
     in front of it with it. So does a constant nothing consumes: the
     bytecode leaves it on the stack and never reads it, so dropping it
-    changes nothing the program computes, but a program that has one does not
-    re-encode to itself. A ``Dup`` is not ``Pure``, so one whose copies
-    nothing reads stays, as the ``dup`` it was.
+    changes nothing the program computes. A ``Dup`` is not ``Pure``, so one
+    whose copies nothing reads stays, as the ``dup`` it was.
 
-    Between Pass 2 and Pass 3, a ``Dup`` of a constant whose copies would be
-    spilled is inlined — its consumers given the constant, which Passes 1 and
-    2 then clone for each — since a copy of a constant is that constant and a
-    clone needs no local. Every other ``Dup`` stays the ``dup`` it was.
-
-Pass 3 — spill to locals
-    An operand is consumed by the op that pops it, so a non-constant value
-    with more than one consumer (e.g. an ``AwaitMeasure`` result read by N
-    ``GetItem`` statements) cannot stay where it was pushed. It is spilled
-    instead: a ``StoreLocal`` right after its producer parks it in a local,
-    out of every operand op's reach, and a ``LoadLocal`` before each consumer
-    brings a copy back where the consumer expects it — in stack order among
-    the constants Pass 1 placed, above every one that belongs deeper:
+Pass 3 — move out-of-order values to locals
+    A value is in stack order when it has one consumer and waits on the stack
+    for it among the deepest of that consumer's arguments that are exactly
+    the top of the stack when it runs. Whatever a consumer does not take from
+    the stack is supplied on top — clones and reloads, interleaved deepest
+    first — so every argument above the first one supplied is supplied too.
+    ``_values_to_spill`` finds the rest greedily, walking the stack; each is
+    moved:
 
         v = AwaitMeasure(...)
         StoreLocal(v, k)          ← off the operand stack
         ...                       ← anything at all; local k is untouched
-        <const args of c_i below v>
+        <args of c_i below v, taken from the stack or supplied>
         LoadLocal(k)              ← one reload per consumer
-        <const args of c_i above v>
+        <args of c_i above v, supplied>
         c_i(…, reload, …)
 
-    A consumer that takes a spilled value takes its other non-constant
-    arguments from locals too, reloaded in stack order. A reload lands on
-    top of whatever is already on the stack, so on its own it would sit
-    above an argument that belongs above it.
-
-    So does a consumer whose arguments are not on top of the stack in the
-    order it pops them. Values each used once are still consumed out of
-    order — two detector arrays built before either is set, so the first
-    ``SetDetector`` finds the second array on top — and a walk of the
-    operand stack finds those, and takes them from locals, where the order
-    they were pushed in no longer matters.
-
-    So, too, does a consumer's non-constant argument above one of its
-    constants. The constant is cloned right in front of the consumer, so
-    whatever belongs above it can only get there as a reload. A consumer's
-    operands are therefore materialised in one deepest-first sequence — each
-    constant cloned and each non-constant above it reloaded, interleaved in
-    ``_stack_order`` — on top of whatever it takes from the stack. The
-    compiler never puts a constant below a non-constant operand; decoded
-    bytecode can (``new_array`` of a constant and a measurement, ``local_r``
-    with a computed rotation).
+    A value with several consumers is out of order at all but one of them at
+    least, and is moved outright (e.g. an ``AwaitMeasure`` result read by N
+    ``GetItem`` statements). One used once is moved when it is not where its
+    consumer pops it: below a constant it belongs above, or beneath values
+    consumed later — two detector arrays built before either is set, so the
+    first ``SetDetector`` finds the second array on top.
 
     Slots are handed out lowest-free-first and returned after a value's last
-    reload, so a function reserves one local per spilled value live at once.
+    reload, so a function reserves one local per moved value live at once.
 
     This is the work the bytecode's ``dup``/``swap``/``pop`` did before a
     function had locals of its own (#1038).
@@ -91,7 +82,6 @@ from __future__ import annotations
 
 import heapq
 import itertools
-from collections.abc import Callable
 from typing import cast
 
 from kirin import ir
@@ -160,17 +150,20 @@ def stackify(method: ir.Method) -> None:
     if _is_stack_program(list(blocks[0].stmts)):
         return
 
-    # Pass 1 + 2: clone constants into correct stack-depth order, then DCE —
-    # to a fixpoint, because a dead `Pure` consumer's clones die with it; they
-    # would otherwise be left on the stack for the next operand to pop.
+    # A copy of a constant is that constant: give its consumers the constant,
+    # for Pass 1 to re-create in front of each like any other use.
+    for stmt in list(blocks[0].stmts):
+        if isinstance(stmt, stack_move.Dup) and _is_constant(stmt.value):
+            InlineDup().rewrite_Statement(stmt)
+
+    # Pass 1 + 2: re-create every constant in front of each consumer, in stack
+    # order, then DCE — to a fixpoint, because a dead `Pure` consumer's clones
+    # die with it; they would otherwise be left on the stack for the next
+    # operand to pop.
     Walk(CloneConstants()).rewrite(method.code)
     Fixpoint(Walk(DeadCodeElimination())).rewrite(method.code)
-    if _inline_spilled_copies_of_constants(blocks[0]):
-        # The constant now has a consumer per copy: clone it for each.
-        Walk(CloneConstants()).rewrite(method.code)
-        Fixpoint(Walk(DeadCodeElimination())).rewrite(method.code)
 
-    # Pass 3: spill every value that more than one statement consumes.
+    # Pass 3: move every value that is not in stack order to a local.
     _spill_to_locals(blocks[0])
 
 
@@ -209,37 +202,6 @@ def _spillable(arg: ir.SSAValue) -> bool:
     return isinstance(arg, ir.ResultValue) and not arg.owner.has_trait(ir.ConstantLike)
 
 
-def _inline_spilled_copies_of_constants(block: ir.Block) -> bool:
-    """Take out every ``Dup`` of a constant none of whose copies waits on the
-    stack, giving their consumers the constant; say whether there was one.
-
-    A copy of a constant is that constant. Spilled, each copy costs a local
-    and a store and load; inlined, each consumer gets a clone of its own and
-    needs none. Only when some copy is spilled and none stays on the stack,
-    though: one that stays would become a clone in front of its consumer, and
-    whatever sits above it there would have to be spilled instead — and a
-    ``Dup`` nothing reads at all is kept, as the ``dup`` it was.
-    """
-    stmts = list(block.stmts)
-    dups = [
-        stmt
-        for stmt in stmts
-        if isinstance(stmt, stack_move.Dup) and _is_constant(stmt.value)
-    ]
-    if not dups:
-        return False
-    spilled = _values_to_spill(stmts, _spillable)
-    inlined = False
-    for dup in dups:
-        copies = dup.results
-        if any(copy in spilled for copy in copies) and all(
-            copy in spilled or not copy.uses for copy in copies
-        ):
-            InlineDup().rewrite_Statement(dup)
-            inlined = True
-    return inlined
-
-
 def _value_type(value: ir.SSAValue) -> str:
     """The vihaco type ``value`` has at run time, spelled for ``StoreLocal``.
 
@@ -247,21 +209,17 @@ def _value_type(value: ir.SSAValue) -> str:
     a lanes op returns without simulating it — a measurement future, an array,
     an element of one, a detector — is an ``Undefined`` placeholder on the
     machine, whatever it stands for, until #776 decides what those values
-    are. Constants are cloned rather than spilled, so the other producers of
-    a spilled value are a decoded program's own ``LoadLocal``, which says,
-    and its ``Dup``, whose copies are whatever it copied — a constant
-    included.
+    are. Constants are re-created rather than moved, and so are the copies
+    of one, so the other producers of a moved value are a decoded program's
+    own ``LoadLocal``, which says, and its ``Dup``, whose copies are whatever
+    it copied.
     """
     while isinstance(value, ir.ResultValue) and isinstance(value.owner, stack_move.Dup):
         value = value.owner.value
-    if isinstance(value, ir.ResultValue):
-        owner = value.owner
-        if isinstance(owner, stack_move.LoadLocal):
-            return owner.value_type
-        if owner.has_trait(ir.ConstantLike):
-            constant = stack_move.constant_value_type(getattr(owner, "value", None))
-            if constant is not None:
-                return constant
+    if isinstance(value, ir.ResultValue) and isinstance(
+        value.owner, stack_move.LoadLocal
+    ):
+        return value.owner.value_type
     return "undef"
 
 
@@ -284,64 +242,57 @@ def _stack_order(stmt: ir.Statement) -> list[int]:
     return list(range(n))
 
 
-def _values_to_spill(
-    stmts: list[ir.Statement], spillable: Callable[[ir.SSAValue], bool]
-) -> set[ir.SSAValue]:
-    """Every value Pass 3 parks in a local.
+def _values_to_spill(stmts: list[ir.Statement]) -> set[ir.SSAValue]:
+    """Every non-constant value Pass 3 moves to a local: each one not in
+    stack order.
 
-    Those with more than one consumer, every other non-constant argument of a
-    statement that takes one, every non-constant argument above one of its
-    statement's constants, and the arguments of any statement that would not
-    find them on top of the operand stack in the order it pops them. The last
-    is found by walking the stack: whatever is not spilled stays where its
-    producer pushed it, so each statement's remaining arguments have to be
-    exactly the top of it.
+    A value is in stack order when it has one consumer and waits on the
+    operand stack for it, as one of the deepest of that consumer's arguments
+    that are exactly the top of the stack when it runs — every argument above
+    the first one that is not has to be supplied on top, so is not either.
+    Constants are always re-created in front of their consumers (Pass 1), so
+    each is supplied, never waits on the stack, and never stands in anyone's
+    way.
 
-    One walk is enough. A value spilled for being out of place has one
-    consumer, the statement that found it so, and parking it only takes it
-    out of the stack — which cannot put anything else out of place, because
-    whatever was consumed while it waited was consumed from above it.
+    Found greedily, by walking the stack: whatever is not moved stays where
+    its producer pushed it. At each statement, the longest run of its
+    deepest arguments that is exactly the top stays; every other argument
+    that is waiting on the stack is moved. One walk is enough: a value is
+    only ever moved at its one consumer, and taking it off the stack beneath
+    whatever that consumer pops cannot put anything else out of order,
+    because whatever was popped while it waited was popped from above it.
     """
-    shared = {
+    # A value popped twice is out of order at one of them at least.
+    moved = {
         arg
         for stmt in stmts
         for arg in stmt.args
-        if spillable(arg) and len(arg.uses) > 1
+        if _spillable(arg) and len(arg.uses) > 1
     }
-    spilled = set(shared)
-    for stmt in stmts:
-        order = [stmt.args[i] for i in _stack_order(stmt)]
-        if any(arg in shared for arg in order):
-            spilled.update(arg for arg in order if spillable(arg))
-            continue
-        # Above a cloned constant, only a reload can put an argument.
-        first_constant = next(
-            (depth for depth, arg in enumerate(order) if _is_constant(arg)), None
-        )
-        if first_constant is not None:
-            spilled.update(arg for arg in order[first_constant:] if spillable(arg))
-
-    # Insertion-ordered, so the last key is the top — and a value parked for
-    # being out of place comes out wherever it is without rebuilding the rest.
+    # Insertion-ordered, so the last key is the top — and a value moved for
+    # being out of order comes out wherever it is without rebuilding the rest.
     stack: dict[ir.SSAValue, None] = {}
     for stmt in stmts:
-        # A constant is cloned in front of its one consumer, above the rest
-        # of its arguments; it never waits on the stack.
         if stmt.has_trait(ir.ConstantLike):
             continue
-        order = (stmt.args[i] for i in _stack_order(stmt))
-        need = [arg for arg in order if spillable(arg) and arg not in spilled]
-        top = list(itertools.islice(reversed(stack), len(need)))[::-1]
-        if need and top == need:
-            for _ in need:
-                stack.popitem()
-        elif need:
-            spilled.update(need)
-            for arg in need:
-                stack.pop(arg, None)
+        order = [stmt.args[i] for i in _stack_order(stmt)]
+        kept = 0
+        top = next(reversed(stack), None)
+        if top is not None and top in order:
+            depth = order.index(top) + 1
+            run = order[:depth]
+            # A constant is never on the stack, so a run holding one is not.
+            if run == list(itertools.islice(reversed(stack), depth))[::-1]:
+                kept = depth
+        for _ in range(kept):
+            stack.popitem()
+        for arg in order[kept:]:
+            if arg in stack:
+                del stack[arg]
+                moved.add(arg)
         # Results pushed deepest first; the first declared ends up on top.
-        stack.update((r, None) for r in reversed(stmt.results) if r not in spilled)
-    return spilled
+        stack.update((r, None) for r in reversed(stmt.results) if r not in moved)
+    return moved
 
 
 def _spill_to_locals(block: ir.Block) -> None:
@@ -349,7 +300,7 @@ def _spill_to_locals(block: ir.Block) -> None:
     consumers in a local, and reload it for each (see the module docs)."""
     stmts: list[ir.Statement] = list(block.stmts)
 
-    spilled = _values_to_spill(stmts, _spillable)
+    spilled = _values_to_spill(stmts)
     if not spilled:
         return
 

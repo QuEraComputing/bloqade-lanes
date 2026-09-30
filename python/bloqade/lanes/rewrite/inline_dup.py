@@ -10,11 +10,11 @@ leave it. ``load_program(..., inline_dup=True)`` runs it on a decoded kernel.
 ``RewriteStackMoveToMove`` lowers each ``Dup`` with it: ``move`` keeps no
 stack, so a copy means nothing there. ``stackify`` uses it for one case only,
 and only in a block that is not already a stack program: a ``Dup`` of a
-constant whose copies it would otherwise spill to locals, which it replaces
-by a clone of the constant per consumer. It keeps every other ``Dup``.
-Inlining those too would still be correct, since the operand then has a
-consumer per copy and is spilled to a local and reloaded for each, but it
-would spend a local where the ``dup`` needed none.
+constant, since a copy of a constant is that constant, which it re-creates in
+front of each consumer. It keeps every other ``Dup``. Inlining those too
+would still be correct, since the operand then has a consumer per copy and is
+moved to a local and reloaded for each, but it would spend a local where the
+``dup`` needed none.
 """
 
 from dataclasses import dataclass
