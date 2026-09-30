@@ -4,7 +4,7 @@ import bloqade.squin as squin
 import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.squin import gate, qubit
-from kirin.dialects import ilist
+from kirin.dialects import debug, ilist
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.lowering.exception import BuildError
 from kirin.prelude import structural_no_opt
@@ -32,9 +32,21 @@ def test_movement_kernel_has_only_physical_source_dialects():
                 gemini.common.dialects.qubit,
                 gemini.common.dialects.arrange,
                 arch_dialect,
+                debug,
             ]
         ).data
     )
+
+
+@pytest.mark.parametrize("aggressive_unroll", [False, True])
+def test_movement_kernel_accepts_debug_info(aggressive_unroll: bool):
+    @movement_kernel(aggressive_unroll=aggressive_unroll)
+    def k():
+        q = squin.qalloc(1)
+        debug.info("physical kernel debug marker")
+        return squin.broadcast.measure(q)
+
+    assert any(isinstance(stmt, debug.Info) for stmt in k.callable_region.walk())
 
 
 def test_movement_kernel_validation_does_not_lower_to_native(monkeypatch):
