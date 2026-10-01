@@ -110,6 +110,24 @@ def test_emit_bytecode_round_trips():
     )
 
 
+def test_stackify_leaves_emitted_bytecode_as_it_is():
+    """The compiler's own output is a fixed point of ``stackify``: run again
+    on the emitted kernel, or on its bytecode decoded afresh, it changes
+    nothing."""
+    from bloqade.lanes.bytecode.encode import dump_program
+    from bloqade.lanes.rewrite.stackify import stackify
+
+    xform = MoveToStackMove(arch_spec=_ARCH)
+    out = xform.emit(_move_kernel())
+    program = dump_program(out)
+
+    stackify(out)
+    assert dump_program(out).to_text() == program.to_text()
+    decoded = load_program(program)
+    stackify(decoded)
+    assert dump_program(decoded).to_text() == program.to_text()
+
+
 def test_emit_bytecode_version_passthrough():
     """emit_bytecode() forwards the requested version onto the Program."""
     prog = MoveToStackMove(arch_spec=_ARCH).emit_bytecode(
