@@ -104,14 +104,53 @@ def test_store_is_dropped():
 def test_dup_redirects_uses_to_input():
     cf = stack_move.ConstFloat(value=1.0)
     dup = stack_move.Dup(value=cf.result)
-    # Downstream consumer that references Dup's result.
-    consumer = stack_move.GlobalRz(rotation_angle=dup.result)
-    block = _build_stack_move_block([cf, dup, consumer])
+    # A downstream consumer for each of Dup's two copies.
+    consumers = [
+        stack_move.GlobalRz(rotation_angle=dup.top),
+        stack_move.GlobalRz(rotation_angle=dup.below),
+    ]
+    block = _build_stack_move_block([cf, dup, *consumers])
     Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
-    # Dup is gone, and the gate reads the constant straight through it.
+    # Dup is gone, and both gates read the constant straight through it.
     assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
-    gate = next(s for s in block.stmts if isinstance(s, move.GlobalRz))
-    assert _constant(gate.rotation_angle) == 1.0
+    gates = [s for s in block.stmts if isinstance(s, move.GlobalRz)]
+    assert [_constant(gate.rotation_angle) for gate in gates] == [1.0, 1.0]
+
+
+def test_a_copy_of_a_copy_redirects_to_the_input():
+    """Producers are lowered before consumers, so the first ``Dup``'s copy
+    is the constant by the time the ``Dup`` of it is reached."""
+    cf = stack_move.ConstFloat(value=1.0)
+    first = stack_move.Dup(value=cf.result)
+    second = stack_move.Dup(value=first.top)
+    consumers = [
+        stack_move.GlobalRz(rotation_angle=second.top),
+        stack_move.GlobalRz(rotation_angle=second.below),
+        stack_move.GlobalRz(rotation_angle=first.below),
+    ]
+    block = _build_stack_move_block([cf, first, second, *consumers])
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+    assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
+    gates = [s for s in block.stmts if isinstance(s, move.GlobalRz)]
+    assert [_constant(gate.rotation_angle) for gate in gates] == [1.0] * 3
+
+
+def test_a_py_constant_address_is_lifted():
+    """An address held by a ``py.Constant`` — one this rewrite did not make —
+    still lifts to a ``cz``'s attribute, and a store of one still holds a
+    ``u32``, so the load of it back resolves."""
+    zone = py.Constant(EncodingZoneAddress(1))
+    store = stack_move.StoreLocal(value=zone.result, index=0, value_type="u32")
+    first = stack_move.CZ(zone=zone.result)
+    load = stack_move.LoadLocal(index=0, value_type="u32")
+    second = stack_move.CZ(zone=load.result)
+    block = _build_stack_move_block([zone, store, first, load, second])
+
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+
+    gates = [s for s in block.stmts if isinstance(s, move.CZ)]
+    assert [g.zone_address for g in gates] == [EncodingZoneAddress(1)] * 2
+    assert not any(isinstance(s, stack_move.CZ) for s in block.stmts)
 
 
 def test_load_redirects_uses_to_the_value_last_stored():
