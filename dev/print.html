@@ -1675,10 +1675,57 @@ Compiled programs therefore contain <code>cpu::cpu.store undef, 0</code> /
 <code>undef</code>, because the value is the placeholder a lanes op pushes in place of a
 result it does not simulate. Slots scale with how many values are live at
 once, and <code>stackify</code> raises <code>ValueError</code> rather than need more than the 1024
-a frame may hold. It also raises on two shapes only decoded bytecode has — a
-<code>stack_move.Dup</code>, and a constant operand below a non-constant one — which it
-would otherwise reorder
+a frame may hold. Decoded bytecode's <code>dup</code>, and a constant operand below a
+non-constant one, both come out right
 (<a href="https://github.com/QuEraComputing/bloqade-lanes/issues/1050">#1050</a>).</p>
+</li>
+<li>
+<p><strong>Changed:</strong> <code>stack_move.Dup</code> pops its operand and has two results, <code>top</code>
+and <code>below</code>, as <code>dup</code> (<code>a -- a a</code>) does. It used to have one <code>result</code>, and
+the decoder left the operand it copied on the stack beneath it — a use that
+was not a pop, which no other <code>stack_move</code> statement has.
+<code>StackMachineFrame.peek_value</code> is removed: the decoder's <code>dup</code> was its only
+caller, and now pops instead.</p>
+</li>
+<li>
+<p><strong>Changed:</strong> <code>stack_move.Dup</code> is no longer <code>Pure</code>, so DCE and <code>ConstantFold</code>
+leave it, even when nothing reads a copy.</p>
+</li>
+<li>
+<p><strong>New:</strong> <code>bloqade.lanes.rewrite.inline_dup.InlineDup</code> canonicalises <code>Dup</code>
+out of <code>stack_move</code> IR, giving each copy's consumers the operand itself.
+<code>RewriteStackMoveToMove</code> uses it to lower <code>Dup</code>.</p>
+</li>
+<li>
+<p><strong>New:</strong> <code>load_program(..., inline_dup=True)</code> runs <code>InlineDup</code> on the
+decoded kernel. The default, <code>False</code>, keeps the 1:1 SSA image of the
+program, with every <code>dup</code> a <code>Dup</code>.</p>
+</li>
+<li>
+<p><strong>Behaviour:</strong> <code>stackify</code> leaves a block that already is a stack program —
+every statement finds its arguments on top of the operand stack, in the
+order it pops them — exactly as it is. Its own output is one, so running it
+again changes nothing, and so is every kernel <code>load_program</code> decodes by
+default, so <code>stackify</code> + <code>dump_program</code> give the program back unchanged. It
+used to move each constant to just before its consumer and drop constants
+nothing read even there.</p>
+</li>
+<li>
+<p><strong>Behaviour:</strong> A block that is not a stack program, <code>stackify</code> repairs by
+two rules. A constant is always re-created, cloned in front of each
+consumer — a <code>Dup</code> of one is inlined, so its copies are too. Any other value
+stays on the stack while it is in stack order, and is moved to a local
+otherwise: one used more than once, or not where its consumer pops it. It
+used to also move every other argument of a consumer that took a shared
+value, which it no longer does for the ones below it, so a program may
+need fewer locals than before. A kernel decoded with <code>inline_dup=True</code> is
+such a block wherever a value was duplicated.</p>
+</li>
+<li>
+<p><strong>New:</strong> <code>stack_move</code>'s constants and <code>Dup</code> have a concrete (<code>main</code>)
+interpretation, and <code>Dup</code> a <code>constprop</code> one. Kirin's constant propagation
+used to see every <code>stack_move</code> value as unknown; it now propagates
+constants, through <code>Dup</code> too.</p>
 </li>
 <li>
 <p><strong>New:</strong> <code>Program.entry_parameters</code> lists the entry point's declared
