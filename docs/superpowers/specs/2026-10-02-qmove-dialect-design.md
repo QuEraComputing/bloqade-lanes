@@ -432,6 +432,9 @@ decorated with `inline=False`. `squin.kernel` does not inline.
      `ilist.map(lambda addr: qubit.new_at(...), addrs)`;
    - an early return: a `func.Return` inside an `scf` body (the state would
      leave the chain without reaching `Store`/`exit`);
+   - a `func.Call` left after inlining, i.e. a call through a function value.
+     The lowering only threads the state through `qmove.invoke`, so any gates
+     behind such a call would never join the chain;
    - allocation inside a subroutine;
    - any remaining statement from a quantum dialect (`squin`, `gate`, `qubit`,
      `arrange`, `gemini.*`) that the lowering table does not cover;
