@@ -516,10 +516,15 @@ analysis frame, derive a type from its address:
 Set the value's type to the **meet** of its current type and the derived type,
 so the pass only ever narrows. A loop variable whose address joins to
 `Unknown` keeps its inferred `Qubit`. If the meet is bottom, the value's type
-contradicts what it holds, for example a register passed where a `Qubit` is
-expected (`squin.measure(qs)` instead of `squin.broadcast.measure(qs)`, which
-the frontend accepts today). The pass reports this as a validation error instead
-of setting the type.
+contradicts what it holds (a value typed `Qubit` that holds a register), and
+the pass reports a validation error instead of setting the type.
+
+Values that type inference already typed `Bottom` are skipped. Their address
+says nothing: `AddressAnalysis` derives `UnknownReg` from a `Bottom` type,
+because `Bottom` is a subtype of every `IList[Qubit]`. Taking it would re-type,
+for example, the `Bottom`-typed result of `squin.measure(qs)` on a register
+(`squin.measure` takes one `Qubit`) as a qubit register. Type inference has
+already flagged that mistake.
 
 **Placement.** `TypeInfer` overwrites every type it infers (`ApplyType`), so
 `RefineQubitTypes` runs immediately after each `TypeInfer` in this transform
@@ -626,7 +631,9 @@ Tests live under `python/tests/`, mirroring the package layout:
   - a loop variable over a register keeps `Qubit` (an `Unknown` address never
     widens a type);
   - a subroutine's parameter keeps its annotated type;
-  - `squin.measure(qs)` on a register is reported as a contradiction;
+  - a value typed `Qubit` that holds a register is reported as a contradiction;
+  - a `Bottom`-typed value (from `squin.measure(qs)` on a register) is left
+    alone;
   - running it twice changes nothing.
 - **Lowering:** kernels covering
   - straight-line code;
