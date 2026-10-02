@@ -8,6 +8,8 @@ from kirin.dialects import func, ilist, scf
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import squin
+from bloqade.gemini import physical
+from bloqade.gemini.common.dialects import arrange
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.transform.qmove_frontend import lower_to_native, unlisted_recursion
 
@@ -136,3 +138,25 @@ def test_inlining_that_does_not_converge_is_an_error():
     (error,) = excinfo.value.errors
     message = str(error.args[0])
     assert "inlining did not converge" in message and "entry" in message
+
+
+@physical.kernel(verify=False)
+def physical_only(qs: ilist.IList[Qubit, Literal[2]]):
+    arrange.permute(qs, ilist.IList([1, 0]))
+    squin.cz(qs[0], qs[1])
+
+
+@squin.kernel
+def never_calls_it():
+    qs = squin.qalloc(2)
+    squin.h(qs[0])
+
+
+def test_an_uncalled_subroutine_may_use_other_dialects():
+    # The entry is squin-only; the listed subroutine is a physical kernel that
+    # the entry never calls, so the dialect union must cover it as well.
+    program = lower_to_native(never_calls_it, [physical_only], get_arch_spec())
+    clone = program.subroutines[physical_only]
+    assert any(
+        isinstance(s, arrange.stmts.Permute) for s in clone.callable_region.walk()
+    )

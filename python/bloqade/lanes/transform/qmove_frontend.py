@@ -59,7 +59,11 @@ def lower_to_native(
 ) -> NativeProgram:
     subs = tuple(dict.fromkeys(subroutines))
     sub_codes = tuple(sub.code for sub in subs)
-    reachable = CallGraph(entry).edges.keys()
+    # Subroutines are lowered even if the entry never calls them, so their
+    # callees contribute dialects too.
+    reachable = chain.from_iterable(
+        CallGraph(root).edges.keys() for root in (entry, *subs)
+    )
     dialects = (
         entry.dialects.union(chain.from_iterable(m.dialects.data for m in reachable))
         .union(native_kernel)
