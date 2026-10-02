@@ -10,12 +10,13 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
+use crate::bounds::CompletionBound;
 use crate::drivers::result::{SearchResult, Termination};
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::graph::{NodeId, SearchGraph};
-use crate::traits::{CandidateScorer, CostFn, Goal, MoveGenerator};
+use crate::traits::{CandidateScorer, CostFn, Goal, MoveGenerator, Objective};
 
 /// Number of parent-chain steps to inspect when computing the
 /// per-atom recent-source map for the IDS frontier's reversal
@@ -463,15 +464,14 @@ fn count_reversals(
 /// candidate; in release builds it is a zero-cost no-op.
 ///
 /// Do **not** call this from hot production paths outside the search loop
-/// — `ArchSpec::check_lanes` is linear in the group size and allocates.
+/// — `LaneIndex::check_lanes` is linear in the group size and allocates.
 #[inline]
 fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchContext<'_>) {
     #[cfg(debug_assertions)]
     {
-        let arch = ctx.index.arch_spec();
         for candidate in candidates {
             let lanes = candidate.move_set.decode();
-            let errors = arch.check_lanes(&lanes);
+            let errors = ctx.index.check_lanes(&lanes);
             debug_assert!(
                 errors.is_empty(),
                 "generator emitted invalid AOD lane group: {:?} (lanes={:?})",
@@ -540,6 +540,153 @@ where
     F: Frontier,
     O: SearchObserver,
 {
+    search_loop(
+        root,
+        generator,
+        scorer,
+        cost_fn,
+        goal,
+        frontier,
+        ctx,
+        state,
+        observer,
+        max_expansions,
+        max_depth,
+        max_cost,
+        &NoPushBound,
+    )
+}
+
+/// [`run_search`] with a completion bound gating every child **before** it
+/// is inserted into the graph.
+///
+/// A child is dropped when the bound proves it infeasible (`h = +∞`), or,
+/// given a `max_cost` cap `C`, when `g + h ≥ C`: with `h` admissible no plan
+/// through it can be strictly cheaper than `C`. Dropped children never get a
+/// node, which is the point — the cap alone only stops *expansion* at pop, so
+/// every child still took a slot in the graph and the frontier. The prune
+/// never discards a strictly cheaper plan, but because pruned children take no
+/// `NodeId`, later ids shift and a tie can resolve to a different plan of the
+/// same cost.
+///
+/// The bound must be admissible for `objective`, which also prices the edges.
+/// The returned [`BoundStats`](crate::bounds::BoundStats) count the cuts; the
+/// depth sums follow the entropy driver's convention.
+#[allow(clippy::too_many_arguments)]
+pub fn run_search_bounded<G, S, C, Go, F, O, B>(
+    root: Config,
+    generator: &G,
+    scorer: &S,
+    objective: &C,
+    goal: &Go,
+    frontier: &mut F,
+    ctx: &SearchContext,
+    state: &mut SearchState,
+    observer: &mut O,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+    max_cost: Option<f64>,
+    bound: &B,
+) -> SearchResult
+where
+    G: MoveGenerator,
+    S: CandidateScorer,
+    C: Objective,
+    Go: Goal,
+    F: Frontier,
+    O: SearchObserver,
+    B: CompletionBound<Obj = C>,
+{
+    // Same pairing check as the entropy driver: a bound built against a
+    // different objective instance can prune correct plans.
+    assert_eq!(
+        bound.objective_id(),
+        objective.id(),
+        "completion bound was built against a different objective instance \
+         than the one pricing the edges"
+    );
+    search_loop(
+        root,
+        generator,
+        scorer,
+        objective,
+        goal,
+        frontier,
+        ctx,
+        state,
+        observer,
+        max_expansions,
+        max_depth,
+        max_cost,
+        &CompletionGate { objective, bound },
+    )
+}
+
+/// What the frontier loop consults before it inserts a child. Private:
+/// [`run_search`] passes [`NoPushBound`], whose `OFF` compiles the gate out,
+/// so the unbounded loop is the same code it was before the gate existed.
+trait PushBound {
+    const OFF: bool;
+    fn estimate(&self, config: &Config) -> f64;
+    fn min_shot_cost(&self) -> f64;
+}
+
+struct NoPushBound;
+
+impl PushBound for NoPushBound {
+    const OFF: bool = true;
+
+    fn estimate(&self, _config: &Config) -> f64 {
+        0.0
+    }
+
+    fn min_shot_cost(&self) -> f64 {
+        1.0
+    }
+}
+
+struct CompletionGate<'a, O, B> {
+    objective: &'a O,
+    bound: &'a B,
+}
+
+impl<O: Objective, B: CompletionBound<Obj = O>> PushBound for CompletionGate<'_, O, B> {
+    const OFF: bool = B::TRIVIAL;
+
+    fn estimate(&self, config: &Config) -> f64 {
+        self.bound.estimate(config)
+    }
+
+    fn min_shot_cost(&self) -> f64 {
+        self.objective.min_shot_cost()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_loop<G, S, C, Go, F, O, P>(
+    root: Config,
+    generator: &G,
+    scorer: &S,
+    cost_fn: &C,
+    goal: &Go,
+    frontier: &mut F,
+    ctx: &SearchContext,
+    state: &mut SearchState,
+    observer: &mut O,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+    max_cost: Option<f64>,
+    gate: &P,
+) -> SearchResult
+where
+    G: MoveGenerator,
+    S: CandidateScorer,
+    C: CostFn,
+    Go: Goal,
+    F: Frontier,
+    O: SearchObserver,
+    P: PushBound,
+{
     // Early check: root is already a goal.
     if goal.is_goal(&root) {
         return SearchResult {
@@ -555,6 +702,16 @@ where
 
     let mut graph = SearchGraph::new(root);
     let root_id = graph.root();
+
+    // With the gate off this stays the inert default every frontier result
+    // has always carried.
+    let mut stats = crate::bounds::BoundStats::default();
+    // Configurations the gate has cut, so each counts once; see the gate.
+    let mut cut_configs: HashSet<Config> = HashSet::new();
+    if !P::OFF {
+        stats.bound_enabled = true;
+        stats.root_lower_bound = gate.estimate(graph.config(root_id));
+    }
 
     // Seed the frontier.
     frontier.receive_children(&[root_id], &graph);
@@ -595,12 +752,15 @@ where
                 node_id,
                 config: graph.config(node_id),
             });
+            if !P::OFF {
+                stats.incumbent_cost = Some(graph.g_score(node_id));
+            }
             return SearchResult {
                 goal: Some(node_id),
                 nodes_expanded,
                 max_depth_reached: max_depth_seen,
                 graph,
-                bound_stats: crate::bounds::BoundStats::default(),
+                bound_stats: stats,
                 termination: Termination::Stopped,
             };
         }
@@ -652,6 +812,55 @@ where
             );
             debug_assert!(edge_cost.is_finite(), "edge_cost must be finite");
             let new_g = current_g + edge_cost;
+
+            // The completion gate, before the child takes a node.
+            //
+            // A cut child is never inserted, so the graph cannot tell that its
+            // configuration was cut before: `cut_configs` does, so that each
+            // distinct configuration counts once however many parents
+            // generate it, as `BoundStats` promises.
+            if !P::OFF {
+                // A configuration the graph already holds at no higher `g` is
+                // a re-generated duplicate that `insert` drops unchanged, not
+                // a cut: skip it before it is gated or counted.
+                if graph
+                    .seen_id(&candidate.new_config)
+                    .is_some_and(|id| graph.g_score(id) <= new_g)
+                {
+                    continue;
+                }
+                let h = gate.estimate(&candidate.new_config);
+                let child_depth = depth + 1;
+                if h == f64::INFINITY {
+                    if cut_configs.insert(candidate.new_config) {
+                        stats.cuts_infeasible += 1;
+                    }
+                    continue;
+                }
+                if let Some(cap) = max_cost {
+                    if new_g >= cap {
+                        if cut_configs.insert(candidate.new_config) {
+                            stats.cuts_by_g += 1;
+                        }
+                        continue;
+                    }
+                    if new_g + h >= cap {
+                        if cut_configs.insert(candidate.new_config) {
+                            stats.cuts_by_h += 1;
+                            stats.cut_depth_sum += u64::from(child_depth);
+                            let min_shot = gate.min_shot_cost();
+                            let extra = if min_shot > 0.0 {
+                                ((cap - new_g) / min_shot).ceil().max(0.0) as u64
+                            } else {
+                                0
+                            };
+                            stats.cut_depth_g_only_sum += u64::from(child_depth) + extra;
+                        }
+                        continue;
+                    }
+                }
+            }
+
             let (child_id, is_new) =
                 graph.insert(node_id, candidate.move_set, candidate.new_config, new_g);
 
@@ -672,12 +881,15 @@ where
                         node_id: child_id,
                         config: graph.config(child_id),
                     });
+                    if !P::OFF {
+                        stats.incumbent_cost = Some(new_g);
+                    }
                     return SearchResult {
                         goal: Some(child_id),
                         nodes_expanded,
                         max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
                         graph,
-                        bound_stats: crate::bounds::BoundStats::default(),
+                        bound_stats: stats,
                         termination: Termination::Stopped,
                     };
                 }
@@ -695,7 +907,7 @@ where
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
-        bound_stats: crate::bounds::BoundStats::default(),
+        bound_stats: stats,
         termination: SearchResult::loop_exit_termination(nodes_expanded, max_expansions),
     }
 }
@@ -759,7 +971,6 @@ mod tests {
                 blocked: &self.blocked,
                 targets: &self.targets,
                 cz_pairs: None,
-                capacity: None,
             }
         }
     }
@@ -1712,7 +1923,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
-            capacity: None,
         };
         let mut state = SearchState::default();
 
@@ -1741,5 +1951,65 @@ mod tests {
             None,
         );
         assert!(result.goal.is_some(), "v2 should find a solution");
+    }
+
+    /// The exact remaining hop count along [`LineGen`]'s line, as a
+    /// completion bound for [`UniformCost`].
+    struct LineBound {
+        objective_id: crate::traits::ObjectiveId,
+        goal_site: u32,
+    }
+
+    impl CompletionBound for LineBound {
+        type Obj = UniformCost;
+
+        fn objective_id(&self) -> crate::traits::ObjectiveId {
+            self.objective_id
+        }
+
+        fn estimate(&self, config: &Config) -> f64 {
+            let site = config.location_of(0).expect("qubit 0").site_id;
+            f64::from(site.abs_diff(self.goal_site))
+        }
+    }
+
+    /// The gate counts a cut only for a child it drops. Walking the line from
+    /// site 0 to site 4 under a cap of 5 re-generates, from every node, the
+    /// node behind it at a higher `g`: a duplicate `insert` would ignore, not
+    /// a cut. Every child that is not a duplicate stays under the cap, so the
+    /// solve cuts nothing.
+    #[test]
+    fn the_gate_does_not_count_duplicates_as_cuts() {
+        let fx = Fixture::new();
+        let objective = UniformCost;
+        let bound = LineBound {
+            objective_id: objective.id(),
+            goal_site: 4,
+        };
+        let mut frontier = PriorityFrontier::astar(manhattan(4), 1.0);
+        let result = run_search_bounded(
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &LineGen { max_site: 4 },
+            &ZeroScorer,
+            &objective,
+            &SiteGoal { target: 4 },
+            &mut frontier,
+            &fx.ctx(),
+            &mut SearchState::default(),
+            &mut crate::observer::NoOpObserver,
+            None,
+            None,
+            Some(5.0),
+            &bound,
+        );
+
+        assert!(result.goal.is_some());
+        let stats = result.bound_stats;
+        assert!(stats.bound_enabled);
+        assert_eq!(
+            stats.cuts_by_g + stats.cuts_by_h + stats.cuts_infeasible,
+            0,
+            "{stats:?}"
+        );
     }
 }
