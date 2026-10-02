@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from kirin import ir, passes, rewrite
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
+from kirin.validation.validationpass import ValidationResult
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects.qmove import Frame
@@ -76,11 +77,16 @@ class NativeToQMove:
             passes.TypeInfer(method.dialects, no_raise=no_raise)(method)
             RefineQubitTypes(method.dialects, no_raise=no_raise)(method)
 
-        validation = get_qmove_validation(self.arch_spec, self.policy)
-        for method, _, _ in roles:
-            result = ValidationSuite([validation]).validate(method)
-            if not no_raise:
-                result.raise_if_invalid()
+        if not no_raise:
+            # Validate every method before raising, so one run reports all problems.
+            validation = get_qmove_validation(self.arch_spec, self.policy)
+            merged: dict[str, list[ir.ValidationError]] = {}
+            for method, _, _ in roles:
+                result = ValidationSuite([validation]).validate(method)
+                for name, errs in result.errors.items():
+                    merged.setdefault(name, []).extend(errs)
+            ValidationResult(merged).raise_if_invalid()
+            for method, _, _ in roles:
                 method.verify()
                 method.verify_type()
         return program.entry

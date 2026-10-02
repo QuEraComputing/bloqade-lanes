@@ -191,3 +191,37 @@ def test_bottom_typed_value_is_not_threaded_as_state():
     out = NativeToQMove(ARCH).emit(bottom_result, no_raise=True)
     result = ValidationSuite([get_qmove_validation(ARCH, ZonedPolicy())]).validate(out)
     assert [err for errs in result.errors.values() for err in errs] == []
+
+
+@squin.kernel
+def sub_a(qs: ilist.IList[Qubit, Literal[2]]):
+    squin.cx(qs[0], qs[1])
+
+
+@squin.kernel
+def sub_b(qs: ilist.IList[Qubit, Literal[2]]):
+    squin.cz(qs[0], qs[1])
+
+
+@squin.kernel
+def calls_both():
+    qs = squin.qalloc(2)
+    sub_a(qs)
+    sub_b(qs)
+
+
+def test_frame_errors_are_reported_across_all_subroutines():
+    wrong_shape = Frame(FrameShape(((0, 1),)), (A,))  # the parameter has 2 slots
+    subroutines: dict[ir.Method, Frame | None] = {
+        sub_a: wrong_shape,
+        sub_b: wrong_shape,
+    }
+    with pytest.raises(ValidationErrorGroup) as excinfo:
+        NativeToQMove(ARCH, subroutines).emit(calls_both)
+    messages = [str(err.args[0]) for err in excinfo.value.errors]
+    assert len([m for m in messages if m.startswith("F2:")]) == 2
+
+
+def test_no_raise_returns_despite_frame_errors():
+    wrong_shape = Frame(FrameShape(((0, 1),)), (A,))
+    NativeToQMove(ARCH, {sub_a: wrong_shape}).emit(calls_both, no_raise=True)
