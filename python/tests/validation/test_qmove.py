@@ -315,6 +315,49 @@ def test_f4_relabels_must_compose_to_identity():
 
 
 @physical.kernel(verify=False)
+def bad_perm_in_frame(qs: ilist.IList[Qubit, Literal[2]]):
+    arrange.permute(qs, ilist.IList([0, 2]))
+
+
+def test_f4_invalid_perm_does_not_crash_validation():
+    frame = Frame(FrameShape(((0, 2),)), (A, B))
+    messages = _frame_messages(
+        frame, kernel=bad_perm_in_frame, subroutine=bad_perm_in_frame
+    )
+    # V3 reports "is not a permutation"; validation should not crash with IndexError.
+    assert any("is not a permutation" in m for m in messages)
+    assert not any(m.startswith("Validation pass") for m in messages)
+
+
+@physical.kernel(verify=False)
+def permute_via_ilist(qs: ilist.IList[Qubit, Literal[2]]):
+    arrange.permute(ilist.IList([qs[0], qs[1]]), ilist.IList([1, 0]))
+
+
+@physical.kernel(verify=False)
+def permute_direct(qs: ilist.IList[Qubit, Literal[2]]):
+    arrange.permute(qs, ilist.IList([1, 0]))
+
+
+@physical.kernel(verify=False, inline=False)
+def aliased_relabels():
+    qs = squin.qalloc(2)
+    permute_via_ilist(qs)
+    permute_direct(qs)
+
+
+def test_f4_aliased_relabels_do_not_trigger_error():
+    frame = Frame(FrameShape(((0, 2),)), (A, B))
+    program = _build(
+        aliased_relabels,
+        {permute_via_ilist: frame, permute_direct: frame},
+    )
+    # Both relabel through different SSA operands; F4 is skipped.
+    messages = _messages(program.subroutines[permute_via_ilist])
+    assert not any(m.startswith("F4:") for m in messages)
+
+
+@physical.kernel(verify=False)
 def inner(qs: ilist.IList[Qubit, Literal[2]]):
     squin.cz(qs[0], qs[1])
 

@@ -289,6 +289,7 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
     footprint = frame.footprint
     effects = frame.effects
     relabels: dict[ir.SSAValue, list[tuple[int, ...]]] = {}
+    has_non_param_relabel = False
     top = mt.callable_region.blocks[0]
     for stmt in mt.callable_region.walk():
         if isinstance(stmt, qmove.MoveTo):
@@ -322,7 +323,16 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
             and stmt.parent_block is top
             and (perm := _const(stmt.perm)) is not None
         ):
-            relabels.setdefault(stmt.qubits, []).append(tuple(int(p) for p in perm))
+            # Only collect relabels on parameters; without qubit identity, aliasing
+            # cannot be judged, so skip F4 if any top-level relabel acts on non-parameters.
+            if isinstance(stmt.qubits, ir.BlockArgument) and stmt.qubits.block is top:
+                # Validate that perm is a valid permutation before collecting.
+                if sorted(int(p) for p in perm) == list(range(len(perm))):
+                    relabels.setdefault(stmt.qubits, []).append(
+                        tuple(int(p) for p in perm)
+                    )
+            else:
+                has_non_param_relabel = True
         elif isinstance(stmt, qmove.Invoke):
             inner = subroutine_frame(stmt.callee)
             if inner is not None and (
@@ -334,15 +344,23 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
                     f"F5: frame of {stmt.callee.sym_name} is not inside this frame",
                 )
 
-    for perms in relabels.values():
-        net = list(range(len(perms[0])))
-        for perm in perms:
-            net = [net[i] for i in perm]
-        if net != list(range(len(net))):
-            error(
-                mt.code,
-                f"F4: relabels {perms} leave the binding permuted at exit",
-            )
+    # Check relabel composition to identity, but only for parameter-only relabels.
+    if not has_non_param_relabel:
+        for perms in relabels.values():
+            if not perms:
+                continue
+            # Validate all perms have the same length before composition.
+            perm_len = len(perms[0])
+            if any(len(p) != perm_len for p in perms):
+                continue
+            net = list(range(perm_len))
+            for perm in perms:
+                net = [net[i] for i in perm]
+            if net != list(range(len(net))):
+                error(
+                    mt.code,
+                    f"F4: relabels {perms} leave the binding permuted at exit",
+                )
     return errors
 
 
