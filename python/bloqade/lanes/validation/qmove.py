@@ -258,7 +258,15 @@ def expected_param_slots(
 
 
 def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
-    """F1-F5, for a framed subroutine."""
+    """F1-F5, for a framed subroutine.
+
+    F4 (relabels compose to the identity) is judged only when every relabel
+    ``Permute`` (``insert_moves=False``) in the method is a top-level, constant,
+    well-formed permutation of a parameter. Without qubit identity, a relabel
+    that is nested, non-constant, malformed or on a non-parameter operand cannot
+    be composed with the others, so F4 abstains for the whole method rather than
+    judge an inconsistent subset.
+    """
     frame = subroutine_frame(mt)
     if frame is None:
         return []
@@ -293,7 +301,7 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
     footprint = frame.footprint
     effects = frame.effects
     relabels: dict[ir.SSAValue, list[tuple[int, ...]]] = {}
-    has_non_param_relabel = False
+    f4_abstains = False
     top = mt.callable_region.blocks[0]
     for stmt in mt.callable_region.walk():
         if isinstance(stmt, qmove.MoveTo):
@@ -321,22 +329,18 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
                 src, dst = arch.get_endpoints(lane)
                 if src not in footprint or dst not in footprint:
                     error(stmt, f"F3: lane {lane} leaves the frame")
-        elif (
-            isinstance(stmt, qmove.Permute)
-            and not stmt.insert_moves
-            and stmt.parent_block is top
-            and (perm := _const(stmt.perm)) is not None
-        ):
-            # Only collect relabels on parameters; without qubit identity, aliasing
-            # cannot be judged, so skip F4 if any top-level relabel acts on non-parameters.
-            if isinstance(stmt.qubits, ir.BlockArgument) and stmt.qubits.block is top:
-                # Validate that perm is a valid permutation before collecting.
-                if sorted(int(p) for p in perm) == list(range(len(perm))):
-                    relabels.setdefault(stmt.qubits, []).append(
-                        tuple(int(p) for p in perm)
-                    )
+        elif isinstance(stmt, qmove.Permute) and not stmt.insert_moves:
+            perm = _const(stmt.perm)
+            if (
+                stmt.parent_block is top
+                and perm is not None
+                and isinstance(stmt.qubits, ir.BlockArgument)
+                and stmt.qubits.block is top
+                and sorted(int(p) for p in perm) == list(range(len(perm)))
+            ):
+                relabels.setdefault(stmt.qubits, []).append(tuple(int(p) for p in perm))
             else:
-                has_non_param_relabel = True
+                f4_abstains = True
         elif isinstance(stmt, qmove.Invoke):
             inner = subroutine_frame(stmt.callee)
             if inner is not None and (
@@ -348,11 +352,8 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
                     f"F5: frame of {stmt.callee.sym_name} is not inside this frame",
                 )
 
-    # Check relabel composition to identity, but only for parameter-only relabels.
-    if not has_non_param_relabel:
+    if not f4_abstains:
         for perms in relabels.values():
-            if not perms:
-                continue
             # Validate all perms have the same length before composition.
             perm_len = len(perms[0])
             if any(len(p) != perm_len for p in perms):

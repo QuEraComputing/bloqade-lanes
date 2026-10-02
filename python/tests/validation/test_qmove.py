@@ -329,31 +329,71 @@ def test_f4_invalid_perm_does_not_crash_validation():
     assert not any(m.startswith("Validation pass") for m in messages)
 
 
+def _f4_messages(kernel: ir.Method) -> list[str]:
+    """F4 messages of a framed subroutine ``kernel`` that takes two qubits."""
+
+    @physical.kernel(verify=False, inline=False)
+    def entry():
+        qs = squin.qalloc(2)
+        kernel(qs)
+
+    program = _build(entry, {kernel: Frame(FrameShape(((0, 2),)), (A, B))})
+    return [m for m in _messages(program.subroutines[kernel]) if m.startswith("F4:")]
+
+
 @physical.kernel(verify=False)
-def permute_via_ilist(qs: ilist.IList[Qubit, Literal[2]]):
+def aliased_relabels(qs: ilist.IList[Qubit, Literal[2]]):
     arrange.permute(ilist.IList([qs[0], qs[1]]), ilist.IList([1, 0]))
-
-
-@physical.kernel(verify=False)
-def permute_direct(qs: ilist.IList[Qubit, Literal[2]]):
     arrange.permute(qs, ilist.IList([1, 0]))
 
 
-@physical.kernel(verify=False, inline=False)
-def aliased_relabels():
-    qs = squin.qalloc(2)
-    permute_via_ilist(qs)
-    permute_direct(qs)
-
-
 def test_f4_aliased_relabels_do_not_trigger_error():
+    # The first relabel acts on a fresh list of the same qubits; without qubit
+    # identity F4 cannot judge it, so it abstains.
+    assert _f4_messages(aliased_relabels) == []
+
+
+@physical.kernel(verify=False)
+def relabel_in_loop(qs: ilist.IList[Qubit, Literal[2]]):
+    arrange.permute(qs, ilist.IList([1, 0]))
+    for _ in range(1):
+        arrange.permute(qs, ilist.IList([1, 0]))
+
+
+def test_f4_abstains_when_a_relabel_is_nested():
+    # The loop relabel undoes the top-level one, but only the top-level one is
+    # collected: judging the composition would be a false positive.
+    assert _f4_messages(relabel_in_loop) == []
+
+
+@physical.kernel(verify=False)
+def relabel_then_malformed(qs: ilist.IList[Qubit, Literal[2]]):
+    arrange.permute(qs, ilist.IList([1, 0]))
+    arrange.permute(qs, ilist.IList([0, 2]))
+
+
+def test_f4_abstains_when_a_relabel_is_malformed():
+    assert _f4_messages(relabel_then_malformed) == []
+
+
+@physical.kernel(verify=False)
+def relabel_then_unknown(
+    qs: ilist.IList[Qubit, Literal[2]], perm: ilist.IList[int, Literal[2]]
+):
+    arrange.permute(qs, ilist.IList([1, 0]))
+    arrange.permute(qs, perm)
+
+
+@physical.kernel(verify=False, inline=False)
+def calls_relabel_then_unknown():
+    qs = squin.qalloc(2)
+    relabel_then_unknown(qs, ilist.IList([1, 0]))
+
+
+def test_f4_abstains_when_a_permutation_is_not_constant():
     frame = Frame(FrameShape(((0, 2),)), (A, B))
-    program = _build(
-        aliased_relabels,
-        {permute_via_ilist: frame, permute_direct: frame},
-    )
-    # Both relabel through different SSA operands; F4 is skipped.
-    messages = _messages(program.subroutines[permute_via_ilist])
+    program = _build(calls_relabel_then_unknown, {relabel_then_unknown: frame})
+    messages = _messages(program.subroutines[relabel_then_unknown])
     assert not any(m.startswith("F4:") for m in messages)
 
 
