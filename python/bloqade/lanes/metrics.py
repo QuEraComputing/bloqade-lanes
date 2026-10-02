@@ -39,41 +39,57 @@ class KernelMoveMetrics:
     moved_lane_count: int
 
 
-@dataclass(frozen=True)
+@dataclass
 class UsedBuses:
-    """Unique transport buses referenced by a move kernel."""
+    """Per-move-event usage counts for transport buses.
 
-    zone: tuple[int, ...] = ()
-    word: tuple[tuple[int, int], ...] = ()
-    site: tuple[tuple[int, int], ...] = ()
+    Each dictionary value counts the number of move events using a bus; a bus
+    is counted at most once within any one event. Zone keys are global bus IDs,
+    while word and site keys are ``(zone_id, bus_id)`` pairs.
+    """
+
+    zone: dict[int, int] = field(default_factory=dict)
+    word: dict[tuple[int, int], int] = field(default_factory=dict)
+    site: dict[tuple[int, int], int] = field(default_factory=dict)
 
 
 def get_used_buses(move_kernel: ir.Method) -> UsedBuses:
-    """Return the unique zone, word, and site buses used by ``move_kernel``.
+    """Count per-move-event usage of zone, word, and site buses.
 
-    Zone bus IDs are global. Word and site bus IDs are local to a zone, so they
-    are returned as ``(zone_id, bus_id)`` pairs.
+    A bus is counted at most once within any one move event, even when multiple
+    lanes in that event reference it. Zone bus IDs are global. Word and site
+    bus IDs are local to a zone, so they are keyed by ``(zone_id, bus_id)``.
     """
-    zone_buses: set[int] = set()
-    word_buses: set[tuple[int, int]] = set()
-    site_buses: set[tuple[int, int]] = set()
+    zone_buses: dict[int, int] = {}
+    word_buses: dict[tuple[int, int], int] = {}
+    site_buses: dict[tuple[int, int], int] = {}
 
     for statement in move_kernel.callable_region.walk():
         if not isinstance(statement, move.Move):
             continue
 
+        event_zone_buses: set[int] = set()
+        event_word_buses: set[tuple[int, int]] = set()
+        event_site_buses: set[tuple[int, int]] = set()
         for lane in statement.lanes:
             if lane.move_type == MoveType.ZONE:
-                zone_buses.add(lane.bus_id)
+                event_zone_buses.add(lane.bus_id)
             elif lane.move_type == MoveType.WORD:
-                word_buses.add((lane.zone_id, lane.bus_id))
+                event_word_buses.add((lane.zone_id, lane.bus_id))
             elif lane.move_type == MoveType.SITE:
-                site_buses.add((lane.zone_id, lane.bus_id))
+                event_site_buses.add((lane.zone_id, lane.bus_id))
+
+        for bus in event_zone_buses:
+            zone_buses[bus] = zone_buses.get(bus, 0) + 1
+        for bus in event_word_buses:
+            word_buses[bus] = word_buses.get(bus, 0) + 1
+        for bus in event_site_buses:
+            site_buses[bus] = site_buses.get(bus, 0) + 1
 
     return UsedBuses(
-        zone=tuple(sorted(zone_buses)),
-        word=tuple(sorted(word_buses)),
-        site=tuple(sorted(site_buses)),
+        zone=dict(sorted(zone_buses.items())),
+        word=dict(sorted(word_buses.items())),
+        site=dict(sorted(site_buses.items())),
     )
 
 
