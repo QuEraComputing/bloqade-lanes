@@ -8,6 +8,7 @@ import pytest
     "module",
     [
         "bloqade.lanes.dialects.move",
+        "bloqade.lanes.dialects.qmove",
         "bloqade.lanes.prelude",
         "bloqade.lanes.validation.address",
         "bloqade.gemini.device.logical.utils",
