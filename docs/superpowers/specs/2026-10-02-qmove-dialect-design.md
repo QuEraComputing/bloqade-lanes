@@ -456,9 +456,12 @@ error, since it cannot be inlined.
      with `Store` / `qmove.exit`.
 
    This is a direct recursive traversal, not `kirin.rewrite.Walk`. `Walk` visits
-   a region's blocks in reverse and reaches a nested function's region before the
-   statement that owns it (pinned by `python/tests/rewrite/test_walk_order.py`).
-   Threading must see statements in execution order.
+   a region's blocks in reverse and reaches a nested statement's regions before
+   the statement that owns them (`kirin/rewrite/walk.py`,
+   `populate_worklist_Statement` / `populate_worklist_Region`, kirin 0.22.16).
+   Threading must see statements in execution order. `FlatBlockValidation`'s
+   docstring cites `python/tests/rewrite/test_walk_order.py` for this, but that
+   file was never added; this work adds it, pinning both behaviours.
 
    The existing `rewrite/state.py:RewriteLoadStore` cannot be reused here. It
    recognizes stateful statements only by their `ConsumesState`/`EmitsState`
