@@ -39,7 +39,7 @@ def test_a_single_block_region_is_valid():
 
 def test_a_multi_block_region_is_rejected():
     """Walk visits blocks in reverse, so a frame spanning them accumulates
-    backwards -- see test_walk_order.py."""
+    backwards -- see python/tests/rewrite/test_walk_order.py."""
     assert (
         _errors(
             _method(
