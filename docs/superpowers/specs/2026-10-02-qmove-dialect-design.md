@@ -108,7 +108,6 @@ will need them to be constant.
 
 | Statement | Operands beyond `current_state` | Results beyond `State` | Source |
 |---|---|---|---|
-| `Initialize` | `theta, phi, lam: Float`, `qubits: IList[Qubit, Any]` | — | `gemini.logical.Initialize` |
 | `CZ` | `controls: IList[Qubit, N]`, `targets: IList[Qubit, N]` | — | `gate.CZ` |
 | `R` | `axis_angle, rotation_angle: Float`, `qubits: IList[Qubit, Any]` | — | `gate.R` |
 | `Rz` | `rotation_angle: Float`, `qubits: IList[Qubit, Any]` | — | `gate.Rz` |
@@ -365,8 +364,8 @@ Location: `python/bloqade/lanes/transform/native_to_qmove.py`.
 
 - **Input:** squin- or native-level IR. "Native level" means `gate.*`,
   `qubit.New`/`Measure`/`IsZero`/`IsOne`/`IsLost`, `gemini.common.NewAt`,
-  `arrange.MoveTo`/`Permute`, `gemini.logical.Initialize`/`TerminalLogicalMeasurement`
-  and `gemini.extensions.StarRz`, plus `scf`, `func`, `py` and `ilist`.
+  `arrange.MoveTo`/`Permute`, `gemini.logical.TerminalLogicalMeasurement` and
+  `gemini.extensions.StarRz`, plus `scf`, `func`, `py` and `ilist`.
 - **No unrolling.** There is no `AggressiveUnroll` and no `ScfToCf`.
 - **Originals are never mutated.** Every method the transform changes is a
   `similar()` clone, including subroutine bodies; `qmove.invoke` statements
@@ -396,6 +395,8 @@ error, since it cannot be inlined.
    each subroutine clone.
 3. **Input check** (a `ValidationPass`, reporting every problem at once):
    - `qubit.Reset`;
+   - `gemini.logical.Initialize` (its initialize-with-angles semantics is being
+     retired, so `qmove` has no counterpart);
    - multi-block (`cf`) regions;
    - `func.Lambda` bodies containing gates or measurements (so `ilist.map` /
      `for_each` / `foldl` applying gates; `qalloc`'s map is fine because
@@ -406,7 +407,7 @@ error, since it cannot be inlined.
    - a recursive kernel that is not a `subroutines` key.
 4. **Local lowering** (`python/bloqade/lanes/rewrite/native2qmove.py`). Every
    source statement becomes `Load; qmove.X(state, …); Store`:
-   - `gate.*`, `arrange.*`, `Initialize` and `StarRz` map one-to-one;
+   - `gate.*`, `arrange.*` and `StarRz` map one-to-one;
    - `qubit.Measure` becomes `qmove.Measure`, whose `measurements` replaces the
      original result;
    - `TerminalLogicalMeasurement` becomes `qmove.Measure` followed by
@@ -547,8 +548,9 @@ Tests live under `python/tests/`, mirroring the package layout:
   - a recursive subroutine, and the error for a recursive kernel that is not
     listed;
   - calls that are not listed, including squin stdlib, being inlined;
-  - the logical measurement path (`Initialize` and `TerminalLogicalMeasurement`
-    → `Measure` + `ConvertToPhysicalMeasurements`).
+  - the logical measurement path (`TerminalLogicalMeasurement` → `Measure` +
+    `ConvertToPhysicalMeasurements`);
+  - the input-check error for `gemini.logical.Initialize`.
 
   Every output must pass validation, and the entry kernel's top-level block must
   contain exactly one `Load` and end with a `Store`.
@@ -574,6 +576,10 @@ Tests live under `python/tests/`, mirroring the package layout:
   [bloqade-circuit#332](https://github.com/QuEraComputing/bloqade-circuit/issues/332).
 - `cf` control flow, closures that apply gates, `qubit.Reset`, and allocation in
   subroutines.
+- Initialization with angles (`gemini.logical.Initialize`, and the `place`-level
+  `Initialize` / `NewLogicalQubit` angles). These semantics are being retired;
+  `qmove` has no counterpart, and the input check rejects them. What replaces
+  them is a separate decision.
 - Relocatable frames, and a kernel-body intrinsic for pinning a frame (frames
   are pinned through `subroutines` for now).
 - Any change to `PhysicalPipeline`, the logical kernel decorator or other
