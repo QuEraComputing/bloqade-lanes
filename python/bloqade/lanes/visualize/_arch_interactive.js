@@ -919,6 +919,15 @@
     });
   }
 
+  // Reserve wheel zoom for trackpad pinch, which browsers report as a wheel
+  // event with ``ctrlKey`` set. A plain scroll wheel or two-finger scroll
+  // would otherwise zoom the plot as a notebook or page scrolls past it.
+  // Stopping propagation in the capture phase keeps the event away from
+  // Plotly's drag-layer handler without preventing the page scroll.
+  plot.addEventListener('wheel', function (event) {
+    if (!event.ctrlKey) event.stopPropagation();
+  }, true);
+
   // Resolve site previews from pointer position instead of relying solely on
   // Plotly's hover winner. A visible or recently restyled WebGL bus can win
   // hover arbitration over a coincident SVG site marker, even after that bus
