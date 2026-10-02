@@ -10,6 +10,7 @@ import pytest
         "bloqade.lanes.dialects.move",
         "bloqade.lanes.dialects.qmove",
         "bloqade.lanes.prelude",
+        "bloqade.lanes.transform.native_to_qmove",
         "bloqade.lanes.validation.address",
         "bloqade.gemini.device.logical.utils",
     ],
