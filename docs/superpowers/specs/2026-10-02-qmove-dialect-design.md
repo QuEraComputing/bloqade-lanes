@@ -238,7 +238,7 @@ a call without looking inside it.
 | `enter` | `enter(frame: Frame \| None) -> State` | Opens a subroutine's chain. Like `move.load`, plus the frame's precondition. Trait `EmitsState(originates=True)`. |
 | `exit` | `exit(state)` | Closes a subroutine's chain. Like `move.store`, plus the frame's postcondition. Trait `ConsumesState(terminates=False)`. |
 | `prepare` | `prepare(state, *args; callee) -> State` | Establishes `callee`'s precondition for `args`. Logically a no-op; physically, afterwards the arguments are at their entry slots, the scratch slots are empty, and no other atom is inside the footprint. Names the callee rather than repeating the frame, so the two cannot disagree. |
-| `invoke` | `invoke(state, *args; callee) -> (State, T)` | Calls `callee` on the caller's chain. The callee's signature is unchanged. The second result exists only if `callee` returns a non-`None` value. |
+| `invoke` | `invoke(state, *args; callee) -> (State, T)` | Calls `callee` on the caller's chain. The callee's signature is unchanged. The second result, `value`, always exists and has the callee's return type (`NoneType` for a callee that returns `None`), because a kirin statement's result count is fixed by its declaration. |
 
 `frame`, `callee` are attributes (`callee` is a `Method`, as in `func.Invoke`).
 `frame=None` is a **hole**: an unframed subroutine whose frame later synthesis
@@ -270,7 +270,7 @@ added later without changing the IR. For now the binding is always concrete.
 ```python
 @dataclass(frozen=True)
 class FrameShape:
-    param_slots: Mapping[int, int]   # qubit-typed parameter index (excl. self) -> slot count
+    param_slots: tuple[tuple[int, int], ...]  # (qubit-typed parameter index excl. self, slot count)
     scratch_slots: int
 
 @dataclass(frozen=True)
@@ -324,18 +324,18 @@ call site.
 ```python
 class SpectatorPolicy(ABC):
     @abstractmethod
-    def check_frame(self, frame: Frame, arch: ArchSpec) -> list[ir.ValidationError]:
+    def check_frame(self, frame: Frame, arch: ArchSpec) -> list[str]:
         """Static: are these effects acceptable for this footprint on this arch?"""
 
-    def check_call(
-        self, frame: Frame, atoms: AtomStateData, arch: ArchSpec
-    ) -> list[ir.ValidationError]:
+    def check_call(self, frame: Frame, atoms: AtomStateData, arch: ArchSpec) -> list[str]:
         """At an invoke, once atom positions exist: are the spectators safe?"""
         raise NotImplementedError
 ```
 
-`check_frame` runs as part of this spec's validation. `check_call` needs real
-atom positions, so it runs on synthesized IR. In this spec it is declared only.
+Both return human-readable problems; the validator turns each into an
+`ir.ValidationError` anchored at the subroutine. `check_frame` runs as part of
+this spec's validation. `check_call` needs real atom positions, so it runs on
+synthesized IR. In this spec it is declared only.
 The rules in the table below are its specification for the synthesis spec.
 
 Two policies ship with this spec:
@@ -422,12 +422,18 @@ error, since it cannot be inlined.
    - a function value that applies gates or measurements: a `func.Lambda` body,
      or the constant `Method` passed as `fn` to `ilist.map` / `for_each` /
      `foldl` / `foldr` / `scan`, containing a quantum statement other than
-     allocation. `qalloc`'s `ilist.map(_new, range(n))` is fine, because `_new`
-     only allocates and `qubit.New` does not touch the state;
+     allocation. Allocation-only function values are fine: `qalloc`'s
+     `ilist.map(_new, range(n))`, and the physical-kernel idiom
+     `ilist.map(lambda addr: qubit.new_at(...), addrs)`;
+   - an early return: a `func.Return` inside an `scf` body (the state would
+     leave the chain without reaching `Store`/`exit`);
    - allocation inside a subroutine;
    - any remaining statement from a quantum dialect (`squin`, `gate`, `qubit`,
      `arrange`, `gemini.*`) that the lowering table does not cover;
-   - a recursive kernel that is not a `subroutines` key.
+   - a recursive kernel that is not a `subroutines` key. This one is checked
+     **before** step 1, with the call graph from
+     `bloqade.gemini.common.validation.recursion`, because inlining a recursive
+     kernel never reaches a fixpoint.
 5. **Local lowering** (`python/bloqade/lanes/rewrite/native2qmove.py`). Every
    source statement becomes `Load; qmove.X(state, …); Store`:
    - `gate.*` and `arrange.*` map one-to-one;
@@ -459,9 +465,8 @@ error, since it cannot be inlined.
    a region's blocks in reverse and reaches a nested statement's regions before
    the statement that owns them (`kirin/rewrite/walk.py`,
    `populate_worklist_Statement` / `populate_worklist_Region`, kirin 0.22.16).
-   Threading must see statements in execution order. `FlatBlockValidation`'s
-   docstring cites `python/tests/rewrite/test_walk_order.py` for this, but that
-   file was never added; this work adds it, pinning both behaviours.
+   Threading must see statements in execution order. Both behaviours are pinned
+   by `python/tests/rewrite/test_walk_order.py`.
 
    The existing `rewrite/state.py:RewriteLoadStore` cannot be reused here. It
    recognizes stateful statements only by their `ConsumesState`/`EmitsState`
@@ -625,6 +630,7 @@ Tests live under `python/tests/`, mirroring the package layout:
   - running it twice changes nothing.
 - **Lowering:** kernels covering
   - straight-line code;
+  - a physical kernel using `new_at`, `arrange.move_to` and `arrange.permute`;
   - `scf.IfElse` on a mid-circuit measurement, including an arm with no gates and
     a missing `else`;
   - `scf.For` over an `IList[Qubit]`, and over a `range` using `q[i]`;
@@ -648,10 +654,18 @@ Tests live under `python/tests/`, mirroring the package layout:
   - the state's yields, initializers and block arguments;
 
   and turns `qmove` statements back into the native statements they came from
-  (`qmove.invoke` back into `func.invoke` of the original method). The result
-  must be structurally equal to the input after passes 1–2 and DCE.
-- **No regressions:** only new files are added. No existing module, pipeline or
-  test changes, so the existing suite and the benchmark baseline CSVs stay the
+  (`qmove.invoke` back into `func.invoke`). The result must equal the IR after
+  passes 1–3 and DCE, compared **block by block** with a test-only comparator.
+  kirin's `is_structurally_equal` cannot be used for this: `Region`'s version
+  records every block pair in its context before comparing, so `Block`'s
+  version returns early and nested region contents are never compared (two
+  function bodies `x+1` and `x*2` compare equal), and result types are never
+  compared. The comparator recurses into every nested region, maps SSA values,
+  compares result types, and compares callee `Method`s by `sym_name`. Its own
+  tests include a difference that exists only inside an `scf` body.
+- **No regressions:** only new files are added, apart from registering the new
+  dialect module in `python/tests/test_import_cycles.py`. No existing pipeline
+  changes, so the existing suite and the benchmark baseline CSVs stay the
   same.
 
 ## Out of scope
