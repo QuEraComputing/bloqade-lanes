@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TypeVar
 
 from bloqade.native.dialects.gate import stmts as gate
-from kirin import ir
+from kirin import ir, types
 from kirin.dialects import func, scf
 
 from bloqade import qubit
@@ -107,7 +107,9 @@ def assert_methods_match(got: ir.Method, expected: ir.Method) -> None:
 
 
 def _is_state(value: ir.SSAValue) -> bool:
-    return value.type.is_subseteq(StateType)
+    return not value.type.is_subseteq(types.Bottom) and value.type.is_subseteq(
+        StateType
+    )
 
 
 def _native(stmt: ir.Statement) -> ir.Statement | None:

@@ -5,6 +5,7 @@ from bloqade.types import Qubit
 from kirin import ir
 from kirin.dialects import func, ilist, scf
 from kirin.ir.exception import ValidationErrorGroup
+from kirin.validation import ValidationSuite
 from tests._qmove_helpers import (
     assert_methods_match,
     erase_qmove,
@@ -22,7 +23,8 @@ from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape
 from bloqade.lanes.transform.native_to_qmove import NativeToQMove
 from bloqade.lanes.transform.qmove_frontend import lower_to_native
 from bloqade.lanes.types import StateType
-from bloqade.lanes.validation.spectator import SingleZonePolicy
+from bloqade.lanes.validation.qmove import get_qmove_validation
+from bloqade.lanes.validation.spectator import SingleZonePolicy, ZonedPolicy
 
 ARCH = get_arch_spec()
 A, B = LocationAddress(0, 0), LocationAddress(1, 0)
@@ -165,3 +167,27 @@ def test_original_kernels_are_untouched():
     before = main.print_str()
     NativeToQMove(ARCH, SUBROUTINES).emit(main)
     assert main.print_str() == before
+
+
+@squin.kernel
+def bottom_result():
+    qs = squin.qalloc(3)
+    # measure takes one Qubit, so its result is Bottom.
+    m = squin.measure(qs)  # type: ignore[arg-type]
+    x = m[0]  # type: ignore[index]
+    squin.h(qs[0])
+    return x
+
+
+def test_bottom_typed_result_is_reported_as_a_type_error():
+    with pytest.raises(ValidationErrorGroup) as excinfo:
+        NativeToQMove(ARCH).emit(bottom_result)
+    messages = [str(err.args[0]) for err in excinfo.value.errors]
+    assert any("no valid type" in m and "Bottom" in m for m in messages)
+    assert not any(m.startswith("V1") for m in messages)
+
+
+def test_bottom_typed_value_is_not_threaded_as_state():
+    out = NativeToQMove(ARCH).emit(bottom_result, no_raise=True)
+    result = ValidationSuite([get_qmove_validation(ARCH, ZonedPolicy())]).validate(out)
+    assert [err for errs in result.errors.values() for err in errs] == []

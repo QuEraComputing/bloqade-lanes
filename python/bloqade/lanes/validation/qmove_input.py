@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 
 from bloqade.native.dialects.gate import dialect as native_gate, stmts as gate
 from bloqade.squin import gate as squin_gate, noise as squin_noise
-from kirin import ir
+from kirin import ir, types
 from kirin.dialects import func, ilist, py, scf
 from kirin.validation import ValidationPass
 
@@ -134,6 +134,17 @@ def get_input_validation(subroutine: bool) -> type[ValidationPass]:
                 ):
                     error(stmt, f"{stmt.name} is not supported by the qmove lowering")
 
+                if (
+                    stmt.dialect in QUANTUM_DIALECTS or isinstance(stmt, func.Invoke)
+                ) and any(r.type.is_subseteq(types.Bottom) for r in stmt.results):
+                    # Type inference found no valid type, e.g. a wrongly typed
+                    # argument. Reporting it here keeps the later state checks
+                    # from blaming stdlib code for the user's type error.
+                    error(
+                        stmt,
+                        f"{stmt.name} result has no valid type (Bottom); "
+                        "check its argument types",
+                    )
                 if isinstance(stmt, func.Call):
                     error(stmt, "calls through a function value are not supported")
                 if self.SUBROUTINE and isinstance(stmt, ALLOCATION):

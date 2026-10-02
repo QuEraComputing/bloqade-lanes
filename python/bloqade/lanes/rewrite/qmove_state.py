@@ -17,7 +17,7 @@ so it would skip the branch and drop its effect.
 
 from __future__ import annotations
 
-from kirin import ir
+from kirin import ir, types
 from kirin.dialects import scf
 
 from bloqade.lanes.dialects import move, qmove
@@ -26,7 +26,11 @@ from bloqade.lanes.types import StateType
 
 
 def _is_state(value: ir.SSAValue) -> bool:
-    return value.type.is_subseteq(StateType)
+    # Bottom is a subtype of everything; a value whose type inference failed is
+    # not a machine state.
+    return not value.type.is_subseteq(types.Bottom) and value.type.is_subseteq(
+        StateType
+    )
 
 
 def touches_state(stmt: ir.Statement) -> bool:

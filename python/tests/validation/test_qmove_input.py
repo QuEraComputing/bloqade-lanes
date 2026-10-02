@@ -153,3 +153,18 @@ def test_early_return_and_multiple_blocks_are_rejected():
     )
     assert "early return inside scf is not supported" in messages
     assert any("region has 2 blocks" in m for m in messages)
+
+
+def test_bottom_typed_quantum_result_is_rejected():
+    @squin.kernel
+    def k():
+        qs = squin.qalloc(3)
+        # measure takes one Qubit, so its result is Bottom.
+        m = squin.measure(qs)  # type: ignore[arg-type]
+        squin.h(qs[0])
+        return m[0]  # type: ignore[index]
+
+    (message,) = _messages(_native(k).entry)
+    assert message == (
+        "measure result has no valid type (Bottom); check its argument types"
+    )
