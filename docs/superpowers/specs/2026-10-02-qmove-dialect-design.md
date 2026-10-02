@@ -7,6 +7,10 @@ non-inlined calls intact, and gives subroutines an explicit placement contract
 (a *frame*). This spec covers the dialect, the lowering from native IR into it,
 and its verifier. It does not cover placement or move synthesis.
 
+**Target: the physical pipeline.** Input kernels are physical-qubit kernels, as
+accepted by `PhysicalPipeline` today. Logical-pipeline constructs
+(`gemini.logical.*`, `gemini.extensions.*`) are out of scope and rejected.
+
 The new path coexists with the current pipeline. No existing module, pipeline,
 test or benchmark baseline changes.
 
@@ -65,8 +69,9 @@ Representing these is in scope. Compiling them to atom moves is not.
 | 4 | Runtime branches | Agreeing layouts where branch arms rejoin | future spec |
 | 5 | Subroutines | Choosing frames, emitting `prepare`, `check_call` | future spec |
 | 6 | Index-dependent references | Lane tables indexed at runtime, or per-iteration schedules | future spec |
+| 7 | Logical pipeline on `qmove` | Logical measurement dataflow, `StarRz`, a replacement for initialization with angles | future spec |
 
-Sub-projects 3–6 depend on 1 and 2.
+Sub-projects 3–7 depend on 1, and 3–6 also depend on 2.
 
 ## Design overview
 
@@ -101,7 +106,7 @@ traits, and the `move.StatefulStatement` base class. Every gate statement, and
 
 ### Gate statements
 
-Operand types mirror the source statement in `gate` / `arrange` / `gemini`.
+Operand types mirror the source statement in `gate` / `arrange` / `qubit`.
 `MoveTo.locations` and `Permute.perm` stay SSA values (as in `arrange`), not
 attributes (as in `place`), so they can depend on runtime values. Synthesis
 will need them to be constant.
@@ -111,20 +116,15 @@ will need them to be constant.
 | `CZ` | `controls: IList[Qubit, N]`, `targets: IList[Qubit, N]` | — | `gate.CZ` |
 | `R` | `axis_angle, rotation_angle: Float`, `qubits: IList[Qubit, Any]` | — | `gate.R` |
 | `Rz` | `rotation_angle: Float`, `qubits: IList[Qubit, Any]` | — | `gate.Rz` |
-| `StarRz` | `rotation_angle: Float`, `qubits: IList[Qubit, Any]`; attribute `qubit_indices` (keeps today's `check`) | — | `gemini.extensions.StarRz` |
 | `MoveTo` | `qubits: IList[Qubit, Len]`, `locations: IList[LocationAddress, Len]`; attribute `multi_move_warning` | — | `arrange.MoveTo` |
 | `Permute` | `qubits: IList[Qubit, Len]`, `perm: IList[Int, Len]`; attribute `insert_moves` | — | `arrange.Permute` |
-| `Measure` | `qubits: IList[Qubit, Len]` | `measurements: IList[MeasurementResult, Len]` | `qubit.Measure`, `TerminalLogicalMeasurement` |
+| `Measure` | `qubits: IList[Qubit, Len]` | `measurements: IList[MeasurementResult, Len]` | `qubit.Measure` |
 
 `Measure` is **not terminal**. The state continues after it, so measurement
 results can drive later branches. Whether a measured qubit may be used again is
-for architecture validation to decide, not the dialect. Rules that only allow
-terminal measurement stay in gemini's existing validation.
-
-`ConvertToPhysicalMeasurements` is a pure statement that is not on the chain:
-`IList[MeasurementResult, Len] -> IList[IList[MeasurementResult, Any], Len]`. It
-carries the logical-to-physical measurement dataflow, as `place`'s statement of
-the same name does today, without making the new IR depend on `place`.
+for architecture validation to decide, not the dialect. The current physical
+pipeline's terminal-only rule (`PhysicalTerminalMeasurementValidation`) is not
+run on this path.
 
 The call and frame statements (`enter`, `exit`, `prepare`, `invoke`) are
 defined under [Calls and frames](#calls-and-frames).
@@ -137,22 +137,24 @@ A `State` value is the whole machine configuration:
 - where each atom is;
 - which qubit reference each atom carries (the **binding**).
 
-Qubit references are stable logical identities for the life of the kernel.
-`qmove` statements never name locations. Each one acts on whichever atoms hold
-the referenced qubits at that point in the chain.
+Qubit references are stable identities for the life of the kernel. `qmove`
+statements never name locations. Each one acts on whichever atoms hold the
+referenced qubits at that point in the chain. (Below, "the quantum information"
+means the state a reference carries, as opposed to where its atom sits; all
+qubits here are physical qubits.)
 
-- **`Permute`** is a logical permutation gate: afterwards `qubits[i]` holds the
-  quantum information `qubits[perm[i]]` held. Both `insert_moves` settings have
-  the same logical effect. `insert_moves` is a binding **constraint** on how
-  synthesis realizes it:
+- **`Permute`** is a permutation gate on quantum information: afterwards
+  `qubits[i]` holds the quantum information `qubits[perm[i]]` held. Both
+  `insert_moves` settings have this same effect on quantum information.
+  `insert_moves` is a binding **constraint** on how synthesis realizes it:
   - `False`: realized by relabeling the binding, with no atom moves;
   - `True`: realized with moves that restore the previous binding.
 
   Because the binding lives in `State`, qubit identity is unaffected by
   `Permute`. The upstream identity analysis (#332) never needs to model it; only
   placement analysis does.
-- **`MoveTo`** is a logical no-op with a layout constraint: afterwards, the atoms
-  carrying those qubits are at those locations.
+- **`MoveTo`** leaves quantum information unchanged and adds a layout
+  constraint: afterwards, the atoms carrying those qubits are at those locations.
 - **Path-dependent bindings are legal IR.** A relabel `Permute` in one
   `scf.IfElse` arm makes the binding after the join depend on which arm ran. A
   relabel in an `scf.For` body makes the binding after `k` iterations `perm^k`,
@@ -363,9 +365,8 @@ class NativeToQMove:
 Location: `python/bloqade/lanes/transform/native_to_qmove.py`.
 
 - **Input:** squin- or native-level IR. "Native level" means `gate.*`,
-  `qubit.New`/`Measure`/`IsZero`/`IsOne`/`IsLost`, `gemini.common.NewAt`,
-  `arrange.MoveTo`/`Permute`, `gemini.logical.TerminalLogicalMeasurement` and
-  `gemini.extensions.StarRz`, plus `scf`, `func`, `py` and `ilist`.
+  `qubit.New`/`Measure`/`IsZero`/`IsOne`/`IsLost`, `gemini.common.NewAt` and
+  `arrange.MoveTo`/`Permute`, plus `scf`, `func`, `py` and `ilist`.
 - **No unrolling.** There is no `AggressiveUnroll` and no `ScfToCf`.
 - **Originals are never mutated.** Every method the transform changes is a
   `similar()` clone, including subroutine bodies; `qmove.invoke` statements
@@ -395,8 +396,9 @@ error, since it cannot be inlined.
    each subroutine clone.
 3. **Input check** (a `ValidationPass`, reporting every problem at once):
    - `qubit.Reset`;
-   - `gemini.logical.Initialize` (its initialize-with-angles semantics is being
-     retired, so `qmove` has no counterpart);
+   - any `gemini.logical.*` or `gemini.extensions.*` statement (this spec targets
+     the physical pipeline; `Initialize` in particular has no counterpart, since
+     its initialize-with-angles semantics is being retired);
    - multi-block (`cf`) regions;
    - `func.Lambda` bodies containing gates or measurements (so `ilist.map` /
      `for_each` / `foldl` applying gates; `qalloc`'s map is fine because
@@ -407,11 +409,9 @@ error, since it cannot be inlined.
    - a recursive kernel that is not a `subroutines` key.
 4. **Local lowering** (`python/bloqade/lanes/rewrite/native2qmove.py`). Every
    source statement becomes `Load; qmove.X(state, …); Store`:
-   - `gate.*`, `arrange.*` and `StarRz` map one-to-one;
+   - `gate.*` and `arrange.*` map one-to-one;
    - `qubit.Measure` becomes `qmove.Measure`, whose `measurements` replaces the
      original result;
-   - `TerminalLogicalMeasurement` becomes `qmove.Measure` followed by
-     `qmove.ConvertToPhysicalMeasurements`;
    - a `func.invoke` of a subroutine becomes `qmove.invoke` targeting the clone.
 
    Each rule is local, and its output is valid C-style IR.
@@ -481,7 +481,6 @@ statements on a mixed chain.
   that goes nowhere fails V1.
 - **V3 — Per-statement checks, where operands are constant.**
   - `CZ` controls and targets have equal length.
-  - `StarRz.qubit_indices` is valid (the existing `validate_steane_star_support`).
   - `Permute.perm` is a permutation of `range(len(qubits))`.
   - `MoveTo` has as many locations as qubits.
 
@@ -529,8 +528,7 @@ Tests live under `python/tests/`, mirroring the package layout:
 `rewrite/test_qmove_state.py`, `validation/test_qmove.py`,
 `validation/test_spectator.py`, and `test_transform_native_to_qmove.py`.
 
-- **Dialect:** build, print and type-check each statement, including
-  `StarRz.check`.
+- **Dialect:** build, print and type-check each statement.
 - **Verifier:** hand-built IR with one passing case and at least one failing case
   per rule (V1–V3, the call rules, F1–F5), plus one IR with several violations to
   confirm they are all reported in one run.
@@ -548,9 +546,10 @@ Tests live under `python/tests/`, mirroring the package layout:
   - a recursive subroutine, and the error for a recursive kernel that is not
     listed;
   - calls that are not listed, including squin stdlib, being inlined;
-  - the logical measurement path (`TerminalLogicalMeasurement` → `Measure` +
-    `ConvertToPhysicalMeasurements`);
-  - the input-check error for `gemini.logical.Initialize`.
+  - pinned allocation (`NewAt`) alongside `qubit.New`, and `IsZero`/`IsOne`/
+    `IsLost` on `Measure` results feeding a branch;
+  - the input-check errors for logical-pipeline statements
+    (`gemini.logical.Initialize`, `TerminalLogicalMeasurement`, `StarRz`).
 
   Every output must pass validation, and the entry kernel's top-level block must
   contain exactly one `Load` and end with a `Store`.
@@ -576,10 +575,13 @@ Tests live under `python/tests/`, mirroring the package layout:
   [bloqade-circuit#332](https://github.com/QuEraComputing/bloqade-circuit/issues/332).
 - `cf` control flow, closures that apply gates, `qubit.Reset`, and allocation in
   subroutines.
-- Initialization with angles (`gemini.logical.Initialize`, and the `place`-level
-  `Initialize` / `NewLogicalQubit` angles). These semantics are being retired;
-  `qmove` has no counterpart, and the input check rejects them. What replaces
-  them is a separate decision.
+- **The logical pipeline.** `gemini.logical.*` and `gemini.extensions.*` are
+  rejected by the input check. That covers the logical measurement dataflow
+  (`TerminalLogicalMeasurement` and `ConvertToPhysicalMeasurements`), `StarRz`,
+  and initialization with angles (`gemini.logical.Initialize`, and the
+  `place`-level `Initialize` / `NewLogicalQubit` angles). Initialization with
+  angles is being retired rather than ported; what replaces it is a separate
+  decision.
 - Relocatable frames, and a kernel-body intrinsic for pinning a frame (frames
   are pinned through `subroutines` for now).
 - Any change to `PhysicalPipeline`, the logical kernel decorator or other
