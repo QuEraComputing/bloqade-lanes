@@ -56,18 +56,18 @@ class NativeToQMove:
             for original, clone in program.subroutines.items()
         ]
 
+        clones = frozenset(program.subroutines.values())
         errors: list[ir.ValidationError] = []
         for method, _, is_subroutine in roles:
-            result = ValidationSuite([get_input_validation(is_subroutine)]).validate(
-                method
-            )
+            result = ValidationSuite(
+                [get_input_validation(is_subroutine, clones)]
+            ).validate(method)
             errors += [err for errs in result.errors.values() for err in errs]
         if errors and not no_raise:
             raise ValidationErrorGroup(
                 "NativeToQMove: unsupported input", errors=errors
             )
 
-        clones = frozenset(program.subroutines.values())
         for method, frame, is_subroutine in roles:
             rewrite.Walk(RewriteNativeToQMove(clones)).rewrite(method.code)
             thread_method(method, subroutine=is_subroutine, frame=frame)

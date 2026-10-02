@@ -17,6 +17,7 @@ from bloqade.native._prelude import kernel as native_kernel
 from bloqade.native.upstream.squin2native import GateRule
 from bloqade.rewrite.passes.callgraph import ReplaceMethods
 from kirin import ir, passes, rewrite
+from kirin.ir.exception import ValidationErrorGroup
 from kirin.rewrite import Inline
 
 from bloqade.gemini.common.validation.recursion import CallGraph, format_cycle
@@ -75,15 +76,31 @@ def lower_to_native(
         rewrite.Walk(rewrite.Chain(ConstCallToInvoke(), Inline(keep_call)))
     )
 
+    def inline_calls(method: ir.Method) -> None:
+        # A Fixpoint that hits its iteration limit leaves calls un-inlined, and
+        # such a call would sit off the state chain: a silent miscompile.
+        if inline.rewrite(method.code).exceeded_max_iter:
+            raise ValidationErrorGroup(
+                "NativeToQMove: inlining did not converge",
+                errors=[
+                    ir.ValidationError(
+                        method.code,
+                        f"inlining did not converge after {inline.max_iter} "
+                        f"iterations in {method.sym_name}; the call chain is "
+                        "too deep or recursive",
+                    )
+                ],
+            )
+
     def lower(method: ir.Method) -> ir.Method:
         out = method.similar(dialects)
-        inline.rewrite(out.code)
+        inline_calls(out)
         rewrite.Walk(BindArchSpec(arch_spec)).rewrite(out.code)
         rewrite.Walk(clifford2native.DecomposeCliffordToNative()).rewrite(out.code)
         # GateRule turns each squin gate into a call of a native stdlib kernel;
         # inline again to expose the native.gate statements.
         rewrite.Walk(GateRule()).rewrite(out.code)
-        inline.rewrite(out.code)
+        inline_calls(out)
         rewrite.Fixpoint(rewrite.Walk(rewrite.DeadCodeElimination())).rewrite(out.code)
         return out
 

@@ -96,12 +96,19 @@ def _allocates(code: ir.Statement) -> bool:
     return any(isinstance(s, ALLOCATION) for s in _reachable(code))
 
 
-def get_input_validation(subroutine: bool) -> type[ValidationPass]:
-    """``ValidationSuite`` builds passes with no arguments, hence the factory."""
+def get_input_validation(
+    subroutine: bool, clones: frozenset[ir.Method] = frozenset()
+) -> type[ValidationPass]:
+    """``ValidationSuite`` builds passes with no arguments, hence the factory.
+
+    ``clones`` are the lowered subroutine methods; a ``func.Invoke`` of any other
+    method is a call that survived inlining.
+    """
 
     @dataclass
     class QMoveInputValidation(ValidationPass):
         SUBROUTINE: ClassVar[bool] = subroutine
+        CLONES: ClassVar[frozenset[ir.Method]] = clones
 
         def name(self) -> str:
             return "lanes.qmove.input"
@@ -147,6 +154,14 @@ def get_input_validation(subroutine: bool) -> type[ValidationPass]:
                     )
                 if isinstance(stmt, func.Call):
                     error(stmt, "calls through a function value are not supported")
+                if isinstance(stmt, func.Invoke) and stmt.callee not in self.CLONES:
+                    # An un-inlined call stays off the state chain, silently
+                    # dropping the effects of the gates behind it.
+                    error(
+                        stmt,
+                        f"call of {stmt.callee.sym_name} survived inlining and is "
+                        "not a listed subroutine",
+                    )
                 if self.SUBROUTINE and isinstance(stmt, ALLOCATION):
                     error(stmt, "qubits may only be allocated in the entry kernel")
                 if (

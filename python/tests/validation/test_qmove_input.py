@@ -16,8 +16,14 @@ from bloqade.lanes.transform.qmove_frontend import lower_to_native
 from bloqade.lanes.validation.qmove_input import get_input_validation
 
 
-def _messages(method: ir.Method, subroutine: bool = False) -> list[str]:
-    result = ValidationSuite([get_input_validation(subroutine)]).validate(method)
+def _messages(
+    method: ir.Method,
+    subroutine: bool = False,
+    clones: frozenset[ir.Method] = frozenset(),
+) -> list[str]:
+    result = ValidationSuite([get_input_validation(subroutine, clones)]).validate(
+        method
+    )
     return [str(err.args[0]) for errs in result.errors.values() for err in errs]
 
 
@@ -168,3 +174,33 @@ def test_bottom_typed_quantum_result_is_rejected():
     assert message == (
         "measure result has no valid type (Bottom); check its argument types"
     )
+
+
+def test_leftover_invoke_of_a_non_subroutine_is_rejected():
+    @squin.kernel
+    def helper():
+        return None
+
+    invoke = func.Invoke((), callee=helper)
+    assert _messages(_method(ir.Block([invoke, func.Return()]))) == [
+        "call of helper survived inlining and is not a listed subroutine"
+    ]
+
+
+def test_invoke_of_a_subroutine_clone_is_fine():
+    @squin.kernel
+    def sub(qs: ilist.IList[Qubit, Literal[1]]):
+        squin.h(qs[0])
+
+    @squin.kernel
+    def k():
+        qs = squin.qalloc(1)
+        sub(qs)
+
+    program = _native(k, [sub])
+    clones = frozenset(program.subroutines.values())
+    assert _messages(program.entry, clones=clones) == []
+    # Without the clone set, the same call is a leftover.
+    assert _messages(program.entry) == [
+        "call of sub survived inlining and is not a listed subroutine"
+    ]

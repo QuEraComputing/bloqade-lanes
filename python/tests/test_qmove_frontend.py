@@ -1,9 +1,11 @@
 from typing import Literal
 
+import pytest
 from bloqade.native.dialects.gate import stmts as gate
 from bloqade.types import Qubit, QubitType
-from kirin import types
+from kirin import ir, types
 from kirin.dialects import func, ilist, scf
+from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import squin
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
@@ -93,3 +95,44 @@ def test_listed_recursion_calls_its_own_clone():
     clone = program.subroutines[rec]
     (self_call,) = _calls(clone)
     assert self_call.callee is clone
+
+
+def _call_chain(depth: int) -> ir.Method:
+    """An entry kernel that reaches a gate through ``depth`` nested calls."""
+
+    @squin.kernel
+    def leaf(q: Qubit):
+        squin.h(q)
+
+    def wrap(callee: ir.Method) -> ir.Method:
+        @squin.kernel
+        def step(q: Qubit):
+            callee(q)
+
+        return step
+
+    inner = leaf
+    for _ in range(depth):
+        inner = wrap(inner)
+
+    @squin.kernel
+    def entry():
+        qs = squin.qalloc(1)
+        inner(qs[0])
+
+    return entry
+
+
+def test_moderately_nested_calls_are_fully_inlined():
+    program = lower_to_native(_call_chain(10), [], get_arch_spec())
+    assert _calls(program.entry) == []
+
+
+def test_inlining_that_does_not_converge_is_an_error():
+    # Each fixpoint round inlines a bounded number of levels; a call chain deeper
+    # than that used to leave an un-inlined call behind without any error.
+    with pytest.raises(ValidationErrorGroup) as excinfo:
+        lower_to_native(_call_chain(100), [], get_arch_spec())
+    (error,) = excinfo.value.errors
+    message = str(error.args[0])
+    assert "inlining did not converge" in message and "entry" in message
