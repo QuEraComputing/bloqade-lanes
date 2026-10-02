@@ -35,8 +35,7 @@ class NativeToQMove:
     policy: SpectatorPolicy = field(default_factory=ZonedPolicy)
 
     def emit(self, mt: ir.Method, no_raise: bool = False) -> ir.Method:
-        subroutines = frozenset(self.subroutines)
-        if cycles := unlisted_recursion(mt, subroutines):
+        if cycles := unlisted_recursion(mt, frozenset(self.subroutines)):
             raise ValidationErrorGroup(
                 "NativeToQMove: recursive kernels must be listed as subroutines",
                 errors=[
@@ -47,7 +46,10 @@ class NativeToQMove:
                 ],
             )
 
-        program = lower_to_native(mt, subroutines, self.arch_spec, no_raise=no_raise)
+        # A tuple keeps the listed order; a frozenset would order by id hash.
+        program = lower_to_native(
+            mt, tuple(self.subroutines), self.arch_spec, no_raise=no_raise
+        )
         roles: list[tuple[ir.Method, Frame | None, bool]] = [
             (program.entry, None, False)
         ]

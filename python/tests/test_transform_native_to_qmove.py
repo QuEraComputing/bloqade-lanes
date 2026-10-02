@@ -20,6 +20,7 @@ from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, qmove
 from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape
+from bloqade.lanes.transform import native_to_qmove
 from bloqade.lanes.transform.native_to_qmove import NativeToQMove
 from bloqade.lanes.transform.qmove_frontend import lower_to_native
 from bloqade.lanes.types import StateType
@@ -225,3 +226,21 @@ def test_frame_errors_are_reported_across_all_subroutines():
 def test_no_raise_returns_despite_frame_errors():
     wrong_shape = Frame(FrameShape(((0, 1),)), (A,))
     NativeToQMove(ARCH, {sub_a: wrong_shape}).emit(calls_both, no_raise=True)
+
+
+@pytest.mark.parametrize(
+    "listed", [(sub, nested, sub_a, sub_b), (sub_b, sub_a, nested, sub)]
+)
+def test_subroutines_are_lowered_in_listed_order(monkeypatch, listed):
+    # A frozenset would order them by id hash, which varies from run to run.
+    seen: list[tuple[ir.Method, ...]] = []
+    real = native_to_qmove.lower_to_native
+
+    def spy(entry, subroutines, *args, **kwargs):
+        subroutines = tuple(subroutines)
+        seen.append(subroutines)
+        return real(entry, subroutines, *args, **kwargs)
+
+    monkeypatch.setattr(native_to_qmove, "lower_to_native", spy)
+    NativeToQMove(ARCH, dict.fromkeys(listed)).emit(main)
+    assert seen == [listed]
