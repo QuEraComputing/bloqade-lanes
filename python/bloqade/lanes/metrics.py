@@ -9,6 +9,7 @@ from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
+from bloqade.lanes.bytecode.encoding import MoveType
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.noise_model import generate_logical_noise_model
@@ -36,6 +37,44 @@ class KernelMoveMetrics:
 
     approx_lane_parallelism: float
     moved_lane_count: int
+
+
+@dataclass(frozen=True)
+class UsedBuses:
+    """Unique transport buses referenced by a move kernel."""
+
+    zone: tuple[int, ...] = ()
+    word: tuple[tuple[int, int], ...] = ()
+    site: tuple[tuple[int, int], ...] = ()
+
+
+def get_used_buses(move_kernel: ir.Method) -> UsedBuses:
+    """Return the unique zone, word, and site buses used by ``move_kernel``.
+
+    Zone bus IDs are global. Word and site bus IDs are local to a zone, so they
+    are returned as ``(zone_id, bus_id)`` pairs.
+    """
+    zone_buses: set[int] = set()
+    word_buses: set[tuple[int, int]] = set()
+    site_buses: set[tuple[int, int]] = set()
+
+    for statement in move_kernel.callable_region.walk():
+        if not isinstance(statement, move.Move):
+            continue
+
+        for lane in statement.lanes:
+            if lane.move_type == MoveType.ZONE:
+                zone_buses.add(lane.bus_id)
+            elif lane.move_type == MoveType.WORD:
+                word_buses.add((lane.zone_id, lane.bus_id))
+            elif lane.move_type == MoveType.SITE:
+                site_buses.add((lane.zone_id, lane.bus_id))
+
+    return UsedBuses(
+        zone=tuple(sorted(zone_buses)),
+        word=tuple(sorted(word_buses)),
+        site=tuple(sorted(site_buses)),
+    )
 
 
 @dataclass(frozen=True)
