@@ -26,6 +26,7 @@ from bloqade.lanes.rewrite.transversal import (
     RewriteLogicalInitialize,
     RewriteLogicalToPhysicalConversion,
     RewriteMoves,
+    RewriteStarRx,
     RewriteStarRz,
 )
 
@@ -163,6 +164,7 @@ class TransversalRewritePass(passes.Pass):
         rules += [
             RewriteLocations(self.transversal_location_map),
             RewriteMoves(self.transversal_location_map),
+            RewriteStarRx(self.transversal_location_map),
             RewriteStarRz(self.transversal_location_map),
             # handles the rewrite of physical to logical measurement results
             RewriteGetItem(self.transversal_location_map),

@@ -27,7 +27,7 @@ def validate_steane_star_support(
             str(support) for support in sorted(VALID_STEANE_STAR_SUPPORTS)
         )
         raise ValueError(
-            f"qubit_indices must be a valid Steane weight-3 logical-Z support; "
+            f"qubit_indices must be a valid Steane weight-3 logical-X or logical-Z support; "
             f"got {out}. Valid Steane supports are: {valid}"
         )
     return cast(tuple[int, int, int], out)

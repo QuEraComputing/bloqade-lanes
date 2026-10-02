@@ -270,6 +270,7 @@ class _SimulatorTaskBase(Generic[RetType]):
             move.LocalRz,
             move.GlobalRz,
             move.StarRz,
+            move.StarRx,
         )
         state_frame, _ = atom.AtomInterpreter(
             self.physical_move_kernel.dialects,
