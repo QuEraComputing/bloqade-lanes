@@ -386,6 +386,11 @@ opt-in, stdlib gate kernels always disappear, and existing kernels lower as they
 do today, minus the unrolling. A recursive kernel that is not listed is an
 error, since it cannot be inlined.
 
+A subroutine call has to survive until this transform sees it.
+`bloqade.gemini.physical.kernel` inlines calls when the kernel is decorated
+(`inline=True` by default), so a physical kernel that calls a subroutine must be
+decorated with `inline=False`. `squin.kernel` does not inline.
+
 ### Passes
 
 1. **Clone and inline, per method.** For the entry method and for each
