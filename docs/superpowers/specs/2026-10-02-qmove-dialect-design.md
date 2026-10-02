@@ -438,6 +438,15 @@ decorated with `inline=False`. `squin.kernel` does not inline.
    - allocation inside a subroutine;
    - any remaining statement from a quantum dialect (`squin`, `gate`, `qubit`,
      `arrange`, `gemini.*`) that the lowering table does not cover;
+   - a `func.Invoke` whose callee is not a subroutine clone. Everything else
+     should have been inlined, and an invoke the lowering does not lower stays
+     off the chain. (`lower_to_native` also raises if its inline fixpoint stops
+     at the iteration limit without converging.);
+   - a quantum statement or `func.Invoke` whose result type inference typed
+     `Bottom`, for example `squin.measure(qs)` on a register (`squin.measure`
+     takes one `Qubit`). `TypeInfer` does not raise on this, so the input check
+     is where the user's real type error is reported. Later passes also treat a
+     `Bottom`-typed value as never being a `State`;
    - a recursive kernel that is not a `subroutines` key. This one is checked
      **before** step 1, with the call graph from
      `bloqade.gemini.common.validation.recursion`, because inlining a recursive
@@ -483,7 +492,8 @@ decorated with `inline=False`. `squin.kernel` does not inline.
    the following `Load` with the pre-branch state, and drop the branch's effect.
 7. **Cleanup:** DCE, `TypeInfer`, then `RefineQubitTypes` again.
 8. **Validation:** V1–V3, F1–F5, then `policy.check_frame` for every framed
-   subroutine.
+   subroutine. Errors from every method are collected and raised together.
+   Under `no_raise=True` validation is skipped.
 
 ### Qubit type refinement
 
@@ -529,10 +539,10 @@ the pass reports a validation error instead of setting the type.
 
 Values that type inference already typed `Bottom` are skipped. Their address
 says nothing: `AddressAnalysis` derives `UnknownReg` from a `Bottom` type,
-because `Bottom` is a subtype of every `IList[Qubit]`. Taking it would re-type,
-for example, the `Bottom`-typed result of `squin.measure(qs)` on a register
-(`squin.measure` takes one `Qubit`) as a qubit register. Type inference has
-already flagged that mistake.
+because `Bottom` is a subtype of every `IList[Qubit]`. Meeting with it would
+turn the value into a spurious contradiction. An example is the `Bottom`-typed
+result of `squin.measure(qs)` on a register. Type inference does *not* report
+that mistake; the input check (step 4) does.
 
 **Placement.** `TypeInfer` overwrites every type it infers (`ApplyType`), so
 `RefineQubitTypes` runs immediately after each `TypeInfer` in this transform
@@ -604,8 +614,14 @@ Unframed subroutines and unframed `prepare`s skip these.
     `GlobalR`/`GlobalRz` unless `global_pulses`);
   - `move.Move` lanes start and end inside the footprint.
 - **F4** — Exit = entry: constant-`perm` relabel `Permute`s on parameter slots
-  compose to the identity. The general case needs qubit identity and is an
-  obligation for the #332-based analysis.
+  compose to the identity. F4 judges only the case it can see completely.
+  - The relabels it composes are top-level, constant-perm, valid relabels
+    acting directly on a parameter.
+  - If the method has any other relabel (nested in a region, non-constant,
+    malformed, or on a non-parameter operand that may alias), F4 abstains for
+    that method.
+  - The general case needs qubit identity and is an obligation for the
+    #332-based analysis.
 - **F5** — A framed subroutine's `invoke` of a framed subroutine: the inner
   footprint is inside the outer footprint, and the inner effects are a subset of
   the outer effects.
@@ -669,8 +685,16 @@ Tests live under `python/tests/`, mirroring the package layout:
   - the state's yields, initializers and block arguments;
 
   and turns `qmove` statements back into the native statements they came from
-  (`qmove.invoke` back into `func.invoke`). The result must equal the IR after
-  passes 1–3 and DCE, compared **block by block** with a test-only comparator.
+  (`qmove.invoke` back into `func.invoke`). For the test kernels, the result
+  must equal the IR after passes 1–3 and DCE, compared **block by block** with a
+  test-only comparator.
+  - This does not hold for every kernel, but only result types can differ.
+  - Pass 3 refines once. A loop-carried copy of a register that
+    `AddressAnalysis` never visits (for example in a loop with an unknown range)
+    can keep `IList[Qubit, Any]` in the reference.
+  - Pass 7's re-inference then propagates the refined type.
+  - Iterating `TypeInfer`/`RefineQubitTypes` to a fixpoint in pass 3 would
+    close this; it is left for later.
   kirin's `is_structurally_equal` cannot be used for this: `Region`'s version
   records every block pair in its context before comparing, so `Block`'s
   version returns early and nested region contents are never compared (two
