@@ -22,6 +22,7 @@ _SchedulableStmt = (
     place.R
     | place.Rz
     | place.StarRz
+    | place.StarRx
     | place.CZ
     | place.Initialize
     | place.EndMeasure
@@ -36,7 +37,7 @@ def _group_key(stmt: _SchedulableStmt) -> tuple:
         return (type(stmt), id(stmt.axis_angle), id(stmt.rotation_angle))
     if isinstance(stmt, place.Rz):
         return (type(stmt), id(stmt.rotation_angle))
-    if isinstance(stmt, place.StarRz):
+    if isinstance(stmt, (place.StarRz, place.StarRx)):
         return (type(stmt), id(stmt.rotation_angle), stmt.qubit_indices)
     return (type(stmt),)  # CZ has no non-qubit params
 

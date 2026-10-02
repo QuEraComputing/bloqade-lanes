@@ -10,4 +10,4 @@ that the distinction is visible in the import path -- see
 
 from . import stmts as stmts
 from ._dialect import dialect as dialect
-from ._interface import star_rz as star_rz
+from ._interface import star_rx as star_rx, star_rz as star_rz
