@@ -388,26 +388,47 @@ error, since it cannot be inlined.
 
 ### Passes
 
-1. **Inline** every call except calls to `subroutines` keys, in the entry method
-   and in each subroutine clone, using kirin's inline rewrite with that set as its
-   rule and no unrolling.
-2. **Squin → native.** Apply the existing `SquinToNative` and
-   `DecomposeCliffordToNative` rewrites, unchanged, to the entry method and to
-   each subroutine clone.
-3. **Input check** (a `ValidationPass`, reporting every problem at once):
+1. **Clone and inline, per method.** For the entry method and for each
+   `subroutines` key, make a `similar()` clone over a dialect group that is the
+   union of every reachable method's dialects plus the native `kernel` group. In
+   each clone, run `Fixpoint(Walk(Chain(ConstCallToInvoke(), Inline(keep))))`,
+   where `keep(code)` is true unless `code` is a subroutine's `code` object.
+   (`rewrite.Inline` passes its heuristic the callee's `func.Function`
+   statement, not the call site.)
+   - **Why not `CallGraphPass` or `SquinToNative.emit`:** both clone every
+     callee and retarget the calls, so after them a subroutine call no longer
+     references the user's `Method`. In a trial run, the subroutine was then
+     silently inlined. Per-method cloning keeps calls pointing at the originals
+     until step 2 retargets them.
+   - **`ConstCallToInvoke`** (new, small) turns `func.Call` of a
+     `py.Constant(Method)` into `func.Invoke`. `rewrite.Inline` only inlines
+     `func.Call` of a lambda, and kirin's `Call2Invoke` relies on const-prop
+     hints, which are not set inside `scf.For` bodies. In a trial run, gate calls
+     inside loops survived for that reason.
+2. **Squin → native, per clone.** Apply `Walk(DecomposeCliffordToNative())`
+   and then `Walk(GateRule())` (`SquinToNative`'s own rule) directly, both
+   unchanged. `GateRule` turns each squin gate into a call of a native stdlib
+   kernel, so repeat step 1's inline fixpoint to expose the `gate.*` statements.
+   Then retarget every `func.invoke` of a subroutine original to its clone
+   (bloqade's `ReplaceMethods`).
+3. **Types:** `TypeInfer`, then `RefineQubitTypes` (see
+   [Qubit type refinement](#qubit-type-refinement)).
+4. **Input check** (a `ValidationPass`, reporting every problem at once):
    - `qubit.Reset`;
    - any `gemini.logical.*` or `gemini.extensions.*` statement (this spec targets
      the physical pipeline; `Initialize` in particular has no counterpart, since
      its initialize-with-angles semantics is being retired);
    - multi-block (`cf`) regions;
-   - `func.Lambda` bodies containing gates or measurements (so `ilist.map` /
-     `for_each` / `foldl` applying gates; `qalloc`'s map is fine because
-     `qubit.New` does not touch the state);
+   - a function value that applies gates or measurements: a `func.Lambda` body,
+     or the constant `Method` passed as `fn` to `ilist.map` / `for_each` /
+     `foldl` / `foldr` / `scan`, containing a quantum statement other than
+     allocation. `qalloc`'s `ilist.map(_new, range(n))` is fine, because `_new`
+     only allocates and `qubit.New` does not touch the state;
    - allocation inside a subroutine;
    - any remaining statement from a quantum dialect (`squin`, `gate`, `qubit`,
      `arrange`, `gemini.*`) that the lowering table does not cover;
    - a recursive kernel that is not a `subroutines` key.
-4. **Local lowering** (`python/bloqade/lanes/rewrite/native2qmove.py`). Every
+5. **Local lowering** (`python/bloqade/lanes/rewrite/native2qmove.py`). Every
    source statement becomes `Load; qmove.X(state, …); Store`:
    - `gate.*` and `arrange.*` map one-to-one;
    - `qubit.Measure` becomes `qmove.Measure`, whose `measurements` replaces the
@@ -415,7 +436,7 @@ error, since it cannot be inlined.
    - a `func.invoke` of a subroutine becomes `qmove.invoke` targeting the clone.
 
    Each rule is local, and its output is valid C-style IR.
-5. **Threading** (`python/bloqade/lanes/rewrite/qmove_state.py`). One recursive
+6. **Threading** (`python/bloqade/lanes/rewrite/qmove_state.py`). One recursive
    procedure, `thread_block(block, state) -> state`, is applied to each method's
    top-level block:
    - replace each `Load` with the current state and delete it; delete each
@@ -425,7 +446,11 @@ error, since it cannot be inlined.
      starting an `IfElse` arm from the captured state and a `For` body from a new
      block argument, then **rebuild** the statement with the state as its first
      yield and result (kirin fixes a statement's result count when it is built),
-     and remap the old results' uses to the shifted results;
+     and remap the old results' uses to the shifted results. `scf.For` often
+     already has loop-carried values: kirin's Python lowering carries a register
+     read in a loop body as `iter_args`, even when it is only yielded back
+     unchanged (`for i in range(2): squin.z(qs[i + 1])` carries `qs`). The state
+     goes in front of them;
    - at the top level, open the chain with one `Load` (entry kernel) or
      `qmove.enter(frame)` (subroutine, `frame` from `subroutines`), and close it
      with `Store` / `qmove.exit`.
@@ -440,9 +465,60 @@ error, since it cannot be inlined.
    traits, and a threaded `scf.IfElse` has a `State` result but no trait (kirin
    owns `scf`). `RewriteLoadStore` would treat the branch as stateless, replace
    the following `Load` with the pre-branch state, and drop the branch's effect.
-6. **Cleanup:** DCE and `TypeInfer`.
-7. **Validation:** V1–V3, F1–F5, then `policy.check_frame` for every framed
+7. **Cleanup:** DCE, `TypeInfer`, then `RefineQubitTypes` again.
+8. **Validation:** V1–V3, F1–F5, then `policy.check_frame` for every framed
    subroutine.
+
+### Qubit type refinement
+
+`RefineQubitTypes` (`python/bloqade/lanes/rewrite/refine_qubit_types.py`) is a
+separate, reusable pass that narrows the types of qubit-valued SSA values using
+`AddressAnalysis`. The new path needs it because type inference cannot recover
+qubit types once calls are inlined without unrolling:
+
+- **`func.invoke` is typed from the callee's signature.** Type inference does
+  not specialize a call to its arguments, because that would mutate the callee's
+  signature, which every call site shares. So `qalloc(3)` is typed
+  `IList[Qubit, Any]`.
+- **Constants are not `Literal`s.** `py.Constant` is typed
+  `PyClass(type(value))`, e.g. `!py.int`. Values live in the const-prop
+  lattice; `types.Literal` appears only where an impl builds it, as
+  `ilist.range` does from const hints.
+- **Re-inference cannot narrow an inlined type.**
+  `TypeInference.eval_fallback` solves the type variables correctly (for
+  `ilist.map(_new, range(3))` it finds `ListLen := Literal(3)`), but substitutes
+  them into the result's *current* SSA type rather than the statement's declared
+  type. An inlined statement arrives already typed from the callee's generic
+  body (`IList[Qubit, Any]`), with no type variables left to substitute.
+
+`AddressAnalysis` re-interprets each callee with the real arguments, so it does
+know `qalloc(3)` is a 3-qubit register (`AddressReg((0, 1, 2))`).
+
+**Rule.** For each SSA value (statement results and block arguments) in the
+analysis frame, derive a type from its address:
+
+| Address | Derived type |
+|---|---|
+| `AddressQubit`, `UnknownQubit` | `Qubit` |
+| `AddressReg(data)` | `IList[Qubit, Literal(len(data))]` |
+| `UnknownReg` | `IList[Qubit, Any]` |
+| `PartialIList(elems)` whose elements all derive a type | `IList[join of element types, Literal(len(elems))]` |
+| anything else, including `Unknown` | no refinement |
+
+Set the value's type to the **meet** of its current type and the derived type,
+so the pass only ever narrows. A loop variable whose address joins to
+`Unknown` keeps its inferred `Qubit`. If the meet is bottom, the value's type
+contradicts what it holds, for example a register passed where a `Qubit` is
+expected (`squin.measure(qs)` instead of `squin.broadcast.measure(qs)`, which
+the frontend accepts today). The pass reports this as a validation error instead
+of setting the type.
+
+**Placement.** `TypeInfer` overwrites every type it infers (`ApplyType`), so
+`RefineQubitTypes` runs immediately after each `TypeInfer` in this transform
+(passes 3 and 7). It runs on each method separately, entry and subroutine
+clones, because `AddressAnalysis` discards callee frames. Subroutine parameters
+are `UnknownReg` / `UnknownQubit` (or `Unknown`), so they keep their annotated
+types. It does not change the existing pipeline.
 
 ## Validation
 
@@ -525,7 +601,8 @@ layouts.
 
 Tests live under `python/tests/`, mirroring the package layout:
 `dialects/test_qmove.py`, `rewrite/test_native2qmove.py`,
-`rewrite/test_qmove_state.py`, `validation/test_qmove.py`,
+`rewrite/test_qmove_state.py`, `rewrite/test_refine_qubit_types.py`,
+`validation/test_qmove.py`,
 `validation/test_spectator.py`, and `test_transform_native_to_qmove.py`.
 
 - **Dialect:** build, print and type-check each statement.
@@ -535,6 +612,14 @@ Tests live under `python/tests/`, mirroring the package layout:
 - **Policies:** `check_frame` for `ZonedPolicy` and `SingleZonePolicy` on
   synthetic architectures built with `ArchBuilder` (the `python/tests/conftest.py`
   fixtures), not only the shipped Gemini specs.
+- **Type refinement** (`rewrite/test_refine_qubit_types.py`):
+  - `qalloc(3)` is narrowed from `IList[Qubit, Any]` to
+    `IList[Qubit, Literal(3)]`;
+  - a loop variable over a register keeps `Qubit` (an `Unknown` address never
+    widens a type);
+  - a subroutine's parameter keeps its annotated type;
+  - `squin.measure(qs)` on a register is reported as a contradiction;
+  - running it twice changes nothing.
 - **Lowering:** kernels covering
   - straight-line code;
   - `scf.IfElse` on a mid-circuit measurement, including an arm with no gates and
