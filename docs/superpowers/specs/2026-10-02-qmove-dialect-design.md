@@ -1,10 +1,11 @@
 # `qmove`: a qubit-addressed, state-threaded dialect for structured control flow
 
 Add a new dialect, `lanes.qmove`, that expresses quantum operations on **qubit
-references** while threading an explicit machine `State` through them. It
-reuses `move`'s `Load`/`Store` state cell, keeps `scf` control flow and
-non-inlined calls intact, and gives subroutines an explicit placement contract
-(a *frame*). This spec covers the dialect, the lowering from native IR into it,
+references** while threading an explicit machine `State` through them. Every
+qmove method opens its state chain with `qmove.enter(frame)` and closes it with
+`qmove.exit`. It keeps `scf` control flow and non-inlined calls intact, and
+gives every method an explicit placement contract (a *frame*). The entry
+kernel's frame is the whole machine. This spec covers the dialect, the lowering from native IR into it,
 and its verifier. It does not cover placement or move synthesis.
 
 **Target: the physical pipeline.** Input kernels are physical-qubit kernels, as
@@ -80,14 +81,16 @@ Sub-projects 3–7 depend on 1, and 3–6 also depend on 2.
 - **Quantum operations** become `qmove` statements. Each one consumes a `State`,
   produces a new `State`, and takes its qubits as `IList[Qubit]` SSA values,
   mirroring the native `gate` dialect.
-- **The state cell** is `move.Load` / `move.Store`, shared with `move`. `qmove`
-  is a sibling dialect, not part of `move`, so the current pipeline's dialect
-  groups (and its `raise_if_statements_outside_dialect_group` check) are
-  unaffected.
+- **The state cell** is read and written only by `qmove.enter` / `qmove.exit`
+  (one pair per method). `move.Load` / `move.Store` appear only transiently
+  inside the lowering, and they remain in address-level `move` IR. `qmove` is a
+  sibling dialect, not part of `move`, so the current pipeline's dialect groups
+  (and its `raise_if_statements_outside_dialect_group` check) are unaffected.
 - **Structured control flow** threads the `State` explicitly through `scf.IfElse`
   and `scf.For`.
-- **Calls** to subroutines go through `qmove.invoke`, and each subroutine
-  declares a *frame*: where its arguments must be, which scratch locations it may
+- **Calls** to subroutines go through `qmove.invoke`. Every method declares a
+  *frame* on its `enter`. For the entry kernel it is `MachineFrame()`; for a
+  subroutine it says where its arguments must be, which scratch locations it may
   use, and which zone-wide effects it may have.
 
 ## The `qmove` dialect
@@ -174,11 +177,14 @@ now so that later synthesis is a local rewrite: one `qmove` statement becomes
 
 ### Normal form
 
-- An **entry kernel** keeps its signature. Its top-level block opens one chain
-  with `move.load()` and closes it with `move.store()`. Extra `Store`s in the
-  middle are allowed (they are writes to the cell, ignored by the use-def rule).
-- A **subroutine** opens its chain with `qmove.enter` and closes it with
-  `qmove.exit` (see [Calls and frames](#calls-and-frames)).
+- **Every qmove method**, entry kernel and subroutine alike, keeps its signature.
+  Its top-level block opens one chain with `qmove.enter(frame)` and closes it
+  with exactly one `qmove.exit`. The entry kernel's frame is `MachineFrame()`
+  (see [Calls and frames](#calls-and-frames)).
+- No `move.Load` / `move.Store` remains in qmove IR. The chain ends exactly once,
+  so there are no extra writes to the cell mid-chain. (An earlier draft allowed
+  extra `Store`s in an entry kernel; unifying the entry with subroutines removed
+  them.)
 - State is threaded only through structure whose body **touches** the state. A
   body touches the state if it contains a stateful statement, directly or in a
   nested region. A call to a subroutine is a stateful statement
@@ -203,7 +209,7 @@ state. A zero-trip loop returns the initializer.
 ### Example
 
 ```
-%s0 = move.load()
+%s0 = qmove.enter() {frame = MachineFrame()}
 %s1 = qmove.r(%s0, %qs, ...)
 %s2, %m = qmove.measure(%s1, %a)
 %c  = py.indexing.getitem(qubit.is_one(%m), 0)
@@ -218,7 +224,7 @@ state. A zero-trip loop returns the initializer.
         scf.yield %u
       }
 %s5, %r = qmove.invoke(%s4, sub, %qs)
-move.store(%s5)
+qmove.exit(%s5)
 ```
 
 ## Calls and frames
@@ -235,14 +241,21 @@ a call without looking inside it.
 
 | Statement | Signature | Meaning |
 |---|---|---|
-| `enter` | `enter(frame: Frame \| None) -> State` | Opens a subroutine's chain. Like `move.load`, plus the frame's precondition. Trait `EmitsState(originates=True)`. |
-| `exit` | `exit(state)` | Closes a subroutine's chain. Like `move.store`, plus the frame's postcondition. Trait `ConsumesState(terminates=False)`. |
+| `enter` | `enter(frame: Frame \| MachineFrame \| None) -> State` | Opens a method's chain: reads the machine state, plus the frame's precondition. Exactly one per qmove method. Trait `EmitsState(originates=True)`. |
+| `exit` | `exit(state)` | Closes a method's chain: writes the machine state, plus the frame's postcondition. Exactly one per qmove method. Trait `ConsumesState(terminates=False)`. |
 | `prepare` | `prepare(state, *args; callee) -> State` | Establishes `callee`'s precondition for `args`. Logically a no-op; physically, afterwards the arguments are at their entry slots, the scratch slots are empty, and no other atom is inside the footprint. Names the callee rather than repeating the frame, so the two cannot disagree. |
 | `invoke` | `invoke(state, *args; callee) -> (State, T)` | Calls `callee` on the caller's chain. The callee's signature is unchanged. The second result, `value`, always exists and has the callee's return type (`NoneType` for a callee that returns `None`), because a kirin statement's result count is fixed by its declaration. |
 
 `frame`, `callee` are attributes (`callee` is a `Method`, as in `func.Invoke`).
-`frame=None` is a **hole**: an unframed subroutine whose frame later synthesis
-chooses. A `prepare` of an unframed subroutine is also a hole.
+A frame is one of three kinds:
+
+| Kind | Meaning |
+|---|---|
+| `Frame(...)` | Partial: entry slots, scratch slots and effects (below) |
+| `MachineFrame()` | The whole machine: no footprint limit, every effect allowed |
+| `None` | A **hole**: an unframed subroutine whose frame later synthesis chooses |
+
+A `prepare` of an unframed subroutine is also a hole.
 
 A `prepare` is **not** required to come right before an `invoke`. A state can
 already satisfy the precondition, for example after an earlier call to the same
@@ -253,19 +266,28 @@ and lets a `prepare` be hoisted out of a loop of calls.
 
 ### Kernel roles
 
-- An **entry kernel** contains `Load`/`Store`, owns the whole machine, and cannot
-  be the target of a `qmove.invoke`.
-- A **subroutine** contains exactly one `enter` and one `exit` in its top-level
+Roles follow from the frame kind, not from separate statements:
+
+- **Every qmove method** has exactly one `enter` and one `exit` in its top-level
   block, and is only called through `qmove.invoke`. A plain `func.invoke` of a
-  subroutine is an error.
-- A method containing neither does not touch the state.
-- Allocation (`qubit.New`, `NewAt`) is only allowed in entry kernels. Ancillas
-  are passed to subroutines as arguments.
+  qmove method is an error.
+- The **entry kernel** gets `MachineFrame()`. A listed subroutine may also be
+  given `MachineFrame()`; it then behaves like a nested entry kernel.
+- **Who may call whom** follows from nesting (F5). A whole-machine method can
+  only be called from a whole-machine method, so the entry kernel cannot be
+  called from a partially framed subroutine. A partial frame inside a
+  whole-machine caller is always fine.
+- **Allocation** (`qubit.New`, `NewAt`) is only allowed under `MachineFrame()`.
+  Ancillas are passed to partially framed subroutines as arguments.
 
 ### The frame
 
-A frame is a **shape** plus a **binding**, so that a relocatable variant can be
-added later without changing the IR. For now the binding is always concrete.
+`MachineFrame` is a frozen marker with no fields. The rest of this section is
+about partial frames.
+
+A partial `Frame` is a **shape** plus a **binding**, so that a relocatable
+variant can be added later without changing the IR. For now the binding is
+always concrete.
 
 ```python
 @dataclass(frozen=True)
@@ -297,9 +319,10 @@ class Frame:
 - **Effects are permissions.** Before synthesis, `qmove.CZ` and `qmove.Measure`
   name no zone; the frame bounds which zones synthesis may choose for them, and
   whether it may use global pulses.
-- **Nesting.** A framed subroutine that calls a framed subroutine must pass it a
+- **Nesting.** A method that calls a partially framed subroutine must pass it a
   footprint inside its own footprint, with effects that are a subset of its own,
-  like stack frames.
+  like stack frames. `MachineFrame()` contains every partial frame and is
+  contained only in another `MachineFrame()`.
 
 Users pin frames through the lowering's `subroutines` mapping (see
 [Lowering](#lowering-native-ir--qmove)).
@@ -356,7 +379,7 @@ only zone reads every atom. A different policy could allow it with conditions.
 @dataclass
 class NativeToQMove:
     arch_spec: ArchSpec
-    subroutines: Mapping[ir.Method, Frame | None]
+    subroutines: Mapping[ir.Method, Frame | MachineFrame | None]
     policy: SpectatorPolicy
 
     def emit(self, mt: ir.Method, no_raise: bool = False) -> ir.Method: ...
@@ -378,8 +401,9 @@ Location: `python/bloqade/lanes/transform/native_to_qmove.py`.
 
 ### Subroutines are opt-in
 
-The keys of `subroutines` stay as calls; each value is a pinned frame or `None`
-(a hole). **Every other call is inlined.** This matters because squin's gate
+The keys of `subroutines` stay as calls; each value is a pinned partial frame,
+`MachineFrame()`, or `None` (a hole). The entry kernel always gets
+`MachineFrame()`. **Every other call is inlined.** This matters because squin's gate
 functions are kernels: `squin.h`, `squin.cx` and `squin.broadcast.h` are all
 `Method`s. Today `AggressiveUnroll` is what inlines them. With subroutines
 opt-in, stdlib gate kernels always disappear, and existing kernels lower as they
@@ -435,7 +459,7 @@ decorated with `inline=False`. `squin.kernel` does not inline.
    - a `func.Call` left after inlining, i.e. a call through a function value.
      The lowering only threads the state through `qmove.invoke`, so any gates
      behind such a call would never join the chain;
-   - allocation inside a subroutine;
+   - allocation in a method whose frame is not `MachineFrame()`;
    - any remaining statement from a quantum dialect (`squin`, `gate`, `qubit`,
      `arrange`, `gemini.*`) that the lowering table does not cover;
    - a `func.Invoke` whose callee is not a subroutine clone. Everything else
@@ -474,9 +498,11 @@ decorated with `inline=False`. `squin.kernel` does not inline.
      read in a loop body as `iter_args`, even when it is only yielded back
      unchanged (`for i in range(2): squin.z(qs[i + 1])` carries `qs`). The state
      goes in front of them;
-   - at the top level, open the chain with one `Load` (entry kernel) or
-     `qmove.enter(frame)` (subroutine, `frame` from `subroutines`), and close it
-     with `Store` / `qmove.exit`.
+   - at the top level, open the chain with `qmove.enter(frame)`
+     (`MachineFrame()` for the entry kernel, the `subroutines` value for a
+     subroutine) and close it with `qmove.exit`. Every method gets the pair,
+     even one with no quantum statements, so "is a qmove method" means "has an
+     `enter`" and a pinned frame is never dropped.
 
    This is a direct recursive traversal, not `kirin.rewrite.Walk`. `Walk` visits
    a region's blocks in reverse and reaches a nested statement's regions before
@@ -491,8 +517,8 @@ decorated with `inline=False`. `squin.kernel` does not inline.
    owns `scf`). `RewriteLoadStore` would treat the branch as stateless, replace
    the following `Load` with the pre-branch state, and drop the branch's effect.
 7. **Cleanup:** DCE, `TypeInfer`, then `RefineQubitTypes` again.
-8. **Validation:** V1–V3, F1–F5, then `policy.check_frame` for every framed
-   subroutine. Errors from every method are collected and raised together.
+8. **Validation:** V1–V3, F1–F5, then `policy.check_frame` for every method
+   under a partial frame. Errors from every method are collected and raised together.
    Under `no_raise=True` validation is skipped.
 
 ### Qubit type refinement
@@ -570,18 +596,19 @@ Location: `python/bloqade/lanes/validation/qmove.py`, and
 These apply to every stateful statement, including address-level `move`
 statements on a mixed chain.
 
-- **V1 — Use-def, ignoring `Store`.**
+- **V1 — Use-def, ignoring `Store`.** (A `Store` can only appear in mixed or
+  hand-built IR, and V2 rejects it there; the carve-out keeps it from being
+  reported twice.)
   - Every `State` value has at least one use. A state that is neither stored,
     yielded, passed on nor consumed is a dropped update.
   - No execution path consumes a state twice, not counting `Store`. Concretely,
     its non-`Store` uses must each lie in a different arm of a common enclosing
     `scf.IfElse`, and none may lie inside an `scf.For` body that does not also
     contain the definition.
-- **V2 — Where the cell and frames are accessed.**
-  - `Load`/`Store` appear only in the top-level block of entry kernels.
-  - `enter`/`exit` appear only in the top-level block of subroutines: exactly one
-    `enter` and one `exit` each.
-  - No method contains both kinds.
+- **V2 — Chain ends.**
+  - A qmove method has exactly one `enter` and one `exit`, both in its top-level
+    block.
+  - `Load`/`Store` do not appear in qmove IR.
 
   V1 and V2 together guarantee that a chain inside a region cannot re-read the
   cell. It must take its state from outside and yield it back, and any update
@@ -595,13 +622,17 @@ statements on a mixed chain.
 
 ### Call rules
 
-- `qmove.invoke` and `qmove.prepare` target subroutines (methods with `enter`),
-  never entry kernels.
-- A plain `func.invoke` of a subroutine is an error.
+- `qmove.invoke` and `qmove.prepare` target qmove methods (methods with
+  `enter`).
+- A plain `func.invoke` of a qmove method is an error.
+- A whole-machine callee needs a whole-machine caller. This is F5's
+  whole-machine half, checked here because it holds whatever the caller's frame
+  is (partial, hole or whole machine).
 
-### Frame rules (framed subroutines only)
+### Frame rules (methods under a partial frame only)
 
-Unframed subroutines and unframed `prepare`s skip these.
+Holes, unframed `prepare`s and `MachineFrame()` methods skip these. A whole
+machine has no footprint or effect limit to check.
 
 - **F1** — Binding locations are distinct, there is one per slot, and each is
   valid in the `ArchSpec`. Effect zones are valid in the `ArchSpec`.
@@ -622,9 +653,10 @@ Unframed subroutines and unframed `prepare`s skip these.
     that method.
   - The general case needs qubit identity and is an obligation for the
     #332-based analysis.
-- **F5** — A framed subroutine's `invoke` of a framed subroutine: the inner
-  footprint is inside the outer footprint, and the inner effects are a subset of
-  the outer effects.
+- **F5** — For an `invoke` of a partially framed subroutine from a partially
+  framed method: the inner footprint is inside the outer footprint, and the
+  inner effects are a subset of the outer effects. (The whole-machine half is
+  under Call rules.)
 - **Policy** — `policy.check_frame(frame, arch)`.
 
 ### Not checked here
@@ -676,8 +708,11 @@ Tests live under `python/tests/`, mirroring the package layout:
   - the input-check errors for logical-pipeline statements
     (`gemini.logical.Initialize`, `TerminalLogicalMeasurement`, `StarRz`).
 
-  Every output must pass validation, and the entry kernel's top-level block must
-  contain exactly one `Load` and end with a `Store`.
+  Every output must pass validation. Every method's top-level block must open
+  with `qmove.enter` (`MachineFrame()` for the entry kernel) and end with
+  `qmove.exit`, with no `Load`/`Store` anywhere. Also tested: a whole-machine
+  subroutine may allocate, a partial or unframed one may not, and a
+  whole-machine callee from a partially framed caller fails F5.
 - **Oracle: the lowering adds only state plumbing.** A test-only `EraseQMove`
   pass (in `python/tests/`) removes everything state-related:
   - state operands and results;
@@ -714,8 +749,8 @@ Tests live under `python/tests/`, mirroring the package layout:
   declared only.
 - **Checks that depend on qubit identity**, which wait on
   [bloqade-circuit#332](https://github.com/QuEraComputing/bloqade-circuit/issues/332).
-- `cf` control flow, closures that apply gates, `qubit.Reset`, and allocation in
-  subroutines.
+- `cf` control flow, closures that apply gates, `qubit.Reset`, and allocation
+  outside a `MachineFrame()`.
 - **The logical pipeline.** `gemini.logical.*` and `gemini.extensions.*` are
   rejected by the input check. That covers the logical measurement dataflow
   (`TerminalLogicalMeasurement` and `ConvertToPhysicalMeasurements`), `StarRz`,
