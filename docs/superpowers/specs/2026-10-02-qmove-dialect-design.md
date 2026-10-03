@@ -243,7 +243,7 @@ a call without looking inside it.
 |---|---|---|
 | `enter` | `enter(frame: Frame \| MachineFrame \| None) -> State` | Opens a method's chain: reads the machine state, plus the frame's precondition. Exactly one per qmove method. Trait `EmitsState(originates=True)`. |
 | `exit` | `exit(state)` | Closes a method's chain: writes the machine state, plus the frame's postcondition. Exactly one per qmove method. Trait `ConsumesState(terminates=False)`. |
-| `prepare` | `prepare(state, *args; callee) -> State` | Establishes `callee`'s precondition for `args`. Logically a no-op; physically, afterwards the arguments are at their entry slots, the scratch slots are empty, and no other atom is inside the footprint. Names the callee rather than repeating the frame, so the two cannot disagree. |
+| `prepare` | `prepare(state, *args; callee) -> State` | Establishes `callee`'s precondition for `args`. Logically a no-op; physically, afterwards the arguments are at their entry slots, the scratch slots are empty, and no other atom is inside the footprint. Names the callee rather than repeating the frame, so the two cannot disagree. For a whole-machine callee the precondition is trivial: `prepare` is a no-op, and an `invoke` guarantees nothing about other atoms, because there are none outside its footprint. |
 | `invoke` | `invoke(state, *args; callee) -> (State, T)` | Calls `callee` on the caller's chain. The callee's signature is unchanged. The second result, `value`, always exists and has the callee's return type (`NoneType` for a callee that returns `None`), because a kirin statement's result count is fixed by its declaration. |
 
 `frame`, `callee` are attributes (`callee` is a `Method`, as in `func.Invoke`).
@@ -253,7 +253,7 @@ A frame is one of three kinds:
 |---|---|
 | `Frame(...)` | Partial: entry slots, scratch slots and effects (below) |
 | `MachineFrame()` | The whole machine: no footprint limit, every effect allowed |
-| `None` | A **hole**: an unframed subroutine whose frame later synthesis chooses |
+| `None` | A **hole**: an unframed subroutine whose frame later synthesis fills with a partial `Frame` |
 
 A `prepare` of an unframed subroutine is also a hole.
 
@@ -455,7 +455,7 @@ decorated with `inline=False`. `squin.kernel` does not inline.
      `ilist.map(_new, range(n))`, and the physical-kernel idiom
      `ilist.map(lambda addr: qubit.new_at(...), addrs)`;
    - an early return: a `func.Return` inside an `scf` body (the state would
-     leave the chain without reaching `Store`/`exit`);
+     leave the chain without reaching `exit`);
    - a `func.Call` left after inlining, i.e. a call through a function value.
      The lowering only threads the state through `qmove.invoke`, so any gates
      behind such a call would never join the chain;
@@ -599,7 +599,7 @@ statements on a mixed chain.
 - **V1 — Use-def, ignoring `Store`.** (A `Store` can only appear in mixed or
   hand-built IR, and V2 rejects it there; the carve-out keeps it from being
   reported twice.)
-  - Every `State` value has at least one use. A state that is neither stored,
+  - Every `State` value has at least one use. A state that is neither exited,
     yielded, passed on nor consumed is a dropped update.
   - No execution path consumes a state twice, not counting `Store`. Concretely,
     its non-`Store` uses must each lie in a different arm of a common enclosing
