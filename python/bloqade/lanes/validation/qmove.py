@@ -20,7 +20,7 @@ from kirin.validation import ValidationPass
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move, qmove
-from bloqade.lanes.dialects.qmove import Frame
+from bloqade.lanes.dialects.qmove import Frame, MachineFrame
 from bloqade.lanes.types import StateType
 from bloqade.lanes.validation.spectator import SpectatorPolicy, format_location
 
@@ -39,7 +39,7 @@ def is_subroutine(mt: ir.Method) -> bool:
     return any(isinstance(s, qmove.Enter) for s in mt.callable_region.walk())
 
 
-def subroutine_frame(mt: ir.Method) -> Frame | None:
+def subroutine_frame(mt: ir.Method) -> Frame | MachineFrame | None:
     for stmt in mt.callable_region.walk():
         if isinstance(stmt, qmove.Enter):
             return stmt.frame
@@ -268,7 +268,7 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
     judge an inconsistent subset.
     """
     frame = subroutine_frame(mt)
-    if frame is None:
+    if frame is None or isinstance(frame, MachineFrame):
         return []
     errors: list[ir.ValidationError] = []
 
@@ -343,14 +343,19 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
                 f4_abstains = True
         elif isinstance(stmt, qmove.Invoke):
             inner = subroutine_frame(stmt.callee)
-            if inner is not None and (
-                not inner.footprint <= footprint
-                or not inner.effects.is_subset_of(effects)
-            ):
-                error(
-                    stmt,
-                    f"F5: frame of {stmt.callee.sym_name} is not inside this frame",
-                )
+            if inner is not None:
+                if isinstance(inner, MachineFrame):
+                    error(
+                        stmt,
+                        f"F5: {stmt.callee.sym_name} has a whole-machine frame and cannot be called from here",
+                    )
+                elif not inner.footprint <= footprint or not inner.effects.is_subset_of(
+                    effects
+                ):
+                    error(
+                        stmt,
+                        f"F5: frame of {stmt.callee.sym_name} is not inside this frame",
+                    )
 
     if not f4_abstains:
         for perms in relabels.values():
@@ -390,7 +395,9 @@ def get_qmove_validation(
                 + check_calls(method)
                 + check_frame(method, self.ARCH)
             )
-            if (frame := subroutine_frame(method)) is not None:
+            if (frame := subroutine_frame(method)) is not None and not isinstance(
+                frame, MachineFrame
+            ):
                 errors += [
                     ir.ValidationError(method.code, problem)
                     for problem in self.POLICY.check_frame(frame, self.ARCH)

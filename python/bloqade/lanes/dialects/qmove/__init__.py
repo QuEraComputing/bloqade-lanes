@@ -1,6 +1,11 @@
 from . import stmts as stmts
 from ._dialect import dialect as dialect
-from .frame import Effects as Effects, Frame as Frame, FrameShape as FrameShape
+from .frame import (
+    Effects as Effects,
+    Frame as Frame,
+    FrameShape as FrameShape,
+    MachineFrame as MachineFrame,
+)
 from .stmts import (
     CZ as CZ,
     Enter as Enter,

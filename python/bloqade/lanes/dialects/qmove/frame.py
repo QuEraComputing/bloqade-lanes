@@ -1,7 +1,11 @@
 """Subroutine frames: where a subroutine's arguments must be, and what it may do.
 
-A frame is a *shape* (how many slots each qubit parameter takes, plus scratch)
-and a *binding* of those slots to concrete locations. Keeping the two apart
+Every qmove method opens its chain with ``qmove.enter(frame)``. The frame is a
+``Frame`` (partial: entry slots, scratch and effects), a ``MachineFrame`` (the
+whole machine, as for the entry kernel), or ``None`` (a hole for synthesis).
+
+A ``Frame`` is a *shape* (how many slots each qubit parameter takes, plus
+scratch) and a *binding* of those slots to concrete locations. Keeping the two apart
 leaves room for relocatable frames later without changing the IR; for now the
 binding is always concrete.
 
@@ -45,6 +49,15 @@ class Effects:
             and self.measure_zones <= other.measure_zones
             and (other.global_pulses or not self.global_pulses)
         )
+
+
+@dataclass(frozen=True)
+class MachineFrame:
+    """The whole machine: no footprint limit, and every effect is allowed.
+
+    The entry kernel's frame. A method under it may allocate qubits, and only
+    another whole-machine method may call it (F5).
+    """
 
 
 @dataclass(frozen=True)

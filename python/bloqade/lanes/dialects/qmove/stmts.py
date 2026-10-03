@@ -10,7 +10,7 @@ from bloqade.lanes.dialects.move import ConsumesState, EmitsState, StatefulState
 from bloqade.lanes.types import StateType
 
 from ._dialect import dialect
-from .frame import Frame
+from .frame import Frame, MachineFrame
 
 N = types.TypeVar("N")
 Len = types.TypeVar("Len")
@@ -72,19 +72,20 @@ class Measure(StatefulStatement):
 
 @statement(dialect=dialect)
 class Enter(ir.Statement):
-    """Open a subroutine's chain; ``move.load`` plus the frame's precondition.
+    """Open a method's chain; reads the machine state, plus the frame's precondition.
 
-    ``frame=None`` is a hole that later synthesis fills.
+    Every qmove method has exactly one. ``MachineFrame()`` is the whole machine
+    (the entry kernel); ``frame=None`` is a hole that later synthesis fills.
     """
 
     traits = frozenset({EmitsState(True)})
-    frame: Frame | None = info.attribute(default=None)
+    frame: Frame | MachineFrame | None = info.attribute(default=None)
     result: ir.ResultValue = info.result(StateType)
 
 
 @statement(dialect=dialect)
 class Exit(ir.Statement):
-    """Close a subroutine's chain; ``move.store`` plus the frame's postcondition."""
+    """Close a method's chain; writes the machine state, plus the frame's postcondition."""
 
     traits = frozenset({ConsumesState(False)})
     current_state: ir.SSAValue = info.argument(StateType)

@@ -99,3 +99,12 @@ def test_dialect_contains_every_statement():
         qmove.Prepare,
         qmove.Invoke,
     }
+
+
+def test_machine_frame_is_a_hashable_marker():
+    assert qmove.MachineFrame() == qmove.MachineFrame()
+    enter = qmove.Enter(frame=qmove.MachineFrame())
+    assert enter.frame == qmove.MachineFrame()
+    assert hash(enter.attributes["frame"]) == hash(
+        qmove.Enter(frame=qmove.MachineFrame()).attributes["frame"]
+    )
