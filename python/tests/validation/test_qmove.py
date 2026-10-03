@@ -1,5 +1,6 @@
 from typing import Any, Literal
 
+import pytest
 from bloqade.types import Qubit, QubitType
 from kirin import ir, rewrite, types as kirin_types
 from kirin.analysis import const
@@ -17,6 +18,7 @@ from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape, MachineFram
 from bloqade.lanes.rewrite.native2qmove import RewriteNativeToQMove
 from bloqade.lanes.rewrite.qmove_state import thread_method
 from bloqade.lanes.transform.qmove_frontend import NativeProgram, lower_to_native
+from bloqade.lanes.types import StateType
 from bloqade.lanes.validation.qmove import get_qmove_validation
 from bloqade.lanes.validation.spectator import (
     SingleZonePolicy,
@@ -176,6 +178,22 @@ def _method(*stmts: ir.Statement) -> ir.Method:
 
 def _qubits(n: int) -> ir.TestValue:
     return ir.TestValue(ilist.IListType[QubitType, kirin_types.Literal(n)])
+
+
+def _v2_messages(method: ir.Method) -> list[str]:
+    return [m for m in _messages(method) if m.startswith("V2:")]
+
+
+def test_v2_stateful_statement_without_enter_or_exit():
+    rz = qmove.Rz(ir.TestValue(StateType), ir.TestValue(kirin_types.Float), _qubits(1))
+    assert _v2_messages(_method(rz)) == [
+        "V2: a qmove method needs exactly one enter, found 0",
+        "V2: a qmove method needs exactly one exit, found 0",
+    ]
+
+
+def test_v2_stateless_method_needs_no_enter_or_exit():
+    assert _v2_messages(_method(py.Constant(1))) == []
 
 
 def test_v3_cz_lengths_must_match():
@@ -446,15 +464,23 @@ def test_policy_problems_are_reported():
     )
 
 
-def test_f5_machine_callee_needs_a_machine_caller():
-    program = _build(
-        calls_outer,
-        {outer: Frame(FrameShape(((0, 2),)), (A, B)), inner: MachineFrame()},
-    )
-    assert (
-        "F5: whole-machine method inner can only be called from a whole-machine "
-        "method" in _messages(program.subroutines[outer])
-    )
+F5_MACHINE_CALLEE = (
+    "F5: whole-machine method inner can only be called from a whole-machine method"
+)
+
+
+@pytest.mark.parametrize(
+    ("outer_frame", "expected"),
+    [
+        (Frame(FrameShape(((0, 2),)), (A, B)), [F5_MACHINE_CALLEE]),
+        (None, [F5_MACHINE_CALLEE]),
+        (MachineFrame(), []),
+    ],
+    ids=["partial", "hole", "machine"],
+)
+def test_f5_machine_callee_needs_a_machine_caller(outer_frame, expected):
+    program = _build(calls_outer, {outer: outer_frame, inner: MachineFrame()})
+    assert _messages(program.subroutines[outer]) == expected
 
 
 def test_machine_callee_from_the_entry_is_fine():

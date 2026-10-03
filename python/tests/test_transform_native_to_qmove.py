@@ -25,6 +25,7 @@ from bloqade.lanes.transform.native_to_qmove import NativeToQMove
 from bloqade.lanes.transform.qmove_frontend import lower_to_native
 from bloqade.lanes.types import StateType
 from bloqade.lanes.validation.qmove import get_qmove_validation
+from bloqade.lanes.validation.qmove_input import ALLOCATION_MESSAGE
 from bloqade.lanes.validation.spectator import SingleZonePolicy, ZonedPolicy
 
 ARCH = get_arch_spec()
@@ -269,6 +270,10 @@ def test_whole_machine_subroutine_may_allocate():
     assert isinstance(callee, qmove.Enter) and callee.frame == MachineFrame()
 
 
-def test_allocation_in_a_partial_or_unframed_subroutine_is_rejected():
-    with pytest.raises(ValidationErrorGroup):
-        NativeToQMove(ARCH, {allocating_sub: None}).emit(calls_allocating_sub)
+@pytest.mark.parametrize(
+    "frame", [None, Frame(FrameShape(((0, 1),)), (A,))], ids=["unframed", "partial"]
+)
+def test_allocation_in_a_partial_or_unframed_subroutine_is_rejected(frame):
+    with pytest.raises(ValidationErrorGroup) as excinfo:
+        NativeToQMove(ARCH, {allocating_sub: frame}).emit(calls_allocating_sub)
+    assert ALLOCATION_MESSAGE in [str(e.args[0]) for e in excinfo.value.errors]
