@@ -278,7 +278,9 @@ Roles follow from the frame kind, not from separate statements:
   called from a partially framed subroutine. A partial frame inside a
   whole-machine caller is always fine.
 - **Allocation** (`qubit.New`, `NewAt`) is only allowed under `MachineFrame()`.
-  Ancillas are passed to partially framed subroutines as arguments.
+  Ancillas are passed to partially framed subroutines as arguments. A
+  recursive whole-machine subroutine may allocate with `qubit.new()` but not
+  with `squin.qalloc`, until a kirin bug is fixed (see the input check).
 
 ### The frame
 
@@ -474,7 +476,19 @@ decorated with `inline=False`. `squin.kernel` does not inline.
    - a recursive kernel that is not a `subroutines` key. This one is checked
      **before** step 1, with the call graph from
      `bloqade.gemini.common.validation.recursion`, because inlining a recursive
-     kernel never reaches a fixpoint.
+     kernel never reaches a fixpoint;
+   - a call-graph cycle that reaches allocation through a function value, such
+     as `squin.qalloc`'s `ilist.map(_new, range(n))`. Also checked before
+     step 1, from the entry and from every subroutine (each is lowered, called
+     or not), and skipped under `no_raise`. This is a kirin bug, not a qmove
+     rule. kirin's constant propagation follows recursion down to its depth
+     limit and takes the call it cuts off there for pure. One level above that,
+     the allocating `ilist.map` therefore looks pure, with constant operands,
+     and is evaluated concretely. `TypeInfer` in step 3 then raises
+     `NotImplementedError` for `qubit.New`, whatever the frame. A bare
+     `qubit.new()` is not affected, so a recursive whole-machine subroutine
+     can allocate that way. Drop this check once kirin marks a call it cuts
+     off as impure.
 5. **Local lowering** (`python/bloqade/lanes/rewrite/native2qmove.py`). Every
    source statement becomes `Load; qmove.X(state, …); Store`:
    - `gate.*` and `arrange.*` map one-to-one;
@@ -702,6 +716,9 @@ Tests live under `python/tests/`, mirroring the package layout:
   - nested subroutines;
   - a recursive subroutine, and the error for a recursive kernel that is not
     listed;
+  - a recursive whole-machine subroutine allocating with `qubit.new()`, and the
+    up-front error, under any frame, for one that allocates through
+    `squin.qalloc`, directly or through a callee;
   - calls that are not listed, including squin stdlib, being inlined;
   - pinned allocation (`NewAt`) alongside `qubit.New`, and `IsZero`/`IsOne`/
     `IsLost` on `Measure` results feeding a branch;

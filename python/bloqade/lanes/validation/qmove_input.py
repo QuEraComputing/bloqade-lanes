@@ -100,6 +100,16 @@ def _allocates(code: ir.Statement) -> bool:
     return any(isinstance(s, ALLOCATION) for s in _reachable(code))
 
 
+def allocates_through_function_value(stmt: ir.Statement) -> bool:
+    """``stmt`` is a higher-order ``ilist`` statement whose function allocates,
+    like the ``ilist.map`` inside ``squin.qalloc``."""
+    return (
+        isinstance(stmt, HIGHER_ORDER)
+        and (code := _function_code(stmt.fn)) is not None
+        and _allocates(code)
+    )
+
+
 def get_input_validation(
     may_allocate: bool, clones: frozenset[ir.Method] = frozenset()
 ) -> type[ValidationPass]:

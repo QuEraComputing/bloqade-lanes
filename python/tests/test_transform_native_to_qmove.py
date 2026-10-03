@@ -13,7 +13,7 @@ from tests._qmove_helpers import (
     top_level,
 )
 
-from bloqade import squin
+from bloqade import qubit, squin
 from bloqade.gemini import physical
 from bloqade.gemini.common.dialects import arrange, qubit as gemini_qubit
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
@@ -21,7 +21,10 @@ from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, qmove
 from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape, MachineFrame
 from bloqade.lanes.transform import native_to_qmove
-from bloqade.lanes.transform.native_to_qmove import NativeToQMove
+from bloqade.lanes.transform.native_to_qmove import (
+    RECURSIVE_ALLOCATION_MESSAGE,
+    NativeToQMove,
+)
 from bloqade.lanes.transform.qmove_frontend import lower_to_native
 from bloqade.lanes.types import StateType
 from bloqade.lanes.validation.qmove import get_qmove_validation
@@ -277,3 +280,63 @@ def test_allocation_in_a_partial_or_unframed_subroutine_is_rejected(frame):
     with pytest.raises(ValidationErrorGroup) as excinfo:
         NativeToQMove(ARCH, {allocating_sub: frame}).emit(calls_allocating_sub)
     assert ALLOCATION_MESSAGE in [str(e.args[0]) for e in excinfo.value.errors]
+
+
+@squin.kernel
+def recursive_qalloc(qs: ilist.IList[Qubit, Literal[1]], n: int):
+    if n > 0:
+        extra = squin.qalloc(1)
+        squin.cz(qs[0], extra[0])
+        recursive_qalloc(qs, n - 1)
+
+
+@squin.kernel
+def calls_recursive_qalloc():
+    qs = squin.qalloc(1)
+    recursive_qalloc(qs, 3)
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [MachineFrame(), None, Frame(FrameShape(((0, 1),)), (A,))],
+    ids=["whole-machine", "unframed", "partial"],
+)
+def test_recursive_allocation_through_qalloc_is_rejected_up_front(frame):
+    # kirin's constant propagation used to crash on this in lower_to_native, with
+    # NotImplementedError for qubit.New, whatever the frame.
+    with pytest.raises(ValidationErrorGroup) as excinfo:
+        NativeToQMove(ARCH, {recursive_qalloc: frame}).emit(calls_recursive_qalloc)
+    (message,) = [str(e.args[0]) for e in excinfo.value.errors]
+    assert message.startswith("recursive_qalloc -> recursive_qalloc")
+    assert "reaches qalloc" in message
+    assert message.endswith(RECURSIVE_ALLOCATION_MESSAGE)
+
+
+def test_no_raise_lowers_recursive_allocation_through_qalloc():
+    out = NativeToQMove(ARCH, {recursive_qalloc: MachineFrame()}).emit(
+        calls_recursive_qalloc, no_raise=True
+    )
+    assert set(_callees(out, qmove.Invoke)) == {"recursive_qalloc"}
+
+
+@squin.kernel
+def recursive_new(qs: ilist.IList[Qubit, Literal[1]], n: int):
+    if n > 0:
+        extra = qubit.new()
+        squin.cz(qs[0], extra)
+        recursive_new(qs, n - 1)
+
+
+@squin.kernel
+def calls_recursive_new():
+    qs = squin.qalloc(1)
+    recursive_new(qs, 3)
+
+
+def test_recursive_whole_machine_subroutine_may_allocate_with_qubit_new():
+    out = NativeToQMove(ARCH, {recursive_new: MachineFrame()}).emit(calls_recursive_new)
+    callee = _callees(out, qmove.Invoke)["recursive_new"]
+    enter = top_level(callee)[0]
+    assert isinstance(enter, qmove.Enter) and enter.frame == MachineFrame()
+    assert statements_of(callee, qubit.stmts.New)
+    assert _callees(callee, qmove.Invoke) == {"recursive_new": callee}

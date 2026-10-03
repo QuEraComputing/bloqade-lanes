@@ -13,10 +13,20 @@ from bloqade.lanes.dialects.qmove import Frame, MachineFrame
 from bloqade.lanes.rewrite.native2qmove import RewriteNativeToQMove
 from bloqade.lanes.rewrite.qmove_state import thread_method
 from bloqade.lanes.rewrite.refine_qubit_types import RefineQubitTypes
-from bloqade.lanes.transform.qmove_frontend import lower_to_native, unlisted_recursion
+from bloqade.lanes.transform.qmove_frontend import (
+    lower_to_native,
+    recursive_allocation,
+    unlisted_recursion,
+)
 from bloqade.lanes.validation.qmove import get_qmove_validation
 from bloqade.lanes.validation.qmove_input import get_input_validation
 from bloqade.lanes.validation.spectator import SpectatorPolicy, ZonedPolicy
+
+RECURSIVE_ALLOCATION_MESSAGE = (
+    "kirin's constant propagation does not support allocation through a "
+    "function value, such as squin.qalloc, inside recursion; allocate outside "
+    "the recursion and pass the qubits in, or use qubit.new()"
+)
 
 
 @dataclass
@@ -39,15 +49,21 @@ class NativeToQMove:
     policy: SpectatorPolicy = field(default_factory=ZonedPolicy)
 
     def emit(self, mt: ir.Method, no_raise: bool = False) -> ir.Method:
-        if cycles := unlisted_recursion(mt, frozenset(self.subroutines)):
+        recursion = [
+            f"recursive kernel is not a subroutine: {cycle}"
+            for cycle in unlisted_recursion(mt, frozenset(self.subroutines))
+        ]
+        if not no_raise:
+            # Under no_raise, kirin's HintConst swallows the error instead and
+            # drops the method's constant hints.
+            recursion += [
+                f"{cycle}: {RECURSIVE_ALLOCATION_MESSAGE}"
+                for cycle in recursive_allocation(mt, tuple(self.subroutines))
+            ]
+        if recursion:
             raise ValidationErrorGroup(
-                "NativeToQMove: recursive kernels must be listed as subroutines",
-                errors=[
-                    ir.ValidationError(
-                        mt.code, f"recursive kernel is not a subroutine: {cycle}"
-                    )
-                    for cycle in cycles
-                ],
+                "NativeToQMove: unsupported recursion",
+                errors=[ir.ValidationError(mt.code, msg) for msg in recursion],
             )
 
         # A tuple keeps the listed order; a frozenset would order by id hash.

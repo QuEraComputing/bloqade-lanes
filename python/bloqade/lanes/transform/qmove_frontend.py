@@ -20,13 +20,14 @@ from kirin import ir, passes, rewrite
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.rewrite import Inline
 
-from bloqade.gemini.common.validation.recursion import CallGraph, format_cycle
+from bloqade.gemini.common.validation.recursion import CallGraph, Cycle, format_cycle
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move, qmove
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import clifford2native
 from bloqade.lanes.rewrite.const_call_to_invoke import ConstCallToInvoke
 from bloqade.lanes.rewrite.refine_qubit_types import RefineQubitTypes
+from bloqade.lanes.validation.qmove_input import allocates_through_function_value
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,42 @@ def unlisted_recursion(
         for cycle in CallGraph(entry).find_cycles()
         if any(member not in subroutines for member in cycle.members)
     ]
+
+
+def recursive_allocation(
+    entry: ir.Method, subroutines: Iterable[ir.Method]
+) -> list[str]:
+    """Call-graph cycles that reach allocation through a function value.
+
+    ``TypeInfer`` in ``lower_to_native`` raises ``NotImplementedError`` on these.
+    kirin's constant propagation follows a recursive call down to its depth
+    limit and treats the call it cuts off there as pure. One level above, an
+    ``ilist.map`` whose function allocates, like ``squin.qalloc``'s, then looks
+    pure with constant operands, so it is run by the concrete interpreter, which
+    has no ``qubit.New``. A ``qubit.New`` outside a function value is fine.
+
+    Every subroutine is a root, since each one is lowered even if the entry
+    never calls it.
+    """
+    cycles: dict[frozenset[ir.Method], Cycle] = {}
+    for root in (entry, *subroutines):
+        for cycle in CallGraph(root).find_cycles():
+            cycles.setdefault(frozenset(cycle.members), cycle)
+
+    found = []
+    for cycle in cycles.values():
+        # Keyed by every method the cycle reaches, the cycle included.
+        reached = CallGraph(cycle.members[0]).edges
+        allocating = sorted(
+            {
+                method.sym_name or "<lambda>"
+                for method in reached
+                if any(allocates_through_function_value(s) for s in method.code.walk())
+            }
+        )
+        if allocating:
+            found.append(f"{format_cycle(cycle)} reaches {', '.join(allocating)}")
+    return found
 
 
 def lower_to_native(

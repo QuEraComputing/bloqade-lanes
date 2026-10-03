@@ -11,7 +11,11 @@ from bloqade import squin
 from bloqade.gemini import physical
 from bloqade.gemini.common.dialects import arrange
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
-from bloqade.lanes.transform.qmove_frontend import lower_to_native, unlisted_recursion
+from bloqade.lanes.transform.qmove_frontend import (
+    lower_to_native,
+    recursive_allocation,
+    unlisted_recursion,
+)
 
 
 @squin.kernel
@@ -160,3 +164,32 @@ def test_an_uncalled_subroutine_may_use_other_dialects():
     assert any(
         isinstance(s, arrange.stmts.Permute) for s in clone.callable_region.walk()
     )
+
+
+@squin.kernel
+def allocates(q: Qubit):
+    extra = squin.qalloc(1)
+    squin.cz(q, extra[0])
+
+
+@squin.kernel
+def rec_calls_allocates(qs: ilist.IList[Qubit, Literal[1]], n: int):
+    if n > 0:
+        allocates(qs[0])
+        rec_calls_allocates(qs, n - 1)
+
+
+def test_recursive_allocation_is_found_past_the_cycle():
+    # allocates is not recursive, but the cycle reaches qalloc through it.
+    (found,) = recursive_allocation(rec_calls_allocates, [])
+    assert found == "rec_calls_allocates -> rec_calls_allocates reaches qalloc"
+
+
+def test_recursive_allocation_checks_subroutines_the_entry_never_calls():
+    # Every subroutine is lowered, called or not.
+    (found,) = recursive_allocation(main, [rec_calls_allocates])
+    assert found.startswith("rec_calls_allocates -> rec_calls_allocates")
+
+
+def test_recursion_without_allocation_is_not_reported():
+    assert recursive_allocation(calls_rec, [rec]) == []
