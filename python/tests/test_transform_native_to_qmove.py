@@ -19,7 +19,7 @@ from bloqade.gemini.common.dialects import arrange, qubit as gemini_qubit
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, qmove
-from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape
+from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape, MachineFrame
 from bloqade.lanes.transform import native_to_qmove
 from bloqade.lanes.transform.native_to_qmove import NativeToQMove
 from bloqade.lanes.transform.qmove_frontend import lower_to_native
@@ -82,8 +82,11 @@ def _callees(entry: ir.Method, kind: type[qmove.Invoke] | type[func.Invoke]):
 def test_entry_kernel_is_one_chain():
     out = NativeToQMove(ARCH, SUBROUTINES).emit(main)
     top = top_level(out)
-    assert isinstance(top[0], move.Load) and isinstance(top[-2], move.Store)
-    assert len(statements_of(out, move.Load)) == 1
+    enter = top[0]
+    assert isinstance(enter, qmove.Enter) and enter.frame == MachineFrame()
+    assert isinstance(top[-2], qmove.Exit)
+    assert len(statements_of(out, qmove.Enter)) == 1
+    assert not statements_of(out, move.Load) and not statements_of(out, move.Store)
 
 
 def test_subroutines_are_called_on_the_chain():
@@ -244,3 +247,28 @@ def test_subroutines_are_lowered_in_listed_order(monkeypatch, listed):
     monkeypatch.setattr(native_to_qmove, "lower_to_native", spy)
     NativeToQMove(ARCH, dict.fromkeys(listed)).emit(main)
     assert seen == [listed]
+
+
+@squin.kernel
+def allocating_sub(qs: ilist.IList[Qubit, Literal[1]]):
+    extra = squin.qalloc(1)
+    squin.cz(qs[0], extra[0])
+
+
+@squin.kernel
+def calls_allocating_sub():
+    qs = squin.qalloc(1)
+    allocating_sub(qs)
+
+
+def test_whole_machine_subroutine_may_allocate():
+    out = NativeToQMove(ARCH, {allocating_sub: MachineFrame()}).emit(
+        calls_allocating_sub
+    )
+    callee = top_level(_callees(out, qmove.Invoke)["allocating_sub"])[0]
+    assert isinstance(callee, qmove.Enter) and callee.frame == MachineFrame()
+
+
+def test_allocation_in_a_partial_or_unframed_subroutine_is_rejected():
+    with pytest.raises(ValidationErrorGroup):
+        NativeToQMove(ARCH, {allocating_sub: None}).emit(calls_allocating_sub)

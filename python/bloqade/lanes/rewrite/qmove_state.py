@@ -1,10 +1,11 @@
 """Thread the machine state through a method's ``load; qmove.X; store`` chains.
 
 After ``RewriteNativeToQMove`` every stateful statement sits in its own
-``load``/``store`` pair. ``thread_method`` joins them into one chain per method
-and threads the state explicitly through ``scf.IfElse`` (both arms capture it
-and yield it back) and ``scf.For`` (a loop-carried value, ahead of any existing
-``iter_args``).
+``load``/``store`` pair. ``thread_method`` joins them into one chain per method,
+opened by ``qmove.enter(frame)`` and closed by ``qmove.exit``, and threads the
+state explicitly through ``scf.IfElse`` (both arms capture it and yield it back)
+and ``scf.For`` (a loop-carried value, ahead of any existing ``iter_args``). No
+``load``/``store`` is left afterwards.
 
 This is a direct recursive traversal, not ``kirin.rewrite.Walk``: ``Walk`` visits
 a region's blocks in reverse and a statement's regions before the statement
@@ -21,7 +22,7 @@ from kirin import ir, types
 from kirin.dialects import scf
 
 from bloqade.lanes.dialects import move, qmove
-from bloqade.lanes.dialects.qmove import Frame
+from bloqade.lanes.dialects.qmove import Frame, MachineFrame
 from bloqade.lanes.types import StateType
 
 
@@ -117,21 +118,18 @@ def _thread_for(stmt: scf.For, state: ir.SSAValue) -> ir.SSAValue:
     return _replace_scf(stmt, scf.For(stmt.iterable, region, state, *stmt.initializers))
 
 
-def thread_method(
-    mt: ir.Method, *, subroutine: bool, frame: Frame | None = None
-) -> None:
-    """Open the chain with ``load`` (or ``qmove.enter``), thread it, and close it."""
+def thread_method(mt: ir.Method, *, frame: Frame | MachineFrame | None) -> None:
+    """Open the chain with ``qmove.enter(frame)``, thread it, close it with ``exit``.
+
+    Every method gets the pair, even one with no quantum statements, so "is a
+    qmove method" is the same as "has an ``enter``" and a frame is never dropped.
+    """
     block = mt.callable_region.blocks[0]
-    if not any(
-        isinstance(s, (move.Load, move.Store)) or touches_state(s) for s in block.stmts
-    ):
-        return
-    opener: ir.Statement = qmove.Enter(frame=frame) if subroutine else move.Load()
+    opener = qmove.Enter(frame=frame)
     first = block.first_stmt
     assert first is not None
     opener.insert_before(first)
-    final = thread_block(block, opener.results[0], skip=opener)
-    closer: ir.Statement = qmove.Exit(final) if subroutine else move.Store(final)
+    final = thread_block(block, opener.result, skip=opener)
     terminator = block.last_stmt
     assert terminator is not None
-    closer.insert_before(terminator)
+    qmove.Exit(final).insert_before(terminator)

@@ -9,7 +9,7 @@ from kirin.validation import ValidationSuite
 from kirin.validation.validationpass import ValidationResult
 
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects.qmove import Frame
+from bloqade.lanes.dialects.qmove import Frame, MachineFrame
 from bloqade.lanes.rewrite.native2qmove import RewriteNativeToQMove
 from bloqade.lanes.rewrite.qmove_state import thread_method
 from bloqade.lanes.rewrite.refine_qubit_types import RefineQubitTypes
@@ -23,15 +23,20 @@ from bloqade.lanes.validation.spectator import SpectatorPolicy, ZonedPolicy
 class NativeToQMove:
     """Lower a physical kernel to qmove IR, keeping ``scf`` and subroutine calls.
 
-    ``subroutines`` maps each kernel to keep as a call to its pinned frame, or to
-    ``None`` for a hole that later synthesis fills. Every other call is inlined;
+    ``subroutines`` maps each kernel to keep as a call to its pinned frame: a
+    partial ``Frame``, ``MachineFrame()`` for a whole-machine subroutine (which
+    may allocate, and only whole-machine methods may call), or ``None`` for a
+    hole that later synthesis fills. The entry kernel always gets
+    ``MachineFrame()``. Every other call is inlined;
     nothing is unrolled. The result is the entry method; subroutine clones are
     reachable through its ``qmove.invoke`` statements. No placement or move
     synthesis happens here.
     """
 
     arch_spec: ArchSpec
-    subroutines: Mapping[ir.Method, Frame | None] = field(default_factory=dict)
+    subroutines: Mapping[ir.Method, Frame | MachineFrame | None] = field(
+        default_factory=dict
+    )
     policy: SpectatorPolicy = field(default_factory=ZonedPolicy)
 
     def emit(self, mt: ir.Method, no_raise: bool = False) -> ir.Method:
@@ -50,19 +55,20 @@ class NativeToQMove:
         program = lower_to_native(
             mt, tuple(self.subroutines), self.arch_spec, no_raise=no_raise
         )
-        roles: list[tuple[ir.Method, Frame | None, bool]] = [
-            (program.entry, None, False)
+        roles: list[tuple[ir.Method, Frame | MachineFrame | None]] = [
+            (program.entry, MachineFrame())
         ]
         roles += [
-            (clone, self.subroutines[original], True)
+            (clone, self.subroutines[original])
             for original, clone in program.subroutines.items()
         ]
 
         clones = frozenset(program.subroutines.values())
         errors: list[ir.ValidationError] = []
-        for method, _, is_subroutine in roles:
+        for method, frame in roles:
+            may_allocate = isinstance(frame, MachineFrame)
             result = ValidationSuite(
-                [get_input_validation(is_subroutine, clones)]
+                [get_input_validation(may_allocate, clones)]
             ).validate(method)
             errors += [err for errs in result.errors.values() for err in errs]
         if errors and not no_raise:
@@ -70,9 +76,9 @@ class NativeToQMove:
                 "NativeToQMove: unsupported input", errors=errors
             )
 
-        for method, frame, is_subroutine in roles:
+        for method, frame in roles:
             rewrite.Walk(RewriteNativeToQMove(clones)).rewrite(method.code)
-            thread_method(method, subroutine=is_subroutine, frame=frame)
+            thread_method(method, frame=frame)
             rewrite.Fixpoint(rewrite.Walk(rewrite.DeadCodeElimination())).rewrite(
                 method.code
             )
@@ -83,12 +89,12 @@ class NativeToQMove:
             # Validate every method before raising, so one run reports all problems.
             validation = get_qmove_validation(self.arch_spec, self.policy)
             merged: dict[str, list[ir.ValidationError]] = {}
-            for method, _, _ in roles:
+            for method, _ in roles:
                 result = ValidationSuite([validation]).validate(method)
                 for name, errs in result.errors.items():
                     merged.setdefault(name, []).extend(errs)
             ValidationResult(merged).raise_if_invalid()
-            for method, _, _ in roles:
+            for method, _ in roles:
                 method.verify()
                 method.verify_type()
         return program.entry

@@ -47,6 +47,9 @@ SUPPORTED = ALLOCATION + (
     arrange.stmts.Permute,
 )
 HIGHER_ORDER = (ilist.Map, ilist.ForEach, ilist.Foldl, ilist.Foldr, ilist.Scan)
+ALLOCATION_MESSAGE = (
+    "qubits may only be allocated under a whole-machine frame (the entry kernel)"
+)
 
 
 def _function_code(value: ir.SSAValue) -> ir.Statement | None:
@@ -97,17 +100,19 @@ def _allocates(code: ir.Statement) -> bool:
 
 
 def get_input_validation(
-    subroutine: bool, clones: frozenset[ir.Method] = frozenset()
+    may_allocate: bool, clones: frozenset[ir.Method] = frozenset()
 ) -> type[ValidationPass]:
     """``ValidationSuite`` builds passes with no arguments, hence the factory.
 
-    ``clones`` are the lowered subroutine methods; a ``func.Invoke`` of any other
-    method is a call that survived inlining.
+    ``may_allocate`` is true for a method under a ``MachineFrame`` (the entry
+    kernel, or a whole-machine subroutine). ``clones`` are the lowered subroutine
+    methods; a ``func.Invoke`` of any other method is a call that survived
+    inlining.
     """
 
     @dataclass
     class QMoveInputValidation(ValidationPass):
-        SUBROUTINE: ClassVar[bool] = subroutine
+        MAY_ALLOCATE: ClassVar[bool] = may_allocate
         CLONES: ClassVar[frozenset[ir.Method]] = clones
 
         def name(self) -> str:
@@ -162,8 +167,8 @@ def get_input_validation(
                         f"call of {stmt.callee.sym_name} survived inlining and is "
                         "not a listed subroutine",
                     )
-                if self.SUBROUTINE and isinstance(stmt, ALLOCATION):
-                    error(stmt, "qubits may only be allocated in the entry kernel")
+                if not self.MAY_ALLOCATE and isinstance(stmt, ALLOCATION):
+                    error(stmt, ALLOCATION_MESSAGE)
                 if (
                     isinstance(stmt, HIGHER_ORDER)
                     and (code := _function_code(stmt.fn)) is not None
@@ -174,8 +179,8 @@ def get_input_validation(
                             f"{stmt.name} applies gates through a function value; "
                             "use a for loop",
                         )
-                    elif self.SUBROUTINE and _allocates(code):
-                        error(stmt, "qubits may only be allocated in the entry kernel")
+                    elif not self.MAY_ALLOCATE and _allocates(code):
+                        error(stmt, ALLOCATION_MESSAGE)
 
             for region in regions:
                 if len(region.blocks) > 1:

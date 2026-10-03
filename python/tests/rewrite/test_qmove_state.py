@@ -10,6 +10,7 @@ from bloqade import squin
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move, qmove
+from bloqade.lanes.dialects.qmove import MachineFrame
 from bloqade.lanes.rewrite.native2qmove import RewriteNativeToQMove
 from bloqade.lanes.rewrite.qmove_state import thread_block, thread_method
 from bloqade.lanes.transform.qmove_frontend import NativeProgram, lower_to_native
@@ -40,12 +41,13 @@ def straight():
 
 def test_straight_line_becomes_one_chain():
     program = _lowered(straight)
-    thread_method(program.entry, subroutine=False)
+    thread_method(program.entry, frame=MachineFrame())
     stmts = top_level(program.entry)
-    (load,) = [s for s in stmts if isinstance(s, move.Load)]
-    (store,) = [s for s in stmts if isinstance(s, move.Store)]
-    assert stmts[0] is load
-    assert stmts[-2] is store and isinstance(stmts[-1], func.Return)
+    enter, exit_ = stmts[0], stmts[-2]
+    assert isinstance(enter, qmove.Enter) and enter.frame == MachineFrame()
+    assert isinstance(exit_, qmove.Exit) and isinstance(stmts[-1], func.Return)
+    assert not statements_of(program.entry, move.Load)
+    assert not statements_of(program.entry, move.Store)
     chain = [s for s in stmts if s.args and s.args[0].type.is_subseteq(StateType)]
     for prev, nxt in pairwise(chain):
         assert nxt.args[0] is prev.results[0]
@@ -61,7 +63,7 @@ def branchy():
 
 def test_if_else_captures_and_yields_the_state():
     program = _lowered(branchy)
-    thread_method(program.entry, subroutine=False)
+    thread_method(program.entry, frame=MachineFrame())
     branch = first_of(program.entry, scf.IfElse)
     measure = first_of(program.entry, qmove.Measure)
     assert branch.results[0].type.is_subseteq(StateType)
@@ -82,12 +84,12 @@ def test_for_carries_the_state_ahead_of_existing_iter_args():
     program = _lowered(loopy)
     carried_before = len(first_of(program.entry, scf.For).initializers)
     assert carried_before > 0  # kirin carries `qs` through the loop
-    thread_method(program.entry, subroutine=False)
+    thread_method(program.entry, frame=MachineFrame())
     loop = first_of(program.entry, scf.For)
     assert len(loop.initializers) == carried_before + 1
     assert loop.body.blocks[0].args[1].type.is_subseteq(StateType)
     assert _yield(loop.body).values[0].type.is_subseteq(StateType)
-    assert first_of(program.entry, move.Store).current_state is loop.results[0]
+    assert first_of(program.entry, qmove.Exit).current_state is loop.results[0]
 
 
 def test_hand_built_if_without_else_gets_one():
@@ -124,7 +126,7 @@ def test_subroutine_uses_enter_and_exit():
     frame = qmove.Frame(
         qmove.FrameShape(((0, 2),)), (LocationAddress(0, 0), LocationAddress(1, 0))
     )
-    thread_method(clone, subroutine=True, frame=frame)
+    thread_method(clone, frame=frame)
     stmts = top_level(clone)
     enter = stmts[0]
     assert isinstance(enter, qmove.Enter) and enter.frame == frame
@@ -132,12 +134,14 @@ def test_subroutine_uses_enter_and_exit():
     assert not statements_of(clone, move.Load) and not statements_of(clone, move.Store)
 
 
-def test_method_without_quantum_operations_is_untouched():
+def test_method_without_quantum_operations_still_gets_enter_and_exit():
     @squin.kernel
     def classical(x: int) -> int:
         return x + 1
 
     out = classical.similar()
-    before = len(top_level(out))
-    thread_method(out, subroutine=False)
-    assert len(top_level(out)) == before
+    thread_method(out, frame=None)
+    stmts = top_level(out)
+    assert isinstance(stmts[0], qmove.Enter)
+    exit_ = stmts[-2]
+    assert isinstance(exit_, qmove.Exit) and exit_.current_state is stmts[0].result

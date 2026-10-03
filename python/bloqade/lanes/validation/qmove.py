@@ -35,11 +35,13 @@ def _is_state(value: ir.SSAValue) -> bool:
     )
 
 
-def is_subroutine(mt: ir.Method) -> bool:
+def is_qmove_method(mt: ir.Method) -> bool:
+    """Whether ``mt`` has been lowered to qmove: it opens its chain with ``enter``."""
     return any(isinstance(s, qmove.Enter) for s in mt.callable_region.walk())
 
 
-def subroutine_frame(mt: ir.Method) -> Frame | MachineFrame | None:
+def method_frame(mt: ir.Method) -> Frame | MachineFrame | None:
+    """The frame on ``mt``'s ``enter``; ``None`` for a hole or a non-qmove method."""
     for stmt in mt.callable_region.walk():
         if isinstance(stmt, qmove.Enter):
             return stmt.frame
@@ -131,34 +133,38 @@ def check_use_def(mt: ir.Method) -> list[ir.ValidationError]:
     return errors
 
 
-def check_cell_access(mt: ir.Method) -> list[ir.ValidationError]:
-    """V2: load/store or enter/exit, only in the method's top-level block."""
+def check_chain_ends(mt: ir.Method) -> list[ir.ValidationError]:
+    """V2: exactly one ``enter`` and one ``exit``, top level; no ``load``/``store``."""
     errors = []
     top = mt.callable_region.blocks[0]
     stmts = list(mt.callable_region.walk())
-    cell = [s for s in stmts if isinstance(s, (move.Load, move.Store))]
-    frame = [s for s in stmts if isinstance(s, (qmove.Enter, qmove.Exit))]
-    if cell and frame:
-        errors.append(
-            ir.ValidationError(
-                mt.code, "V2: method uses both load/store and enter/exit"
+    for stmt in stmts:
+        if isinstance(stmt, (move.Load, move.Store)):
+            errors.append(
+                ir.ValidationError(
+                    stmt,
+                    f"V2: {stmt.name} is not allowed in qmove IR; "
+                    "a method's chain uses enter/exit",
+                )
             )
-        )
-    for stmt in cell + frame:
+    ends = [s for s in stmts if isinstance(s, (qmove.Enter, qmove.Exit))]
+    for stmt in ends:
         if stmt.parent_block is not top:
             errors.append(
                 ir.ValidationError(
                     stmt, f"V2: {stmt.name} must be in the method's top-level block"
                 )
             )
-    if frame:
+    stateful = any(_is_state(v) for s in stmts for v in (*s.args, *s.results))
+    if ends or stateful:
         for kind in (qmove.Enter, qmove.Exit):
-            count = sum(isinstance(s, kind) for s in frame)
+            count = sum(isinstance(s, kind) for s in ends)
             if count != 1:
                 errors.append(
                     ir.ValidationError(
                         mt.code,
-                        f"V2: a subroutine needs exactly one {kind.name}, found {count}",
+                        f"V2: a qmove method needs exactly one {kind.name}, "
+                        f"found {count}",
                     )
                 )
     return errors
@@ -217,21 +223,36 @@ def check_statements(mt: ir.Method) -> list[ir.ValidationError]:
 
 
 def check_calls(mt: ir.Method) -> list[ir.ValidationError]:
+    """Call rules, plus F5's whole-machine half (it holds whatever the caller's frame)."""
     errors = []
+    caller_is_machine = isinstance(method_frame(mt), MachineFrame)
     for stmt in mt.callable_region.walk():
         if isinstance(stmt, (qmove.Invoke, qmove.Prepare)):
-            if not is_subroutine(stmt.callee):
+            if not is_qmove_method(stmt.callee):
                 errors.append(
                     ir.ValidationError(
                         stmt,
-                        f"{stmt.name} target {stmt.callee.sym_name} is not a subroutine",
+                        f"{stmt.name} target {stmt.callee.sym_name} is not a qmove "
+                        "method",
                     )
                 )
-        elif isinstance(stmt, func.Invoke) and is_subroutine(stmt.callee):
+            elif (
+                isinstance(method_frame(stmt.callee), MachineFrame)
+                and not caller_is_machine
+            ):
+                errors.append(
+                    ir.ValidationError(
+                        stmt,
+                        f"F5: whole-machine method {stmt.callee.sym_name} can only "
+                        "be called from a whole-machine method",
+                    )
+                )
+        elif isinstance(stmt, func.Invoke) and is_qmove_method(stmt.callee):
             errors.append(
                 ir.ValidationError(
                     stmt,
-                    f"subroutine {stmt.callee.sym_name} must be called with qmove.invoke",
+                    f"qmove method {stmt.callee.sym_name} must be called with "
+                    "qmove.invoke",
                 )
             )
     return errors
@@ -258,7 +279,10 @@ def expected_param_slots(
 
 
 def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
-    """F1-F5, for a framed subroutine.
+    """F1-F5, for a method under a partial ``Frame``.
+
+    A ``MachineFrame`` is the whole machine and has nothing to check; a hole
+    (``None``) is not known yet. F5's whole-machine half is in ``check_calls``.
 
     F4 (relabels compose to the identity) is judged only when every relabel
     ``Permute`` (``insert_moves=False``) in the method is a top-level, constant,
@@ -267,8 +291,8 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
     be composed with the others, so F4 abstains for the whole method rather than
     judge an inconsistent subset.
     """
-    frame = subroutine_frame(mt)
-    if frame is None or isinstance(frame, MachineFrame):
+    frame = method_frame(mt)
+    if not isinstance(frame, Frame):
         return []
     errors: list[ir.ValidationError] = []
 
@@ -342,20 +366,15 @@ def check_frame(mt: ir.Method, arch: ArchSpec) -> list[ir.ValidationError]:
             else:
                 f4_abstains = True
         elif isinstance(stmt, qmove.Invoke):
-            inner = subroutine_frame(stmt.callee)
-            if inner is not None:
-                if isinstance(inner, MachineFrame):
-                    error(
-                        stmt,
-                        f"F5: {stmt.callee.sym_name} has a whole-machine frame and cannot be called from here",
-                    )
-                elif not inner.footprint <= footprint or not inner.effects.is_subset_of(
-                    effects
-                ):
-                    error(
-                        stmt,
-                        f"F5: frame of {stmt.callee.sym_name} is not inside this frame",
-                    )
+            inner = method_frame(stmt.callee)
+            if isinstance(inner, Frame) and (
+                not inner.footprint <= footprint
+                or not inner.effects.is_subset_of(effects)
+            ):
+                error(
+                    stmt,
+                    f"F5: frame of {stmt.callee.sym_name} is not inside this frame",
+                )
 
     if not f4_abstains:
         for perms in relabels.values():
@@ -390,14 +409,12 @@ def get_qmove_validation(
         def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
             errors = (
                 check_use_def(method)
-                + check_cell_access(method)
+                + check_chain_ends(method)
                 + check_statements(method)
                 + check_calls(method)
                 + check_frame(method, self.ARCH)
             )
-            if (frame := subroutine_frame(method)) is not None and not isinstance(
-                frame, MachineFrame
-            ):
+            if isinstance(frame := method_frame(method), Frame):
                 errors += [
                     ir.ValidationError(method.code, problem)
                     for problem in self.POLICY.check_frame(frame, self.ARCH)

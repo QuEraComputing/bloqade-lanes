@@ -18,10 +18,10 @@ from bloqade.lanes.validation.qmove_input import get_input_validation
 
 def _messages(
     method: ir.Method,
-    subroutine: bool = False,
+    may_allocate: bool = True,
     clones: frozenset[ir.Method] = frozenset(),
 ) -> list[str]:
-    result = ValidationSuite([get_input_validation(subroutine, clones)]).validate(
+    result = ValidationSuite([get_input_validation(may_allocate, clones)]).validate(
         method
     )
     return [str(err.args[0]) for errs in result.errors.values() for err in errs]
@@ -104,21 +104,28 @@ def test_allocation_only_function_value_is_fine():
     assert _messages(_native(k).entry) == []
 
 
-def test_allocation_in_a_subroutine_is_rejected():
-    @squin.kernel
-    def sub(qs: ilist.IList[Qubit, Literal[1]]):
-        extra = squin.qalloc(1)
-        squin.cz(qs[0], extra[0])
+@squin.kernel
+def allocating_sub(qs: ilist.IList[Qubit, Literal[1]]):
+    extra = squin.qalloc(1)
+    squin.cz(qs[0], extra[0])
 
-    @squin.kernel
-    def k():
-        qs = squin.qalloc(1)
-        sub(qs)
 
-    clone = _native(k, [sub]).subroutines[sub]
-    assert _messages(clone, subroutine=True) == [
-        "qubits may only be allocated in the entry kernel"
+@squin.kernel
+def calls_allocating_sub():
+    qs = squin.qalloc(1)
+    allocating_sub(qs)
+
+
+def test_allocation_outside_a_machine_frame_is_rejected():
+    clone = _native(calls_allocating_sub, [allocating_sub]).subroutines[allocating_sub]
+    assert _messages(clone, may_allocate=False) == [
+        "qubits may only be allocated under a whole-machine frame (the entry kernel)"
     ]
+
+
+def test_allocation_under_a_machine_frame_is_allowed():
+    clone = _native(calls_allocating_sub, [allocating_sub]).subroutines[allocating_sub]
+    assert _messages(clone, may_allocate=True) == []
 
 
 def _logical_statements() -> list[ir.Statement]:

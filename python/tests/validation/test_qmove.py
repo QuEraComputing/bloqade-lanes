@@ -13,7 +13,7 @@ from bloqade.gemini.common.dialects import arrange
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, qmove
-from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape
+from bloqade.lanes.dialects.qmove import Effects, Frame, FrameShape, MachineFrame
 from bloqade.lanes.rewrite.native2qmove import RewriteNativeToQMove
 from bloqade.lanes.rewrite.qmove_state import thread_method
 from bloqade.lanes.transform.qmove_frontend import NativeProgram, lower_to_native
@@ -31,16 +31,17 @@ Z0 = ZoneAddress(0)
 
 
 def _build(
-    kernel: ir.Method, subroutines: dict[ir.Method, Frame | None] | None = None
+    kernel: ir.Method,
+    subroutines: dict[ir.Method, Frame | MachineFrame | None] | None = None,
 ) -> NativeProgram:
     subroutines = subroutines or {}
     program = lower_to_native(kernel, subroutines, ARCH)
     clones = frozenset(program.subroutines.values())
     rewrite.Walk(RewriteNativeToQMove(clones)).rewrite(program.entry.code)
-    thread_method(program.entry, subroutine=False)
+    thread_method(program.entry, frame=MachineFrame())
     for original, clone in program.subroutines.items():
         rewrite.Walk(RewriteNativeToQMove(clones)).rewrite(clone.code)
-        thread_method(clone, subroutine=True, frame=subroutines[original])
+        thread_method(clone, frame=subroutines[original])
     return program
 
 
@@ -92,7 +93,7 @@ def test_v1_double_consumption():
 
 def test_v1_dropped_update():
     program = _build(main)
-    first_of(program.entry, move.Store).delete()
+    first_of(program.entry, qmove.Exit).delete()
     assert any("never used" in m for m in _messages(program.entry))
 
 
@@ -123,20 +124,37 @@ def _insert_load_store_before(anchor: ir.Statement | None) -> None:
     move.Store(load.result).insert_after(load)
 
 
-def test_v2_load_inside_a_region():
+def test_v2_load_and_store_are_rejected():
     program = _build(main)
     branch = first_of(program.entry, scf.IfElse)
     _insert_load_store_before(branch.then_body.blocks[0].first_stmt)
     messages = _messages(program.entry)
-    assert "V2: load must be in the method's top-level block" in messages
-    assert "V2: store must be in the method's top-level block" in messages
+    for name in ("load", "store"):
+        assert (
+            f"V2: {name} is not allowed in qmove IR; a method's chain uses enter/exit"
+            in messages
+        )
 
 
-def test_v2_mixing_load_with_enter():
-    program = _build(main, {sub: None})
-    clone = program.subroutines[sub]
-    _insert_load_store_before(clone.callable_region.blocks[0].first_stmt)
-    assert "V2: method uses both load/store and enter/exit" in _messages(clone)
+def test_v2_needs_exactly_one_exit():
+    program = _build(main)
+    first_of(program.entry, qmove.Exit).delete()
+    assert "V2: a qmove method needs exactly one exit, found 0" in _messages(
+        program.entry
+    )
+
+
+def test_v2_enter_must_be_top_level():
+    program = _build(main)
+    branch = first_of(program.entry, scf.IfElse)
+    anchor = branch.then_body.blocks[0].first_stmt
+    assert anchor is not None
+    enter = qmove.Enter(frame=MachineFrame())
+    enter.insert_before(anchor)
+    qmove.Exit(enter.result).insert_after(enter)
+    messages = _messages(program.entry)
+    assert "V2: enter must be in the method's top-level block" in messages
+    assert "V2: a qmove method needs exactly one enter, found 2" in messages
 
 
 # --- V3 ---------------------------------------------------------------------
@@ -161,9 +179,9 @@ def _qubits(n: int) -> ir.TestValue:
 
 
 def test_v3_cz_lengths_must_match():
-    load = move.Load()
-    cz = qmove.CZ(load.result, _qubits(1), _qubits(2))
-    messages = _messages(_method(load, cz, move.Store(cz.result)))
+    enter = qmove.Enter(frame=MachineFrame())
+    cz = qmove.CZ(enter.result, _qubits(1), _qubits(2))
+    messages = _messages(_method(enter, cz, qmove.Exit(cz.result)))
     assert messages == ["V3: cz has 1 controls but 2 targets"]
 
 
@@ -184,28 +202,28 @@ def test_v3_move_to_needs_one_location_per_qubit():
     # the mismatch first; this check covers hand-built IR.
     locations = py.Constant(ilist.IList([FAR]))
     locations.result.hints["const"] = const.Value(ilist.IList([FAR]))
-    load = move.Load()
-    move_to = qmove.MoveTo(load.result, _qubits(2), locations.result)
-    messages = _messages(_method(locations, load, move_to, move.Store(move_to.result)))
+    enter = qmove.Enter(frame=MachineFrame())
+    move_to = qmove.MoveTo(enter.result, _qubits(2), locations.result)
+    messages = _messages(_method(locations, enter, move_to, qmove.Exit(move_to.result)))
     assert messages == ["V3: move_to has 1 locations for 2 qubits"]
 
 
 # --- call rules -------------------------------------------------------------
 
 
-def test_func_invoke_of_a_subroutine_is_rejected():
+def test_func_invoke_of_a_qmove_method_is_rejected():
     program = _build(main, {sub: None})
     invoke = first_of(program.entry, qmove.Invoke)
     func.Invoke(tuple(invoke.inputs), callee=invoke.callee).insert_after(invoke)
     messages = _messages(program.entry)
-    assert "subroutine sub must be called with qmove.invoke" in messages
+    assert "qmove method sub must be called with qmove.invoke" in messages
 
 
-def test_qmove_invoke_of_a_non_subroutine_is_rejected():
-    load = move.Load()
-    call = qmove.Invoke(load.result, (), callee=main)
-    messages = _messages(_method(load, call, move.Store(call.result)))
-    assert messages == ["invoke target main is not a subroutine"]
+def test_qmove_invoke_of_a_non_qmove_method_is_rejected():
+    enter = qmove.Enter(frame=MachineFrame())
+    call = qmove.Invoke(enter.result, (), callee=main)
+    messages = _messages(_method(enter, call, qmove.Exit(call.result)))
+    assert messages == ["invoke target main is not a qmove method"]
 
 
 # --- frame rules --------------------------------------------------------------
@@ -426,3 +444,20 @@ def test_policy_problems_are_reported():
     assert "ZonedPolicy: subroutines may not use global pulses" in _frame_messages(
         frame
     )
+
+
+def test_f5_machine_callee_needs_a_machine_caller():
+    program = _build(
+        calls_outer,
+        {outer: Frame(FrameShape(((0, 2),)), (A, B)), inner: MachineFrame()},
+    )
+    assert (
+        "F5: whole-machine method inner can only be called from a whole-machine "
+        "method" in _messages(program.subroutines[outer])
+    )
+
+
+def test_machine_callee_from_the_entry_is_fine():
+    program = _build(main, {sub: MachineFrame()})
+    assert _messages(program.entry) == []
+    assert _messages(program.subroutines[sub]) == []
