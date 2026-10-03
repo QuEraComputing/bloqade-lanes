@@ -27,10 +27,9 @@ class NativeToQMove:
     partial ``Frame``, ``MachineFrame()`` for a whole-machine subroutine (which
     may allocate, and only whole-machine methods may call), or ``None`` for a
     hole that later synthesis fills. The entry kernel always gets
-    ``MachineFrame()``. Every other call is inlined;
-    nothing is unrolled. The result is the entry method; subroutine clones are
-    reachable through its ``qmove.invoke`` statements. No placement or move
-    synthesis happens here.
+    ``MachineFrame()``. Every other call is inlined; nothing is unrolled. The
+    result is the entry method; subroutine clones are reachable through its
+    ``qmove.invoke`` statements. No placement or move synthesis happens here.
     """
 
     arch_spec: ArchSpec

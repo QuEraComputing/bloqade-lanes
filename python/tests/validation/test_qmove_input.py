@@ -13,7 +13,10 @@ from bloqade.gemini.logical.dialects.extensions import stmts as extensions
 from bloqade.gemini.logical.dialects.operations import stmts as logical
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.transform.qmove_frontend import lower_to_native
-from bloqade.lanes.validation.qmove_input import get_input_validation
+from bloqade.lanes.validation.qmove_input import (
+    ALLOCATION_MESSAGE,
+    get_input_validation,
+)
 
 
 def _messages(
@@ -118,9 +121,7 @@ def calls_allocating_sub():
 
 def test_allocation_outside_a_machine_frame_is_rejected():
     clone = _native(calls_allocating_sub, [allocating_sub]).subroutines[allocating_sub]
-    assert _messages(clone, may_allocate=False) == [
-        "qubits may only be allocated under a whole-machine frame (the entry kernel)"
-    ]
+    assert _messages(clone, may_allocate=False) == [ALLOCATION_MESSAGE]
 
 
 def test_allocation_under_a_machine_frame_is_allowed():

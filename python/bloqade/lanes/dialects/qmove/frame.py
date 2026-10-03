@@ -1,4 +1,4 @@
-"""Subroutine frames: where a subroutine's arguments must be, and what it may do.
+"""Frames: where a qmove method's arguments must be, and what it may do.
 
 Every qmove method opens its chain with ``qmove.enter(frame)``. The frame is a
 ``Frame`` (partial: entry slots, scratch and effects), a ``MachineFrame`` (the
@@ -9,8 +9,10 @@ scratch) and a *binding* of those slots to concrete locations. Keeping the two a
 leaves room for relocatable frames later without changing the IR; for now the
 binding is always concrete.
 
-Exit = entry: on return every argument atom is back in its own entry slot and
-the scratch slots are empty again, so there is no separate exit layout.
+Exit = entry, for a partial ``Frame``: on return every argument atom is back in
+its own entry slot and the scratch slots are empty again, so there is no
+separate exit layout. A ``MachineFrame`` has no entry slots, so this does not
+apply to it.
 """
 
 from __future__ import annotations

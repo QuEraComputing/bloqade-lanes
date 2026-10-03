@@ -48,7 +48,8 @@ SUPPORTED = ALLOCATION + (
 )
 HIGHER_ORDER = (ilist.Map, ilist.ForEach, ilist.Foldl, ilist.Foldr, ilist.Scan)
 ALLOCATION_MESSAGE = (
-    "qubits may only be allocated under a whole-machine frame (the entry kernel)"
+    "qubits may only be allocated under a whole-machine frame (the entry kernel, "
+    "or a subroutine pinned to MachineFrame())"
 )
 
 

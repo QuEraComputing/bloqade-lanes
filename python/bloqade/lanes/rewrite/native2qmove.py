@@ -1,8 +1,10 @@
 """Lower native statements to qmove, each wrapped as ``load; qmove.X; store``.
 
-Every rule is local. The output is valid but un-threaded: each statement opens
-and closes its own chain against the state cell. ``qmove_state.thread_method``
-then joins the chains and threads the state through ``scf``.
+Every rule is local. The output is an intermediate form, not valid qmove: each
+statement carries its own ``load``/``store`` placeholders against the state
+cell, which validation (V2) rejects. ``qmove_state.thread_method`` turns it
+into qmove normal form, joining the chains into one ``enter``..``exit`` chain
+threaded through ``scf``.
 """
 
 from __future__ import annotations

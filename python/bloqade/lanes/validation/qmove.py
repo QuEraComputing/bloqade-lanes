@@ -223,7 +223,10 @@ def check_statements(mt: ir.Method) -> list[ir.ValidationError]:
 
 
 def check_calls(mt: ir.Method) -> list[ir.ValidationError]:
-    """Call rules, plus F5's whole-machine half (it holds whatever the caller's frame)."""
+    """Call rules, plus F5's whole-machine half.
+
+    That half holds whatever the caller's frame is.
+    """
     errors = []
     caller_is_machine = isinstance(method_frame(mt), MachineFrame)
     for stmt in mt.callable_region.walk():
