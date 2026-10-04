@@ -62,6 +62,7 @@ def recursive_allocation(
     ``ilist.map`` whose function allocates, like ``squin.qalloc``'s, then looks
     pure with constant operands, so it is run by the concrete interpreter, which
     has no ``qubit.New``. A ``qubit.New`` outside a function value is fine.
+    Remove this check once kirin#765 is fixed.
 
     Every subroutine is a root, since each one is lowered even if the entry
     never calls it.
