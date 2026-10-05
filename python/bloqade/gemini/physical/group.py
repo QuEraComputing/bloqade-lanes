@@ -5,6 +5,7 @@ from bloqade.decoders.dialects import annotate
 from bloqade.rewrite.passes import AggressiveUnroll
 from bloqade.squin import gate, qubit
 from kirin import ir
+from kirin.dialects import debug
 from kirin.passes import Default
 from kirin.passes.inline import InlinePass
 from kirin.prelude import structural_no_opt
@@ -31,6 +32,7 @@ from bloqade.lanes.dialects import arch as arch_dialect
             gemini_common.dialects.qubit,
             gemini_common.dialects.arrange,
             arch_dialect,
+            debug,
         ]
     )
 )
