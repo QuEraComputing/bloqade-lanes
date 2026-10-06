@@ -20,6 +20,7 @@ from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
 
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
+    from bloqade.lanes.analysis.layout import LayoutHeuristicABC
     from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 
@@ -99,6 +100,8 @@ class GeminiLogicalSimulator:
     """The noise model used for simulation. Defaults to :func:`generate_logical_noise_model`."""
     backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
     """Sampling backend for tasks created by this simulator."""
+    layout_heuristic: LayoutHeuristicABC | None = None
+    """Optional logical initial-layout heuristic; ``None`` preserves the compiler default."""
 
     def task(
         self,
@@ -112,6 +115,9 @@ class GeminiLogicalSimulator:
 
         CUDA-Q conversion and any desired detector/observable annotations must be
         completed externally.
+
+        When ``layout_heuristic`` is configured on the simulator, it is used
+        for initial qubit placement during move compilation.
 
         Args:
             logical_kernel (ir.Method[[], RetType]): The logical
@@ -130,7 +136,7 @@ class GeminiLogicalSimulator:
             physical_arch_spec,
             physical_move_kernel,
             post_processing,
-        ) = compile_task(logical_kernel)
+        ) = compile_task(logical_kernel, layout_heuristic=self.layout_heuristic)
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
