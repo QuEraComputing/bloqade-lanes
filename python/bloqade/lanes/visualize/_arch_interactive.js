@@ -556,6 +556,7 @@
     const frameName = debuggerFrameNames[stepIndex];
     if (frameName === undefined) return;
     currentDebuggerStep = stepIndex;
+    setDebuggerSlider(stepIndex);
     // Plotly rejects the previous animation's promise when a new immediate
     // animation interrupts it; that is expected when clicking quickly.
     window.Plotly.animate(plot, [frameName], {
@@ -667,6 +668,9 @@
 
   function setDebuggerSlider(frameIndex) {
     if (!plot.layout.sliders || !plot.layout.sliders.length) {
+      return Promise.resolve();
+    }
+    if (plot.layout.sliders[0].active === frameIndex) {
       return Promise.resolve();
     }
     return window.Plotly.relayout(

@@ -158,6 +158,7 @@ test('debugger arrow navigation starts at the active slider step', () => {
   f.keydown(event);
 
   assert.deepEqual(plain(f.animateCalls[0].frames), ['step-2']);
+  assert.deepEqual(plain(f.relayoutCalls), [{'sliders[0].active': 2}]);
 });
 
 test('debugger arrow navigation clamps at both ends and prevents scrolling', () => {
