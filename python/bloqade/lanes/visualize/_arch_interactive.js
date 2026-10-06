@@ -944,6 +944,14 @@
 
   if (interactiveDebugger) {
     plot.setAttribute('tabindex', '0');
+    plot.addEventListener('click', function (event) {
+      const target = event.target;
+      if (target && target.closest && target.closest(
+        'input, button, select, textarea, [contenteditable], ' +
+        '[data-arch-visualizer-bus-selectors]'
+      )) return;
+      plot.focus({preventScroll: true});
+    });
     plot.addEventListener('keydown', function (event) {
       if (event.target !== plot) return;
       const stepDelta = event.key === 'ArrowLeft' || event.key === 'ArrowUp'

@@ -37,6 +37,7 @@ function fixture(occupied, debuggerOptions = {}) {
   const siteData = [0, 0, 0, 0, 0];
   const atomData = [7, ...siteData, ''];
   const plot = new Element();
+  plot.focus = () => { plot.focused = true; };
   plot.clientWidth = 600;
   plot.clientHeight = 400;
   plot.layout = {font: {color: 'black'}, meta: {
@@ -103,6 +104,7 @@ function fixture(occupied, debuggerOptions = {}) {
     emit: (name, event) => events[name].forEach((handler) => handler(event)),
     move: (event) => domEvents.mousemove.forEach((handler) => handler(event)),
     leave: () => domEvents.mouseleave.forEach((handler) => handler()),
+    click: (target) => domEvents.click.forEach((handler) => handler({target})),
     keydown: (event) => domEvents.keydown.forEach((handler) => handler(event)),
     lanes: () => overlay.children.filter((element) =>
       element.isConnected && 'data-arch-visualizer-site-lane' in element.attributes
@@ -126,6 +128,24 @@ test('interactive multi-frame debugger makes only the plot focusable', () => {
 
   assert.equal(f.plot.attributes.tabindex, '0');
   assert.equal(f.domEvents.keydown.length, 1);
+});
+
+test('clicking the debugger plot gives arrow keys figure focus', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1'], hasSlider: true
+  });
+  f.click({closest: () => null});
+
+  assert.equal(f.plot.focused, true);
+});
+
+test('clicking a nested bus control does not take its keyboard focus', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1'], hasSlider: true
+  });
+  f.click({closest: (selector) => selector.includes('input') ? {} : null});
+
+  assert.equal(f.plot.focused, undefined);
 });
 
 test('debugger arrow keys navigate every previous and next mapping', () => {
