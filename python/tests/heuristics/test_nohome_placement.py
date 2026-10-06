@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from bloqade.lanes.analysis.placement import ConcreteState, ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import SearchStrategy
 from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.heuristics.physical.movement import RustPlacementTraversal
 from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
 
 
@@ -40,6 +44,86 @@ def test_nohome_default_construction():
     assert strategy.gamma == 0.85
     assert strategy.lambda_lookahead == 0.5
     assert strategy.k_candidates == 8
+
+
+def test_nohome_completion_bound_reaches_cz_search(monkeypatch: pytest.MonkeyPatch):
+    seen: dict[str, object] = {}
+    original_entropy_options = _native.EntropyOptions
+
+    def entropy_options(*args, **kwargs):
+        seen.update(kwargs)
+        return original_entropy_options(*args, **kwargs)
+
+    monkeypatch.setattr(_native, "EntropyOptions", entropy_options)
+    strategy = NoHomePlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        strategy=SearchStrategy.ENTROPY,
+        completion_bound="weighted_distance",
+    )
+    strategy._build_move_search()
+    assert seen["completion_bound"] == "weighted_distance"
+
+
+def test_nohome_completion_bound_reaches_move_to_search(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from bloqade.lanes.heuristics import move_synthesis
+
+    seen: dict[str, object] = {}
+
+    def compute_move_layers(arch_spec, state_before, state_after, *, engine, traversal):
+        seen["traversal"] = traversal
+        return ()
+
+    monkeypatch.setattr(move_synthesis, "compute_move_layers", compute_move_layers)
+    strategy = NoHomePlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        strategy=SearchStrategy.ENTROPY,
+        completion_bound="weighted_distance",
+    )
+    state = _make_state()
+    assert strategy.compute_moves(state, state) == ()
+    traversal = seen["traversal"]
+    assert isinstance(traversal, RustPlacementTraversal)
+    assert traversal.completion_bound == "weighted_distance"
+
+
+def test_nohome_cz_placements_with_completion_bound():
+    strategy = NoHomePlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        strategy=SearchStrategy.ENTROPY,
+        completion_bound="weighted_distance",
+        max_expansions=2000,
+        restarts=1,
+    )
+    state = _make_unaligned_state()
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(out, ExecuteCZ)
+
+
+def test_nohome_move_to_with_completion_bound():
+    strategy = NoHomePlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        strategy=SearchStrategy.ENTROPY,
+        completion_bound="weighted_distance",
+    )
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(1, 0), LocationAddress(2, 0)),
+        move_count=(1, 0),
+    )
+    layers = strategy.compute_moves(state_before, state_after)
+    assert layers
+    assert all(
+        not strategy.arch_spec.check_lane_group([lane])
+        for layer in layers
+        for lane in layer
+    )
 
 
 def test_nohome_cz_placements_smoke():

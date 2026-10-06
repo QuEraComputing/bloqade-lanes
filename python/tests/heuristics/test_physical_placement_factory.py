@@ -74,11 +74,28 @@ def test_make_physical_placement_strategy_allows_unbounded_search_budget():
     assert inner.max_expansions is None
 
 
+@pytest.mark.parametrize("return_moves", [True, False])
+def test_make_physical_placement_strategy_threads_completion_bound(return_moves):
+    strategy = make_physical_placement_strategy(
+        completion_bound="weighted_distance", return_moves=return_moves
+    )
+
+    inner = (
+        strategy.inner
+        if isinstance(strategy, PalindromePlacementStrategy)
+        else strategy
+    )
+    assert isinstance(inner, NoHomePlacementStrategy)
+    assert inner.completion_bound == "weighted_distance"
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
         ({"move_solutions_per_layer": 0}, "move_solutions_per_layer"),
         ({"search_budget": 0}, "search_budget"),
+        ({"completion_bound": "unknown"}, "completion_bound"),
+        ({"completion_bound": "weighted_distance", "strategy": "astar"}, "entropy"),
     ],
 )
 def test_make_physical_placement_strategy_rejects_invalid_values(kwargs, message):
