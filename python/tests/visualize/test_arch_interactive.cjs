@@ -149,6 +149,17 @@ test('debugger arrow keys navigate every previous and next mapping', () => {
   }
 });
 
+test('debugger arrow navigation starts at the active slider step', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true, activeStep: 1
+  });
+  const event = keyEvent('ArrowRight', f.plot);
+
+  f.keydown(event);
+
+  assert.deepEqual(plain(f.animateCalls[0].frames), ['step-2']);
+});
+
 test('debugger arrow navigation clamps at both ends and prevents scrolling', () => {
   const f = fixture(false, {
     frameNames: ['step-0', 'step-1'], hasSlider: true
@@ -207,6 +218,22 @@ test('direct frame animation synchronizes the debugger arrow navigation state', 
 
   assert.deepEqual(plain(f.animateCalls[0].frames), ['step-1']);
   assert.deepEqual(plain(f.relayoutCalls[0]), {'sliders[0].active': 2});
+});
+
+test('click-to-jump updates the debugger arrow navigation state', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2', 'step-3'], hasSlider: true
+  });
+  f.plot.data.push({meta: {bloqadeTraceKind: 'circuitGate'}});
+  f.emit('plotly_click', {points: [{curveNumber: 1, customdata: [2]}]});
+  const event = keyEvent('ArrowRight', f.plot);
+
+  f.keydown(event);
+
+  assert.deepEqual(
+    f.animateCalls.map((call) => plain(call.frames)),
+    [['step-2'], ['step-3']]
+  );
 });
 
 test('pointer proximity previews a site even when another overlay captures hover', () => {
