@@ -15,6 +15,13 @@
     (plot.layout.meta || {}).archVisualizerSiteLanePreviewMode || 'hover';
   const debuggerMeta = (plot.layout.meta || {}).bloqadePlotlyDebugger || {};
   const debuggerFrameNames = debuggerMeta.frameNames || [];
+  const debuggerSlider = (plot.layout.sliders || [])[0];
+  const interactiveDebugger =
+    debuggerSlider !== undefined && debuggerFrameNames.length >= 2;
+  let currentDebuggerStep = interactiveDebugger &&
+    Number.isInteger(debuggerSlider.active)
+    ? Math.min(Math.max(debuggerSlider.active, 0), debuggerFrameNames.length - 1)
+    : 0;
   let currentPathStyle =
     (plot.layout.meta || {}).archVisualizerPathStyle || 'exact';
   let highlightPath = null;
@@ -548,6 +555,7 @@
   function jumpToDebuggerStep(stepIndex) {
     const frameName = debuggerFrameNames[stepIndex];
     if (frameName === undefined) return;
+    currentDebuggerStep = stepIndex;
     // Plotly rejects the previous animation's promise when a new immediate
     // animation interrupts it; that is expected when clicking quickly.
     window.Plotly.animate(plot, [frameName], {
@@ -904,6 +912,7 @@
       const frameName = event.name || (event.frame && event.frame.name);
       const frameIndex = debuggerFrameNames.indexOf(frameName);
       if (frameIndex >= 0) {
+        currentDebuggerStep = frameIndex;
         setDebuggerSlider(frameIndex);
       }
     });
@@ -916,6 +925,26 @@
       });
       if (!gatePoint || !gatePoint.customdata) return;
       jumpToDebuggerStep(gatePoint.customdata[0]);
+    });
+  }
+
+  if (interactiveDebugger) {
+    plot.setAttribute('tabindex', '0');
+    plot.addEventListener('keydown', function (event) {
+      if (event.target !== plot) return;
+      const stepDelta = event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+        ? -1
+        : event.key === 'ArrowRight' || event.key === 'ArrowDown'
+          ? 1
+          : 0;
+      if (stepDelta === 0) return;
+
+      event.preventDefault();
+      const nextStep = Math.min(
+        Math.max(currentDebuggerStep + stepDelta, 0),
+        debuggerFrameNames.length - 1
+      );
+      jumpToDebuggerStep(nextStep);
     });
   }
 
