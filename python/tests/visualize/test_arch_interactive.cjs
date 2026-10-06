@@ -221,6 +221,36 @@ test('direct frame animation synchronizes the debugger arrow navigation state', 
   assert.deepEqual(plain(f.relayoutCalls[0]), {'sliders[0].active': 2});
 });
 
+test('Play steps refreshes the slider after Plotly updates its active value', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true
+  });
+
+  // Plotly can update the layout value before the external frame listener runs.
+  // The visible slider still needs the relayout request for this frame.
+  f.plot.layout.sliders[0].active = 1;
+  f.emit('plotly_animatingframe', {name: 'step-1'});
+
+  assert.deepEqual(plain(f.relayoutCalls), [{'sliders[0].active': 1}]);
+});
+
+test('Play steps refreshes after a jump whose frame event did not arrive', async () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true
+  });
+  f.keydown(keyEvent('ArrowRight', f.plot));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  f.plot.layout.sliders[0].active = 0;
+  f.emit('plotly_animatingframe', {name: 'step-1'});
+
+  assert.deepEqual(plain(f.relayoutCalls), [
+    {'sliders[0].active': 1},
+    {'sliders[0].active': 1}
+  ]);
+});
+
 test('click-to-jump updates the debugger arrow navigation state', () => {
   const f = fixture(false, {
     frameNames: ['step-0', 'step-1', 'step-2', 'step-3'], hasSlider: true

@@ -22,6 +22,8 @@
     Number.isInteger(debuggerSlider.active)
     ? Math.min(Math.max(debuggerSlider.active, 0), debuggerFrameNames.length - 1)
     : 0;
+  // A jump updates the slider directly; its matching frame event is redundant.
+  let pendingDebuggerJump = null;
   let currentPathStyle =
     (plot.layout.meta || {}).archVisualizerPathStyle || 'exact';
   let highlightPath = null;
@@ -556,6 +558,7 @@
     const frameName = debuggerFrameNames[stepIndex];
     if (frameName === undefined) return;
     currentDebuggerStep = stepIndex;
+    pendingDebuggerJump = frameName;
     setDebuggerSlider(stepIndex);
     // Plotly rejects the previous animation's promise when a new immediate
     // animation interrupts it; that is expected when clicking quickly.
@@ -563,7 +566,9 @@
       mode: 'immediate',
       frame: {duration: 0, redraw: true},
       transition: {duration: 0}
-    }).catch(function () {});
+    }).catch(function () {}).finally(function () {
+      if (pendingDebuggerJump === frameName) pendingDebuggerJump = null;
+    });
   }
 
   function atomHoverTargetForSite(siteCustomdata) {
@@ -666,11 +671,13 @@
     });
   }
 
-  function setDebuggerSlider(frameIndex) {
+  function setDebuggerSlider(frameIndex, force = false) {
     if (!plot.layout.sliders || !plot.layout.sliders.length) {
       return Promise.resolve();
     }
-    if (plot.layout.sliders[0].active === frameIndex) {
+    // During Play, Plotly can change the layout value before this event runs.
+    // Still request the slider redraw for that frame.
+    if (!force && plot.layout.sliders[0].active === frameIndex) {
       return Promise.resolve();
     }
     return window.Plotly.relayout(
@@ -917,11 +924,14 @@
       const frameIndex = debuggerFrameNames.indexOf(frameName);
       if (frameIndex >= 0) {
         currentDebuggerStep = frameIndex;
-        setDebuggerSlider(frameIndex);
+        if (frameName !== pendingDebuggerJump) {
+          setDebuggerSlider(frameIndex, true);
+        }
+        pendingDebuggerJump = null;
       }
     });
     // Clicking a gate in the executed-circuit panel jumps the debugger to
-    // the step that applies it; the frame hook above then syncs the slider.
+    // the step that applies it and updates the slider directly.
     plot.on('plotly_click', function (event) {
       const gatePoint = (event.points || []).find((item) => {
         const trace = plot.data[item.curveNumber];
