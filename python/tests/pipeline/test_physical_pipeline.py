@@ -3,10 +3,11 @@
 import bloqade.squin as squin
 import pytest
 from kirin import ir, rewrite
-from kirin.dialects import ilist
+from kirin.dialects import debug, ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import qubit
+from bloqade.gemini.physical import kernel as physical_kernel
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite.circuit2place import RewriteQubitsToPinnedQubits
@@ -51,6 +52,44 @@ def test_physical_pipeline_smoke():
     assert out is not None
     fills = [s for s in out.callable_region.walk() if isinstance(s, move.Fill)]
     assert len(fills) == 1
+
+
+@pytest.mark.parametrize("no_raise", [False, True])
+def test_physical_pipeline_removes_debug_info_from_move_kernel(no_raise: bool):
+    @physical_kernel
+    def kernel():
+        reg = squin.qalloc(1)
+        debug.info("physical kernel marker")
+        debug.info("another physical kernel marker", reg[0])
+        return squin.broadcast.measure(reg)
+
+    assert (
+        sum(isinstance(stmt, debug.Info) for stmt in kernel.callable_region.walk()) == 2
+    )
+
+    out = PhysicalPipeline().emit(kernel, no_raise=no_raise)
+
+    assert not any(isinstance(stmt, debug.Info) for stmt in out.callable_region.walk())
+    assert (
+        sum(isinstance(stmt, debug.Info) for stmt in kernel.callable_region.walk()) == 2
+    )
+
+
+def test_physical_pipeline_removes_debug_info_from_helper():
+    @physical_kernel
+    def kernel():
+        def log_debug():
+            debug.info("helper marker")
+
+        reg = squin.qalloc(1)
+        log_debug()
+        return squin.broadcast.measure(reg)
+
+    assert any(isinstance(stmt, debug.Info) for stmt in kernel.callable_region.walk())
+
+    out = PhysicalPipeline().emit(kernel, no_raise=False)
+
+    assert not any(isinstance(stmt, debug.Info) for stmt in out.callable_region.walk())
 
 
 def test_physical_pipeline_placement_strategy_default_is_none():

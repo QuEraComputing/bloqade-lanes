@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass, field
 
-from kirin import passes
+from kirin import passes, rewrite
 from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
@@ -19,6 +19,7 @@ from bloqade.lanes.heuristics.physical.layout import (
 )
 from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
 from bloqade.lanes.passes import SequentialPlacePass, TransversalRewritePass
+from bloqade.lanes.rewrite.remove_debug import RemoveDebugStatements
 from bloqade.lanes.transform.native_to_place import (
     LogicalNativeToPlace,
     PhysicalNativeToPlace,
@@ -114,6 +115,9 @@ class PhysicalPipeline:
         out = PhysicalNativeToPlace(arch_spec=self.arch_spec).emit(
             mt, no_raise=no_raise
         )
+        # Source kernels may contain debug.Info, but no placement strategy
+        # should carry those statements into the move program.
+        rewrite.Walk(RemoveDebugStatements()).rewrite(out.code)
         self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = PlaceToMove(
