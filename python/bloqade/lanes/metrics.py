@@ -39,13 +39,16 @@ class KernelMoveMetrics:
     moved_lane_count: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class UsedBuses:
     """Per-move-event usage counts for transport buses.
 
-    Each dictionary value counts the number of move events using a bus; a bus
-    is counted at most once within any one event. Zone keys are global bus IDs,
+    Each dictionary value counts the number of move events using a bus. Zone keys are global bus IDs,
     while word and site keys are ``(zone_id, bus_id)`` pairs.
+
+    `zone` maps an integer `bus_id` to an integer count for how many times the zone bus with bus `bus_id` was used.
+    `word` maps a tuple `(zone_id, bus_id)` to an integer count for how many times the word bus with id `bus_id` in zone `zone_id` was used.
+    `site` maps a tuple `(zone_id, bus_id)` to an integer count for how many times the site bus with id `bus_id` in zone `zone_id` was used.
     """
 
     zone: dict[int, int] = field(default_factory=dict)
@@ -56,9 +59,8 @@ class UsedBuses:
 def get_used_buses(move_kernel: ir.Method) -> UsedBuses:
     """Count per-move-event usage of zone, word, and site buses.
 
-    A bus is counted at most once within any one move event, even when multiple
-    lanes in that event reference it. Zone bus IDs are global. Word and site
-    bus IDs are local to a zone, so they are keyed by ``(zone_id, bus_id)``.
+    For a given move kernel, outputs a `UsedBuses` class that counts how many times
+    each zone, word, and site bus was used in the program.
     """
     zone_buses: dict[int, int] = {}
     word_buses: dict[tuple[int, int], int] = {}
