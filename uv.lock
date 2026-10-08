@@ -282,7 +282,7 @@ wheels = [
 
 [[package]]
 name = "bloqade-circuit"
-version = "0.15.2"
+version = "0.15.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bloqade-decoders" },
@@ -296,9 +296,9 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/1b/e8ad753a75f039f5886bc73ef96e83a7c6a77186646e9b5533945dcbc121/bloqade_circuit-0.15.2.tar.gz", hash = "sha256:5268e7ba282fd611226479d361f44cf0eb396d8003db10e4034f2236a344b03b", size = 517255, upload-time = "2026-09-14T14:24:21.854Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/16/30dcb54074ce615e6274762b0438424bf29b82673740b0514b0a19ea0742/bloqade_circuit-0.15.3.tar.gz", hash = "sha256:a1f6535086e5ddabccefbe018a4372bfa34668a29c103ef4b82ff15b7ef9fe58", size = 521185, upload-time = "2026-09-28T13:59:06.997Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/6b/13aa557d3af1163554d225a7371662156f3e3fca7810736445213515172d/bloqade_circuit-0.15.2-py3-none-any.whl", hash = "sha256:636259086bc19720ec26fd6f8044f57151ef4a69a3664ee468289e48f2d0237e", size = 318284, upload-time = "2026-09-14T14:24:20.195Z" },
+    { url = "https://files.pythonhosted.org/packages/38/a5/e5db6eefae2cafeade34ac1daf9622a4cb6a8d12bde96993022338dc9510/bloqade_circuit-0.15.3-py3-none-any.whl", hash = "sha256:60aed392f09e6149fbfcefa7b43a9f12863f0d9205e58e91eb2d1571d4cde4d6", size = 321913, upload-time = "2026-09-28T13:59:05.075Z" },
 ]
 
 [package.optional-dependencies]
@@ -447,7 +447,7 @@ doc = [
 [package.metadata]
 requires-dist = [
     { name = "bloqade-circuit", extras = ["cirq", "tsim"], marker = "extra == 'sim'", specifier = "~=0.15.1" },
-    { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.1" },
+    { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.3" },
     { name = "bloqade-core", specifier = "~=0.6.8" },
     { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
     { name = "bloqade-lanes", extras = ["decoding"], marker = "extra == 'msd-reprod'" },
