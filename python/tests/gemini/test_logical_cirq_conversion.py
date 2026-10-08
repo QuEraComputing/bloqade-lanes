@@ -4,16 +4,20 @@ from bloqade.cirq_utils import emit_circuit, load_circuit
 from bloqade.cirq_utils.emit.base import EmitCirq, EmitCirqFrame
 from kirin import interp, ir, lowering
 from kirin.dialects import ilist
+from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical
+from bloqade.gemini.common.cirq_conversion import (
+    GeminiCirqLowerer,
+    GeminiQubit,
+    _GeminiQubitCirqMethods,
+)
 from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.common.dialects.qubit.stmts import NewAt
 from bloqade.gemini.device import GeminiLogicalSimulator
 from bloqade.gemini.logical.cirq_conversion import (
-    GeminiLogicalCirqLowerer,
     GeminiLogicalQubit,
-    _GeminiQubitCirqMethods,
     _LogicalCirqMethods,
 )
 from bloqade.gemini.logical.dialects.operations import stmts as logical_ops
@@ -42,6 +46,44 @@ def test_load_plain_cirq_as_logical_kernel():
     )
     method.verify()
     method.verify_type()
+
+
+def test_logical_loader_accepts_unmeasured_subcircuit_with_final_measurement():
+    q0, q1 = cirq.LineQubit.range(2)
+    body = cirq.FrozenCircuit(cirq.H(q0), cirq.CX(q0, q1))
+    circuit = cirq.Circuit(cirq.CircuitOperation(body), cirq.measure(q0, q1))
+
+    method = load_circuit(circuit, dialects=logical.kernel)
+
+    assert (
+        sum(
+            isinstance(stmt, TerminalLogicalMeasurement)
+            for stmt in method.callable_region.walk()
+        )
+        == 1
+    )
+
+
+def test_logical_loader_preserves_subcircuit_qubit_mapping():
+    q0, q1 = cirq.LineQubit.range(2)
+    operation = cirq.CircuitOperation(cirq.FrozenCircuit(cirq.H(q0)))
+    operation = operation.with_qubit_mapping({q0: q1})
+    circuit = cirq.Circuit(cirq.X(q0), operation, cirq.measure(q0, q1))
+
+    method = load_circuit(circuit, dialects=logical.kernel)
+    emitted = emit_circuit(method)
+
+    assert cirq.H(q1) in emitted.all_operations()
+    assert cirq.H(q0) not in emitted.all_operations()
+
+
+def test_logical_loader_preserves_terminal_measurement_order():
+    q0, q1 = cirq.LineQubit.range(2)
+    circuit = cirq.Circuit(cirq.H(q0), cirq.measure(q1, q0))
+
+    method = load_circuit(circuit, dialects=logical.kernel)
+
+    assert emit_circuit(method) == circuit
 
 
 def test_pinned_logical_qubit_round_trip():
@@ -86,7 +128,23 @@ def test_logical_loader_rejects_mid_circuit_measurement():
     q0, q1 = cirq.LineQubit.range(2)
     circuit = cirq.Circuit(cirq.measure(q0), cirq.H(q1), cirq.measure(q1))
 
-    with pytest.raises(lowering.BuildError, match="one final measurement"):
+    with pytest.raises(ValidationErrorGroup, match="Multiple terminal measurements"):
+        load_circuit(circuit, dialects=logical.kernel)
+
+
+def test_logical_loader_rejects_partial_terminal_measurement():
+    q0, q1 = cirq.LineQubit.range(2)
+    circuit = cirq.Circuit(cirq.H(q0), cirq.H(q1), cirq.measure(q0))
+
+    with pytest.raises(ValidationErrorGroup, match="only 1 were measured"):
+        load_circuit(circuit, dialects=logical.kernel)
+
+
+def test_logical_loader_rejects_missing_terminal_measurement():
+    q0 = cirq.LineQubit(0)
+    circuit = cirq.Circuit(cirq.H(q0))
+
+    with pytest.raises(ValidationErrorGroup, match="exactly one"):
         load_circuit(circuit, dialects=logical.kernel)
 
 
@@ -172,25 +230,26 @@ def test_emit_compiled_bell_has_one_physical_measurement():
     assert len(cirq_measurements[0].qubits) == 14
 
 
-def test_logical_qid_rejects_negative_index_and_invalid_pin():
+def test_gemini_qid_rejects_negative_index_and_invalid_pin():
     with pytest.raises(ValueError, match="nonnegative"):
-        GeminiLogicalQubit(-1)
+        GeminiQubit(-1)
     with pytest.raises(ValueError, match="three integer coordinates"):
-        GeminiLogicalQubit(0, (0, 1))  # type: ignore[arg-type]
+        GeminiQubit(0, (0, 1))  # type: ignore[arg-type]
 
 
-def test_logical_qid_has_readable_pinned_and_unpinned_names():
-    unpinned = GeminiLogicalQubit(0)
-    pinned = GeminiLogicalQubit(1, (0, 2, 3))
+def test_gemini_qid_has_readable_pinned_and_unpinned_names():
+    unpinned = GeminiQubit(0)
+    pinned = GeminiQubit(1, (0, 2, 3))
 
-    assert str(unpinned) == "L0"
-    assert str(pinned) == "L1@(0,2,3)"
-    assert repr(pinned) == "GeminiLogicalQubit(index=1, pin=(0, 2, 3))"
+    assert str(unpinned) == "Q0"
+    assert str(pinned) == "Q1@(0,2,3)"
+    assert repr(pinned) == "GeminiQubit(index=1, pin=(0, 2, 3))"
+    assert GeminiLogicalQubit is GeminiQubit
 
 
 def test_logical_loader_rejects_unsupported_qid_type():
-    with pytest.raises(lowering.BuildError, match="Unsupported logical qubit"):
-        GeminiLogicalCirqLowerer._logical_index(cirq.GridQubit(0, 0))
+    with pytest.raises(lowering.BuildError, match="Unsupported Gemini qubit"):
+        GeminiCirqLowerer._qubit_index(cirq.GridQubit(0, 0))
 
 
 def test_logical_loader_rejects_mixed_qid_types():
