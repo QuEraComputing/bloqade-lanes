@@ -14,7 +14,7 @@ frame by frame), and steps that are neither.
 from __future__ import annotations
 
 import pytest
-from matplotlib import pyplot as plt
+from matplotlib import animation, pyplot as plt
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import (
@@ -33,6 +33,7 @@ from bloqade.lanes.visualize.artist import (
     get_drawer,
     render_generator,
 )
+from bloqade.lanes.visualize.debug import animated_debugger, debugger
 
 # Kirin lowers a call's keyword arguments as statement operands, so a
 # ``SiteLaneAddress`` cannot be built inside a kernel body; it is a constant the
@@ -112,6 +113,41 @@ def test_kernel_reaches_every_renderer_branch(transport_arch_spec: ArchSpec) -> 
         "Move",
         "EndMeasure",
     ]
+
+
+def test_static_debugger_exports_mp4(transport_arch_spec: ArchSpec, tmp_path) -> None:
+    if not animation.writers.is_available("ffmpeg"):
+        pytest.skip("FFmpeg is not installed")
+    output = tmp_path / "static.mp4"
+    debugger(
+        _gate_then_move_kernel,
+        transport_arch_spec,
+        pause_time=0,
+        to_mp4=output,
+    )
+    assert output.read_bytes()[4:8] == b"ftyp"
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        debugger(
+            _gate_then_move_kernel,
+            transport_arch_spec,
+            pause_time=0,
+            to_mp4=output,
+        )
+    assert output.read_bytes()[4:8] == b"ftyp"
+
+
+def test_animated_debugger_exports_mp4(transport_arch_spec: ArchSpec, tmp_path) -> None:
+    if not animation.writers.is_available("ffmpeg"):
+        pytest.skip("FFmpeg is not installed")
+    output = tmp_path / "animated.mp4"
+    animated_debugger(
+        _gate_then_move_kernel,
+        transport_arch_spec,
+        fps=2,
+        to_mp4=output,
+    )
+    assert output.read_bytes()[4:8] == b"ftyp"
 
 
 # ── get_drawer ───────────────────────────────────────────────────

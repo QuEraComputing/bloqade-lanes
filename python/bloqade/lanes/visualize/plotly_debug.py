@@ -4,6 +4,8 @@ import itertools
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from io import BytesIO
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from kirin import ir
@@ -12,6 +14,7 @@ from bloqade.lanes.analysis.atom import AtomState
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.dialects import move
+from bloqade.lanes.visualize._mp4 import hold_frames, mp4_writer
 from bloqade.lanes.visualize.arch import ArchVisualizer, bus_preview_label
 from bloqade.lanes.visualize.artist import DebugStep, collect_debug_steps
 from bloqade.lanes.visualize.plotly_circuit import (
@@ -816,6 +819,52 @@ def _show_plotly_debugger(
     )
 
 
+def _export_plotly_mp4(figure: Figure, path: str | Path, pause_time: float) -> None:
+    """Record each Plotly debugger step as a still frame in an MP4."""
+    from matplotlib import pyplot as plt
+
+    fps = 30
+    frames_per_step = hold_frames(pause_time, fps)
+    output, writer = mp4_writer(path, fps=fps)
+    snapshot = _plotly().Figure(figure)
+    snapshot.frames = ()
+    # Playback and bus controls are interactive HTML elements, not video content.
+    snapshot.update_layout(sliders=[], updatemenus=[])
+
+    width = snapshot.layout.width or 700
+    height = snapshot.layout.height or 450
+    video_figure = plt.figure(figsize=(width / 100, height / 100), dpi=100)
+    ax = video_figure.add_axes((0, 0, 1, 1))
+    ax.axis("off")
+    try:
+        with writer.saving(video_figure, output, dpi=100):
+            for frame in figure.frames or (None,):
+                if frame is not None:
+                    # Plotly animation merges frame attributes into existing
+                    # traces; reproduce that merge for each rasterized step.
+                    for index, trace in zip(frame.traces, frame.data):
+                        snapshot.data[index].update(trace.to_plotly_json())
+                    if frame.layout is not None:
+                        snapshot.update_layout(frame.layout)
+                try:
+                    png = snapshot.to_image(format="png")
+                except (ImportError, RuntimeError, ValueError) as exc:
+                    raise RuntimeError(
+                        "Plotly MP4 export requires Kaleido and a compatible "
+                        "Chrome installation"
+                    ) from exc
+                ax.clear()
+                ax.imshow(plt.imread(BytesIO(png), format="png"))
+                ax.axis("off")
+                for _ in range(frames_per_step):
+                    writer.grab_frame()
+    except Exception:
+        Path(output).unlink(missing_ok=True)
+        raise
+    finally:
+        plt.close(video_figure)
+
+
 def plotly_debugger(
     mt: ir.Method,
     arch_spec: ArchSpec,
@@ -829,6 +878,7 @@ def plotly_debugger(
     height: int = 720,
     show_circuit: bool = True,
     circuit_window: int = 24,
+    to_mp4: str | Path | None = None,
 ) -> Figure | None:
     """Display a browser-native, discrete-step move-program debugger.
 
@@ -859,6 +909,9 @@ def plotly_debugger(
             kept in view; clicking a gate jumps the debugger to its step.
         circuit_window: Maximum number of circuit columns visible at once.
             Longer circuits scroll horizontally to follow the active step.
+        to_mp4: Export the discrete debugger steps to this MP4 path instead of
+            opening the interactive view. Requires FFmpeg, Kaleido, and Chrome.
+            An existing file is never overwritten.
 
     Returns:
         The constructed Plotly figure when ``show=False``; otherwise ``None``.
@@ -874,6 +927,9 @@ def plotly_debugger(
         show_circuit=show_circuit,
         circuit_window=circuit_window,
     )
+    if to_mp4 is not None:
+        _export_plotly_mp4(figure, to_mp4, pause_time)
+        return None if show else figure
     if show:
         _show_plotly_debugger(
             figure,

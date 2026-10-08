@@ -74,7 +74,11 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
         )
 
     def visualize_logical(
-        self, animated: bool = False, interactive: bool = True, arch_vis: bool = False
+        self,
+        animated: bool = False,
+        interactive: bool = True,
+        arch_vis: bool = False,
+        to_mp4: str | None = None,
     ) -> None:
         """Visualize the logical move program using the built-in debugger.
 
@@ -86,6 +90,8 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
             animated: Use the animated Matplotlib debugger.
             interactive: Enable interactive debugger controls.
             arch_vis: Use the interactive Plotly architecture debugger.
+            to_mp4: MP4 output path. When set, export instead of displaying
+                the debugger. Existing files are not overwritten.
         """
         self._visualize_move_kernel(
             self.logical_move_kernel,
@@ -93,6 +99,7 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
             animated=animated,
             interactive=interactive,
             arch_vis=arch_vis,
+            to_mp4=to_mp4,
         )
 
     @cached_property

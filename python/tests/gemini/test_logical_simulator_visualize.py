@@ -81,6 +81,7 @@ def test_visualize_logical_uses_logical_program_and_architecture(
         logical_task.logical_move_kernel,
         logical_task.logical_arch_spec,
         interactive=False,
+        to_mp4=None,
     )
     for name, mock in mocks.items():
         if name != selected:
@@ -101,4 +102,32 @@ def test_visualize_still_uses_physical_program_and_architecture(
         logical_task.physical_move_kernel,
         logical_task.physical_arch_spec,
         interactive=False,
+        to_mp4=None,
+    )
+
+
+@pytest.mark.parametrize("logical", [False, True])
+@pytest.mark.parametrize("arch_vis", [False, True])
+def test_task_visualization_forwards_mp4_path(
+    logical_task, monkeypatch, tmp_path, logical: bool, arch_vis: bool
+):
+    import bloqade.lanes.visualize as visualize
+
+    selected = "plotly_debugger" if arch_vis else "animated_debugger"
+    draw = Mock()
+    monkeypatch.setattr(visualize, selected, draw)
+    output = str(tmp_path / "moves.mp4")
+
+    method = logical_task.visualize_logical if logical else logical_task.visualize
+    method(animated=True, arch_vis=arch_vis, to_mp4=output)
+
+    draw.assert_called_once_with(
+        (
+            logical_task.logical_move_kernel
+            if logical
+            else logical_task.physical_move_kernel
+        ),
+        logical_task.logical_arch_spec if logical else logical_task.physical_arch_spec,
+        interactive=True,
+        to_mp4=output,
     )

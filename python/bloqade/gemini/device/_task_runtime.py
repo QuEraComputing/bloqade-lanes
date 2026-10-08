@@ -338,14 +338,20 @@ class _SimulatorTaskBase(Generic[RetType]):
         return (None, None)
 
     def visualize(
-        self, animated: bool = False, interactive: bool = True, arch_vis=False
-    ):
+        self,
+        animated: bool = False,
+        interactive: bool = True,
+        arch_vis: bool = False,
+        to_mp4: str | None = None,
+    ) -> None:
         """Visualize the physical move kernel using the built-in debugger.
 
         Args:
             animated (bool): Whether to use the animated debugger. Defaults to False.
             interactive (bool): Whether to enable interactive mode. Defaults to True.
             arch_vis (bool): Whether to use the interactive plotly debugger to visualize the architecture. Defaults to False.
+            to_mp4 (str | None): MP4 output path. When set, export instead of
+                displaying the debugger. Existing files are not overwritten.
 
         """
         self._visualize_move_kernel(
@@ -354,6 +360,7 @@ class _SimulatorTaskBase(Generic[RetType]):
             animated=animated,
             interactive=interactive,
             arch_vis=arch_vis,
+            to_mp4=to_mp4,
         )
 
     @staticmethod
@@ -364,15 +371,14 @@ class _SimulatorTaskBase(Generic[RetType]):
         animated: bool,
         interactive: bool,
         arch_vis: bool,
+        to_mp4: str | None,
     ) -> None:
         """Dispatch a move kernel to the requested debugger."""
         from bloqade.lanes.visualize import animated_debugger, debugger, plotly_debugger
 
         if arch_vis:
             plotly_debugger(
-                move_kernel,
-                arch_spec,
-                interactive=interactive,
+                move_kernel, arch_spec, interactive=interactive, to_mp4=to_mp4
             )
         else:
             if animated:
@@ -380,12 +386,14 @@ class _SimulatorTaskBase(Generic[RetType]):
                     move_kernel,
                     arch_spec,
                     interactive=interactive,
+                    to_mp4=to_mp4,
                 )
             else:
                 debugger(
                     move_kernel,
                     arch_spec,
                     interactive=interactive,
+                    to_mp4=to_mp4,
                 )
 
     def fidelity_bounds(self) -> tuple[float, float]:
