@@ -323,14 +323,51 @@ in `latest_physical.csv` / `latest_logical.csv` must not change.
   through `PhysicalPipeline`. The initial layout respects both blocks, and the
   transversal CZ layer becomes identical site moves across the two words.
 
-**Benchmark (optional, decide at review)**
+## Section 5 — Benchmark: [[4,2,2]] blocks, two per word
 
-- A new small case in `python/benchmarks/kernels/` that registers blocks, with new
-  rows in `latest_physical.csv`. Existing rows must not change.
+A [[4,2,2]] block has 4 qubits and a Gemini physical word has 8 sites, so two
+blocks fill a word exactly, at offsets 0 and 4.
+
+### Cases — `python/benchmarks/kernels/medium/`
+
+- **`code422_physical_16`** has 16 qubits in four [[4,2,2]] blocks `b0..b3`
+  (`q[4i : 4i+4]`), each registered with `code_block.register`.
+  1. Encode each block into logical `|00⟩`: `H(q0)`, then `CX(q0, q1)`,
+     `CX(q0, q2)`, `CX(q0, q3)`. All of these edges are inside a block.
+  2. Three layers of transversal CZ, each a single `broadcast.cz`:
+     `(b0, b1), (b2, b3)`, then `(b0, b2), (b1, b3)`, then `(b0, b3), (b1, b2)`.
+     Transversal CZ is a logical Clifford on [[4,2,2]], so the circuit is a
+     valid encoded program, and the three layers use every block pairing.
+- **`code422_unblocked_16`** is the same circuit without the `register` calls.
+  It is the control row: the difference between the two rows is what block
+  awareness changes.
+
+Four blocks need two words. Step 1 of Section 3 therefore picks `k = 2`, which
+puts exactly two blocks in each word. A layout test checks this shape on the
+benchmark kernel directly, so the CSV is not the only guard.
+
+Both cases have more than `MAX_LOGICAL_QUBITS = 10` qubits, so the logical suite
+skips them through its existing capacity filter. `latest_logical.csv` does not
+change.
+
+### Harness change
+
+The physical suite currently lowers every case through the generic
+`NativeToPlace` (`harness/runner.py`, `_squin_to_move`), which would delete the
+registrations. `BenchmarkCase` gains `code_blocks: bool`, set during discovery
+when the kernel contains a `code_block.Register` statement. In physical mode
+such cases are lowered with `PhysicalNativeToPlace`. All other cases keep the
+generic lowering, so their rows do not move.
+
+### Baselines
+
+- New rows for both cases are added to `latest_physical.csv`, for every strategy
+  in the default physical matrix.
+- Existing rows must not change. Regenerate, diff, and re-run once to confirm
+  determinism, per AGENT.md.
 
 ## Open questions for review
 
 1. Should `register` in the logical or generic pipeline warn (as proposed) or
    error?
 2. Under `no_raise=True`, is "drop all blocks with one warning" the right fallback?
-3. Include the benchmark case in this change or in a follow-up?
