@@ -348,25 +348,43 @@ class _SimulatorTaskBase(Generic[RetType]):
             arch_vis (bool): Whether to use the interactive plotly debugger to visualize the architecture. Defaults to False.
 
         """
+        self._visualize_move_kernel(
+            self.physical_move_kernel,
+            self.physical_arch_spec,
+            animated=animated,
+            interactive=interactive,
+            arch_vis=arch_vis,
+        )
+
+    @staticmethod
+    def _visualize_move_kernel(
+        move_kernel: ir.Method,
+        arch_spec: ArchSpec,
+        *,
+        animated: bool,
+        interactive: bool,
+        arch_vis: bool,
+    ) -> None:
+        """Dispatch a move kernel to the requested debugger."""
         from bloqade.lanes.visualize import animated_debugger, debugger, plotly_debugger
 
         if arch_vis:
             plotly_debugger(
-                self.physical_move_kernel,
-                self.physical_arch_spec,
+                move_kernel,
+                arch_spec,
                 interactive=interactive,
             )
         else:
             if animated:
                 animated_debugger(
-                    self.physical_move_kernel,
-                    self.physical_arch_spec,
+                    move_kernel,
+                    arch_spec,
                     interactive=interactive,
                 )
             else:
                 debugger(
-                    self.physical_move_kernel,
-                    self.physical_arch_spec,
+                    move_kernel,
+                    arch_spec,
                     interactive=interactive,
                 )
 
