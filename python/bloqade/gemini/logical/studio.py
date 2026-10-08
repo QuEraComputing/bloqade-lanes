@@ -68,27 +68,19 @@ def _qubit_ids(
 
 
 def _placement(pinned: dict[int, int], count: int) -> list[dict[str, int]]:
-    used = set(pinned.values())
-    if len(used) != len(pinned):
+    if len(set(pinned.values())) != len(pinned):
         raise ValueError("Gemini Studio requires distinct pinned home slots")
+    used = set(pinned.values())
     slots = dict(pinned)
     for qubit in range(count):
-        if qubit in slots:
-            continue
-        slot = (
-            qubit
-            if qubit not in used
-            else next(
+        if qubit not in slots:
+            slot = next(
                 candidate for candidate in range(_MAX_QUBITS) if candidate not in used
             )
-        )
-        slots[qubit] = slot
-        used.add(slot)
-    return [
-        {"qubit": qubit, "slot": slots[qubit]}
-        for qubit in range(count)
-        if slots[qubit] != qubit
-    ]
+            slots[qubit] = slot
+            used.add(slot)
+    # Studio assigns every omitted qubit the lowest free slot, not its index.
+    return [{"qubit": qubit, "slot": slots[qubit]} for qubit in range(count)]
 
 
 def to_studio_url(kernel: ir.Method) -> str:
@@ -104,6 +96,11 @@ def to_studio_url(kernel: ir.Method) -> str:
     The kernel must already be flattened, normally by using
     ``@logical.kernel(aggressive_unroll=True)``. Unsupported quantum operations
     and dynamic control flow raise ``ValueError`` instead of being omitted.
+
+    Studio's link format pins either every qubit or none. If a kernel pins only
+    some qubits, the remaining qubits are pinned to the lowest free slots in
+    Studio. Identity-only pins (``qalloc_at([0, 1, ...])``) cannot be preserved:
+    Studio renders those as an unpinned allocation and may choose another layout.
     """
     if kernel.args:
         raise ValueError("Gemini Studio links require a kernel without arguments")
@@ -179,6 +176,10 @@ def to_studio_url(kernel: ir.Method) -> str:
                 raise ValueError(
                     "Gemini Studio requires one terminal measurement of all qubits"
                 )
+            if measured_ids != tuple(range(count)):
+                raise ValueError(
+                    "Gemini Studio requires terminal measurement in allocation order"
+                )
             measured = True
             continue
 
@@ -241,9 +242,8 @@ def to_studio_url(kernel: ir.Method) -> str:
         snapshot["gates"] = gates
     if prep:
         snapshot["prep"] = [prep[qubit] for qubit in sorted(prep)]
-    placement = _placement(pinned, count)
-    if placement:
-        snapshot["placement"] = placement
+    if pinned:
+        snapshot["placement"] = _placement(pinned, count)
     # Studio's link codec removes quotes from identifier-shaped JSON tokens.
     payload = json.dumps(snapshot, separators=(",", ":"), ensure_ascii=True).replace(
         '"', ""

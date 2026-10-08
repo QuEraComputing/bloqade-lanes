@@ -34,6 +34,13 @@ def pinned():
 
 
 @logical.kernel(aggressive_unroll=True)
+def pinned_off_identity():
+    qubits = logical.qalloc_at(ilist.IList([5, 1]))
+    squin.cz(qubits[0], qubits[1])
+    return logical.default_post_processing(qubits)
+
+
+@logical.kernel(aggressive_unroll=True)
 def prepared():
     qubits = squin.qalloc(1)
     squin.u3(0.25, 0.5, 0.75, qubits[0])
@@ -68,6 +75,11 @@ def test_pinned_slots_and_unpinned_conflict() -> None:
     assert "{gate:cz,column:0,targets:[0,2]}" in url
     assert "placement:[{qubit:0,slot:3},{qubit:1,slot:0}," in url
     assert "{qubit:2,slot:1},{qubit:3,slot:2}]" in url
+
+
+def test_every_pinned_slot_is_written() -> None:
+    url = logical.to_studio_url(pinned_off_identity)
+    assert "placement:[{qubit:0,slot:5},{qubit:1,slot:1}]" in url
 
 
 def test_initial_state_and_adjoint_gate() -> None:
@@ -166,6 +178,16 @@ def test_partial_terminal_measurement_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="measurement of all qubits"):
         logical.to_studio_url(partial_measurement)
+
+
+def test_permuted_terminal_measurement_is_rejected() -> None:
+    @logical.kernel(aggressive_unroll=True, verify=False)
+    def permuted_measurement():
+        qubits = squin.qalloc(2)
+        return logical.terminal_measure(ilist.IList([qubits[1], qubits[0]]))
+
+    with pytest.raises(ValueError, match="measurement in allocation order"):
+        logical.to_studio_url(permuted_measurement)
 
 
 def test_column_limit_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
