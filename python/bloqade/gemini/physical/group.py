@@ -20,7 +20,7 @@ from bloqade.gemini.common.validation.duplicate_address import (
 from bloqade.gemini.common.validation.terminal_measure import (
     PhysicalTerminalMeasurementValidation,
 )
-from bloqade.lanes.dialects import arch as arch_dialect
+from bloqade.lanes.dialects import arch as arch_dialect, code_block
 
 
 @ir.dialect_group(
@@ -32,6 +32,7 @@ from bloqade.lanes.dialects import arch as arch_dialect
             gemini_common.dialects.qubit,
             gemini_common.dialects.arrange,
             arch_dialect,
+            code_block,
             debug,
         ]
     )
@@ -41,8 +42,9 @@ def kernel(self):
 
     Physical kernels use ordinary SQuIN gates and end with one
     ``squin.broadcast.measure`` that consumes every allocated qubit. They may
-    also use ``new_at``, ``arrange.move_to`` / ``arrange.permute``, and
-    architecture-location primitives such as ``loc`` and ``cz_partner``.
+    also use ``new_at``, ``arrange.move_to`` / ``arrange.permute``,
+    architecture-location primitives such as ``loc`` and ``cz_partner``, and
+    ``code_block.register`` to declare code blocks.
     """
 
     def run_pass(

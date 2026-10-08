@@ -73,6 +73,7 @@ class Register(ir.Statement):
 and a user-facing wrapper:
 
 ```python
+from bloqade.gemini.physical import kernel
 from bloqade.lanes import code_block
 
 @kernel
@@ -88,13 +89,14 @@ def main():
 example a `new_steane_block()` allocator) is the intended pattern: every call
 produces its own `Register` statement after inlining.
 
-`code_block` is a physical-only dialect. A kernel opts in by adding it to its
-dialect group, the same way pinned kernels add the gemini `qubit` dialect today
-(`squin.kernel.add(qubit).add(code_block)`). Only `PhysicalNativeToPlace` lowers
-it. `LogicalNativeToPlace` and the generic `NativeToPlace` have no handling for
-it, so a `Register` reaching them is rejected by the existing
-`raise_if_statements_outside_dialect_group` check, like any other unsupported
-statement.
+`code_block` is a physical-only dialect. It is part of the physical kernel
+group, `bloqade.gemini.physical.kernel`, next to `new_at` and the `arch`
+dialect; other kernels may add it explicitly (`squin.kernel.add(code_block)`).
+The logical kernel group does not include it, so logical kernels cannot call
+`register`. Only `PhysicalNativeToPlace` lowers it. The generic `NativeToPlace`
+(used by the physical benchmark harness) deletes `Register` statements with one
+`CodeBlockWarning`; because the dialect is in the physical group, the
+dialect-group check would not catch a leftover `Register`.
 
 ### `CodeBlockValidation`
 
@@ -120,10 +122,11 @@ post-unroll rules: if validation fails, no block is registered, all `Register`
 statements are deleted, and one `CodeBlockWarning` lists the errors. A
 silently-wrong block layout is worse than an unblocked one.
 
-### `ResolveCodeBlocks`
+### `resolve_code_blocks`
 
-A rewrite rule that runs in `PhysicalNativeToPlace._lower_qubits`, immediately
-after `RewriteQubitsToPinnedQubits`:
+A pass (`rewrite/resolve_code_blocks.py`) that runs in
+`PhysicalNativeToPlace._lower_qubits`, immediately after
+`RewriteQubitsToPinnedQubits`:
 
 - Block ids are assigned `0, 1, 2, …` in program order of the `Register`
   statements in the flattened kernel. The id is a stable identifier and the
@@ -194,7 +197,7 @@ In `LayoutAnalysis.process_results`:
 
 After the layout is computed, `LayoutAnalysis` checks the shape rule on every
 block as a post-condition. A block-aware heuristic that breaks it is a bug, so
-this raises instead of warning.
+this raises `RuntimeError` instead of warning.
 
 ### Into the placement strategies
 
@@ -272,10 +275,12 @@ qubits**.
    block qubits act as **fixed anchors**: an unblocked qubit's incremental and swap
    cost include its CZ edges to block qubits, so syndrome-style qubits are pulled
    toward the site indices of the block qubits they interact with. Edges to
-   pinned-but-unblocked qubits stay excluded, as today. This needs an optional
-   `anchors: dict[int, LocationAddress]` parameter on
-   `_global_site_min_cost_assignment`; when the parameter is empty the function
-   behaves exactly as now.
+   pinned-but-unblocked qubits stay excluded, as today. This adds an optional
+   `anchors: dict[int, list[tuple[LocationAddress, int]]]` parameter (qubit to
+   placed partner location and CZ weight) to `_global_site_min_cost_assignment`,
+   and lets it take more slots than qubits. A qubit with anchors is placed
+   greedily rather than on the most central slot. With no anchors and equal
+   counts, as on the unblocked path, the function behaves exactly as before.
 
 ### Invariant
 
@@ -296,8 +301,7 @@ in `latest_physical.csv` / `latest_logical.csv` must not change.
 - `no_raise=True` with invalid blocks: no tags, one `CodeBlockWarning`.
 - `use_code_blocks=False`: IR and layout identical to the same kernel without
   `register` calls, plus one warning.
-- A `Register` reaching `LogicalNativeToPlace` or the generic `NativeToPlace`
-  is rejected by the dialect-group check.
+- The generic `NativeToPlace` deletes `Register` with one warning.
 
 **Analysis plumbing (Section 2)** — `python/tests/analysis/layout/`, `python/tests/analysis/placement/`
 
@@ -325,8 +329,9 @@ in `latest_physical.csv` / `latest_logical.csv` must not change.
 **End to end** — `python/tests/integration/`
 
 - A Steane-style kernel with two 7-qubit blocks and a transversal CX compiles
-  through `PhysicalPipeline`. The initial layout respects both blocks, and the
-  transversal CZ layer becomes identical site moves across the two words.
+  through `PhysicalPipeline`. The initial layout (the move program's `Fill`)
+  puts the two blocks in different words at the same offset, so the transversal
+  pairs share site indices.
 
 ## Section 5 — Benchmark baseline: [[4,2,2]], two blocks per word
 

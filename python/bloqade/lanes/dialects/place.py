@@ -7,6 +7,7 @@ from kirin.lattice.empty import EmptyLattice
 
 from bloqade import types as bloqade_types
 from bloqade.gemini.star import validate_steane_star_support
+from bloqade.lanes.analysis.code_blocks import CodeBlockTag
 from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -50,6 +51,9 @@ class _NewQubitBase(ir.Statement):
 
     traits = frozenset()
     location_address: LocationAddress | None = info.attribute(default=None)
+    code_block: CodeBlockTag | None = info.attribute(default=None)
+    """Code-block membership stamped by ``resolve_code_blocks``; None when the qubit
+    is in no block. Only the physical pipeline sets it."""
     result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
 
@@ -294,11 +298,12 @@ class PlacementMethods(interp.MethodTable):
         lookahead_cz_layers = _interp.buffered_future_cz_layers(stmt)
 
         state = _interp.placement_strategy.cz_placements(
-            frame.get(stmt.state_before),
+            _interp.attach_code_blocks(frame.get(stmt.state_before)),
             stmt.controls,
             stmt.targets,
             lookahead_cz_layers,
         )
+        _interp.attach_code_blocks(state)
         if isinstance(state, ExecuteCZ) and not state.verify(
             _interp.placement_strategy.arch_spec, stmt.targets, stmt.controls
         ):
@@ -319,11 +324,11 @@ class PlacementMethods(interp.MethodTable):
                 "user-directed movement (not a MoveToPlacementStrategyABC), but "
                 "the circuit contains a move_to statement"
             )
-        state = frame.get(stmt.state_before)
+        state = _interp.attach_code_blocks(frame.get(stmt.state_before))
         if not isinstance(state, ConcreteState):
             return (state,)
         new_state = strategy.move_to_placements(state, stmt.qubits, stmt.locations)
-        return (new_state,)
+        return (_interp.attach_code_blocks(new_state),)
 
     @interp.impl(Permute)
     def impl_permute(
@@ -339,7 +344,7 @@ class PlacementMethods(interp.MethodTable):
                 "user-directed movement (not a MoveToPlacementStrategyABC), but "
                 "the circuit contains a permute statement"
             )
-        state = frame.get(stmt.state_before)
+        state = _interp.attach_code_blocks(frame.get(stmt.state_before))
         if not isinstance(state, ConcreteState):
             return (state,)
         # relabel by default (no moves); commit the physical permutation when
@@ -348,7 +353,7 @@ class PlacementMethods(interp.MethodTable):
         new_state = strategy.permute_placements(
             state, stmt.qubits, stmt.perm, stmt.insert_moves
         )
-        return (new_state,)
+        return (_interp.attach_code_blocks(new_state),)
 
     @interp.impl(Initialize)
     def impl_initialize(
@@ -368,12 +373,11 @@ class PlacementMethods(interp.MethodTable):
         frame: ForwardFrame[AtomState],
         stmt: R | Rz | StarRz,
     ):
-        return (
-            _interp.placement_strategy.sq_placements(
-                frame.get(stmt.state_before),
-                stmt.qubits,
-            ),
+        state = _interp.placement_strategy.sq_placements(
+            _interp.attach_code_blocks(frame.get(stmt.state_before)),
+            stmt.qubits,
         )
+        return (_interp.attach_code_blocks(state),)
 
     @interp.impl(Yield)
     def impl_yield(
@@ -423,9 +427,11 @@ class PlacementMethods(interp.MethodTable):
         stmt: EndMeasure,
     ):
         new_state = _interp.placement_strategy.measure_placements(
-            frame.get(stmt.state_before), stmt.qubits
+            _interp.attach_code_blocks(frame.get(stmt.state_before)), stmt.qubits
         )
-        return (new_state,) + (AtomState.bottom(),) * len(stmt.qubits)
+        return (_interp.attach_code_blocks(new_state),) + (AtomState.bottom(),) * len(
+            stmt.qubits
+        )
 
 
 @dialect.register(key="place.layout")
@@ -439,12 +445,16 @@ class InitialLayoutMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         stmt: _NewQubitBase,
     ):
-        if stmt.location_address is None:
+        if stmt.location_address is None and stmt.code_block is None:
             return (EmptyLattice.bottom(),)
         addr_entry = _interp.address_entries.get(stmt.result)
         if not isinstance(addr_entry, address.AddressQubit):
             return (EmptyLattice.bottom(),)
         qubit_id = addr_entry.data
+        if stmt.code_block is not None:
+            _interp.code_block_tags[qubit_id] = stmt.code_block
+        if stmt.location_address is None:
+            return (EmptyLattice.bottom(),)
         pinned_values = _interp.location_addresses.values()
         if stmt.location_address in pinned_values:
             raise interp.InterpreterError(

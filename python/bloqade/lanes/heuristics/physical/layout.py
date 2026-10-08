@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 
 import kahip
 
-from bloqade.lanes.analysis.layout import LayoutHeuristicABC
+from bloqade.lanes.analysis.code_blocks import (
+    CodeBlock,
+    CodeBlockPlacementError,
+    block_shape_error,
+)
+from bloqade.lanes.analysis.layout import CodeBlockLayoutHeuristicABC
 from bloqade.lanes.arch.gemini.physical import (
     get_physical_layout_arch_spec,
 )
@@ -26,7 +31,7 @@ def _to_cz_layers(
 
 
 @dataclass
-class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
+class PhysicalLayoutHeuristicGraphPartitionCenterOut(CodeBlockLayoutHeuristicABC):
     arch_spec: ArchSpec = field(default_factory=get_physical_layout_arch_spec)
     max_words: int | None = None
     u_factor: int = 1
@@ -309,9 +314,18 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         weighted_edges: dict[tuple[int, int], int],
         q_to_node: dict[int, int],
         slots: list[LocationAddress],
+        anchors: dict[int, list[tuple[LocationAddress, int]]] | None = None,
     ) -> dict[int, LocationAddress]:
-        if len(qubits) != len(slots):
-            raise RuntimeError("Qubit count and slot count must match for assignment.")
+        """Assign ``qubits`` to ``slots``, minimizing weighted site distance.
+
+        ``anchors`` maps a qubit to ``(location, weight)`` pairs for CZ partners
+        that are already placed (code-block qubits). Those terms join the cost,
+        pulling the qubit toward its partners' site indices. ``slots`` may hold
+        more slots than qubits; the spare ones stay empty.
+        """
+        anchors = {} if anchors is None else anchors
+        if len(qubits) > len(slots):
+            raise RuntimeError("More qubits than slots for assignment.")
 
         site_distance = self._site_distance_matrix()
         qids = tuple(sorted(qubits))
@@ -344,21 +358,30 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
             slot_centrality.append((centrality, slot.site_id, slot.word_id, i))
         slot_order = [idx for _, _, _, idx in sorted(slot_centrality)]
 
+        def anchor_cost(qid: int, site_id: int) -> int:
+            return sum(
+                w * site_distance[site_id][loc.site_id]
+                for loc, w in anchors.get(qid, ())
+            )
+
         q_to_slot_idx: dict[int, int] = {}
         used_slots: set[int] = set()
-        first_q = qubit_order[0]
-        first_slot = slot_order[0]
-        q_to_slot_idx[first_q] = first_slot
-        used_slots.add(first_slot)
+        greedy_order = qubit_order
+        if not anchors.get(qubit_order[0]):
+            first_q = qubit_order[0]
+            first_slot = slot_order[0]
+            q_to_slot_idx[first_q] = first_slot
+            used_slots.add(first_slot)
+            greedy_order = qubit_order[1:]
 
-        for qid in qubit_order[1:]:
+        for qid in greedy_order:
             best_slot_idx: int | None = None
             best_key: tuple[float, int, int, int] | None = None
             for slot_idx in slot_order:
                 if slot_idx in used_slots:
                     continue
                 slot = slots[slot_idx]
-                incremental = 0.0
+                incremental = float(anchor_cost(qid, slot.site_id))
                 for other_qid, other_slot_idx in q_to_slot_idx.items():
                     w = edge_weight_by_q[qid].get(other_qid, 0)
                     if w == 0:
@@ -376,7 +399,12 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         def swap_delta(qid_a: int, qid_b: int) -> int:
             slot_a = slots[q_to_slot_idx[qid_a]]
             slot_b = slots[q_to_slot_idx[qid_b]]
-            delta = 0
+            delta = (
+                anchor_cost(qid_a, slot_b.site_id)
+                - anchor_cost(qid_a, slot_a.site_id)
+                + anchor_cost(qid_b, slot_a.site_id)
+                - anchor_cost(qid_b, slot_b.site_id)
+            )
             for other_qid in qids:
                 if other_qid == qid_a or other_qid == qid_b:
                     continue
@@ -475,13 +503,11 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         result = q_to_location | pinned
         return tuple(result[q] for q in qubits)
 
-    def compute_layout(
+    def _check_layout_inputs(
         self,
         all_qubits: tuple[int, ...],
-        stages: list[tuple[tuple[int, int], ...]],
-        pinned: dict[int, LocationAddress] | None = None,
-    ) -> tuple[LocationAddress, ...]:
-        pinned = {} if pinned is None else pinned
+        pinned: dict[int, LocationAddress],
+    ) -> None:
         if len(set(pinned.values())) < len(pinned):
             raise ValueError(
                 "pinned addresses must be unique; two qubit IDs share the same address"
@@ -492,6 +518,337 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
                 f"pinned contains qubit IDs not in all_qubits: {sorted(extra_keys)}"
             )
         self._validate_pinned_in_arch(pinned, self.arch_spec)
+
+    def compute_layout(
+        self,
+        all_qubits: tuple[int, ...],
+        stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, LocationAddress] | None = None,
+    ) -> tuple[LocationAddress, ...]:
+        pinned = {} if pinned is None else pinned
+        self._check_layout_inputs(all_qubits, pinned)
         qubits = tuple(sorted(all_qubits))
         cz_layers = _to_cz_layers(stages)
         return self._compute_layout_from_cz_layers(qubits, cz_layers, pinned)
+
+    def compute_layout_with_blocks(
+        self,
+        all_qubits: tuple[int, ...],
+        stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, LocationAddress],
+        code_blocks: tuple[CodeBlock, ...],
+    ) -> tuple[LocationAddress, ...]:
+        self._check_layout_inputs(all_qubits, pinned)
+        qubits = tuple(sorted(all_qubits))
+        cz_layers = _to_cz_layers(stages)
+        if not code_blocks:
+            return self._compute_layout_from_cz_layers(qubits, cz_layers, pinned)
+        return _BlockLayout(self, qubits, cz_layers, pinned, code_blocks).solve()
+
+
+_Slot = tuple[int, int]
+"""A block slot: (index into the used home words, site offset)."""
+
+
+class _BlockLayout:
+    """Block-aware layout for ``PhysicalLayoutHeuristicGraphPartitionCenterOut``.
+
+    1. Choose the word count ``k``: the smallest at least today's
+       ``_word_count`` for which the unpinned blocks (first-fit decreasing,
+       contiguous runs) and the unblocked qubits fit the free home-word sites.
+    2. Rank unpinned blocks by entanglement weight (CZ count on edges leaving
+       the block), then size, then block id.
+    3. Greedily give each block the cheapest feasible slot, cost being
+       ``weight * site_distance`` against pinned and already-placed qubits.
+    4. Hill-climb over block swaps (equal sizes) and moves to free slots.
+    5. Assign unblocked qubits to the remaining sites, anchored to the block
+       qubits they interact with.
+    """
+
+    def __init__(
+        self,
+        heuristic: PhysicalLayoutHeuristicGraphPartitionCenterOut,
+        qubits: tuple[int, ...],
+        cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+        pinned: dict[int, LocationAddress],
+        code_blocks: tuple[CodeBlock, ...],
+    ) -> None:
+        self.h = heuristic
+        self.qubits = qubits
+        self.cz_layers = cz_layers
+        self.pinned = pinned
+        self.spw = heuristic.sites_per_partition
+        self.site_distance = heuristic._site_distance_matrix()
+        self.zone_of = heuristic.arch_spec.word_zone_map
+
+        self.weights: dict[int, dict[int, int]] = defaultdict(dict)
+        for controls, targets in cz_layers:
+            for c, t in zip(controls, targets):
+                self.weights[c][t] = self.weights[c].get(t, 0) + 1
+                self.weights[t][c] = self.weights[t].get(c, 0) + 1
+
+        self.free_blocks: list[CodeBlock] = []
+        for block in code_blocks:
+            if len(block) > self.spw:
+                raise CodeBlockPlacementError(
+                    f"code block {block.block_id} has {len(block)} qubits but a "
+                    f"word has only {self.spw} sites"
+                )
+            pinned_members = [q for q in block.qids if q in pinned]
+            if pinned_members and len(pinned_members) != len(block):
+                raise CodeBlockPlacementError(
+                    f"code block {block.block_id} is partly pinned; pin all of "
+                    "its qubits or none"
+                )
+            if pinned_members:
+                reason = block_shape_error([pinned[q] for q in block.qids])
+                if reason is not None:
+                    raise CodeBlockPlacementError(
+                        f"pinned code block {block.block_id}: {reason}"
+                    )
+            else:
+                self.free_blocks.append(block)
+        self.block_qids = {q for block in code_blocks for q in block.qids}
+        self.unblocked = tuple(
+            q for q in qubits if q not in pinned and q not in self.block_qids
+        )
+        self.pinned_sites = {(loc.word_id, loc.site_id) for loc in pinned.values()}
+        home = heuristic.home_word_ids
+        limit = len(home) if heuristic.max_words is None else heuristic.max_words
+        self.home = home[: min(limit, len(home))]
+
+    # -- capacity -------------------------------------------------------------
+
+    def _free(self, k: int, taken: set[tuple[int, int]]) -> list[list[bool]]:
+        return [
+            [
+                (self.home[w], site) not in self.pinned_sites
+                and (self.home[w], site) not in taken
+                for site in range(self.spw)
+            ]
+            for w in range(k)
+        ]
+
+    def _first_fit(
+        self, k: int, blocks: list[CodeBlock], taken: set[tuple[int, int]]
+    ) -> CodeBlock | None:
+        """Pack ``blocks`` first-fit decreasing; return the first that fails."""
+        free = self._free(k, taken)
+        for block in sorted(blocks, key=lambda b: (-len(b), b.block_id)):
+            slot = next(
+                (
+                    (w, off)
+                    for w in range(k)
+                    for off in range(self.spw - len(block) + 1)
+                    if all(free[w][off : off + len(block)])
+                ),
+                None,
+            )
+            if slot is None:
+                return block
+            w, off = slot
+            for site in range(off, off + len(block)):
+                free[w][site] = False
+        if sum(map(sum, free)) < len(self.unblocked):
+            return _UNBLOCKED
+        return None
+
+    def _fits(self, k: int, blocks: list[CodeBlock], taken: set[tuple[int, int]]):
+        return self._first_fit(k, blocks, taken) is None
+
+    def _word_count(self) -> int:
+        start = max(1, self.h._word_count(len(self.qubits)))
+        for k in range(min(start, len(self.home)), len(self.home) + 1):
+            if self._fits(k, self.free_blocks, set()):
+                return k
+        failed = self._first_fit(len(self.home), self.free_blocks, set())
+        if failed is None or failed is _UNBLOCKED:
+            raise CodeBlockPlacementError(
+                f"no free sites remain for {len(self.unblocked)} qubits outside "
+                f"code blocks within {len(self.home)} home words"
+            )
+        raise CodeBlockPlacementError(
+            f"code block {failed.block_id} ({len(failed)} qubits) does not fit "
+            f"in the free sites of {len(self.home)} home words"
+        )
+
+    # -- cost -----------------------------------------------------------------
+
+    def _sites(self, block: CodeBlock, slot: _Slot) -> list[tuple[int, int]]:
+        w, off = slot
+        return [(self.home[w], off + p) for p in range(len(block))]
+
+    def _block_cost(
+        self,
+        block: CodeBlock,
+        slot: _Slot,
+        placed: dict[int, int],
+    ) -> int:
+        """Cost of ``block`` at ``slot`` against ``placed`` (qid -> site id)."""
+        off = slot[1]
+        cost = 0
+        for p, q in enumerate(block.qids):
+            for other, w in self.weights.get(q, {}).items():
+                site = placed.get(other)
+                if site is not None:
+                    cost += w * self.site_distance[off + p][site]
+        return cost
+
+    def _total_cost(self, assignment: dict[int, _Slot]) -> int:
+        placed = self._placed_sites(assignment)
+        total = 0
+        for block in self.free_blocks:
+            others = {q: s for q, s in placed.items() if q not in set(block.qids)}
+            total += self._block_cost(block, assignment[block.block_id], others)
+        return total
+
+    def _placed_sites(self, assignment: dict[int, _Slot]) -> dict[int, int]:
+        placed = {q: loc.site_id for q, loc in self.pinned.items()}
+        for block in self.free_blocks:
+            if block.block_id in assignment:
+                off = assignment[block.block_id][1]
+                for p, q in enumerate(block.qids):
+                    placed[q] = off + p
+        return placed
+
+    # -- search ---------------------------------------------------------------
+
+    def _taken(
+        self, assignment: dict[int, _Slot], skip: int | None = None
+    ) -> set[tuple[int, int]]:
+        by_id = {b.block_id: b for b in self.free_blocks}
+        taken: set[tuple[int, int]] = set()
+        for block_id, slot in assignment.items():
+            if block_id != skip:
+                taken.update(self._sites(by_id[block_id], slot))
+        return taken
+
+    def _open_slots(
+        self, k: int, block: CodeBlock, taken: set[tuple[int, int]]
+    ) -> list[_Slot]:
+        free = self._free(k, taken)
+        n = len(block)
+        return [
+            (w, off)
+            for off in range(self.spw - n + 1)
+            for w in range(k)
+            if all(free[w][off : off + n])
+        ]
+
+    def _rank(self) -> list[CodeBlock]:
+        def weight(block: CodeBlock) -> int:
+            members = set(block.qids)
+            return sum(
+                w
+                for q in block.qids
+                for other, w in self.weights.get(q, {}).items()
+                if other not in members
+            )
+
+        return sorted(self.free_blocks, key=lambda b: (-weight(b), -len(b), b.block_id))
+
+    def _greedy(self, k: int) -> dict[int, _Slot]:
+        assignment: dict[int, _Slot] = {}
+        ranked = self._rank()
+        for i, block in enumerate(ranked):
+            taken = self._taken(assignment)
+            remaining = ranked[i + 1 :]
+            placed = self._placed_sites(assignment)
+            best: tuple[int, int, int] | None = None
+            best_slot: _Slot | None = None
+            for slot in self._open_slots(k, block, taken):
+                if not self._fits(k, remaining, taken | set(self._sites(block, slot))):
+                    continue
+                key = (self._block_cost(block, slot, placed), slot[1], slot[0])
+                if best is None or key < best:
+                    best, best_slot = key, slot
+            assert best_slot is not None, "capacity check guarantees a slot"
+            assignment[block.block_id] = best_slot
+        return assignment
+
+    def _hill_climb(self, k: int, assignment: dict[int, _Slot]) -> None:
+        ranked = self._rank()
+        cost = self._total_cost(assignment)
+        for _ in range(max(1, len(ranked))):
+            improved = False
+            for i, a in enumerate(ranked):
+                for b in ranked[i + 1 :]:
+                    if len(a) != len(b):
+                        continue
+                    trial = dict(assignment)
+                    trial[a.block_id], trial[b.block_id] = (
+                        assignment[b.block_id],
+                        assignment[a.block_id],
+                    )
+                    trial_cost = self._total_cost(trial)
+                    if trial_cost < cost:
+                        assignment.update(trial)
+                        cost = trial_cost
+                        improved = True
+                taken = self._taken(assignment, skip=a.block_id)
+                for slot in self._open_slots(k, a, taken):
+                    if slot == assignment[a.block_id]:
+                        continue
+                    trial = dict(assignment)
+                    trial[a.block_id] = slot
+                    trial_cost = self._total_cost(trial)
+                    if trial_cost < cost:
+                        assignment.update(trial)
+                        cost = trial_cost
+                        improved = True
+                        taken = self._taken(assignment, skip=a.block_id)
+            if not improved:
+                break
+
+    # -- result ---------------------------------------------------------------
+
+    def _location(self, word_id: int, site_id: int) -> LocationAddress:
+        return LocationAddress(word_id, site_id, self.zone_of[word_id])
+
+    def solve(self) -> tuple[LocationAddress, ...]:
+        k = self._word_count()
+        assignment = self._greedy(k)
+        self._hill_climb(k, assignment)
+
+        result: dict[int, LocationAddress] = dict(self.pinned)
+        for block in self.free_blocks:
+            for (word_id, site_id), q in zip(
+                self._sites(block, assignment[block.block_id]), block.qids
+            ):
+                result[q] = self._location(word_id, site_id)
+
+        if self.unblocked:
+            taken = self._taken(assignment)
+            free = self._free(k, taken)
+            slots = [
+                self._location(self.home[w], site)
+                for w in range(k)
+                for site in range(self.spw)
+                if free[w][site]
+            ]
+            unblocked_set = set(self.unblocked)
+            q_to_node = {q: i for i, q in enumerate(self.unblocked)}
+            edges: dict[tuple[int, int], int] = {}
+            anchors: dict[int, list[tuple[LocationAddress, int]]] = {}
+            for q in self.unblocked:
+                for other, w in sorted(self.weights.get(q, {}).items()):
+                    if other in unblocked_set:
+                        u, v = sorted((q_to_node[q], q_to_node[other]))
+                        edges[(u, v)] = w
+                    elif other in self.block_qids:
+                        anchors.setdefault(q, []).append((result[other], w))
+            result.update(
+                self.h._global_site_min_cost_assignment(
+                    qubits=self.unblocked,
+                    weighted_edges=edges,
+                    q_to_node=q_to_node,
+                    slots=slots,
+                    anchors=anchors or None,
+                )
+            )
+        return tuple(result[q] for q in self.qubits)
+
+
+_UNBLOCKED = CodeBlock(block_id=-1, qids=())
+"""Sentinel returned by ``_BlockLayout._first_fit`` when only unblocked qubits
+lack room."""
