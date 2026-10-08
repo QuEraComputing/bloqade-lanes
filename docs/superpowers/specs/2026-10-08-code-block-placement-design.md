@@ -88,9 +88,13 @@ def main():
 example a `new_steane_block()` allocator) is the intended pattern: every call
 produces its own `Register` statement after inlining.
 
-The dialect is added to the physical kernel dialect group. The logical
-pipeline and the generic `NativeToPlace` delete `Register` statements and emit a
-single `CodeBlockWarning` if any were present.
+`code_block` is a physical-only dialect. A kernel opts in by adding it to its
+dialect group, the same way pinned kernels add the gemini `qubit` dialect today
+(`squin.kernel.add(qubit).add(code_block)`). Only `PhysicalNativeToPlace` lowers
+it. `LogicalNativeToPlace` and the generic `NativeToPlace` have no handling for
+it, so a `Register` reaching them is rejected by the existing
+`raise_if_statements_outside_dialect_group` check, like any other unsupported
+statement.
 
 ### `CodeBlockValidation`
 
@@ -292,7 +296,8 @@ in `latest_physical.csv` / `latest_logical.csv` must not change.
 - `no_raise=True` with invalid blocks: no tags, one `CodeBlockWarning`.
 - `use_code_blocks=False`: IR and layout identical to the same kernel without
   `register` calls, plus one warning.
-- The logical pipeline deletes `Register` with one warning.
+- A `Register` reaching `LogicalNativeToPlace` or the generic `NativeToPlace`
+  is rejected by the dialect-group check.
 
 **Analysis plumbing (Section 2)** — `python/tests/analysis/layout/`, `python/tests/analysis/placement/`
 
@@ -323,51 +328,57 @@ in `latest_physical.csv` / `latest_logical.csv` must not change.
   through `PhysicalPipeline`. The initial layout respects both blocks, and the
   transversal CZ layer becomes identical site moves across the two words.
 
-## Section 5 — Benchmark: [[4,2,2]] blocks, two per word
+## Section 5 — Benchmark baseline: [[4,2,2]], two blocks per word
+
+This change adds a **routing baseline** only. No block-aware placement strategy
+exists yet (see Non-goals), so there is nothing to compare against today. The
+case pins its initial layout, so its rows measure placement and routing alone.
+A future block-aware strategy can be benchmarked against these rows on the same
+initial layout.
 
 A [[4,2,2]] block has 4 qubits and a Gemini physical word has 8 sites, so two
 blocks fill a word exactly, at offsets 0 and 4.
 
-### Cases — `python/benchmarks/kernels/medium/`
+### Case — `python/benchmarks/kernels/medium/code422_physical_16.py`
 
-- **`code422_physical_16`** has 16 qubits in four [[4,2,2]] blocks `b0..b3`
-  (`q[4i : 4i+4]`), each registered with `code_block.register`.
+16 qubits in four [[4,2,2]] blocks `b0..b3`. **No `code_block.register`
+calls**: the case runs through the existing harness unchanged.
+
+- **Fixed initial layout.** Every qubit is pinned with `new_at`, so the layout
+  heuristic has nothing to choose. The pins already have the block shape, at
+  home words 0 and 2 (the physical arch's home words are the even words; their
+  CZ partners are the odd words):
+
+  | Block | Word | Sites |
+  | --- | --- | --- |
+  | `b0` | 0 | 0–3 |
+  | `b1` | 0 | 4–7 |
+  | `b2` | 2 | 0–3 |
+  | `b3` | 2 | 4–7 |
+
+  Position `p` of each block is at site `offset + p`, so the same pins can be
+  registered as valid fully pinned blocks later without moving anything.
+- **Circuit.**
   1. Encode each block into logical `|00⟩`: `H(q0)`, then `CX(q0, q1)`,
      `CX(q0, q2)`, `CX(q0, q3)`. All of these edges are inside a block.
   2. Three layers of transversal CZ, each a single `broadcast.cz`:
      `(b0, b1), (b2, b3)`, then `(b0, b2), (b1, b3)`, then `(b0, b3), (b1, b2)`.
      Transversal CZ is a logical Clifford on [[4,2,2]], so the circuit is a
-     valid encoded program, and the three layers use every block pairing.
-- **`code422_unblocked_16`** is the same circuit without the `register` calls.
-  It is the control row: the difference between the two rows is what block
-  awareness changes.
+     valid encoded program. The three layers use every block pairing: both
+     same-word pairs (offset 0 against offset 4) and cross-word pairs.
 
-Four blocks need two words. Step 1 of Section 3 therefore picks `k = 2`, which
-puts exactly two blocks in each word. A layout test checks this shape on the
-benchmark kernel directly, so the CSV is not the only guard.
-
-Both cases have more than `MAX_LOGICAL_QUBITS = 10` qubits, so the logical suite
-skips them through its existing capacity filter. `latest_logical.csv` does not
-change.
-
-### Harness change
-
-The physical suite currently lowers every case through the generic
-`NativeToPlace` (`harness/runner.py`, `_squin_to_move`), which would delete the
-registrations. `BenchmarkCase` gains `code_blocks: bool`, set during discovery
-when the kernel contains a `code_block.Register` statement. In physical mode
-such cases are lowered with `PhysicalNativeToPlace`. All other cases keep the
-generic lowering, so their rows do not move.
+The kernel uses the same dialect group as other pinned kernels
+(`squin.kernel.add(qubit)`). The physical harness lowers through the generic
+`NativeToPlace`, which already keeps `new_at` pins (`InitializeNewQubits`), so
+**no harness change is needed**. With 16 qubits the case is over
+`MAX_LOGICAL_QUBITS = 10`, so the logical suite skips it through its existing
+capacity filter.
 
 ### Baselines
 
-- New rows for both cases are added to `latest_physical.csv`, for every strategy
-  in the default physical matrix.
+- New rows for `code422_physical_16` in `latest_physical.csv`, for every strategy
+  in the default physical matrix. `latest_logical.csv` does not change.
 - Existing rows must not change. Regenerate, diff, and re-run once to confirm
   determinism, per AGENT.md.
-
-## Open questions for review
-
-1. Should `register` in the logical or generic pipeline warn (as proposed) or
-   error?
-2. Under `no_raise=True`, is "drop all blocks with one warning" the right fallback?
+- A test asserts that the kernel's pins form four blocks, two per word, with
+  `site = offset + position`, so the baseline's layout cannot drift unnoticed.
