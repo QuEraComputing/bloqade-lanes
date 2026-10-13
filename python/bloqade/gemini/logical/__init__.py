@@ -39,6 +39,7 @@ from . import (
 from .dialects.operations import terminal_measure as terminal_measure
 from .group import kernel as kernel
 from .stdlib import (
+    broadcast as broadcast,
     default_post_processing as default_post_processing,
     qalloc_at as qalloc_at,
 )
