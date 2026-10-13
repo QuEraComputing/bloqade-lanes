@@ -1,12 +1,16 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import cast
 
 from kirin import ir
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 from bloqade.lanes.arch.spec import ArchSpec
 
+from ._mp4 import hold_frames, mp4_writer
 from .app import DebuggerController
 from .artist import get_drawer, render_generator
 
@@ -162,16 +166,45 @@ def debugger(
     pause_time: float = 1.0,
     atom_marker: str = "o",
     ax: Axes | None = None,
+    *,
+    to_mp4: str | Path | None = None,
 ):
+    """Show move-program steps, or export them as still frames in an MP4.
+
+    ``to_mp4`` suppresses the interactive view and never overwrites a file.
+    FFmpeg must be available on ``PATH``.
+    """
     # set up matplotlib figure with buttons
+    owns_figure = ax is None
     if ax is None:
         fig, ax = plt.subplots(figsize=(14, 8))
     else:
-        fig = ax.figure
+        fig = cast(Figure, ax.get_figure(root=True))
 
     fig.subplots_adjust(bottom=0.2)
 
     draw, num_steps = get_drawer(mt, arch_spec, ax, atom_marker)
+    if to_mp4 is not None:
+        fps = 30
+        output: str | None = None
+        try:
+            output, writer = mp4_writer(to_mp4, fps=fps)
+            with writer.saving(fig, output, dpi=fig.dpi):
+                for step_index in range(num_steps):
+                    ax.cla()
+                    draw(step_index)
+                    for _ in range(hold_frames(pause_time, fps)):
+                        writer.grab_frame()
+                if num_steps == 0:
+                    writer.grab_frame()
+        except Exception:
+            if output is not None:
+                Path(output).unlink(missing_ok=True)
+            raise
+        finally:
+            if owns_figure:
+                plt.close(fig)
+        return
     if interactive:
         controller = StaticDebuggerController(ax, num_steps, draw)
         controller.run_mpl_event_loop(ax, fig)
@@ -189,15 +222,44 @@ def animated_debugger(
     atom_marker: str = "o",
     ax: Axes | None = None,
     fps: int = 30,
+    *,
+    to_mp4: str | Path | None = None,
 ):
+    """Animate move-program steps, or export the animation as an MP4.
+
+    ``to_mp4`` suppresses the interactive view and never overwrites a file.
+    FFmpeg must be available on ``PATH``.
+    """
+    owns_figure = ax is None
     if ax is None:
         fig, ax = plt.subplots(figsize=(14, 8))
     else:
-        fig = ax.figure
+        fig = cast(Figure, ax.get_figure(root=True))
 
     fig.subplots_adjust(bottom=0.2)
 
     get_renderer, num_steps = render_generator(mt, arch_spec, ax, atom_marker, fps)
+    if to_mp4 is not None:
+        output = None
+        try:
+            output, writer = mp4_writer(to_mp4, fps=fps)
+            with writer.saving(fig, output, dpi=fig.dpi):
+                for step_index in range(num_steps):
+                    ax.cla()
+                    num_frames, renderer = get_renderer(step_index)
+                    for frame_index in range(num_frames + 1):
+                        renderer(frame_index)
+                        writer.grab_frame()
+                if num_steps == 0:
+                    writer.grab_frame()
+        except Exception:
+            if output is not None:
+                Path(output).unlink(missing_ok=True)
+            raise
+        finally:
+            if owns_figure:
+                plt.close(fig)
+        return
     if interactive:
         controller = AnimatorController(ax, num_steps, get_renderer)
         controller.run_mpl_event_loop(ax, fig)
