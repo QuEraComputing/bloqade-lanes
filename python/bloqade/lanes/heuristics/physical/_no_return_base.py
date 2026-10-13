@@ -19,7 +19,7 @@ their specific CzPlacement entry point. The base owns:
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -38,7 +38,10 @@ from bloqade.lanes.bytecode._native import (
     SolveStatus,
 )
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
-from bloqade.lanes.heuristics.physical.movement import convert_move_layers
+from bloqade.lanes.heuristics.physical.movement import (
+    RustPlacementTraversal,
+    convert_move_layers,
+)
 
 
 @dataclass
@@ -99,6 +102,11 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         gradient. Off the palindrome path the return phase does run, and
         mirroring it is expected to be neutral, since both of *its*
         endpoints are unpaired.
+    completion_bound:
+        Optional admissible completion bound for entropy-based fixed-target
+        routing. ``"weighted_distance"`` applies to the fixed-target CZ
+        phase and user-directed ``MoveTo`` routing; ``None`` preserves the
+        Rust solver's default pruning behavior.
 
     Notes
     -----
@@ -127,12 +135,21 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
     # stable. Tolerated because no in-repo caller constructs these strategies
     # positionally.
     backwards_search: bool = False
+    _: KW_ONLY
+    completion_bound: str | None = None
 
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         assert_single_cz_zone(self.arch_spec, type(self).__name__)
+        if self.completion_bound not in (None, "weighted_distance"):
+            raise ValueError("completion_bound must be None or 'weighted_distance'")
+        if (
+            self.completion_bound is not None
+            and self.strategy != SearchStrategy.ENTROPY
+        ):
+            raise ValueError("completion_bound requires the entropy search strategy")
 
     @property
     def rust_nodes_expanded_total(self) -> int:
@@ -166,7 +183,12 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
 
     def _build_move_search(self) -> MoveSearch:
         """Build a :class:`MoveSearch` from the base solve-option fields."""
-        return MoveSearch.ids().with_options(self._build_solve_options())
+        move_search = MoveSearch.ids().with_options(self._build_solve_options())
+        if self.completion_bound is not None:
+            move_search = move_search.with_entropy_options(
+                _native.EntropyOptions(completion_bound=self.completion_bound)
+            )
+        return move_search
 
     @abc.abstractmethod
     def _invoke_placement(
@@ -355,5 +377,9 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
         from bloqade.lanes.heuristics.move_synthesis import compute_move_layers
 
         return compute_move_layers(
-            self.arch_spec, state_before, state_after, engine=self._get_engine()
+            self.arch_spec,
+            state_before,
+            state_after,
+            engine=self._get_engine(),
+            traversal=RustPlacementTraversal(completion_bound=self.completion_bound),
         )
