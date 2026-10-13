@@ -828,8 +828,8 @@ def _export_plotly_mp4(figure: Figure, path: str | Path, pause_time: float) -> N
     output, writer = mp4_writer(path, fps=fps)
     snapshot = _plotly().Figure(figure)
     snapshot.frames = ()
-    # Playback and bus controls are interactive HTML elements, not video content.
-    snapshot.update_layout(sliders=[], updatemenus=[])
+    # Kaleido rasterizes static figures: it does not run Plotly.animate(),
+    # which normally advances the visible step slider in the browser.
 
     width = snapshot.layout.width or 700
     height = snapshot.layout.height or 450
@@ -838,7 +838,7 @@ def _export_plotly_mp4(figure: Figure, path: str | Path, pause_time: float) -> N
     ax.axis("off")
     try:
         with writer.saving(video_figure, output, dpi=100):
-            for frame in figure.frames or (None,):
+            for step_index, frame in enumerate(figure.frames or (None,)):
                 if frame is not None:
                     # Plotly animation merges frame attributes into existing
                     # traces; reproduce that merge for each rasterized step.
@@ -846,6 +846,8 @@ def _export_plotly_mp4(figure: Figure, path: str | Path, pause_time: float) -> N
                         snapshot.data[index].update(trace.to_plotly_json())
                     if frame.layout is not None:
                         snapshot.update_layout(frame.layout)
+                if snapshot.layout.sliders:
+                    snapshot.layout.sliders[0].active = step_index
                 try:
                     png = snapshot.to_image(format="png")
                 except (ImportError, RuntimeError, ValueError) as exc:

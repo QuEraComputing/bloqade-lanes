@@ -512,12 +512,25 @@ def test_plotly_mp4_export_applies_each_frame(plotly, monkeypatch, tmp_path) -> 
             go.Frame(data=[go.Scatter(x=[2], y=[0])], traces=[0]),
         ],
     )
-    figure.update_layout(width=32, height=32)
-    observed: list[list[int]] = []
+    figure.update_layout(
+        width=32,
+        height=32,
+        sliders=[
+            {
+                "active": 0,
+                "currentvalue": {"prefix": "Step: "},
+                "steps": [
+                    {"label": "1", "method": "animate", "args": [["step-0"]]},
+                    {"label": "2", "method": "animate", "args": [["step-1"]]},
+                ],
+            }
+        ],
+    )
+    observed: list[tuple[list[int], int]] = []
 
     def fake_to_image(self, *, format: str) -> bytes:
         assert format == "png"
-        observed.append(list(self.data[0].x))
+        observed.append((list(self.data[0].x), self.layout.sliders[0].active))
         image = BytesIO()
         plt.imsave(image, np.zeros((8, 8, 3)), format="png")
         return image.getvalue()
@@ -526,7 +539,8 @@ def test_plotly_mp4_export_applies_each_frame(plotly, monkeypatch, tmp_path) -> 
     output = tmp_path / "plotly.mp4"
     plotly_debug._export_plotly_mp4(figure, output, pause_time=0)
 
-    assert observed == [[1], [2]]
+    assert observed == [([1], 0), ([2], 1)]
+    assert figure.layout.sliders[0].active == 0
     assert output.read_bytes()[4:8] == b"ftyp"
 
 
