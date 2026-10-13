@@ -558,6 +558,9 @@ def make_physical_placement_strategy(
     arch_spec: ArchSpec | None = None,
     return_moves: bool = True,
     mover_selection: MoverSelection | None = None,
+    lambda_lookahead: float = 0.0,
+    bus_reward_rho: int = 1,
+    top_bus_signatures: int = 6,
 ) -> PlacementStrategyABC:
     """Build a physical placement strategy from user-facing search knobs.
 
@@ -568,9 +571,12 @@ def make_physical_placement_strategy(
     sites per qubit in the Hungarian assignment).  ``search_budget`` maps to
     ``max_expansions``.  ``mover_selection`` picks which qubit of each CZ pair
     moves (see :class:`~bloqade.lanes.bytecode.MoverSelection`); ``None`` keeps
-    NoHome's default, ``RANKED``.  ``lambda_lookahead`` is fixed at ``0`` because
-    palindrome return always moves atoms back to their original home position,
-    so future-layer proximity penalties carry no signal.
+    NoHome's default, ``RANKED``. ``lambda_lookahead`` weights future-layer
+    proximity in the no-home return assignment; its factory default is ``0``
+    because palindrome return always restores the original home positions.
+    ``bus_reward_rho`` and ``top_bus_signatures`` control bus-biased return
+    assignment variants. These three knobs are most useful when
+    ``return_moves=False``.
 
     ``return_moves`` also selects mirrored solving: it wraps the strategy in
     :class:`~bloqade.lanes.analysis.placement.PalindromePlacementStrategy`
@@ -608,7 +614,9 @@ def make_physical_placement_strategy(
         strategy=_STRATEGY_MAP[strategy],
         max_expansions=search_budget,
         k_candidates=move_solutions_per_layer,
-        lambda_lookahead=0.0,
+        lambda_lookahead=lambda_lookahead,
+        bus_reward_rho=bus_reward_rho,
+        top_bus_signatures=top_bus_signatures,
         # Mirrored solving is only sound as an *optimisation* when the target
         # is reliably the more constrained endpoint, and palindrome is what
         # guarantees that: it restores the pre-CZ home layout before every
