@@ -46,6 +46,24 @@ def test_nohome_default_construction():
     assert strategy.k_candidates == 8
 
 
+@pytest.mark.parametrize(
+    ("completion_bound", "strategy", "message"),
+    [
+        ("unknown", SearchStrategy.ENTROPY, "completion_bound"),
+        ("weighted_distance", SearchStrategy.ASTAR, "entropy"),
+    ],
+)
+def test_nohome_rejects_invalid_completion_bound(
+    completion_bound: str, strategy: SearchStrategy, message: str
+):
+    with pytest.raises(ValueError, match=message):
+        NoHomePlacementStrategy(
+            arch_spec=logical.get_arch_spec(),
+            strategy=strategy,
+            completion_bound=completion_bound,
+        )
+
+
 def test_nohome_completion_bound_reaches_cz_search(monkeypatch: pytest.MonkeyPatch):
     seen: dict[str, object] = {}
     original_entropy_options = _native.EntropyOptions
