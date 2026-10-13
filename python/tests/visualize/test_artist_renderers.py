@@ -13,6 +13,9 @@ frame by frame), and steps that are neither.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from unittest.mock import Mock
+
 import pytest
 from matplotlib import animation, pyplot as plt
 
@@ -28,6 +31,7 @@ from bloqade.lanes.bytecode.encoding import Direction, SiteLaneAddress
 from bloqade.lanes.bytecode.word import Word
 from bloqade.lanes.dialects import move
 from bloqade.lanes.prelude import kernel
+from bloqade.lanes.visualize import debug as debug_module
 from bloqade.lanes.visualize.artist import (
     collect_debug_steps,
     get_drawer,
@@ -148,6 +152,48 @@ def test_animated_debugger_exports_mp4(transport_arch_spec: ArchSpec, tmp_path) 
         to_mp4=output,
     )
     assert output.read_bytes()[4:8] == b"ftyp"
+
+
+@pytest.mark.parametrize("exporter", [debugger, animated_debugger])
+def test_mp4_export_records_one_frame_without_steps(
+    exporter, transport_arch_spec: ArchSpec, tmp_path, monkeypatch
+) -> None:
+    writer = Mock()
+    writer.saving.return_value = nullcontext()
+    monkeypatch.setattr(
+        debug_module,
+        "mp4_writer",
+        lambda path, *, fps: (str(path), writer),
+    )
+
+    exporter(_no_atom_state_kernel, transport_arch_spec, to_mp4=tmp_path / "empty.mp4")
+
+    writer.grab_frame.assert_called_once_with()
+
+
+@pytest.mark.parametrize("exporter", [debugger, animated_debugger])
+def test_mp4_export_removes_partial_file_on_failure(
+    exporter, transport_arch_spec: ArchSpec, tmp_path, monkeypatch
+) -> None:
+    output = tmp_path / "partial.mp4"
+    writer = Mock()
+
+    def saving(*_args, **_kwargs):
+        output.write_bytes(b"partial")
+        return nullcontext()
+
+    writer.saving.side_effect = saving
+    writer.grab_frame.side_effect = RuntimeError("encoding failed")
+    monkeypatch.setattr(
+        debug_module,
+        "mp4_writer",
+        lambda path, *, fps: (str(path), writer),
+    )
+
+    with pytest.raises(RuntimeError, match="encoding failed"):
+        exporter(_gate_then_move_kernel, transport_arch_spec, to_mp4=output)
+
+    assert not output.exists()
 
 
 # ── get_drawer ───────────────────────────────────────────────────
