@@ -16,7 +16,11 @@ from ._task_runtime import (
     Result as Result,
     _SimulatorTaskBase,
 )
-from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
+from .simulator_backend import (
+    AbstractSimulatorBackend,
+    PPVMSimulatorBackend,
+    TsimSimulatorBackend,
+)
 
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
@@ -97,7 +101,7 @@ class GeminiLogicalSimulator:
 
     noise_model: LogicalNoiseModelABC = field(default_factory=_default_noise_model)
     """The noise model used for simulation. Defaults to :func:`generate_logical_noise_model`."""
-    backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
+    backend: AbstractSimulatorBackend = field(default_factory=PPVMSimulatorBackend)
     """Sampling backend for tasks created by this simulator."""
 
     def task(

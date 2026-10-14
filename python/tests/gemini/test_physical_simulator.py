@@ -22,6 +22,7 @@ from bloqade.gemini.device import (
     DetectorResult,
     GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask,
+    PPVMSimulatorBackend,
     Result,
     SimulatorResult,
     TsimSimulatorBackend,
@@ -134,6 +135,13 @@ def test_physical_simulator_exports_from_gemini_namespace():
 def test_physical_simulator_result_aliases_are_public():
     assert PhysicalResult is Result
     assert PhysicalDetectorResult is DetectorResult
+
+
+def test_physical_simulator_defaults_to_ppvm_backend():
+    simulator = PhysicalSimulator()
+
+    assert isinstance(simulator.backend, PPVMSimulatorBackend)
+    assert simulator.task(small_physical_kernel)._backend is simulator.backend
 
 
 def test_logical_and_physical_tasks_share_non_dataclass_runtime():
@@ -380,6 +388,7 @@ def test_physical_task_preserves_source_kernel_across_repeated_compilation():
             ),
         ),
         pytest.param(_PyQrackSimulatorBackend(seed=29), id="pyqrack"),
+        pytest.param(PPVMSimulatorBackend(seed=29), id="ppvm"),
     ],
 )
 @pytest.mark.parametrize("with_noise", [False, True], ids=["noiseless", "noisy"])
