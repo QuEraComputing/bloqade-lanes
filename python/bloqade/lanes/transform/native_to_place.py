@@ -35,6 +35,7 @@ from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place, clifford2native
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+from bloqade.lanes.rewrite.merge_single_qubit_runs import MergeSingleQubitRuns
 from bloqade.lanes.rewrite.normalize_axis_angles import NormalizeGateAxisAngles
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
@@ -62,8 +63,10 @@ class NativeToPlaceBase:
       ``AggressiveUnroll`` and after every validator, in the only window where
       the program is a flat block of ``native.gate`` statements.  Returned
       pre-wrapped in their traversal, as ``_squin_clifford_rules`` are.
-      Default is no rules.  Logical subclass runs ``EliminateRz``, commuting
-      ``Rz`` phase into later ``R`` gates instead of emitting it.
+      Default is no rules.  Logical subclass runs ``MergeSingleQubitRuns``,
+      folding each qubit's run of 1-qubit gates into one rotation, then
+      ``EliminateRz``, commuting ``Rz`` phase into later ``R`` gates instead of
+      emitting it.
 
     * ``_post_unroll_validation(out)`` — called after ``AggressiveUnroll``,
       before ``ScfToCfRule``.  Default is a no-op.  Physical subclass runs
@@ -279,6 +282,9 @@ class LogicalNativeToPlace(NativeToPlaceBase):
 
     def _post_unroll_rules(self, no_raise: bool) -> list[RewriteRule]:
         return [
+            # Before EliminateRz: a merged run comes out as R then Rz, and
+            # EliminateRz absorbs that Rz like any other.
+            rewrite.Walk(MergeSingleQubitRuns()),
             rewrite.Walk(EliminateRz(no_raise=no_raise)),
             # After EliminateRz, which is what grows the angles, and before
             # the CSE below, which is what turns equal angles back into one
