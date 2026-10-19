@@ -453,6 +453,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
 
         remaining = self.traversal.max_expansions
         winning_result = None
+        statuses: list[str] = []
         for candidate in candidates:
             if remaining is not None and remaining <= 0:
                 break
@@ -465,6 +466,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
                 blocked_native,
                 remaining,
             )
+            statuses.append(result.status.name)
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             self._accumulate_bound_stats(result.bound_stats)
             if result.proof == Proof.OPTIMAL:
@@ -492,7 +494,8 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         if winning_result is None:
             raise PlacementError(
                 f"CZ routing solver failed for pairs {list(zip(controls, targets))}; "
-                "no candidate target layout was solved within the expansion budget"
+                "no candidate target layout was solved within the expansion budget "
+                f"(solver statuses: {statuses})"
             )
 
         move_layers = convert_move_layers(winning_result.move_layers)
