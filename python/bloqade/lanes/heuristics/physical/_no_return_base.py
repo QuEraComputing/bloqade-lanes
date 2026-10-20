@@ -19,7 +19,7 @@ their specific CzPlacement entry point. The base owns:
 from __future__ import annotations
 
 import abc
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import dataclass, field
 
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -135,8 +135,7 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
     # stable. Tolerated because no in-repo caller constructs these strategies
     # positionally.
     backwards_search: bool = False
-    _: KW_ONLY
-    completion_bound: str | None = None
+    completion_bound: str | None = field(kw_only=True, default=None)
 
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
