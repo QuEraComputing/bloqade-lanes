@@ -22,7 +22,11 @@ from ._task_runtime import (
     Result as Result,
     _SimulatorTaskBase,
 )
-from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
+from .simulator_backend import (
+    AbstractSimulatorBackend,
+    PPVMSimulatorBackend,
+    TsimSimulatorBackend,
+)
 
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
@@ -210,7 +214,7 @@ class GeminiPhysicalSimulator:
     """The physical noise model used for simulation."""
     arch_spec: ArchSpec = field(default_factory=_default_arch_spec)
     """The physical architecture specification used for compilation."""
-    backend: AbstractSimulatorBackend = field(default_factory=TsimSimulatorBackend)
+    backend: AbstractSimulatorBackend = field(default_factory=PPVMSimulatorBackend)
     """Sampling and detector-model backend used by created tasks."""
     place_opt_type: type[passes.Pass] | None = None
     """Optional placement pass used for compilation."""

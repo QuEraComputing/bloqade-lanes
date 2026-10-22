@@ -33,6 +33,7 @@ cudaq = [
 sim = [
     "bloqade-circuit[cirq, tsim]~=0.15.1",
     "bloqade-tsim~=0.1.3",
+    "ppvm"
 ]
 decoding = [
     # Optional confidence decoders (Gurobi MLE + table/MLD) live behind the
