@@ -518,9 +518,33 @@ def test_postselection_experiment_analysis_curve_shapes(msd_mld_exp, msd_mld_dec
 
 def test_postselection_experiment_tomography_result_matches_full_curve_point(
     msd_mld_exp,
-    msd_mld_decoded,
+    monkeypatch,
 ):
-    _ = msd_mld_decoded
+    from bloqade.gemini.decoding.postselection import _DecodedPostselectionResult
+
+    # Compare estimates with known basis coverage rather than relying on a
+    # small random sample surviving postselection in every basis.
+    decoded = {
+        basis: _DecodedPostselectionResult(
+            observables=np.array([[0], [0], [1]], dtype=np.uint8),
+            confidence=np.array([0.9, 0.8, 0.1]),
+        )
+        for basis in ("X", "Y", "Z")
+    }
+    monkeypatch.setattr(
+        msd_mld_exp._postselection_exp_cache, "decoded_results", decoded
+    )
+    monkeypatch.setattr(
+        msd_mld_exp._postselection_exp_cache,
+        "raw_results",
+        {
+            basis: _BasisDataset(
+                detectors=np.zeros((3, 0), dtype=np.uint8),
+                observables=result.observables,
+            )
+            for basis, result in decoded.items()
+        },
+    )
     target_bloch = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
     curve = msd_mld_exp.analysis_f_vs_fraction(
         target_bloch=target_bloch,
@@ -535,9 +559,9 @@ def test_postselection_experiment_tomography_result_matches_full_curve_point(
 def test_tomography_result_rejects_bloch_vector_with_norm_greater_than_one():
     result = TomographyResult(
         {
-            "X": np.array([[0], [1]], dtype=np.uint8),
-            "Y": np.array([[0], [1]], dtype=np.uint8),
-            "Z": np.array([[0], [1]], dtype=np.uint8),
+            "X": np.array([0, 1], dtype=np.uint8),
+            "Y": np.array([0, 1], dtype=np.uint8),
+            "Z": np.array([0, 1], dtype=np.uint8),
         }
     )
 

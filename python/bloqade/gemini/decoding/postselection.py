@@ -296,7 +296,11 @@ def _evaluate_cached_threshold_curve(
     basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
 ) -> PostselectionCurveData:
-    """Evaluate a point-fidelity curve from decoded shots and confidences."""
+    """Evaluate a point-fidelity curve from decoded shots and confidences.
+
+    A tomography estimate requires at least one shot in every basis, even when
+    ``min_accepted_per_basis`` is zero. Skip thresholds without that coverage.
+    """
 
     confidence_arrays = [
         decoded_results[basis].confidence
@@ -319,13 +323,12 @@ def _evaluate_cached_threshold_curve(
         for basis in basis_labels:
             basis_results = decoded_results[basis]
             keep = basis_results.confidence >= float(threshold)
-            shots = basis_results.observables[keep].astype(np.uint8, copy=False)
+            shots = basis_results.observables[keep, 0].astype(np.uint8, copy=False)
             shots_by_basis[basis] = shots
             accepted_count += int(shots.shape[0])
 
-        if (
-            min(shots_by_basis[basis].shape[0] for basis in basis_labels)
-            < min_accepted_per_basis
+        if min(shots_by_basis[basis].shape[0] for basis in basis_labels) < max(
+            1, min_accepted_per_basis
         ):
             continue
 

@@ -474,7 +474,8 @@ class PostSelectionExperiment:
             accepting all shots that passed postselection, not all shots used to perform the experiment.
 
         Returns:
-            TomographyResult: The resulting shots in each basis based on the accepted_fraction provided.
+            TomographyResult: Single-qubit tomography with a one-dimensional
+                shot array per basis, selected using the accepted fraction.
         """
 
         decoded_results = self._postselection_exp_cache.decoded_results
@@ -489,7 +490,9 @@ class PostSelectionExperiment:
             accepted_fraction,
             basis_labels=basis_labels,
         )
-        return TomographyResult(shots_by_basis)
+        return TomographyResult(
+            {basis: shots[:, 0] for basis, shots in shots_by_basis.items()}
+        )
 
     def analysis_visualization(
         self, min_accepted_fraction: float = 0.04, title: str | None = None

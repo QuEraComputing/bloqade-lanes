@@ -17,9 +17,9 @@ from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
 def test_tomography_result_builds_density_matrix_and_point_fidelity():
     result = TomographyResult(
         {
-            "X": np.array([[0], [0]], dtype=np.uint8),
-            "Y": np.array([[0], [1]], dtype=np.uint8),
-            "Z": np.array([[0], [1]], dtype=np.uint8),
+            "X": np.array([0, 0], dtype=np.uint8),
+            "Y": np.array([0, 1], dtype=np.uint8),
+            "Z": np.array([0, 1], dtype=np.uint8),
         }
     )
 
@@ -30,9 +30,9 @@ def test_tomography_result_builds_density_matrix_and_point_fidelity():
 def test_tomography_result_rejects_non_physical_target_bloch_vector():
     result = TomographyResult(
         {
-            "X": np.array([[0], [1]], dtype=np.uint8),
-            "Y": np.array([[0], [1]], dtype=np.uint8),
-            "Z": np.array([[0], [1]], dtype=np.uint8),
+            "X": np.array([0, 1], dtype=np.uint8),
+            "Y": np.array([0, 1], dtype=np.uint8),
+            "Z": np.array([0, 1], dtype=np.uint8),
         }
     )
 
