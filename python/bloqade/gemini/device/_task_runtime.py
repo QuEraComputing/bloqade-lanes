@@ -286,7 +286,10 @@ class _SimulatorTaskBase(Generic[RetType]):
                 total_distance_moved_um += sum(
                     move_metric_calculator.lane_distance_um(lane)
                     for lane in stmt.lanes
-                    if state.data.get_qubit(lane.src_site()) is not None
+                    if state.data.get_qubit(
+                        self.physical_arch_spec.get_endpoints(lane)[0]
+                    )
+                    is not None
                 )
             elif isinstance(stmt, move.CZ):
                 cz_pulse_count += 1

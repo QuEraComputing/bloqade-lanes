@@ -8,7 +8,8 @@ from bloqade.decoders.dialects.annotate.types import (
     MeasurementResultType,
     ObservableType,
 )
-from kirin import ir, lowering, types
+from kirin import interp, ir, lowering, types
+from kirin.analysis import const
 from kirin.decl import info, statement
 from kirin.ir import StmtTrait
 
@@ -45,7 +46,7 @@ ZoneAddressType = types.PyClass(ZoneAddress)
 # ArrayType and MeasurementFutureType come from bloqade.lanes.types.
 
 # Type variable for the stack-manipulation invariant:
-#   Dup preserves the top-of-stack type (T → T).
+#   Dup preserves the top-of-stack type (T → T, T).
 T = types.TypeVar("T")
 
 # Type variables for the parameterised ArrayType — used by NewArray (result
@@ -78,6 +79,28 @@ TYPE_TAG: dict[int, types.TypeAttribute] = {
 
 
 # ── Constants ──────────────────────────────────────────────────────────
+
+
+def constant_value_type(value: typing.Any) -> str | None:
+    """The vihaco type a constant holding ``value`` pushes, spelled as the
+    text format spells it (see ``Instruction.load``) — what the Rust
+    validator's stack simulation gives each ``const``. ``None`` for a value
+    no bytecode constant holds.
+
+    Keyed on the value rather than the statement, so it answers for a
+    ``Const*`` statement's ``value`` and a folded ``py.Constant`` alike.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float):
+        return "f64"
+    if isinstance(value, int):
+        return "i64"
+    if isinstance(value, (LocationAddress, LaneAddress)):
+        return "u64"
+    if isinstance(value, ZoneAddress):
+        return "u32"
+    return None
 
 
 @statement(dialect=dialect)
@@ -120,13 +143,25 @@ class ConstZone(ir.Statement):
 
 @statement(dialect=dialect)
 class Dup(ir.Statement):
-    """Duplicate the top of the virtual stack. Semantically result ≡ value;
-    preserved as an explicit op to give downstream passes a hook for
-    non-cloning invariants."""
+    """Duplicate the top of the virtual stack: bytecode ``dup``, ``(a -- a a)``.
 
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    Like every other statement here it pops its operand and pushes its
+    results — two of them, both ``≡ value``. ``top`` is the copy left on top,
+    ``below`` the one beneath it, per the first-declared-on-top convention.
+    Each is a value of its own with its own consumer, so an operand is only
+    ever used by the statement that pops it.
+
+    Not ``Pure``: a ``Dup`` is part of the program the bytecode spells, so
+    DCE and ``ConstantFold`` leave it, even when nothing reads a copy.
+    ``InlineDup`` is what takes it out: ``load_program(..., inline_dup=True)``,
+    the lowering to ``move``, and ``stackify`` — in a block it has to rework —
+    for a ``Dup`` of a constant.
+    """
+
+    traits = frozenset({lowering.FromPythonCall()})
     value: ir.SSAValue = info.argument(T)
-    result: ir.ResultValue = info.result(T)
+    top: ir.ResultValue = info.result(T)
+    below: ir.ResultValue = info.result(T)
 
 
 # ── Locals ─────────────────────────────────────────────────────────────
@@ -393,3 +428,52 @@ class SetObservable(ir.Statement):
 # ``func.Return``, whose type-inference methods come from the ``func``
 # dialect itself. Every other stack_move statement's result type is
 # fully determined by its declaration.
+
+
+# ── Concrete interpretation ────────────────────────────────────────────
+#
+# The statements whose value is known without running the device: the
+# constants and ``Dup``. Every other statement acts on the device, or on the
+# frame's locals, and has no Python value to compute here.
+#
+# Kirin's constant propagation falls back to the concrete methods for a
+# ``Pure`` statement, which the constants are. ``Dup`` is not (see its
+# docstring), so it has a ``constprop`` method of its own: a constant is
+# propagated through a ``Dup`` to its consumers, but nothing folds the ``Dup``
+# away — ``InlineDup`` does that.
+
+
+@dialect.register
+class Concrete(interp.MethodTable):
+
+    @interp.impl(ConstFloat)
+    @interp.impl(ConstInt)
+    @interp.impl(ConstLoc)
+    @interp.impl(ConstLane)
+    @interp.impl(ConstZone)
+    def const(
+        self,
+        _interp: interp.Interpreter,
+        frame: interp.Frame,
+        stmt: ConstFloat | ConstInt | ConstLoc | ConstLane | ConstZone,
+    ):
+        return (stmt.value,)
+
+    @interp.impl(Dup)
+    def dup(self, _interp: interp.Interpreter, frame: interp.Frame, stmt: Dup):
+        value = frame.get(stmt.value)
+        return (value, value)
+
+
+@dialect.register(key="constprop")
+class ConstProp(interp.MethodTable):
+
+    @interp.impl(Dup)
+    def dup(
+        self,
+        _interp: const.Propagate,
+        frame: const.Frame,
+        stmt: Dup,
+    ):
+        value = frame.get(stmt.value)
+        return (value, value)

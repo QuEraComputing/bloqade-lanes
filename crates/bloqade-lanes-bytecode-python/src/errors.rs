@@ -38,6 +38,34 @@ fn arch_spec_error_to_py(py: Python<'_>, error: &ArchSpecError) -> PyResult<PyOb
     Ok(obj.into())
 }
 
+/// Convert an invalid search request to its `SearchConfigError` subclass.
+pub fn config_error_to_py(
+    py: Python<'_>,
+    error: &bloqade_lanes_search::primitives::config::ConfigError,
+) -> PyErr {
+    use bloqade_lanes_search::primitives::config::ConfigError;
+    let build = || -> PyResult<PyErr> {
+        let module = py.import(EXCEPTIONS_MODULE)?;
+        let message = error.to_string();
+        let obj = match *error {
+            ConfigError::DuplicateQubitId { qubit_id } => module
+                .getattr("DuplicateQubitIdError")?
+                .call1((message, qubit_id))?,
+            ConfigError::DuplicateTargetLocation { location, qubits } => module
+                .getattr("DuplicateTargetLocationError")?
+                .call1((message, location, qubits))?,
+            ConfigError::DuplicateTargetQubit { qubit_id } => module
+                .getattr("DuplicateTargetQubitError")?
+                .call1((message, qubit_id))?,
+            ConfigError::DuplicateOccupancy { location, qubits } => module
+                .getattr("DuplicateOccupancyError")?
+                .call1((message, location, qubits))?,
+        };
+        Ok(PyErr::from_value(obj))
+    };
+    build().unwrap_or_else(|e| e)
+}
+
 /// Convert a Vec<ArchSpecError> to a single Python ArchSpecError with an errors list.
 /// Build a [`LaneIndex`] from a Python-supplied [`ArchSpec`], rejecting a spec
 /// that fails structural validation.

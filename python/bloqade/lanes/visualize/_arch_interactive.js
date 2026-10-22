@@ -15,6 +15,15 @@
     (plot.layout.meta || {}).archVisualizerSiteLanePreviewMode || 'hover';
   const debuggerMeta = (plot.layout.meta || {}).bloqadePlotlyDebugger || {};
   const debuggerFrameNames = debuggerMeta.frameNames || [];
+  const debuggerSlider = (plot.layout.sliders || [])[0];
+  const interactiveDebugger =
+    debuggerSlider !== undefined && debuggerFrameNames.length >= 2;
+  let currentDebuggerStep = interactiveDebugger &&
+    Number.isInteger(debuggerSlider.active)
+    ? Math.min(Math.max(debuggerSlider.active, 0), debuggerFrameNames.length - 1)
+    : 0;
+  // A jump updates the slider directly; its matching frame event is redundant.
+  let pendingDebuggerJump = null;
   let currentPathStyle =
     (plot.layout.meta || {}).archVisualizerPathStyle || 'exact';
   let highlightPath = null;
@@ -548,13 +557,18 @@
   function jumpToDebuggerStep(stepIndex) {
     const frameName = debuggerFrameNames[stepIndex];
     if (frameName === undefined) return;
+    currentDebuggerStep = stepIndex;
+    pendingDebuggerJump = frameName;
+    setDebuggerSlider(stepIndex);
     // Plotly rejects the previous animation's promise when a new immediate
     // animation interrupts it; that is expected when clicking quickly.
     window.Plotly.animate(plot, [frameName], {
       mode: 'immediate',
       frame: {duration: 0, redraw: true},
       transition: {duration: 0}
-    }).catch(function () {});
+    }).catch(function () {}).finally(function () {
+      if (pendingDebuggerJump === frameName) pendingDebuggerJump = null;
+    });
   }
 
   function atomHoverTargetForSite(siteCustomdata) {
@@ -657,8 +671,13 @@
     });
   }
 
-  function setDebuggerSlider(frameIndex) {
+  function setDebuggerSlider(frameIndex, force = false) {
     if (!plot.layout.sliders || !plot.layout.sliders.length) {
+      return Promise.resolve();
+    }
+    // During Play, Plotly can change the layout value before this event runs.
+    // Still request the slider redraw for that frame.
+    if (!force && plot.layout.sliders[0].active === frameIndex) {
       return Promise.resolve();
     }
     return window.Plotly.relayout(
@@ -904,11 +923,15 @@
       const frameName = event.name || (event.frame && event.frame.name);
       const frameIndex = debuggerFrameNames.indexOf(frameName);
       if (frameIndex >= 0) {
-        setDebuggerSlider(frameIndex);
+        currentDebuggerStep = frameIndex;
+        if (frameName !== pendingDebuggerJump) {
+          setDebuggerSlider(frameIndex, true);
+        }
+        pendingDebuggerJump = null;
       }
     });
     // Clicking a gate in the executed-circuit panel jumps the debugger to
-    // the step that applies it; the frame hook above then syncs the slider.
+    // the step that applies it and updates the slider directly.
     plot.on('plotly_click', function (event) {
       const gatePoint = (event.points || []).find((item) => {
         const trace = plot.data[item.curveNumber];
@@ -918,6 +941,43 @@
       jumpToDebuggerStep(gatePoint.customdata[0]);
     });
   }
+
+  if (interactiveDebugger) {
+    plot.setAttribute('tabindex', '0');
+    plot.addEventListener('click', function (event) {
+      const target = event.target;
+      if (target && target.closest && target.closest(
+        'input, button, select, textarea, [contenteditable], ' +
+        '[data-arch-visualizer-bus-selectors]'
+      )) return;
+      plot.focus({preventScroll: true});
+    });
+    plot.addEventListener('keydown', function (event) {
+      if (event.target !== plot) return;
+      const stepDelta = event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+        ? -1
+        : event.key === 'ArrowRight' || event.key === 'ArrowDown'
+          ? 1
+          : 0;
+      if (stepDelta === 0) return;
+
+      event.preventDefault();
+      const nextStep = Math.min(
+        Math.max(currentDebuggerStep + stepDelta, 0),
+        debuggerFrameNames.length - 1
+      );
+      jumpToDebuggerStep(nextStep);
+    });
+  }
+
+  // Reserve wheel zoom for trackpad pinch, which browsers report as a wheel
+  // event with ``ctrlKey`` set. A plain scroll wheel or two-finger scroll
+  // would otherwise zoom the plot as a notebook or page scrolls past it.
+  // Stopping propagation in the capture phase keeps the event away from
+  // Plotly's drag-layer handler without preventing the page scroll.
+  plot.addEventListener('wheel', function (event) {
+    if (!event.ctrlKey) event.stopPropagation();
+  }, true);
 
   // Resolve site previews from pointer position instead of relying solely on
   // Plotly's hover winner. A visible or recently restyled WebGL bus can win

@@ -196,6 +196,17 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         """
         return self._inner.blockade_radius
 
+    @property
+    def aod_capacity(self) -> tuple[int, int] | None:
+        """The largest AOD rectangle one shot may drive, as ``(x, y)`` tone
+        counts, or ``None`` if unlimited.
+
+        At most ``x`` distinct source columns and ``y`` distinct source rows
+        move in one shot. The router's search strategies honour it;
+        Push-and-Rotate does not.
+        """
+        return self._inner.aod_capacity
+
     @cached_property
     def site_buses(self) -> tuple[SiteBus, ...]:
         """Aggregate all site buses across all zones.
@@ -239,6 +250,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         feed_forward: bool = False,
         atom_reloading: bool = False,
         blockade_radius: float | None = None,
+        aod_capacity: tuple[int, int] | None = None,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
 
@@ -269,6 +281,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
             feed_forward=feed_forward,
             atom_reloading=atom_reloading,
             blockade_radius=blockade_radius,
+            aod_capacity=aod_capacity,
         )
         return cls(inner)
 

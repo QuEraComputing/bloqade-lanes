@@ -125,6 +125,10 @@ pub struct ArchSpec {
     /// `ZoneBuilder.set_blockade_radius` on the Python side).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blockade_radius: Option<f64>,
+    /// The largest AOD rectangle one shot may drive, as a tone count per
+    /// axis. `None`, the default when absent in JSON, means unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aod_capacity: Option<AodCapacity>,
 }
 
 impl ArchSpec {
@@ -160,9 +164,112 @@ impl ArchSpec {
             feed_forward,
             atom_reloading,
             blockade_radius,
+            aod_capacity: None,
         };
         spec.validate()?;
         Ok(spec)
+    }
+
+    /// Set the AOD capacity. [`from_components`](Self::from_components)
+    /// leaves it unlimited.
+    pub fn with_aod_capacity(mut self, aod_capacity: Option<AodCapacity>) -> Self {
+        self.aod_capacity = aod_capacity;
+        self
+    }
+}
+
+/// The largest AOD rectangle a single shot may drive, as a tone count per
+/// axis: at most `x` distinct source columns and `y` distinct source rows.
+///
+/// A hardware parameter, the number of tones the AOD can hold on each axis.
+/// In JSON it is `{"x": <columns>, "y": <rows>}`.
+///
+/// Both axes are at least one, and the fields are private so that stays true;
+/// deserialization rejects a zero. A zero on either axis would admit no
+/// rectangle at all, not even a single atom, so every shot a router could
+/// propose would violate it. There is no useful behaviour to define for such
+/// a cap, so it is refused at construction rather than defended against at
+/// every use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "AodCapacityFields", into = "AodCapacityFields")]
+pub struct AodCapacity {
+    x: usize,
+    y: usize,
+}
+
+/// The serialized form of [`AodCapacity`], before the non-zero check.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AodCapacityFields {
+    x: usize,
+    y: usize,
+}
+
+impl TryFrom<AodCapacityFields> for AodCapacity {
+    type Error = String;
+
+    fn try_from(fields: AodCapacityFields) -> Result<Self, Self::Error> {
+        Self::new(fields.x, fields.y).ok_or_else(|| {
+            format!(
+                "aod_capacity must be at least 1 on both axes, got x={}, y={}",
+                fields.x, fields.y
+            )
+        })
+    }
+}
+
+impl From<AodCapacity> for AodCapacityFields {
+    fn from(capacity: AodCapacity) -> Self {
+        Self {
+            x: capacity.x,
+            y: capacity.y,
+        }
+    }
+}
+
+impl AodCapacity {
+    /// A capacity of `x` source columns by `y` source rows, or `None` when
+    /// either axis is zero. See the type's docs for why zero is refused.
+    pub const fn new(x: usize, y: usize) -> Option<Self> {
+        if x == 0 || y == 0 {
+            return None;
+        }
+        Some(Self { x, y })
+    }
+
+    /// Maximum number of distinct source columns (x tones) in one shot.
+    #[inline]
+    pub fn x(self) -> usize {
+        self.x
+    }
+
+    /// Maximum number of distinct source rows (y tones) in one shot.
+    #[inline]
+    pub fn y(self) -> usize {
+        self.y
+    }
+
+    /// Whether a rectangle spanning `nx` source columns and `ny` source rows
+    /// fits within this capacity.
+    #[inline]
+    pub fn admits(self, nx: usize, ny: usize) -> bool {
+        nx <= self.x && ny <= self.y
+    }
+
+    /// Componentwise minimum of two optional caps, where `None` is
+    /// "unlimited" on either side: the result admits a rectangle exactly
+    /// when both inputs do.
+    ///
+    /// Total: both inputs are already non-zero on both axes, so their
+    /// componentwise minimum is too.
+    pub fn tighten(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+        match (a, b) {
+            (None, other) | (other, None) => other,
+            (Some(a), Some(b)) => Some(Self {
+                x: a.x.min(b.x),
+                y: a.y.min(b.y),
+            }),
+        }
     }
 }
 
@@ -490,6 +597,7 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: None,
+            aod_capacity: None,
         };
         assert_eq!(spec.sites_per_word(), 2);
     }
@@ -506,6 +614,7 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: None,
+            aod_capacity: None,
         };
         assert_eq!(spec.sites_per_word(), 0);
     }
@@ -522,6 +631,7 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: None,
+            aod_capacity: None,
         };
         let json = serde_json::to_string(&spec).unwrap();
         // None is skipped in serialization.
@@ -542,10 +652,77 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: Some(2.0),
+            aod_capacity: None,
         };
         let json = serde_json::to_string(&spec).unwrap();
         assert!(json.contains("\"blockade_radius\":2.0"));
         let parsed: ArchSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.blockade_radius, Some(2.0));
+    }
+
+    fn empty_spec() -> ArchSpec {
+        ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![],
+            zones: vec![],
+            zone_buses: vec![],
+            modes: vec![],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: None,
+            aod_capacity: None,
+        }
+    }
+
+    #[test]
+    fn aod_capacity_is_unlimited_and_omitted_by_default() {
+        let spec = empty_spec();
+        assert_eq!(spec.aod_capacity, None);
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(!json.contains("aod_capacity"), "{json}");
+        let parsed: ArchSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.aod_capacity, None);
+    }
+
+    #[test]
+    fn aod_capacity_roundtrips() {
+        let spec = empty_spec().with_aod_capacity(AodCapacity::new(4, 2));
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains(r#""aod_capacity":{"x":4,"y":2}"#), "{json}");
+        let parsed: ArchSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.aod_capacity, AodCapacity::new(4, 2));
+    }
+
+    #[test]
+    fn aod_capacity_rejects_a_zero_axis_and_unknown_keys() {
+        let json = serde_json::to_string(&empty_spec()).unwrap();
+        let with =
+            |capacity: &str| json.replacen('{', &format!(r#"{{"aod_capacity":{capacity},"#), 1);
+        for bad in [
+            r#"{"x":0,"y":3}"#,
+            r#"{"x":3,"y":0}"#,
+            r#"{"x":3,"y":3,"z":1}"#,
+        ] {
+            let err = serde_json::from_str::<ArchSpec>(&with(bad)).unwrap_err();
+            assert!(
+                err.to_string().contains("aod_capacity")
+                    || err.to_string().contains("unknown field"),
+                "{bad}: {err}"
+            );
+        }
+        let parsed: ArchSpec = serde_json::from_str(&with(r#"{"x":1,"y":1}"#)).unwrap();
+        assert_eq!(parsed.aod_capacity, AodCapacity::new(1, 1));
+    }
+
+    #[test]
+    fn aod_capacity_tighten_takes_the_componentwise_minimum() {
+        let (a, b) = (AodCapacity::new(4, 1), AodCapacity::new(2, 3));
+        assert_eq!(AodCapacity::tighten(a, b), AodCapacity::new(2, 1));
+        assert_eq!(AodCapacity::tighten(a, None), a);
+        assert_eq!(AodCapacity::tighten(None, None), None);
+        assert!(AodCapacity::new(2, 1).unwrap().admits(2, 1));
+        assert!(!AodCapacity::new(2, 1).unwrap().admits(2, 2));
+        assert_eq!(AodCapacity::new(0, 1), None);
     }
 }

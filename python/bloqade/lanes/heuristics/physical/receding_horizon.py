@@ -207,10 +207,10 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
             self._build_entangling_options(),
             self._build_rh_options(),
         )
-        return placement.solve_pairs(
+        return placement.place(
             initial,
             cz_pairs,
             blocked,
             max_expansions=self.max_expansions,
-            future_cz_layers=future_cz_layers,
-        )
+            future_layers=future_cz_layers,
+        ).result

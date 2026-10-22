@@ -9,7 +9,6 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::primitives::config::Config;
 use crate::primitives::distance::DistanceTable;
@@ -54,19 +53,17 @@ pub struct EntanglingWordPair {
 
 /// Enumerate all entangling word pairs from the architecture spec.
 ///
-/// Iterates all zones and their `entangling_pairs` fields.
-pub fn enumerate_word_pairs(arch: &ArchSpec) -> Vec<EntanglingWordPair> {
-    let mut result = Vec::new();
-    for (zone_id, zone) in arch.zones.iter().enumerate() {
-        for pair in &zone.entangling_pairs {
-            result.push(EntanglingWordPair {
-                zone_id: zone_id as u32,
-                word_a: pair[0],
-                word_b: pair[1],
-            });
-        }
-    }
-    result
+/// Iterates all zones and their entangling pairs, via
+/// [`LaneIndex::entangling_word_pairs`].
+pub fn enumerate_word_pairs(index: &LaneIndex) -> Vec<EntanglingWordPair> {
+    index
+        .entangling_word_pairs()
+        .map(|(zone_id, word_a, word_b)| EntanglingWordPair {
+            zone_id,
+            word_a,
+            word_b,
+        })
+        .collect()
 }
 
 /// Collect all encoded locations that participate in any entangling pair.
@@ -74,10 +71,10 @@ pub fn enumerate_word_pairs(arch: &ArchSpec) -> Vec<EntanglingWordPair> {
 /// Returns a deduplicated list of encoded `LocationAddr` values — both words
 /// of each pair, all sites. Used to build a [`DistanceTable`] targeting all
 /// potential entangling positions.
-pub fn all_entangling_locations(arch: &ArchSpec) -> Vec<u64> {
-    let sites_per_word = arch.sites_per_word() as u32;
+pub fn all_entangling_locations(index: &LaneIndex) -> Vec<u64> {
+    let sites_per_word = index.sites_per_word() as u32;
     let mut locs = Vec::new();
-    for wp in enumerate_word_pairs(arch) {
+    for wp in enumerate_word_pairs(index) {
         for site in 0..sites_per_word {
             locs.push(
                 LocationAddr {
@@ -107,8 +104,9 @@ pub fn all_entangling_locations(arch: &ArchSpec) -> Vec<u64> {
 /// See [`ArchSpec::home_locations`]: every zone a home word is present in
 /// contributes its sites, so a storage word reached only by a zone bus is
 /// home in the zone it actually lives in.
-pub(crate) fn home_sites(arch: &ArchSpec) -> Vec<u64> {
-    arch.home_locations()
+pub(crate) fn home_sites(index: &LaneIndex) -> Vec<u64> {
+    index
+        .home_locations()
         .iter()
         .map(LocationAddr::encode)
         .collect()
@@ -120,10 +118,10 @@ pub(crate) fn home_sites(arch: &ArchSpec) -> Vec<u64> {
 /// locations are in the same zone, on an entangling word pair, at the same
 /// site index. Both orderings are stored so lookup works regardless of
 /// which qubit is on which word.
-pub fn build_entangling_set(arch: &ArchSpec) -> HashSet<(u64, u64)> {
-    let sites_per_word = arch.sites_per_word() as u32;
+pub fn build_entangling_set(index: &LaneIndex) -> HashSet<(u64, u64)> {
+    let sites_per_word = index.sites_per_word() as u32;
     let mut set = HashSet::new();
-    for wp in enumerate_word_pairs(arch) {
+    for wp in enumerate_word_pairs(index) {
         for site in 0..sites_per_word {
             let loc_a = LocationAddr {
                 zone_id: wp.zone_id,
@@ -176,10 +174,10 @@ impl WordPairDistances {
     /// by grouping targets by word and taking the minimum distance per group.
     pub fn from_dist_table(
         word_pairs: &[EntanglingWordPair],
-        arch: &ArchSpec,
+        index: &LaneIndex,
         dist_table: &DistanceTable,
     ) -> Self {
-        let sites_per_word = arch.sites_per_word() as u32;
+        let sites_per_word = index.sites_per_word() as u32;
 
         let entries = word_pairs
             .iter()
@@ -293,7 +291,7 @@ struct PositionSlot {
 pub fn greedy_assign_pairs(
     cz_pairs: &[(u32, u32)],
     config: &Config,
-    arch: &ArchSpec,
+    index: &LaneIndex,
     dist_table: &DistanceTable,
     seed: u64,
     transition_targets: Option<&HashMap<u32, u64>>,
@@ -305,8 +303,8 @@ pub fn greedy_assign_pairs(
         return Vec::new();
     }
 
-    let word_pairs = enumerate_word_pairs(arch);
-    let sites_per_word = arch.sites_per_word() as u32;
+    let word_pairs = enumerate_word_pairs(index);
+    let sites_per_word = index.sites_per_word() as u32;
 
     // Build columns: each (word_pair, site) is one position slot.
     // For each slot, we store the best orientation per pair when building costs.
@@ -534,7 +532,6 @@ enum Row {
 pub fn assign_pairs_with_blockers(
     cz_pairs: &[(u32, u32)],
     config: &Config,
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -550,8 +547,8 @@ pub fn assign_pairs_with_blockers(
         return Vec::new();
     }
 
-    let word_pairs = enumerate_word_pairs(arch);
-    let sites_per_word = arch.sites_per_word() as u32;
+    let word_pairs = enumerate_word_pairs(index);
+    let sites_per_word = index.sites_per_word() as u32;
 
     // Build slot columns (same layout as `greedy_assign_pairs`).
     let mut slots: Vec<PositionSlot> = Vec::new();
@@ -599,7 +596,7 @@ pub fn assign_pairs_with_blockers(
         return greedy_assign_pairs(
             cz_pairs,
             config,
-            arch,
+            index,
             dist_table,
             seed,
             transition_targets,
@@ -670,7 +667,7 @@ pub fn assign_pairs_with_blockers(
 
         let new_ab = detect_blockers(&targets, &pair_qubits, config, &row_qubits, index);
         let new_d = if enable_case_d {
-            detect_accidental_cz_spectators(config, arch, &pair_qubits, &row_qubits)
+            detect_accidental_cz_spectators(config, index, &pair_qubits, &row_qubits)
         } else {
             Vec::new()
         };
@@ -684,7 +681,7 @@ pub fn assign_pairs_with_blockers(
         // inside lookahead simulations for the same reason — sim configs
         // legitimately put prior-layer pair atoms at slot partner halves).
         let new_e = if enable_case_d {
-            detect_accidentals_created(&targets, arch, config, &pair_qubits, &row_qubits)
+            detect_accidentals_created(&targets, index, config, &pair_qubits, &row_qubits)
         } else {
             Vec::new()
         };
@@ -1076,7 +1073,7 @@ fn detect_blockers(
 ///
 /// An accidental CZ exists when two non-row, non-CZ-pair atoms occupy
 /// partner halves of an entangling word pair at the same site
-/// (i.e. `arch.get_cz_partner(loc_of_qa) == loc_of_qb` and neither qa
+/// (i.e. `index.cz_partner(loc_of_qa) == loc_of_qb` and neither qa
 /// nor qb is in the current Hungarian row set or in any CZ pair).
 ///
 /// Returns **both** members of every accidental pair. Returning both
@@ -1115,7 +1112,7 @@ fn detect_blockers(
 /// `assign_pairs_with_blockers`.
 fn detect_accidentals_created(
     targets: &[(u32, u64)],
-    arch: &ArchSpec,
+    index: &LaneIndex,
     config: &Config,
     pair_qubits: &HashSet<u32>,
     row_qubits: &HashSet<u32>,
@@ -1129,7 +1126,7 @@ fn detect_accidentals_created(
             continue;
         }
         let target_loc = LocationAddr::decode(target_enc);
-        let Some(partner_loc) = arch.get_cz_partner(&target_loc) else {
+        let Some(partner_loc) = index.cz_partner(&target_loc) else {
             continue;
         };
         let Some(partner_qid) = config.qubit_at(partner_loc) else {
@@ -1150,7 +1147,7 @@ fn detect_accidentals_created(
 
 fn detect_accidental_cz_spectators(
     config: &Config,
-    arch: &ArchSpec,
+    index: &LaneIndex,
     pair_qubits: &HashSet<u32>,
     row_qubits: &HashSet<u32>,
 ) -> Vec<u32> {
@@ -1164,7 +1161,7 @@ fn detect_accidental_cz_spectators(
         if seen_loc.contains(&loc_enc) {
             continue;
         }
-        let Some(partner_loc) = arch.get_cz_partner(&loc) else {
+        let Some(partner_loc) = index.cz_partner(&loc) else {
             continue;
         };
         let partner_enc = partner_loc.encode();
@@ -1327,7 +1324,6 @@ fn max_load_per_wp(assignment: &[usize], sites_per_word: usize, n_word_pairs: us
 pub fn lookahead_assign_pairs(
     cz_pairs: &[(u32, u32)],
     config: &Config,
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -1342,7 +1338,6 @@ pub fn lookahead_assign_pairs(
         return assign_pairs_with_blockers(
             cz_pairs,
             config,
-            arch,
             index,
             dist_table,
             blocked,
@@ -1376,7 +1371,6 @@ pub fn lookahead_assign_pairs(
         let assign = assign_pairs_with_blockers(
             layer_pairs,
             &sim_config,
-            arch,
             index,
             dist_table,
             blocked,
@@ -1431,7 +1425,6 @@ pub fn lookahead_assign_pairs(
         forward_assignments[i] = assign_pairs_with_blockers(
             all_layers[i],
             &layer_config,
-            arch,
             index,
             dist_table,
             blocked,
@@ -1567,52 +1560,6 @@ pub fn assignment_cost(config: &Config, targets: &[(u32, u64)], dist_table: &Dis
     total
 }
 
-// ── Accidental CZ detection ────────────────────────────────────────
-
-/// Find spectator qubits involved in accidental CZ pairings.
-///
-/// An accidental CZ occurs when two spectator qubits (neither in `cz_qubits`)
-/// occupy partner sites in the entangling set. Only one qubit per accidental
-/// pair is returned (the one with the higher qubit ID).
-///
-/// Returns `(qubit_id, location)` pairs that need to be moved.
-pub fn find_accidental_cz(
-    config: &Config,
-    cz_qubits: &HashSet<u32>,
-    partner_map: &HashMap<u64, u64>,
-) -> Vec<(u32, LocationAddr)> {
-    let mut result = Vec::new();
-    let mut seen_pairs: HashSet<(u64, u64)> = HashSet::new();
-
-    for (qid, loc) in config.iter() {
-        if cz_qubits.contains(&qid) {
-            continue;
-        }
-        let loc_enc = loc.encode();
-        if let Some(&partner_enc) = partner_map.get(&loc_enc)
-            && let Some(other_qid) = config.qubit_at(LocationAddr::decode(partner_enc))
-            && !cz_qubits.contains(&other_qid)
-        {
-            // Both are spectators at partner sites — accidental CZ.
-            let pair = if loc_enc < partner_enc {
-                (loc_enc, partner_enc)
-            } else {
-                (partner_enc, loc_enc)
-            };
-            if seen_pairs.insert(pair) {
-                // Pick the qubit with higher ID to move.
-                let (move_qid, move_loc) = if qid > other_qid {
-                    (qid, loc)
-                } else {
-                    (other_qid, LocationAddr::decode(partner_enc))
-                };
-                result.push((move_qid, move_loc));
-            }
-        }
-    }
-    result
-}
-
 /// Build a partner map from the entangling set: for each encoded location,
 /// its CZ partner location (if any). Used for O(1) accidental CZ checks.
 pub fn build_partner_map(entangling_set: &HashSet<(u64, u64)>) -> HashMap<u64, u64> {
@@ -1636,20 +1583,16 @@ mod tests {
     use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
 
-    fn make_arch() -> ArchSpec {
-        serde_json::from_str(example_arch_json()).unwrap()
-    }
-
     fn make_index() -> LaneIndex {
-        LaneIndex::new(make_arch())
+        LaneIndex::new(serde_json::from_str(example_arch_json()).unwrap())
     }
 
     // ── enumerate_word_pairs ──
 
     #[test]
     fn enumerate_example_arch() {
-        let arch = make_arch();
-        let pairs = enumerate_word_pairs(&arch);
+        let index = make_index();
+        let pairs = enumerate_word_pairs(&index);
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].zone_id, 0);
         assert_eq!(pairs[0].word_a, 0);
@@ -1707,8 +1650,8 @@ mod tests {
 
     #[test]
     fn entangling_locations_count() {
-        let arch = make_arch();
-        let locs = all_entangling_locations(&arch);
+        let index = make_index();
+        let locs = all_entangling_locations(&index);
         // 1 word pair × 10 sites × 2 words = 20 locations.
         assert_eq!(locs.len(), 20);
     }
@@ -1717,8 +1660,8 @@ mod tests {
 
     #[test]
     fn entangling_set_contains_valid_pairs() {
-        let arch = make_arch();
-        let set = build_entangling_set(&arch);
+        let index = make_index();
+        let set = build_entangling_set(&index);
         // (word 0 site 5, word 1 site 5) should be valid.
         let a = loc(0, 5).encode();
         let b = loc(1, 5).encode();
@@ -1728,8 +1671,8 @@ mod tests {
 
     #[test]
     fn entangling_set_rejects_different_sites() {
-        let arch = make_arch();
-        let set = build_entangling_set(&arch);
+        let index = make_index();
+        let set = build_entangling_set(&index);
         // (word 0 site 3, word 1 site 5) — different sites, not valid.
         let a = loc(0, 3).encode();
         let b = loc(1, 5).encode();
@@ -1738,8 +1681,8 @@ mod tests {
 
     #[test]
     fn entangling_set_rejects_same_word() {
-        let arch = make_arch();
-        let set = build_entangling_set(&arch);
+        let index = make_index();
+        let set = build_entangling_set(&index);
         // (word 0 site 5, word 0 site 5) — same word, not valid.
         let a = loc(0, 5).encode();
         assert!(!set.contains(&(a, a)));
@@ -1749,12 +1692,11 @@ mod tests {
 
     #[test]
     fn word_pair_distances_basic() {
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
-        let word_pairs = enumerate_word_pairs(&arch);
-        let wpd = WordPairDistances::from_dist_table(&word_pairs, &arch, &dist_table);
+        let word_pairs = enumerate_word_pairs(&index);
+        let wpd = WordPairDistances::from_dist_table(&word_pairs, &index, &dist_table);
 
         assert_eq!(wpd.len(), 1);
 
@@ -1767,12 +1709,11 @@ mod tests {
 
     #[test]
     fn word_pair_distances_cross_word() {
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
-        let word_pairs = enumerate_word_pairs(&arch);
-        let wpd = WordPairDistances::from_dist_table(&word_pairs, &arch, &dist_table);
+        let word_pairs = enumerate_word_pairs(&index);
+        let wpd = WordPairDistances::from_dist_table(&word_pairs, &index, &dist_table);
 
         // From word 0 site 0 to word 1 (any site): should need site bus + word bus = 2 hops.
         let (_, _, min_b) = wpd.iter().next().unwrap();
@@ -1785,9 +1726,8 @@ mod tests {
 
     #[test]
     fn greedy_assigns_all_pairs() {
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
@@ -1795,7 +1735,7 @@ mod tests {
         let targets = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -1813,18 +1753,17 @@ mod tests {
 
     #[test]
     fn greedy_assigns_to_entangling_positions() {
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
-        let eset = build_entangling_set(&arch);
+        let eset = build_entangling_set(&index);
 
         let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
         let targets = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -1843,9 +1782,8 @@ mod tests {
 
     #[test]
     fn greedy_no_double_booking() {
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         // Two pairs, both starting near the same site.
@@ -1860,7 +1798,7 @@ mod tests {
         let targets = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -1876,9 +1814,8 @@ mod tests {
 
     #[test]
     fn greedy_perturbation_changes_assignment() {
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         // Multiple pairs with equal-cost options — perturbation should vary.
@@ -1894,7 +1831,7 @@ mod tests {
         let t0 = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -1905,7 +1842,7 @@ mod tests {
         let t1 = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             42,
             None,
@@ -1916,7 +1853,7 @@ mod tests {
         let t2 = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             123,
             None,
@@ -1940,9 +1877,8 @@ mod tests {
 
     #[test]
     fn occupancy_penalty_avoids_spectator_slots() {
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         // 1 CZ pair already at slot site 5 (q0 at pos_a, q1 at pos_b),
@@ -1967,7 +1903,7 @@ mod tests {
         let baseline = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -1978,7 +1914,7 @@ mod tests {
         let with_pen = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -2005,9 +1941,8 @@ mod tests {
         // slot indices). Without penalty, ties between two equally-cheap
         // slots may resolve in favour of a spectator-occupied one;
         // with a large penalty, the Hungarian must avoid the spectator.
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         // Two CZ pairs, both already anchored at site 5 and site 8
@@ -2028,7 +1963,7 @@ mod tests {
         let with_pen = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -2054,9 +1989,8 @@ mod tests {
         // sitting at their shared entangling positions: the penalty must
         // not steer them away just because the slot positions are
         // currently held by the other pair's members.
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         let config = Config::new([
@@ -2071,7 +2005,7 @@ mod tests {
         let baseline = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -2082,7 +2016,7 @@ mod tests {
         let with_pen = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -2102,9 +2036,8 @@ mod tests {
     fn iterative_assigns_pair_when_no_blockers() {
         // No spectators in the way → result identical (modulo target encoding)
         // to plain `greedy_assign_pairs`.
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
@@ -2114,7 +2047,6 @@ mod tests {
         let iter_targets = assign_pairs_with_blockers(
             &cz_pairs,
             &config,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -2129,7 +2061,7 @@ mod tests {
         let greedy_targets = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -2214,9 +2146,8 @@ mod tests {
         // strong penalty it must still produce a valid assignment for
         // the pair (this verifies the spectator-row's own slot is not
         // self-penalised when the spectator becomes a row in iteration 2).
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
@@ -2226,7 +2157,6 @@ mod tests {
         let pen0 = assign_pairs_with_blockers(
             &cz_pairs,
             &config,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -2241,7 +2171,6 @@ mod tests {
         let pen5 = assign_pairs_with_blockers(
             &cz_pairs,
             &config,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -2265,7 +2194,7 @@ mod tests {
         // partner half (1,5) currently holds q6, who is NOT a row qubit.
         // Case E must flag q6 so the next iteration can give it its own
         // target and prevent q5+q6 ending up at slot partner halves.
-        let arch = make_arch();
+        let index = make_index();
         let pair_qubits: HashSet<u32> = [0u32, 1u32].into_iter().collect();
         let row_qubits: HashSet<u32> = [0u32, 1u32, 5u32].into_iter().collect();
         let config = Config::new([
@@ -2280,7 +2209,7 @@ mod tests {
             (1u32, loc(1, 0).encode()),
             (5u32, loc(0, 5).encode()),
         ];
-        let new = detect_accidentals_created(&targets, &arch, &config, &pair_qubits, &row_qubits);
+        let new = detect_accidentals_created(&targets, &index, &config, &pair_qubits, &row_qubits);
         assert_eq!(new, vec![6], "q6 sits at q5's target's partner half");
     }
 
@@ -2288,7 +2217,7 @@ mod tests {
     fn detect_accidentals_created_skips_row_partner() {
         // Same setup but q6 is already a row qubit. Then it will move to
         // its own assigned target and the half becomes free — no Case E.
-        let arch = make_arch();
+        let index = make_index();
         let pair_qubits: HashSet<u32> = [0u32, 1u32].into_iter().collect();
         let row_qubits: HashSet<u32> = [0u32, 1u32, 5u32, 6u32].into_iter().collect();
         let config = Config::new([
@@ -2303,7 +2232,7 @@ mod tests {
             (1u32, loc(1, 0).encode()),
             (5u32, loc(0, 5).encode()),
         ];
-        let new = detect_accidentals_created(&targets, &arch, &config, &pair_qubits, &row_qubits);
+        let new = detect_accidentals_created(&targets, &index, &config, &pair_qubits, &row_qubits);
         assert!(new.is_empty(), "row qubits at the partner half move away");
     }
 
@@ -2312,13 +2241,13 @@ mod tests {
         // Pair-row targets occupy *both* halves; any non-row at the pair
         // target is caught by Case A (`detect_blockers`). Case E must not
         // double-flag those.
-        let arch = make_arch();
+        let index = make_index();
         let pair_qubits: HashSet<u32> = [0u32, 1u32].into_iter().collect();
         let row_qubits: HashSet<u32> = [0u32, 1u32].into_iter().collect();
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0)), (6, loc(1, 5))]).unwrap();
         // Pair (0,1) targets slot site 5; q6 sits on the other half.
         let targets = vec![(0u32, loc(0, 5).encode()), (1u32, loc(1, 5).encode())];
-        let new = detect_accidentals_created(&targets, &arch, &config, &pair_qubits, &row_qubits);
+        let new = detect_accidentals_created(&targets, &index, &config, &pair_qubits, &row_qubits);
         assert!(new.is_empty(), "pair-row partner-half conflicts are Case A");
     }
 
@@ -2328,7 +2257,7 @@ mod tests {
     fn detect_accidental_cz_finds_both_partners() {
         // 1 CZ pair (q0, q1) far away; 2 spectators (q5, q6) at partner
         // halves of the (0, 1) word pair at site 5. Both must be flagged.
-        let arch = make_arch();
+        let index = make_index();
         let pair_qubits: HashSet<u32> = [0u32, 1u32].into_iter().collect();
         let row_qubits = pair_qubits.clone();
         let config = Config::new([
@@ -2338,7 +2267,7 @@ mod tests {
             (6, loc(1, 5)),
         ])
         .unwrap();
-        let mut new = detect_accidental_cz_spectators(&config, &arch, &pair_qubits, &row_qubits);
+        let mut new = detect_accidental_cz_spectators(&config, &index, &pair_qubits, &row_qubits);
         new.sort();
         assert_eq!(
             new,
@@ -2351,7 +2280,7 @@ mod tests {
     fn detect_accidental_cz_skips_existing_rows() {
         // If one of the accidental partners is already in row_qubits,
         // the other should not be re-added.
-        let arch = make_arch();
+        let index = make_index();
         let pair_qubits: HashSet<u32> = [0u32, 1u32].into_iter().collect();
         let mut row_qubits = pair_qubits.clone();
         row_qubits.insert(5); // q5 already a row.
@@ -2362,7 +2291,7 @@ mod tests {
             (6, loc(1, 5)),
         ])
         .unwrap();
-        let new = detect_accidental_cz_spectators(&config, &arch, &pair_qubits, &row_qubits);
+        let new = detect_accidental_cz_spectators(&config, &index, &pair_qubits, &row_qubits);
         assert!(
             new.is_empty(),
             "accidental partner of an already-row qubit must not be added"
@@ -2374,9 +2303,8 @@ mod tests {
         // Single CZ pair already at slot site 5. With no move_penalty,
         // perturbation+ties may move them; with non-zero move_penalty,
         // anchored placement (zero hops) is strictly cheaper.
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
@@ -2386,7 +2314,6 @@ mod tests {
         let with_bias = assign_pairs_with_blockers(
             &cz_pairs,
             &config,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -2412,9 +2339,8 @@ mod tests {
     fn congestion_aware_does_not_break_uncongested_case() {
         // With only one CZ pair and the example arch (1 word pair, 10 sites),
         // congestion can't bind. Result must match the standard assignment.
-        let arch = make_arch();
         let index = make_index();
-        let locs = all_entangling_locations(&arch);
+        let locs = all_entangling_locations(&index);
         let dist_table = DistanceTable::new(&locs, &index);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
@@ -2423,7 +2349,7 @@ mod tests {
         let baseline = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -2434,7 +2360,7 @@ mod tests {
         let with_cw = greedy_assign_pairs(
             &cz_pairs,
             &config,
-            &arch,
+            &index,
             &dist_table,
             0,
             None,
@@ -2512,51 +2438,13 @@ mod tests {
 
     #[test]
     fn partner_map_bidirectional() {
-        let arch = make_arch();
-        let eset = build_entangling_set(&arch);
+        let index = make_index();
+        let eset = build_entangling_set(&index);
         let pmap = build_partner_map(&eset);
         // (word 0, site 5) → (word 1, site 5) and vice versa.
         let a = loc(0, 5).encode();
         let b = loc(1, 5).encode();
         assert_eq!(pmap.get(&a), Some(&b));
         assert_eq!(pmap.get(&b), Some(&a));
-    }
-
-    // ── find_accidental_cz ──
-
-    #[test]
-    fn no_accidental_cz_when_partner_empty() {
-        let arch = make_arch();
-        let eset = build_entangling_set(&arch);
-        let pmap = build_partner_map(&eset);
-        // q0 at (word 0, site 5), q1 at (word 0, site 6) — no partner occupied.
-        let config = Config::new([(0, loc(0, 5)), (1, loc(0, 6))]).unwrap();
-        let cz_qubits = HashSet::new();
-        let accidental = find_accidental_cz(&config, &cz_qubits, &pmap);
-        assert!(accidental.is_empty());
-    }
-
-    #[test]
-    fn detects_accidental_cz() {
-        let arch = make_arch();
-        let eset = build_entangling_set(&arch);
-        let pmap = build_partner_map(&eset);
-        // q0 at (word 0, site 5), q1 at (word 1, site 5) — partner sites!
-        let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
-        let cz_qubits = HashSet::new(); // both are spectators
-        let accidental = find_accidental_cz(&config, &cz_qubits, &pmap);
-        assert_eq!(accidental.len(), 1); // one of the pair needs to move
-    }
-
-    #[test]
-    fn no_accidental_cz_when_partner_is_cz_participant() {
-        let arch = make_arch();
-        let eset = build_entangling_set(&arch);
-        let pmap = build_partner_map(&eset);
-        // q0 at (word 0, site 5), q1 at (word 1, site 5) — but q1 is a CZ participant.
-        let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
-        let cz_qubits: HashSet<u32> = [1].into_iter().collect();
-        let accidental = find_accidental_cz(&config, &cz_qubits, &pmap);
-        assert!(accidental.is_empty());
     }
 }

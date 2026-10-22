@@ -164,7 +164,6 @@ pub fn schedule_with(
     } = build_deps(moves, &lanes);
 
     // ── List scheduling ────────────────────────────────────────────
-    let arch = index.arch_spec();
     let mut scheduled = vec![false; n];
     let mut done = 0usize;
     let mut out: Vec<Batch> = Vec::new();
@@ -239,8 +238,8 @@ pub fn schedule_with(
         // that provoked it is only in scope right here.
         let batch = best;
         let batch_lanes: Vec<LaneAddr> = batch.iter().map(|&i| lanes[i]).collect();
-        let validated = state
-            .validate_moves(&batch_lanes, arch)
+        let validated = index
+            .check_move_set(&state, &batch_lanes)
             .unwrap_or_else(|errors| {
                 panic!(
                     "the condenser built an operation the execution model \
@@ -754,8 +753,9 @@ mod tests {
 
         let mut state = mover_state(&fx.graph, &moves);
         for (i, b) in batches.iter().enumerate() {
-            let validated = state
-                .validate_moves(&b.lanes, fx.index.arch_spec())
+            let validated = fx
+                .index
+                .check_move_set(&state, &b.lanes)
                 .unwrap_or_else(|e| panic!("operation {i} does not execute: {e:?}"));
             state = state.apply_validated(&validated).expect("token is fresh");
         }

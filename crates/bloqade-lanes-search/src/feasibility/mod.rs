@@ -186,7 +186,7 @@ impl Feasibility {
 /// validated spec (e.g. loaded via `ArchSpec::from_json_validated`).
 fn debug_assert_valid_arch(_index: &LaneIndex) {
     #[cfg(debug_assertions)]
-    if let Err(errors) = _index.arch_spec().validate() {
+    if let Err(errors) = _index.validate_arch() {
         panic!(
             "feasibility requires a structurally valid ArchSpec \
              (per-bus acyclicity is load-bearing for the reduction): {errors:?}"

@@ -123,7 +123,7 @@ def test_star_rz_payload_survives():
     @gemini_logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = qubit.qalloc(1)
-        gemini_logical.star_rz(theta, reg[0])
+        gemini_logical.extensions.star_rz(theta, reg[0])
         gemini_logical.terminal_measure(reg)
 
     out = _compile(kernel)

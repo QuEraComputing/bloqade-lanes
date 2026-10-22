@@ -693,7 +693,8 @@ class ArchVisualizer:
         """Build an interactive architecture and atom-path visualization.
 
         The returned Plotly figure supports pan, box zoom, and mode-bar zoom.
-        Its HTML representation also enables wheel and trackpad zoom.
+        Its HTML representation also enables trackpad pinch zoom (or
+        Ctrl+wheel); a plain scroll wheel scrolls the page instead of zooming.
         A site can overlay every transport lane available from that site,
         using the lane's bus color and the currently selected exact or cartoon
         path representation.
@@ -747,7 +748,7 @@ class ArchVisualizer:
         Returns:
             A ``plotly.graph_objects.Figure``. In a notebook, return it from a
             cell or call ``figure.show(config={"scrollZoom": True})`` to also
-            enable scroll-wheel zoom. Export interactive figures with the
+            enable pinch zoom. Export interactive figures with the
             returned figure's ``to_html`` or ``write_html`` methods. Calling
             the module-level ``plotly.io.to_html(figure)`` or
             ``plotly.io.write_html(figure, ...)`` bypasses the custom figure

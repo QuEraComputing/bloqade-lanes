@@ -68,6 +68,16 @@
     "blockade_radius": {
       "description": "Optional Rydberg blockade radius in micrometers. Metadata associated with the architecture, typically used by consumers to interpret the entangling word pairs; no relationship between the pairs and the radius is enforced by the spec itself.",
       "type": "number"
+    },
+    "aod_capacity": {
+      "description": "Optional. The largest AOD rectangle one move may drive, as a tone count per axis: at most x distinct source columns and y distinct source rows. Absent means unlimited.",
+      "type": "object",
+      "properties": {
+        "x": { "type": "integer", "minimum": 1 },
+        "y": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["x", "y"],
+      "additionalProperties": false
     }
   },
   "$defs": {

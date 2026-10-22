@@ -23,5 +23,5 @@ pub use addr::{
 };
 pub use metrics::MotionModel;
 pub use query::ArchSpecLoadError;
-pub use types::{ArchSpec, Bus, Grid, Mode, TransportPath, Word, Zone};
+pub use types::{AodCapacity, ArchSpec, Bus, Grid, Mode, TransportPath, Word, Zone};
 pub use validate::ArchSpecError;

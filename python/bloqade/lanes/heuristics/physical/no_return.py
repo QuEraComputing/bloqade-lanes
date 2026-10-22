@@ -98,10 +98,10 @@ class NoReturnPlacementStrategy(NoReturnStrategyBase):
         placement = LooseGoalCzPlacement(
             engine, move_search, self._build_entangling_options()
         )
-        return placement.solve_pairs(
+        return placement.place(
             initial,
             cz_pairs,
             blocked,
             max_expansions=self.max_expansions,
-            future_cz_layers=future_cz_layers,
-        )
+            future_layers=future_cz_layers,
+        ).result

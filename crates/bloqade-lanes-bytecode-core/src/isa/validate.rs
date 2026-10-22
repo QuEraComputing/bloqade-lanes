@@ -1953,6 +1953,7 @@ mod tests {
             feed_forward,
             atom_reloading,
             blockade_radius: None,
+            aod_capacity: None,
         }
     }
 

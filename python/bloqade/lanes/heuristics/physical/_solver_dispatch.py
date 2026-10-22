@@ -29,7 +29,7 @@ _STRATEGY_MAP: dict[str, _native.SearchStrategy] = {
     "entropy": _native.SearchStrategy.ENTROPY,
     # Push and Rotate: complete, rule-based, not a search. Slower schedules
     # than the search strategies where they succeed, but it succeeds where
-    # they do not. See `SolveOptions.fallback_push_rotate` to use it as a
-    # reliability net rather than a primary.
+    # they do not. See `RustPlacementTraversal.fallback_push_rotate` to use it
+    # as a reliability net rather than a primary.
     "push-rotate": _native.SearchStrategy.PUSH_ROTATE,
 }

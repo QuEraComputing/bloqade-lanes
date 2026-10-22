@@ -16,12 +16,12 @@ from typing_extensions import Doc
 from bloqade.gemini import common as gemini_common
 from bloqade.gemini.steane_defaults import STEANE7_PHYSICAL_QUBITS
 
-from .dialects import operations
+from .dialects import extensions, operations
 
 
 @ir.dialect_group(
     structural_no_opt.union(
-        [gate, qubit, operations, annotate, gemini_common.dialects.qubit]
+        [gate, qubit, operations, extensions, annotate, gemini_common.dialects.qubit]
     )
 )
 def kernel(self):

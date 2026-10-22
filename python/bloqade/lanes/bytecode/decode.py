@@ -109,16 +109,6 @@ class StackMachineFrame:
         popped.reverse()
         return popped
 
-    def peek_value(self) -> ir.SSAValue:
-        """Return the top-of-stack SSA value without popping.
-
-        Raises:
-            StackUnderflowError: when the stack is empty.
-        """
-        if not self.stack:
-            raise StackUnderflowError(snapshot=self.snapshot(), required=1)
-        return self.stack[-1]
-
     def snapshot(self) -> tuple[ir.SSAValue, ...]:
         """Return a tuple snapshot of the stack -- used for error reporting."""
         return tuple(self.stack)
@@ -298,7 +288,8 @@ class BytecodeDecoder:
         )
 
     def _visit_cpu_dup(self, idx: int, instr: Instruction) -> None:
-        top = self.frame.peek_value()
+        # Popped, not peeked: the two copies `Dup` pushes stand in for it.
+        top = self.frame.pop_value()
         self.frame.push(stack_move.Dup(value=top))
 
     def _visit_cpu_store(self, idx: int, instr: Instruction) -> None:
@@ -453,17 +444,36 @@ class BytecodeDecoder:
         )
 
 
-def load_program(program: Program, kernel_name: str = "main") -> ir.Method:
+def load_program(
+    program: Program, kernel_name: str = "main", *, inline_dup: bool = False
+) -> ir.Method:
     """Decode a bytecode Program into a stack_move ir.Method and run
     Kirin's type-inference pass on the result.
 
     The returned method carries inferred types on every SSA value,
     including the method's overall return type -- useful for downstream
     passes (analysis, rewrites) that rely on type information.
+
+    ``inline_dup`` chooses between the two SSA forms of a ``dup``. Off (the
+    default), every ``dup`` stays a ``stack_move.Dup``: the method is the
+    program's 1:1 SSA image. On, ``InlineDup`` takes them out, so each copy's
+    consumers read the operand itself — what the program computes rather than
+    how it keeps its stack.
+
+    Off, the method is a stack program, which ``stackify`` leaves as it is:
+    ``stackify`` + ``dump_program`` give back the program decoded. On, a value
+    that was duplicated has a consumer per copy, so ``stackify`` reworks the
+    block: it clones a duplicated constant for each consumer and holds any
+    other duplicated value in a local.
     """
     from kirin.passes.typeinfer import TypeInfer
+    from kirin.rewrite import Walk
+
+    from bloqade.lanes.rewrite.inline_dup import InlineDup
 
     decoder = BytecodeDecoder()
     method = decoder.decode(program, kernel_name)
+    if inline_dup:
+        Walk(InlineDup()).rewrite(method.code)
     TypeInfer(method.dialects).unsafe_run(method)
     return method

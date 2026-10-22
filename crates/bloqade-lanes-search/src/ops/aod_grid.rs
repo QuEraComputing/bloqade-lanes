@@ -250,7 +250,7 @@ pub(crate) struct BusGridContext<'a> {
     /// the rectangle's `(src, dst)` cells and its sorted source encodings.
     cells_scratch: RefCell<Vec<(u64, u64)>>,
     srcs_scratch: RefCell<Vec<u64>>,
-    /// The solve's AOD tone limit per axis (`SearchContext::capacity`);
+    /// The solve's AOD tone limit per axis (`LaneIndex::aod_capacity`);
     /// `None` is unlimited. A rectangle spanning more source columns or rows
     /// than this is invalid, and growth stops there.
     capacity: Option<AodCapacity>,
@@ -267,8 +267,8 @@ impl<'a> BusGridContext<'a> {
     /// however well its positions align.
     ///
     /// `capacity` caps every rectangle this context builds at that many
-    /// distinct source columns and rows; pass the solve's
-    /// `SearchContext::capacity`, or `None` for the uncapped behaviour.
+    /// distinct source columns and rows; pass the architecture's
+    /// `LaneIndex::aod_capacity`, or `None` for the uncapped behaviour.
     pub(crate) fn new(
         index: &'a LaneIndex,
         group: GroupKey,

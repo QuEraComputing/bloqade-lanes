@@ -83,7 +83,7 @@ class _RunArtifacts:
     extra: dict[str, Any] = field(default_factory=dict)
     """The root-bound summary every *bounded* row carries: summed `h(root)`,
     summed plan cost, their gap, the count of solves where they are equal, and
-    how many solves reported `proven`. Empty for unbounded strategies.
+    how many solves proved their plan optimal. Empty for unbounded strategies.
     Console-only: adding CSV columns would change the committed baselines."""
     notes: str = ""
 

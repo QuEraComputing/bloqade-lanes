@@ -96,7 +96,7 @@ impl MoveGenerator for GreedyGenerator {
                 index,
                 GroupKey::new(*mt, *bus_id, *zone_id, *dir),
                 &occupied,
-                ctx.capacity,
+                ctx.index.aod_capacity(),
             );
             let grids = grid_ctx.build_aod_grids(entries);
 
@@ -158,7 +158,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
-            capacity: None,
         };
         let mut state = SearchState::default();
 
@@ -200,7 +199,6 @@ mod tests {
             blocked: &blocked,
             targets: &target_enc,
             cz_pairs: None,
-            capacity: None,
         };
         let mut state = SearchState::default();
 
