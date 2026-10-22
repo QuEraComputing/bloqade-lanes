@@ -21,29 +21,41 @@ from bloqade.gemini.common.dialects.qubit._dialect import (
 
 @dataclass(frozen=True, eq=False, repr=False)
 class GeminiQubit(cirq.Qid):
-    """A Cirq qubit with an optional pinned Gemini architecture address."""
+    """A Cirq qubit pinned to a required Gemini architecture address.
+
+    ``pin`` is the nonnegative integer triple ``(zone, word, site)``. Use
+    ``cirq.LineQubit(index)`` for an unpinned qubit instead. During conversion,
+    GeminiQubit maps to ``new_at`` and LineQubit maps to ordinary ``qubit.New``;
+    emission preserves those pinned and unpinned forms, respectively. As with
+    the standard Squin loader, input Qids are sorted and renumbered in allocation
+    order: ``index`` is a Cirq label, not a required internal register index.
+    Pin coordinates are preserved independently of that renumbering.
+    """
 
     index: int
-    pin: tuple[int, int, int] | None = None
+    pin: tuple[int, int, int]
 
     def __post_init__(self) -> None:
-        if self.index < 0:
-            raise ValueError("Gemini qubit indices must be nonnegative")
-        if self.pin is not None and (
-            len(self.pin) != 3 or any(not isinstance(value, int) for value in self.pin)
-        ):
+        if not isinstance(self.index, int) or self.index < 0:
+            raise ValueError("Gemini qubit indices must be nonnegative integers")
+        if self.pin is None:
+            raise ValueError(
+                "A pinned address is required; use cirq.LineQubit for unpinned qubits"
+            )
+        if len(self.pin) != 3 or any(not isinstance(value, int) for value in self.pin):
             raise ValueError("A pinned address must be three integer coordinates")
+        if any(value < 0 for value in self.pin):
+            raise ValueError("Pinned address coordinates must be nonnegative")
+        object.__setattr__(self, "pin", tuple(self.pin))
 
     @property
     def dimension(self) -> int:
         return 2
 
     def _comparison_key(self) -> tuple[int, tuple[int, int, int]]:
-        return (self.index, self.pin or (-1, -1, -1))
+        return (self.index, self.pin)
 
     def __str__(self) -> str:
-        if self.pin is None:
-            return f"Q{self.index}"
         zone, word, site = self.pin
         return f"Q{self.index}@({zone},{word},{site})"
 
@@ -52,7 +64,12 @@ class GeminiQubit(cirq.Qid):
 
 
 class GeminiCirqLowerer(Squin):
-    """Load pinned Qids as ``new_at`` and other Qids as ordinary qubits."""
+    """Load pinned Qids as ``new_at`` and other Qids as ordinary qubits.
+
+    Qid ordering and dense register indices come from the standard Squin
+    lowerer. Sparse labels and mixed Qid types are accepted whether or not
+    any qubit is pinned; the original labels need not survive emission.
+    """
 
     def visit_CircuitOperation(
         self, state: lowering.State[cirq.Circuit], node: cirq.CircuitOperation
@@ -73,44 +90,17 @@ class GeminiCirqLowerer(Squin):
         **kwargs: Any,
     ) -> ir.Region:
         if register_as_argument and any(
-            isinstance(qid, GeminiQubit) and qid.pin is not None
-            for qid in self.circuit.all_qubits()
+            isinstance(qid, GeminiQubit) for qid in self.circuit.all_qubits()
         ):
             raise lowering.BuildError(
                 "A pinned Gemini qubit cannot be loaded as a register argument"
             )
         return super().run(stmt, register_as_argument=register_as_argument, **kwargs)
 
-    @staticmethod
-    def _qubit_index(qid: cirq.Qid) -> int:
-        if isinstance(qid, GeminiQubit):
-            return qid.index
-        if isinstance(qid, cirq.LineQubit):
-            return qid.x
-        raise lowering.BuildError(f"Unsupported Gemini qubit identifier: {qid!r}")
-
-    def __post_init__(self) -> None:
-        qids = self.circuit.all_qubits()
-        annotated = any(isinstance(qid, GeminiQubit) for qid in qids)
-        if annotated:
-            if not all(isinstance(qid, (GeminiQubit, cirq.LineQubit)) for qid in qids):
-                raise lowering.BuildError(
-                    "GeminiQubit cannot be mixed with other Cirq Qid types"
-                )
-            ordered = sorted(qids, key=self._qubit_index)
-            indices = [self._qubit_index(qid) for qid in ordered]
-            if indices != list(range(len(qids))):
-                raise lowering.BuildError(
-                    "Gemini qubit indices must be unique and contiguous from zero"
-                )
-        else:
-            ordered = sorted(qids)
-        self.qreg_index = {qid: index for index, qid in enumerate(ordered)}
-
     def allocate_register(self, state: lowering.State[cirq.Circuit]) -> ir.SSAValue:
         values: list[ir.SSAValue] = []
         for qid in self.qreg_index:
-            if isinstance(qid, GeminiQubit) and qid.pin is not None:
+            if isinstance(qid, GeminiQubit):
                 coords = [
                     state.current_frame.push(py.Constant(value)).result
                     for value in qid.pin

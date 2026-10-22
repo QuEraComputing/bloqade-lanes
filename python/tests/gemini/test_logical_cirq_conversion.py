@@ -1,13 +1,16 @@
+from typing import Any, cast
+
 import cirq
 import pytest
 from bloqade.cirq_utils import emit_circuit, load_circuit
 from bloqade.cirq_utils.emit.base import EmitCirq, EmitCirqFrame
+from bloqade.cirq_utils.lowering import Squin
 from kirin import interp, ir, lowering
-from kirin.dialects import ilist
+from kirin.dialects import ilist, py
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import qubit, squin
-from bloqade.gemini import logical
+from bloqade.gemini import logical, physical
 from bloqade.gemini.common.cirq_conversion import (
     GeminiCirqLowerer,
     GeminiQubit,
@@ -89,19 +92,24 @@ def test_logical_loader_preserves_terminal_measurement_order():
 def test_pinned_logical_qubit_round_trip():
     @logical.kernel
     def program():
-        register = ilist.IList([new_at(0, 0, 0), qubit.new()])
+        register = ilist.IList([new_at(1, 2, 3), qubit.new()])
         squin.h(register[0])
         squin.cx(register[0], register[1])
         logical.terminal_measure(register)
 
     circuit = emit_circuit(program)
     qids = circuit.all_qubits()
-    assert GeminiLogicalQubit(0, (0, 0, 0)) in qids
+    assert GeminiLogicalQubit(0, (1, 2, 3)) in qids
     assert cirq.LineQubit(1) in qids
 
     reloaded = load_circuit(circuit, dialects=logical.kernel)
     pins = [stmt for stmt in reloaded.callable_region.walk() if isinstance(stmt, NewAt)]
     assert len(pins) == 1
+    for coordinate, expected in zip(
+        (pins[0].zone_id, pins[0].word_id, pins[0].site_id), (1, 2, 3), strict=True
+    ):
+        assert isinstance(coordinate.owner, py.Constant)
+        assert coordinate.owner.value.unwrap() == expected
     assert (
         sum(
             isinstance(stmt, TerminalLogicalMeasurement)
@@ -114,14 +122,17 @@ def test_pinned_logical_qubit_round_trip():
     assert emit_circuit(reloaded) == circuit
 
 
-def test_pinned_emission_rejects_mismatched_circuit_qubits():
+@pytest.mark.parametrize(
+    "supplied", [cirq.LineQubit(0), GeminiLogicalQubit(0, (3, 2, 1))]
+)
+def test_pinned_emission_rejects_mismatched_circuit_qubits(supplied: cirq.Qid):
     @logical.kernel
     def program():
-        register = ilist.IList([new_at(0, 0, 0)])
+        register = ilist.IList([new_at(1, 2, 3)])
         logical.terminal_measure(register)
 
     with pytest.raises(interp.exceptions.InterpreterError, match="matching"):
-        emit_circuit(program, circuit_qubits=[cirq.LineQubit(0)])
+        emit_circuit(program, circuit_qubits=[supplied])
 
 
 def test_logical_loader_rejects_mid_circuit_measurement():
@@ -232,41 +243,122 @@ def test_emit_compiled_bell_has_one_physical_measurement():
 
 def test_gemini_qid_rejects_negative_index_and_invalid_pin():
     with pytest.raises(ValueError, match="nonnegative"):
-        GeminiQubit(-1)
+        GeminiQubit(-1, (0, 0, 0))
     with pytest.raises(ValueError, match="three integer coordinates"):
         GeminiQubit(0, (0, 1))  # type: ignore[arg-type]
 
 
-def test_gemini_qid_has_readable_pinned_and_unpinned_names():
-    unpinned = GeminiQubit(0)
+def test_gemini_qid_requires_pin():
+    with pytest.raises(TypeError, match="pin"):
+        cast(Any, GeminiQubit)(0)
+
+
+def test_gemini_qid_rejects_none_pin():
+    with pytest.raises(ValueError, match="LineQubit"):
+        GeminiQubit(0, cast(tuple[int, int, int], None))
+
+
+@pytest.mark.parametrize("index", [0.5, "0", None])
+def test_gemini_qid_rejects_noninteger_index(index: object):
+    with pytest.raises(ValueError, match="integer"):
+        GeminiQubit(cast(int, index), (0, 0, 0))
+
+
+@pytest.mark.parametrize("pin", [(-1, 0, 0), (0, -1, 0), (0, 0, -1), (-1, -1, -1)])
+def test_gemini_qid_rejects_negative_pin(pin: tuple[int, int, int]):
+    with pytest.raises(ValueError, match="nonnegative"):
+        GeminiQubit(0, pin)
+
+
+@pytest.mark.parametrize("pin", [(0, 1, 2.5), (0, "1", 2)])
+def test_gemini_qid_rejects_noninteger_pin(pin: object):
+    with pytest.raises(ValueError, match="three integer coordinates"):
+        GeminiQubit(0, cast(tuple[int, int, int], pin))
+
+
+def test_gemini_qid_normalizes_list_pin_to_immutable_tuple():
+    pin = [0, 1, 2]
+    qid = GeminiQubit(0, cast(tuple[int, int, int], pin))
+    expected = GeminiQubit(0, (0, 1, 2))
+
+    assert qid.pin == (0, 1, 2)
+    assert qid == expected
+    assert hash(qid) == hash(expected)
+    assert len({qid, expected}) == 1
+
+    pin[0] = 3
+    assert qid.pin == (0, 1, 2)
+    assert qid == expected
+    assert hash(qid) == hash(expected)
+
+
+def test_gemini_qid_ordering_uses_index_and_pin():
+    ordered = [
+        GeminiQubit(0, (0, 0, 0)),
+        GeminiQubit(0, (0, 0, 1)),
+        GeminiQubit(0, (0, 1, 0)),
+        GeminiQubit(1, (0, 0, 0)),
+    ]
+
+    assert sorted([ordered[2], ordered[0], ordered[3], ordered[1]]) == ordered
+    assert len(set(ordered)) == len(ordered)
+
+
+def test_gemini_qid_has_readable_pinned_name():
     pinned = GeminiQubit(1, (0, 2, 3))
 
-    assert str(unpinned) == "Q0"
     assert str(pinned) == "Q1@(0,2,3)"
     assert repr(pinned) == "GeminiQubit(index=1, pin=(0, 2, 3))"
     assert GeminiLogicalQubit is GeminiQubit
 
 
-def test_logical_loader_rejects_unsupported_qid_type():
-    with pytest.raises(lowering.BuildError, match="Unsupported Gemini qubit"):
-        GeminiCirqLowerer._qubit_index(cirq.GridQubit(0, 0))
+@pytest.mark.parametrize(
+    "dialects", [logical.kernel, physical.kernel], ids=["logical", "physical"]
+)
+@pytest.mark.parametrize(
+    "qids",
+    [
+        (cirq.LineQubit(0), cirq.LineQubit(5), cirq.LineQubit(9)),
+        (cirq.LineQubit(0), GeminiQubit(1, (0, 2, 3)), cirq.LineQubit(5)),
+        (cirq.GridQubit(0, 0), cirq.GridQubit(3, 4), cirq.GridQubit(1, 5)),
+        (cirq.GridQubit(0, 1), GeminiQubit(7, (0, 2, 3)), cirq.NamedQubit("anc")),
+        (GeminiQubit(5, (0, 0, 0)), cirq.LineQubit(5), GeminiQubit(5, (0, 1, 0))),
+    ],
+    ids=[
+        "sparse-lines",
+        "sparse-pinned",
+        "grids",
+        "mixed-types",
+        "shared-numeric-labels",
+    ],
+)
+def test_gemini_loader_uses_standard_squin_qubit_order(
+    dialects: ir.DialectGroup, qids: tuple[cirq.Qid, cirq.Qid, cirq.Qid]
+):
+    q0, q1, q2 = qids
+    circuit = cirq.Circuit(cirq.H(q0), cirq.CX(q0, q1), cirq.measure(q2, q0, q1))
+    indices = Squin(squin.kernel, circuit).qreg_index
 
+    assert GeminiCirqLowerer(dialects, circuit).qreg_index == indices
 
-def test_logical_loader_rejects_mixed_qid_types():
-    pinned = GeminiLogicalQubit(0, (0, 0, 0))
-    grid = cirq.GridQubit(0, 1)
-    circuit = cirq.Circuit(cirq.measure(pinned, grid))
+    method = load_circuit(circuit, dialects=dialects)
+    renamed = {
+        qid: (
+            GeminiQubit(index, qid.pin)
+            if isinstance(qid, GeminiQubit)
+            else cirq.LineQubit(index)
+        )
+        for qid, index in indices.items()
+    }
+    expected = cirq.Circuit(
+        cirq.H(renamed[q0]),
+        cirq.CX(renamed[q0], renamed[q1]),
+        cirq.measure(renamed[q2], renamed[q0], renamed[q1]),
+    )
 
-    with pytest.raises(lowering.BuildError, match="cannot be mixed"):
-        load_circuit(circuit, dialects=logical.kernel)
-
-
-def test_logical_loader_requires_contiguous_logical_indices():
-    qid = GeminiLogicalQubit(1)
-    circuit = cirq.Circuit(cirq.measure(qid))
-
-    with pytest.raises(lowering.BuildError, match="contiguous from zero"):
-        load_circuit(circuit, dialects=logical.kernel)
+    method.verify()
+    method.verify_type()
+    assert emit_circuit(method) == expected
 
 
 def test_pinned_emission_rejects_noninteger_address():

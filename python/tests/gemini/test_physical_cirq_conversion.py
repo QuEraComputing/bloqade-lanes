@@ -7,6 +7,7 @@ import cirq
 import pytest
 from bloqade.cirq_utils import emit_circuit, load_circuit
 from kirin import lowering
+from kirin.dialects import py
 
 from bloqade.gemini import physical
 from bloqade.gemini.common.dialects.qubit.stmts import NewAt
@@ -15,8 +16,39 @@ from bloqade.gemini.common.dialects.qubit.stmts import NewAt
 def test_physical_pinned_qubit_round_trip():
     from bloqade.gemini.common.cirq_conversion import GeminiQubit
 
-    pinned = GeminiQubit(0, pin=(0, 0, 0))
+    pinned = GeminiQubit(0, pin=(1, 2, 3))
     circuit = cirq.Circuit(cirq.H(pinned), cirq.measure(pinned))
+
+    method = load_circuit(circuit, dialects=physical.kernel)
+
+    pins = [stmt for stmt in method.callable_region.walk() if isinstance(stmt, NewAt)]
+    assert len(pins) == 1
+    for coordinate, expected in zip(
+        (pins[0].zone_id, pins[0].word_id, pins[0].site_id), (1, 2, 3), strict=True
+    ):
+        assert isinstance(coordinate.owner, py.Constant)
+        assert coordinate.owner.value.unwrap() == expected
+    assert emit_circuit(method) == circuit
+
+
+def test_physical_unpinned_line_qubit_round_trip():
+    unpinned = cirq.LineQubit(0)
+    circuit = cirq.Circuit(cirq.H(unpinned), cirq.measure(unpinned))
+
+    method = load_circuit(circuit, dialects=physical.kernel)
+
+    assert not any(isinstance(stmt, NewAt) for stmt in method.callable_region.walk())
+    assert emit_circuit(method) == circuit
+
+
+def test_physical_mixed_pinned_and_unpinned_qubit_round_trip():
+    from bloqade.gemini.common.cirq_conversion import GeminiQubit
+
+    pinned = GeminiQubit(0, (1, 2, 3))
+    unpinned = cirq.LineQubit(1)
+    circuit = cirq.Circuit(
+        cirq.H(pinned), cirq.CX(pinned, unpinned), cirq.measure(pinned, unpinned)
+    )
 
     method = load_circuit(circuit, dialects=physical.kernel)
 
@@ -27,7 +59,7 @@ def test_physical_pinned_qubit_round_trip():
 def test_physical_pinned_loader_rejects_register_as_argument():
     from bloqade.gemini.common.cirq_conversion import GeminiQubit
 
-    pinned = GeminiQubit(0, pin=(0, 0, 0))
+    pinned = GeminiQubit(0, pin=(1, 2, 3))
     circuit = cirq.Circuit(cirq.measure(pinned))
 
     with pytest.raises(lowering.BuildError, match="pinned"):
@@ -47,7 +79,7 @@ def test_physical_new_at_emits_without_importing_logical_converter(tmp_path):
 
             @physical.kernel()
             def program():
-                qubit = new_at(0, 0, 0)
+                qubit = new_at(1, 2, 3)
                 squin.h(qubit)
                 return squin.broadcast.measure(ilist.IList([qubit]))
 
@@ -66,4 +98,4 @@ def test_physical_new_at_emits_without_importing_logical_converter(tmp_path):
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "GeminiQubit(index=0, pin=(0, 0, 0))" in completed.stdout
+    assert "GeminiQubit(index=0, pin=(1, 2, 3))" in completed.stdout

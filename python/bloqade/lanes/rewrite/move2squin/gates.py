@@ -212,10 +212,16 @@ class InsertMeasurements(rewrite_abc.RewriteRule):
     batched_results: dict[move.GetFutureResult, tuple[ir.SSAValue, int]] = field(
         init=False, default_factory=dict
     )
+    _attempted_futures: set[ir.SSAValue] = field(init=False, default_factory=set)
 
     def batch_future_results(self, node: move.GetFutureResult) -> None:
-        """Measure the concrete readouts of one future in record order."""
+        """Try batching each future once, measuring its readouts in record order."""
         future = node.measurement_future
+        if future in self._attempted_futures:
+            return
+        # Remember failures too: individual fallback rewrites remove future
+        # uses, so retrying could incorrectly batch only the remaining suffix.
+        self._attempted_futures.add(future)
         if not isinstance(future, ir.ResultValue) or not isinstance(
             owner := future.owner, move.EndMeasure
         ):

@@ -613,3 +613,49 @@ def test_insert_measurements_does_not_batch_invalid_readout_groups(
     rule.batch_future_results(readouts[0])
 
     assert rule.batched_results == {}
+
+
+@pytest.mark.parametrize(
+    "record_ids,qubit_ids",
+    [
+        ((0, 2, 3), (0, 1, 2)),  # Removing the first readout closes the record gap.
+        ((0, 1, 2), (0, 0, 1)),  # Removing the first readout removes the duplicate.
+    ],
+)
+def test_insert_measurements_failed_batch_is_not_retried(
+    record_ids: tuple[int, int, int], qubit_ids: tuple[int, int, int]
+):
+    zone = ZoneAddress(0)
+    future = move.EndMeasure(ir.TestValue(), zone_addresses=(zone,))
+    locations = tuple(LocationAddress(0, index) for index in range(3))
+    readouts = [
+        move.GetFutureResult(
+            future.result, zone_address=zone, location_address=location
+        )
+        for location in locations
+    ]
+    block = ir.Block([future, *readouts])
+    physical_qubits: dict[int, ir.SSAValue] = {
+        index: ir.TestValue() for index in range(3)
+    }
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        future,
+        entries={
+            readout.result: atom.MeasureResult(record_id, qubit_id, location)
+            for readout, record_id, qubit_id, location in zip(
+                readouts, record_ids, qubit_ids, locations, strict=True
+            )
+        },
+    )
+    rule = gates.InsertMeasurements(physical_qubits, frame)
+
+    rewrite.Walk(rule).rewrite(block)
+
+    assert not any(isinstance(stmt, qubit.stmts.Measure) for stmt in block.stmts)
+    measurements = [stmt for stmt in block.stmts if isinstance(stmt, func.Invoke)]
+    assert len(measurements) == 3
+    assert all(stmt.callee is qubit.measure for stmt in measurements)
+    assert [tuple(stmt.inputs) for stmt in measurements] == [
+        (physical_qubits[qubit_id],) for qubit_id in qubit_ids
+    ]
+    assert rule.batched_results == {}

@@ -2,6 +2,10 @@
 
 Imported lazily by ``bloqade.cirq_utils`` so importing Gemini logical kernels
 does not require the optional Cirq dependency.
+
+Use ``GeminiLogicalQubit(index, pin=(zone, word, site))`` for pinned qubits and
+``cirq.LineQubit(index)`` for unpinned qubits. ``GeminiLogicalQubit`` is an alias
+of the shared, pinned-only ``GeminiQubit`` type.
 """
 
 from typing import Any
