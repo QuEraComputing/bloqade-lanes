@@ -27,6 +27,7 @@ _SchedulableStmt = (
     | place.EndMeasure
     | place.MoveTo
     | place.Permute
+    | place.Barrier
 )
 
 

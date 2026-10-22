@@ -42,6 +42,7 @@ class ReorderStaticPlacement(abc.RewriteRule):
             place.CZ,
             place.Initialize,
             place.EndMeasure,
+            place.Barrier,
             # Movement statements are accepted and handled as barriers by the
             # policy (see _BARRIERS); they thread state like any other
             # QuantumStmt, so the reconstruction below rebuilds them unchanged.

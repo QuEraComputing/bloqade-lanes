@@ -520,6 +520,12 @@ REGISTERED_STATEMENTS = {
 }
 
 
+if hasattr(squin_qubit.stmts, "Barrier"):
+    # Barriers are phase-neutral but force pending phases to materialize before
+    # the boundary, rather than permitting commutation across it.
+    REGISTERED_STATEMENTS.add("bloqade.qubit.stmts.Barrier")
+
+
 def test_dispatch_table_is_what_it_claims_to_be():
     """Pin every registration, because deleting one is currently invisible.
 

@@ -111,6 +111,13 @@ class Initialize(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class Barrier(QuantumStmt):
+    """Compilation boundary on selected qubits; erased after gate scheduling."""
+
+    qubits: tuple[int, ...] = info.attribute()
+
+
+@statement(dialect=dialect)
 class CZ(QuantumStmt):
     qubits: tuple[int, ...] = info.attribute()
 
@@ -351,11 +358,12 @@ class PlacementMethods(interp.MethodTable):
         return (new_state,)
 
     @interp.impl(Initialize)
+    @interp.impl(Barrier)
     def impl_initialize(
         self,
         _interp: PlacementAnalysis,
         frame: ForwardFrame[AtomState],
-        stmt: Initialize,
+        stmt: Initialize | Barrier,
     ):
         return (frame.get(stmt.state_before),)
 

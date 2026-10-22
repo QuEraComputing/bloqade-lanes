@@ -272,6 +272,24 @@ class EliminateRz(RewriteRule):
 
     # --- the actual work ---
 
+    # Circuit 0.15 has no Barrier; keep its compilation paths working.
+    if (_barrier_type := getattr(squin_qubit.stmts, "Barrier", None)) is not None:
+
+        @_rewrite.register(_barrier_type)
+        def _(self, stmt: ir.Statement) -> RewriteResult:
+            # Materialize the addressed frames before the boundary. Frames on
+            # other wires can still commute forward independently.
+            source: ilist.New = stmt.args[0].owner  # type: ignore[reportAssignmentType]
+            changed = False
+            for qubit in source.values:
+                if (angle := self._frame.pop(qubit, None)) is None:
+                    continue
+                register = ilist.New(values=(qubit,), elem_type=bloqade_types.QubitType)
+                register.insert_before(stmt)
+                native_gate.stmts.Rz(angle, register.result).insert_before(stmt)
+                changed = True
+            return RewriteResult(has_done_something=changed)
+
     @_rewrite.register(native_gate.stmts.Rz)
     def _(self, stmt: native_gate.stmts.Rz) -> RewriteResult:
         source: ilist.New = stmt.qubits.owner  # type: ignore[reportAssignmentType]

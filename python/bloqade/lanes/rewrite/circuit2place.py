@@ -195,6 +195,7 @@ class RewritePlaceOperations(abc.RewriteRule):
                 gate.CZ,
                 gate.R,
                 gate.Rz,
+                getattr(qubit.stmts, "Barrier", ()),  # Circuit >= 0.16
                 arrange_dialect.stmts.MoveTo,
                 arrange_dialect.stmts.Permute,
             ),
@@ -223,6 +224,17 @@ class RewritePlaceOperations(abc.RewriteRule):
         )
 
         return place.StaticPlacement(qubits=qubits, body=body)
+
+    def rewrite_Barrier(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(args_list := node.args[0].owner, ilist.New):
+            return abc.RewriteResult()
+        inputs = args_list.values
+        body, block, entry_state = self.prep_region()
+        barrier = place.Barrier(entry_state, qubits=tuple(range(len(inputs))))
+        node.replace_by(
+            self.construct_execute(barrier, qubits=inputs, body=body, block=block)
+        )
+        return abc.RewriteResult(has_done_something=True)
 
     def rewrite_Initialize(self, node: gemini_stmts.Initialize) -> abc.RewriteResult:
         if not isinstance(args_list := node.qubits.owner, ilist.New):
@@ -609,6 +621,7 @@ class MergePlacementRegions(abc.RewriteRule):
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
+                    place.Barrier,
                     place.MoveTo,
                     place.Permute,
                 ),
@@ -751,6 +764,7 @@ class MergeStaticPlacement(abc.RewriteRule):
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
+                    place.Barrier,
                     place.MoveTo,
                     place.Permute,
                 ),

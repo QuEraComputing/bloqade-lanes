@@ -27,7 +27,7 @@ class InsertMoves(RewriteRule):
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, place.QuantumStmt):
+        if not isinstance(node, place.QuantumStmt) or isinstance(node, place.Barrier):
             return RewriteResult()
 
         state_after = self.placement_analysis.get(node.state_after)
@@ -83,6 +83,11 @@ class RewriteGates(RewriteRule):
         self, node: ir.Statement, state_after: placement.AtomState
     ) -> list[ir.Statement] | None:
         return None
+
+    @stmts_to_insert.register(place.Barrier)
+    def _(self, node: place.Barrier, state_after: placement.AtomState):
+        # Scheduling and fusion have finished; a barrier emits no hardware op.
+        return []
 
     @stmts_to_insert.register(place.CZ)
     def _(self, node: place.CZ, state_after: placement.AtomState):
