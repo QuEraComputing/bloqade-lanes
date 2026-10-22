@@ -4,14 +4,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from bloqade.analysis.tomography import TomographyResult
 from bloqade.decoders import BaseDecoder
 
 from .confidence import ConfidenceDecoder
 from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
 from .sampling import _BasisDataset
-from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 
 _DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
+_DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 _ProgressLabel = str | bool
 
 
@@ -295,7 +296,11 @@ def _evaluate_cached_threshold_curve(
     basis_labels: Sequence[str] = _DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
 ) -> PostselectionCurveData:
-    """Evaluate a point-fidelity curve from decoded shots and confidences."""
+    """Evaluate a point-fidelity curve from decoded shots and confidences.
+
+    A tomography estimate requires at least one shot in every basis, even when
+    ``min_accepted_per_basis`` is zero. Skip thresholds without that coverage.
+    """
 
     confidence_arrays = [
         decoded_results[basis].confidence
@@ -318,13 +323,12 @@ def _evaluate_cached_threshold_curve(
         for basis in basis_labels:
             basis_results = decoded_results[basis]
             keep = basis_results.confidence >= float(threshold)
-            shots = basis_results.observables[keep].astype(np.uint8, copy=False)
+            shots = basis_results.observables[keep, 0].astype(np.uint8, copy=False)
             shots_by_basis[basis] = shots
             accepted_count += int(shots.shape[0])
 
-        if (
-            min(shots_by_basis[basis].shape[0] for basis in basis_labels)
-            < min_accepted_per_basis
+        if min(shots_by_basis[basis].shape[0] for basis in basis_labels) < max(
+            1, min_accepted_per_basis
         ):
             continue
 
