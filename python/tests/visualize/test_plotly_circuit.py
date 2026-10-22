@@ -365,6 +365,20 @@ def test_star_rz_is_labelled_apart_from_a_plain_rz() -> None:
     assert plotly_circuit._gate_kind_and_label(load) is None
 
 
+def test_star_rx_is_labelled_apart_from_a_plain_equatorial_rotation() -> None:
+    load = move.Load()
+    rotation_angle = py.Constant(value=ir.PyAttr(0.5))
+    star_rx = move.StarRx(
+        current_state=load.result,
+        rotation_angle=rotation_angle.result,
+        location_addresses=(LocationAddress(0, 0, 0),),
+        qubit_indices=(4, 5, 6),
+    )
+
+    assert plotly_circuit._gate_kind_and_label(star_rx) == ("local_r", "Rx*")
+    assert plotly_circuit.gate_parameter_names(star_rx) == ("rotation_angle",)
+
+
 def test_circuit_gates_skip_qubits_without_a_wire(plotly) -> None:
     """A column may name a qubit the diagram has no row for; it is dropped.
 

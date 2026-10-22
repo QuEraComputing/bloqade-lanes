@@ -139,6 +139,19 @@ class StarRz(StatefulStatement):
 
 
 @statement(dialect=dialect)
+class StarRx(StatefulStatement):
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
+
+
+@statement(dialect=dialect)
 class GlobalRz(StatefulStatement):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
@@ -254,6 +267,16 @@ def local_rz(
 
 @wraps(StarRz)
 def star_rz(
+    current_state: State,
+    rotation_angle: float,
+    *,
+    location_addresses: tuple[LocationAddress, ...],
+    qubit_indices: tuple[int, int, int],
+) -> State: ...
+
+
+@wraps(StarRx)
+def star_rx(
     current_state: State,
     rotation_angle: float,
     *,

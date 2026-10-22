@@ -3,8 +3,9 @@
 The statements in :mod:`bloqade.gemini.logical.dialects.extensions` are part of
 the ``@gemini.logical.kernel`` dialect group, so they lower and compile like any
 other logical statement. What sets them apart is that they are *not* logical
-operations: ``StarRz`` puts physical Z rotations on the three qubits of a
-weight-3 logical-Z representative, which takes the state out of the code space.
+operations: ``StarRz`` and ``StarRx`` put physical Z and X rotations on the
+three qubits of a weight-3 logical operator representative, taking the state
+out of the code space.
 The state only comes back if the program post-selects on the error-correction
 checks around it -- something the compiler neither inserts nor can verify.
 
