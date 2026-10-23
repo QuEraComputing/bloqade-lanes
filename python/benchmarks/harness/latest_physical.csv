@@ -50,6 +50,23 @@ bv_70,rust_ids,builtin,rust,rust_solver,True,272.887084,198,198,0.0000000000,99,
 bv_70,rust_loose_goal,builtin,rust,rust_solver,True,308.149833,80,80,0.0000003446,80,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
 bv_70,rust_push_rotate,builtin,rust,rust_solver,True,261.429333,198,198,0.0000000000,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
 bv_70,rust_receding_horizon,builtin,rust,rust_solver,True,299.192250,79,80,0.0000003716,1675,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
+code422_physical_16,pipeline_default,builtin,rust,rust_solver,True,889.960607,54,192,0.1413552252,86,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
+code422_physical_16,pipeline_route_all,builtin,rust,rust_solver,True,17263.488043,52,176,0.1535109374,16459,,,,,,,,pipeline_default with mover_selection=ROUTE_ALL
+code422_physical_16,rust_astar,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+code422_physical_16,rust_astar_fallback,builtin,rust,rust_solver,True,248.767612,50,184,0.1551283125,315,,,,,,,,A* with Push and Rotate as the reliability net on failure
+code422_physical_16,rust_bfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+code422_physical_16,rust_cascade_ids,builtin,rust,rust_solver,False,,,,,,,,,,,,,"IDS, then an A* refinement gated by the completion bound; error=Compilation did not fully lower to Move IR; place.CZ statements remain."
+code422_physical_16,rust_cascade_ids_ungated,builtin,rust,rust_solver,False,,,,,,,,,,,,,cascade-ids with the refinement's completion-bound gate off; error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+code422_physical_16,rust_dfs,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+code422_physical_16,rust_entropy_1,builtin,rust,rust_solver,True,265.795715,88,168,0.0845237747,63,,,,,,,,
+code422_physical_16,rust_entropy_10,builtin,rust,rust_solver,True,1563.046263,78,168,0.1004300766,435,,,,,,,,
+code422_physical_16,rust_entropy_20,builtin,rust,rust_solver,True,1428.923168,78,168,0.1004300766,435,,,,,,,,
+code422_physical_16,rust_entropy_5,builtin,rust,rust_solver,True,1391.452828,80,168,0.0970257061,288,,,,,,,,
+code422_physical_16,rust_greedy,builtin,rust,rust_solver,False,,,,,,,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output; error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+code422_physical_16,rust_ids,builtin,rust,rust_solver,False,,,,,,,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+code422_physical_16,rust_loose_goal,builtin,rust,rust_solver,True,401.986714,114,132,0.0601439136,122,,,,,,,,"loose-goal entangling solver (LooseGoalCzPlacement), defaults"
+code422_physical_16,rust_push_rotate,builtin,rust,rust_solver,True,266.406596,52,168,0.1572405524,0,,,,,,,,"complete rule-based router, not a search; expands no nodes"
+code422_physical_16,rust_receding_horizon,builtin,rust,rust_solver,True,893.478008,101,126,0.0766233254,12949,,,,,,,,"receding-horizon loose-goal solver (RecedingHorizonCzPlacement), defaults"
 ghz_4,pipeline_default,builtin,rust,rust_solver,True,153.170209,10,14,0.8781419138,25,,,,,,,,shipped PhysicalPipeline default; knobs intentionally unpinned
 ghz_4,pipeline_route_all,builtin,rust,rust_solver,True,168.469750,10,14,0.8781419138,51,,,,,,,,pipeline_default with mover_selection=ROUTE_ALL
 ghz_4,rust_astar,builtin,rust,rust_solver,True,225.450458,12,14,0.8706036048,6,,,,,,,,

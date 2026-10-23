@@ -38,22 +38,19 @@ class PlaceToMove:
         address_analysis = address.AddressAnalysis(out.dialects)
         if no_raise:
             address_frame, _ = address_analysis.run_no_raise(out)
-            all_qubits = tuple(range(address_analysis.next_address))
-            initial_layout = layout.LayoutAnalysis(
-                out.dialects,
-                self.layout_heuristic,
-                address_frame.entries,
-                all_qubits,
-            ).get_layout_no_raise(out)
         else:
             address_frame, _ = address_analysis.run(out)
-            all_qubits = tuple(range(address_analysis.next_address))
-            initial_layout = layout.LayoutAnalysis(
-                out.dialects,
-                self.layout_heuristic,
-                address_frame.entries,
-                all_qubits,
-            ).get_layout(out)
+        all_qubits = tuple(range(address_analysis.next_address))
+        layout_analysis = layout.LayoutAnalysis(
+            out.dialects,
+            self.layout_heuristic,
+            address_frame.entries,
+            all_qubits,
+        )
+        if no_raise:
+            initial_layout = layout_analysis.get_layout_no_raise(out)
+        else:
+            initial_layout = layout_analysis.get_layout(out)
 
         rewrite.Walk(
             resolve_pinned.ResolvePinnedAddresses(
@@ -67,6 +64,7 @@ class PlaceToMove:
             initial_layout,
             address_frame.entries,
             self.placement_strategy,
+            code_blocks=layout_analysis.code_blocks,
         )
         if no_raise:
             placement_frame, _ = placement_analysis.run_no_raise(out)

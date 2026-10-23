@@ -9,6 +9,11 @@ from kirin.analysis.forward import ForwardFrame
 from kirin.interp.exceptions import InterpreterError
 from typing_extensions import Self
 
+from bloqade.lanes.analysis.code_blocks import (
+    CodeBlock,
+    LocalCodeBlock,
+    localize_code_blocks,
+)
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
 from .lattice import AtomState, ConcreteState
@@ -34,6 +39,11 @@ class PlacementAnalysis(Forward[AtomState]):
 
     placement_strategy: PlacementStrategyABC
     """The strategy function to use for calculating placements."""
+    code_blocks: tuple[CodeBlock, ...] = field(default=(), kw_only=True)
+    """Code blocks honored by the initial layout, in global qubit ids."""
+    _local_code_blocks: tuple[LocalCodeBlock, ...] = field(
+        default=(), init=False, repr=False
+    )
     lattice = AtomState
 
     def __post_init__(self):
@@ -50,20 +60,39 @@ class PlacementAnalysis(Forward[AtomState]):
         occupied = set(self.initial_layout)
         layout = []
         move_count = []
+        qids = []
         for q in qubits:
             if not isinstance(addr := self.address_analysis.get(q), AddressQubit):
                 raise InterpreterError(f"Qubit {q} does not have a qubit address.")
 
+            qids.append(addr.data)
             loc_addr = self.initial_layout[addr.data]
             occupied.discard(loc_addr)
             layout.append(loc_addr)
             move_count.append(self.move_count[q])
 
+        self._local_code_blocks = localize_code_blocks(self.code_blocks, qids)
         return ConcreteState(
             layout=tuple(layout),
             occupied=frozenset(occupied),
             move_count=tuple(move_count),
+            code_blocks=self._local_code_blocks,
         )
+
+    def attach_code_blocks(self, state: AtomState) -> AtomState:
+        """Set the current static circuit's code blocks on ``state``.
+
+        Called on the state passed to, and every state returned from, a
+        placement strategy, so strategies that construct a ``ConcreteState``
+        without the field still hand it on.
+        """
+        if (
+            self._local_code_blocks
+            and isinstance(state, ConcreteState)
+            and state.code_blocks is not self._local_code_blocks
+        ):
+            state.code_blocks = self._local_code_blocks
+        return state
 
     def build_cz_buffer(
         self, block: ir.Block
