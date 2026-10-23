@@ -21,6 +21,41 @@ Bloqade-lanes provides the core components for compiling neutral atom quantum ci
 uv add bloqade-lanes
 ```
 
+## Local TaskBuilder simulation
+
+Install the simulation dependencies with `pip install 'bloqade-lanes[sim]'`.
+Use `GeminiLogicalSimulatorDevice` to run the same builder locally:
+
+```python
+from bloqade import squin
+from bloqade.core.device.task_builder import TaskBuilder
+from bloqade.gemini import GeminiLogicalSimulatorDevice, logical
+
+@logical.kernel
+def bell():
+    q = squin.qalloc(2)
+    squin.h(q[0])
+    squin.cx(q[0], q[1])
+    return logical.terminal_measure(q)
+
+builder = TaskBuilder()
+builder.add_subtask(bell, num_shots=100)
+
+device = GeminiLogicalSimulatorDevice(backend="tsim", seed=1234, with_noise=False)
+future = device.run_async(builder)
+result = future.result(timeout=80)
+print(result.return_values)
+```
+
+The standard Python future returns the existing `GeminiLogicalResult`, including
+raw 160-site SLM shots, metadata, and sorting postselection. Each submission uses
+fresh in-memory storage. Sorting is ideal, and circuit noise defaults to off;
+set `with_noise=True` to enable it. PPVM is available with `backend="ppvm"`.
+Programs must take no runtime arguments. No server, authentication, context
+manager, or explicit close is needed; workers stop after their submission ends.
+`device.run_async(builder, dry_run=True)` validates and prints the task without
+starting a simulation. A future timeout does not stop a running simulation.
+
 ## Documentation
 
 The documentation is available at [https://bloqade.quera.com/latest/](https://bloqade.quera.com/latest/). We are at an early stage of completing the documentation with more details and examples, so comments and contributions are most welcome!
