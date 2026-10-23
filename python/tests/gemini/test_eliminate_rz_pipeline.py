@@ -51,8 +51,18 @@ def test_teleportation_kernel_emits_no_local_rz():
     assert _count(_compile(kernel), move.LocalRz) == 0
 
 
-def test_local_r_count_is_unchanged():
-    """Rz removal must not drop or duplicate rotation pulses."""
+class _NoOpMerge(RewriteRule):
+    """Stand-in for MergeSingleQubitRuns that leaves every statement alone."""
+
+
+def test_local_r_count_is_unchanged(monkeypatch):
+    """Rz removal must not drop or duplicate rotation pulses.
+
+    MergeSingleQubitRuns is switched off: it runs first and *does* drop pulses
+    here (``h . s . h`` on ``reg[1]`` folds into one ``R``), which would hide
+    whatever EliminateRz did to the count.
+    """
+    monkeypatch.setattr(native_to_place, "MergeSingleQubitRuns", _NoOpMerge)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def kernel():
