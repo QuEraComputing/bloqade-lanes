@@ -14,15 +14,21 @@ compiling with ``logical_initialize=False`` must NOT insert any
 from __future__ import annotations
 
 import math
+import warnings
 
+import pytest
 from kirin.dialects import ilist
 from tests._squin_to_move_helper import squin_to_move
 
 from bloqade import squin
-from bloqade.lanes.dialects import move
+from bloqade.lanes.analysis.placement.exceptions import PlacementError
+from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
+from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
+from bloqade.lanes.heuristics.physical.movement import RustPlacementTraversal
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 
 
@@ -78,3 +84,83 @@ def test_physical_compile_produces_move_ir() -> None:
     assert any(
         isinstance(s, move.StatefulStatement) for s in stmts
     ), "Expected at least one move.StatefulStatement in compiled move IR"
+
+
+def test_a_placement_out_of_budget_warns_with_the_solver_status() -> None:
+    """A CZ stage whose routing search runs out of budget leaves its gates
+    unlowered, exactly as before, but now says why: the placement error and the
+    solver's ``BUDGET_EXCEEDED`` status reach the caller as a warning instead of
+    being discarded with the exception."""
+
+    @squin.kernel
+    def ghz():
+        q = squin.qalloc(4)
+        squin.h(q[0])
+        squin.cx(q[0], q[1])
+        squin.cx(q[1], q[2])
+        squin.cx(q[2], q[3])
+
+    def compile_with(max_expansions: int):
+        strategy = PalindromePlacementStrategy(
+            inner=PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(
+                    strategy="cascade-ids", max_expansions=max_expansions
+                ),
+            )
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            out = squin_to_move(
+                ghz,
+                layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(
+                    arch_spec=physical.get_arch_spec()
+                ),
+                placement_strategy=strategy,
+                logical_initialize=False,
+            )
+        placement_warnings = [
+            str(w.message) for w in caught if "placement analysis" in str(w.message)
+        ]
+        remaining = sum(
+            isinstance(stmt, place.CZ) for stmt in out.callable_region.walk()
+        )
+        return remaining, placement_warnings
+
+    # Enough budget: every CZ lowers and nothing is reported.
+    assert compile_with(300) == (0, [])
+
+    remaining, reported = compile_with(1)
+    assert remaining == 3, "the failed stage must still leave its gates unlowered"
+    assert len(reported) == 1
+    assert "routing solver failed" in reported[0]
+    assert "BUDGET_EXCEEDED" in reported[0]
+
+
+def test_a_failed_placement_is_still_raised_when_asked() -> None:
+    """``no_raise=False`` keeps raising the placement error itself."""
+
+    @squin.kernel
+    def ghz():
+        q = squin.qalloc(4)
+        squin.h(q[0])
+        squin.cx(q[0], q[1])
+        squin.cx(q[1], q[2])
+        squin.cx(q[2], q[3])
+
+    strategy = PalindromePlacementStrategy(
+        inner=PhysicalPlacementStrategy(
+            arch_spec=physical.get_arch_spec(),
+            traversal=RustPlacementTraversal(strategy="cascade-ids", max_expansions=1),
+        )
+    )
+    with pytest.raises(PlacementError, match="BUDGET_EXCEEDED"):
+        squin_to_move(
+            ghz,
+            layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(
+                arch_spec=physical.get_arch_spec()
+            ),
+            placement_strategy=strategy,
+            logical_initialize=False,
+            no_raise=False,
+        )
