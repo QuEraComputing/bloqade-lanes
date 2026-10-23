@@ -558,6 +558,7 @@ def make_physical_placement_strategy(
     arch_spec: ArchSpec | None = None,
     return_moves: bool = True,
     mover_selection: MoverSelection | None = None,
+    completion_bound: str | None = None,
 ) -> PlacementStrategyABC:
     """Build a physical placement strategy from user-facing search knobs.
 
@@ -571,6 +572,12 @@ def make_physical_placement_strategy(
     NoHome's default, ``RANKED``.  ``lambda_lookahead`` is fixed at ``0`` because
     palindrome return always moves atoms back to their original home position,
     so future-layer proximity penalties carry no signal.
+
+    ``completion_bound="weighted_distance"`` enables admissible
+    branch-and-bound pruning for entropy-based fixed-target routing, including
+    user-directed ``MoveTo`` and the fixed-target phase of NoHome CZ placement.
+    It does not apply to loose-goal CZ pair searches. ``None`` retains the
+    existing solver behavior.
 
     ``return_moves`` also selects mirrored solving: it wraps the strategy in
     :class:`~bloqade.lanes.analysis.placement.PalindromePlacementStrategy`
@@ -602,6 +609,10 @@ def make_physical_placement_strategy(
         raise ValueError("move_solutions_per_layer must be >= 1")
     if search_budget is not None and search_budget < 1:
         raise ValueError("search_budget must be None or >= 1")
+    if completion_bound not in (None, "weighted_distance"):
+        raise ValueError("completion_bound must be None or 'weighted_distance'")
+    if completion_bound is not None and strategy != "entropy":
+        raise ValueError("completion_bound requires the entropy search strategy")
 
     inner = NoHomePlacementStrategy(
         arch_spec=get_physical_arch_spec() if arch_spec is None else arch_spec,
@@ -620,6 +631,7 @@ def make_physical_placement_strategy(
         # `return_moves`.
         backwards_search=return_moves,
         mover_selection=mover_selection,
+        completion_bound=completion_bound,
     )
 
     return PalindromePlacementStrategy(inner=inner) if return_moves else inner
