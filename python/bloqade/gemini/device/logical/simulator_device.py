@@ -27,13 +27,13 @@ from .utils import ShotRemappingException
 if TYPE_CHECKING:
     from qlam_core.plugins.tasks.api.tasks_models import TaskDefinition
 
+    from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 
-    from ..simulator import GeminiLogicalSimulatorTask
     from ..simulator_backend import AbstractSimulatorBackend
 
 
-def _slm_layout(task: GeminiLogicalSimulatorTask) -> tuple[list[int], np.ndarray]:
+def _slm_layout(move_kernel: ir.Method, arch: ArchSpec) -> tuple[list[int], np.ndarray]:
     # These imports must stay lazy: the public Gemini package is also imported
     # while the Lanes analysis/transform modules are being initialized.
     from bloqade.lanes.analysis.atom import AtomInterpreter
@@ -41,12 +41,11 @@ def _slm_layout(task: GeminiLogicalSimulatorTask) -> tuple[list[int], np.ndarray
     from bloqade.lanes.bytecode.encoding import ZoneAddress
     from bloqade.lanes.dialects import move
 
-    arch = task.physical_arch_spec
     zone = ZoneAddress(0)
     width = len(list(arch.yield_zone_locations(zone)))
     remapping = AtomInterpreter(
-        task.physical_move_kernel.dialects, arch_spec=arch
-    ).get_shot_remapping(task.physical_move_kernel)
+        move_kernel.dialects, arch_spec=arch
+    ).get_shot_remapping(move_kernel)
     if isinstance(remapping, ShotRemappingErr):
         raise ShotRemappingException(
             f"Cannot map physical measurements: {remapping.diagnostic}"
@@ -62,7 +61,7 @@ def _slm_layout(task: GeminiLogicalSimulatorTask) -> tuple[list[int], np.ndarray
 
     fills = [
         stmt
-        for stmt in task.physical_move_kernel.callable_region.walk()
+        for stmt in move_kernel.callable_region.walk()
         if isinstance(stmt, move.Fill)
     ]
     if len(fills) != 1:
@@ -87,13 +86,15 @@ def _run_task(
     storage: StorageBackend,
 ) -> GeminiLogicalResult[Any]:
     from bloqade.gemini import logical
+    from bloqade.gemini.compile.task import run_squin_kernel_validation
+    from bloqade.lanes.arch.gemini import physical
+    from bloqade.lanes.noise_model import generate_logical_noise_model
+    from bloqade.lanes.transform import LogicalPipeline, MoveToSquinLogical
 
-    from ..simulator import GeminiLogicalSimulator, _default_noise_model
-
-    simulator = GeminiLogicalSimulator(
-        backend=backend,
-        noise_model=noise_model if noise_model is not None else _default_noise_model(),
+    resolved_noise_model = (
+        noise_model if noise_model is not None else generate_logical_noise_model()
     )
+    arch_spec = physical.get_arch_spec()
     serializer = JSONSerializer()
     prepared = []
     for program in definition.programs:
@@ -105,13 +106,17 @@ def _run_task(
         if run_pass is None:
             raise RuntimeError("Gemini logical kernel has no pass pipeline")
         run_pass(kernel, aggressive_unroll=True, verify=False)
-        task = simulator.task(kernel)
-        mapping, sorted_frame = _slm_layout(task)
-        physical_kernel = (
-            task.physical_squin_kernel
-            if with_noise
-            else task.noiseless_physical_squin_kernel
+        logical_kernel = kernel.similar()
+        run_squin_kernel_validation(logical_kernel).raise_if_invalid()
+        move_kernel = LogicalPipeline(transversal_rewrite=True, simulation=True).emit(
+            logical_kernel
         )
+        mapping, sorted_frame = _slm_layout(move_kernel, arch_spec)
+        physical_kernel = MoveToSquinLogical(
+            arch_spec=arch_spec,
+            noise_model=resolved_noise_model,
+            add_noise=with_noise,
+        ).emit(move_kernel)
         prepared.append((physical_kernel, mapping, sorted_frame))
 
     task_id = str(uuid4())

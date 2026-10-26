@@ -33,6 +33,7 @@ from bloqade.gemini.device.simulator_backend import (
     PPVMSimulatorBackend,
     TsimSimulatorBackend,
 )
+from bloqade.lanes.transform import LogicalPipeline
 
 
 @logical.kernel
@@ -301,13 +302,13 @@ def test_detectors_observables_and_structured_returns_use_existing_result():
 
 def test_multiple_programs_repeated_subtasks_and_metadata(monkeypatch):
     calls = []
-    compile_task = GeminiLogicalSimulator.task
+    emit = LogicalPipeline.emit
 
-    def record(self, kernel):
+    def record(self, kernel, no_raise=True):
         calls.append(kernel.sym_name)
-        return compile_task(self, kernel)
+        return emit(self, kernel, no_raise=no_raise)
 
-    monkeypatch.setattr(GeminiLogicalSimulator, "task", record)
+    monkeypatch.setattr(LogicalPipeline, "emit", record)
     builder = builder_for(shots=3)
     builder.add_subtask(bell, 5, metadata={"name": "bell"})
     builder.add_subtask(pinned, 2, metadata={"name": "repeat"})
@@ -332,6 +333,50 @@ def test_multiple_programs_repeated_subtasks_and_metadata(monkeypatch):
     assert [row.subtask_shot_index for row in rows] == [0, 1, 2, 0, 1, 2, 3, 4, 0, 1]
     bell_values = np.logical_xor.reduce(np.asarray(result.return_values[1]), axis=2)
     assert np.all(bell_values[:, 0] == bell_values[:, 1])
+
+
+def test_local_execution_uses_pipelines_without_simulator_tasks(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("local execution must not construct simulator tasks")
+
+    monkeypatch.setattr(GeminiLogicalSimulator, "task", forbidden)
+    result = (
+        GeminiLogicalSimulatorDevice(seed=12)
+        .run_async(builder_for(shots=2), dry_run=False)
+        .result(60)
+    )
+    assert result.shot_results()[0].shape == (2, 160)
+    parity = np.logical_xor.reduce(np.asarray(result.return_values[0]), axis=2)
+    assert np.all(parity == [True, False])
+
+
+@pytest.mark.parametrize("with_noise", [False, True])
+def test_direct_pipeline_preserves_physical_kernel(with_noise, monkeypatch):
+    simulator = GeminiLogicalSimulator()
+    reference_task = simulator.task(pinned)
+    expected = (
+        reference_task.physical_squin_kernel
+        if with_noise
+        else reference_task.noiseless_physical_squin_kernel
+    )
+    sampled = []
+    sample = TsimSimulatorBackend.sample
+
+    def record(self, kernel, *, shots):
+        sampled.append(kernel)
+        return sample(self, kernel, shots=shots)
+
+    monkeypatch.setattr(TsimSimulatorBackend, "sample", record)
+    result = (
+        GeminiLogicalSimulatorDevice(
+            seed=12, with_noise=with_noise, noise_model=simulator.noise_model
+        )
+        .run_async(builder_for(shots=1), dry_run=False)
+        .result(60)
+    )
+    assert len(sampled) == 1
+    assert sampled[0].is_structurally_equal(expected)
+    assert result.shot_results()[0].shape == (1, 160)
 
 
 def test_all_logical_slots_have_the_correct_physical_filling():
