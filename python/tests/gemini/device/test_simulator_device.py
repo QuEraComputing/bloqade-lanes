@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import sys
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from inspect import Parameter, signature
 from threading import Barrier, Event, enumerate as enumerate_threads, get_ident
@@ -27,13 +28,15 @@ from bloqade.gemini import (
     GeminiLogicalSimulatorDevice,
     logical,
 )
-from bloqade.gemini.device import logical as device_logical
+from bloqade.gemini.device import (
+    logical as device_logical,
+    simulator_backend as backend_module,
+)
 from bloqade.gemini.device.logical import simulator_device as device_module
 from bloqade.gemini.device.simulator_backend import (
     BackendSample,
     CliffTSimulatorBackend,
     PPVMSimulatorBackend,
-    TsimSimulatorBackend,
 )
 from bloqade.lanes.transform import LogicalPipeline
 
@@ -87,6 +90,35 @@ def test_public_exports_are_the_same_class():
 
 def test_noise_is_enabled_by_default():
     assert GeminiLogicalSimulatorDevice().with_noise is True
+
+
+def test_ppvm_is_the_default_backend():
+    assert GeminiLogicalSimulatorDevice().backend == "ppvm"
+
+
+def test_default_backend_reports_missing_ppvm_dependency(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ppvm", None)
+    future = GeminiLogicalSimulatorDevice().run_async(
+        builder_for(shots=1), dry_run=False
+    )
+    with pytest.raises(ImportError, match=r"bloqade-ppvm.*bloqade-lanes\[sim\]"):
+        future.result(60)
+
+
+def test_default_backend_initializes_ppvm_on_the_caller_thread(monkeypatch):
+    ppvm = pytest.importorskip("ppvm")
+    importing_threads = []
+
+    def record_import():
+        importing_threads.append(get_ident())
+        return ppvm
+
+    monkeypatch.setattr(backend_module, "_ppvm", record_import)
+    future = GeminiLogicalSimulatorDevice().run_async(
+        builder_for(shots=1), dry_run=False
+    )
+    assert future.result(60).shot_results()[0].shape == (1, 160)
+    assert importing_threads[0] == get_ident()
 
 
 def test_finalize_context_defaults_match_hardware_device():
@@ -436,14 +468,14 @@ def test_sqlite_results_use_caller_storage_and_close_worker_connection(
 
 def test_concurrent_simulations_write_to_same_sqlite_database(tmp_path, monkeypatch):
     barrier = Barrier(2)
-    sample = TsimSimulatorBackend.sample
+    sample = PPVMSimulatorBackend.sample
 
     def synchronize(self, kernel, *, shots):
         result = sample(self, kernel, shots=shots)
         barrier.wait(timeout=30)
         return result
 
-    monkeypatch.setattr(TsimSimulatorBackend, "sample", synchronize)
+    monkeypatch.setattr(PPVMSimulatorBackend, "sample", synchronize)
     with SQLiteStorage(str(tmp_path / "concurrent.sqlite")) as storage:
         device = GeminiLogicalSimulatorDevice(seed=12, batch_shots=2)
         first = device.run_async(builder_for(shots=5), dry_run=False, storage=storage)
@@ -499,7 +531,7 @@ def test_sqlite_worker_factory_closes_connection_on_constructor_failure(
 
 def test_sqlite_worker_waits_for_writer_to_commit(tmp_path, monkeypatch):
     entered, proceed = Event(), Event()
-    sample = TsimSimulatorBackend.sample
+    sample = PPVMSimulatorBackend.sample
 
     def blocked(self, kernel, *, shots):
         result = sample(self, kernel, shots=shots)
@@ -507,7 +539,7 @@ def test_sqlite_worker_waits_for_writer_to_commit(tmp_path, monkeypatch):
         assert proceed.wait(30)
         return result
 
-    monkeypatch.setattr(TsimSimulatorBackend, "sample", blocked)
+    monkeypatch.setattr(PPVMSimulatorBackend, "sample", blocked)
     with SQLiteStorage(str(tmp_path / "contention.sqlite")) as storage:
         future = GeminiLogicalSimulatorDevice().run_async(
             builder_for(shots=1), dry_run=False, storage=storage
@@ -536,7 +568,7 @@ def test_sqlite_worker_connection_closes_on_backend_failure(tmp_path, monkeypatc
         closed.append(get_ident())
 
     monkeypatch.setattr(SQLiteStorage, "close", record_close)
-    monkeypatch.setattr(TsimSimulatorBackend, "sample", fail)
+    monkeypatch.setattr(PPVMSimulatorBackend, "sample", fail)
     with SQLiteStorage(str(tmp_path / "failure.sqlite")) as storage:
         future = GeminiLogicalSimulatorDevice().run_async(
             builder_for(shots=1), dry_run=False, storage=storage
@@ -696,13 +728,13 @@ def test_direct_pipeline_preserves_physical_kernel(with_noise, monkeypatch):
         else reference_task.noiseless_physical_squin_kernel
     )
     sampled = []
-    sample = TsimSimulatorBackend.sample
+    sample = PPVMSimulatorBackend.sample
 
     def record(self, kernel, *, shots):
         sampled.append(kernel)
         return sample(self, kernel, shots=shots)
 
-    monkeypatch.setattr(TsimSimulatorBackend, "sample", record)
+    monkeypatch.setattr(PPVMSimulatorBackend, "sample", record)
     if with_noise is None:
         device = GeminiLogicalSimulatorDevice(
             seed=12, noise_model=simulator.noise_model
@@ -842,7 +874,7 @@ def test_backend_failure_is_raised_by_the_standard_future(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("sample failed")
 
-    monkeypatch.setattr(TsimSimulatorBackend, "sample", fail)
+    monkeypatch.setattr(PPVMSimulatorBackend, "sample", fail)
     future = GeminiLogicalSimulatorDevice().run_async(
         builder_for(shots=1), dry_run=False
     )
@@ -854,7 +886,7 @@ def test_backend_failure_is_raised_by_the_standard_future(monkeypatch):
 @pytest.mark.parametrize("payload", [None, np.zeros((1, 1), dtype=bool)])
 def test_invalid_sample_shapes_are_not_stored(monkeypatch, payload):
     monkeypatch.setattr(
-        TsimSimulatorBackend,
+        PPVMSimulatorBackend,
         "sample",
         lambda *args, **kwargs: BackendSample(measurements=payload),
     )

@@ -257,7 +257,7 @@ class GeminiLogicalSimulatorDevice:
     of the result.
 
     Args:
-        backend: Sampling backend, "tsim" (default), "ppvm", or "clifft".
+        backend: Sampling backend, "ppvm" (default), "tsim", or "clifft".
             Install the optional ``bloqade-lanes[sim]`` dependencies to run
             simulations, and ``bloqade-lanes[sim,clifft]`` for CliffT
             (Python 3.12 or later).
@@ -284,7 +284,7 @@ class GeminiLogicalSimulatorDevice:
     validation_suite: ValidationSuite | None = field(
         default_factory=_default_validation_suite
     )
-    backend: Literal["tsim", "ppvm", "clifft"] = "tsim"
+    backend: Literal["tsim", "ppvm", "clifft"] = "ppvm"
     seed: int | None = None
     with_noise: bool = True
     noise_model: LogicalNoiseModelABC | None = None
@@ -436,6 +436,7 @@ class GeminiLogicalSimulatorDevice:
             CliffTSimulatorBackend,
             PPVMSimulatorBackend,
             TsimSimulatorBackend,
+            _ppvm,
         )
 
         _validate_task_definition(task_definition)
@@ -455,6 +456,16 @@ class GeminiLogicalSimulatorDevice:
             )
         if storage is None:
             storage = DictStorage()
+
+        if self.backend == "ppvm":
+            try:
+                # Avoid first initializing PPVM's native module in a
+                # short-lived executor thread.
+                _ppvm()
+            except ImportError as exc:
+                failed: Future[GeminiLogicalResult[Any]] = Future()
+                failed.set_exception(exc)
+                return failed
 
         seed = int(self._seed_rng.integers(0, 2**63)) if self.seed is not None else None
         backend_cls = {
