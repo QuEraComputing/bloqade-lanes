@@ -5,8 +5,7 @@ import sqlite3
 import sys
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from inspect import Parameter, signature
-from threading import Barrier, Event, enumerate as enumerate_threads, get_ident
-from time import monotonic, sleep
+from threading import Event, get_ident
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -96,6 +95,50 @@ def test_ppvm_is_the_default_backend():
     assert GeminiLogicalSimulatorDevice().backend == "ppvm"
 
 
+def test_batch_shots_defaults_to_none():
+    assert GeminiLogicalSimulatorDevice().batch_shots is None
+
+
+@pytest.mark.parametrize(
+    "batch_shots,subtask_shots,expected_batches",
+    [
+        (None, [257, 3], [257, 3]),
+        (2, [5, 3], [2, 2, 1, 2, 1]),
+        (1000, [5, 3], [5, 3]),
+    ],
+)
+def test_sampling_batches_follow_each_subtask_shot_count(
+    monkeypatch, batch_shots, subtask_shots, expected_batches
+):
+    sample = PPVMSimulatorBackend.sample
+    batches = []
+
+    def record(self, kernel, *, shots):
+        batches.append(shots)
+        return sample(self, kernel, shots=shots)
+
+    monkeypatch.setattr(PPVMSimulatorBackend, "sample", record)
+    builder = TaskBuilder()
+    for shots in subtask_shots:
+        builder.add_subtask(pinned, shots)
+    result = (
+        GeminiLogicalSimulatorDevice(seed=12, batch_shots=batch_shots)
+        .run_async(builder, dry_run=False)
+        .result(60)
+    )
+    assert batches == expected_batches
+    assert [shots.shape for shots in result.shot_results()] == [
+        (count, 160) for count in subtask_shots
+    ]
+    rows = list(result.storage.get_shots(shot_filter=result.shot_filter))
+    assert [row.shot_index for row in rows] == list(range(sum(subtask_shots)))
+    assert [(row.subtask_index, row.subtask_shot_index) for row in rows] == [
+        (subtask, shot)
+        for subtask, count in enumerate(subtask_shots)
+        for shot in range(count)
+    ]
+
+
 def test_default_backend_reports_missing_ppvm_dependency(monkeypatch):
     monkeypatch.setitem(sys.modules, "ppvm", None)
     future = GeminiLogicalSimulatorDevice().run_async(
@@ -143,7 +186,7 @@ def test_create_task_definition_has_no_submission_side_effects(monkeypatch, caps
     def forbidden(*args, **kwargs):
         pytest.fail("creating a definition must not start a worker")
 
-    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    monkeypatch.setattr(device._executor, "submit", forbidden)
     definition = device.create_task_definition(builder)
     assert definition.program_language == f"squin.v{device.language_version}"
     assert definition.subtasks[0].num_shots == 2
@@ -277,7 +320,7 @@ def test_submit_task_definition_rejects_invalid_definition_before_worker(
     def forbidden(*args, **kwargs):
         pytest.fail("invalid definitions must not start a worker")
 
-    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    monkeypatch.setattr(device._executor, "submit", forbidden)
     with pytest.raises(ValueError):
         device.submit_task_definition(task_definition=definition)
     assert json.dumps(device._seed_rng.bit_generator.state) == state
@@ -389,7 +432,7 @@ def test_dry_run_with_submission_options_does_not_write_storage(monkeypatch):
     device = GeminiLogicalSimulatorDevice(seed=12)
     storage = DictStorage()
     state = json.dumps(device._seed_rng.bit_generator.state)
-    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    monkeypatch.setattr(device._executor, "submit", forbidden)
     monkeypatch.setattr(storage, "add_task_definition", forbidden)
     monkeypatch.setattr(storage, "add_shots", forbidden)
     assert (
@@ -414,7 +457,7 @@ def test_private_sqlite_storage_rejected_before_starting_worker(monkeypatch, db_
 
     device = GeminiLogicalSimulatorDevice(seed=12)
     state = json.dumps(device._seed_rng.bit_generator.state)
-    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    monkeypatch.setattr(device._executor, "submit", forbidden)
     with SQLiteStorage(db_file) as storage:
         with pytest.raises(ValueError, match="file-backed"):
             device.run_async(builder_for(shots=1), dry_run=False, storage=storage)
@@ -466,16 +509,7 @@ def test_sqlite_results_use_caller_storage_and_close_worker_connection(
         assert len(list(reopened.get_shots())) == 6
 
 
-def test_concurrent_simulations_write_to_same_sqlite_database(tmp_path, monkeypatch):
-    barrier = Barrier(2)
-    sample = PPVMSimulatorBackend.sample
-
-    def synchronize(self, kernel, *, shots):
-        result = sample(self, kernel, shots=shots)
-        barrier.wait(timeout=30)
-        return result
-
-    monkeypatch.setattr(PPVMSimulatorBackend, "sample", synchronize)
+def test_queued_simulations_write_to_same_sqlite_database(tmp_path):
     with SQLiteStorage(str(tmp_path / "concurrent.sqlite")) as storage:
         device = GeminiLogicalSimulatorDevice(seed=12, batch_shots=2)
         first = device.run_async(builder_for(shots=5), dry_run=False, storage=storage)
@@ -585,16 +619,12 @@ def test_dry_run_accepts_sqlite_storage_without_accessing_it(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("dry-run must not access storage or start a worker")
 
-    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    device = GeminiLogicalSimulatorDevice()
+    monkeypatch.setattr(device._executor, "submit", forbidden)
     with SQLiteStorage(":memory:") as storage:
         monkeypatch.setattr(storage, "add_task_definition", forbidden)
         monkeypatch.setattr(storage, "add_shots", forbidden)
-        assert (
-            GeminiLogicalSimulatorDevice().run_async(
-                builder_for(), dry_run=True, storage=storage
-            )
-            is None
-        )
+        assert device.run_async(builder_for(), dry_run=True, storage=storage) is None
         assert not storage.task_ids()
 
 
@@ -770,7 +800,7 @@ def test_dry_run_has_no_worker_and_does_not_consume_seed(monkeypatch, capsys):
 
     device = GeminiLogicalSimulatorDevice(seed=12)
     state = json.dumps(device._seed_rng.bit_generator.state)
-    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    monkeypatch.setattr(device._executor, "submit", forbidden)
     assert device.run_async(builder_for(), dry_run=True) is None
     assert "pinned" in capsys.readouterr().out
     assert json.dumps(device._seed_rng.bit_generator.state) == state
@@ -789,10 +819,49 @@ def test_simulation_does_not_authenticate(monkeypatch):
     assert result.shot_results()[0].shape == (1, 160)
 
 
-def test_submission_snapshots_mutable_builder_and_releases_executor(monkeypatch):
+def test_submissions_reuse_one_worker_and_do_not_overlap(monkeypatch):
+    entered, release, second_entered = Event(), Event(), Event()
+    run_task = device_module._run_task
+    worker_ids = []
+    pools = []
+    executor_type = device_module.ThreadPoolExecutor
+
+    def make_executor(*args, **kwargs):
+        executor = executor_type(*args, **kwargs)
+        pools.append(executor)
+        return executor
+
+    def blocked(*args):
+        worker_ids.append(get_ident())
+        if len(worker_ids) == 1:
+            entered.set()
+            assert release.wait(30)
+        else:
+            second_entered.set()
+        return run_task(*args)
+
+    monkeypatch.setattr(device_module, "ThreadPoolExecutor", make_executor)
+    monkeypatch.setattr(device_module, "_run_task", blocked)
+    device = GeminiLogicalSimulatorDevice(seed=12)
+    definition = device.create_task_definition(builder_for(shots=1))
+    first = device.submit_task_definition(task_definition=definition)
+    second = None
+    try:
+        assert entered.wait(30)
+        second = device.submit_task_definition(task_definition=definition)
+        assert not second_entered.wait(0.1)
+    finally:
+        release.set()
+        first.result(60)
+        if second is not None:
+            second.result(60)
+    assert len(pools) == 1
+    assert len(worker_ids) == 2 and len(set(worker_ids)) == 1
+
+
+def test_submission_snapshots_mutable_builder(monkeypatch):
     entered, proceed = Event(), Event()
     run_task = device_module._run_task
-    threads_before = {thread.ident for thread in enumerate_threads()}
 
     def blocked(*args):
         entered.set()
@@ -816,19 +885,6 @@ def test_submission_snapshots_mutable_builder_and_releases_executor(monkeypatch)
     assert json.loads(result.full_subtasks()[0]["metadata"]["user_metadata"]) == {
         "name": "pinned"
     }
-    workers = []
-    deadline = monotonic() + 5
-    while monotonic() < deadline:
-        workers = [
-            thread
-            for thread in enumerate_threads()
-            if thread.ident not in threads_before
-            and thread.name.startswith("gemini-logical-simulator")
-        ]
-        if not workers:
-            break
-        sleep(0.01)
-    assert not workers
 
 
 @pytest.mark.parametrize("backend", ["tsim", "clifft"])
@@ -932,6 +988,9 @@ def test_noisy_ppvm_sampling_uses_existing_noise_model():
         {"seed": 2**63},
         {"batch_shots": 0},
         {"batch_shots": True},
+        {"batch_shots": -1},
+        {"batch_shots": 1.5},
+        {"batch_shots": "2"},
         {"backend": "unknown"},
         {"with_noise": "true"},
     ],

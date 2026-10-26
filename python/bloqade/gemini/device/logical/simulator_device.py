@@ -129,7 +129,7 @@ def _run_task(
     backend: AbstractSimulatorBackend,
     with_noise: bool,
     noise_model: LogicalNoiseModelABC | None,
-    batch_shots: int,
+    batch_shots: int | None,
     storage: StorageBackend,
     connection_factory: Callable[[], SQLiteStorage] | None = None,
 ) -> GeminiLogicalResult[Any]:
@@ -150,7 +150,7 @@ def _simulate_task(
     backend: AbstractSimulatorBackend,
     with_noise: bool,
     noise_model: LogicalNoiseModelABC | None,
-    batch_shots: int,
+    batch_shots: int | None,
     storage: StorageBackend,
 ) -> GeminiLogicalResult[Any]:
     from bloqade.gemini import logical
@@ -189,8 +189,9 @@ def _simulate_task(
     shot_index = 0
     for subtask_index, subtask in enumerate(definition.subtasks):
         physical_kernel, mapping, sorted_frame = prepared[subtask.program_index]
-        for start in range(0, subtask.num_shots, batch_shots):
-            count = min(batch_shots, subtask.num_shots - start)
+        batch_size = subtask.num_shots if batch_shots is None else batch_shots
+        for start in range(0, subtask.num_shots, batch_size):
+            count = min(batch_size, subtask.num_shots - start)
             sample = backend.sample(physical_kernel, shots=count)
             if sample.measurements is None:
                 raise ValueError(
@@ -248,13 +249,15 @@ class GeminiLogicalSimulatorDevice:
     an existing GeminiLogicalResult backed by the supplied storage or a fresh
     DictStorage. No QLAM server, authentication, context manager, or explicit
     close is required.
-    Each submission's executor stops automatically after its work finishes.
+    One single-worker executor is shared by submissions on this device. Its
+    thread starts on first submission and is reused while the device is alive.
+    Separate device instances do not share this execution queue.
 
     Sorting is ideal, and raw frames use physical Zone-0 SLM order (160 sites
     on the default architecture). Runtime arguments, dynamic refills and
     multiple SLM zones are unsupported. With default storage, all result frames
-    remain in memory; batching bounds temporary sampling arrays, not the size
-    of the result.
+    remain in memory; explicit batching bounds temporary sampling arrays, not
+    the size of the result.
 
     Args:
         backend: Sampling backend, "ppvm" (default), "tsim", or "clifft".
@@ -266,7 +269,8 @@ class GeminiLogicalSimulatorDevice:
         with_noise: Insert circuit noise, default True. Sorting remains ideal.
         noise_model: Optional custom logical noise model. None uses the same
             default model as GeminiLogicalSimulator.
-        batch_shots: Maximum shots per sampling batch, default 256.
+        batch_shots: Maximum shots per sampling batch. The default, None, samples
+            all shots of each subtask in one batch.
         program_language: Language name recorded in task metadata, default "squin".
         language_version: Language version used for serialization and metadata.
         kernel_serializer: Kernel encoder, default JSONSerializer. Local execution
@@ -288,8 +292,9 @@ class GeminiLogicalSimulatorDevice:
     seed: int | None = None
     with_noise: bool = True
     noise_model: LogicalNoiseModelABC | None = None
-    batch_shots: int = 256
+    batch_shots: int | None = None
     _seed_rng: np.random.Generator = field(init=False, repr=False)
+    _executor: ThreadPoolExecutor = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         from ..simulator_backend import _validate_seed
@@ -299,13 +304,16 @@ class GeminiLogicalSimulatorDevice:
         _validate_seed(self.seed)
         if not isinstance(self.with_noise, bool):
             raise TypeError("with_noise must be bool")
-        if (
+        if self.batch_shots is not None and (
             isinstance(self.batch_shots, bool)
             or not isinstance(self.batch_shots, int)
             or self.batch_shots <= 0
         ):
-            raise ValueError("batch_shots must be a positive integer")
+            raise ValueError("batch_shots must be None or a positive integer")
         self._seed_rng = np.random.default_rng(self.seed)
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="gemini-logical-simulator"
+        )
 
     def _finalize_context(self) -> FinalizeContext:
         """Return this simulator device's validation and serialization settings."""
@@ -474,21 +482,13 @@ class GeminiLogicalSimulatorDevice:
             "clifft": CliffTSimulatorBackend,
         }[self.backend]
         backend = backend_cls(seed=seed)
-        executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="gemini-logical-simulator"
+        return self._executor.submit(
+            _run_task,
+            definition,
+            backend,
+            self.with_noise,
+            self.noise_model,
+            self.batch_shots,
+            storage,
+            connection_factory,
         )
-        try:
-            return executor.submit(
-                _run_task,
-                definition,
-                backend,
-                self.with_noise,
-                self.noise_model,
-                self.batch_shots,
-                storage,
-                connection_factory,
-            )
-        finally:
-            # shutdown(wait=False) lets the submitted task finish, then releases
-            # the worker even if the device/notebook remains alive indefinitely.
-            executor.shutdown(wait=False)
