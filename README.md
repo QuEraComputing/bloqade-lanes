@@ -42,19 +42,30 @@ builder = TaskBuilder()
 builder.add_subtask(bell, num_shots=100)
 
 device = GeminiLogicalSimulatorDevice(backend="tsim", seed=1234, with_noise=False)
-future = device.run_async(builder)
+future = device.run_async(builder, dry_run=False)
 result = future.result(timeout=80)
 print(result.return_values)
 ```
 
 The standard Python future returns the existing `GeminiLogicalResult`, including
 raw 160-site SLM shots, metadata, and sorting postselection. Each submission uses
-fresh in-memory storage. Sorting is ideal, and circuit noise defaults to off;
-set `with_noise=True` to enable it. PPVM is available with `backend="ppvm"`.
+fresh in-memory storage unless `storage=` is supplied. Sorting is ideal, and
+circuit noise defaults to off; set `with_noise=True` to enable it. PPVM is
+available with `backend="ppvm"`.
 Programs must take no runtime arguments. No server, authentication, context
 manager, or explicit close is needed; workers stop after their submission ends.
 `device.run_async(builder, dry_run=True)` validates and prints the task without
 starting a simulation. A future timeout does not stop a running simulation.
+
+The simulator owns the same configurable finalization fields as the hardware
+device: `program_language`, `language_version`, `kernel_serializer`,
+`dialect_group`, and `validation_suite`. Local execution requires a serializer
+that produces compatible Kirin JSON. `run_async` also accepts `profile_id` as
+local task metadata. The remote-only `group` and `fetch_options` arguments are
+accepted and ignored; no group resolution, authentication, or polling occurs.
+Supplied storage must support access from the simulation worker thread.
+`SQLiteStorage` is currently unsupported and is rejected before execution;
+dry runs ignore storage without writing to it.
 
 ## Documentation
 

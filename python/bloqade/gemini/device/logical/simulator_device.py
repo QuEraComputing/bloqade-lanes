@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
-from _thread import LockType
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal, overload
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import numpy as np
 from bloqade.core.device import DictStorage, ShotFilter, ShotResult
-from bloqade.core.device.task_builder import TaskBuilder
+from bloqade.core.device.future import DEFAULT_FETCH_OPTIONS, ApiFetchOptions
+from bloqade.core.device.local_storage import SQLiteStorage, StorageBackend
+from bloqade.core.device.task import KernelSerializer
+from bloqade.core.device.task_builder import FinalizeContext, TaskBuilder
+from kirin import ir
 from kirin.serialization import JSONSerializer
+from kirin.validation import ValidationSuite
 
-from .device import GeminiLogicalDevice
+from bloqade.gemini.logical.group import kernel as logical_kernel
+
+from .device import _bloqade_version, _default_validation_suite
 from .result import GeminiLogicalResult
 from .utils import ShotRemappingException
 
@@ -79,6 +84,7 @@ def _run_task(
     with_noise: bool,
     noise_model: LogicalNoiseModelABC | None,
     batch_shots: int,
+    storage: StorageBackend,
 ) -> GeminiLogicalResult[Any]:
     from bloqade.gemini import logical
 
@@ -108,7 +114,6 @@ def _run_task(
         )
         prepared.append((physical_kernel, mapping, sorted_frame))
 
-    storage = DictStorage()
     task_id = str(uuid4())
     storage.add_task_definition(task_id, definition, datetime.now(timezone.utc))
     shot_index = 0
@@ -170,14 +175,16 @@ class GeminiLogicalSimulatorDevice:
 
     Uses the same builder finalization and validation as GeminiLogicalDevice.
     Each submission returns a standard concurrent.futures.Future; its result is
-    an existing GeminiLogicalResult backed by a fresh DictStorage. No QLAM
-    server, authentication, context manager, or explicit close is required.
+    an existing GeminiLogicalResult backed by the supplied storage or a fresh
+    DictStorage. No QLAM server, authentication, context manager, or explicit
+    close is required.
     Each submission's executor stops automatically after its work finishes.
 
     Sorting is ideal, and raw frames use physical Zone-0 SLM order (160 sites
     on the default architecture). Runtime arguments, dynamic refills and
-    multiple SLM zones are unsupported. All result frames remain in memory;
-    batching bounds temporary sampling arrays, not the size of the result.
+    multiple SLM zones are unsupported. With default storage, all result frames
+    remain in memory; batching bounds temporary sampling arrays, not the size
+    of the result.
 
     Args:
         backend: Sampling backend, "tsim" (default) or "ppvm". Install the
@@ -188,15 +195,29 @@ class GeminiLogicalSimulatorDevice:
         noise_model: Optional custom logical noise model. None uses the same
             default model as GeminiLogicalSimulator.
         batch_shots: Maximum shots per sampling batch, default 256.
+        program_language: Language name recorded in task metadata, default "squin".
+        language_version: Language version used for serialization and metadata.
+        kernel_serializer: Kernel encoder, default JSONSerializer. Local execution
+            requires compatible Kirin JSON output.
+        dialect_group: Allowed dialects for builder finalization, default logical.kernel.
+        validation_suite: Submission validation, using the Gemini hardware defaults.
     """
 
+    program_language: str = "squin"
+    language_version: str = _bloqade_version
+    kernel_serializer: KernelSerializer = field(default_factory=JSONSerializer)
+    dialect_group: ir.DialectGroup | None = field(
+        default_factory=lambda: logical_kernel
+    )
+    validation_suite: ValidationSuite | None = field(
+        default_factory=_default_validation_suite
+    )
     backend: Literal["tsim", "ppvm"] = "tsim"
     seed: int | None = None
     with_noise: bool = False
     noise_model: LogicalNoiseModelABC | None = None
     batch_shots: int = 256
     _seed_rng: np.random.Generator = field(init=False, repr=False)
-    _seed_lock: LockType = field(default_factory=Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         from ..simulator_backend import _validate_seed
@@ -214,23 +235,61 @@ class GeminiLogicalSimulatorDevice:
             raise ValueError("batch_shots must be a positive integer")
         self._seed_rng = np.random.default_rng(self.seed)
 
+    def _finalize_context(self) -> FinalizeContext:
+        """Return this simulator device's validation and serialization settings."""
+        return FinalizeContext(
+            program_language=self.program_language,
+            language_version=self.language_version,
+            kernel_serializer=self.kernel_serializer,
+            dialect_group=self.dialect_group,
+            validation_suite=self.validation_suite,
+        )
+
     @overload
     def run_async(
-        self, task_builder: TaskBuilder, *, dry_run: Literal[False] = False
+        self,
+        task_builder: TaskBuilder,
+        *,
+        dry_run: Literal[False],
+        group: str | None = None,
+        profile_id: str | UUID | None = None,
+        storage: StorageBackend | None = None,
+        fetch_options: ApiFetchOptions = DEFAULT_FETCH_OPTIONS,
     ) -> Future[GeminiLogicalResult[Any]]: ...
 
     @overload
     def run_async(
-        self, task_builder: TaskBuilder, *, dry_run: Literal[True]
+        self,
+        task_builder: TaskBuilder,
+        *,
+        dry_run: Literal[True],
+        group: str | None = None,
+        profile_id: str | UUID | None = None,
+        storage: StorageBackend | None = None,
+        fetch_options: ApiFetchOptions = DEFAULT_FETCH_OPTIONS,
     ) -> None: ...
 
     @overload
     def run_async(
-        self, task_builder: TaskBuilder, *, dry_run: bool
+        self,
+        task_builder: TaskBuilder,
+        *,
+        dry_run: bool,
+        group: str | None = None,
+        profile_id: str | UUID | None = None,
+        storage: StorageBackend | None = None,
+        fetch_options: ApiFetchOptions = DEFAULT_FETCH_OPTIONS,
     ) -> Future[GeminiLogicalResult[Any]] | None: ...
 
     def run_async(
-        self, task_builder: TaskBuilder, *, dry_run: bool = False
+        self,
+        task_builder: TaskBuilder,
+        *,
+        dry_run: bool,
+        group: str | None = None,
+        profile_id: str | UUID | None = None,
+        storage: StorageBackend | None = None,
+        fetch_options: ApiFetchOptions = DEFAULT_FETCH_OPTIONS,
     ) -> Future[GeminiLogicalResult[Any]] | None:
         """Finalize a builder and execute a snapshot in a background thread.
 
@@ -239,12 +298,20 @@ class GeminiLogicalSimulatorDevice:
         affect the submitted task. Validation errors are raised immediately;
         compilation and sampling errors are raised by ``future.result()``.
         Standard future timeouts do not cancel a running simulation.
+
+        ``storage`` receives task metadata and shots; None creates a fresh
+        DictStorage. It must support access from the simulation worker thread;
+        SQLiteStorage is not supported. Storage is ignored for a dry run.
+        ``profile_id`` is recorded as metadata only, and does not
+        override a profile already supplied by the finalized task definition.
+        ``group`` and ``fetch_options`` are accepted for Device compatibility
+        and ignored: local simulation performs no group lookup or API polling.
         """
         from ..simulator_backend import PPVMSimulatorBackend, TsimSimulatorBackend
 
         if not isinstance(task_builder, TaskBuilder):
             raise TypeError("run_async requires a TaskBuilder")
-        definition = task_builder._finalize(GeminiLogicalDevice()._finalize_context())
+        definition = task_builder._finalize(self._finalize_context())
         if not definition.programs or not definition.subtasks:
             raise ValueError("At least one program and subtask are required")
         for subtask in definition.subtasks:
@@ -258,12 +325,24 @@ class GeminiLogicalSimulatorDevice:
             print(task_builder.summary())
             return None
 
-        with self._seed_lock:
-            seed = (
-                int(self._seed_rng.integers(0, 2**63))
-                if self.seed is not None
-                else None
+        if isinstance(storage, SQLiteStorage):
+            raise TypeError(
+                "SQLiteStorage is not supported by GeminiLogicalSimulatorDevice: "
+                "simulation writes storage from a worker thread. Use DictStorage "
+                "or another worker-safe storage backend."
             )
+        if definition.profile_id is None and profile_id is not None:
+            definition = definition.model_copy(
+                update={
+                    "profile_id": (
+                        UUID(profile_id) if isinstance(profile_id, str) else profile_id
+                    )
+                }
+            )
+        if storage is None:
+            storage = DictStorage()
+
+        seed = int(self._seed_rng.integers(0, 2**63)) if self.seed is not None else None
         backend_cls = (
             TsimSimulatorBackend if self.backend == "tsim" else PPVMSimulatorBackend
         )
@@ -279,6 +358,7 @@ class GeminiLogicalSimulatorDevice:
                 self.with_noise,
                 self.noise_model,
                 self.batch_shots,
+                storage,
             )
         finally:
             # shutdown(wait=False) lets the submitted task finish, then releases
