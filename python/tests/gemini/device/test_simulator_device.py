@@ -1,9 +1,10 @@
 """TaskBuilder-to-local-simulator integration with the existing result API."""
 
 import json
-from concurrent.futures import Future
+import sqlite3
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from inspect import Parameter, signature
-from threading import Event, enumerate as enumerate_threads
+from threading import Barrier, Event, enumerate as enumerate_threads, get_ident
 from time import monotonic, sleep
 from uuid import UUID, uuid4
 
@@ -30,6 +31,7 @@ from bloqade.gemini.device import logical as device_logical
 from bloqade.gemini.device.logical import simulator_device as device_module
 from bloqade.gemini.device.simulator_backend import (
     BackendSample,
+    CliffTSimulatorBackend,
     PPVMSimulatorBackend,
     TsimSimulatorBackend,
 )
@@ -95,6 +97,154 @@ def test_finalize_context_defaults_match_hardware_device():
     assert isinstance(hardware.validation_suite, ValidationSuite)
     assert context.validation_suite.passes == hardware.validation_suite.passes
     assert context.validation_suite is not hardware.validation_suite
+
+
+def test_create_task_definition_has_no_submission_side_effects(monkeypatch, capsys):
+    device = GeminiLogicalSimulatorDevice(seed=12)
+    builder = builder_for(shots=2)
+    state = json.dumps(device._seed_rng.bit_generator.state)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("creating a definition must not start a worker")
+
+    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    definition = device.create_task_definition(builder)
+    assert definition.program_language == f"squin.v{device.language_version}"
+    assert definition.subtasks[0].num_shots == 2
+    assert definition.profile_id is None
+    assert definition.group_id is None
+    assert json.dumps(device._seed_rng.bit_generator.state) == state
+    assert capsys.readouterr().out == ""
+    assert device.create_task_definition(builder) == definition
+    builder.add_subtask(bell, 1)
+    assert len(device.create_task_definition(builder).subtasks) == 2
+    assert len(definition.subtasks) == 1
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_run_async_delegates_to_public_definition_methods(monkeypatch, dry_run, capsys):
+    device = GeminiLogicalSimulatorDevice()
+    builder = builder_for(shots=2)
+    definition = builder._finalize(device._finalize_context())
+    storage = DictStorage()
+    options = ApiFetchOptions(shots_per_fetch=4)
+    profile = uuid4()
+    future = Future()
+    created, submitted = [], []
+
+    def create(task_builder):
+        created.append(task_builder)
+        return definition
+
+    def submit(**kwargs):
+        submitted.append(kwargs)
+        return future
+
+    monkeypatch.setattr(device, "create_task_definition", create)
+    monkeypatch.setattr(device, "submit_task_definition", submit)
+    returned = device.run_async(
+        builder,
+        dry_run=dry_run,
+        group="ignored",
+        profile_id=profile,
+        storage=storage,
+        fetch_options=options,
+    )
+    assert created == [builder]
+    if dry_run:
+        assert returned is None
+        assert submitted == []
+        assert "pinned" in capsys.readouterr().out
+    else:
+        assert returned is future
+        assert submitted == [
+            {
+                "task_definition": definition,
+                "storage": storage,
+                "fetch_options": options,
+                "group": "ignored",
+                "profile_id": profile,
+            }
+        ]
+
+
+@pytest.mark.parametrize("sqlite", [False, True])
+def test_submit_task_definition_uses_existing_result_and_metadata(tmp_path, sqlite):
+    device = GeminiLogicalSimulatorDevice(seed=12)
+    definition = device.create_task_definition(builder_for(shots=2))
+    profile = uuid4()
+    storage = (
+        SQLiteStorage(str(tmp_path / "direct.sqlite")) if sqlite else DictStorage()
+    )
+    try:
+        future = device.submit_task_definition(
+            task_definition=definition,
+            storage=storage,
+            profile_id=str(profile),
+            group="ignored",
+            fetch_options=ApiFetchOptions(shots_per_fetch=1),
+        )
+        assert type(future) is Future
+        result = future.result(60)
+        assert result.storage is storage
+        assert result.shot_results()[0].shape == (2, 160)
+        task_id = next(iter(result.task_ids()))
+        assert storage.get_profile_id(task_id) == profile
+        assert definition.profile_id is None
+    finally:
+        if isinstance(storage, SQLiteStorage):
+            storage.close()
+
+
+def test_submit_task_definition_snapshots_input(monkeypatch):
+    device = GeminiLogicalSimulatorDevice()
+    definition = device.create_task_definition(builder_for(shots=2))
+    entered, proceed = Event(), Event()
+    run_task = device_module._run_task
+
+    def blocked(*args):
+        entered.set()
+        assert proceed.wait(30)
+        return run_task(*args)
+
+    monkeypatch.setattr(device_module, "_run_task", blocked)
+    future = device.submit_task_definition(task_definition=definition)
+    try:
+        assert entered.wait(30)
+        definition.subtasks[0].num_shots = 5
+    finally:
+        proceed.set()
+    assert future.result(60).shot_results()[0].shape == (2, 160)
+
+
+@pytest.mark.parametrize("kind", ["empty", "index", "arguments", "shots"])
+def test_submit_task_definition_rejects_invalid_definition_before_worker(
+    monkeypatch, kind
+):
+    device = GeminiLogicalSimulatorDevice(seed=12)
+    definition = device.create_task_definition(builder_for(shots=2))
+    if kind == "empty":
+        definition = definition.model_copy(update={"subtasks": []})
+    else:
+        updates = {
+            "index": {"program_index": 99},
+            "arguments": {"arguments": {"theta": 0.1}},
+            "shots": {"num_shots": 0},
+        }
+        definition = definition.model_copy(
+            update={
+                "subtasks": [definition.subtasks[0].model_copy(update=updates[kind])]
+            }
+        )
+    state = json.dumps(device._seed_rng.bit_generator.state)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid definitions must not start a worker")
+
+    monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
+    with pytest.raises(ValueError):
+        device.submit_task_definition(task_definition=definition)
+    assert json.dumps(device._seed_rng.bit_generator.state) == state
 
 
 def test_custom_finalize_context_is_used_by_submission(monkeypatch):
@@ -221,18 +371,178 @@ def test_dry_run_with_submission_options_does_not_write_storage(monkeypatch):
     assert json.dumps(device._seed_rng.bit_generator.state) == state
 
 
-def test_sqlite_storage_rejected_before_starting_worker(monkeypatch):
+@pytest.mark.parametrize("db_file", [":memory:", ""])
+def test_private_sqlite_storage_rejected_before_starting_worker(monkeypatch, db_file):
     def forbidden(*args, **kwargs):
         pytest.fail("unsupported storage must be rejected before starting a worker")
 
     device = GeminiLogicalSimulatorDevice(seed=12)
     state = json.dumps(device._seed_rng.bit_generator.state)
     monkeypatch.setattr(device_module, "ThreadPoolExecutor", forbidden)
-    with SQLiteStorage(":memory:") as storage:
-        with pytest.raises(TypeError, match="SQLiteStorage.*not supported"):
+    with SQLiteStorage(db_file) as storage:
+        with pytest.raises(ValueError, match="file-backed"):
             device.run_async(builder_for(shots=1), dry_run=False, storage=storage)
         assert not storage.task_ids()
     assert json.dumps(device._seed_rng.bit_generator.state) == state
+
+
+def test_sqlite_results_use_caller_storage_and_close_worker_connection(
+    tmp_path, monkeypatch
+):
+    def forbidden(*args, **kwargs):
+        pytest.fail("worker must not write through the caller's SQLite connection")
+
+    caller_thread = get_ident()
+    closed = []
+    close = SQLiteStorage.close
+
+    def record_close(self):
+        close(self)
+        closed.append(get_ident())
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            self.conn.execute("SELECT 1")
+
+    monkeypatch.setattr(SQLiteStorage, "close", record_close)
+    path = str(tmp_path / "simulation.sqlite")
+    with SQLiteStorage(path) as storage:
+        monkeypatch.setattr(storage, "add_task_definition", forbidden)
+        monkeypatch.setattr(storage, "add_shots", forbidden)
+        monkeypatch.setattr(storage, "update_subtasks_completed_date", forbidden)
+        future = GeminiLogicalSimulatorDevice(seed=12, batch_shots=2).run_async(
+            builder_for(shots=3), dry_run=False, storage=storage
+        )
+        assert type(future) is Future
+        result = future.result(60)
+        assert result is future.result()
+        assert result.storage is storage
+        assert len(closed) == 1 and closed[0] != caller_thread
+        assert result.shot_results()[0].shape == (3, 160)
+        assert np.all(
+            np.logical_xor.reduce(np.asarray(result.return_values[0]), axis=2)
+            == [True, False]
+        )
+        assert all(
+            subtask["completed_date"] is not None for subtask in result.full_subtasks()
+        )
+        task_id = next(iter(result.task_ids()))
+    with SQLiteStorage(path) as reopened:
+        assert reopened.task_ids() == {task_id}
+        assert len(list(reopened.get_shots())) == 6
+
+
+def test_concurrent_simulations_write_to_same_sqlite_database(tmp_path, monkeypatch):
+    barrier = Barrier(2)
+    sample = TsimSimulatorBackend.sample
+
+    def synchronize(self, kernel, *, shots):
+        result = sample(self, kernel, shots=shots)
+        barrier.wait(timeout=30)
+        return result
+
+    monkeypatch.setattr(TsimSimulatorBackend, "sample", synchronize)
+    with SQLiteStorage(str(tmp_path / "concurrent.sqlite")) as storage:
+        device = GeminiLogicalSimulatorDevice(seed=12, batch_shots=2)
+        first = device.run_async(builder_for(shots=5), dry_run=False, storage=storage)
+        second = device.run_async(builder_for(shots=5), dry_run=False, storage=storage)
+        results = [first.result(60), second.result(60)]
+        assert all(result.storage is storage for result in results)
+        assert len(storage.task_ids()) == 2
+        assert len(list(storage.get_shots())) == 20
+        assert all(result.shot_results()[0].shape == (5, 160) for result in results)
+
+
+def test_sqlite_worker_factory_preserves_path_timeout_and_wal(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with SQLiteStorage("relative.sqlite") as storage:
+        storage.conn.execute("PRAGMA busy_timeout=2000")
+        assert storage.conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        factory = device_module._sqlite_connection_factory(storage)
+        other = tmp_path / "other"
+        other.mkdir()
+        monkeypatch.chdir(other)
+        with factory() as worker:
+            assert worker.conn is not storage.conn
+            assert worker.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 2000
+            assert worker.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+            assert worker.conn.execute("PRAGMA database_list").fetchone()[2] == str(
+                tmp_path / "relative.sqlite"
+            )
+        assert not (other / "relative.sqlite").exists()
+
+
+def test_sqlite_worker_factory_closes_connection_on_constructor_failure(
+    tmp_path, monkeypatch
+):
+    with SQLiteStorage(str(tmp_path / "invalid-schema.sqlite")) as storage:
+        factory = device_module._sqlite_connection_factory(storage)
+        storage.conn.execute("UPDATE bloqade_schema SET version_number='999.0.0'")
+        storage.conn.commit()
+        connect = sqlite3.connect
+        connections = []
+
+        def record(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        monkeypatch.setattr(sqlite3, "connect", record)
+        with pytest.raises(ValueError, match="Schema version mismatch"):
+            factory()
+        assert len(connections) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connections[0].execute("SELECT 1")
+
+
+def test_sqlite_worker_waits_for_writer_to_commit(tmp_path, monkeypatch):
+    entered, proceed = Event(), Event()
+    sample = TsimSimulatorBackend.sample
+
+    def blocked(self, kernel, *, shots):
+        result = sample(self, kernel, shots=shots)
+        entered.set()
+        assert proceed.wait(30)
+        return result
+
+    monkeypatch.setattr(TsimSimulatorBackend, "sample", blocked)
+    with SQLiteStorage(str(tmp_path / "contention.sqlite")) as storage:
+        future = GeminiLogicalSimulatorDevice().run_async(
+            builder_for(shots=1), dry_run=False, storage=storage
+        )
+        try:
+            assert entered.wait(30)
+            storage.conn.execute("BEGIN IMMEDIATE")
+            proceed.set()
+            with pytest.raises(FutureTimeoutError):
+                future.result(timeout=0.05)
+        finally:
+            storage.conn.rollback()
+            proceed.set()
+        assert future.result(60).shot_results()[0].shape == (1, 160)
+
+
+def test_sqlite_worker_connection_closes_on_backend_failure(tmp_path, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("sample failed")
+
+    closed = []
+    close = SQLiteStorage.close
+
+    def record_close(self):
+        close(self)
+        closed.append(get_ident())
+
+    monkeypatch.setattr(SQLiteStorage, "close", record_close)
+    monkeypatch.setattr(TsimSimulatorBackend, "sample", fail)
+    with SQLiteStorage(str(tmp_path / "failure.sqlite")) as storage:
+        future = GeminiLogicalSimulatorDevice().run_async(
+            builder_for(shots=1), dry_run=False, storage=storage
+        )
+        with pytest.raises(RuntimeError, match="sample failed"):
+            future.result(60)
+        assert len(closed) == 1 and closed[0] != get_ident()
+        storage.conn.execute("BEGIN IMMEDIATE")
+        storage.conn.rollback()
+        assert storage.conn.execute("SELECT 1").fetchone()[0] == 1
 
 
 def test_dry_run_accepts_sqlite_storage_without_accessing_it(monkeypatch):
@@ -252,11 +562,13 @@ def test_dry_run_accepts_sqlite_storage_without_accessing_it(monkeypatch):
         assert not storage.task_ids()
 
 
-@pytest.mark.parametrize("backend", ["tsim", "ppvm"])
+@pytest.mark.parametrize("backend", ["tsim", "ppvm", "clifft"])
 def test_real_backend_result_frames_and_postprocessing(backend):
     pytest.importorskip("bloqade.tsim")
     if backend == "ppvm":
         pytest.importorskip("ppvm")
+    if backend == "clifft":
+        pytest.importorskip("clifft")
     future = GeminiLogicalSimulatorDevice(backend=backend, seed=1234).run_async(
         builder_for(), dry_run=False
     )
@@ -333,6 +645,26 @@ def test_multiple_programs_repeated_subtasks_and_metadata(monkeypatch):
     assert [row.subtask_shot_index for row in rows] == [0, 1, 2, 0, 1, 2, 3, 4, 0, 1]
     bell_values = np.logical_xor.reduce(np.asarray(result.return_values[1]), axis=2)
     assert np.all(bell_values[:, 0] == bell_values[:, 1])
+
+
+def test_local_execution_verifies_deserialized_kernel(monkeypatch):
+    builder = builder_for(shots=1)
+    run_pass = logical.kernel.run_pass
+    assert run_pass is not None
+    verification = []
+
+    def record(kernel, **kwargs):
+        verification.append(kwargs.get("verify", True))
+        return run_pass(kernel, **kwargs)
+
+    monkeypatch.setattr(logical.kernel, "run_pass", record)
+    result = (
+        GeminiLogicalSimulatorDevice(seed=12)
+        .run_async(builder, dry_run=False)
+        .result(60)
+    )
+    assert verification == [True]
+    assert result.shot_results()[0].shape == (1, 160)
 
 
 def test_local_execution_uses_pipelines_without_simulator_tasks(monkeypatch):
@@ -461,15 +793,43 @@ def test_submission_snapshots_mutable_builder_and_releases_executor(monkeypatch)
     assert not workers
 
 
-def test_seeded_devices_replay_the_same_submission_sequence():
-    a = GeminiLogicalSimulatorDevice(seed=123, batch_shots=2)
-    b = GeminiLogicalSimulatorDevice(seed=123, batch_shots=2)
+@pytest.mark.parametrize("backend", ["tsim", "clifft"])
+def test_seeded_devices_replay_the_same_submission_sequence(backend):
+    if backend == "clifft":
+        pytest.importorskip("clifft")
+    a = GeminiLogicalSimulatorDevice(backend=backend, seed=123, batch_shots=2)
+    b = GeminiLogicalSimulatorDevice(backend=backend, seed=123, batch_shots=2)
     builder = builder_for(bell, 5)
     for _ in range(2):
         ra = a.run_async(builder, dry_run=False).result(60)
         rb = b.run_async(builder, dry_run=False).result(60)
         np.testing.assert_array_equal(ra.shot_results()[0], rb.shot_results()[0])
         assert ra.task_ids() != rb.task_ids()
+
+
+@pytest.mark.parametrize("seed", [None, 123])
+def test_clifft_receives_submission_seed(seed, monkeypatch):
+    pytest.importorskip("clifft")
+    sample = CliffTSimulatorBackend.sample
+    received = []
+
+    def record(self, kernel, *, shots):
+        received.append(self.seed)
+        return sample(self, kernel, shots=shots)
+
+    monkeypatch.setattr(CliffTSimulatorBackend, "sample", record)
+    result = (
+        GeminiLogicalSimulatorDevice(backend="clifft", seed=seed)
+        .run_async(builder_for(shots=1), dry_run=False)
+        .result(60)
+    )
+    expected = (
+        int(np.random.default_rng(seed).integers(0, 2**63))
+        if seed is not None
+        else None
+    )
+    assert received == [expected]
+    assert result.shot_results()[0].shape == (1, 160)
 
 
 def test_backend_failure_is_raised_by_the_standard_future(monkeypatch):

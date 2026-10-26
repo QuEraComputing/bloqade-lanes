@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, overload
@@ -17,6 +19,7 @@ from bloqade.core.device.task_builder import FinalizeContext, TaskBuilder
 from kirin import ir
 from kirin.serialization import JSONSerializer
 from kirin.validation import ValidationSuite
+from qlam_core.plugins.tasks.api.tasks_models import TaskDefinition
 
 from bloqade.gemini.logical.group import kernel as logical_kernel
 
@@ -25,8 +28,6 @@ from .result import GeminiLogicalResult
 from .utils import ShotRemappingException
 
 if TYPE_CHECKING:
-    from qlam_core.plugins.tasks.api.tasks_models import TaskDefinition
-
     from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 
@@ -77,7 +78,74 @@ def _slm_layout(move_kernel: ir.Method, arch: ArchSpec) -> tuple[list[int], np.n
     return mapping, sorted_frame
 
 
+def _validate_task_definition(definition: TaskDefinition) -> None:
+    if not isinstance(definition, TaskDefinition):
+        raise TypeError("submit_task_definition requires a TaskDefinition")
+    if not definition.programs or not definition.subtasks:
+        raise ValueError("At least one program and subtask are required")
+    for subtask in definition.subtasks:
+        if not 0 <= subtask.program_index < len(definition.programs):
+            raise ValueError("Invalid subtask program index")
+        if subtask.arguments:
+            raise ValueError("Runtime subtask arguments are unsupported")
+        if subtask.num_shots <= 0:
+            raise ValueError("num_shots must be positive")
+
+
+def _sqlite_connection_factory(storage: SQLiteStorage) -> Callable[[], SQLiteStorage]:
+    """Capture SQLite file/config on the caller thread, not its connection."""
+    db_file = next(
+        (
+            row[2]
+            for row in storage.conn.execute("PRAGMA database_list")
+            if row[1] == "main"
+        ),
+        "",
+    )
+    if not db_file:
+        raise ValueError("Worker connections require a file-backed SQLite database")
+    timeout_ms = int(storage.conn.execute("PRAGMA busy_timeout").fetchone()[0])
+
+    def connect() -> SQLiteStorage:
+        # SQLiteStorage's existing constructor uses its default timeout during
+        # schema initialization. Restore the caller's timeout for later writes.
+        # Allocate first so even a partially initialized core storage can be
+        # closed if its constructor raises after opening the connection.
+        worker = SQLiteStorage.__new__(SQLiteStorage)
+        try:
+            SQLiteStorage.__init__(worker, db_file)
+            worker.conn.execute(f"PRAGMA busy_timeout={timeout_ms}")
+        except BaseException:
+            if hasattr(worker, "conn"):
+                worker.close()
+            raise
+        return worker
+
+    return connect
+
+
 def _run_task(
+    definition: TaskDefinition,
+    backend: AbstractSimulatorBackend,
+    with_noise: bool,
+    noise_model: LogicalNoiseModelABC | None,
+    batch_shots: int,
+    storage: StorageBackend,
+    connection_factory: Callable[[], SQLiteStorage] | None = None,
+) -> GeminiLogicalResult[Any]:
+    # Open, use and close a SQLite writer on the worker thread. Merely retain
+    # the caller's storage for the returned view; never query its connection.
+    context = (
+        connection_factory() if connection_factory is not None else nullcontext(storage)
+    )
+    with context as writer:
+        result = _simulate_task(
+            definition, backend, with_noise, noise_model, batch_shots, writer
+        )
+    return GeminiLogicalResult(storage=storage, shot_filter=result.shot_filter)
+
+
+def _simulate_task(
     definition: TaskDefinition,
     backend: AbstractSimulatorBackend,
     with_noise: bool,
@@ -86,7 +154,6 @@ def _run_task(
     storage: StorageBackend,
 ) -> GeminiLogicalResult[Any]:
     from bloqade.gemini import logical
-    from bloqade.gemini.compile.task import run_squin_kernel_validation
     from bloqade.lanes.arch.gemini import physical
     from bloqade.lanes.noise_model import generate_logical_noise_model
     from bloqade.lanes.transform import LogicalPipeline, MoveToSquinLogical
@@ -105,11 +172,9 @@ def _run_task(
         run_pass = logical.kernel.run_pass
         if run_pass is None:
             raise RuntimeError("Gemini logical kernel has no pass pipeline")
-        run_pass(kernel, aggressive_unroll=True, verify=False)
-        logical_kernel = kernel.similar()
-        run_squin_kernel_validation(logical_kernel).raise_if_invalid()
+        run_pass(kernel, aggressive_unroll=True, verify=True)
         move_kernel = LogicalPipeline(transversal_rewrite=True, simulation=True).emit(
-            logical_kernel
+            kernel
         )
         mapping, sorted_frame = _slm_layout(move_kernel, arch_spec)
         physical_kernel = MoveToSquinLogical(
@@ -192,8 +257,10 @@ class GeminiLogicalSimulatorDevice:
     of the result.
 
     Args:
-        backend: Sampling backend, "tsim" (default) or "ppvm". Install the
-            optional ``bloqade-lanes[sim]`` dependencies to run simulations.
+        backend: Sampling backend, "tsim" (default), "ppvm", or "clifft".
+            Install the optional ``bloqade-lanes[sim]`` dependencies to run
+            simulations, and ``bloqade-lanes[sim,clifft]`` for CliffT
+            (Python 3.12 or later).
         seed: Optional root seed. Submissions receive successive child seeds;
             replay requires the same submission order and batching.
         with_noise: Insert circuit noise, default False. Sorting remains ideal.
@@ -217,7 +284,7 @@ class GeminiLogicalSimulatorDevice:
     validation_suite: ValidationSuite | None = field(
         default_factory=_default_validation_suite
     )
-    backend: Literal["tsim", "ppvm"] = "tsim"
+    backend: Literal["tsim", "ppvm", "clifft"] = "tsim"
     seed: int | None = None
     with_noise: bool = False
     noise_model: LogicalNoiseModelABC | None = None
@@ -227,8 +294,8 @@ class GeminiLogicalSimulatorDevice:
     def __post_init__(self) -> None:
         from ..simulator_backend import _validate_seed
 
-        if self.backend not in ("tsim", "ppvm"):
-            raise ValueError("backend must be 'tsim' or 'ppvm'")
+        if self.backend not in ("tsim", "ppvm", "clifft"):
+            raise ValueError("backend must be 'tsim', 'ppvm', or 'clifft'")
         _validate_seed(self.seed)
         if not isinstance(self.with_noise, bool):
             raise TypeError("with_noise must be bool")
@@ -249,6 +316,19 @@ class GeminiLogicalSimulatorDevice:
             dialect_group=self.dialect_group,
             validation_suite=self.validation_suite,
         )
+
+    def create_task_definition(self, task_builder: TaskBuilder) -> TaskDefinition:
+        """Validate and serialize a builder without submitting or printing.
+
+        Uses this device's finalization context. No worker, storage write,
+        authentication, or seed consumption occurs. The builder remains editable;
+        group and profile metadata are selected at submission.
+        """
+        if not isinstance(task_builder, TaskBuilder):
+            raise TypeError("create_task_definition requires a TaskBuilder")
+        definition = task_builder._finalize(self._finalize_context())
+        _validate_task_definition(definition)
+        return definition
 
     @overload
     def run_async(
@@ -305,37 +385,66 @@ class GeminiLogicalSimulatorDevice:
         Standard future timeouts do not cancel a running simulation.
 
         ``storage`` receives task metadata and shots; None creates a fresh
-        DictStorage. It must support access from the simulation worker thread;
-        SQLiteStorage is not supported. Storage is ignored for a dry run.
+        DictStorage. File-backed SQLiteStorage uses a separate worker-owned
+        connection and returns a result referencing the original storage.
+        Read that result on the thread owning the original connection, and
+        keep the original storage open while using the result. Private
+        in-memory/temporary SQLite databases are unsupported. Other backends
+        must support worker-thread access. Storage is ignored for a dry run.
         ``profile_id`` is recorded as metadata only, and does not
         override a profile already supplied by the finalized task definition.
         ``group`` and ``fetch_options`` are accepted for Device compatibility
         and ignored: local simulation performs no group lookup or API polling.
-        """
-        from ..simulator_backend import PPVMSimulatorBackend, TsimSimulatorBackend
 
-        if not isinstance(task_builder, TaskBuilder):
-            raise TypeError("run_async requires a TaskBuilder")
-        definition = task_builder._finalize(self._finalize_context())
-        if not definition.programs or not definition.subtasks:
-            raise ValueError("At least one program and subtask are required")
-        for subtask in definition.subtasks:
-            if not 0 <= subtask.program_index < len(definition.programs):
-                raise ValueError("Invalid subtask program index")
-            if subtask.arguments:
-                raise ValueError("Runtime subtask arguments are unsupported")
-            if subtask.num_shots <= 0:
-                raise ValueError("num_shots must be positive")
+        Delegates to :meth:`create_task_definition` and, unless this is a dry
+        run, :meth:`submit_task_definition`.
+        """
+        definition = self.create_task_definition(task_builder)
         if dry_run:
             print(task_builder.summary())
             return None
+        return self.submit_task_definition(
+            task_definition=definition,
+            storage=storage,
+            fetch_options=fetch_options,
+            group=group,
+            profile_id=profile_id,
+        )
 
-        if isinstance(storage, SQLiteStorage):
-            raise TypeError(
-                "SQLiteStorage is not supported by GeminiLogicalSimulatorDevice: "
-                "simulation writes storage from a worker thread. Use DictStorage "
-                "or another worker-safe storage backend."
-            )
+    def submit_task_definition(
+        self,
+        *,
+        task_definition: TaskDefinition,
+        storage: StorageBackend | None = None,
+        fetch_options: ApiFetchOptions = DEFAULT_FETCH_OPTIONS,
+        group: str | None = None,
+        profile_id: str | UUID | None = None,
+    ) -> Future[GeminiLogicalResult[Any]]:
+        """Submit a prepared definition to local simulation.
+
+        Validates its structure and snapshots it before starting a worker.
+        Compilation/sampling failures propagate through the returned standard
+        Future. File-backed SQLite storage uses a worker-owned connection;
+        results reference the original storage, which the caller must keep
+        open and access on its owning thread. None creates a fresh DictStorage.
+
+        An existing definition profile takes precedence over ``profile_id``;
+        the latter fills missing metadata only. ``group`` and ``fetch_options``
+        are accepted and ignored, without QLAM requests or authentication.
+        """
+        from ..simulator_backend import (
+            CliffTSimulatorBackend,
+            PPVMSimulatorBackend,
+            TsimSimulatorBackend,
+        )
+
+        _validate_task_definition(task_definition)
+        definition = task_definition.model_copy(deep=True)
+        connection_factory = (
+            _sqlite_connection_factory(storage)
+            if isinstance(storage, SQLiteStorage)
+            else None
+        )
         if definition.profile_id is None and profile_id is not None:
             definition = definition.model_copy(
                 update={
@@ -348,9 +457,11 @@ class GeminiLogicalSimulatorDevice:
             storage = DictStorage()
 
         seed = int(self._seed_rng.integers(0, 2**63)) if self.seed is not None else None
-        backend_cls = (
-            TsimSimulatorBackend if self.backend == "tsim" else PPVMSimulatorBackend
-        )
+        backend_cls = {
+            "tsim": TsimSimulatorBackend,
+            "ppvm": PPVMSimulatorBackend,
+            "clifft": CliffTSimulatorBackend,
+        }[self.backend]
         backend = backend_cls(seed=seed)
         executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="gemini-logical-simulator"
@@ -358,12 +469,13 @@ class GeminiLogicalSimulatorDevice:
         try:
             return executor.submit(
                 _run_task,
-                definition.model_copy(deep=True),
+                definition,
                 backend,
                 self.with_noise,
                 self.noise_model,
                 self.batch_shots,
                 storage,
+                connection_factory,
             )
         finally:
             # shutdown(wait=False) lets the submitted task finish, then releases
