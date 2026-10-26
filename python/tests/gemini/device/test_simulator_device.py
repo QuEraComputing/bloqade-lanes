@@ -85,6 +85,10 @@ def test_public_exports_are_the_same_class():
     assert device_logical.GeminiLogicalSimulatorDevice is GeminiLogicalSimulatorDevice
 
 
+def test_noise_is_enabled_by_default():
+    assert GeminiLogicalSimulatorDevice().with_noise is True
+
+
 def test_finalize_context_defaults_match_hardware_device():
     device = GeminiLogicalSimulatorDevice()
     context = device._finalize_context()
@@ -408,9 +412,9 @@ def test_sqlite_results_use_caller_storage_and_close_worker_connection(
         monkeypatch.setattr(storage, "add_task_definition", forbidden)
         monkeypatch.setattr(storage, "add_shots", forbidden)
         monkeypatch.setattr(storage, "update_subtasks_completed_date", forbidden)
-        future = GeminiLogicalSimulatorDevice(seed=12, batch_shots=2).run_async(
-            builder_for(shots=3), dry_run=False, storage=storage
-        )
+        future = GeminiLogicalSimulatorDevice(
+            seed=12, batch_shots=2, with_noise=False
+        ).run_async(builder_for(shots=3), dry_run=False, storage=storage)
         assert type(future) is Future
         result = future.result(60)
         assert result is future.result()
@@ -569,9 +573,9 @@ def test_real_backend_result_frames_and_postprocessing(backend):
         pytest.importorskip("ppvm")
     if backend == "clifft":
         pytest.importorskip("clifft")
-    future = GeminiLogicalSimulatorDevice(backend=backend, seed=1234).run_async(
-        builder_for(), dry_run=False
-    )
+    future = GeminiLogicalSimulatorDevice(
+        backend=backend, seed=1234, with_noise=False
+    ).run_async(builder_for(), dry_run=False)
     assert type(future) is Future
     result = future.result(timeout=60)
     assert type(result) is GeminiLogicalResult
@@ -625,7 +629,7 @@ def test_multiple_programs_repeated_subtasks_and_metadata(monkeypatch):
     builder.add_subtask(bell, 5, metadata={"name": "bell"})
     builder.add_subtask(pinned, 2, metadata={"name": "repeat"})
     result = (
-        GeminiLogicalSimulatorDevice(seed=12, batch_shots=2)
+        GeminiLogicalSimulatorDevice(seed=12, batch_shots=2, with_noise=False)
         .run_async(builder, dry_run=False)
         .result(60)
     )
@@ -673,7 +677,7 @@ def test_local_execution_uses_pipelines_without_simulator_tasks(monkeypatch):
 
     monkeypatch.setattr(GeminiLogicalSimulator, "task", forbidden)
     result = (
-        GeminiLogicalSimulatorDevice(seed=12)
+        GeminiLogicalSimulatorDevice(seed=12, with_noise=False)
         .run_async(builder_for(shots=2), dry_run=False)
         .result(60)
     )
@@ -682,13 +686,13 @@ def test_local_execution_uses_pipelines_without_simulator_tasks(monkeypatch):
     assert np.all(parity == [True, False])
 
 
-@pytest.mark.parametrize("with_noise", [False, True])
+@pytest.mark.parametrize("with_noise", [None, False, True])
 def test_direct_pipeline_preserves_physical_kernel(with_noise, monkeypatch):
     simulator = GeminiLogicalSimulator()
     reference_task = simulator.task(pinned)
     expected = (
         reference_task.physical_squin_kernel
-        if with_noise
+        if with_noise is not False
         else reference_task.noiseless_physical_squin_kernel
     )
     sampled = []
@@ -699,13 +703,15 @@ def test_direct_pipeline_preserves_physical_kernel(with_noise, monkeypatch):
         return sample(self, kernel, shots=shots)
 
     monkeypatch.setattr(TsimSimulatorBackend, "sample", record)
-    result = (
-        GeminiLogicalSimulatorDevice(
+    if with_noise is None:
+        device = GeminiLogicalSimulatorDevice(
+            seed=12, noise_model=simulator.noise_model
+        )
+    else:
+        device = GeminiLogicalSimulatorDevice(
             seed=12, with_noise=with_noise, noise_model=simulator.noise_model
         )
-        .run_async(builder_for(shots=1), dry_run=False)
-        .result(60)
-    )
+    result = device.run_async(builder_for(shots=1), dry_run=False).result(60)
     assert len(sampled) == 1
     assert sampled[0].is_structurally_equal(expected)
     assert result.shot_results()[0].shape == (1, 160)

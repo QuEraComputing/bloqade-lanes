@@ -263,7 +263,7 @@ class GeminiLogicalSimulatorDevice:
             (Python 3.12 or later).
         seed: Optional root seed. Submissions receive successive child seeds;
             replay requires the same submission order and batching.
-        with_noise: Insert circuit noise, default False. Sorting remains ideal.
+        with_noise: Insert circuit noise, default True. Sorting remains ideal.
         noise_model: Optional custom logical noise model. None uses the same
             default model as GeminiLogicalSimulator.
         batch_shots: Maximum shots per sampling batch, default 256.
@@ -286,7 +286,7 @@ class GeminiLogicalSimulatorDevice:
     )
     backend: Literal["tsim", "ppvm", "clifft"] = "tsim"
     seed: int | None = None
-    with_noise: bool = False
+    with_noise: bool = True
     noise_model: LogicalNoiseModelABC | None = None
     batch_shots: int = 256
     _seed_rng: np.random.Generator = field(init=False, repr=False)
