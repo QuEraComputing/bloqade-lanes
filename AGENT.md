@@ -10,7 +10,7 @@ This is a hybrid Rust + Python package. The Rust crates provide a bytecode forma
 
 - **Package manager**: `uv` (Python) + `cargo` (Rust)
 - **Build backend**: Maturin (PyO3 bindings for Rust → Python)
-- **Python**: >= 3.10 (tested on 3.10, 3.11, 3.12)
+- **Python**: >= 3.11 (tested on 3.11, 3.12, 3.13, 3.14)
 - **Rust**: stable toolchain
 - **Source layout**: `python/bloqade/lanes/` (Python), `crates/` (Rust)
 - **Key Python deps**: kirin-toolchain (IR framework), bloqade-circuit, bloqade-geometry, rustworkx, numpy, scipy

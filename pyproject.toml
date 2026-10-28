@@ -21,7 +21,7 @@ dependencies = [
     "scipy>=1.15.3",
 ]
 license = { file = "LICENSE" }
-requires-python = ">= 3.10"
+requires-python = ">= 3.11"
 
 [project.optional-dependencies]
 cudaq = [
@@ -118,10 +118,10 @@ src_paths = ["python/bloqade"]
 line-length = 88
 
 [tool.ruff]
-# Match requires-python (>= 3.10): a py312 target makes ruff "modernize" code to
-# 3.11/3.12-only constructs (datetime.UTC, typing.Self, PEP 695 generics) that
-# break on the 3.10/3.11 the project still supports.
-target-version = "py310"
+# Match requires-python (>= 3.11): a py312 target makes ruff "modernize" code to
+# 3.12-only constructs (PEP 695 generics, `type` statements) that break on the
+# 3.11 the project still supports.
+target-version = "py311"
 # Hand-maintained type stub mirroring the Rust _native extension; it trips a
 # large number of PYI/PIE rules that do not apply to a generated-style stub.
 extend-exclude = ["python/bloqade/lanes/bytecode/_native.pyi"]

@@ -7,7 +7,7 @@ level, so the patch site is task_module specifically.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -72,7 +72,7 @@ def make_task_response(task_id, **extras):
         id=task_id,
         task_status=TaskStatus.CREATED,
         created_by=uuid4(),
-        created_date=datetime.now(timezone.utc),
+        created_date=datetime.now(UTC),
         # ``group`` became a required field in qlam-core 0.6.0. Tests only
         # ever parse Tasks the API hands back, so any resolvable group
         # will do; nothing here reads it.
