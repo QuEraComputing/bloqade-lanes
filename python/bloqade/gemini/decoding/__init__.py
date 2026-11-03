@@ -2,6 +2,8 @@
 
 """Notebook-focused Gemini decoding helpers."""
 
+from bloqade.analysis.tomography import TomographyResult
+
 from bloqade.gemini.decoding.confidence import (
     ConfidenceDecoder,
     GurobiDecoderWithConfidence,
@@ -14,7 +16,6 @@ from bloqade.gemini.decoding.experiments import (
 )
 from bloqade.gemini.decoding.postselection import PostselectionCurveData
 from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
-from bloqade.gemini.decoding.tomography import TomographyResult
 
 __all__ = [
     "ConfidenceDecoder",

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+from bloqade.analysis.tomography import TomographyResult
 from bloqade.decoders import BaseDecoder
 
 from bloqade.gemini.decoding import experiments as experiments_module
@@ -17,7 +19,6 @@ from bloqade.gemini.decoding.postselection import (
     _shots_at_accepted_fraction,
 )
 from bloqade.gemini.decoding.sampling import _BasisDataset
-from bloqade.gemini.decoding.tomography import TomographyResult
 
 
 def _dataset() -> _BasisDataset:
@@ -217,7 +218,10 @@ def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
     assert np.all(curve.fidelity == curve.point_fidelity)
 
 
-def test_postselection_experiment_decode_and_tomography_result_with_cached_data():
+@pytest.mark.parametrize("accepted_fraction", [0.5, 1.0])
+def test_postselection_experiment_decode_and_tomography_result_with_cached_data(
+    accepted_fraction,
+):
     exp = object.__new__(PostSelectionExperiment)
     exp._postselection_exp_cache = _PostSelectionExperimentCache()
     exp._postselection_exp_cache.raw_results = {
@@ -234,9 +238,15 @@ def test_postselection_experiment_decode_and_tomography_result_with_cached_data(
     )
     assert decoded["X"].observables.shape == (3, 1)
 
-    result = exp.tomography_result(accepted_fraction=0.5)
+    result = exp.tomography_result(accepted_fraction=accepted_fraction)
     assert isinstance(result, TomographyResult)
     assert result.density_matrix.shape == (2, 2)
+    for shots in result.shots_by_basis.values():
+        assert shots.ndim == 1
+        assert shots.dtype == np.uint8
+    assert sum(shots.size for shots in result.shots_by_basis.values()) == int(
+        np.ceil(accepted_fraction * 9)
+    )
 
 
 def test_postselection_experiment_decode_progress_label_true_uses_decoder_class_name(
@@ -292,3 +302,31 @@ def test_shots_at_accepted_fraction_is_relative_to_postselected_shots():
     )
 
     assert sum(shots.shape[0] for shots in accepted.values()) == 3
+
+
+@pytest.mark.parametrize("missing_basis", [False, True])
+def test_threshold_curve_skips_empty_bases_when_minimum_is_zero(missing_basis):
+    decoded = {
+        basis: _DecodedPostselectionResult(
+            observables=np.array([[0], [1]], dtype=np.uint8),
+            confidence=np.array([0.8 if basis == "Z" else 0.9, 0.1]),
+        )
+        for basis in ("X", "Y", "Z")
+    }
+    if missing_basis:
+        decoded["Z"] = _DecodedPostselectionResult(
+            observables=np.zeros((0, 1), dtype=np.uint8),
+            confidence=np.zeros(0),
+        )
+
+    curve = _evaluate_cached_threshold_curve(
+        decoded,
+        total_shots=6,
+        threshold_points=6,
+        min_accepted_per_basis=0,
+    )
+
+    expected_fractions = [] if missing_basis else [0.5, 1.0]
+    np.testing.assert_allclose(curve.accepted_fraction, expected_fractions)
+    assert curve.fidelity.shape == curve.accepted_fraction.shape
+    assert np.all(np.isfinite(curve.fidelity))
