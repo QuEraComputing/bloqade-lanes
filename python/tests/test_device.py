@@ -35,6 +35,10 @@ from bloqade.gemini.device.simulator import (
 )
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
+from bloqade.lanes.dialects import move
+from bloqade.lanes.heuristics.logical.min_move_depth import (
+    LogicalLayoutHeuristicMinMoveDepth,
+)
 from bloqade.lanes.noise_model import generate_logical_noise_model
 
 _HAS_CLIFFT = importlib.util.find_spec("clifft") is not None
@@ -86,6 +90,31 @@ def small_backend_kernel():
 
 def _plain_callable():
     return None
+
+
+def test_logical_simulator_uses_configured_layout_heuristic(monkeypatch):
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def kernel():
+        reg = squin.qalloc(2)
+        squin.cz(reg[0], reg[1])
+        return gemini_logical.terminal_measure(reg)
+
+    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    compute_layout = heuristic.compute_layout
+    calls = []
+
+    def tracked_compute_layout(all_qubits, stages, pinned=None):
+        calls.append((all_qubits, stages))
+        return compute_layout(all_qubits, stages, pinned)
+
+    monkeypatch.setattr(heuristic, "compute_layout", tracked_compute_layout)
+    task = GeminiLogicalSimulator(layout_heuristic=heuristic).task(kernel)
+
+    assert calls
+    assert any(
+        isinstance(stmt, move.Fill)
+        for stmt in task.physical_move_kernel.callable_region.walk()
+    )
 
 
 @pytest.mark.slow

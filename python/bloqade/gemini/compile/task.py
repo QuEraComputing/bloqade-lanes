@@ -22,6 +22,7 @@ from bloqade.gemini.steane_defaults import (
     steane7_m2dets,
     steane7_m2obs,
 )
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.transform import LogicalPipeline
 
@@ -257,6 +258,8 @@ def compile_task(
     logical_kernel: ir.Method | Callable[..., Any],
     m2dets: list[list[int]] | None = None,
     m2obs: list[list[int]] | None = None,
+    *,
+    layout_heuristic: LayoutHeuristicABC | None = None,
 ):
     """Compile a logical kernel into physical move artifacts.
 
@@ -270,6 +273,8 @@ def compile_task(
             defaults to Steane [[7,1,3]] detectors if ``None``.
         m2obs: Binary measurement-to-observable matrix. For CUDA-Q kernels,
             defaults to Steane [[7,1,3]] observables if ``None``.
+        layout_heuristic: Optional logical initial-layout heuristic. ``None``
+            retains the default used by :class:`LogicalPipeline`.
 
     Returns:
         A tuple of ``(logical_squin_kernel, physical_arch_spec,
@@ -297,9 +302,9 @@ def compile_task(
     run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
 
     physical_arch_spec = physical.get_arch_spec()
-    physical_move_kernel = LogicalPipeline(transversal_rewrite=True).emit(
-        logical_squin_kernel
-    )
+    physical_move_kernel = LogicalPipeline(
+        transversal_rewrite=True, layout_heuristic=layout_heuristic
+    ).emit(logical_squin_kernel)
     post_processing = build_post_processing(logical_squin_kernel)
 
     return (
