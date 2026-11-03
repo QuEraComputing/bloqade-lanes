@@ -198,6 +198,17 @@ def test_emit_rejects_logical_star_rz_extension():
         emit_circuit(program, ignore_returns=True)
 
 
+def test_emit_rejects_logical_star_rx_extension():
+    @logical.kernel
+    def program():
+        register = qubit.qalloc(1)
+        logical.extensions.star_rx(0.1, register[0])
+        logical.terminal_measure(register)
+
+    with pytest.raises(interp.exceptions.InterpreterError, match="star_rx"):
+        emit_circuit(program, ignore_returns=True)
+
+
 def test_emit_bell_kernel_returning_terminal_measurement():
     @logical.kernel
     def logical_bell():
