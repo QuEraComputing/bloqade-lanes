@@ -12,7 +12,7 @@
 
 use rayon::prelude::*;
 
-use crate::bounds::{BoundStats, NoBound, WeightedDistanceBound};
+use crate::bounds::{BoundStats, BusCutBound, NoBound, WeightedDistanceBound};
 use crate::cost::UniformCost;
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
@@ -316,13 +316,21 @@ where
     // remaining cost, `h0` would be inadmissible, and pruning could discard
     // the optimum. Asking the goal keeps that decision next to the definition
     // that determines it, rather than inferring it from a context field.
-    let completion_bound = match entropy_opts.and_then(|o| o.completion_bound) {
+    let bound_kind = entropy_opts.and_then(|o| o.completion_bound);
+    let completion_bound = match bound_kind {
         Some(BoundKind::WeightedDistance) if entropy_tables.is_some() => goal
             .exact_targets()
             .map(|targets| WeightedDistanceBound::new(&objective, targets, ctx.index, ctx.blocked)),
         _ => None,
     };
     let completion_bound = completion_bound.as_ref();
+    let bus_cut_bound = match bound_kind {
+        Some(BoundKind::BusCut) if entropy_tables.is_some() => goal
+            .exact_targets()
+            .map(|targets| BusCutBound::new(&objective, targets, ctx.index, ctx.blocked)),
+        _ => None,
+    };
+    let bus_cut_bound = bus_cut_bound.as_ref();
     let no_bound = NoBound::for_objective(&objective);
 
     // Helper: run a single inner strategy with the given seed and budget.
@@ -378,6 +386,22 @@ where
                             &objective,
                             bound,
                         ),
+                        // The bus-cut bound is a third type, so a third instance.
+                        None if bus_cut_bound.is_some() => {
+                            crate::drivers::entropy::entropy_search_with_tables(
+                                root.clone(),
+                                goal,
+                                &entropy_params,
+                                ctx,
+                                budget,
+                                None,
+                                seed,
+                                observer,
+                                entropy_tables,
+                                &objective,
+                                bus_cut_bound.expect("guarded by is_some"),
+                            )
+                        }
                         None => crate::drivers::entropy::entropy_search_with_tables(
                             root.clone(),
                             goal,
@@ -444,7 +468,16 @@ where
             .cascade_bound
             .then(|| goal.exact_targets())
             .flatten()
+            .filter(|_| bound_kind != Some(BoundKind::BusCut))
             .map(|targets| WeightedDistanceBound::new(&objective, targets, ctx.index, ctx.blocked));
+        // `EntropyOptions::completion_bound` names the bound that gates it; unset,
+        // it is `h0`.
+        let refine_bus_cut = opts
+            .cascade_bound
+            .then(|| goal.exact_targets())
+            .flatten()
+            .filter(|_| bound_kind == Some(BoundKind::BusCut))
+            .map(|targets| BusCutBound::new(&objective, targets, ctx.index, ctx.blocked));
         let astar_result = match &refine_bound {
             Some(bound) => crate::drivers::frontier::run_search_bounded(
                 root.clone(),
@@ -460,6 +493,21 @@ where
                 None,
                 max_cost,
                 bound,
+            ),
+            None if refine_bus_cut.is_some() => crate::drivers::frontier::run_search_bounded(
+                root.clone(),
+                &astar_move_gen,
+                &DistanceScorer,
+                &objective,
+                goal,
+                &mut astar_f,
+                ctx,
+                &mut SearchState::default(),
+                &mut NoOpObserver,
+                max_expansions,
+                None,
+                max_cost,
+                refine_bus_cut.as_ref().expect("guarded by is_some"),
             ),
             None => run_frontier(
                 &root,
@@ -943,6 +991,96 @@ mod tests {
             &start(),
         );
         assert!(with_cz_marker.bound_stats.bound_enabled);
+    }
+
+    /// A placement where one atom needs only the word bus and the other only the
+    /// site bus to reach `solve_with`'s targets: `h0 = 1`, but no shot serves
+    /// both, so the bus-cut bound is `2`, which is also the optimum.
+    fn two_buses() -> Vec<(u32, bloqade_lanes_bytecode_core::arch::addr::LocationAddr)> {
+        vec![(0, loc(0, 5)), (1, loc(1, 1))]
+    }
+
+    /// `BoundKind::BusCut` reaches the entropy driver, prunes, and certifies a
+    /// root bound strictly above `h0`'s where a second bus is needed.
+    #[test]
+    fn the_bus_cut_bound_reaches_the_entropy_driver() {
+        let h0 = solve_with(
+            Strategy::Entropy,
+            Some(BoundKind::WeightedDistance),
+            None,
+            &two_buses(),
+        );
+        let bus_cut = solve_with(
+            Strategy::Entropy,
+            Some(BoundKind::BusCut),
+            None,
+            &two_buses(),
+        );
+        assert_eq!(h0.bound_stats.root_lower_bound, 1.0);
+        assert_eq!(bus_cut.bound_stats.root_lower_bound, 2.0);
+        assert_eq!(bus_cut.status, SolveStatus::Solved);
+        assert!(bus_cut.bound_stats.bound_enabled);
+        assert!(
+            bus_cut.bound_stats.total_cuts() > 0,
+            "the bus-cut bound must reach the driver and prune, not just set a flag"
+        );
+        assert!(
+            bus_cut
+                .bound_stats
+                .optimality_gap()
+                .is_some_and(|g| g >= 0.0)
+        );
+        assert!(bus_cut.cost <= solve_with(Strategy::Entropy, None, None, &two_buses()).cost);
+    }
+
+    /// A cascade's A* refinement is gated by the bound `completion_bound` names,
+    /// `h0` when it names none, and both find the same cost.
+    #[test]
+    fn the_cascade_refinement_uses_the_bound_completion_bound_names() {
+        let cascade = Strategy::Cascade {
+            inner: InnerStrategy::Ids,
+        };
+        let default = solve_with(cascade, None, None, &two_buses());
+        let h0 = solve_with(
+            cascade,
+            Some(BoundKind::WeightedDistance),
+            None,
+            &two_buses(),
+        );
+        let bus_cut = solve_with(cascade, Some(BoundKind::BusCut), None, &two_buses());
+
+        for result in [&default, &h0, &bus_cut] {
+            assert_eq!(result.status, SolveStatus::Solved);
+            assert!(result.bound_stats.bound_enabled);
+        }
+        assert_eq!(
+            default.bound_stats, h0.bound_stats,
+            "leaving the option unset must keep gating the refinement with h0"
+        );
+        assert_eq!(
+            bus_cut.cost, h0.cost,
+            "a stronger admissible bound must not change the answer"
+        );
+        assert_eq!(h0.bound_stats.root_lower_bound, 1.0);
+        assert_eq!(
+            bus_cut.bound_stats.root_lower_bound, 2.0,
+            "the refinement must be gated by the bus-cut bound, not h0"
+        );
+    }
+
+    /// The bus-cut bound is refused for a set-valued goal, like `h0`.
+    #[test]
+    fn a_set_valued_goal_refuses_the_bus_cut_bound() {
+        let loose = solve_with_goal(
+            |targets| crate::goals::PartialPlacementGoal::new(targets, Some(1)),
+            Strategy::Entropy,
+            Some(BoundKind::BusCut),
+            None,
+            &start(),
+        );
+        assert_eq!(loose.status, SolveStatus::Solved);
+        assert!(!loose.bound_stats.bound_enabled);
+        assert_eq!(loose.bound_stats.total_cuts(), 0);
     }
 
     /// The dispatch may *raise* a caller's deadlock policy to keep the plain
