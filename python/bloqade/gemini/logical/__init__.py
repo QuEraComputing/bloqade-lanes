@@ -1,3 +1,4 @@
+from bloqade.cirq_registry import register_cirq_loader as _register_cirq_loader
 from bloqade.qubit import qalloc as qalloc
 from bloqade.squin.stdlib.simple import (
     cnot as cnot,
@@ -44,3 +45,13 @@ from .stdlib import (
     qalloc_at as qalloc_at,
 )
 from .studio import to_studio_url as to_studio_url
+
+
+def _get_cirq_loader():
+    from .cirq_conversion import GeminiLogicalCirqLowerer
+
+    return GeminiLogicalCirqLowerer
+
+
+# Keep Cirq optional: load its Gemini integration only when conversion is used.
+_register_cirq_loader(dialects=kernel, factory=_get_cirq_loader)
