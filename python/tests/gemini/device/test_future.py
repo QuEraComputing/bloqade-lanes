@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import numpy as np
@@ -31,7 +31,7 @@ from qlam_core.plugins.tasks.api.tasks_models import (
 
 from bloqade.gemini import GeminiLogicalFuture
 
-CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
 
 def make_task(status, *, task_id="task-1", error_reasons=None, **extras):
@@ -39,7 +39,7 @@ def make_task(status, *, task_id="task-1", error_reasons=None, **extras):
         id=task_id,
         task_status=status,
         created_by=uuid4(),
-        created_date=datetime.now(timezone.utc),
+        created_date=datetime.now(UTC),
         # ``group`` became a required field in qlam-core 0.6.0. Tests only
         # ever parse Tasks the API hands back, so any resolvable group
         # will do; nothing here reads it.
@@ -751,7 +751,7 @@ def test_from_task_id_fetches_definition_and_stores_it(
         program_language="flair.v1",
         programs=[DefinitionProgram(content="kernel")],
         subtasks=[DefinitionSubtask(program_index=0, num_shots=5)],
-        created_date=datetime.now(timezone.utc),
+        created_date=datetime.now(UTC),
         created_by=uuid4(),
         group=DefinitionGroupSummary(id=group_id),
     )

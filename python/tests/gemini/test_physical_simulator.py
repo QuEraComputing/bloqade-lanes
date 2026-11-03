@@ -2,7 +2,7 @@ import importlib.util
 import inspect
 from concurrent.futures import Future
 from dataclasses import is_dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_type
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -11,7 +11,6 @@ from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from kirin import ir, types
 from kirin.decl import info, statement
 from kirin.dialects import func, ilist, ssacfg
-from typing_extensions import assert_type
 
 from bloqade import squin, types as bloqade_types
 from bloqade.gemini.common.dialects import qubit as gemini_qubit
