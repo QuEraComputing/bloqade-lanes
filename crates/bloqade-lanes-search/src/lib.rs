@@ -39,7 +39,7 @@ pub mod search;
 pub(crate) mod test_utils;
 pub mod traits;
 
-pub use bounds::{CompletionBound, NoBound, WeightedDistanceBound};
+pub use bounds::{BusCutBound, CompletionBound, NoBound, WeightedDistanceBound};
 // `assert_objective_contract` is deliberately not re-exported here: it is a
 // test-only assertion helper, reachable as `bounds::assert_objective_contract`
 // under `cfg(test)` or the `test-util` feature.

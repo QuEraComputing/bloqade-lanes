@@ -1379,6 +1379,8 @@ impl PyEntropyOptions {
         match self.inner.completion_bound {
             None => None,
             Some(BoundKind::WeightedDistance) => Some("weighted_distance"),
+            // Not constructible from Python yet; arm needed for exhaustiveness.
+            Some(BoundKind::BusCut) => Some("bus_cut"),
         }
     }
 
