@@ -83,6 +83,7 @@ jobs:
     name: build (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
@@ -107,7 +108,7 @@ jobs:
           uv python install ${{ matrix.python-version }}
           uv python pin ${{ matrix.python-version }}
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --locked --all-extras --dev
       - name: Run all tests with coverage
         run: uv run just coverage
       - name: Upload Python coverage to Codecov
@@ -129,6 +130,7 @@ jobs:
   demo:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
@@ -153,7 +155,7 @@ jobs:
           uv python install ${{ matrix.python-version }}
           uv python pin ${{ matrix.python-version }}
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --locked --all-extras --dev
       - name: Run demos
         run: uv run just demo
       - name: Run simulator backend demo
@@ -212,7 +214,7 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --locked --all-extras --dev
       - name: Run benchmark harness (${{ matrix.architecture }})
         run: just benchmark-${{ matrix.architecture }}
       - name: Upload benchmark CSV
