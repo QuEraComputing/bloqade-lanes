@@ -14,7 +14,7 @@ from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.logical import loc, move_to, terminal_measure
 from bloqade.gemini.physical import kernel as movement_kernel
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import arch as arch_dialect
+from bloqade.lanes.dialects import arch as arch_dialect, code_block
 
 
 def test_movement_kernel_exists():
@@ -32,6 +32,7 @@ def test_movement_kernel_has_only_physical_source_dialects():
                 gemini.common.dialects.qubit,
                 gemini.common.dialects.arrange,
                 arch_dialect,
+                code_block,
                 debug,
             ]
         ).data

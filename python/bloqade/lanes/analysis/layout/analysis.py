@@ -1,4 +1,5 @@
 import abc
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -7,6 +8,13 @@ from kirin import ir
 from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice import EmptyLattice
 
+from bloqade.lanes.analysis.code_blocks import (
+    CodeBlock,
+    CodeBlockTag,
+    CodeBlockWarning,
+    block_shape_error,
+    group_code_blocks,
+)
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
 if TYPE_CHECKING:
@@ -65,6 +73,32 @@ class LayoutHeuristicABC(abc.ABC):
         ...  # pragma: no cover
 
 
+class CodeBlockLayoutHeuristicABC(LayoutHeuristicABC):
+    """A layout heuristic that can honor registered code blocks.
+
+    ``LayoutAnalysis`` calls ``compute_layout_with_blocks`` instead of
+    ``compute_layout`` whenever the kernel registers at least one block.
+    """
+
+    @abc.abstractmethod
+    def compute_layout_with_blocks(
+        self,
+        all_qubits: tuple[int, ...],
+        stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, LocationAddress],
+        code_blocks: tuple[CodeBlock, ...],
+    ) -> tuple[LocationAddress, ...]:
+        """Compute an initial layout in which every block has the block shape.
+
+        Each block in ``code_blocks`` must land on contiguous sites of a single
+        word with position ``p`` at site ``offset + p``. Pinned qubits keep their
+        pins; a fully pinned block already has the shape. Raises
+        ``CodeBlockPlacementError`` when the blocks cannot all be placed.
+        Contract otherwise as for ``compute_layout``.
+        """
+        ...  # pragma: no cover
+
+
 @dataclass
 class LayoutAnalysis(Forward):
     keys = ("place.layout",)
@@ -78,11 +112,17 @@ class LayoutAnalysis(Forward):
     location_addresses: dict[int, LocationAddress] = field(
         default_factory=dict, init=False
     )
+    code_block_tags: dict[int, CodeBlockTag] = field(default_factory=dict, init=False)
+    code_blocks: tuple[CodeBlock, ...] = field(default=(), init=False)
+    """Blocks the last computed layout honors (empty if none were registered or
+    the heuristic is not block-aware). Read after ``get_layout``."""
 
     def initialize(self):
         self.stages.clear()
         self.global_address_stack.clear()
         self.location_addresses.clear()
+        self.code_block_tags.clear()
+        self.code_blocks = ()
         return super().initialize()
 
     def eval_stmt_fallback(self, frame, stmt):
@@ -97,9 +137,36 @@ class LayoutAnalysis(Forward):
         return EmptyLattice.bottom()
 
     def process_results(self):
-        layout = self.heuristic.compute_layout(
-            self.all_qubits, self.stages, pinned=self.location_addresses
+        blocks = group_code_blocks(self.code_block_tags)
+        self.code_blocks = ()
+        if not blocks:
+            return self.heuristic.compute_layout(
+                self.all_qubits, self.stages, pinned=self.location_addresses
+            )
+        if not isinstance(self.heuristic, CodeBlockLayoutHeuristicABC):
+            warnings.warn(
+                f"layout heuristic {type(self.heuristic).__name__} is not "
+                f"block-aware; ignoring {len(blocks)} registered code block(s).",
+                CodeBlockWarning,
+                stacklevel=2,
+            )
+            return self.heuristic.compute_layout(
+                self.all_qubits, self.stages, pinned=self.location_addresses
+            )
+        layout = self.heuristic.compute_layout_with_blocks(
+            self.all_qubits, self.stages, dict(self.location_addresses), blocks
         )
+        sites_per_word = len(self.heuristic.arch_spec.words[0].site_indices)
+        for block in blocks:
+            reason = block_shape_error(
+                [layout[qid] for qid in block.qids], sites_per_word
+            )
+            if reason is not None:
+                raise RuntimeError(
+                    f"{type(self.heuristic).__name__} broke code block "
+                    f"{block.block_id}: {reason}"
+                )
+        self.code_blocks = blocks
         return layout
 
     def get_layout_no_raise(self, method: ir.Method):

@@ -8,6 +8,7 @@ from kirin.lattice import (
     SingletonMeta,
 )
 
+from bloqade.lanes.analysis.code_blocks import LocalCodeBlock
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
@@ -58,6 +59,15 @@ class ConcreteState(AtomState):
     """Stores the current location of the ith qubit argument in layout[i]."""
     move_count: tuple[int, ...]
     """Stores the number of moves each atom has undergone."""
+    code_blocks: tuple[LocalCodeBlock, ...] = field(
+        default=(), kw_only=True, compare=False
+    )
+    """Registered code blocks in local index space (indices into ``layout``).
+
+    Metadata for placement strategies: excluded from equality, and re-attached
+    by ``PlacementAnalysis`` around every strategy call, so a strategy that
+    builds a new state without it does not lose it. Each block starts on
+    contiguous sites of one word; later moves may separate it."""
 
     def __post_init__(self):
         assert self.occupied.isdisjoint(
