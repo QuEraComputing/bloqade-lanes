@@ -12,3 +12,11 @@ def star_rz(
     qubit: types.Qubit,
 ) -> None:
     broadcast.star_rz(theta, ilist.IList([qubit]))
+
+
+@kernel(aggressive_unroll=True, verify=False)
+def star_rx(
+    theta: float,
+    qubit: types.Qubit,
+) -> None:
+    broadcast.star_rx(theta, ilist.IList([qubit]))

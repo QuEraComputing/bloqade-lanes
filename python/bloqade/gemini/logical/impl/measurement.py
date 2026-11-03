@@ -73,18 +73,19 @@ class __GeminiLogicalMeasurementValidation(_interp.MethodTable):
         return (interp.lattice.bottom(),)
 
 
-# NOTE: a separate table because `StarRz` lives in the `extensions` dialect, not
+# NOTE: a separate table because STAR rotations live in the `extensions` dialect, not
 # in `operations` -- an impl registered above would never be reached for it. It
 # is checked here for the same reason the gates next door are: it acts on qubits,
 # so applying one after the terminal measurement is the same mistake.
 @extensions.dialect.register(key="gemini.validate.terminal_measurement")
 class __GeminiLogicalExtensionsMeasurementValidation(_interp.MethodTable):
+    @_interp.impl(extensions.stmts.StarRx)
     @_interp.impl(extensions.stmts.StarRz)
-    def star_rz(
+    def star_rotation(
         self,
         interp: "_GeminiTerminalMeasurementValidationAnalysis",
         frame: ForwardFrame,
-        stmt: extensions.stmts.StarRz,
+        stmt: extensions.stmts.StarRx | extensions.stmts.StarRz,
     ):
         interp.check_gate_after_measurement(stmt)
         return ()

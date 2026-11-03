@@ -3,7 +3,8 @@
 Scans a flat block in order carrying a per-qubit phase *frame*. Each ``Rz`` is
 absorbed into the frame and deleted; each ``R`` has its axis angle shifted by the
 frame of the qubits it addresses; ``CZ`` and ``StarRz`` are diagonal and pass
-through untouched. Whatever frame remains when the block ends is discarded --
+through untouched; ``StarRx`` flushes the pending frame before its non-diagonal
+physical gadget. Whatever frame remains when the block ends is discarded --
 sound because the residual is diagonal and the device's readout is in the Z
 basis. ``flush_residual`` writes it back out instead, which makes the emitted
 program exactly equal the input; see that field's docstring for why a test
@@ -269,6 +270,12 @@ class EliminateRz(RewriteRule):
         # sides' frames need not agree. ``StarRz``'s own rotation survives into
         # the emitted program -- see the class docstring.
         return RewriteResult()
+
+    @_rewrite.register(extensions.StarRx)
+    def _(self, stmt: extensions.StarRx) -> RewriteResult:
+        # A fixed-axis X rotation does not commute with a pending Z frame.
+        # Restore the phase before the physical STAR-X gadget.
+        return RewriteResult(has_done_something=self._drain(stmt))
 
     # --- the actual work ---
 

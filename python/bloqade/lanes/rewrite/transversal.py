@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from itertools import chain
 
 from kirin import ir, types
-from kirin.dialects import func, ilist, math as kmath
+from kirin.dialects import func, ilist, math as kmath, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
@@ -104,7 +104,7 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
 
     transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
-    def _theta_star_ir(self, node: move.StarRz) -> ir.SSAValue:
+    def _theta_star_ir(self, node: move.StarRz | move.StarRx) -> ir.SSAValue:
         theta_star = func.Invoke((node.rotation_angle,), callee=steane_star_theta)
         theta_star.insert_before(node)
         return theta_star.result
@@ -139,6 +139,34 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
                 node.current_state,
                 theta_star,
                 location_addresses=physical_addresses,
+            )
+        )
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+@dataclass
+class RewriteStarRx(RewriteStarRz):
+    """Lower logical STAR-X to physical local X rotations on its support."""
+
+    def rewrite_Statement(self, node: ir.Statement):
+        if not isinstance(node, move.StarRx):
+            return rewrite_abc.RewriteResult()
+
+        supports = [
+            self._physical_support(address, node.qubit_indices)
+            for address in node.location_addresses
+        ]
+        if not no_none_elements(supports):
+            return rewrite_abc.RewriteResult()
+
+        theta_star = self._theta_star_ir(node)
+        (zero := py.Constant(0.0)).insert_before(node)
+        node.replace_by(
+            move.LocalR(
+                node.current_state,
+                zero.result,
+                theta_star,
+                location_addresses=tuple(chain.from_iterable(supports)),
             )
         )
         return rewrite_abc.RewriteResult(has_done_something=True)

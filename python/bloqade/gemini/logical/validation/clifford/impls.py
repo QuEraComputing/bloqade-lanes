@@ -117,12 +117,13 @@ class __GateGeminiLogicalValidation(_interp.MethodTable):
 
 @extensions.dialect.register(key="gemini.validate.logical")
 class __ExtensionsGeminiLogicalValidation(_interp.MethodTable):
+    @_interp.impl(extensions.stmts.StarRx)
     @_interp.impl(extensions.stmts.StarRz)
-    def star_rz(
+    def star_rotation(
         self,
         interp: _GeminiLogicalValidationAnalysis,
         frame: ForwardFrame,
-        stmt: extensions.stmts.StarRz,
+        stmt: extensions.stmts.StarRx | extensions.stmts.StarRz,
     ):
         interp.check_first_gate(stmt.qubits)
         return ()

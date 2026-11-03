@@ -16,3 +16,11 @@ def star_rz(
     qubits: ilist.IList[types.Qubit, Any],
 ) -> None:
     extensions.star_rz(_radian_to_turn(theta), qubits, DEFAULT_STEANE_STAR_SUPPORT)
+
+
+@kernel(aggressive_unroll=True, verify=False)
+def star_rx(
+    theta: float,
+    qubits: ilist.IList[types.Qubit, Any],
+) -> None:
+    extensions.star_rx(_radian_to_turn(theta), qubits, DEFAULT_STEANE_STAR_SUPPORT)

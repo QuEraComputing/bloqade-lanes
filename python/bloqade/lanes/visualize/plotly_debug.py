@@ -197,7 +197,7 @@ def _atom_trace(
 def _gate_applies_to_location(
     statement: ir.Statement, location: LocationAddress
 ) -> bool:
-    if isinstance(statement, (move.LocalR, move.LocalRz, move.StarRz)):
+    if isinstance(statement, (move.LocalR, move.LocalRz, move.StarRz, move.StarRx)):
         return location in statement.location_addresses
     if isinstance(statement, (move.GlobalR, move.GlobalRz)):
         return True
@@ -377,7 +377,7 @@ def _gate_trace(
     go = _plotly()
     statement = step.statement
     description = gate_description(step)
-    local_gate_types = (move.LocalR, move.LocalRz, move.StarRz)
+    local_gate_types = (move.LocalR, move.LocalRz, move.StarRz, move.StarRx)
     if isinstance(statement, local_gate_types):
         positions = [
             arch_spec.get_position(location)
@@ -385,7 +385,7 @@ def _gate_trace(
         ]
         color = (
             colors["local_r"]
-            if isinstance(statement, move.LocalR)
+            if isinstance(statement, (move.LocalR, move.StarRx))
             else colors["local_rz"]
         )
         return go.Scatter(

@@ -33,3 +33,25 @@ class StarRz(ir.Statement):
             validate_steane_star_support(self.qubit_indices)
         except ValueError as exc:
             raise exception.StaticCheckError(str(exc)) from exc
+
+
+@statement(dialect=dialect)
+class StarRx(ir.Statement):
+    """STAR/TMR logical-X rotation injection primitive.
+
+    The angle is in SQuIn IR turns. The physical lowering applies the
+    corresponding local X rotations on the selected Steane support.
+    """
+
+    traits = frozenset({lowering.FromPythonCall()})
+    rotation_angle: ir.SSAValue = info.argument(types.Float)
+    qubits: ir.SSAValue = info.argument(ilist.IListType[QubitType, types.Any])
+    qubit_indices: tuple[int, int, int] = info.attribute(
+        default=DEFAULT_STEANE_STAR_SUPPORT
+    )
+
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc

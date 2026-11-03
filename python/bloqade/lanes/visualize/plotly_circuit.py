@@ -41,7 +41,7 @@ def _plotly() -> Any:
 def gate_parameter_names(statement: ir.Statement) -> tuple[str, ...]:
     if isinstance(statement, (move.LocalR, move.GlobalR)):
         return ("axis_angle", "rotation_angle")
-    if isinstance(statement, (move.LocalRz, move.StarRz, move.GlobalRz)):
+    if isinstance(statement, (move.LocalRz, move.StarRz, move.StarRx, move.GlobalRz)):
         return ("rotation_angle",)
     return ()
 
@@ -82,6 +82,8 @@ def _gate_kind_and_label(statement: ir.Statement) -> tuple[GateKind, str] | None
         return "global_r", "R"
     if isinstance(statement, move.StarRz):
         return "local_rz", "Rz*"
+    if isinstance(statement, move.StarRx):
+        return "local_r", "Rx*"
     if isinstance(statement, move.LocalRz):
         return "local_rz", "Rz"
     if isinstance(statement, move.GlobalRz):
@@ -129,7 +131,7 @@ def circuit_columns(
         kind, label = kind_and_label
         pairs: tuple[tuple[int, int], ...] = ()
 
-        if isinstance(statement, (move.LocalR, move.LocalRz, move.StarRz)):
+        if isinstance(statement, (move.LocalR, move.LocalRz, move.StarRz, move.StarRx)):
             qubit_ids = _qubits_at(step, statement.location_addresses)
         elif isinstance(statement, (move.GlobalR, move.GlobalRz)):
             qubit_ids = tuple(sorted(step.state.data.qubit_to_locations))

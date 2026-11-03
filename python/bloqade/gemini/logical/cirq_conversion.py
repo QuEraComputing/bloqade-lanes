@@ -100,9 +100,13 @@ class _LogicalCirqMethods(interp.MethodTable):
 
 @logical_extensions_dialect.register(key="emit.cirq")
 class _LogicalExtensionsCirqMethods(interp.MethodTable):
+    @interp.impl(logical_extensions.StarRx)
     @interp.impl(logical_extensions.StarRz)
     def unsupported(
-        self, emit: EmitCirq, frame: EmitCirqFrame, stmt: logical_extensions.StarRz
+        self,
+        emit: EmitCirq,
+        frame: EmitCirqFrame,
+        stmt: logical_extensions.StarRx | logical_extensions.StarRz,
     ) -> tuple[Any, ...]:
         raise interp.exceptions.InterpreterError(
             f"Cirq emission does not yet support {stmt.name}"

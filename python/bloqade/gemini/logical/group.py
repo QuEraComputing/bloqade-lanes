@@ -134,11 +134,13 @@ def kernel(self):
             from .validation.measurement.analysis import (
                 GeminiTerminalMeasurementValidation,
             )
+            from .validation.star_rx_rz import StarRxRzGateValidation
 
             validator = ValidationSuite(
                 [
                     GeminiLogicalValidation,
                     GeminiTerminalMeasurementValidation,
+                    StarRxRzGateValidation,
                     FlatKernelNoCloningValidation,
                     # Before DuplicateAddressValidation: it is that pass's
                     # precondition, and reporting the precondition first reads
