@@ -13,6 +13,7 @@ from .device import (
     GeminiLogicalFuture as GeminiLogicalFuture,
     GeminiLogicalResult as GeminiLogicalResult,
     GeminiLogicalSimulator as GeminiLogicalSimulator,
+    GeminiLogicalSimulatorDevice as GeminiLogicalSimulatorDevice,
     GeminiLogicalSimulatorTask as GeminiLogicalSimulatorTask,
     GeminiPhysicalSimulator as GeminiPhysicalSimulator,
     PhysicalResult as PhysicalResult,

@@ -27,6 +27,23 @@ from .task import GeminiKernelBatchTask, GeminiParameterScanTask, GeminiSingleKe
 _bloqade_version = version("bloqade-circuit")
 
 
+def _default_validation_suite() -> ValidationSuite:
+    """Build an independent validation suite for Gemini logical submission."""
+    return ValidationSuite(
+        [
+            GeminiLogicalValidation,
+            GeminiTerminalMeasurementValidation,
+            FlatKernelNoCloningValidation,
+            ConstAddressValidation,
+            DuplicateAddressValidation,
+            # Submission must validate methods built without @logical.kernel.
+            GeminiLogicalArgumentValidation,
+            # Experimental extensions remain unsupported by hardware submission.
+            NoLogicalExtensionsValidation,
+        ]
+    )
+
+
 @dataclass(kw_only=True)
 class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
     """Device that builds tasks for the Gemini logical backend.
@@ -38,25 +55,7 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
     program_language: str = "squin"
     language_version: str = _bloqade_version
     validation_suite: ValidationSuite | None = field(
-        default_factory=lambda: ValidationSuite(
-            [
-                GeminiLogicalValidation,
-                GeminiTerminalMeasurementValidation,
-                FlatKernelNoCloningValidation,
-                ConstAddressValidation,
-                DuplicateAddressValidation,
-                # NOTE: not redundant with the `@logical.kernel` decorator. A
-                # method can be built without it and handed straight to the
-                # device, so submission is its own enforcement point.
-                GeminiLogicalArgumentValidation,
-                # The experimental extensions leave the logical subspace and
-                # are only meaningful with post-selection the user applies
-                # themselves, so they stay available in simulation (which does
-                # not run this suite) and are rejected here, on the way to the
-                # backend.
-                NoLogicalExtensionsValidation,
-            ]
-        )
+        default_factory=_default_validation_suite
     )
     # Annotated ``| None`` to match ``Device.dialect_group`` as of
     # bloqade-core 0.6.8, which widened it. The default_factory keeps this

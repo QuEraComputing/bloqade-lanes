@@ -7,6 +7,7 @@ from .logical import (
     GeminiLogicalDevice as GeminiLogicalDevice,
     GeminiLogicalFuture as GeminiLogicalFuture,
     GeminiLogicalResult as GeminiLogicalResult,
+    GeminiLogicalSimulatorDevice as GeminiLogicalSimulatorDevice,
 )
 from .physical_simulator import (
     GeminiPhysicalSimulator as GeminiPhysicalSimulator,
