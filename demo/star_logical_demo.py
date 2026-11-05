@@ -51,7 +51,7 @@ def star_on_plus_kernel():
 
 
 # %%
-task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel)
+task = GeminiLogicalSimulator().task(star_on_plus_kernel)
 
 # %% [markdown]
 # We can visualize the circuit and see that U3 gates have been applied to the last 3 qubits, representing the target support
@@ -122,9 +122,9 @@ def postselected_observable_bits(result):
 
 
 # Compile kernels down to tsim circuits to do simulation
-x_task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel_x)
-y_task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel_y)
-z_task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel_z)
+x_task = GeminiLogicalSimulator().task(star_on_plus_kernel_x)
+y_task = GeminiLogicalSimulator().task(star_on_plus_kernel_y)
+z_task = GeminiLogicalSimulator().task(star_on_plus_kernel_z)
 
 x_shots = x_task.run(shots=SHOTS, with_noise=False)
 y_shots = y_task.run(shots=SHOTS, with_noise=False)
