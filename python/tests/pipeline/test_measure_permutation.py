@@ -14,7 +14,7 @@ import pytest
 from bloqade.pyqrack.device import StackMemorySimulator
 from kirin.dialects import ilist
 
-from bloqade import squin
+from bloqade import qubit, squin
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.transform import MoveToSquinPhysical, PhysicalPipeline
@@ -64,6 +64,15 @@ def test_physical_roundtrip_preserves_measurement_order(
         _build_kernel(perm)
     )
     compiled = MoveToSquinPhysical(arch).emit(move_kernel)
+
+    measurements = [
+        stmt
+        for stmt in compiled.callable_region.walk()
+        if isinstance(stmt, qubit.stmts.Measure)
+    ]
+    assert len(measurements) == 1
+    assert isinstance(measurements[0].qubits.owner, ilist.New)
+    assert len(measurements[0].qubits.owner.values) == len(perm)
 
     sim = StackMemorySimulator()
     # Results are MeasurementResultValue (an IntEnum), so they compare equal to
