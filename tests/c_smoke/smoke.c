@@ -38,48 +38,68 @@
         }                                                                      \
     } while (0)
 
+/* vihaco's `sst v1` section container, as a pair of literals the body sits
+ * between. C concatenates adjacent string literals at compile time, so
+ * SST_HEAD "body" SST_TAIL is still one constant — and a container change is
+ * one edit rather than five. */
+#define SST_HEAD                                                               \
+    "sst v1\n"                                                                 \
+    "\n"                                                                       \
+    ".section(root):\n"                                                        \
+    ".header(root):\n"                                                         \
+    "version 1.0\n"                                                            \
+    ".header(root).\n"                                                         \
+    ".text(root):\n"
+#define SST_TAIL                                                               \
+    ".text(root).\n"                                                           \
+    ".section(root).\n"
+
 /* Minimal valid SST program: two locations, initial_fill, halt.
  * LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
  * zone 0, word 0, site 0 = 0x0000000000000000
  * zone 0, word 0, site 1 = 0x0000000001000000 */
 static const char *VALID_PROGRAM =
-    "version 1.0;\n"
+    SST_HEAD
     "fn @main() {\n"
-    "  const_loc 0x0000000000000000\n"
-    "  const_loc 0x0000000001000000\n"
-    "  initial_fill 2\n"
-    "  halt\n"
-    "}\n";
+    "  lanes::lanes.const_loc 0x0000000000000000\n"
+    "  lanes::lanes.const_loc 0x0000000001000000\n"
+    "  lanes::lanes.initial_fill 2\n"
+    "  cpu::cpu.halt\n"
+    "}\n"
+    SST_TAIL;
 
 /* Program that triggers a structural error (initial_fill not first). */
 static const char *INVALID_STRUCTURE =
-    "version 1.0;\n"
+    SST_HEAD
     "fn @main() {\n"
-    "  halt\n"
-    "  const_loc 0x0000000000000000\n"
-    "  initial_fill 1\n"
-    "}\n";
+    "  cpu::cpu.halt\n"
+    "  lanes::lanes.const_loc 0x0000000000000000\n"
+    "  lanes::lanes.initial_fill 1\n"
+    "}\n"
+    SST_TAIL;
 
-/* Program that triggers a stack underflow: `pop` on an empty stack. */
+/* Program that triggers a stack underflow: `dup` on an empty stack. */
 static const char *STACK_UNDERFLOW =
-    "version 1.0;\n"
+    SST_HEAD
     "fn @main() {\n"
-    "  pop\n"
-    "  halt\n"
-    "}\n";
+    "  cpu::cpu.dup\n"
+    "  cpu::cpu.halt\n"
+    "}\n"
+    SST_TAIL;
 
 /* Program with a type mismatch: `fill` expects a location but gets a float.
  * `initial_fill` is fed a valid location first so the mismatch lands squarely
  * on `fill`. */
 static const char *TYPE_MISMATCH =
-    "version 1.0;\n"
+    SST_HEAD
     "fn @main() {\n"
-    "  const_loc 0x0000000000000000\n"
-    "  initial_fill 1\n"
-    "  const.f64 3.14\n"
-    "  fill 1\n"
-    "  halt\n"
-    "}\n";
+    "  lanes::lanes.const_loc 0x0000000000000000\n"
+    "  lanes::lanes.initial_fill 1\n"
+    "  cpu::cpu.const f64, 3.14\n"
+    "  lanes::lanes.fill 1\n"
+    "  cpu::cpu.halt\n"
+    "}\n"
+    SST_TAIL;
 
 int main(void) {
     int tests_passed = 0;
@@ -91,8 +111,9 @@ int main(void) {
                   "parse valid program");
         ASSERT_TRUE(prog != NULL, "program handle is non-null");
 
+        /* Four instructions plus the func_start/func_end delimiting @main. */
         uint32_t count = lanes_program_instruction_count(prog);
-        ASSERT_EQ(count, 4, "instruction count");
+        ASSERT_EQ(count, 6, "instruction count");
 
         uint16_t major = 0, minor = 0;
         lanes_program_version(prog, &major, &minor);
@@ -260,12 +281,13 @@ int main(void) {
 
         /* Site-bus lane on bus 7, which does not exist in the arch. */
         static const char *BAD_LANE_PROGRAM =
-            "version 1.0;\n"
+            SST_HEAD
             "fn @main() {\n"
-            "  const_lane 0x0000000700000000\n"
-            "  move 1\n"
-            "  halt\n"
-            "}\n";
+            "  lanes::lanes.const_lane 0x0000000700000000\n"
+            "  lanes::lanes.move 1\n"
+            "  cpu::cpu.halt\n"
+            "}\n"
+            SST_TAIL;
 
         struct LANESArchSpec *arch = NULL;
         ASSERT_OK(lanes_arch_from_json(ARCH_JSON, &arch), "parse arch json");

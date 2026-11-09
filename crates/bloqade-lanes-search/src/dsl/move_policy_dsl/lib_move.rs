@@ -588,8 +588,15 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         let raw_scored = unpack_scored_list(scored)?;
         let raw_groups = pipeline_group_by_triplet(raw_scored);
 
-        let candidates =
-            pipeline_pack_aod_rectangles(raw_groups, &config.0, &this.index, &this.blocked);
+        // Capped by the architecture's AOD capacity, as every other shot
+        // assembler is.
+        let candidates = pipeline_pack_aod_rectangles(
+            raw_groups,
+            &config.0,
+            &this.index,
+            &this.blocked,
+            this.index.aod_capacity(),
+        );
         let items: Vec<Value<'v>> = candidates
             .into_iter()
             .map(|c| heap.alloc(StarlarkPackedCandidate(c)))
@@ -730,6 +737,7 @@ mod tests {
             feed_forward: false,
             atom_reloading: false,
             blockade_radius: None,
+            aod_capacity: None,
         });
         let arch_wrap = StarlarkArchSpec(arch);
         let targets = vec![

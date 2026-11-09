@@ -15,17 +15,17 @@
 //!      tier-1 winner; advance the state and re-plan.
 //!
 //! [`solve_receding_horizon`] (the public entry) wraps a parallel restart
-//! loop around [`solve_entangling_rh_single`].
+//! loop around [`solve_entangling_rh_single_budgeted`].
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
 
 use crate::cost::UniformCost;
 use crate::drivers::frontier::{self, IdsFrontier};
+use crate::drivers::result::Termination;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::generators::{HeuristicGenerator, LooseTargetGenerator};
 use crate::goals::EntanglingConstraintGoal;
@@ -37,7 +37,7 @@ use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
-use crate::search::options::{EntanglingOptions, SolveOptions};
+use crate::search::options::{EntanglingOptions, EntropyOptions, SolveOptions};
 use crate::search::result::{SolveResult, SolveStatus};
 use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
@@ -162,6 +162,11 @@ pub fn default_weight_grid() -> Vec<(f64, f64)> {
 /// Tier-2 (failed to reach depth x) is represented by `None` from
 /// [`classify_into_tier`] — dropped branches are not stored.
 ///
+/// Node counts are not stored here either: they belong to the rollout, not
+/// to the branch it produced, so the stage loop reads them from the
+/// [`RolloutOutcome`] before classifying. A dropped rollout's work must
+/// still count toward the budget.
+///
 /// Tier-1's leaf-Hungarian cost (`c_prime`) is **not** stored here — it's
 /// only consulted when ranking against other tier-1 branches in the
 /// absence of any tier-0 winner. When at least one tier-0 exists, all
@@ -174,7 +179,6 @@ pub(crate) enum BranchResult {
         depth: u32,
         path: Vec<MoveSet>,
         leaf_config: Config,
-        nodes_expanded: u32,
     },
     /// Rollout completed exactly `rollout_horizon` layers without reaching
     /// the goal. The leaf Hungarian cost is computed lazily in
@@ -182,17 +186,10 @@ pub(crate) enum BranchResult {
     Tier1 {
         path: Vec<MoveSet>,
         leaf_config: Config,
-        nodes_expanded: u32,
     },
 }
 
 impl BranchResult {
-    fn nodes_expanded(&self) -> u32 {
-        match self {
-            BranchResult::Tier0 { nodes_expanded, .. }
-            | BranchResult::Tier1 { nodes_expanded, .. } => *nodes_expanded,
-        }
-    }
     fn is_tier0(&self) -> bool {
         matches!(self, BranchResult::Tier0 { .. })
     }
@@ -234,7 +231,6 @@ impl BranchResult {
 pub(crate) fn generate_k_candidates(
     state: &Config,
     cz_pairs: &[(u32, u32)],
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -256,7 +252,6 @@ pub(crate) fn generate_k_candidates(
             entangling::lookahead_assign_pairs(
                 cz_pairs,
                 state,
-                arch,
                 index,
                 dist_table,
                 blocked,
@@ -271,7 +266,6 @@ pub(crate) fn generate_k_candidates(
             entangling::assign_pairs_with_blockers(
                 cz_pairs,
                 state,
-                arch,
                 index,
                 dist_table,
                 blocked,
@@ -324,7 +318,6 @@ pub(crate) fn generate_k_candidates(
         let targets = entangling::assign_pairs_with_blockers(
             cz_pairs,
             state,
-            arch,
             index,
             dist_table,
             blocked,
@@ -356,6 +349,9 @@ pub(crate) struct RolloutOutcome {
     pub(crate) goal_node: Option<NodeId>,
     pub(crate) max_depth_reached: u32,
     pub(crate) nodes_expanded: u32,
+    /// Nodes generated across the rollout, including a greedy beam's graph
+    /// that was discarded for IDS, matching `nodes_expanded`.
+    pub(crate) nodes_generated: u32,
 }
 
 /// Fast bounded beam-search rollout used as the first attempt inside
@@ -406,6 +402,7 @@ fn beam_rollout<G: Goal>(
             goal_node: Some(graph.root()),
             max_depth_reached: 0,
             nodes_expanded: 0,
+            nodes_generated: graph_len(&graph),
             graph,
         };
     }
@@ -443,6 +440,7 @@ fn beam_rollout<G: Goal>(
                 goal_node: None,
                 max_depth_reached: depth,
                 nodes_expanded,
+                nodes_generated: graph_len(&graph),
                 graph,
             };
         }
@@ -464,6 +462,7 @@ fn beam_rollout<G: Goal>(
                     goal_node: Some(next),
                     max_depth_reached: depth,
                     nodes_expanded,
+                    nodes_generated: graph_len(&graph),
                     graph,
                 };
             }
@@ -481,8 +480,14 @@ fn beam_rollout<G: Goal>(
         goal_node: None,
         max_depth_reached: depth,
         nodes_expanded,
+        nodes_generated: graph_len(&graph),
         graph,
     }
+}
+
+/// A search graph's size as the `u32` counters use.
+fn graph_len(graph: &SearchGraph) -> u32 {
+    u32::try_from(graph.len()).unwrap_or(u32::MAX)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -490,7 +495,6 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     root: Config,
     targets: Vec<(u32, u64)>,
     cz_pairs: Vec<(u32, u32)>,
-    arch: Arc<ArchSpec>,
     index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     blocked: &HashSet<u64>,
@@ -516,8 +520,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     // overrides ctx for the inner HeuristicGenerator).
     let targets_for_ctx = targets.clone();
     let cz_pairs_for_ctx = cz_pairs.clone();
-    let generator =
-        LooseTargetGenerator::from_targets(inner, targets, cz_pairs, arch, index, dist_table);
+    let generator = LooseTargetGenerator::from_targets(inner, targets, cz_pairs, index, dist_table);
 
     // ── Phase 1: try cheap greedy walk first (if enabled) ──────────────
     // Most rollouts succeed under greedy at moderate density. We fall
@@ -530,6 +533,11 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     //
     // Greedy is ~50× cheaper per rollout when it succeeds; the gate
     // adds two h-score evaluations per gated rollout — negligible.
+    //
+    // The beam's expansions are real work even when its result is thrown
+    // away, so a rollout that falls through to IDS reports both.
+    let mut beam_nodes: u32 = 0;
+    let mut beam_generated: u32 = 0;
     if greedy_first {
         let greedy_outcome = beam_rollout(
             root.clone(),
@@ -564,6 +572,8 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
                 // defensive and fall through to IDS.
             }
         }
+        beam_nodes = greedy_outcome.nodes_expanded;
+        beam_generated = greedy_outcome.nodes_generated;
     }
 
     // ── Phase 2: greedy got stuck; fall back to full IDS ───────────────
@@ -600,10 +610,11 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     };
 
     RolloutOutcome {
+        nodes_generated: beam_generated.saturating_add(graph_len(&result.graph)),
         graph: result.graph,
         goal_node: result.goal,
         max_depth_reached: result.max_depth_reached,
-        nodes_expanded: result.nodes_expanded,
+        nodes_expanded: beam_nodes.saturating_add(result.nodes_expanded),
     }
 }
 
@@ -660,7 +671,6 @@ pub(crate) fn extract_best_leaf(
 pub(crate) fn hungarian_cost_at_leaf(
     leaf: &Config,
     pairs: &[(u32, u32)],
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -672,7 +682,6 @@ pub(crate) fn hungarian_cost_at_leaf(
     let targets = entangling::assign_pairs_with_blockers(
         pairs,
         leaf,
-        arch,
         index,
         dist_table,
         blocked,
@@ -704,7 +713,8 @@ pub(crate) fn classify_into_tier(
         graph,
         goal_node,
         max_depth_reached,
-        nodes_expanded,
+        nodes_expanded: _,
+        nodes_generated: _,
     } = outcome;
 
     // Tier-0: rollout reached the constraint goal.
@@ -716,7 +726,6 @@ pub(crate) fn classify_into_tier(
             depth,
             path,
             leaf_config,
-            nodes_expanded,
         });
     }
 
@@ -733,11 +742,7 @@ pub(crate) fn classify_into_tier(
     let leaf_config = graph.config(leaf).clone();
     // Note: c_prime (Hungarian cost at leaf) is computed lazily in
     // pick_best_branch, only when needed (i.e., when no tier-0 branch exists).
-    Some(BranchResult::Tier1 {
-        path,
-        leaf_config,
-        nodes_expanded,
-    })
+    Some(BranchResult::Tier1 { path, leaf_config })
 }
 
 /// Pick the lowest-score branch. Tier-0 always beats tier-1.
@@ -757,7 +762,6 @@ pub(crate) fn pick_best_branch<'a>(
     alpha: f64,
     cz_pairs: &[(u32, u32)],
     future_layers: &[Vec<(u32, u32)>],
-    arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
     blocked: &HashSet<u64>,
@@ -775,7 +779,6 @@ pub(crate) fn pick_best_branch<'a>(
                     hungarian_cost_at_leaf(
                         leaf_config,
                         &future_layers[0],
-                        arch,
                         index,
                         dist_table,
                         blocked,
@@ -795,7 +798,6 @@ pub(crate) fn pick_best_branch<'a>(
                     hungarian_cost_at_leaf(
                         leaf_config,
                         cz_pairs,
-                        arch,
                         index,
                         dist_table,
                         blocked,
@@ -821,12 +823,16 @@ pub(crate) fn pick_best_branch<'a>(
 ///
 /// The caller is responsible for parallelism (see
 /// [`solve_receding_horizon`]'s rayon wrapper).
+///
+/// `fallback` finishes a trajectory the stage loop cannot, from the state
+/// it stopped in, and chooses its own budget. To have it share the
+/// trajectory's `max_expansions` instead, use
+/// [`solve_entangling_rh_single_budgeted`], which this forwards to.
 #[allow(clippy::too_many_arguments)]
 pub fn solve_entangling_rh_single(
     root: Config,
     cz_pairs: &[(u32, u32)],
     blocked: HashSet<u64>,
-    arch: Arc<ArchSpec>,
     index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     goal: &EntanglingConstraintGoal,
@@ -839,9 +845,48 @@ pub fn solve_entangling_rh_single(
     restart_seed: u64,
     fallback: impl Fn(&Config) -> SolveResult + Sync,
 ) -> SolveResult {
+    solve_entangling_rh_single_budgeted(
+        root,
+        cz_pairs,
+        blocked,
+        index,
+        dist_table,
+        goal,
+        heuristic,
+        opts,
+        ent_opts,
+        rh_opts,
+        future_layers,
+        max_expansions,
+        restart_seed,
+        |state: &Config, _remaining: Option<u32>| fallback(state),
+    )
+}
+
+/// [`solve_entangling_rh_single`], with a `fallback` that is handed the
+/// budget it may spend: whatever `max_expansions` has left, so the fallback
+/// shares the trajectory's cap rather than adding a fresh one on top.
+#[allow(clippy::too_many_arguments)]
+pub fn solve_entangling_rh_single_budgeted(
+    root: Config,
+    cz_pairs: &[(u32, u32)],
+    blocked: HashSet<u64>,
+    index: Arc<LaneIndex>,
+    dist_table: Arc<DistanceTable>,
+    goal: &EntanglingConstraintGoal,
+    heuristic: &PairDistanceHeuristic,
+    opts: &SolveOptions,
+    ent_opts: &EntanglingOptions,
+    rh_opts: &RecedingHorizonOptions,
+    future_layers: &[Vec<(u32, u32)>],
+    max_expansions: Option<u32>,
+    restart_seed: u64,
+    fallback: impl Fn(&Config, Option<u32>) -> SolveResult + Sync,
+) -> SolveResult {
     let mut state = root;
     let mut committed_layers: Vec<MoveSet> = Vec::new();
     let mut total_expansions: u32 = 0;
+    let mut total_generated: u32 = 0;
     let mut x = rh_opts.rollout_horizon;
 
     // Reusable handle to the sum-heuristic for IDS frontier ordering and
@@ -854,6 +899,9 @@ pub fn solve_entangling_rh_single(
 
     let mut stage_iter: u32 = 0;
     let stage_budget_cap: u32 = max_expansions.unwrap_or(u32::MAX);
+    // What is left of the cap after `spent` expansions (`None` stays
+    // unbounded). A batch can overshoot the cap, so this saturates at zero.
+    let remaining = |spent: u32| max_expansions.map(|cap| cap.saturating_sub(spent));
 
     while !goal.is_goal(&state) {
         if total_expansions >= stage_budget_cap {
@@ -864,10 +912,13 @@ pub fn solve_entangling_rh_single(
                 move_layers: committed_layers,
                 goal_config: state,
                 nodes_expanded: total_expansions,
+                nodes_generated: total_generated,
                 cost: 0.0,
                 deadlocks: 0,
                 entropy_trace: None,
                 bound_stats: crate::bounds::BoundStats::default(),
+                termination: crate::drivers::result::Termination::Budget,
+                best_partial: None,
             };
         }
         stage_iter = stage_iter.saturating_add(1);
@@ -885,7 +936,6 @@ pub fn solve_entangling_rh_single(
         let candidates = generate_k_candidates(
             &state,
             cz_pairs,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -899,17 +949,16 @@ pub fn solve_entangling_rh_single(
 
         if candidates.is_empty() {
             // No assignment possible from this state — fall back.
-            let fb = fallback(&state);
-            return merge_fallback(committed_layers, fb, total_expansions);
+            let fb = fallback(&state, remaining(total_expansions));
+            return merge_fallback(committed_layers, fb, total_expansions, total_generated);
         }
 
         // (b) Run rollouts (optionally parallel).
-        let rollout = |targets: Vec<(u32, u64)>| -> Option<BranchResult> {
+        let rollout = |targets: Vec<(u32, u64)>| -> (u32, u32, Option<BranchResult>) {
             let outcome = run_inner_rollout(
                 state.clone(),
                 targets,
                 cz_pairs.to_vec(),
-                arch.clone(),
                 index.clone(),
                 dist_table.clone(),
                 &blocked,
@@ -924,16 +973,31 @@ pub fn solve_entangling_rh_single(
                 rh_opts.greedy_first,
                 rh_opts.inner_beam_width,
             );
-            classify_into_tier(outcome, x, heuristic)
+            (
+                outcome.nodes_expanded,
+                outcome.nodes_generated,
+                classify_into_tier(outcome, x, heuristic),
+            )
         };
 
-        let branches: Vec<BranchResult> = if rh_opts.branch_parallel {
-            candidates.into_par_iter().filter_map(rollout).collect()
+        let outcomes: Vec<(u32, u32, Option<BranchResult>)> = if rh_opts.branch_parallel {
+            candidates.into_par_iter().map(rollout).collect()
         } else {
-            candidates.into_iter().filter_map(rollout).collect()
+            candidates.into_iter().map(rollout).collect()
         };
+        // Charge every rollout, including the ones that drop (tier-2). An
+        // all-drop batch is retried below at a shorter horizon, so counting
+        // only the surviving branches let each retry run a whole batch
+        // outside `max_expansions` and left it out of `nodes_expanded`.
         total_expansions = total_expansions
-            .saturating_add(branches.iter().map(|b| b.nodes_expanded()).sum::<u32>());
+            .saturating_add(outcomes.iter().map(|(nodes, _, _)| *nodes).sum::<u32>());
+        total_generated = total_generated.saturating_add(
+            outcomes
+                .iter()
+                .map(|(_, generated, _)| *generated)
+                .sum::<u32>(),
+        );
+        let branches: Vec<BranchResult> = outcomes.into_iter().filter_map(|(_, _, b)| b).collect();
 
         // (c) All-drop fallback.
         if branches.is_empty() {
@@ -941,8 +1005,8 @@ pub fn solve_entangling_rh_single(
                 x = x.saturating_sub(rh_opts.fallback_x_decrement.max(1));
                 continue;
             }
-            let fb = fallback(&state);
-            return merge_fallback(committed_layers, fb, total_expansions);
+            let fb = fallback(&state, remaining(total_expansions));
+            return merge_fallback(committed_layers, fb, total_expansions, total_generated);
         }
 
         // (d) Pick best branch.
@@ -951,7 +1015,6 @@ pub fn solve_entangling_rh_single(
             rh_opts.tier0_next_h_weight,
             cz_pairs,
             future_layers,
-            &arch,
             &index,
             &dist_table,
             &blocked,
@@ -959,8 +1022,8 @@ pub fn solve_entangling_rh_single(
         ) {
             Some(b) => b,
             None => {
-                let fb = fallback(&state);
-                return merge_fallback(committed_layers, fb, total_expansions);
+                let fb = fallback(&state, remaining(total_expansions));
+                return merge_fallback(committed_layers, fb, total_expansions, total_generated);
             }
         };
 
@@ -972,8 +1035,8 @@ pub fn solve_entangling_rh_single(
         };
         if commit_count == 0 {
             // Nothing to commit (shouldn't happen — guards against infinite loop).
-            let fb = fallback(&state);
-            return merge_fallback(committed_layers, fb, total_expansions);
+            let fb = fallback(&state, remaining(total_expansions));
+            return merge_fallback(committed_layers, fb, total_expansions, total_generated);
         }
         // Advance state. If the partial-commit replay fails (would only
         // happen on an internal inconsistency between the rollout graph
@@ -1008,10 +1071,13 @@ pub fn solve_entangling_rh_single(
         move_layers: committed_layers,
         goal_config: state,
         nodes_expanded: total_expansions,
+        nodes_generated: total_generated,
         cost,
         deadlocks: 0,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
+        termination: Termination::Stopped,
+        best_partial: None,
     }
 }
 
@@ -1082,18 +1148,38 @@ fn merge_fallback(
     committed_layers: Vec<MoveSet>,
     fallback: SolveResult,
     total_expansions: u32,
+    total_generated: u32,
 ) -> SolveResult {
     let combined_expansions = total_expansions.saturating_add(fallback.nodes_expanded);
+    let combined_generated = total_generated.saturating_add(fallback.nodes_generated);
     if fallback.status != SolveStatus::Solved {
+        // The fallback ran from wherever the committed prefix left the atoms,
+        // so a proof it carries is a proof about *that* state, not about the
+        // instance the caller asked for: a different prefix might well have
+        // reached the goal. With no prefix the two states coincide and the
+        // proof transfers intact.
+        //
+        // Downgrading only the proof keeps `Budget` intact — a give-up says
+        // the same thing from any state — and `proven()`, which is derived
+        // from the termination, follows it.
+        let termination = match fallback.termination {
+            Termination::Exhausted { proof: true } if !committed_layers.is_empty() => {
+                Termination::Exhausted { proof: false }
+            }
+            other => other,
+        };
         return SolveResult {
             status: fallback.status,
             move_layers: committed_layers,
             goal_config: fallback.goal_config,
             nodes_expanded: combined_expansions,
+            nodes_generated: combined_generated,
             cost: 0.0,
             deadlocks: fallback.deadlocks,
             entropy_trace: None,
             bound_stats: crate::bounds::BoundStats::default(),
+            termination,
+            best_partial: None,
         };
     }
     let mut merged = committed_layers;
@@ -1104,16 +1190,19 @@ fn merge_fallback(
         move_layers: merged,
         goal_config: fallback.goal_config,
         nodes_expanded: combined_expansions,
+        nodes_generated: combined_generated,
         cost,
         deadlocks: fallback.deadlocks,
         entropy_trace: None,
         bound_stats: crate::bounds::BoundStats::default(),
+        termination: crate::drivers::result::Termination::Stopped,
+        best_partial: None,
     }
 }
 
 // ── CzPlacement composition ─────────────────────────────────────────────
 
-use crate::placement::cz_placement::CzPlacement;
+use crate::placement::cz_placement::{CzPlacement, CzStage, PlacementBudget, PlacementResult};
 use crate::placement::loose_goal::solve_loose_goal;
 use crate::primitives::config::ConfigError;
 use crate::search::engine::SearchEngine;
@@ -1122,11 +1211,12 @@ use crate::search::move_search::MoveSearch;
 /// MPC-style loose-goal CZ placement.
 ///
 /// Composes `Arc<SearchEngine> + MoveSearch + EntanglingOptions +
-/// RecedingHorizonOptions`. Drives [`solve_entangling_rh_single`]
+/// RecedingHorizonOptions`. Drives [`solve_entangling_rh_single_budgeted`]
 /// across restarts in parallel via Rayon; falls back to
 /// [`LooseGoalCzPlacement`](crate::placement::loose_goal::LooseGoalCzPlacement)'s
 /// shared impl when the receding-horizon branches all drop at
-/// horizon = 1.
+/// horizon = 1. The fallback runs on what is left of `max_expansions`, so
+/// the cap bounds the whole solve.
 pub struct RecedingHorizonCzPlacement {
     engine: Arc<SearchEngine>,
     search: MoveSearch,
@@ -1169,69 +1259,40 @@ impl RecedingHorizonCzPlacement {
     pub fn rh_options(&self) -> &RecedingHorizonOptions {
         &self.rh_options
     }
-
-    /// Solve using the receding-horizon MPC loop.
-    ///
-    /// Equivalent to the trait-level
-    /// [`CzPlacement::solve`](super::cz_placement::CzPlacement::solve)
-    /// but accepts `cz_pairs` and an explicit `future_cz_layers`
-    /// lookahead window directly.
-    pub fn solve_pairs(
-        &self,
-        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-        cz_pairs: &[(u32, u32)],
-        blocked: impl IntoIterator<Item = LocationAddr>,
-        max_expansions: Option<u32>,
-        future_cz_layers: &[Vec<(u32, u32)>],
-    ) -> Result<SolveResult, ConfigError> {
-        solve_receding_horizon(
-            &self.engine,
-            &self.search.options,
-            &self.entangling_options,
-            &self.rh_options,
-            initial,
-            cz_pairs,
-            blocked,
-            max_expansions,
-            future_cz_layers,
-        )
-    }
 }
 
 impl CzPlacement for RecedingHorizonCzPlacement {
-    fn solve(
+    /// `budget.max_expansions` caps the whole stage: every rollout of every
+    /// commit step, plus the end-of-trajectory fallback, which gets what is
+    /// left. Each rollout is also capped by
+    /// [`RecedingHorizonOptions::max_expansions_per_rollout`].
+    fn place(
         &self,
-        initial: &[(u32, LocationAddr)],
-        controls: &[u32],
-        targets: &[u32],
-        blocked: &[LocationAddr],
-        max_expansions: Option<u32>,
-    ) -> Result<SolveResult, ConfigError> {
-        debug_assert_eq!(
-            controls.len(),
-            targets.len(),
-            "controls and targets must have equal length",
-        );
-        let cz_pairs: Vec<(u32, u32)> = controls
-            .iter()
-            .copied()
-            .zip(targets.iter().copied())
-            .collect();
-        self.solve_pairs(
-            initial.iter().copied(),
-            &cz_pairs,
-            blocked.iter().copied(),
-            max_expansions,
-            &[],
+        stage: &CzStage<'_>,
+        budget: &PlacementBudget,
+    ) -> Result<PlacementResult, ConfigError> {
+        solve_receding_horizon(
+            &self.engine,
+            &self.search.options,
+            Some(&self.search.entropy_options),
+            &self.entangling_options,
+            &self.rh_options,
+            stage.initial.iter().copied(),
+            stage.pairs,
+            stage.blocked.iter().copied(),
+            budget.max_expansions,
+            stage.future_layers,
         )
+        .map(PlacementResult::single)
     }
 }
 
-/// Shared implementation backing [`RecedingHorizonCzPlacement::solve_pairs`].
+/// Shared implementation backing [`RecedingHorizonCzPlacement`]'s [`CzPlacement::place`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_receding_horizon(
     engine: &SearchEngine,
     opts: &SolveOptions,
+    entropy_opts: Option<&EntropyOptions>,
     ent_opts: &EntanglingOptions,
     rh_opts: &RecedingHorizonOptions,
     initial: impl IntoIterator<Item = (u32, LocationAddr)>,
@@ -1244,7 +1305,6 @@ pub(crate) fn solve_receding_horizon(
 
     let root = Config::new(initial)?;
     let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-    let arch = engine.index().arch_spec();
 
     let cache = engine.entangling_cache();
     let dist_table = cache.dist_table.clone();
@@ -1259,40 +1319,39 @@ pub(crate) fn solve_receding_horizon(
     let upgraded_opts = opts.upgraded_for_entangling();
     let opts = &upgraded_opts;
 
-    let arch_arc = Arc::new(arch.clone());
     let index_arc: Arc<LaneIndex> = Arc::new(engine.index().clone());
 
     let restarts = opts.restarts.max(1);
     let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
 
     // Fallback when receding-horizon drops at horizon=1: run a single-shot
-    // loose-goal solve from the current state. Use restarts=1 to avoid
-    // nested rayon parallelism.
+    // loose-goal solve from the current state, on whatever budget the
+    // trajectory has left. Use restarts=1 to avoid nested rayon parallelism.
     let single_opts = SolveOptions {
         restarts: 1,
         ..opts.clone()
     };
-    let make_fallback = |state: &Config| -> SolveResult {
+    let make_fallback = |state: &Config, budget: Option<u32>| -> SolveResult {
         let initial: Vec<(u32, LocationAddr)> = state.iter().collect();
         solve_loose_goal(
             engine,
             &single_opts,
+            entropy_opts,
             ent_opts,
             initial,
             cz_pairs,
             blocked_locs.iter().copied(),
-            max_expansions,
+            budget,
             future_cz_layers,
         )
         .unwrap_or_else(|_| SolveResult::unsolvable(state.clone()))
     };
 
     let results: Vec<SolveResult> = if restarts <= 1 {
-        vec![solve_entangling_rh_single(
+        vec![solve_entangling_rh_single_budgeted(
             root.clone(),
             &cz_pairs_owned,
             blocked_encoded.clone(),
-            arch_arc.clone(),
             index_arc.clone(),
             dist_table.clone(),
             &goal,
@@ -1309,11 +1368,10 @@ pub(crate) fn solve_receding_horizon(
         (0..restarts)
             .into_par_iter()
             .map(|i| {
-                solve_entangling_rh_single(
+                solve_entangling_rh_single_budgeted(
                     root.clone(),
                     &cz_pairs_owned,
                     blocked_encoded.clone(),
-                    arch_arc.clone(),
                     index_arc.clone(),
                     dist_table.clone(),
                     &goal,
@@ -1343,6 +1401,90 @@ mod tests {
     use crate::primitives::graph::SearchGraph;
     use crate::search::options::Strategy;
     use crate::test_utils::{example_arch_json, loc};
+
+    // ── Fallback merge: whose state is the proof about? ──
+
+    /// One arbitrary lane, standing in for "the prefix is not empty". Nothing
+    /// in `merge_fallback` inspects the layers, only whether there are any.
+    fn any_layer() -> Vec<MoveSet> {
+        use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
+        vec![MoveSet::new(vec![LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        }])]
+    }
+
+    /// A prefix-relative proof must not be reported as a proof about the
+    /// instance.
+    ///
+    /// The fallback runs from wherever the committed layers left the atoms, so
+    /// "no plan exists" from there says nothing about the caller's root — a
+    /// different prefix might have reached the goal. With no prefix the two
+    /// states coincide and the proof stands.
+    #[test]
+    fn a_committed_prefix_downgrades_the_fallbacks_proof() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let proven = || {
+            let mut r = SolveResult::proven_unsolvable(root.clone());
+            r.nodes_expanded = 7;
+            r
+        };
+        let one_layer = any_layer;
+
+        let after_prefix = merge_fallback(one_layer(), proven(), 3, 0);
+        assert_eq!(
+            after_prefix.termination,
+            Termination::Exhausted { proof: false },
+            "the proof was about the post-prefix state, not the root"
+        );
+        assert!(!after_prefix.proven());
+
+        let no_prefix = merge_fallback(Vec::new(), proven(), 3, 0);
+        assert_eq!(
+            no_prefix.termination,
+            Termination::Exhausted { proof: true },
+            "with no prefix committed the proof is about the root itself"
+        );
+        assert!(no_prefix.proven());
+    }
+
+    /// Downgrading touches the proof only: a give-up says the same thing from
+    /// any state, so `Budget` survives a committed prefix unchanged.
+    #[test]
+    fn a_committed_prefix_preserves_a_budget_give_up() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let mut give_up = SolveResult::unsolved(SolveStatus::BudgetExceeded, root, 0, 0);
+        give_up.termination = Termination::Budget;
+
+        let merged = merge_fallback(any_layer(), give_up, 1, 0);
+        assert_eq!(merged.termination, Termination::Budget);
+        assert!(!merged.proven());
+    }
+
+    /// `proven` is documented as exactly `Exhausted { proof: true }`, so the
+    /// merge cannot report one without the other in either direction.
+    #[test]
+    fn the_merge_keeps_proven_and_termination_in_agreement() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        for prefix in [Vec::new(), any_layer()] {
+            for fallback in [
+                SolveResult::proven_unsolvable(root.clone()),
+                SolveResult::unsolvable(root.clone()),
+            ] {
+                let merged = merge_fallback(prefix.clone(), fallback, 0, 0);
+                assert_eq!(
+                    merged.proven(),
+                    matches!(merged.termination, Termination::Exhausted { proof: true }),
+                    "proven disagreed with {:?}",
+                    merged.termination
+                );
+            }
+        }
+    }
 
     // ── Trivial / structural ──
 
@@ -1445,11 +1587,10 @@ mod tests {
     #[test]
     fn hungarian_cost_at_leaf_empty_pairs_returns_zero() {
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
-        let arch = engine.index().arch_spec().clone();
         let lane_index = engine.index();
         let cz_pairs: Vec<(u32, u32)> = vec![(0, 1)];
         // Build a tiny dist table targeting entangling locations.
-        let ent_locs = entangling::all_entangling_locations(&arch);
+        let ent_locs = entangling::all_entangling_locations(engine.index());
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
@@ -1458,7 +1599,6 @@ mod tests {
         let cost = hungarian_cost_at_leaf(
             &config,
             &[],
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1471,7 +1611,6 @@ mod tests {
         let cost = hungarian_cost_at_leaf(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1502,9 +1641,8 @@ mod tests {
     #[test]
     fn generate_k_candidates_caps_at_k() {
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
-        let arch = engine.index().arch_spec().clone();
         let lane_index = engine.index();
-        let ent_locs = entangling::all_entangling_locations(&arch);
+        let ent_locs = entangling::all_entangling_locations(engine.index());
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
         let cz_pairs: Vec<(u32, u32)> = vec![(0, 1)];
@@ -1515,7 +1653,6 @@ mod tests {
         let candidates = generate_k_candidates(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1544,9 +1681,8 @@ mod tests {
         // same candidate set. On a non-trivial instance, distinct seeds
         // should produce at least one distinct candidate signature.
         let engine = SearchEngine::from_json(example_arch_json()).unwrap();
-        let arch = engine.index().arch_spec().clone();
         let lane_index = engine.index();
-        let ent_locs = entangling::all_entangling_locations(&arch);
+        let ent_locs = entangling::all_entangling_locations(engine.index());
         let dist_table = DistanceTable::new(&ent_locs, lane_index);
         let blocked: HashSet<u64> = HashSet::new();
         let cz_pairs: Vec<(u32, u32)> = vec![(0, 1)];
@@ -1556,7 +1692,6 @@ mod tests {
         let cands_seed_1 = generate_k_candidates(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1570,7 +1705,6 @@ mod tests {
         let cands_seed_2 = generate_k_candidates(
             &config,
             &cz_pairs,
-            &arch,
             lane_index,
             &dist_table,
             &blocked,
@@ -1615,6 +1749,7 @@ mod tests {
                 restarts: 1,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             &RecedingHorizonOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
@@ -1640,6 +1775,7 @@ mod tests {
                 restarts: 1,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             &RecedingHorizonOptions {
                 k_candidates: 3,
@@ -1668,6 +1804,7 @@ mod tests {
                 restarts: 2,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             &RecedingHorizonOptions {
                 k_candidates: 3,
@@ -1686,7 +1823,137 @@ mod tests {
         assert_eq!(result.status, SolveStatus::Solved);
     }
 
-    /// End-to-end: `RecedingHorizonCzPlacement::solve_pairs` drives qubits
+    /// A rollout whose beam pre-pass falls through to IDS reports both
+    /// phases' expansions.
+    ///
+    /// Here the beam dead-ends before the horizon, so the rollout hands over
+    /// to IDS, which then runs exactly as it would with `greedy_first =
+    /// false`. The outcome must be the IDS-only one, with the beam's
+    /// expansions counted on top. Previously they were dropped and the two
+    /// counts came out equal.
+    #[test]
+    fn a_beam_that_falls_through_to_ids_reports_both_phases() {
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        let cache = engine.entangling_cache();
+        let index = Arc::new(engine.index().clone());
+        let blocked: HashSet<u64> = HashSet::new();
+        let pairs = vec![(0, 1), (2, 3)];
+        let root = Config::new([
+            (0, loc(0, 5)),
+            (1, loc(0, 0)),
+            (2, loc(0, 6)),
+            (3, loc(0, 1)),
+        ])
+        .unwrap();
+        let targets: Vec<(u32, u64)> = [
+            (0, loc(0, 5)),
+            (1, loc(1, 5)),
+            (2, loc(1, 1)),
+            (3, loc(0, 1)),
+        ]
+        .iter()
+        .map(|&(q, l)| (q, l.encode()))
+        .collect();
+        let goal = EntanglingConstraintGoal::new(&pairs, cache.ent_set.clone());
+        let heuristic = PairDistanceHeuristic::new(&pairs, &cache.wpd);
+        let h_sum = |c: &Config| heuristic.estimate_sum(c);
+        let rollout = |greedy_first: bool| {
+            run_inner_rollout(
+                root.clone(),
+                targets.clone(),
+                pairs.clone(),
+                index.clone(),
+                cache.dist_table.clone(),
+                &blocked,
+                &goal,
+                h_sum,
+                5,   // max_depth
+                300, // max_expansions
+                DeadlockPolicy::MoveBlockers,
+                true, // inner_lookahead
+                3,    // top_c
+                0,    // restart_seed
+                greedy_first,
+                2, // inner_beam_width
+            )
+        };
+
+        let ids_only = rollout(false);
+        let beam_then_ids = rollout(true);
+        // The IDS phase ran and its result was kept...
+        assert_eq!(beam_then_ids.goal_node, ids_only.goal_node);
+        assert_eq!(beam_then_ids.max_depth_reached, ids_only.max_depth_reached);
+        assert_eq!(beam_then_ids.graph.len(), ids_only.graph.len());
+        // ...and the beam's expansions are counted on top of it.
+        assert!(beam_then_ids.nodes_expanded > ids_only.nodes_expanded);
+    }
+
+    /// A pair that needs two layers, solved with a one-node rollout budget
+    /// and no beam pre-pass, so no rollout ever gets deep enough to be kept.
+    /// Every batch drops and is retried at a shorter horizon: five batches
+    /// (`x = 5` down to `1`) of two nodes each, after which the loose-goal
+    /// fallback, which needs two nodes, finishes the pair.
+    fn solve_with_every_rollout_dropping(max_expansions: u32) -> SolveResult {
+        let engine = SearchEngine::from_json(example_arch_json()).unwrap();
+        solve_receding_horizon(
+            &engine,
+            &SolveOptions {
+                strategy: Strategy::Ids,
+                restarts: 1,
+                ..SolveOptions::default()
+            },
+            None,
+            &EntanglingOptions::default(),
+            &RecedingHorizonOptions {
+                k_candidates: 3,
+                rollout_horizon: 5,
+                commit_depth: 1,
+                branch_parallel: false,
+                max_expansions_per_rollout: 1,
+                greedy_first: false,
+                ..RecedingHorizonOptions::default()
+            },
+            [(0, loc(0, 5)), (1, loc(0, 0))],
+            &[(0, 1)],
+            std::iter::empty(),
+            Some(max_expansions),
+            &[],
+        )
+        .unwrap()
+    }
+
+    /// Rollouts that drop (tier-2) still spend budget.
+    ///
+    /// A three-node cap must stop the solve after the second batch with
+    /// nothing committed. Previously a dropped batch cost nothing: all five
+    /// batches ran, the fallback solved the pair, and the result reported
+    /// two nodes for the whole solve.
+    #[test]
+    fn dropped_rollouts_count_toward_the_budget() {
+        let result = solve_with_every_rollout_dropping(3);
+        assert_eq!(result.status, SolveStatus::BudgetExceeded);
+        assert!(result.move_layers.is_empty());
+        assert!(result.nodes_expanded >= 3);
+    }
+
+    /// The fallback spends what is left of the cap, not a fresh one.
+    ///
+    /// The five batches use ten nodes. An eleven-node cap leaves the fallback
+    /// one node, too few to finish, so the solve gives up within the cap;
+    /// previously the fallback got all eleven and the solve spent twelve.
+    /// A twelve-node cap leaves exactly the two nodes it needs.
+    #[test]
+    fn the_fallback_spends_only_what_is_left_of_the_budget() {
+        let short = solve_with_every_rollout_dropping(11);
+        assert_eq!(short.status, SolveStatus::BudgetExceeded);
+        assert!(short.nodes_expanded <= 11);
+
+        let enough = solve_with_every_rollout_dropping(12);
+        assert_eq!(enough.status, SolveStatus::Solved);
+        assert!(enough.nodes_expanded <= 12);
+    }
+
+    /// End-to-end: `RecedingHorizonCzPlacement::place` drives qubits
     /// from non-entangling positions to a feasible configuration via the
     /// trait surface.
     #[test]
@@ -1712,13 +1979,11 @@ mod tests {
         let blocked: [LocationAddr; 0] = [];
 
         let result = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &[],
+            .place(
+                &CzStage::new(&initial, &cz_pairs, &blocked),
+                &PlacementBudget::new(Some(5000)),
             )
+            .map(|placed| placed.result)
             .unwrap();
 
         assert_eq!(result.status, SolveStatus::Solved);

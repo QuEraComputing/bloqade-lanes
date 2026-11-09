@@ -985,7 +985,7 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=None))]
+    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=None, aod_capacity=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
@@ -997,7 +997,17 @@ impl PyArchSpec {
         feed_forward: bool,
         atom_reloading: bool,
         blockade_radius: Option<f64>,
+        aod_capacity: Option<(usize, usize)>,
     ) -> PyResult<Self> {
+        let aod_capacity = aod_capacity
+            .map(|(x, y)| {
+                rs::AodCapacity::new(x, y).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "aod_capacity must be at least 1 on both axes, got ({x}, {y})"
+                    ))
+                })
+            })
+            .transpose()?;
         Ok(Self {
             inner: rs::ArchSpec {
                 version: Version::new(version.0, version.1),
@@ -1009,6 +1019,7 @@ impl PyArchSpec {
                 feed_forward,
                 atom_reloading,
                 blockade_radius,
+                aod_capacity,
             },
         })
     }
@@ -1099,6 +1110,13 @@ impl PyArchSpec {
         self.inner.blockade_radius
     }
 
+    /// The largest AOD rectangle one shot may drive, as `(x, y)` tone counts;
+    /// `None` is unlimited.
+    #[getter]
+    fn aod_capacity(&self) -> Option<(usize, usize)> {
+        self.inner.aod_capacity.map(|c| (c.x(), c.y()))
+    }
+
     #[getter]
     fn paths(&self) -> Option<Vec<PyTransportPath>> {
         self.inner.paths.as_ref().map(|v| {
@@ -1179,11 +1197,28 @@ impl PyArchSpec {
         self.inner.word_partner_map()
     }
 
-    /// Map each word_id to the zone_id that owns it.
+    /// Map each word_id to a preferred zone_id.
     ///
-    /// Returns a dict mapping word_id → zone_id.
+    /// Not ownership: the word template is spec-wide, so every word exists
+    /// in every zone. Returns the first zone that references the word, else 0.
     fn word_zone_map(&self) -> std::collections::HashMap<u32, u32> {
         self.inner.word_zone_map()
+    }
+
+    /// Every home (non-staging) location, sorted by (zone, word, site).
+    fn home_locations(&self) -> Vec<PyLocationAddr> {
+        self.inner
+            .home_locations()
+            .into_iter()
+            .map(|inner| PyLocationAddr { inner })
+            .collect()
+    }
+
+    /// Whether ``loc`` is a home position: its word is not the staging word
+    /// of an entangling pair in its own zone.
+    #[pyo3(text_signature = "(self, loc)")]
+    fn is_home_position(&self, loc: &PyLocationAddr) -> bool {
+        self.inner.is_home_position(&loc.inner)
     }
 
     /// Return sorted left-CZ word IDs (lower word of each CZ pair + unpaired).

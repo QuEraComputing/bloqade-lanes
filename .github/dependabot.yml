@@ -5,3 +5,31 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # Maintain the Python lockfile (uv.lock).
+  #
+  # Without this entry nothing routinely refreshes uv.lock: Dependabot's
+  # *security* updates fire from advisories without needing a manifest entry
+  # (that is where the tornado / cryptography / urllib3 bumps came from), but
+  # ordinary version drift accumulates until someone runs `uv lock --upgrade`
+  # by hand and has to absorb every breaking change at once.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Majors are deliberately left ungrouped so each lands in its own PR: it is
+    # a major (cudaq 0.14 -> 0.16, which swapped in a Linux-only backend) that
+    # tends to need a manifest or test change alongside the lock bump.
+    groups:
+      python-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    # The PR labeler derives `category:` labels from the Conventional Commit
+    # scope and matches on `scope.includes("deps")`, so both prefixes below
+    # resolve to `category: dependencies`.
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(deps-dev)"

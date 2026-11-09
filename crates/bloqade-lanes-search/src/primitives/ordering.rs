@@ -1,44 +1,71 @@
 use std::cmp::Ordering;
+use std::fmt;
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
 
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 
-/// Deterministic sort/group key for a bus triplet: `(move_type, bus_id,
-/// direction)`.
+/// A bus group: the four fields every lane of one shot must share
+/// (`move_type`, `bus_id`, `zone_id`, `direction`), which is also the
+/// validator's one-bus-group rule (S3 in the branch-and-bound spec).
 ///
-/// Derived `Ord` compares the fields in declaration order, exactly as the
-/// former `(u8, u32, u8)` tuple did. `MoveType`/`Direction` declare their
-/// variants in ascending discriminant order, so their derived `Ord` matches
-/// the numeric `#[repr(u8)]` values — i.e. the prior `as u8` casts — and
-/// `BTreeMap`/`sort` iteration order is preserved. Keeping the enums typed
-/// removes the encode-as-`u8` / decode-by-`match` round-trip at the use sites.
+/// Derived `Ord` compares the fields in declaration order. `MoveType` and
+/// `Direction` declare their variants in ascending discriminant order, so the
+/// derived `Ord` matches the numeric `#[repr(u8)]` values and `BTreeMap` /
+/// `sort` iteration order is deterministic. Every generator groups its
+/// candidate lanes by this key and builds one AOD rectangle per group: a
+/// rectangle spanning two zones is never a valid shot, so grouping without
+/// the zone (as the key did before the two-zone fixtures existed) could hand
+/// the grid builder a cross-zone product that `check_lanes` rejects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct TripletKey {
-    pub(crate) move_type: MoveType,
-    pub(crate) bus_id: u32,
-    pub(crate) direction: Direction,
+pub struct GroupKey {
+    pub move_type: MoveType,
+    pub bus_id: u32,
+    pub zone_id: u32,
+    pub direction: Direction,
 }
 
-impl TripletKey {
-    pub(crate) fn new(move_type: MoveType, bus_id: u32, direction: Direction) -> Self {
+impl GroupKey {
+    pub fn new(move_type: MoveType, bus_id: u32, zone_id: u32, direction: Direction) -> Self {
         Self {
             move_type,
             bus_id,
+            zone_id,
             direction,
         }
+    }
+
+    /// The group a lane belongs to.
+    ///
+    /// A lane address carries its *forward* source zone, so a zone-bus lane
+    /// and its backward twin report the same `zone_id` even though the
+    /// backward lane's source physically lies in the destination zone. They
+    /// are still different groups: `direction` is part of the key, because one
+    /// shot drives one direction.
+    pub fn of(lane: &LaneAddr) -> Self {
+        Self::new(lane.move_type, lane.bus_id, lane.zone_id, lane.direction)
+    }
+}
+
+impl fmt::Display for GroupKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?} bus {} zone {} {:?}",
+            self.move_type, self.bus_id, self.zone_id, self.direction
+        )
     }
 }
 
 /// Shared deterministic tie-breaker for triplet-scored entries.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cmp_triplet_entry_tiebreak(
-    a_key: &TripletKey,
+    a_key: &GroupKey,
     a_qubit: u32,
     a_lane: u64,
     a_dst: u64,
-    b_key: &TripletKey,
+    b_key: &GroupKey,
     b_qubit: u32,
     b_lane: u64,
     b_dst: u64,

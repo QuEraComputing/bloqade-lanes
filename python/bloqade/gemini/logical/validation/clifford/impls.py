@@ -5,7 +5,8 @@ from kirin.analysis import ForwardFrame, const
 from kirin.dialects import scf
 
 from bloqade import qubit
-from bloqade.gemini.logical.dialects import operations
+from bloqade.gemini.common.validation.static_call import UnrollFixableError
+from bloqade.gemini.logical.dialects import extensions
 
 from .analysis import _GeminiLogicalValidationAnalysis
 
@@ -37,7 +38,7 @@ class __ScfGeminiLogicalValidation(_interp.MethodTable):
         if not isinstance(stmt.iterable.hints.get("const"), const.Value):
             interp.add_validation_error(
                 stmt,
-                ir.ValidationError(
+                UnrollFixableError(
                     stmt,
                     "Non-constant iterable in for loop is not supported in Gemini logical programs!",
                 ),
@@ -114,14 +115,14 @@ class __GateGeminiLogicalValidation(_interp.MethodTable):
         return ()
 
 
-@operations.dialect.register(key="gemini.validate.logical")
-class __OperationsGeminiLogicalValidation(_interp.MethodTable):
-    @_interp.impl(operations.stmts.StarRz)
+@extensions.dialect.register(key="gemini.validate.logical")
+class __ExtensionsGeminiLogicalValidation(_interp.MethodTable):
+    @_interp.impl(extensions.stmts.StarRz)
     def star_rz(
         self,
         interp: _GeminiLogicalValidationAnalysis,
         frame: ForwardFrame,
-        stmt: operations.stmts.StarRz,
+        stmt: extensions.stmts.StarRz,
     ):
         interp.check_first_gate(stmt.qubits)
         return ()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from bloqade.lanes.analysis.placement import ConcreteState, ExecuteCZ
-from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.bytecode._native import SearchStrategy
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.receding_horizon import (
@@ -44,6 +44,7 @@ def test_receding_horizon_default_construction():
     assert strategy.commit_depth == 3
     assert strategy.tier0_next_h_weight == 0.5
     assert strategy.restarts == 1
+    assert strategy.max_expansions == 5000
 
 
 def test_receding_horizon_cz_placements_smoke():
@@ -103,3 +104,38 @@ def test_receding_horizon_exposes_rust_nodes_expanded():
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
     assert strategy.rust_nodes_expanded_total > before
+
+
+def test_receding_horizon_defaults_budget_allows_more_than_one_stage():
+    """Default construction solves a layer that needs two stages.
+
+    This is the fifth CZ layer of the ``adder_4`` physical benchmark. Its
+    first stage costs 261 expansions (two of the five rollouts fall back from
+    the beam to IDS) and commits three tier-1 layers without reaching the
+    goal; the second stage finishes in six more. The budget is checked
+    between stages, so the ``max_expansions=100`` the strategy used to inherit
+    from ``NoReturnStrategyBase`` returned ``budget_exceeded`` just before
+    that second stage, and the benchmark failed.
+    """
+    strategy = RecedingHorizonNoReturnPlacementStrategy(
+        arch_spec=physical.get_arch_spec(),
+    )
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 3),
+            LocationAddress(1, 3),
+            LocationAddress(3, 2),
+            LocationAddress(2, 2),
+        ),
+        move_count=(0, 0, 0, 0),
+    )
+    controls, targets = (3, 1), (0, 2)
+    out = strategy.cz_placements(
+        state,
+        controls=controls,
+        targets=targets,
+        lookahead_cz_layers=((controls, targets), ((3, 1), (0, 2)), ((3,), (2,))),
+    )
+    assert isinstance(out, ExecuteCZ)
+    assert strategy.rust_nodes_expanded_total > 100

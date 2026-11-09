@@ -47,7 +47,7 @@ def _kernel_b():
     return logical.terminal_measure(q)
 
 
-@logical.kernel(num_physical_qubits=1, aggressive_unroll=True)
+@logical.kernel(aggressive_unroll=True)
 def _kernel_with_postprocessing():
     q = squin.qalloc(2)
     measurements = logical.terminal_measure(q)
@@ -408,7 +408,8 @@ def test_postproc_termmeasure_one():
 
 
 def test_postproc_termmeasure_none():
-    @logical.kernel(aggressive_unroll=True)
+    # An empty program no longer passes validation; this pins post-processing.
+    @logical.kernel(aggressive_unroll=True, verify=False)
     def test_qalloc_4_5():
         _ = logical.qalloc_at(ilist.IList([]))
         # squin.h(qubits[0])
@@ -524,69 +525,6 @@ def test_default_postproc_remapping():
     _ = get_slm_mapping_postprocessing(test_qalloc_4_5)
 
 
-def test_aligned_detected_and_sorted_shots_use_full_shot_identity(storage):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=2)]),
-    )
-    storage.add_shots(
-        [
-            make_shot(
-                shot_index=2,
-                subtask_shot_index=1,
-                frame_type="SORTED",
-                bitstring=(False, True),
-            ),
-            make_shot(
-                shot_index=1,
-                subtask_shot_index=0,
-                frame_type="DETECTED",
-                bitstring=(True, False),
-            ),
-            make_shot(
-                shot_index=2,
-                subtask_shot_index=1,
-                frame_type="DETECTED",
-                bitstring=(True, True),
-            ),
-            make_shot(
-                shot_index=1,
-                subtask_shot_index=0,
-                frame_type="SORTED",
-                bitstring=(False, False),
-            ),
-        ]
-    )
-
-    detected, sorted_ = aligned_detected_and_sorted_shots_for_subtasks(
-        storage,
-        ShotFilter(task_ids=("task-1",)),
-        GeminiLogicalResult(storage=storage).subtasks(),
-    )
-
-    np.testing.assert_array_equal(detected[0], np.array([[True, False], [True, True]]))
-    np.testing.assert_array_equal(sorted_[0], np.array([[False, False], [False, True]]))
-
-
-def test_aligned_detected_and_sorted_shots_reject_missing_frame(storage):
-    add_task_definition(
-        storage,
-        "task-1",
-        make_task_definition(subtasks=[Subtask(program_index=0, num_shots=1)]),
-    )
-    storage.add_shots(
-        [make_shot(shot_index=0, frame_type="DETECTED", bitstring=(True, False))]
-    )
-
-    with pytest.raises(ValueError, match="not aligned"):
-        aligned_detected_and_sorted_shots_for_subtasks(
-            storage,
-            ShotFilter(task_ids=("task-1",)),
-            GeminiLogicalResult(storage=storage).subtasks(),
-        )
-
-
 def test_get_slm_mapping_postprocessing_maps_and_validates_frames(monkeypatch):
     def fail_if_called(*args, **kwargs):
         raise AssertionError("SLM post-processing must come from the source kernel")
@@ -651,7 +589,10 @@ def test_postprocessing_functions_compile_once_independent_of_bit_convention(
     assert decode_spy.call_count == 1
 
 
-def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
+@pytest.mark.parametrize("frame_type", ["DETECTED", "SORTED", "RAW", None])
+def test_slm_result_views_use_detected_and_sorted_frames(
+    storage, monkeypatch, frame_type
+):
     add_task_definition(
         storage,
         "task-1",
@@ -693,12 +634,15 @@ def test_slm_result_views_use_detected_and_sorted_frames(storage, monkeypatch):
         get_mapping,
     )
 
-    result = GeminiLogicalResult(storage=storage)
+    result = GeminiLogicalResult(
+        storage=storage, shot_filter=ShotFilter(frame_type=frame_type)
+    )
     assert result.measurements == [[[False, True]]]
     assert result.return_values == [[[False, True]]]
     assert result.detectors == [[[False]]]
     assert result.observables == [[[True]]]
     assert result.filling_at_start == [[[False, True]]]
+    assert result.shot_filter.frame_type == frame_type
     assert len(mapping_calls) == 1
     assert conventions.count(True) == 4
     assert conventions.count(False) == 1

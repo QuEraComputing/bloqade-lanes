@@ -23,9 +23,9 @@ def qalloc_at(
 
     An integer ``position`` pins the qubit to zone 0 at word ``2 * position``;
     ``None`` allocates an unpinned qubit for the layout heuristic to place.
-    The input must be statically known, and the calling kernel must set
-    ``aggressive_unroll=True``, so the map can lower into individual
-    allocations.
+    The input must be statically known, and the calling kernel must keep
+    ``aggressive_unroll=True`` (the default), so the map can lower into
+    individual allocations.
     """
 
     def position_to_new_at(

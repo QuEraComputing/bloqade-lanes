@@ -127,9 +127,18 @@ pub struct SolveOptions {
     ///   completeness regime, or when its proof checks come up short, it
     ///   reports `BudgetExceeded` and the search's own result stands.
     ///
-    /// The recovered schedule uses more AOD operations than a search would
-    /// have, but it only ever applies where the search produced nothing at
-    /// all.
+    /// The planner does not honour the architecture's AOD capacity, so on an
+    /// architecture that sets one, a planner schedule with a shot over the
+    /// cap is discarded and the search's own result stands.
+    ///
+    /// The planner starts from the search's best partial when the search got
+    /// anywhere, so the schedule is the search's prefix followed by the
+    /// planner's layers; if that run cannot finish, the planner reruns from
+    /// `initial`, and only that run can report a proof. A mirrored solve
+    /// (`backwards_search`) always starts from its own initial placement. The
+    /// result keeps the search's counters. The recovered schedule uses more
+    /// AOD operations than a search would have, but it only applies when the
+    /// search fails to finish a schedule.
     ///
     /// Cheap to leave on: the planner is rule-based and runs in well under a
     /// millisecond on Gemini-sized instances, and it only runs after a
@@ -163,6 +172,22 @@ pub struct SolveOptions {
     /// found. That is deliberate: a request to solve backwards returns the
     /// backwards solve's answer rather than silently searching twice.
     pub backwards_search: bool,
+    /// Gate a cascade's A* refinement with the completion bound. **On by
+    /// default** (the refactor plan's decision 7: opted in, measured, flipped).
+    ///
+    /// The refinement looks for a plan strictly cheaper than the inner
+    /// strategy's, so a child whose `g + h` already reaches that cost, or whose
+    /// bound is `+∞`, can be dropped before it takes a node
+    /// ([`run_search_bounded`](crate::drivers::frontier::run_search_bounded)).
+    /// Without the gate the cost cap only stops *expansion*, so every such
+    /// child still fills the graph and the frontier — the cascade's memory
+    /// cost. The prune never discards a strictly cheaper plan, but it can
+    /// change which of two equal-cost plans a tie resolves to.
+    ///
+    /// Point goals only: a set-valued goal (the loose-goal placements) has no
+    /// admissible target-distance bound, so it is never gated. Only
+    /// [`Strategy::Cascade`] reads this.
+    pub cascade_bound: bool,
 }
 
 impl Default for SolveOptions {
@@ -176,6 +201,7 @@ impl Default for SolveOptions {
             top_c: None,
             fallback_push_rotate: false,
             backwards_search: false,
+            cascade_bound: true,
         }
     }
 }
@@ -222,6 +248,21 @@ pub struct EntropyOptions {
     /// A non-zero base seed starts the per-restart sequence at that value
     /// so every run is reproducible.
     pub seed: u64,
+    /// Let the completion bound end the search once it has proven the plan
+    /// optimal, instead of running on to the expansion budget. **On by
+    /// default.**
+    ///
+    /// The proof is the root certificate: when the resume buffer is empty and
+    /// the root is itself cut, `h(root)` has reached the incumbent's cost, and
+    /// `h(root)` lower-bounds every legal plan because it depends only on the
+    /// configuration and not on which candidates were generated. The solve is
+    /// then reported with `proven` set.
+    ///
+    /// Stopping there costs nothing: a cut root cannot be expanded from, so
+    /// the plan is identical either way. Setting this `false` restores the
+    /// spin to the iteration cap that bounding originally shipped with, for
+    /// A/B measurement. Requires `completion_bound`; inert without one.
+    pub bound_terminates: bool,
     /// Admissible completion bound used to prune branches that cannot beat
     /// the incumbent. `None` (the default) means `h ≡ 0`: a branch is only cut
     /// once its accumulated cost alone reaches the incumbent's.
@@ -255,6 +296,7 @@ impl Default for EntropyOptions {
             w_t: 0.05,
             collect_entropy_trace: false,
             seed: 0,
+            bound_terminates: true,
             completion_bound: None,
         }
     }

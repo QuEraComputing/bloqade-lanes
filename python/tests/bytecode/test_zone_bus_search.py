@@ -14,8 +14,12 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import (
     ArchSpec as RustArchSpec,
+    EntropyOptions,
     MoveSearch,
+    Proof,
     SearchEngine,
+    SolveStatus,
+    Termination,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
@@ -72,7 +76,7 @@ def test_rust_solver_routes_across_zone_bus():
     solver = _native.TargetSolver(engine, MoveSearch.entropy())
     result = solver.solve({0: mem_loc._inner}, {0: gate_loc._inner}, [], None)
 
-    assert result.status == "solved"
+    assert result.status == SolveStatus.SOLVED
 
 
 def test_rust_solver_routes_back_across_zone_bus():
@@ -85,4 +89,42 @@ def test_rust_solver_routes_back_across_zone_bus():
     solver = _native.TargetSolver(engine, MoveSearch.entropy())
     result = solver.solve({0: gate_loc._inner}, {0: mem_loc._inner}, [], None)
 
-    assert result.status == "solved"
+    assert result.status == SolveStatus.SOLVED
+
+
+def test_solve_result_reports_proof_and_termination():
+    """The root certificate reaches Python.
+
+    One atom across the zone bus: the plan costs exactly ``h(root)``, so the
+    bound proves it optimal without any complete generator, and the driver
+    ends the search there. (Switching that off is a Rust-only A/B knob,
+    covered by the Rust tests.)
+    """
+    engine = SearchEngine.from_arch_spec(RustArchSpec.from_json(_TWO_ZONE_ARCH_JSON))
+    mem = LocationAddress(1, 0, 1)
+    gate = LocationAddress(0, 0, 0)
+    search = MoveSearch.entropy().with_entropy_options(
+        EntropyOptions(completion_bound="weighted_distance")
+    )
+    stopped = _native.TargetSolver(engine, search).solve(
+        {0: mem._inner}, {0: gate._inner}, [], None
+    )
+
+    assert stopped.status == SolveStatus.SOLVED
+    assert stopped.proof == Proof.OPTIMAL
+    assert stopped.termination == Termination.EXHAUSTED
+    assert "proof=OPTIMAL" in repr(stopped)
+
+
+def test_unbounded_solve_is_never_proven():
+    """Without a bound there is nothing to certify."""
+    engine = SearchEngine.from_arch_spec(RustArchSpec.from_json(_TWO_ZONE_ARCH_JSON))
+    search = MoveSearch.entropy().with_entropy_options(EntropyOptions())
+    result = _native.TargetSolver(engine, search).solve(
+        {0: LocationAddress(1, 0, 1)._inner},
+        {0: LocationAddress(0, 0, 0)._inner},
+        [],
+        None,
+    )
+    assert result.status == SolveStatus.SOLVED
+    assert result.proof is None

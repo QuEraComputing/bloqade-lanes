@@ -3,8 +3,36 @@ from typing import TypeGuard, TypeVar
 
 import numpy as np
 from kirin import ir
+from kirin.dialects import py
 
 T = TypeVar("T")
+
+
+def constant_float(value: ir.SSAValue) -> float | None:
+    """Read the number an SSA value holds, when the compiler can see it.
+
+    Only a literal qualifies. A value produced by a statement is not statically
+    known even when its own operands are, because nothing here evaluates it; a
+    fully determined result therefore still reads as unknown unless a folding
+    pass has already replaced it with a literal.
+
+    Args:
+        value: The SSA value to read.
+
+    Returns:
+        The number as a float, or None when ``value`` is not a numeric literal.
+
+    """
+    if not isinstance(value, ir.ResultValue) or not isinstance(
+        value.owner, py.Constant
+    ):
+        return None
+    data = value.owner.value.unwrap()
+    # `bool` is a subclass of `int`, so `isinstance(True, int)` is True and the
+    # `(int, float)` test alone would accept `True` as the number 1.0.
+    if isinstance(data, bool) or not isinstance(data, (int, float)):
+        return None
+    return float(data)
 
 
 def no_none_elements(xs: Sequence[T | None]) -> TypeGuard[Sequence[T]]:

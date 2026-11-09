@@ -127,36 +127,41 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
 
     @cached_property
     def _home_words(self) -> frozenset[int]:
-        """Words that are 'home' (not CZ-staging) -- lower word_id in each pair."""
+        """Words that are 'home' (not CZ-staging) -- lower word_id in each pair.
+
+        Zone-agnostic: a word that is staging in any zone is excluded. Use
+        :meth:`is_home_position` or :attr:`home_sites` for a per-zone answer.
+        """
         return frozenset(self._inner.left_cz_word_ids())
 
     def is_home_position(self, addr: LocationAddress) -> bool:
-        """True if this address is at a home (non-CZ-staging) word."""
-        return addr.word_id in self._home_words
+        """True if this address is not a CZ-staging position in its own zone.
+
+        Delegates to Rust ``ArchSpec.is_home_position()``.
+        """
+        return self._inner.is_home_position(addr._inner)
 
     @cached_property
     def word_zone_map(self) -> dict[int, int]:
-        """Map each word_id to the zone_id it belongs to.
+        """Map each word_id to a preferred zone_id.
 
-        Delegates to Rust ``ArchSpec.word_zone_map()``.
+        Not ownership: every word exists in every zone. Delegates to Rust
+        ``ArchSpec.word_zone_map()``.
         """
         return self._inner.word_zone_map()
 
     @cached_property
     def home_sites(self) -> frozenset[LocationAddress]:
-        """All home LocationAddresses with correct zone_id per word.
+        """All home (non-CZ-staging) LocationAddresses, across every zone.
 
         A home site is ``(zone_id, word_id, site_id)`` where ``word_id`` is
-        a home word (lower word_id in each entangling pair, or unpaired)
-        and ``zone_id`` is the zone that word belongs to.
+        not the staging word of one of zone ``zone_id``'s entangling pairs.
+        The word template is spec-wide, so every zone contributes. Delegates to Rust
+        ``ArchSpec.home_locations()``.
         """
-        sites: set[LocationAddress] = set()
-        word_zone = self.word_zone_map
-        for word_id in self._home_words:
-            zone_id = word_zone[word_id]
-            for site_id in range(len(self.words[word_id].site_indices)):
-                sites.add(LocationAddress(word_id, site_id, zone_id))
-        return frozenset(sites)
+        return frozenset(
+            LocationAddress.from_inner(loc) for loc in self._inner.home_locations()
+        )
 
     @cached_property
     def cz_zone_addresses(self) -> frozenset[ZoneAddress]:
@@ -190,6 +195,17 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         list to be derived from and checked against a radius.
         """
         return self._inner.blockade_radius
+
+    @property
+    def aod_capacity(self) -> tuple[int, int] | None:
+        """The largest AOD rectangle one shot may drive, as ``(x, y)`` tone
+        counts, or ``None`` if unlimited.
+
+        At most ``x`` distinct source columns and ``y`` distinct source rows
+        move in one shot. The router's search strategies honour it;
+        Push-and-Rotate does not.
+        """
+        return self._inner.aod_capacity
 
     @cached_property
     def site_buses(self) -> tuple[SiteBus, ...]:
@@ -234,6 +250,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         feed_forward: bool = False,
         atom_reloading: bool = False,
         blockade_radius: float | None = None,
+        aod_capacity: tuple[int, int] | None = None,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
 
@@ -264,6 +281,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
             feed_forward=feed_forward,
             atom_reloading=atom_reloading,
             blockade_radius=blockade_radius,
+            aod_capacity=aod_capacity,
         )
         return cls(inner)
 

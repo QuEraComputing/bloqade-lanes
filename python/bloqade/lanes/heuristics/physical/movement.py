@@ -16,7 +16,14 @@ from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import EntropyTrace, SearchEngine
+from bloqade.lanes.bytecode._native import (
+    BoundStats,
+    EntropyTrace,
+    MoverSelection,
+    Proof,
+    SearchEngine,
+    SolveStatus,
+)
 from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
@@ -103,6 +110,27 @@ class RustPlacementTraversal:
     (sometimes increase) move counts (e.g. DFS may relocate a spectator to
     shorten a participant's path); the search-effort reduction is not always
     move-count-free."""
+    fallback_push_rotate: bool = False
+    """Route with Push and Rotate when the search fails.
+
+    Off by default. When ``True``, a solve the search does not finish is handed
+    to Push and Rotate, a complete rule-based router: it either returns a
+    schedule or proves that none exists. Only the failure path pays for it.
+    Push and Rotate starts from the furthest configuration the search reached,
+    so the schedule is the search's prefix plus its own layers; if that cannot
+    finish, it reruns from the original placement. Push and Rotate does not
+    honour an AOD capacity, so on an architecture that sets one, a schedule
+    with a shot over it is discarded and the search's own result stands.
+    """
+    cascade_bound: bool = True
+    """Gate a cascade strategy's A* refinement with the completion bound.
+
+    On by default; ``False`` restores the ungated refinement. The refinement looks for a plan strictly cheaper than the
+    inner strategy's; with the gate, a child whose ``g + h`` already reaches
+    that cost is dropped before it takes a node, which saves memory without
+    losing a cheaper plan (a tie may resolve to a different plan of the same
+    cost). Only the ``cascade-*`` strategies read it.
+    """
 
 
 def _move_search_from_traversal(
@@ -119,6 +147,8 @@ def _move_search_from_traversal(
         strategy=_STRATEGY_MAP[traversal.strategy],
         restarts=traversal.restarts,
         lookahead=traversal.lookahead,
+        fallback_push_rotate=traversal.fallback_push_rotate,
+        cascade_bound=traversal.cascade_bound,
     )
     entropy_opts = _native.EntropyOptions(
         max_movesets_per_group=traversal.max_movesets_per_group,
@@ -148,6 +178,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
+    _rust_proven_total: int = field(default=0, init=False, repr=False)
     _rust_entropy_fallback_count: int = field(default=0, init=False, repr=False)
     _bound_stats_total: dict[str, float] = field(
         default_factory=dict, init=False, repr=False
@@ -264,15 +295,34 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
         the widest observed gap is kept as ``max_optimality_gap`` instead.
 
         **Empty** — not zeroed — before the first solve, and after any number of
-        solves run with :pyattr:`RustPlacementTraversal.completion_bound` set to
-        ``None``: an unbounded run measured nothing, and reporting zeros would
-        be indistinguishable from a bounded run that pruned nothing. Key-check
-        rather than expecting the keys to exist.
+        solves in which no bound ran: an unbounded run measured nothing, and
+        reporting zeros would be indistinguishable from a bounded run that
+        pruned nothing. A bound runs when
+        :pyattr:`RustPlacementTraversal.completion_bound` is set, or when a
+        cascade strategy's refinement is gated
+        (:pyattr:`RustPlacementTraversal.cascade_bound`), which needs no
+        ``completion_bound``. Key-check rather than expecting the keys to exist.
         """
         return dict(self._bound_stats_total)
 
-    def _accumulate_bound_stats(self, stats: dict[str, float | None]) -> None:
-        """Fold one solve's bound statistics into the running totals."""
+    @property
+    def rust_proven_total(self) -> int:
+        """Solves whose plan the bound proved optimal.
+
+        Counts ``Proof.OPTIMAL`` only; a ``Proof.NO_PLAN`` is a different
+        claim. Read against the solve count rather than alone: a solve without
+        a proof is unproven, not suboptimal.
+        """
+        return self._rust_proven_total
+
+    def _accumulate_bound_stats(self, stats: BoundStats | None) -> None:
+        """Fold one solve's bound statistics into the running totals.
+
+        ``None`` -- an unbounded solve, which measured nothing -- contributes
+        nothing.
+        """
+        if stats is None:
+            return
         for key in (
             "cuts_by_g",
             "cuts_by_h",
@@ -280,14 +330,37 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             "cut_depth_sum",
             "cut_depth_g_only_sum",
         ):
-            value = stats.get(key)
-            if value is not None:
-                self._bound_stats_total[key] = self._bound_stats_total.get(
-                    key, 0
-                ) + int(value)
-        gap = stats.get("optimality_gap")
+            self._bound_stats_total[key] = self._bound_stats_total.get(key, 0) + int(
+                getattr(stats, key)
+            )
+        gap = stats.optimality_gap
         if gap is not None:
             gap = float(gap)
+            # `optimality_gap` is `(incumbent - h(root)) / incumbent`, and Rust
+            # only reports it when both are finite and the solve produced a
+            # plan. That is exactly the set over which a root bound is
+            # comparable to a cost, so all four of these accumulate together
+            # and stay consistent with one another.
+            root = stats.root_lower_bound
+            cost = stats.incumbent_cost
+            if cost is not None:
+                self._bound_stats_total["measured_solves"] = (
+                    self._bound_stats_total.get("measured_solves", 0) + 1
+                )
+                self._bound_stats_total["root_lower_bound_sum"] = (
+                    self._bound_stats_total.get("root_lower_bound_sum", 0.0)
+                    + float(root)
+                )
+                self._bound_stats_total["incumbent_cost_sum"] = (
+                    self._bound_stats_total.get("incumbent_cost_sum", 0.0) + float(cost)
+                )
+                # A zero gap is the root optimality certificate: the plan's
+                # cost has reached a bound valid for *every* legal plan, so it
+                # is optimal regardless of what the generator ever proposed.
+                if abs(gap) <= 1e-9:
+                    self._bound_stats_total["certificates"] = (
+                        self._bound_stats_total.get("certificates", 0) + 1
+                    )
             prev = self._bound_stats_total.get("max_optimality_gap")
             # A negative gap means h(root) > incumbent: the bound overestimated
             # the true remaining cost, so it is inadmissible and pruning may have
@@ -394,6 +467,8 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             self._accumulate_bound_stats(result.bound_stats)
+            if result.proof == Proof.OPTIMAL:
+                self._rust_proven_total += 1
             if remaining is not None:
                 # The search strategies expand ≥ 1 node per call (even when
                 # unsolvable), but PUSH_ROTATE is not a search and always
@@ -401,7 +476,7 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
                 # forward progress across candidates and this loop
                 # terminates under every strategy.
                 remaining -= max(1, int(result.nodes_expanded))
-            if result.status == "solved":
+            if result.status == SolveStatus.SOLVED:
                 winning_result = result
                 if should_trace and self.traversal.collect_entropy_trace:
                     trace = result.entropy_trace
@@ -482,6 +557,7 @@ def make_physical_placement_strategy(
     strategy: SearchStrategyName = "entropy",
     arch_spec: ArchSpec | None = None,
     return_moves: bool = True,
+    mover_selection: MoverSelection | None = None,
 ) -> PlacementStrategyABC:
     """Build a physical placement strategy from user-facing search knobs.
 
@@ -490,7 +566,9 @@ def make_physical_placement_strategy(
 
     ``move_solutions_per_layer`` maps to ``k_candidates`` (candidate home
     sites per qubit in the Hungarian assignment).  ``search_budget`` maps to
-    ``max_expansions``.  ``lambda_lookahead`` is fixed at ``0`` because
+    ``max_expansions``.  ``mover_selection`` picks which qubit of each CZ pair
+    moves (see :class:`~bloqade.lanes.bytecode.MoverSelection`); ``None`` keeps
+    NoHome's default, ``RANKED``.  ``lambda_lookahead`` is fixed at ``0`` because
     palindrome return always moves atoms back to their original home position,
     so future-layer proximity penalties carry no signal.
 
@@ -513,9 +591,10 @@ def make_physical_placement_strategy(
 
        The wider consequence is that palindrome reduces
        :class:`~bloqade.lanes.heuristics.physical.nohome.NoHomePlacementStrategy`
-       to a plain fixed-target router, so ``gamma``, ``k_candidates``,
+       to its CZ phase, so ``gamma``, ``k_candidates``,
        ``top_bus_signatures`` and ``bus_reward_rho`` are all inert on that
-       path.
+       path. ``mover_selection`` is not: the CZ phase's choice of which qubit
+       of each pair moves is exactly what it controls.
     """
     from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
 
@@ -540,6 +619,7 @@ def make_physical_placement_strategy(
         # palindrome there is no such guarantee, hence the tie to
         # `return_moves`.
         backwards_search=return_moves,
+        mover_selection=mover_selection,
     )
 
     return PalindromePlacementStrategy(inner=inner) if return_moves else inner

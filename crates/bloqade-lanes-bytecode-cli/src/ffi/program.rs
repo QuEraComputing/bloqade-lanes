@@ -53,7 +53,16 @@ pub unsafe extern "C" fn lanes_program_to_binary(
     }
 
     let prog = unsafe { &*prog };
-    let bytes = to_binary(&prog.inner);
+    let bytes = match to_binary(&prog.inner) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            // The only encodable failure is a runtime label, which a lanes
+            // program never contains. `ErrDecode` is the existing codec status;
+            // adding one would change the C ABI for an unreachable path.
+            set_last_error(e.to_string());
+            return LanesStatus::ErrDecode;
+        }
+    };
     let len = bytes.len();
     let boxed = bytes.into_boxed_slice();
     let ptr = Box::into_raw(boxed) as *mut u8;

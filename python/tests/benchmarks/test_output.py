@@ -1,7 +1,13 @@
 from pathlib import Path
 
 from benchmarks.harness.models import BenchmarkRow
-from benchmarks.harness.output import CSV_COLUMNS, sort_rows, write_csv
+from benchmarks.harness.output import (
+    CSV_COLUMNS,
+    EXTRA_COLUMNS,
+    render_console_table,
+    sort_rows,
+    write_csv,
+)
 
 
 def test_sort_rows_is_deterministic():
@@ -140,3 +146,65 @@ def test_benchmark_row_arch_spec_id_defaults_to_builtin():
         max_depth_reached=1,
     )
     assert row.arch_spec_id == "builtin"
+
+
+def _row(case_id: str, extra: dict[str, object] | None = None) -> BenchmarkRow:
+    return BenchmarkRow(
+        case_id=case_id,
+        strategy_id="rust_entropy_bounded",
+        backend="rust",
+        generator_id="rust_solver",
+        success=True,
+        wall_time_ms=1.0,
+        move_count_events=4,
+        move_count_lanes=6,
+        estimated_fidelity=0.5,
+        nodes_explored=9,
+        max_depth_reached=3,
+        extra=dict(extra or {}),
+    )
+
+
+def test_console_table_renders_the_root_bound_block():
+    """A row carrying ``extra`` gains the bound columns, values and all."""
+    table = render_console_table(
+        [
+            _row(
+                "bounded",
+                {
+                    "h_root_sum": "99.000",
+                    "cost_sum": "101.000",
+                    "gap_pct": "2%",
+                    "certificates": "12/36",
+                    "proven_solves": 12,
+                },
+            )
+        ]
+    )
+    header = table.splitlines()[0]
+    for name, _ in EXTRA_COLUMNS:
+        assert name in header, f"{name!r} missing from {header!r}"
+    assert "99.000" in table and "101.000" in table
+    assert "12/36" in table and "2%" in table
+
+
+def test_console_table_omits_the_block_without_extras():
+    """A run with no bound rows renders exactly as it did before."""
+    header = render_console_table([_row("plain")]).splitlines()[0]
+    for name, _ in EXTRA_COLUMNS:
+        assert name not in header
+
+
+def test_console_table_pads_rows_missing_an_extra_key():
+    """One bounded row does not force values onto the unbounded rows.
+
+    The block is rendered whenever *any* row has extras, so the rows without
+    them must still produce a cell per column — otherwise the table's columns
+    stop lining up with its header.
+    """
+    table = render_console_table(
+        [_row("bounded", {"h_root_sum": "5.000"}), _row("unbounded")]
+    )
+    lines = [line for line in table.splitlines() if "|" in line]
+    counts = {line.count("|") for line in lines}
+    assert len(counts) == 1, f"ragged table: {counts}"

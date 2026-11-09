@@ -85,10 +85,25 @@ pub fn solve_push_rotate_with(
     // that cannot be expressed, so report it as unsolvable rather than
     // erroring.
     let Some(initial_v) = to_vertices(&graph, initial) else {
-        return Ok(SolveResult::unsolvable(root));
+        // Except an atom starting on a blocked site: that is a legal start
+        // (the atom only moves off it), which the lane graph simply has no
+        // vertex for. The planner cannot represent it, so it gives up, and
+        // giving up proves nothing.
+        if initial
+            .iter()
+            .any(|(_, loc)| blocked_set.contains(&loc.encode()))
+        {
+            return Ok(SolveResult::unsolved(
+                SolveStatus::BudgetExceeded,
+                root,
+                0,
+                0,
+            ));
+        }
+        return Ok(SolveResult::proven_unsolvable(root));
     };
     let Some(target_v) = to_vertices(&graph, target) else {
-        return Ok(SolveResult::unsolvable(root));
+        return Ok(SolveResult::proven_unsolvable(root));
     };
 
     let plan = match plan_with(index, &graph, &initial_v, &target_v, budget, heuristics) {
@@ -112,7 +127,12 @@ pub fn solve_push_rotate_with(
                 | PlanError::Stuck { .. }
                 | PlanError::BudgetExceeded { .. } => SolveStatus::BudgetExceeded,
             };
-            return Ok(SolveResult::unsolved(status, root, 0, 0));
+            // `Unsolvable` here is the planner's Theorem 1 verdict, so it
+            // carries a proof; `BudgetExceeded` is a give-up and does not.
+            return Ok(match status {
+                SolveStatus::Unsolvable => SolveResult::proven_unsolvable(root),
+                _ => SolveResult::unsolved(status, root, 0, 0),
+            });
         }
     };
 
@@ -146,7 +166,8 @@ pub fn solve_push_rotate_with(
     crate::search::verify::assert_move_layers_executable(
         &root,
         &move_layers,
-        index.arch_spec(),
+        index,
+        &blocked_set,
         &goal_config,
     );
 

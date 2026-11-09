@@ -12,18 +12,19 @@
 
 use rayon::prelude::*;
 
-use crate::bounds::{NoBound, WeightedDistanceBound};
+use crate::bounds::{BoundStats, NoBound, WeightedDistanceBound};
 use crate::cost::UniformCost;
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
-use crate::drivers::result::SearchResult;
+use crate::drivers::result::{SearchResult, Termination};
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::observer::NoOpObserver;
 use crate::primitives::config::Config;
 use crate::primitives::context::{SearchContext, SearchState};
+use crate::primitives::graph::{NodeId, SearchGraph};
 use crate::scorers::DistanceScorer;
 use crate::search::options::{BoundKind, EntropyOptions, InnerStrategy, SolveOptions, Strategy};
-use crate::search::result::{SolveResult, SolveStatus};
+use crate::search::result::{PartialPlan, SolveResult, SolveStatus};
 // No `Objective` import: the cascade now bounds its refinement by cost
 // directly, so nothing here needs `min_shot_cost`.
 use crate::traits::{Goal, Heuristic, MoveGenerator};
@@ -34,13 +35,20 @@ use crate::traits::{Goal, Heuristic, MoveGenerator};
 /// it leaves the solver (see [`crate::search::verify`]): `Config::with_moves`
 /// performs no occupancy validation, so this is where a generator that emits
 /// an inexecutable move set gets caught, rather than downstream in the IR.
+///
+/// On a failed search toward a point goal it also records the
+/// [`best_partial`](SolveResult::best_partial): the graph does not outlive this
+/// function, so this is the last place the partial can be read.
 pub(crate) fn extract(
     result: SearchResult,
     deadlocks: u32,
     max_exp: Option<u32>,
     ctx: &SearchContext,
+    goal: &impl Goal,
 ) -> SolveResult {
     let bound_stats = result.bound_stats;
+    let termination = result.termination;
+    let nodes_generated = u32::try_from(result.graph.len()).unwrap_or(u32::MAX);
     match result.goal {
         Some(goal_id) => {
             let move_layers = result.solution_path().unwrap_or_default();
@@ -49,7 +57,8 @@ pub(crate) fn extract(
             crate::search::verify::assert_move_layers_executable(
                 result.graph.config(result.graph.root()),
                 &move_layers,
-                ctx.index.arch_spec(),
+                ctx.index,
+                ctx.blocked,
                 &goal_config,
             );
             let mut solved = SolveResult::solved(
@@ -60,31 +69,113 @@ pub(crate) fn extract(
                 deadlocks,
             );
             solved.bound_stats = bound_stats;
+            solved.termination = termination;
+            solved.nodes_generated = nodes_generated;
             solved
         }
         None => {
             let root_config = result.graph.config(result.graph.root()).clone();
-            let status = if max_exp.is_some_and(|max| result.nodes_expanded >= max) {
-                SolveStatus::BudgetExceeded
-            } else {
-                SolveStatus::Unsolvable
+            // The status is the driver's own account of how it ended. The
+            // frontier and entropy drivers report `Budget` exactly when the
+            // inference this replaces — expansions reached `max_expansions` —
+            // would have, so results are unchanged; a driver that can drain
+            // its space says so directly.
+            let status = match termination {
+                Termination::Budget => SolveStatus::BudgetExceeded,
+                Termination::Exhausted { .. } => SolveStatus::Unsolvable,
+                Termination::Stopped => {
+                    debug_assert!(false, "a driver stopped by its own rule must report a goal");
+                    SolveStatus::Unsolvable
+                }
             };
+            debug_assert_eq!(
+                status == SolveStatus::BudgetExceeded,
+                max_exp.is_some_and(|max| result.nodes_expanded >= max)
+                    || matches!(termination, Termination::Budget),
+            );
             let mut unsolved =
                 SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks);
             unsolved.bound_stats = bound_stats;
+            unsolved.termination = termination;
+            unsolved.nodes_generated = nodes_generated;
+            unsolved.best_partial = goal
+                .exact_targets()
+                .map(|targets| best_partial(&result.graph, targets));
             unsolved
         }
     }
 }
 
+/// The node of `graph` with the fewest atoms off `targets`, ties broken by the
+/// lower `g` and then the lower [`NodeId`], with its prefix from the root.
+///
+/// A linear scan over the graph, run only on failed solves.
+fn best_partial(graph: &SearchGraph, targets: &[(u32, u64)]) -> PartialPlan {
+    let unresolved = |config: &Config| -> u32 {
+        targets
+            .iter()
+            .filter(|&&(qubit, target)| {
+                config.location_of(qubit).map(|l| l.encode()) != Some(target)
+            })
+            .count() as u32
+    };
+    let mut best = graph.root();
+    let mut best_key = (unresolved(graph.config(best)), graph.g_score(best));
+    for raw in 1..graph.len() as u32 {
+        let id = NodeId(raw);
+        let key = (unresolved(graph.config(id)), graph.g_score(id));
+        // Strictly better only, so the earlier node keeps a tie.
+        if key.0 < best_key.0 || (key.0 == best_key.0 && key.1.total_cmp(&best_key.1).is_lt()) {
+            best = id;
+            best_key = key;
+        }
+    }
+    PartialPlan {
+        config: graph.config(best).clone(),
+        layers: graph.reconstruct_path(best),
+        unresolved: best_key.0,
+    }
+}
+
 /// Pick the best result from multiple restarts (prefer solved, then lowest
-/// cost). Returns `None` only when `results` is empty.
+/// cost, then a proof over none). Returns `None` only when `results` is empty.
+///
+/// The proof tie-break matters because a root certificate is a statement about
+/// the *instance*, not about one seed's walk: `h(root)` is the same for every
+/// restart, so when two restarts tie on cost and one of them certified, that
+/// cost is optimal. Ranking by `(solved, cost)` alone left which result
+/// surfaced to restart order, so the public answer could drop a valid proof
+/// while keeping an identically-priced plan.
 pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
     results.into_iter().min_by(|a, b| {
         let a_solved = a.status == SolveStatus::Solved;
         let b_solved = b.status == SolveStatus::Solved;
-        b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
+        b_solved
+            .cmp(&a_solved)
+            .then(a.cost.total_cmp(&b.cost))
+            .then(b.proven().cmp(&a.proven()))
     })
+}
+
+/// A bounded cascade's statistics: both legs' cuts, the tighter of their root
+/// bounds (each is a lower bound on the same instance), and the cost of the
+/// plan the cascade returns as the incumbent.
+fn merge_cascade_bound_stats(
+    inner: BoundStats,
+    refine: BoundStats,
+    returned_cost: f64,
+) -> BoundStats {
+    let mut merged = refine;
+    if inner.bound_enabled {
+        merged.cuts_by_g += inner.cuts_by_g;
+        merged.cuts_by_h += inner.cuts_by_h;
+        merged.cuts_infeasible += inner.cuts_infeasible;
+        merged.cut_depth_sum += inner.cut_depth_sum;
+        merged.cut_depth_g_only_sum += inner.cut_depth_g_only_sum;
+        merged.root_lower_bound = merged.root_lower_bound.max(inner.root_lower_bound);
+    }
+    merged.incumbent_cost = Some(returned_cost);
+    merged
 }
 
 /// Deadlock policy for the plain frontier strategies — A*, BFS, greedy, and the
@@ -185,6 +276,7 @@ where
     let max_goal_candidates = entropy.max_goal_candidates;
     let collect_entropy_trace = entropy.collect_entropy_trace;
     let w_t = entropy.w_t;
+    let bound_terminates = entropy.bound_terminates;
     let base_seed = entropy.seed;
     // The objective this solve accumulates `g` with, named once, so the driver
     // and the bound it is paired with cannot disagree about it.
@@ -240,13 +332,13 @@ where
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = IdsFrontier::new(h_sum);
                 let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
-                extract(result, move_gen.deadlock_count(), budget, ctx)
+                extract(result, move_gen.deadlock_count(), budget, ctx, goal)
             }
             InnerStrategy::Dfs => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = DfsFrontier::new(h_sum);
                 let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None, None);
-                extract(result, move_gen.deadlock_count(), budget, ctx)
+                extract(result, move_gen.deadlock_count(), budget, ctx, goal)
             }
             InnerStrategy::Entropy => {
                 let entropy_params = crate::drivers::entropy::EntropyParams {
@@ -254,6 +346,7 @@ where
                     max_goal_candidates,
                     lookahead: opts.lookahead,
                     w_t,
+                    bound_terminates,
                     ..crate::drivers::entropy::EntropyParams::default()
                 };
                 let mut entropy_trace = if collect_entropy_trace {
@@ -300,7 +393,7 @@ where
                         ),
                     }
                 };
-                let mut solve = extract(result, 0, budget, ctx);
+                let mut solve = extract(result, 0, budget, ctx, goal);
                 solve.entropy_trace = entropy_trace;
                 solve
             }
@@ -345,24 +438,63 @@ where
         let max_cost = Some(inner_result.cost);
         let astar_move_gen = make_generator(0, frontier_deadlock_policy(deadlock_policy));
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
-        let astar_result = run_frontier(
-            &root,
-            &astar_move_gen,
-            goal,
-            ctx,
-            &mut astar_f,
-            max_expansions,
-            None,
-            max_cost,
-        );
+        // The bound gate (`SolveOptions::cascade_bound`), for point goals only:
+        // a set-valued goal has no admissible target-distance bound.
+        let refine_bound = opts
+            .cascade_bound
+            .then(|| goal.exact_targets())
+            .flatten()
+            .map(|targets| WeightedDistanceBound::new(&objective, targets, ctx.index, ctx.blocked));
+        let astar_result = match &refine_bound {
+            Some(bound) => crate::drivers::frontier::run_search_bounded(
+                root.clone(),
+                &astar_move_gen,
+                &DistanceScorer,
+                &objective,
+                goal,
+                &mut astar_f,
+                ctx,
+                &mut SearchState::default(),
+                &mut NoOpObserver,
+                max_expansions,
+                None,
+                max_cost,
+                bound,
+            ),
+            None => run_frontier(
+                &root,
+                &astar_move_gen,
+                goal,
+                ctx,
+                &mut astar_f,
+                max_expansions,
+                None,
+                max_cost,
+            ),
+        };
         let astar_solve = extract(
             astar_result,
             astar_move_gen.deadlock_count(),
             max_expansions,
             ctx,
+            goal,
         );
 
-        if astar_solve.status == SolveStatus::Solved {
+        // Both legs are this solve's work, whichever result is returned, so
+        // their counters add — as NoHome's phases do. Reporting only the
+        // returned leg's counters hid the refinement entirely whenever it found
+        // nothing cheaper, which is where a cascade's memory goes.
+        let nodes_expanded = inner_result
+            .nodes_expanded
+            .saturating_add(astar_solve.nodes_expanded);
+        let nodes_generated = inner_result
+            .nodes_generated
+            .saturating_add(astar_solve.nodes_generated);
+        let deadlocks = inner_result.deadlocks.saturating_add(astar_solve.deadlocks);
+        let (inner_bound_stats, refine_bound_stats) =
+            (inner_result.bound_stats, astar_solve.bound_stats);
+
+        let mut best = if astar_solve.status == SolveStatus::Solved {
             // The refinement runs on a frontier driver, which never prunes
             // against an incumbent and so reports an inert `BoundStats`. If it
             // wins, the pruning the inner entropy pass really did still has to
@@ -374,9 +506,18 @@ where
             if !best.bound_stats.bound_enabled {
                 best.bound_stats = inner_stats;
             }
-            return best;
+            best
+        } else {
+            inner_result
+        };
+        best.nodes_expanded = nodes_expanded;
+        best.nodes_generated = nodes_generated;
+        best.deadlocks = deadlocks;
+        if refine_bound_stats.bound_enabled {
+            best.bound_stats =
+                merge_cascade_bound_stats(inner_bound_stats, refine_bound_stats, best.cost);
         }
-        return inner_result;
+        return best;
     }
 
     // ── Non-cascade strategies ─────────────────────────────────
@@ -398,7 +539,7 @@ where
                     budget,
                     weight,
                 );
-                extract(result, move_gen.deadlock_count(), budget, ctx)
+                extract(result, move_gen.deadlock_count(), budget, ctx, goal)
             }
         }
     };
@@ -507,6 +648,48 @@ mod tests {
     use crate::primitives::distance::DistanceTable;
     use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
+
+    /// Equal cost, one restart certified: the proof must survive the pick.
+    ///
+    /// `h(root)` is a property of the instance, not of a seed's walk, so a
+    /// certificate at cost `C` means `C` is optimal for every restart. Ranking
+    /// on `(solved, cost)` alone left which result surfaced to input order, so
+    /// the public answer could drop the proof and keep an identically-priced
+    /// plan. Both orders are checked, since the bug was order-dependent.
+    #[test]
+    fn pick_best_prefers_a_proven_result_at_equal_cost() {
+        let root = || Config::new([(0, loc(0, 0))]).expect("config");
+        let solved = |proven: bool| {
+            let mut r = SolveResult::solved(root(), Vec::new(), 5.0, 1, 0);
+            if proven {
+                r.termination = Termination::Exhausted { proof: true };
+            }
+            r
+        };
+
+        for results in [
+            vec![solved(false), solved(true)],
+            vec![solved(true), solved(false)],
+        ] {
+            let best = pick_best(results).expect("non-empty");
+            assert!(best.proven(), "the proof was dropped by restart order");
+            assert_eq!(best.cost, 5.0);
+        }
+    }
+
+    /// The tie-break is last: a cheaper unproven plan still wins, because a
+    /// proof about a worse plan is not a reason to return the worse plan.
+    #[test]
+    fn pick_best_does_not_let_a_proof_outrank_cost() {
+        let root = || Config::new([(0, loc(0, 0))]).expect("config");
+        let mut proven_expensive = SolveResult::solved(root(), Vec::new(), 9.0, 1, 0);
+        proven_expensive.termination = Termination::Exhausted { proof: true };
+        let cheap = SolveResult::solved(root(), Vec::new(), 4.0, 1, 0);
+
+        let best = pick_best(vec![proven_expensive, cheap]).expect("non-empty");
+        assert_eq!(best.cost, 4.0);
+        assert!(!best.proven());
+    }
 
     /// Drive one solve through the real dispatch. Every argument the wiring
     /// tests need to vary is a parameter; everything else (arch, root, goal,

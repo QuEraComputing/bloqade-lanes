@@ -1,14 +1,14 @@
 """Cross-statement validation: each ``NewAt``'s address must be unique.
 
 Implemented as a Forward dataflow analysis with a method-table impl for
-``stmts.NewAt``. The impl pulls each address arg via ``expect_const``, builds a
+``stmts.NewAt``. The impl pulls each address arg via ``maybe_const``, builds a
 ``LocationAddress``, and accumulates a seen-map on the interpreter. A second
 NewAt pinning the same address records a ``ValidationError``.
 
-Per-statement validation (const-foldability + range) is the precondition;
-when an arg is non-const, ``expect_const`` raises ``InterpreterError``. The
-``ValidationPass`` wrapper uses ``run_no_raise`` so any duplicates collected
-before that point are still reported.
+A non-const arg is skipped, not reported: const-foldability belongs to
+``ConstAddressValidation``, which runs alongside this pass. Skipping keeps the
+two independent -- a kernel with both a non-const address and a genuine
+duplicate gets both diagnostics.
 """
 
 from __future__ import annotations
@@ -38,9 +38,16 @@ class _NewAtDuplicateMethods(interp.MethodTable):
     ):
         from bloqade.lanes.bytecode.encoding import LocationAddress
 
-        z = _interp.expect_const(node.zone_id, int)
-        w = _interp.expect_const(node.word_id, int)
-        s = _interp.expect_const(node.site_id, int)
+        z = _interp.maybe_const(node.zone_id, int)
+        w = _interp.maybe_const(node.word_id, int)
+        s = _interp.maybe_const(node.site_id, int)
+
+        if z is None or w is None or s is None:
+            # No address to compare, so nothing to say -- ConstAddressValidation
+            # reports the non-const arg. Skip this statement rather than raise:
+            # raising aborts the whole forward walk, which used to make one
+            # non-const NewAt silently hide every duplicate after it.
+            return (EmptyLattice.bottom(),)
 
         addr = LocationAddress(word_id=w, site_id=s, zone_id=z)
         if addr in _interp.seen:

@@ -1,0 +1,32 @@
+sst v1
+
+.section(root):
+.header(root):
+version 1.0
+.header(root).
+.text(root):
+// arch: full
+// expect: StackDepthMismatch
+// Invalid: the two arms of a `cond_br` reach `@done` at different depths.
+//
+// The taken arm leaves a zone on the stack and the other does not, so the depth
+// after the join depends on which edge ran. That is rejected at the merge point
+// rather than carried forward, as WASM and JVM bytecode verification do: every
+// instruction has one stack depth, whichever path reached it.
+
+fn @main() {
+  cpu::cpu.const bool, true
+  cpu::cpu.cond_br @one, @zero
+
+  cpu::cpu.label @one
+    lanes::lanes.const_zone 0x00000000
+    cpu::cpu.br @done
+
+  cpu::cpu.label @zero
+    cpu::cpu.br @done
+
+  cpu::cpu.label @done
+    cpu::cpu.halt
+}
+.text(root).
+.section(root).

@@ -39,7 +39,7 @@ from bloqade.gemini.post_processing import build_post_processing
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
-from bloqade.lanes.bytecode.encoding import SiteLaneAddress
+from bloqade.lanes.bytecode.encoding import Direction, SiteLaneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.prelude import kernel as move_kernel
 
@@ -176,7 +176,10 @@ def test_compiled_task_exposes_move_program_metrics():
             for state in (state_frame.get(statement.current_state),)
             if isinstance(state, atom.AtomState)
             for lane in statement.lanes
-            if state.data.get_qubit(lane.src_site()) is not None
+            if (
+                state.data.get_qubit(task.physical_arch_spec.get_endpoints(lane)[0])
+                is not None
+            )
         )
     )
     assert task._move_program_metrics is task._move_program_metrics
@@ -204,6 +207,29 @@ def test_move_distance_ignores_empty_filler_lanes():
     occupied_lane = SiteLaneAddress(1, 0, 0)
     assert task.total_distance_moved_um == pytest.approx(
         calculator.lane_distance_um(occupied_lane)
+    )
+
+
+def test_move_distance_counts_backward_return_lanes():
+    @move_kernel
+    def move_kernel_with_return():
+        state0 = move.load()
+        state1 = move.fill(state0, location_addresses=(move.LocationAddress(1, 0),))
+        state2 = move.move(state1, lanes=(SiteLaneAddress(1, 0, 0),))
+        state3 = move.move(
+            state2,
+            lanes=(SiteLaneAddress(1, 0, 0, Direction.BACKWARD),),
+        )
+        move.store(state3)
+
+    task = object.__new__(PhysicalSimulatorTask)
+    object.__setattr__(task, "physical_move_kernel", move_kernel_with_return)
+    object.__setattr__(task, "physical_arch_spec", get_arch_spec())
+
+    lane = SiteLaneAddress(1, 0, 0)
+    calculator = MoveMetricCalculator(task.physical_arch_spec)
+    assert task.total_distance_moved_um == pytest.approx(
+        2 * calculator.lane_distance_um(lane)
     )
 
 

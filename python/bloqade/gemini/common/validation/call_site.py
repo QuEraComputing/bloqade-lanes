@@ -53,7 +53,7 @@ from kirin.source import SourceInfo
 from kirin.validation.validationpass import ValidationResult
 
 from .recursion import CallGraph
-from .static_call import UNROLL_HELP
+from .static_call import UNROLL_HELP, UnrollFixableError
 
 
 @dataclass(frozen=True)
@@ -166,10 +166,23 @@ class InlineOrigins:
 
             self.offsets[id(stmt)] = source.lineno_begin
 
-    def annotate(self, method: ir.Method, result: ValidationResult) -> ValidationResult:
+    def annotate(
+        self,
+        method: ir.Method,
+        result: ValidationResult,
+        *,
+        aggressive_unroll: bool = False,
+    ) -> ValidationResult:
         """Explain every error that came from inlined code, and fix its excerpt.
 
         Returns ``result`` so it can be chained onto ``validate``.
+
+        Every such error names the call that brought it in. ``UNROLL_HELP`` is
+        added only where it can help: the error is an ``UnrollFixableError`` and
+        the kernel was not already built with ``aggressive_unroll=True``.
+        Anything else -- a non-Clifford gate, a gate after the terminal
+        measurement, or a loop that stays dynamic even under unrolling -- is
+        just as wrong unrolled, so the advice would only mislead.
 
         ``offsets`` is what decides whether an error is about inlined code:
         ``snapshot`` only records statements that came from some other kernel, so
@@ -199,7 +212,10 @@ class InlineOrigins:
                     continue
 
                 site, owner = found
-                note = f"\n    (inlined from {site}; {UNROLL_HELP})"
+                note = f"\n    (inlined from {site}"
+                if not aggressive_unroll and isinstance(err, UnrollFixableError):
+                    note += f"; {UNROLL_HELP}"
+                note += ")"
                 if err.args and isinstance(err.args[0], str):
                     err.args = (err.args[0] + note,) + err.args[1:]
                 else:  # pragma: no cover - ValidationError always has a message

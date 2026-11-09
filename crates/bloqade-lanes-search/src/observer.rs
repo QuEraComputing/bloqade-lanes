@@ -23,6 +23,22 @@
 use crate::primitives::config::Config;
 use crate::primitives::graph::{MoveSet, NodeId};
 
+/// Why the entropy driver took a step, for the steps that carry a reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntropyReason {
+    /// A bump: the node has no improving candidate.
+    NoValidMoves,
+    /// A bump: a tried candidate reached an already-seen configuration.
+    StateSeen,
+    /// A goal reached by a transposition to an already-explored goal node.
+    StateSeenGoal,
+    /// A descent through a deadlock-breaking candidate.
+    DeadlockBreaker,
+    /// A revert: the trigger node's entropy reached
+    /// [`EntropyParams::e_max`](crate::drivers::entropy::EntropyParams::e_max).
+    EntropyLimit,
+}
+
 /// Event emitted during search.
 ///
 /// The `'a` lifetime borrows from the driver's owned state (graph,
@@ -58,7 +74,7 @@ pub enum SearchEvent<'a> {
         moveset: &'a MoveSet,
         candidate_movesets: &'a [MoveSet],
         candidate_index: u32,
-        reason: Option<&'static str>,
+        reason: Option<EntropyReason>,
         configuration: &'a Config,
         parent_configuration: &'a Config,
         moveset_score: f64,
@@ -70,7 +86,7 @@ pub enum SearchEvent<'a> {
     /// * transposition to an already-explored goal → `moveset` and
     ///   `candidate_index` describe the move that re-discovered it,
     ///   `state_seen_node_id` is the canonical node, `trigger_node_id`
-    ///   is the node that proposed the move, `reason == Some("state-seen-goal")`.
+    ///   is the node that proposed the move, `reason == Some(EntropyReason::StateSeenGoal)`.
     EntropyGoal {
         node_id: NodeId,
         parent_node_id: Option<NodeId>,
@@ -79,7 +95,7 @@ pub enum SearchEvent<'a> {
         moveset: Option<&'a MoveSet>,
         candidate_movesets: &'a [MoveSet],
         candidate_index: Option<u32>,
-        reason: Option<&'static str>,
+        reason: Option<EntropyReason>,
         state_seen_node_id: Option<NodeId>,
         trigger_node_id: Option<NodeId>,
         configuration: &'a Config,
@@ -88,10 +104,10 @@ pub enum SearchEvent<'a> {
     },
     /// Entropy search bumped a node's entropy counter. Two sub-flavors,
     /// distinguished by `reason`:
-    /// * `"no-valid-moves"` — node has no improving candidates;
+    /// * [`EntropyReason::NoValidMoves`] — node has no improving candidates;
     ///   `moveset == None`, `no_valid_moves_qubit` names the first
     ///   unresolved qubit lacking a legal move.
-    /// * `"state-seen"` — a tried candidate hit a transposition;
+    /// * [`EntropyReason::StateSeen`] — a tried candidate hit a transposition;
     ///   `moveset` and `candidate_index` describe it, and
     ///   `state_seen_node_id` is the previously-seen node.
     EntropyBump {
@@ -103,7 +119,7 @@ pub enum SearchEvent<'a> {
         moveset: Option<&'a MoveSet>,
         candidate_movesets: &'a [MoveSet],
         candidate_index: Option<u32>,
-        reason: &'static str,
+        reason: EntropyReason,
         state_seen_node_id: Option<NodeId>,
         no_valid_moves_qubit: Option<u32>,
         configuration: &'a Config,

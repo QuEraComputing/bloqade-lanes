@@ -9,7 +9,7 @@ import bloqade.gemini as gemini
 
 def test_type_inference():
 
-    @gemini.logical.kernel(aggressive_unroll=True, num_physical_qubits=4)
+    @gemini.logical.kernel(aggressive_unroll=True)
     def main():
         q = squin.qalloc(3)
 
@@ -22,7 +22,8 @@ def test_type_inference():
 
     assert ret_type.is_structurally_equal(
         ilist.IListType[
-            ilist.IListType[types.MeasurementResultType, kirin_types.Literal(4)],
+            # Steane [[7,1,3]]: the width `@logical.kernel` always stamps.
+            ilist.IListType[types.MeasurementResultType, kirin_types.Literal(7)],
             kirin_types.Literal(3),
         ]
     )

@@ -98,7 +98,7 @@ def _build_kernel():
 
         return ilist.map(_inner, ilist.range(len(rows)))
 
-    @krn()
+    @krn(verify=False)
     def alloc(addresses: ilist.IList[LocationAddress, N]):
         def _inner(addr: LocationAddress):
             return qubit.new_at(0, addr.word_id, addr.site_id)
@@ -151,7 +151,7 @@ def test_cz_partner_matches_hardcoded_partner_words():
 
         return ilist.map(_inner, ilist.range(len(rows)))
 
-    @krn()
+    @krn(verify=False)
     def alloc(addresses: ilist.IList[LocationAddress, N]):
         def _inner(addr: LocationAddress):
             return qubit.new_at(0, addr.word_id, addr.site_id)

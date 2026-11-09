@@ -18,11 +18,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::bounds::{BoundStats, CompletionBound, NoBound};
-use crate::cost::UniformCost;
-use crate::drivers::result::SearchResult;
+use crate::bounds::{BoundStats, CompletionBound};
+use crate::drivers::result::{SearchResult, Termination};
 use crate::feasibility::graph::LaneGraph;
-use crate::observer::{SearchEvent, SearchObserver};
+use crate::observer::{EntropyReason, SearchEvent, SearchObserver};
 use crate::ops::aod_grid::{BusGridContext, ChainLink, close_chain_entries};
 use crate::primitives::config::Config;
 use crate::primitives::context::SearchContext;
@@ -30,8 +29,7 @@ use crate::primitives::distance::DistanceTable;
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::ordering::{
-    TripletKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak,
-    cmp_triplet_entry_tiebreak,
+    GroupKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak, cmp_triplet_entry_tiebreak,
 };
 use crate::primitives::path::find_path_occupied;
 use crate::push_rotate::{DEFAULT_MOVE_BUDGET, plan as push_rotate_plan};
@@ -68,42 +66,53 @@ impl EntropyTrace {
     }
 }
 
+/// What an entropy trace step records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntropyTraceEvent {
+    /// Descended to a new node through a chosen moveset.
+    Descend,
+    /// Reached a goal node.
+    Goal,
+    /// Raised a node's entropy counter; see the step's `reason`.
+    EntropyBump,
+    /// Reverted from a node whose entropy reached the limit to an ancestor.
+    Revert,
+    /// The expansion budget ran out; the sequential fallback starts.
+    FallbackStart,
+}
+
 /// One entropy-search step snapshot.
+///
+/// Domain types only; the Python binding renders them in the visualizer's
+/// format.
 #[derive(Debug, Clone)]
-#[allow(clippy::type_complexity)]
 pub struct EntropyTraceStep {
-    pub event: String,
+    pub event: EntropyTraceEvent,
     pub node_id: u32,
     pub parent_node_id: Option<u32>,
     pub depth: u32,
     pub entropy: u32,
     pub unresolved_count: u32,
-    pub moveset: Option<Vec<(u8, u8, u32, u32, u32, u32)>>,
-    pub candidate_movesets: Vec<Vec<(u8, u8, u32, u32, u32, u32)>>,
+    pub moveset: Option<MoveSet>,
+    pub candidate_movesets: Vec<MoveSet>,
     pub candidate_index: Option<u32>,
-    pub reason: Option<String>,
+    pub reason: Option<EntropyReason>,
     pub state_seen_node_id: Option<u32>,
     pub no_valid_moves_qubit: Option<u32>,
     pub trigger_node_id: Option<u32>,
-    pub configuration: Vec<(u32, u32, u32, u32)>,
-    pub parent_configuration: Option<Vec<(u32, u32, u32, u32)>>,
+    pub configuration: Config,
+    pub parent_configuration: Option<Config>,
     pub moveset_score: Option<f64>,
     pub best_buffer_node_ids: Vec<u32>,
 }
 
 /// `EntropyTrace` collects entropy-driver events into a `Vec<EntropyTraceStep>`,
-/// preserving the legacy step-record shape consumed by the Python
-/// visualization layer. Frontier-driver events (`GoalFound`,
+/// one step per event, in the step-record shape the Python visualization
+/// layer consumes. Frontier-driver events (`GoalFound`,
 /// `NodeExpanded`) are ignored — `EntropyTrace` is specifically the
 /// entropy driver's trace sink.
 impl SearchObserver for EntropyTrace {
     fn on_event(&mut self, event: SearchEvent<'_>) {
-        let to_candidate_tuples = |movesets: &[MoveSet]| {
-            movesets
-                .iter()
-                .map(moveset_to_trace_tuple)
-                .collect::<Vec<_>>()
-        };
         match event {
             SearchEvent::EntropyDescend {
                 node_id,
@@ -121,21 +130,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "descend".to_string(),
+                    event: EntropyTraceEvent::Descend,
                     node_id: node_id.0,
                     parent_node_id: Some(parent_node_id.0),
                     depth,
                     entropy,
                     unresolved_count,
-                    moveset: Some(moveset_to_trace_tuple(moveset)),
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    moveset: Some(moveset.clone()),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index: Some(candidate_index),
-                    reason: reason.map(|s| s.to_string()),
+                    reason,
                     state_seen_node_id: None,
                     no_valid_moves_qubit: None,
                     trigger_node_id: None,
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: Some(config_as_trace_tuples(parent_configuration)),
+                    configuration: configuration.clone(),
+                    parent_configuration: Some(parent_configuration.clone()),
                     moveset_score: Some(moveset_score),
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -156,21 +165,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "goal".to_string(),
+                    event: EntropyTraceEvent::Goal,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
                     entropy,
                     unresolved_count: 0,
-                    moveset: moveset.map(moveset_to_trace_tuple),
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    moveset: moveset.cloned(),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index,
-                    reason: reason.map(str::to_string),
+                    reason,
                     state_seen_node_id: state_seen_node_id.map(|id| id.0),
                     no_valid_moves_qubit: None,
                     trigger_node_id: trigger_node_id.map(|id| id.0),
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    configuration: configuration.clone(),
+                    parent_configuration: parent_configuration.cloned(),
                     moveset_score: None,
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -192,21 +201,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "entropy_bump".to_string(),
+                    event: EntropyTraceEvent::EntropyBump,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
                     entropy,
                     unresolved_count,
-                    moveset: moveset.map(moveset_to_trace_tuple),
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    moveset: moveset.cloned(),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index,
-                    reason: Some(reason.to_string()),
+                    reason: Some(reason),
                     state_seen_node_id: state_seen_node_id.map(|id| id.0),
                     no_valid_moves_qubit,
                     trigger_node_id: None,
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    configuration: configuration.clone(),
+                    parent_configuration: parent_configuration.cloned(),
                     moveset_score: None,
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -225,21 +234,21 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "revert".to_string(),
+                    event: EntropyTraceEvent::Revert,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
                     entropy,
                     unresolved_count,
                     moveset: None,
-                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    candidate_movesets: candidate_movesets.to_vec(),
                     candidate_index: None,
-                    reason: Some("entropy".to_string()),
+                    reason: Some(EntropyReason::EntropyLimit),
                     state_seen_node_id: None,
                     no_valid_moves_qubit: None,
                     trigger_node_id: Some(trigger_node_id.0),
-                    configuration: config_as_trace_tuples(configuration),
-                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    configuration: configuration.clone(),
+                    parent_configuration: parent_configuration.cloned(),
                     moveset_score: Some(trigger_entropy as f64),
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
                 });
@@ -253,7 +262,7 @@ impl SearchObserver for EntropyTrace {
                 best_buffer_node_ids,
             } => {
                 self.steps.push(EntropyTraceStep {
-                    event: "fallback_start".to_string(),
+                    event: EntropyTraceEvent::FallbackStart,
                     node_id: node_id.0,
                     parent_node_id: parent_node_id.map(|id| id.0),
                     depth,
@@ -266,7 +275,7 @@ impl SearchObserver for EntropyTrace {
                     state_seen_node_id: None,
                     no_valid_moves_qubit: None,
                     trigger_node_id: None,
-                    configuration: config_as_trace_tuples(configuration),
+                    configuration: configuration.clone(),
                     parent_configuration: None,
                     moveset_score: None,
                     best_buffer_node_ids: best_buffer_node_ids.to_vec(),
@@ -302,6 +311,27 @@ pub struct EntropyParams {
     pub lookahead: bool,
     /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
     pub w_t: f64,
+    /// Let the completion bound decide when the search is *over*, not merely
+    /// which branches are worth exploring. **On by default.**
+    ///
+    /// A dominated root with an empty resume buffer ends the search, and the
+    /// plan is reported as proven. It is a genuine proof, and it needs no
+    /// complete generator: the root being cut means `h(root)` has reached the
+    /// incumbent, and `h(root)` lower-bounds *every* legal plan because it
+    /// depends only on the configuration and never on which candidates a
+    /// generator happened to propose. So no plan is cheaper, including plans
+    /// this generator would never emit. With no incumbent at all the only cut
+    /// that can fire is `h = +∞`, which is a proof that no plan exists.
+    ///
+    /// Nothing is skipped by stopping: once the root is cut the driver cannot
+    /// expand again, so what follows is a spin over already-cut nodes up to
+    /// the iteration cap. Turning this off restores that spin, which is the
+    /// behaviour bounding originally shipped with, and is useful only for A/B
+    /// measurement.
+    ///
+    /// Inert without a completion bound: `NoBound` reports `h ≡ 0`, which
+    /// only dominates a zero-cost incumbent.
+    pub bound_terminates: bool,
 }
 
 impl Default for EntropyParams {
@@ -320,6 +350,7 @@ impl Default for EntropyParams {
             max_movesets_per_group: 3,
             lookahead: false,
             w_t: 0.95,
+            bound_terminates: true,
         }
     }
 }
@@ -366,7 +397,7 @@ pub(crate) struct CandidateEntry {
     pub(crate) score: f64,
 }
 
-fn cmp_scored_entries(a: &(TripletKey, ScoredEntry), b: &(TripletKey, ScoredEntry)) -> Ordering {
+fn cmp_scored_entries(a: &(GroupKey, ScoredEntry), b: &(GroupKey, ScoredEntry)) -> Ordering {
     b.1.score.total_cmp(&a.1.score).then_with(|| {
         cmp_triplet_entry_tiebreak(
             &a.0,
@@ -416,7 +447,7 @@ fn chain_scored_entries(links: &[ChainLink]) -> impl Iterator<Item = ScoredEntry
 fn build_deadlock_breaker_candidate(
     config: &Config,
     occupied: &HashSet<u64>,
-    all_scores: &[(TripletKey, ScoredEntry)],
+    all_scores: &[(GroupKey, ScoredEntry)],
     ctx: &SearchContext,
 ) -> Option<(f64, MoveSet, Config)> {
     let unresolved: HashSet<u32> = ctx
@@ -432,23 +463,15 @@ fn build_deadlock_breaker_candidate(
     }
     let target_movers = unresolved.len().div_ceil(2).max(1);
 
-    let mut groups: BTreeMap<TripletKey, Vec<ScoredEntry>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<ScoredEntry>> = BTreeMap::new();
     for &(key, entry) in all_scores {
         groups.entry(key).or_default().push(entry);
     }
 
     let mut best: Option<(usize, f64, MoveSet, Config)> = None;
-    for (
-        TripletKey {
-            move_type: mt,
-            bus_id,
-            direction: dir,
-        },
-        mut qubits,
-    ) in groups
-    {
+    for (key, mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
-        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied);
+        let grid_ctx = BusGridContext::new(ctx.index, key, occupied, ctx.index.aod_capacity());
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -695,6 +718,73 @@ fn resume_buffer_pop_best<B: CompletionBound>(
         }
         return Some(best.node_id);
     }
+}
+/// Whether the root's own bound already proves the incumbent optimal.
+///
+/// The same test [`resume_or_finish`] makes before it stops, minus the
+/// recording. On the goal-quota path the quota is what ends the search, so
+/// charging a cut to `bound_stats` would report a prune that drove no
+/// decision; the proof itself is independent of *why* the loop stopped,
+/// because `h(root)` depends only on the configuration and not on how much of
+/// the space was searched. So a quota exit can still carry a certificate, and
+/// must not throw one away.
+fn root_certifies<B: CompletionBound>(
+    graph: &SearchGraph,
+    root_id: NodeId,
+    best_cost: Option<f64>,
+    bound: &B,
+    h_cache: &mut Vec<Option<f64>>,
+    bound_terminates: bool,
+) -> bool {
+    bound_terminates && classify_cut(graph, root_id, best_cost, bound, h_cache).is_some()
+}
+
+/// Pick the next node to resume from, or report that the search is finished.
+///
+/// `None` means the bound has proven the incumbent optimal *and*
+/// `bound_terminates` allows the driver to say so — the resume buffer is empty
+/// and the root itself is dominated, so `h(root)` has reached the incumbent
+/// and no legal plan is cheaper. Otherwise this is [`resume_buffer_pop_best`]
+/// with the historical fallback to the root, which keeps re-widening there
+/// until the budget runs out.
+///
+/// The root's cut is accounted here before returning `None`. It is the bound's
+/// strongest single cut — the certificate itself — and recording it keeps
+/// [`BoundStats`] independent of whether the loop happened to go around one
+/// more time before noticing. [`record_cut`] dedupes by node id, so a caller
+/// that already recorded the root does not double-count it.
+#[allow(clippy::too_many_arguments)]
+fn resume_or_finish<B: CompletionBound>(
+    buffer: &mut Vec<ScoredResumeState>,
+    best_cost: Option<f64>,
+    stats: &mut BoundStats,
+    counted: &mut Vec<bool>,
+    min_shot_cost: f64,
+    graph: &SearchGraph,
+    root_id: NodeId,
+    bound: &B,
+    h_cache: &mut Vec<Option<f64>>,
+    bound_terminates: bool,
+) -> Option<NodeId> {
+    if let Some(node) =
+        resume_buffer_pop_best::<B>(buffer, best_cost, stats, counted, min_shot_cost)
+    {
+        return Some(node);
+    }
+    if bound_terminates && let Some(cut) = classify_cut(graph, root_id, best_cost, bound, h_cache) {
+        record_cut::<B>(
+            stats,
+            counted,
+            root_id,
+            cut,
+            graph.depth(root_id),
+            graph.g_score(root_id),
+            best_cost,
+            min_shot_cost,
+        );
+        return None;
+    }
+    Some(root_id)
 }
 
 fn trace_buffer_node_ids(buffer: &[ScoredResumeState]) -> Vec<u32> {
@@ -1443,28 +1533,6 @@ fn unresolved_count(config: &Config, targets: &[(u32, u64)]) -> u32 {
         .count() as u32
 }
 
-fn config_as_trace_tuples(config: &Config) -> Vec<(u32, u32, u32, u32)> {
-    config
-        .iter()
-        .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
-        .collect()
-}
-
-fn lane_to_trace_tuple(lane: LaneAddr) -> (u8, u8, u32, u32, u32, u32) {
-    (
-        lane.direction as u8,
-        lane.move_type as u8,
-        lane.zone_id,
-        lane.word_id,
-        lane.site_id,
-        lane.bus_id,
-    )
-}
-
-fn moveset_to_trace_tuple(ms: &MoveSet) -> Vec<(u8, u8, u32, u32, u32, u32)> {
-    ms.decode().into_iter().map(lane_to_trace_tuple).collect()
-}
-
 fn first_unresolved_qubit_without_valid_move(config: &Config, ctx: &SearchContext) -> Option<u32> {
     let mut occupied = HashSet::with_capacity(ctx.blocked.len() + config.len());
     occupied.extend(ctx.blocked);
@@ -1553,7 +1621,7 @@ pub(crate) fn generate_candidates(
         return Vec::new();
     }
 
-    let mut raw_deltas: Vec<(TripletKey, u32, f64, f64, u64, u64)> = Vec::new();
+    let mut raw_deltas: Vec<(GroupKey, u32, f64, f64, u64, u64)> = Vec::new();
     // Collect (triplet, qid, delta_d, delta_m, lane_enc, dst_enc).
     //
     // The per-(location, target) quantities below — blended distance, static
@@ -1612,7 +1680,7 @@ pub(crate) fn generate_candidates(
             let delta_d = d_now - effective_d_after;
             let delta_m = m_after - m_now;
 
-            let triplet_key = TripletKey::new(lane.move_type, lane.bus_id, lane.direction);
+            let triplet_key = GroupKey::of(&lane);
             raw_deltas.push((
                 triplet_key,
                 qid,
@@ -1642,7 +1710,7 @@ pub(crate) fn generate_candidates(
     debug_assert!(m_ref >= 1.0, "m_ref must be >= 1.0 (fold seed)");
 
     // Apply entropy-weighted formula and build scored entries.
-    let all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
+    let all_scores: Vec<(GroupKey, ScoredEntry)> = raw_deltas
         .into_iter()
         .map(|(key, qid, delta_d, delta_m, lane_enc, dst_enc)| {
             let d_hat = delta_d / d_ref;
@@ -1664,7 +1732,7 @@ pub(crate) fn generate_candidates(
     // Step 3: keep all positive-scoring entries (Python parity).
     // If none are positive, keep only the single best entry as fallback.
     let has_positive = all_scores.iter().any(|e| e.1.score > 0.0);
-    let selected: Vec<(TripletKey, ScoredEntry)> = if has_positive {
+    let selected: Vec<(GroupKey, ScoredEntry)> = if has_positive {
         all_scores
             .iter()
             .copied()
@@ -1680,7 +1748,7 @@ pub(crate) fn generate_candidates(
     };
 
     // Step 4: group by bus triplet.
-    let mut groups: BTreeMap<TripletKey, Vec<ScoredEntry>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<ScoredEntry>> = BTreeMap::new();
     for (key, entry) in selected {
         groups.entry(key).or_default().push(entry);
     }
@@ -1688,18 +1756,10 @@ pub(crate) fn generate_candidates(
     // Step 5: per group, build AOD-compatible rectangular grids.
     let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
 
-    for (
-        TripletKey {
-            move_type: mt,
-            bus_id,
-            direction: dir,
-        },
-        mut qubits,
-    ) in groups
-    {
+    for (key, mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
 
-        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
+        let grid_ctx = BusGridContext::new(ctx.index, key, &occupied, ctx.index.aod_capacity());
 
         let mut entries: HashMap<u64, u64> = HashMap::new();
         let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
@@ -2234,78 +2294,20 @@ fn sequential_fallback(
 
 // ── Main search loop ───────────────────────────────────────────────
 
-/// Run entropy-guided search under the default objective
-/// ([`UniformCost`] — minimize moveset count).
+/// Run entropy-guided search under an explicit [`Objective`] and completion
+/// bound.
 ///
 /// This is a single-path DFS with entropy-based backtracking, NOT a
 /// standard frontier-based search. See module docs for algorithm details.
 ///
-/// Use [`entropy_search_with_objective`] to search under a different
-/// [`Objective`].
-#[allow(clippy::too_many_arguments)]
-pub fn entropy_search(
-    root: Config,
-    goal: &impl Goal,
-    params: &EntropyParams,
-    ctx: &SearchContext,
-    max_expansions: Option<u32>,
-    max_depth: Option<u32>,
-    seed: u64,
-    observer: &mut dyn SearchObserver,
-) -> SearchResult {
-    entropy_search_with_objective(
-        root,
-        goal,
-        params,
-        ctx,
-        max_expansions,
-        max_depth,
-        seed,
-        observer,
-        &UniformCost,
-    )
-}
-
-/// [`entropy_search`] under an explicit [`Objective`].
-///
 /// The objective is the single source of truth for `g`: it prices every shot
 /// the driver appends and therefore defines what the incumbent comparison
-/// means. Swapping it requires no other change to the driver.
+/// means. [`UniformCost`](crate::cost::UniformCost) minimizes the moveset
+/// count. The bound must be admissible for `objective` — see
+/// [`CompletionBound`]. Pass [`NoBound`](crate::bounds::NoBound) to disable
+/// pruning entirely.
 #[allow(clippy::too_many_arguments)]
-pub fn entropy_search_with_objective<O>(
-    root: Config,
-    goal: &impl Goal,
-    params: &EntropyParams,
-    ctx: &SearchContext,
-    max_expansions: Option<u32>,
-    max_depth: Option<u32>,
-    seed: u64,
-    observer: &mut dyn SearchObserver,
-    objective: &O,
-) -> SearchResult
-where
-    O: Objective,
-{
-    entropy_search_with_bound(
-        root,
-        goal,
-        params,
-        ctx,
-        max_expansions,
-        max_depth,
-        seed,
-        observer,
-        objective,
-        &NoBound::for_objective(objective),
-    )
-}
-
-/// [`entropy_search`] under an explicit [`Objective`] and completion bound.
-///
-/// The bound must be admissible for `objective` — see [`CompletionBound`].
-/// Pass [`NoBound`] to disable pruning entirely.
-#[allow(clippy::too_many_arguments)]
-pub fn entropy_search_with_bound<O, B>(
+pub fn entropy_search<O, B>(
     root: Config,
     goal: &impl Goal,
     params: &EntropyParams,
@@ -2393,6 +2395,7 @@ where
             nodes_expanded: 0,
             max_depth_reached: 0,
             graph,
+            termination: Termination::Stopped,
             // The root satisfies the goal: nothing was searched, and the
             // optimum is trivially 0. `bound_enabled` still reflects whether a
             // bound was supplied, so a bounded solve that starts at the goal is
@@ -2439,6 +2442,13 @@ where
     // buffer is empty. The budget-exhaustion fallback still gets its turn when
     // no goal was found.
     let mut generator_exhausted = false;
+    // Set when the bound proved the incumbent optimal and `bound_terminates`
+    // let the loop act on it. Unlike the budget exit this one carries a proof;
+    // see `resume_or_finish`.
+    let mut certified = false;
+    // Set when the loop ends by its own rule (the goal quota) rather than by
+    // the budget, a stalled generator or a proof.
+    let mut goal_quota_reached = false;
 
     // Nodes whose cut has already been folded into `bound_stats`, so a node
     // tested at both gates or re-tested on resume is counted once. Left empty
@@ -2492,14 +2502,24 @@ where
                 best_cost,
                 objective.min_shot_cost(),
             );
-            current = resume_buffer_pop_best::<B>(
+            match resume_or_finish::<B>(
                 &mut resume_buffer,
                 best_cost,
                 &mut bound_stats,
                 &mut cut_counted,
                 objective.min_shot_cost(),
-            )
-            .unwrap_or(root_id);
+                &graph,
+                root_id,
+                bound,
+                &mut h_cache,
+                params.bound_terminates,
+            ) {
+                Some(node) => current = node,
+                None => {
+                    certified = true;
+                    break;
+                }
+            }
             continue;
         }
 
@@ -2631,7 +2651,7 @@ where
                     moveset: None,
                     candidate_movesets: &candidate_movesets,
                     candidate_index: None,
-                    reason: "no-valid-moves",
+                    reason: EntropyReason::NoValidMoves,
                     state_seen_node_id: None,
                     no_valid_moves_qubit: no_valid_qid,
                     configuration: cfg,
@@ -2689,7 +2709,7 @@ where
                         moveset: Some(&trace_move_set),
                         candidate_movesets: &candidate_movesets,
                         candidate_index: Some(candidate_idx as u32),
-                        reason: Some("state-seen-goal"),
+                        reason: Some(EntropyReason::StateSeenGoal),
                         state_seen_node_id: Some(child_id),
                         trigger_node_id: Some(current),
                         configuration: goal_cfg,
@@ -2698,16 +2718,35 @@ where
                     });
                 }
                 if found_goals.len() >= params.max_goal_candidates {
+                    goal_quota_reached = true;
+                    certified = root_certifies(
+                        &graph,
+                        root_id,
+                        best_cost,
+                        bound,
+                        &mut h_cache,
+                        params.bound_terminates,
+                    );
                     break;
                 }
-                current = resume_buffer_pop_best::<B>(
+                match resume_or_finish::<B>(
                     &mut resume_buffer,
                     best_cost,
                     &mut bound_stats,
                     &mut cut_counted,
                     objective.min_shot_cost(),
-                )
-                .unwrap_or(root_id);
+                    &graph,
+                    root_id,
+                    bound,
+                    &mut h_cache,
+                    params.bound_terminates,
+                ) {
+                    Some(node) => current = node,
+                    None => {
+                        certified = true;
+                        break;
+                    }
+                }
                 continue;
             }
             // Transposition: config seen at equal or better cost.
@@ -2740,7 +2779,7 @@ where
                     moveset: Some(&trace_move_set),
                     candidate_movesets: &candidate_movesets,
                     candidate_index: Some(candidate_idx as u32),
-                    reason: "state-seen",
+                    reason: EntropyReason::StateSeen,
                     state_seen_node_id: Some(child_id),
                     no_valid_moves_qubit: None,
                     configuration: cfg,
@@ -2807,7 +2846,7 @@ where
                 moveset: &trace_move_set,
                 candidate_movesets: &candidate_movesets,
                 candidate_index: candidate_idx as u32,
-                reason: candidate_origin.then_some("deadlock-breaker"),
+                reason: candidate_origin.then_some(EntropyReason::DeadlockBreaker),
                 configuration: child_cfg,
                 parent_configuration: current_cfg_owned,
                 moveset_score,
@@ -2845,16 +2884,35 @@ where
                 });
             }
             if found_goals.len() >= params.max_goal_candidates {
+                goal_quota_reached = true;
+                certified = root_certifies(
+                    &graph,
+                    root_id,
+                    best_cost,
+                    bound,
+                    &mut h_cache,
+                    params.bound_terminates,
+                );
                 break;
             }
-            current = resume_buffer_pop_best::<B>(
+            match resume_or_finish::<B>(
                 &mut resume_buffer,
                 best_cost,
                 &mut bound_stats,
                 &mut cut_counted,
                 objective.min_shot_cost(),
-            )
-            .unwrap_or(root_id);
+                &graph,
+                root_id,
+                bound,
+                &mut h_cache,
+                params.bound_terminates,
+            ) {
+                Some(node) => current = node,
+                None => {
+                    certified = true;
+                    break;
+                }
+            }
             continue;
         }
 
@@ -2870,14 +2928,24 @@ where
                 objective.min_shot_cost(),
             );
             resume_buffer_discard(&mut resume_buffer, child_id);
-            current = resume_buffer_pop_best::<B>(
+            match resume_or_finish::<B>(
                 &mut resume_buffer,
                 best_cost,
                 &mut bound_stats,
                 &mut cut_counted,
                 objective.min_shot_cost(),
-            )
-            .unwrap_or(root_id);
+                &graph,
+                root_id,
+                bound,
+                &mut h_cache,
+                params.bound_terminates,
+            ) {
+                Some(node) => current = node,
+                None => {
+                    certified = true;
+                    break;
+                }
+            }
             continue;
         }
         current = child_id; // descend
@@ -2898,12 +2966,42 @@ where
     // 3) lexicographic path key (deterministic), 4) node id (deterministic).
     let best = select_best_goal_with_tiebreak(&found_goals, &graph, ctx.index);
     bound_stats.incumbent_cost = best.map(|id| graph.g_score(id));
+    // A certificate is the one exit that proves something: `h(root)` reached
+    // the incumbent, so no legal plan is cheaper. Then `Stopped` for the goal
+    // quota. Otherwise the shared loop-exit rule on the final expansion count
+    // (the fallback's expansions included, which is what the status inference
+    // this replaces looked at).
+    //
+    // A stalled generator needs no arm of its own. `generator_exhausted` can
+    // only be set on an iteration where the budget check at the top of the
+    // loop did *not* fire, so `nodes_expanded < max_expansions` there, and the
+    // shared rule reports `Exhausted { proof: false }` — which is exactly
+    // right, since a sampled generator running dry proves nothing. Only the
+    // fallback could push the count over the budget afterwards, and it runs
+    // just when no goal was found, which is when it has no plan to add
+    // expansions for.
+    let termination = if certified {
+        Termination::Exhausted { proof: true }
+    } else if goal_quota_reached {
+        Termination::Stopped
+    } else if budget_exhausted {
+        // The internal cap counts as a budget, not as exhaustion. It fires on
+        // `iterations >= hard_limit * 2` as well as on the expansion count, and
+        // `hard_limit` falls back to a function of the arch when the caller
+        // passes no `max_expansions` at all — so the shared rule below, which
+        // sees only the *external* limit, would call a safety-cap give-up an
+        // exhausted space. Nothing was drained in either case.
+        Termination::Budget
+    } else {
+        SearchResult::loop_exit_termination(nodes_expanded, max_expansions)
+    };
     SearchResult {
         goal: best,
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
         bound_stats,
+        termination,
     }
 }
 
@@ -2969,6 +3067,8 @@ fn get_next_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bounds::NoBound;
+    use crate::cost::UniformCost;
     use crate::test_utils::{example_arch_json, loc};
     use crate::traits::CostFn;
     use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
@@ -3085,6 +3185,8 @@ mod tests {
             None,
             0,
             &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
         )
     }
 
@@ -3120,6 +3222,8 @@ mod tests {
             max_depth,
             0,
             trace,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
         )
     }
 
@@ -3131,6 +3235,62 @@ mod tests {
             r.graph.config(r.goal.unwrap()).location_of(0),
             Some(loc(0, 5))
         );
+    }
+
+    /// Termination is reported, not inferred. The goal quota is the driver's
+    /// own exit (`Stopped`); with the default quota of three a single-goal
+    /// instance never reaches it, so the driver spins to its iteration cap
+    /// after the first goal and ends `Exhausted` with a goal in hand — the
+    /// pre-existing behaviour, now visible in the result; and a budget spent
+    /// without reaching the quota is `Budget`.
+    #[test]
+    fn termination_names_the_quota_the_spin_and_the_budget() {
+        let index = make_index();
+        let run = |params: &EntropyParams, target: LocationAddr, max_expansions: Option<u32>| {
+            let root = Config::new([(0, loc(0, 0))]).unwrap();
+            let target_encoded: Vec<(u32, u64)> = vec![(0, target.encode())];
+            let dist_table = DistanceTable::new(&[target.encode()], &index);
+            let blocked = HashSet::new();
+            let goal = crate::goals::AllAtTarget::new(&target_encoded);
+            let ctx = SearchContext {
+                index: &index,
+                dist_table: &dist_table,
+                blocked: &blocked,
+                targets: &target_encoded,
+                cz_pairs: None,
+            };
+            let r = entropy_search(
+                root,
+                &goal,
+                params,
+                &ctx,
+                max_expansions,
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &NoBound::for_objective(&UniformCost),
+            );
+            (r.goal.is_some(), r.termination, r.nodes_expanded)
+        };
+
+        let one_goal = EntropyParams {
+            max_goal_candidates: 1,
+            ..EntropyParams::default()
+        };
+        let (solved, termination, _) = run(&one_goal, loc(0, 5), Some(1000));
+        assert!(solved);
+        assert_eq!(termination, Termination::Stopped);
+
+        let (solved, termination, expanded) = run(&EntropyParams::default(), loc(0, 5), Some(1000));
+        assert!(solved);
+        assert!(expanded < 1000);
+        assert_eq!(termination, Termination::Exhausted { proof: false });
+
+        // Two shots away (word 1, site 5) with a budget of one expansion.
+        let (_, termination, expanded) = run(&EntropyParams::default(), loc(1, 5), Some(1));
+        assert!(expanded >= 1);
+        assert_eq!(termination, Termination::Budget);
     }
 
     #[test]
@@ -3368,7 +3528,7 @@ mod tests {
             trace
                 .steps
                 .iter()
-                .any(|step| step.event == "fallback_start")
+                .any(|step| step.event == EntropyTraceEvent::FallbackStart)
         );
     }
 
@@ -3388,14 +3548,14 @@ mod tests {
             trace
                 .steps
                 .iter()
-                .all(|step| step.event != "fallback_start")
+                .all(|step| step.event != EntropyTraceEvent::FallbackStart)
         );
     }
 
     #[test]
     fn scored_entry_tie_break_is_deterministic() {
-        let key_bus1 = TripletKey::new(MoveType::WordBus, 1, Direction::Backward);
-        let key_bus2 = TripletKey::new(MoveType::WordBus, 2, Direction::Backward);
+        let key_bus1 = GroupKey::new(MoveType::WordBus, 1, 0, Direction::Backward);
+        let key_bus2 = GroupKey::new(MoveType::WordBus, 2, 0, Direction::Backward);
         let mut entries = [
             (
                 key_bus2,
@@ -3888,14 +4048,7 @@ mod tests {
                 continue;
             }
             let first = lanes[0];
-            let grid_ctx = BusGridContext::new(
-                &index,
-                first.move_type,
-                first.bus_id,
-                None,
-                first.direction,
-                &occupied,
-            );
+            let grid_ctx = BusGridContext::new(&index, GroupKey::of(&first), &occupied, None);
 
             let mut entries: HashMap<u64, u64> = HashMap::new();
             for lane in &lanes {
@@ -4055,11 +4208,25 @@ mod tests {
         };
         let mut trace = EntropyTrace::default();
 
-        let _ = entropy_search(root, &goal, &params, &ctx, Some(8), None, 0, &mut trace);
+        let _ = entropy_search(
+            root,
+            &goal,
+            &params,
+            &ctx,
+            Some(8),
+            None,
+            0,
+            &mut trace,
+            &UniformCost,
+            &NoBound::for_objective(&UniformCost),
+        );
 
         assert!(
-            trace.steps.iter().any(|step| step.event == "descend"
-                && step.reason.as_deref() == Some("deadlock-breaker")),
+            trace
+                .steps
+                .iter()
+                .any(|step| step.event == EntropyTraceEvent::Descend
+                    && step.reason == Some(EntropyReason::DeadlockBreaker)),
             "expected descend step marked with deadlock-breaker reason in trace"
         );
     }
@@ -4129,63 +4296,6 @@ mod tests {
         assert!(lanes_checked > 0, "arch fixture should expose lanes");
     }
 
-    /// The objective is swappable at the driver seam: `entropy_search` and
-    /// `entropy_search_with_objective(.., &UniformCost)` are the same search.
-    ///
-    /// Guards the delegation, so the default entry point cannot drift onto a
-    /// different objective than the one the audit and benchmarks assume.
-    #[test]
-    fn default_entry_point_matches_explicit_uniform_cost_objective() {
-        let index = make_index();
-        let target_encoded = vec![(0u32, loc(1, 5).encode())];
-        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
-        let dist_table = DistanceTable::new(&target_locs, &index);
-        let blocked = HashSet::new();
-        let goal = crate::goals::AllAtTarget::new(&target_encoded);
-        let ctx = SearchContext {
-            index: &index,
-            dist_table: &dist_table,
-            blocked: &blocked,
-            targets: &target_encoded,
-            cz_pairs: None,
-        };
-        let params = EntropyParams::default();
-        let root = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let implicit = entropy_search(
-            root.clone(),
-            &goal,
-            &params,
-            &ctx,
-            Some(200),
-            None,
-            0,
-            &mut crate::observer::NoOpObserver,
-        );
-        let explicit = entropy_search_with_objective(
-            root,
-            &goal,
-            &params,
-            &ctx,
-            Some(200),
-            None,
-            0,
-            &mut crate::observer::NoOpObserver,
-            &UniformCost,
-        );
-
-        assert_eq!(implicit.nodes_expanded, explicit.nodes_expanded);
-        assert_eq!(implicit.max_depth_reached, explicit.max_depth_reached);
-        assert_eq!(
-            implicit.solution_path().map(|p| p.len()),
-            explicit.solution_path().map(|p| p.len())
-        );
-        assert_eq!(
-            implicit.goal.map(|g| implicit.graph.g_score(g)),
-            explicit.goal.map(|g| explicit.graph.g_score(g))
-        );
-    }
-
     /// Swapping the objective requires no driver change, and `g` really is
     /// that objective's cost rather than a moveset count in disguise.
     ///
@@ -4213,7 +4323,7 @@ mod tests {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let objective = WeightedDuration::new(&index, 10.0);
 
-        let result = entropy_search_with_objective(
+        let result = entropy_search(
             root.clone(),
             &goal,
             &EntropyParams::default(),
@@ -4223,6 +4333,7 @@ mod tests {
             0,
             &mut crate::observer::NoOpObserver,
             &objective,
+            &NoBound::for_objective(&objective),
         );
 
         let goal_id = result.goal.expect("instance should solve");
@@ -4276,7 +4387,7 @@ mod tests {
         let params = EntropyParams::default();
         let root = Config::new(initial).unwrap();
 
-        let unbounded = entropy_search_with_bound(
+        let unbounded = entropy_search(
             root.clone(),
             &goal,
             &params,
@@ -4294,7 +4405,7 @@ mod tests {
             &index,
             &blocked,
         );
-        let bounded = entropy_search_with_bound(
+        let bounded = entropy_search(
             root,
             &goal,
             &params,
@@ -4347,7 +4458,7 @@ mod tests {
         };
         let params = EntropyParams::default();
         let mut trace = EntropyTrace::for_params(&params);
-        let result = entropy_search_with_bound(
+        let result = entropy_search(
             Config::new([(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 5))]).unwrap(),
             &goal,
             &params,
@@ -4369,6 +4480,290 @@ mod tests {
             "the root kept grinding: {} trace steps",
             trace.steps.len()
         );
+        // A generator running dry proves nothing — it is the sampled candidate
+        // list that ran out, not the search space. So this exit reports
+        // exhaustion *without* a proof, and must not be confused with the
+        // budget exit it replaces or with the root certificate.
+        assert_eq!(result.termination, Termination::Exhausted { proof: false });
+    }
+
+    /// Run one instance under the weighted-distance bound, with and without
+    /// letting that bound decide when the search is over.
+    fn run_certificate_pair(
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        target: LocationAddr,
+    ) -> (SearchResult, SearchResult) {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> = vec![(0, target.encode())];
+        let dist_table = DistanceTable::new(&[target.encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let bound = crate::bounds::WeightedDistanceBound::new(
+            &UniformCost,
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+        let root = Config::new(initial).unwrap();
+        let run = |bound_terminates: bool| {
+            entropy_search(
+                root.clone(),
+                &goal,
+                &EntropyParams {
+                    bound_terminates,
+                    ..EntropyParams::default()
+                },
+                &ctx,
+                Some(1000),
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &bound,
+            )
+        };
+        (run(false), run(true))
+    }
+
+    /// The root certificate: `h(root)` reaches the incumbent, so no legal plan
+    /// is cheaper and the search is over.
+    ///
+    /// What the knob saves is **loop turns, not expansions**, and the equality
+    /// asserted below is the point rather than a weakness of the test. Once
+    /// the root is cut the driver can never expand again: it falls back to the
+    /// root, the cut fires immediately, the empty buffer sends it back to the
+    /// root, and it does that until the iteration cap. Every one of those
+    /// turns is pure overhead. The plan is identical either way, because the
+    /// search only stops when nothing reachable could improve on it.
+    #[test]
+    fn bound_terminates_stops_on_the_root_certificate() {
+        let (spun, stopped) = run_certificate_pair([(0, loc(0, 0))], loc(0, 5));
+
+        assert_eq!(stopped.termination, Termination::Exhausted { proof: true });
+        assert_ne!(spun.termination, Termination::Exhausted { proof: true });
+        assert_eq!(
+            stopped.nodes_expanded, spun.nodes_expanded,
+            "the certificate ends a spin over already-cut nodes, so no \
+             expansion is skipped and no plan can be lost"
+        );
+
+        // Same plan, and it really is at the bound.
+        let cost = |r: &SearchResult| r.graph.g_score(r.goal.expect("solved"));
+        assert_eq!(cost(&stopped).to_bits(), cost(&spun).to_bits());
+        assert_eq!(
+            stopped.bound_stats.root_lower_bound.to_bits(),
+            cost(&stopped).to_bits()
+        );
+    }
+
+    /// The internal safety cap is a give-up, not an exhausted space.
+    ///
+    /// `hard_limit` fires on `iterations >= hard_limit * 2` as well as on the
+    /// expansion count, and falls back to a function of the arch when the
+    /// caller passes no `max_expansions` — so the shared loop-exit rule, which
+    /// sees only the external limit, reported a capped run as `Exhausted`.
+    /// Nothing was drained: the instance below has no plan at all (three atoms
+    /// on one path asked to reverse, and order along a path is invariant), so
+    /// the run can only ever end on a limit.
+    #[test]
+    fn the_internal_iteration_cap_reports_a_budget() {
+        let index = make_index();
+        let targets: Vec<(u32, u64)> = vec![
+            (0, loc(1, 0).encode()),
+            (1, loc(0, 0).encode()),
+            (2, loc(0, 5).encode()),
+        ];
+        let dist_table =
+            DistanceTable::new(&targets.iter().map(|&(_, t)| t).collect::<Vec<_>>(), &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&targets);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &targets,
+            cz_pairs: None,
+        };
+        let params = EntropyParams::default();
+        let mut trace = EntropyTrace::for_params(&params);
+        let result = entropy_search(
+            Config::new([(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 5))]).unwrap(),
+            &goal,
+            &params,
+            &ctx, // Small enough that the iteration cap (2x this) bites before the
+            // entropy ramp lets the generator declare itself stuck.
+            Some(2),
+            None,
+            0,
+            &mut trace,
+            &UniformCost,
+            &crate::bounds::WeightedDistanceBound::new(&UniformCost, &targets, &index, &blocked),
+        );
+
+        assert!(result.goal.is_none(), "the fixture must have no plan");
+        assert_eq!(
+            result.termination,
+            Termination::Budget,
+            "a run stopped by a limit must not claim it drained the space"
+        );
+    }
+
+    /// A goal quota of one must not throw away an available proof.
+    ///
+    /// The quota exit is checked before `resume_or_finish`, so the first plan
+    /// used to end the search as `Stopped` with `proven` false even when its
+    /// cost had already reached `h(root)`. The certificate does not depend on
+    /// how much of the space was searched -- `h(root)` is a function of the
+    /// configuration alone -- so stopping early is no reason to discard it.
+    ///
+    /// The `max_goal_candidates = 3` default reaches the same instance through
+    /// `resume_or_finish` instead, which is why the regression hid: both paths
+    /// have to check.
+    #[test]
+    fn the_goal_quota_does_not_discard_a_certificate() {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> = vec![(0, loc(0, 5).encode())];
+        let dist_table = DistanceTable::new(&[loc(0, 5).encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let bound = crate::bounds::WeightedDistanceBound::new(
+            &UniformCost,
+            &target_encoded,
+            &index,
+            &blocked,
+        );
+        let run = |max_goal_candidates: usize| {
+            entropy_search(
+                Config::new([(0, loc(0, 0))]).unwrap(),
+                &goal,
+                &EntropyParams {
+                    max_goal_candidates,
+                    ..EntropyParams::default()
+                },
+                &ctx,
+                Some(1000),
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &bound,
+            )
+        };
+
+        for quota in [1usize, 3] {
+            let result = run(quota);
+            let cost = result.graph.g_score(result.goal.expect("solved"));
+            assert_eq!(
+                result.bound_stats.root_lower_bound.to_bits(),
+                cost.to_bits(),
+                "quota {quota}: the fixture must actually reach its bound"
+            );
+            assert_eq!(
+                result.termination,
+                Termination::Exhausted { proof: true },
+                "quota {quota}: a plan at h(root) is proven optimal"
+            );
+        }
+    }
+
+    /// The probe on the quota path must not charge a cut it did not act on.
+    ///
+    /// `bound_stats` counts prunes that *drove* a decision. On the quota path
+    /// the quota is what ends the search, so observing that the root would be
+    /// cut must leave the counters alone -- otherwise the same solve reports a
+    /// different cut count depending on which exit it happened to take, and
+    /// `cuts_by_h` stops meaning anything.
+    #[test]
+    fn the_quota_certificate_probe_records_no_cut() {
+        let index = make_index();
+        let target_encoded: Vec<(u32, u64)> = vec![(0, loc(0, 5).encode())];
+        let dist_table = DistanceTable::new(&[loc(0, 5).encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let result = entropy_search(
+            Config::new([(0, loc(0, 0))]).unwrap(),
+            &goal,
+            &EntropyParams {
+                max_goal_candidates: 1,
+                ..EntropyParams::default()
+            },
+            &ctx,
+            Some(1000),
+            None,
+            0,
+            &mut crate::observer::NoOpObserver,
+            &UniformCost,
+            &crate::bounds::WeightedDistanceBound::new(
+                &UniformCost,
+                &target_encoded,
+                &index,
+                &blocked,
+            ),
+        );
+        assert_eq!(result.termination, Termination::Exhausted { proof: true });
+        assert_eq!(result.bound_stats.cuts_by_h, 0);
+        assert_eq!(result.bound_stats.cut_depth_g_only_sum, 0);
+    }
+
+    /// Without a completion bound there is nothing to certify: `NoBound`
+    /// reports `h ≡ 0`, which never dominates a positive incumbent, so the
+    /// knob cannot change a single expansion.
+    #[test]
+    fn bound_terminates_is_inert_without_a_bound() {
+        let index = make_index();
+        let target = loc(0, 5);
+        let target_encoded: Vec<(u32, u64)> = vec![(0, target.encode())];
+        let dist_table = DistanceTable::new(&[target.encode()], &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let run = |bound_terminates: bool| {
+            entropy_search(
+                Config::new([(0, loc(0, 0))]).unwrap(),
+                &goal,
+                &EntropyParams {
+                    bound_terminates,
+                    ..EntropyParams::default()
+                },
+                &ctx,
+                Some(200),
+                None,
+                0,
+                &mut crate::observer::NoOpObserver,
+                &UniformCost,
+                &NoBound::for_objective(&UniformCost),
+            )
+        };
+        let (off, on) = (run(false), run(true));
+        assert_eq!(off.nodes_expanded, on.nodes_expanded);
+        assert_eq!(off.termination, on.termination);
     }
 
     /// An unreachable target makes `h0 = +∞` — an infeasibility proof
@@ -4579,7 +4974,7 @@ mod tests {
             &blocked,
         );
 
-        let _ = entropy_search_with_bound(
+        let _ = entropy_search(
             Config::new([(0, loc(0, 0))]).unwrap(),
             &goal,
             &EntropyParams::default(),

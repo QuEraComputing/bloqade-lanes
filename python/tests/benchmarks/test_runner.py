@@ -5,7 +5,11 @@ from typing import cast
 
 import pytest
 from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfig
-from benchmarks.harness.runner import BenchmarkRunner, _count_moves
+from benchmarks.harness.runner import (
+    BenchmarkRunner,
+    _count_moves,
+    _root_bound_extra,
+)
 from kirin import ir
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
@@ -408,3 +412,98 @@ def test_estimate_fidelity_physical_mode_uses_the_strategy_arch_spec(monkeypatch
     assert seen["pipeline_arch_spec"] is sentinel
     assert seen["pipeline_layout_arch_spec"] is sentinel
     assert seen["noise_arch_spec"] is sentinel
+
+
+def test_root_bound_extra_summarises_h_root_against_cost():
+    """`h(root)` and plan cost are summed over the same solves, so the ratio
+    is a gap, and equality on a solve is the optimality certificate."""
+    extra = _root_bound_extra(
+        {
+            "measured_solves": 4,
+            "root_lower_bound_sum": 90.0,
+            "incumbent_cost_sum": 100.0,
+            "certificates": 3,
+        },
+        proven=3,
+    )
+    assert extra == {
+        "h_root_sum": "90.000",
+        "cost_sum": "100.000",
+        "gap_pct": "10%",
+        "certificates": "3/4",
+        "proven_solves": 3,
+    }
+
+
+def test_root_bound_extra_is_empty_without_measured_solves():
+    """An unbounded strategy measures nothing, and must not render a 0/0 row
+    that a reader could mistake for a bound reporting a floor of zero."""
+    assert _root_bound_extra({}, proven=0) == {}
+    assert _root_bound_extra({"measured_solves": 0, "certificates": 0}, proven=0) == {}
+
+
+def test_root_bound_extra_leaves_the_gap_blank_at_zero_cost():
+    """No plan cost means no ratio to report -- blank, not a division."""
+    extra = _root_bound_extra(
+        {"measured_solves": 2, "root_lower_bound_sum": 0.0, "incumbent_cost_sum": 0.0},
+        proven=0,
+    )
+    assert extra["gap_pct"] == ""
+
+
+def test_run_one_carries_the_bound_summary_onto_the_row(monkeypatch):
+    """The summary has to survive `_compile` -> `_RunArtifacts` -> `BenchmarkRow`.
+
+    Regression test for a real break: the accumulator and the renderer were
+    both correct while `_run_one` dropped the dict between them, so the columns
+    silently never appeared. Nothing else asserts that hand-off.
+    """
+    runner = BenchmarkRunner()
+
+    class _FakeRegion:
+        def walk(self):
+            return ()
+
+    class _FakeMoveMethod:
+        callable_region = _FakeRegion()
+
+    def _fake_squin_to_move(*args, **kwargs):
+        strategy = kwargs["placement_strategy"]
+        strategy._bound_stats_total = {
+            "measured_solves": 2,
+            "root_lower_bound_sum": 8.0,
+            "incumbent_cost_sum": 10.0,
+            "certificates": 1,
+        }
+        strategy._rust_proven_total = 1
+        return _FakeMoveMethod()
+
+    monkeypatch.setattr("benchmarks.harness.runner._squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr(BenchmarkRunner, "_estimate_fidelity", lambda self, job: 1.0)
+    # Move counting needs a real interpreter run; it is not what this test is
+    # about, and a fake method has no dialects to interpret.
+    monkeypatch.setattr(
+        "benchmarks.harness.runner._count_moves", lambda mt, arch: (0, 0)
+    )
+
+    job = BenchmarkJob(
+        case=BenchmarkCase(
+            case_id="steane_physical_35", kernel=cast(ir.Method, object())
+        ),
+        strategy=StrategyConfig(
+            strategy_id="rust_entropy_bounded",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(),
+            ),
+        ),
+    )
+
+    row = runner._run_one(job)
+    assert row.success, row.notes
+    assert row.extra["h_root_sum"] == "8.000"
+    assert row.extra["cost_sum"] == "10.000"
+    assert row.extra["certificates"] == "1/2"
+    assert row.extra["proven_solves"] == 1

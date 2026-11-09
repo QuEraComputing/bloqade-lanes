@@ -82,6 +82,14 @@ def test_unannotated_kernel_unchanged():
 
     Captured against ``LogicalLayoutHeuristic`` + ``LogicalPlacementStrategyNoHome``
     on the gemini logical arch spec.
+
+    ``LocalRz`` dropped from 2 to 0 and ``Store`` from 9 to 7 (one Store per
+    deleted ``LocalRz`` statement) once ``EliminateRz`` started running in
+    ``LogicalNativeToPlace``: H's two ``Rz`` layers commute into the sole
+    ``LocalR`` between them and the terminal measurement's residual, instead
+    of surviving as their own statements. ``Constant`` is unchanged at 3: the
+    shifted axis folds to a literal that already appears in the block, and CSE
+    merges the two.
     """
 
     @gemini.logical.kernel(aggressive_unroll=True)
@@ -97,9 +105,16 @@ def test_unannotated_kernel_unchanged():
     for s in out.callable_region.walk():
         counts[type(s).__name__] = counts.get(type(s).__name__, 0) + 1
 
+    # `Constant` is 4 rather than 3 because `NormalizeGateAxisAngles` rewrites
+    # this kernel's `-0.25` axis angle to `0.75`, while `-0.25` is still needed
+    # as a *rotation* angle -- so the two roles stop sharing one constant. That
+    # is the rule costing a constant on a shallow kernel; it is worth it
+    # because the same rule takes a 40-layer kernel from 22 constants and 20
+    # distinct axis angles (up to 5.0 turns) down to 5 and 4. Nothing fuses
+    # differently here either way: 0.75 and 0.25 are distinct axes regardless.
     expected_counts = {
         "CZ": 1,
-        "Constant": 3,
+        "Constant": 4,
         "ConstantNone": 1,
         "ConvertToPhysicalMeasurements": 1,
         "EndMeasure": 1,
@@ -107,11 +122,10 @@ def test_unannotated_kernel_unchanged():
         "GetFutureResult": 2,
         "Load": 1,
         "LocalR": 3,
-        "LocalRz": 2,
         "LogicalInitialize": 1,
         "Move": 2,
         "Return": 1,
-        "Store": 9,
+        "Store": 7,
     }
     assert counts == expected_counts, (
         f"un-pinned kernel statement counts drifted:\n"

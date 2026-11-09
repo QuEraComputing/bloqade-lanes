@@ -11,6 +11,7 @@ from kirin.rewrite import abc
 from bloqade import qubit
 from bloqade.gemini.common.dialects import arrange as arrange_dialect
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
+from bloqade.gemini.logical.dialects.extensions import stmts as gemini_extension_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
@@ -190,7 +191,7 @@ class RewritePlaceOperations(abc.RewriteRule):
             (
                 gemini_stmts.TerminalLogicalMeasurement,
                 gemini_stmts.Initialize,
-                gemini_stmts.StarRz,
+                gemini_extension_stmts.StarRz,
                 gate.CZ,
                 gate.R,
                 gate.Rz,
@@ -348,7 +349,7 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         return abc.RewriteResult(has_done_something=True)
 
-    def rewrite_StarRz(self, node: gemini_stmts.StarRz) -> abc.RewriteResult:
+    def rewrite_StarRz(self, node: gemini_extension_stmts.StarRz) -> abc.RewriteResult:
         if not isinstance(args_list := node.qubits.owner, ilist.New):
             return abc.RewriteResult()
 

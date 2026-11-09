@@ -112,13 +112,6 @@ class _StackMoveEmit(MethodTable):
 
     # ── Stack manipulation ─────────────────────────────────────────────────
 
-    @impl(stack_move.Pop)
-    def pop(
-        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Pop
-    ) -> tuple:
-        emit.instructions.append(Instruction.pop())
-        return ()
-
     @impl(stack_move.Dup)
     def dup(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Dup
@@ -126,11 +119,20 @@ class _StackMoveEmit(MethodTable):
         emit.instructions.append(Instruction.dup())
         return ()
 
-    @impl(stack_move.Swap)
-    def swap(
-        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Swap
+    # ── Locals ─────────────────────────────────────────────────────────────
+
+    @impl(stack_move.StoreLocal)
+    def store_local(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.StoreLocal
     ) -> tuple:
-        emit.instructions.append(Instruction.swap())
+        emit.instructions.append(Instruction.store(stmt.value_type, stmt.index))
+        return ()
+
+    @impl(stack_move.LoadLocal)
+    def load_local(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.LoadLocal
+    ) -> tuple:
+        emit.instructions.append(Instruction.load(stmt.value_type, stmt.index))
         return ()
 
     # ── Atom operations ────────────────────────────────────────────────────

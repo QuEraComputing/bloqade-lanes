@@ -29,7 +29,7 @@ use std::marker::PhantomData;
 use crate::primitives::config::Config;
 use crate::primitives::lane_index::LaneIndex;
 use crate::primitives::weighted_distance::WeightedDistanceTable;
-use crate::traits::{Heuristic, Objective, ObjectiveId};
+use crate::traits::{Objective, ObjectiveId};
 
 /// Pruning statistics for one search episode.
 ///
@@ -161,20 +161,6 @@ pub trait CompletionBound: Sync {
 
     /// Lower bound on remaining cost. [`f64::INFINITY`] means infeasible.
     fn estimate(&self, config: &Config) -> f64;
-
-    /// View this bound as a plain [`Heuristic`], for the frontier drivers.
-    ///
-    /// The returned closure is `Copy`, which the `Heuristic + Copy` call sites
-    /// in strategy dispatch require. Note that passing a bound here *loses* the
-    /// objective pairing — the frontier's `f = g + weight * h` may scale it for
-    /// ordering. That is sound for weighted A\* (bounded suboptimal) but must
-    /// never feed an incumbent prune.
-    fn as_heuristic(&self) -> impl Heuristic + Copy + '_
-    where
-        Self: Sized,
-    {
-        move |config: &Config| self.estimate(config)
-    }
 }
 
 /// The trivial bound: `h ≡ 0`, equivalent to no bounding at all.
@@ -205,65 +191,6 @@ impl<O: Objective> CompletionBound for NoBound<O> {
 
     fn estimate(&self, _config: &Config) -> f64 {
         0.0
-    }
-}
-
-/// Combine two bounds by taking the larger estimate.
-///
-/// The max of two admissible bounds is admissible — each is individually a
-/// floor on the same quantity — and is at least as tight as either. This is how
-/// later bounds (a zone-bus cut bound, a per-triplet phase decomposition) get
-/// added without any driver change.
-///
-/// Fields are private and construction goes through [`MaxBound::new`]: public
-/// tuple fields would let a caller skip the objective-instance check and
-/// reintroduce, one level up, exactly the mismatch this module exists to
-/// prevent. The type parameters guarantee the two bounds name the same
-/// objective *type*; only the check in `new` covers the *instance*.
-pub struct MaxBound<A, B> {
-    a: A,
-    b: B,
-}
-
-impl<A, B> MaxBound<A, B>
-where
-    A: CompletionBound,
-    B: CompletionBound<Obj = A::Obj>,
-{
-    /// # Panics
-    ///
-    /// If the two bounds were built against different objective instances.
-    pub fn new(a: A, b: B) -> Self {
-        assert_eq!(
-            a.objective_id(),
-            b.objective_id(),
-            "composed bounds must target the same objective instance"
-        );
-        Self { a, b }
-    }
-}
-
-impl<A, B> CompletionBound for MaxBound<A, B>
-where
-    A: CompletionBound,
-    B: CompletionBound<Obj = A::Obj>,
-{
-    type Obj = A::Obj;
-
-    /// Trivial only when *both* children are: `max(0, 0) == 0` is still no
-    /// bound, but `max(h, 0) == h` is. Without this override the trait default
-    /// (`false`) would make a composition of two [`NoBound`]s report itself as
-    /// a real bound, so the driver would set `bound_enabled` and offer
-    /// `root_lower_bound = 0.0` as a measurement.
-    const TRIVIAL: bool = A::TRIVIAL && B::TRIVIAL;
-
-    fn objective_id(&self) -> ObjectiveId {
-        // Equal to `b`'s by the assert in `new`.
-        self.a.objective_id()
-    }
-
-    fn estimate(&self, config: &Config) -> f64 {
-        self.a.estimate(config).max(self.b.estimate(config))
     }
 }
 
@@ -385,7 +312,7 @@ fn slack(magnitude: f64) -> f64 {
     magnitude.abs().max(1.0) * 1e-12
 }
 
-/// Assert the [`Objective`] contract (C2, C3, C4) for every lane and a
+/// Assert the [`Objective`] contract (C2, C3, C4, C5) for every lane and a
 /// selection of multi-lane shots on `index`.
 ///
 /// These are the properties a weighted-distance bound's admissibility rests on,
@@ -433,12 +360,69 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
                 cost >= min_shot - slack(min_shot),
                 "C4: shot cost {cost} is below min_shot_cost {min_shot} for {shot:?}"
             );
-            for lane in shot.decode() {
+            let decoded = shot.decode();
+            for &lane in &decoded {
                 let w = objective.lane_weight(lane);
                 assert!(
                     cost >= w - slack(w),
                     "C3: shot cost {cost} is below lane weight {w} for {lane:?}"
                 );
+            }
+            // C5: dropping any one lane from a multi-lane shot must not raise
+            // its cost, at equal movers.
+            //
+            // Checked twice, because `edge_cost` is handed both configurations
+            // and may inspect them. With the empty configuration every lane is
+            // a filler and "same movers" holds trivially — but an objective
+            // that discounts added lanes *only when a real atom moves* would
+            // satisfy that and still violate C5 on every shot the generators
+            // actually produce, which would silently make the exhaustive
+            // generator's mover-tight deduplication lossy. So the second pass
+            // puts an atom on the first lane's source and drops only the
+            // others, whose sources stay empty: the mover set is identical
+            // across both shots, which is exactly the condition C5 is stated
+            // under.
+            if decoded.len() > 1 {
+                for (i, dropped) in decoded.iter().enumerate() {
+                    let without = MoveSet::new(
+                        decoded
+                            .iter()
+                            .enumerate()
+                            .filter(|&(j, _)| j != i)
+                            .map(|(_, &l)| l),
+                    );
+                    let cost_without = objective.edge_cost(&without, &config, &config);
+                    assert!(
+                        cost_without <= cost + slack(cost),
+                        "C5: dropping filler lane {dropped:?} from {shot:?} raised the shot cost \
+                         from {cost} to {cost_without}; adding a lane must never make a shot cheaper"
+                    );
+                }
+
+                // Sources within a bus group are unique, so only lane 0's
+                // source is occupied and every other lane is still a filler.
+                if let Some((src, dst)) = index.endpoints(&decoded[0]) {
+                    let from = Config::new([(0u32, src)]).expect("one atom is a valid config");
+                    let to = Config::new([(0u32, dst)]).expect("one atom is a valid config");
+                    let moved = objective.edge_cost(shot, &from, &to);
+                    for (i, dropped) in decoded.iter().enumerate().skip(1) {
+                        let without = MoveSet::new(
+                            decoded
+                                .iter()
+                                .enumerate()
+                                .filter(|&(j, _)| j != i)
+                                .map(|(_, &l)| l),
+                        );
+                        let cost_without = objective.edge_cost(&without, &from, &to);
+                        assert!(
+                            cost_without <= moved + slack(moved),
+                            "C5: with an atom moving on {:?}, dropping filler lane {dropped:?} \
+                             from {shot:?} raised the shot cost from {moved} to {cost_without}; \
+                             adding a lane must never make a shot cheaper",
+                            decoded[0]
+                        );
+                    }
+                }
             }
             checked += 1;
         }
@@ -453,8 +437,10 @@ pub fn assert_objective_contract(objective: &impl Objective, index: &LaneIndex) 
 mod tests {
     use super::*;
     use crate::cost::{UniformCost, WeightedDuration};
+    use crate::primitives::graph::MoveSet;
     use crate::test_utils::{example_arch_json, loc};
-    use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+    use crate::traits::CostFn;
+    use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     /// A no-solution `BoundStats` must equal itself.
@@ -511,6 +497,108 @@ mod tests {
         for tau in [0.5, 1.0, 10.0, 1000.0] {
             assert_objective_contract(&WeightedDuration::new(&index, tau), &index);
         }
+    }
+
+    /// An objective that rebates a shot for the lanes it carries: a shot costs
+    /// `1 + 0.5 / len`, so *adding* a filler lane makes it cheaper. C2, C3 and
+    /// C4 all hold (every shot costs at least `1.0`, which is both the lane
+    /// weight and the shot floor), so the only constraint it breaks is C5.
+    struct FillerDiscount;
+
+    impl CostFn for FillerDiscount {
+        fn edge_cost(&self, move_set: &MoveSet, _from: &Config, _to: &Config) -> f64 {
+            1.0 + 0.5 / move_set.len().max(1) as f64
+        }
+    }
+
+    impl Objective for FillerDiscount {
+        fn lane_weight(&self, _lane: LaneAddr) -> f64 {
+            1.0
+        }
+        fn min_shot_cost(&self) -> f64 {
+            1.0
+        }
+        fn id(&self) -> ObjectiveId {
+            ObjectiveId {
+                kind: "test-filler-discount",
+                params: 0,
+            }
+        }
+    }
+
+    /// The contract check must catch a lane-set *non*-monotone objective and
+    /// name C5, so that a reviewer reading the panic knows which of the five
+    /// constraints failed rather than which lane happened to trip it.
+    #[test]
+    fn a_filler_discounting_objective_fails_c5_by_name() {
+        let index = make_index();
+        let outcome =
+            std::panic::catch_unwind(|| assert_objective_contract(&FillerDiscount, &index));
+        let payload = outcome.expect_err("FillerDiscount must violate the contract");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("panic payload is a message");
+        assert!(
+            message.starts_with("C5:"),
+            "expected the C5 assertion to fire first, got: {message}"
+        );
+    }
+
+    /// An objective that is lane-set monotone on an *empty* configuration and
+    /// non-monotone as soon as an atom really moves.
+    ///
+    /// This is the hole the review found: `edge_cost` is handed both
+    /// configurations and may inspect them, so a check that only ever passes
+    /// the empty one certifies nothing about the shots the generators actually
+    /// produce. C5 is what makes the exhaustive generator's mover-tight
+    /// deduplication sound, so a violation it cannot see would quietly make
+    /// that deduplication lossy.
+    struct MoverOnlyDiscount;
+
+    impl CostFn for MoverOnlyDiscount {
+        fn edge_cost(&self, move_set: &MoveSet, from: &Config, to: &Config) -> f64 {
+            // Indistinguishable from `UniformCost` while nothing moves.
+            if from == to {
+                return 1.0;
+            }
+            1.0 + 0.5 / move_set.len().max(1) as f64
+        }
+    }
+
+    impl Objective for MoverOnlyDiscount {
+        fn lane_weight(&self, _lane: LaneAddr) -> f64 {
+            1.0
+        }
+        fn min_shot_cost(&self) -> f64 {
+            1.0
+        }
+        fn id(&self) -> ObjectiveId {
+            ObjectiveId {
+                kind: "test-mover-only-discount",
+                params: 0,
+            }
+        }
+    }
+
+    /// The contract check must exercise a real mover, not just the empty
+    /// configuration, or an objective like this one passes it.
+    #[test]
+    fn a_discount_that_needs_a_mover_still_fails_c5() {
+        let index = make_index();
+        let outcome =
+            std::panic::catch_unwind(|| assert_objective_contract(&MoverOnlyDiscount, &index));
+        let payload = outcome.expect_err("MoverOnlyDiscount must violate the contract");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("panic payload is a message");
+        assert!(
+            message.starts_with("C5:") && message.contains("with an atom moving on"),
+            "expected the mover-configuration C5 assertion, got: {message}"
+        );
     }
 
     // ── h0 ──
@@ -632,67 +720,6 @@ mod tests {
         );
     }
 
-    // ── Composition ──
-
-    #[test]
-    fn max_bound_takes_the_larger_estimate() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let blocked = HashSet::new();
-        let config = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let real = bound_for(&targets, &index, &blocked);
-        let real_estimate = real.estimate(&config);
-        let composed = MaxBound::new(real, NoBound::<UniformCost>::for_objective(&UniformCost));
-
-        assert_eq!(composed.estimate(&config), real_estimate);
-        assert_eq!(composed.objective_id(), UniformCost.id());
-    }
-
-    #[test]
-    fn max_bound_composes_recursively() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let blocked = HashSet::new();
-        let config = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let expected = bound_for(&targets, &index, &blocked).estimate(&config);
-        let composed = MaxBound::new(
-            MaxBound::new(
-                bound_for(&targets, &index, &blocked),
-                NoBound::<UniformCost>::for_objective(&UniformCost),
-            ),
-            bound_for(&targets, &index, &blocked),
-        );
-        assert_eq!(composed.estimate(&config), expected);
-    }
-
-    /// Two bounds of the same type built against *different instances* of the
-    /// same objective family must not compose. The type system cannot catch
-    /// this — both are `WeightedDistanceBound<WeightedDuration>` — so the
-    /// construction-time check is the only guard.
-    #[test]
-    #[should_panic(expected = "same objective instance")]
-    fn max_bound_rejects_mismatched_objective_instances() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let blocked = HashSet::new();
-
-        let a = WeightedDistanceBound::new(
-            &WeightedDuration::new(&index, 1.0),
-            &targets,
-            &index,
-            &blocked,
-        );
-        let b = WeightedDistanceBound::new(
-            &WeightedDuration::new(&index, 10.0),
-            &targets,
-            &index,
-            &blocked,
-        );
-        let _ = MaxBound::new(a, b);
-    }
-
     // Compile-time, not runtime: a driver monomorphizes its bound test on
     // `TRIVIAL`, so "bounding disabled" must compile to the same code as no
     // bounding at all. If these ever became runtime-only facts, the flag-off
@@ -741,7 +768,7 @@ mod tests {
         budget: u32,
     ) -> Option<f64> {
         use crate::drivers::frontier::{self, BfsFrontier};
-        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::generators::exhaustive::{ExhaustiveGenerator, SeedPolicy};
         use crate::goals::AllAtTarget;
         use crate::observer::NoOpObserver;
         use crate::primitives::context::{SearchContext, SearchState};
@@ -761,7 +788,7 @@ mod tests {
         let mut frontier = BfsFrontier::new();
         let result = frontier::run_search(
             Config::new(initial.iter().copied()).unwrap(),
-            &ExhaustiveGenerator::new(None, None),
+            &ExhaustiveGenerator::for_solve(&ctx, SeedPolicy::Any, None).unwrap(),
             &DistanceScorer,
             &UniformCost,
             &goal,
@@ -982,23 +1009,5 @@ mod tests {
             "only {verified} randomized instances were verified \
              ({skipped_budget} skipped on budget); the test is not exercising the bound"
         );
-    }
-
-    // ── Frontier interop ──
-
-    /// The same bound object is consumable by the frontier drivers through the
-    /// plain `Heuristic` trait, and the adapter is `Copy` as those call sites
-    /// require.
-    #[test]
-    fn as_heuristic_matches_estimate_and_is_copy() {
-        let index = make_index();
-        let targets = [(0u32, loc(1, 0).encode())];
-        let bound = bound_for(&targets, &index, &HashSet::new());
-        let config = Config::new([(0, loc(0, 0))]).unwrap();
-
-        let h = bound.as_heuristic();
-        let h_copy = h; // requires Copy
-        assert_eq!(h.estimate(&config), bound.estimate(&config));
-        assert_eq!(h_copy.estimate(&config), bound.estimate(&config));
     }
 }

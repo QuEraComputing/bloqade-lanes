@@ -35,8 +35,14 @@ test-util = []
 
 [dev-dependencies]
 assert_cmd = "2"
+divan = "0.1.21"
 tempfile = "3"
 
 [[bench]]
 name = "entropy"
+harness = false
+
+# Local A/B timing over the behaviour-net corpus (tests/behaviour/).
+[[bench]]
+name = "behaviour"
 harness = false

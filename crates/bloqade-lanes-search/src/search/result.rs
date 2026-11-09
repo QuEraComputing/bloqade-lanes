@@ -5,6 +5,7 @@
 
 use crate::bounds::BoundStats;
 use crate::drivers::entropy::EntropyTrace;
+use crate::drivers::result::Termination;
 use crate::primitives::config::Config;
 use crate::primitives::graph::MoveSet;
 
@@ -30,22 +31,14 @@ pub enum SolveStatus {
     /// solves. Callers that branch on this status (fallback logic, feasibility
     /// conclusions, optimality baselines) should treat it as "this search found
     /// nothing" rather than "nothing exists"; for a genuine verdict use the
-    /// feasibility oracle or Push and Rotate.
+    /// feasibility oracle or Push and Rotate. The branch-and-bound driver with
+    /// a complete schedule is the other proof-bearing case: it sets
+    /// [`SolveResult::proven`], which is the flag to read rather than the
+    /// status.
     Unsolvable,
     /// The expansion budget was exhausted before finding a solution or
     /// exhausting the space.
     BudgetExceeded,
-}
-
-impl SolveStatus {
-    /// Stable string label for status reporting (PyO3 wrappers, logs).
-    pub fn as_label(&self) -> &'static str {
-        match self {
-            Self::Solved => "solved",
-            Self::Unsolvable => "unsolvable",
-            Self::BudgetExceeded => "budget_exceeded",
-        }
-    }
 }
 
 /// Result of a solve attempt.
@@ -64,6 +57,13 @@ pub struct SolveResult {
     pub goal_config: Config,
     /// Number of nodes expanded during search.
     pub nodes_expanded: u32,
+    /// Number of nodes the search generated: the size of its search graph.
+    ///
+    /// Summed across every search behind the result wherever
+    /// [`nodes_expanded`](Self::nodes_expanded) is, so the two describe the
+    /// same work. Where `nodes_expanded` measures time, this measures memory.
+    /// Zero for Push and Rotate, which is not a search.
+    pub nodes_generated: u32,
     /// Total path cost. 0.0 when `status` is not `Solved`.
     pub cost: f64,
     /// Number of nodes at which the generator had nothing useful to offer.
@@ -85,12 +85,63 @@ pub struct SolveResult {
     ///
     /// Counters stay zero unless a completion bound was enabled; check
     /// [`BoundStats::bound_enabled`] for that, since `incumbent_cost` is
-    /// populated either way. The Python surface reports an unbounded run as an
-    /// *empty* dict rather than zeros.
+    /// populated either way. The Python surface reports an unbounded run as
+    /// `None` rather than zeros.
     pub bound_stats: BoundStats,
+    /// How the search that produced this result ended.
+    pub termination: Termination,
+    /// On a failed point-goal search, the furthest it got: see [`PartialPlan`].
+    ///
+    /// `None` when the search solved, when its goal is set-valued (a loose
+    /// goal has no single target to measure progress against), and on results
+    /// that compose several searches from different starting points (a
+    /// placement's phases, a mirrored search, Push and Rotate). Every `Some`
+    /// is a prefix from this result's own root, so a caller can resume from
+    /// it.
+    pub best_partial: Option<PartialPlan>,
+}
+
+/// The furthest a failed point-goal search got.
+///
+/// Of every configuration the search reached, the one with the fewest atoms
+/// off their targets; ties go to the cheaper prefix, then to the node reached
+/// first. Measured by atoms rather than by a distance bound, which can be zero
+/// at a configuration that is not the goal.
+#[derive(Debug, Clone)]
+pub struct PartialPlan {
+    /// The configuration reached.
+    pub config: Config,
+    /// The move layers from the search's root to `config`.
+    pub layers: Vec<MoveSet>,
+    /// Atoms not on their targets at `config`.
+    pub unresolved: u32,
 }
 
 impl SolveResult {
+    /// Whether the verdict is a proof: when `Solved`, the plan is optimal;
+    /// when `Unsolvable`, no plan exists.
+    ///
+    /// Derived from [`termination`](Self::termination): exactly
+    /// `matches!(termination, Termination::Exhausted { proof: true })`, and
+    /// `false` on every other path. Two things set it, neither of which
+    /// needs an exhaustive walk of the space:
+    ///
+    /// * the **root certificate** — the incumbent's cost has reached
+    ///   `h(root)`, which lower-bounds every legal plan because it depends
+    ///   only on the configuration and not on which candidates a generator
+    ///   proposed, so no plan is cheaper;
+    /// * **Push and Rotate's** `Unsolvable`, which is its completeness
+    ///   theorem rather than a drained frontier — see [`solve_push_rotate`].
+    ///
+    /// A search driver that merely runs out of frontier reports `Unsolvable`
+    /// with `proven` false: that says the heuristic gave up, not that the
+    /// hardware cannot do it.
+    ///
+    /// [`solve_push_rotate`]: crate::push_rotate::solver::solve_push_rotate
+    pub fn proven(&self) -> bool {
+        matches!(self.termination, Termination::Exhausted { proof: true })
+    }
+
     /// Construct a [`SolveStatus::Solved`] result with the given path and counters.
     pub fn solved(
         goal_config: Config,
@@ -104,10 +155,13 @@ impl SolveResult {
             move_layers,
             goal_config,
             nodes_expanded,
+            nodes_generated: 0,
             cost,
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
+            termination: Termination::Stopped,
+            best_partial: None,
         }
     }
 
@@ -129,10 +183,16 @@ impl SolveResult {
             move_layers: Vec::new(),
             goal_config: root_config,
             nodes_expanded,
+            nodes_generated: 0,
             cost: 0.0,
             deadlocks,
             entropy_trace: None,
             bound_stats: BoundStats::default(),
+            termination: match status {
+                SolveStatus::BudgetExceeded => Termination::Budget,
+                _ => Termination::Exhausted { proof: false },
+            },
+            best_partial: None,
         }
     }
 
@@ -141,38 +201,22 @@ impl SolveResult {
     pub fn unsolvable(root_config: Config) -> Self {
         Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
     }
-}
 
-// ── Multi-candidate solve ──
-
-/// Per-candidate debug info recorded during a multi-candidate solve
-/// (see [`SingleHeuristicCzPlacement::solve_with_attempts`](crate::placement::single_heuristic::SingleHeuristicCzPlacement::solve_with_attempts)).
-#[derive(Debug, Clone)]
-pub struct CandidateAttempt {
-    /// Index of this candidate in the generator's output.
-    pub candidate_index: usize,
-    /// Outcome status of the solve attempt for this candidate.
-    pub status: SolveStatus,
-    /// Number of nodes expanded for this candidate.
-    pub nodes_expanded: u32,
-}
-
-/// Result of a multi-candidate solve attempt.
-///
-/// Surfaced through
-/// [`SingleHeuristicCzPlacement::solve_with_attempts`](crate::placement::single_heuristic::SingleHeuristicCzPlacement::solve_with_attempts).
-#[derive(Debug)]
-pub struct MultiSolveResult {
-    /// The solve result from the winning candidate (or the last attempted).
-    pub result: SolveResult,
-    /// Index of the candidate that succeeded (`None` if all failed).
-    pub candidate_index: Option<usize>,
-    /// Total nodes expanded across all candidates.
-    pub total_expansions: u32,
-    /// Number of candidates actually attempted (excludes validation failures).
-    pub candidates_tried: usize,
-    /// Per-candidate attempt details for debugging.
-    pub attempts: Vec<CandidateAttempt>,
+    /// [`SolveStatus::Unsolvable`] as a **proof**: no plan exists, and the
+    /// producer knows it rather than having merely run out of frontier.
+    ///
+    /// [`Self::unsolved`] infers `Exhausted { proof: false }` from the status,
+    /// which is what a search driver wants — its `Unsolvable` says the
+    /// heuristic gave up. A complete method needs the opposite, and every one
+    /// of its proof-bearing exits must agree, or [`proven`](Self::proven) becomes a property
+    /// of which internal path happened to fire. Hence one constructor rather
+    /// than a flag set at each site.
+    pub fn proven_unsolvable(root_config: Config) -> Self {
+        Self {
+            termination: Termination::Exhausted { proof: true },
+            ..Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -188,6 +232,28 @@ mod tests {
     use crate::search::target_solver::solve_with_engine;
     use crate::test_utils::{example_arch_json, loc};
 
+    /// `proven` is documented as exactly `Exhausted { proof: true }`, and the
+    /// two unsolvable constructors sit on opposite sides of that line: a
+    /// search driver's drained frontier proves nothing, a complete method's
+    /// verdict proves everything.
+    #[test]
+    fn the_two_unsolvable_constructors_differ_only_in_the_proof() {
+        let root = Config::new([(0, loc(0, 0))]).expect("config");
+        let drained = SolveResult::unsolvable(root.clone());
+        let proved = SolveResult::proven_unsolvable(root);
+
+        assert_eq!(drained.status, proved.status);
+        assert!(!drained.proven());
+        assert_eq!(drained.termination, Termination::Exhausted { proof: false });
+        assert!(proved.proven());
+        assert_eq!(proved.termination, Termination::Exhausted { proof: true });
+        for result in [&drained, &proved] {
+            assert_eq!(
+                result.proven(),
+                matches!(result.termination, Termination::Exhausted { proof: true })
+            );
+        }
+    }
     /// Default test options: A*.
     fn default_opts() -> SolveOptions {
         SolveOptions::default()
@@ -454,16 +520,15 @@ mod tests {
             None,
             &DefaultTargetGenerator,
             [(0, loc(0, 0)), (1, loc(1, 0))],
-            &[0],
-            &[1],
+            &[(0, 1)],
             std::iter::empty(),
             Some(1000),
         )
         .unwrap();
 
         assert_eq!(result.result.status, SolveStatus::Solved);
-        assert_eq!(result.candidate_index, Some(0));
-        assert_eq!(result.candidates_tried, 1);
+        assert_eq!(result.chosen, Some(0));
+        assert_eq!(result.candidates_tried(), 1);
         assert_eq!(result.attempts.len(), 1);
     }
 
@@ -477,16 +542,15 @@ mod tests {
             None,
             &DefaultTargetGenerator,
             [(0, loc(0, 0))],
-            &[0],
-            &[1],
+            &[(0, 1)],
             std::iter::empty(),
             Some(1000),
         )
         .unwrap();
 
         assert_eq!(result.result.status, SolveStatus::Unsolvable);
-        assert_eq!(result.candidate_index, None);
-        assert_eq!(result.candidates_tried, 0);
+        assert_eq!(result.chosen, None);
+        assert_eq!(result.candidates_tried(), 0);
         assert!(result.attempts.is_empty());
     }
 
@@ -498,6 +562,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
@@ -509,9 +574,10 @@ mod tests {
 
         assert_eq!(result.status, SolveStatus::Solved);
         // Verify goal config satisfies the entangling constraint.
-        let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
-            serde_json::from_str(example_arch_json()).unwrap();
-        let eset = crate::ops::entangling::build_entangling_set(&arch);
+        let index = crate::primitives::lane_index::LaneIndex::new(
+            serde_json::from_str(example_arch_json()).unwrap(),
+        );
+        let eset = crate::ops::entangling::build_entangling_set(&index);
         let loc_a = result.goal_config.location_of(0).unwrap().encode();
         let loc_b = result.goal_config.location_of(1).unwrap().encode();
         assert!(
@@ -527,6 +593,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 5)), (1, loc(1, 5))],
             &[(0, 1)],
@@ -547,6 +614,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [
                 (0, loc(0, 0)),
@@ -563,9 +631,10 @@ mod tests {
 
         assert_eq!(result.status, SolveStatus::Solved);
         // Verify both pairs satisfy the constraint.
-        let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
-            serde_json::from_str(example_arch_json()).unwrap();
-        let eset = crate::ops::entangling::build_entangling_set(&arch);
+        let index = crate::primitives::lane_index::LaneIndex::new(
+            serde_json::from_str(example_arch_json()).unwrap(),
+        );
+        let eset = crate::ops::entangling::build_entangling_set(&index);
         for &(qa, qb) in &[(0u32, 1u32), (2, 3)] {
             let la = result.goal_config.location_of(qa).unwrap().encode();
             let lb = result.goal_config.location_of(qb).unwrap().encode();
@@ -583,6 +652,7 @@ mod tests {
         let result = solve_loose_goal(
             &engine,
             &default_opts(),
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 3))],
             &[(0, 1)],
@@ -606,6 +676,7 @@ mod tests {
                 strategy: Strategy::Ids,
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],
@@ -629,6 +700,7 @@ mod tests {
                 },
                 ..SolveOptions::default()
             },
+            None,
             &EntanglingOptions::default(),
             [(0, loc(0, 0)), (1, loc(1, 0))],
             &[(0, 1)],

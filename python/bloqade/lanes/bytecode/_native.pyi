@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Optional, final
+from typing import Literal, Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -700,6 +700,10 @@ class ArchSpec:
             indicates the radius associated with the architecture and is typically
             used to interpret entangling pairs. It is metadata; this constructor
             does not itself verify that the pairs match the radius. Default = None.
+        aod_capacity (Optional[tuple[int, int]]): The largest AOD rectangle one shot
+            may drive, as ``(x, y)`` tone counts: at most ``x`` distinct source
+            columns and ``y`` distinct source rows. Both must be at least 1.
+            Default = None, meaning unlimited.
     """
 
     def __init__(
@@ -713,6 +717,7 @@ class ArchSpec:
         feed_forward: bool = False,
         atom_reloading: bool = False,
         blockade_radius: Optional[float] = None,
+        aod_capacity: Optional[tuple[int, int]] = None,
     ) -> None: ...
     @staticmethod
     def from_json(json: str) -> ArchSpec:
@@ -817,6 +822,12 @@ class ArchSpec:
         ...
 
     @property
+    def aod_capacity(self) -> Optional[tuple[int, int]]:
+        """The largest AOD rectangle one shot may drive, as ``(x, y)`` tone
+        counts, or None if unlimited."""
+        ...
+
+    @property
     def paths(self) -> Optional[list[TransportPath]]:
         """Transport paths between locations, or None."""
         ...
@@ -909,14 +920,33 @@ class ArchSpec:
         ...
 
     def word_zone_map(self) -> dict[int, int]:
-        """Map each word_id to the zone_id that owns it.
+        """Map each word_id to a preferred zone_id.
 
-        Derived from each zone's ``entangling_pairs``, ``word_buses``,
-        and ``words_with_site_buses``. Words not referenced by any zone
-        default to zone 0.
+        Not ownership: the word template is spec-wide, so every word exists
+        in every zone and a ``LocationAddress`` carries its zone explicitly.
+        This is the first zone whose ``entangling_pairs``, ``word_buses`` or
+        ``words_with_site_buses`` reference the word, else zone 0.
 
         Returns:
             dict[int, int]: word_id → zone_id.
+        """
+        ...
+
+    def home_locations(self) -> list[LocationAddress]:
+        """Every home (non-staging) location, sorted by (zone, word, site).
+
+        One entry per site of each word in each zone, except where the word
+        is a staging word of that zone's entangling pairs.
+        """
+        ...
+
+    def is_home_position(self, loc: LocationAddress) -> bool:
+        """Whether ``loc`` is a home (non-staging) position.
+
+        True when the location's word is not the upper, staging word of an
+        entangling pair in the location's own zone. A zone with no
+        entangling pairs has no staging positions. False for an
+        out-of-range zone or word.
         """
         ...
 
@@ -1051,6 +1081,7 @@ class SolveOptions:
         top_c: int | None = None,
         fallback_push_rotate: bool = False,
         backwards_search: bool = False,
+        cascade_bound: bool = True,
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
@@ -1068,6 +1099,13 @@ class SolveOptions:
     def fallback_push_rotate(self) -> bool: ...
     @property
     def backwards_search(self) -> bool: ...
+    @property
+    def cascade_bound(self) -> bool:
+        """Whether a cascade's A* refinement is gated by the completion bound:
+        a child whose ``g + h`` reaches the inner plan's cost is dropped before
+        it takes a node. Point goals only. On by default."""
+        ...
+
     def __repr__(self) -> str: ...
 
 @final
@@ -1129,6 +1167,28 @@ class EntanglingOptions:
     def __repr__(self) -> str: ...
 
 @final
+class MoverSelection:
+    """How NoHome's CZ phase chooses, for each pair, which qubit moves.
+
+    ``RULE`` applies a fixed per-pair rule. ``RANKED`` (the default) plans every
+    candidate with Push and Rotate, routes the one with the shortest plan and
+    the rule's, and keeps whichever takes fewer layers, so it is never worse
+    than ``RULE``; when the rule's candidate does not route, the ranked
+    candidates are routed in order until one does. ``ROUTE_ALL`` routes every
+    candidate and keeps the one with the fewest move layers.
+    """
+
+    RULE: MoverSelection
+    RANKED: MoverSelection
+    ROUTE_ALL: MoverSelection
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __int__(self) -> int: ...
+
+@final
 class NoHomeOptions:
     """Tuning parameters for the no-home return assignment."""
 
@@ -1139,6 +1199,8 @@ class NoHomeOptions:
         k_candidates: int = 8,
         top_bus_signatures: int = 6,
         bus_reward_rho: int = 1,
+        mover_selection: MoverSelection | None = None,
+        max_mover_candidates: int = 64,
     ) -> None: ...
     @property
     def gamma(self) -> float: ...
@@ -1150,6 +1212,10 @@ class NoHomeOptions:
     def top_bus_signatures(self) -> int: ...
     @property
     def bus_reward_rho(self) -> int: ...
+    @property
+    def mover_selection(self) -> MoverSelection: ...
+    @property
+    def max_mover_candidates(self) -> int: ...
     def __repr__(self) -> str: ...
 
 @final
@@ -1197,31 +1263,120 @@ class RecedingHorizonOptions:
     def __repr__(self) -> str: ...
 
 @final
+class SolveStatus:
+    """How a solve ended.
+
+    Compare with members (``result.status == SolveStatus.SOLVED``); comparing
+    with a string raises ``TypeError``, since the string labels were retired.
+    ``UNSOLVABLE`` is a proof only when the result's ``proof`` is
+    ``Proof.NO_PLAN``.
+    """
+
+    SOLVED: SolveStatus
+    UNSOLVABLE: SolveStatus
+    BUDGET_EXCEEDED: SolveStatus
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class Termination:
+    """How the search behind a result ended, as the driver's own account.
+
+    ``BUDGET`` ran out of expansions; ``STOPPED`` ended on a rule of its own,
+    such as collecting its goal quota; ``EXHAUSTED`` drained its space. Whether
+    that is a proof is the result's ``proof``. Comparing with a string raises
+    ``TypeError``.
+    """
+
+    BUDGET: Termination
+    EXHAUSTED: Termination
+    STOPPED: Termination
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class Proof:
+    """What a result proves: ``OPTIMAL`` (no legal plan is cheaper) or
+    ``NO_PLAN`` (no plan exists). Comparing with a string raises ``TypeError``.
+    """
+
+    OPTIMAL: Proof
+    NO_PLAN: Proof
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class BoundStats:
+    """Branch-and-bound pruning statistics from one solve."""
+
+    @property
+    def cuts_by_g(self) -> int:
+        """Cuts the accumulated cost alone could make."""
+        ...
+
+    @property
+    def cuts_by_h(self) -> int:
+        """Cuts only the bound could make."""
+        ...
+
+    @property
+    def cuts_infeasible(self) -> int:
+        """Branches cut because the bound proved them infeasible."""
+        ...
+
+    @property
+    def cut_depth_sum(self) -> int:
+        """Sum of the depths at which the bound cut."""
+        ...
+
+    @property
+    def cut_depth_g_only_sum(self) -> int:
+        """Sum of the depths at which the cost alone would have cut."""
+        ...
+
+    @property
+    def root_lower_bound(self) -> float:
+        """A certified lower bound on the instance optimum."""
+        ...
+
+    @property
+    def incumbent_cost(self) -> float | None:
+        """Cost of the best plan found, or None if none was."""
+        ...
+
+    @property
+    def optimality_gap(self) -> float | None:
+        """``(incumbent - root_lower_bound) / incumbent``, or None when unsolved."""
+        ...
+
+@final
 class SolveResult:
     """Result of a move synthesis solve.
 
-    Returned by ``TargetSolver.solve()`` and the ``CzPlacement.solve*()``
-    placement methods (``LooseGoalCzPlacement``, ``NoHomeCzPlacement``,
-    ``RecedingHorizonCzPlacement``). Check ``status`` to determine whether a
+    Returned by ``TargetSolver.solve()``, and as ``PlacementResult.result`` by
+    the placements' ``place()``. Check ``status`` to determine whether a
     solution was found.
     """
 
     @property
-    def status(self) -> str:
-        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
-
-        ``"unsolvable"`` is a proof only from the ``push_rotate`` strategy. From
-        a search strategy it means the search exhausted the moves its generator
-        offered — which is deliberately less than the architecture allows — not
-        that no solution exists.
-        """
+    def status(self) -> SolveStatus:
+        """How the solve ended; see ``SolveStatus``."""
         ...
 
     @property
     def move_layers(self) -> list[list[LaneAddress]]:
         """Move layers as lists of LaneAddress objects.
 
-        Empty when ``status`` is not ``"solved"``.
+        Empty when ``status`` is not ``SolveStatus.SOLVED``.
         """
         ...
 
@@ -1229,7 +1384,8 @@ class SolveResult:
     def goal_config(self) -> dict[int, LocationAddress]:
         """Goal configuration as qubit_id -> LocationAddress mapping.
 
-        Equals the initial configuration when ``status`` is not ``"solved"``.
+        Equals the initial configuration when ``status`` is not
+        ``SolveStatus.SOLVED``.
         """
         ...
 
@@ -1240,24 +1396,35 @@ class SolveResult:
 
     @property
     def cost(self) -> float:
-        """Total path cost. 0.0 when ``status`` is not ``"solved"``."""
+        """Total path cost. 0.0 when ``status`` is not ``SolveStatus.SOLVED``."""
         ...
 
     @property
-    def bound_stats(self) -> dict[str, float | None]:
-        """Branch-and-bound pruning statistics.
+    def bound_stats(self) -> Optional[BoundStats]:
+        """Branch-and-bound pruning statistics, or ``None`` when no bound ran:
+        an unbounded solve measured nothing. A bound runs when
+        ``EntropyOptions.completion_bound`` is set, or when a cascade
+        strategy's refinement is gated (``SolveOptions.cascade_bound``), which
+        needs no ``completion_bound``."""
+        ...
 
-        **Empty** unless ``EntropyOptions.completion_bound`` was set — an
-        unbounded solve measured nothing, and a zeroed dict would advertise a
-        ``root_lower_bound`` of 0.0 and an ``optimality_gap`` of 1.0 as if they
-        were measurements. Key-check rather than expecting zeros. Keys:
-        ``cuts_by_g`` (cuts accumulated cost alone could make), ``cuts_by_h``
-        (cuts only the bound could make), ``cuts_infeasible``,
-        ``cut_depth_sum`` / ``cut_depth_g_only_sum`` (the depth ratio measuring
-        how much earlier the bound cut), ``root_lower_bound`` (a certified
-        lower bound on the instance optimum), ``incumbent_cost``, and
-        ``optimality_gap`` (``None`` when unsolved).
+    @property
+    def proof(self) -> Optional[Proof]:
+        """What the result proves, or ``None``.
+
+        ``Proof.OPTIMAL``: the plan is optimal. On the entropy driver that is
+        the root certificate: the plan's cost reached ``h(root)``, a lower
+        bound on every legal plan, so none is cheaper -- including plans the
+        generator would never have proposed. ``Proof.NO_PLAN``: no plan exists.
+
+        ``None`` is not "suboptimal" or "solvable", it is "unproven": most
+        solves end on their expansion budget.
         """
+        ...
+
+    @property
+    def termination(self) -> Termination:
+        """How the search ended; see ``Termination``."""
         ...
 
     @property
@@ -1416,57 +1583,65 @@ class DefaultTargetGenerator:
     def __repr__(self) -> str: ...
 
 @final
-class MultiSolveResult:
-    """Result of a multi-candidate solve via ``SingleHeuristicCzPlacement.solve_with_attempts()``."""
+class CandidateAttempt:
+    """One candidate a placement tried, in order."""
 
     @property
-    def status(self) -> str:
-        """Status of the winning solve."""
+    def candidate_index(self) -> int:
+        """Index of the candidate in the order the placement generated them."""
         ...
 
     @property
-    def candidate_index(self) -> int | None:
-        """Index of the winning candidate, or None if all failed."""
+    def status(self) -> SolveStatus:
+        """How routing the candidate ended."""
+        ...
+
+    @property
+    def nodes_expanded(self) -> int:
+        """Nodes expanded routing it."""
+        ...
+
+    @property
+    def score(self) -> float | None:
+        """The score a candidate evaluator gave it, or None if nothing ranked
+        the candidates."""
+        ...
+
+@final
+class PlacementResult:
+    """The outcome of placing one CZ stage (``*CzPlacement.place``)."""
+
+    @property
+    def result(self) -> SolveResult:
+        """The routing result. On success its ``goal_config`` is the chosen
+        placement. On failure it is usually the stage's starting
+        configuration, but a placement that commits layers before failing
+        (``RecedingHorizonCzPlacement``) returns those layers and the
+        configuration they reach instead: read ``move_layers`` and
+        ``goal_config`` together."""
+        ...
+
+    @property
+    def chosen(self) -> int | None:
+        """Which candidate won, for placements that enumerate candidates; None
+        when none won or the placement does not enumerate them."""
+        ...
+
+    @property
+    def attempts(self) -> list[CandidateAttempt]:
+        """Every candidate tried, in order. Empty for placements that do not
+        enumerate candidates."""
         ...
 
     @property
     def total_expansions(self) -> int:
-        """Total nodes expanded across all candidates."""
+        """Expansions across every leg and candidate of the placement."""
         ...
 
     @property
     def candidates_tried(self) -> int:
-        """Number of candidates attempted."""
+        """Candidates actually routed (validation failures are not counted)."""
         ...
-
-    @property
-    def attempts(self) -> list[dict[str, object]]:
-        """Per-candidate attempt details."""
-        ...
-
-    @property
-    def move_layers(self) -> list[list[LaneAddress]]:
-        """Move layers from the winning candidate."""
-        ...
-
-    @property
-    def goal_config(self) -> dict[int, LocationAddress]:
-        """Goal configuration from the winning candidate."""
-        ...
-
-    @property
-    def cost(self) -> float:
-        """Path cost from the winning candidate."""
-        ...
-
-    @property
-    def deadlocks(self) -> int:
-        """Deadlocks from the winning candidate."""
-        ...
-
-    def __repr__(self) -> str: ...
-
-# ── New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers ──
 
 @final
 class SearchEngine:
@@ -1612,26 +1787,25 @@ class SingleHeuristicCzPlacement:
     """
 
     def __init__(self, solver: TargetSolver) -> None: ...
-    def solve(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve and return the best result across all candidates."""
-        ...
+        future_layers: list[list[tuple[int, int]]] | None = None,
+        candidates: list[dict[int, LocationAddress]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
 
-    def solve_with_attempts(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> MultiSolveResult:
-        """Solve and return per-candidate attempt details."""
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead. ``candidates``, when given, are the target placements to
+        try, in order, instead of ``DefaultTargetGenerator``'s. Each is
+        validated before it is routed and skipped if it fails: it must place
+        exactly ``initial``'s qubits, at valid and distinct locations, with
+        every pair on CZ partner sites (in either direction).
+        """
         ...
 
     def __repr__(self) -> str: ...
@@ -1649,26 +1823,20 @@ class LooseGoalCzPlacement:
         search: MoveSearch,
         entangling_options: EntanglingOptions | None = None,
     ) -> None: ...
-    def solve_pairs(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Solve using CZ pair constraints (with optional future-layer lookahead)."""
-        ...
+        future_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
 
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve using explicit control/target qubit lists."""
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead.
+        """
         ...
 
     def __repr__(self) -> str: ...
@@ -1684,26 +1852,20 @@ class RecedingHorizonCzPlacement:
         entangling_options: EntanglingOptions | None = None,
         rh_options: RecedingHorizonOptions | None = None,
     ) -> None: ...
-    def solve_pairs(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Solve via receding-horizon MPC (with optional future-layer lookahead)."""
-        ...
+        future_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
 
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve using explicit control/target qubit lists."""
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead.
+        """
         ...
 
     def __repr__(self) -> str: ...
@@ -1718,26 +1880,20 @@ class NoHomeCzPlacement:
         search: MoveSearch,
         nohome_options: NoHomeOptions | None = None,
     ) -> None: ...
-    def solve_pairs(
+    def place(
         self,
         initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
+        pairs: list[tuple[int, int]],
         blocked: list[LocationAddress],
         max_expansions: int | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Solve via two-phase no-home placement (with optional future-layer lookahead)."""
-        ...
+        future_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> PlacementResult:
+        """Place and route one CZ stage.
 
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        blocked: list[LocationAddress],
-        max_expansions: int | None = None,
-    ) -> SolveResult:
-        """Solve using explicit control/target qubit lists."""
+        ``pairs`` are the stage's ``(control, target)`` CZ pairs;
+        ``future_layers`` are later stages, nearest first, for placements that
+        look ahead.
+        """
         ...
 
     def __repr__(self) -> str: ...
@@ -2009,6 +2165,11 @@ class AtomStateData:
 
 # ── Instruction ──
 
+ValueType = Literal[
+    "undef", "str", "bool", "i64", "u32", "u64", "f64", "fn_ref", "heap_ref"
+]
+"""vihaco's value types, spelled as the ``sst`` text format spells them."""
+
 @final
 class Instruction:
     """A single bytecode instruction.
@@ -2019,7 +2180,8 @@ class Instruction:
     Instruction categories:
 
     - **Constants**: Push typed values onto the stack.
-    - **Stack**: Manipulate the operand stack (pop, dup, swap).
+    - **Stack and locals**: Duplicate the top (dup), and park values in a
+      function's locals and bring them back (store, load).
     - **Atom ops**: Fill sites and move atoms (initial_fill, fill, move).
     - **Gates**: Quantum gate operations (local_r, local_rz, global_r, global_rz, cz).
     - **Measurement**: Measure atoms and await results.
@@ -2106,15 +2268,6 @@ class Instruction:
     # -- Stack manipulation --
 
     @staticmethod
-    def pop() -> Instruction:
-        """Pop and discard the top stack value.
-
-        Returns:
-            Instruction: The pop instruction.
-        """
-        ...
-
-    @staticmethod
     def dup() -> Instruction:
         """Duplicate the top stack value.
 
@@ -2122,13 +2275,52 @@ class Instruction:
             Instruction: The dup instruction.
         """
         ...
+    # -- Locals --
+    #
+    # There is no ``pop`` or ``swap``. A function's locals are slots of their
+    # own below its operands, so ``store`` parks a value out of their way and
+    # ``load`` brings a copy back: ``store(t, 0)`` discards the top, and
+    # ``store(t, 0), store(t, 1), load(t, 0), load(t, 1)`` swaps the top two.
 
     @staticmethod
-    def swap() -> Instruction:
-        """Swap the top two stack values.
+    def load(value_type: str, index: int) -> Instruction:
+        """Push a copy of local ``index``.
+
+        The local must hold a ``value_type``, or the ``Undefined``
+        placeholder — unwritten, or a lanes op's result stored there — which
+        reads as that type's zero. ``"undef"`` reads the placeholder back as
+        itself, and refuses a concrete value.
+
+        Args:
+            value_type: The type the local holds, spelled as in the text
+                format — one of the ``ValueType`` names.
+            index: Local slot, ``u32``.
 
         Returns:
-            Instruction: The swap instruction.
+            Instruction: The load instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
+        """
+        ...
+
+    @staticmethod
+    def store(value_type: str, index: int) -> Instruction:
+        """Pop the top of the stack into local ``index``.
+
+        Args:
+            value_type: The type of the value stored, spelled as in the text
+                format — one of the ``ValueType`` names. A placeholder a lanes
+                op pushed may be stored as any type.
+            index: Local slot, ``u32``.
+
+        Returns:
+            Instruction: The store instruction.
+
+        Raises:
+            ValueError: If ``value_type`` is not one of vihaco's types, or
+                ``index`` is negative or does not fit in a ``u32``.
         """
         ...
     # -- Atom operations --
@@ -2351,17 +2543,36 @@ class Instruction:
 
     @property
     def opcode(self) -> int:
-        """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
+        """Packed 16-bit opcode: ``(device_code << 8) | instruction_code``.
+
+        Device codes are ``0x00`` for the CPU and ``0x01`` for the lanes
+        device. Both halves are assigned by declaration order, so they shift
+        whenever either instruction set gains a variant — compare identity with
+        :meth:`op_name`, not with a literal opcode.
+        """
+        ...
+
+    def device(self) -> str:
+        """The device this instruction belongs to: ``"cpu"`` or ``"lanes"``.
+
+        The stack and arithmetic ops come from vihaco-cpu's CPU component; the
+        atom-movement, gate, measurement and array ops are the lanes device's.
+        In ``.sst`` text this is the prefix before ``::``.
+        """
         ...
 
     def op_name(self) -> str:
-        """Lowercase snake_case opcode name matching the bytecode text-format
-        parser's canonical names (see
-        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
+        """Lowercase snake_case opcode name, without the device prefix or
+        dialect head — ``"move"`` for ``lanes::lanes.move``.
 
         Factory methods use trailing underscores for Python-keyword conflicts
         (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
-        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
+        returns the bare names: ``"move"`` and ``"return"``.
+
+        Two names deliberately differ from the text mnemonic because the
+        decoder depends on them: the constants are ``"const_float"`` /
+        ``"const_int"`` rather than vihaco-cpu's single typed ``const``, and
+        ``"return"`` keeps its spelling rather than vihaco-cpu's ``ret``.
         """
         ...
 
@@ -2448,6 +2659,23 @@ class Instruction:
         """
         ...
 
+    def local_index(self) -> int:
+        """Local slot a ``load`` or ``store`` instruction names.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def value_type(self) -> ValueType:
+        """Type a ``load`` or ``store`` instruction names, spelled as in the
+        text format.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
@@ -2457,8 +2685,8 @@ class Instruction:
 class Program:
     """A bytecode program consisting of a version and instruction sequence.
 
-    Programs can be constructed directly, parsed from SST text assembly,
-    or deserialized from native LANES binary format.
+    Programs can be constructed directly, parsed from vihaco's ``sst v1``
+    text container, or deserialized from its ``VHBC`` binary container.
 
     Args:
         version (tuple[int, int]): Program version as ``(major, minor)``.
@@ -2493,10 +2721,10 @@ class Program:
 
     @staticmethod
     def from_binary(data: bytes) -> Program:
-        """Deserialize a program from native LANES binary format.
+        """Deserialize a program from vihaco's ``VHBC`` binary container.
 
         Args:
-            data (bytes): Raw native LANES binary data.
+            data (bytes): Raw ``VHBC`` container bytes.
 
         Returns:
             Program: The deserialized program.
@@ -2507,10 +2735,15 @@ class Program:
         ...
 
     def to_binary(self) -> bytes:
-        """Serialize the program to native LANES binary format.
+        """Serialize the program to vihaco's ``VHBC`` binary container.
 
         Returns:
-            bytes: The native LANES binary representation.
+            bytes: The ``VHBC`` container bytes.
+
+        Raises:
+            ProgramError: If an instruction has no encodable form. Today
+                that is only a runtime label, whose identifier means
+                nothing outside the parse that produced it.
         """
         ...
 
@@ -2538,6 +2771,12 @@ class Program:
     @property
     def version(self) -> tuple[int, int]:
         """Program version as ``(major, minor)``."""
+        ...
+
+    @property
+    def entry_parameters(self) -> list[ValueType]:
+        """The entry point's declared parameter types, spelled as in the text
+        format. Empty when it takes none, or the program has no entry point."""
         ...
 
     @property

@@ -4,17 +4,25 @@ Registered against the lanes validation interpreter key (``move.address.validati
 The impl checks (1) const-foldability of the three SSA int args and (2) that the
 resulting LocationAddress is valid for the architecture (via the existing
 ArchSpec.check_location_group called by ``_ValidationAnalysis.report_location_errors``).
+
+Check (1) is arch-independent and also runs on its own, at kernel-decoration
+time, via :mod:`.const_address` -- this module is where it runs for callers that
+already hold an ``ArchSpec`` and want (2) as well. Re-running it here is what
+lets a kernel compiled without the decorator's validation suite still get the
+const diagnostic instead of a range check on a garbage address.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from kirin import interp, ir
+from kirin import interp
 from kirin.analysis.forward import ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 
 from bloqade.gemini.common.dialects import qubit
+
+from .const_address import _expect_const_int
 
 if TYPE_CHECKING:
     from bloqade.lanes.validation.address import _ValidationAnalysis
@@ -46,26 +54,3 @@ class _NewAtValidation(interp.MethodTable):
         _interp.report_location_errors(node, (candidate,))
 
         return (EmptyLattice.bottom(),)
-
-
-def _expect_const_int(
-    value: ir.SSAValue,
-    arg_name: str,
-    node: ir.Statement,
-    interpreter: _ValidationAnalysis,
-) -> int | None:
-    """Read the const value for `value` via the AbstractInterpreter API. If
-    absent or wrong type, emit a ValidationError on `node` naming the arg and
-    return None.
-    """
-    data = interpreter.maybe_const(value, int)
-    if data is None:
-        interpreter.add_validation_error(
-            node,
-            ir.ValidationError(
-                node,
-                f"address argument '{arg_name}' is not a compile-time constant; "
-                "explicit allocation requires constant zone/word/site",
-            ),
-        )
-    return data
