@@ -32,7 +32,7 @@ cudaq = [
 ]
 sim = [
     "bloqade-circuit[cirq, tsim]~=0.15.5",
-    "bloqade-ppvm~=0.1.1",
+    "bloqade-ppvm>=0.1.1,<0.3.0",
     "bloqade-tsim~=0.1.3",
 ]
 decoding = [
@@ -62,7 +62,7 @@ clifft = [
     "clifft; python_version >= '3.12'"
 ]
 ppvm = [
-    "bloqade-ppvm~=0.1.1"
+    "bloqade-ppvm>=0.1.1,<0.3.0"
 ]
 
 [tool.maturin]
