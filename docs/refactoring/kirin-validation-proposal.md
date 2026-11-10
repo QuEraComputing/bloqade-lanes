@@ -16,5 +16,5 @@ and integration with existing validation and inlining facilities.
 
 The implementations and regression tests remain in the Bloqade projects until
 that review and a Kirin release provide an agreed replacement. This proposal is
-separate from the Gemini package split and does not block it. No upstream API or
+separate from the Gemini namespace refactor and does not block it. No upstream API or
 release commitment is implied.

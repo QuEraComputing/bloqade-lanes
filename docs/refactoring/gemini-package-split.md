@@ -1,9 +1,10 @@
-# Gemini package ownership
+# Gemini namespace ownership
 
-`bloqade.gemini` is now shipped by the `bloqade` distribution, from
-`src/bloqade/gemini`. Install `bloqade` to use `@logical.kernel`, physical
-kernels, devices, simulators, and decoding. Their Python import paths remain
-unchanged. Lanes itself can be imported and used without installing Gemini.
+Both `bloqade.lanes` and `bloqade.gemini` continue to ship in the
+`bloqade-lanes` distribution, from `python/bloqade`. This refactor separates
+compiler and frontend responsibilities inside this repository; it does not
+move the Gemini package to another distribution. Existing Gemini Python
+import paths and installation instructions remain unchanged.
 
 Compiler definitions belong to `bloqade.lanes`:
 
@@ -35,18 +36,14 @@ Gemini. Direct compiler callers must first load their frontend's tables;
 missing required registrations raise a clear error. Generic move/place and
 architecture evaluation/constant-propagation tables remain in lanes.
 
-## Coordinated release
+## Packaging and a future distribution split
 
-This change requires lanes 0.12 and circuit 0.15.5 or newer within their declared
-compatible ranges. Publish the updated lanes package before releasing this
-bloqade change. Regenerate `uv.lock` against that release; an older lanes wheel
-both lacks the new compiler modules and owns the old Gemini package files.
-Do not install the new bloqade wheel alongside lanes 0.11.
-
-For testing unreleased source, install the two checkouts into the same environment
-with compatible circuit/Kirin dependencies. A local uv source override for
-`bloqade-lanes` can point at the lanes checkout; it should not be committed as a
-machine-specific absolute path.
+The lanes wheel includes both namespaces and excludes generated caches. No
+coordinated bloqade release or local path dependency is needed for this refactor.
+The prepared Gemini relocation in the bloqade repository is a separate future
+change. Do not release that copy alongside this lanes wheel: both distributions
+would own `bloqade.gemini`. A future split must remove Gemini from the lanes
+wheel and update bloqade's dependency and lockfile together.
 
 ## Saved IR and backend compatibility
 
