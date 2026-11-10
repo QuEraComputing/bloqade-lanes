@@ -391,12 +391,12 @@ msd-reprod = [
     { name = "ipywidgets" },
 ]
 ppvm = [
-    { name = "ppvm" },
+    { name = "bloqade-ppvm" },
 ]
 sim = [
     { name = "bloqade-circuit", extra = ["cirq", "tsim"] },
+    { name = "bloqade-ppvm" },
     { name = "bloqade-tsim" },
-    { name = "ppvm" },
 ]
 visualization = [
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -452,6 +452,8 @@ requires-dist = [
     { name = "bloqade-core", specifier = "~=0.6.8" },
     { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
     { name = "bloqade-lanes", extras = ["decoding"], marker = "extra == 'msd-reprod'" },
+    { name = "bloqade-ppvm", marker = "extra == 'ppvm'", specifier = "~=0.1.1" },
+    { name = "bloqade-ppvm", marker = "extra == 'sim'", specifier = "~=0.1.1" },
     { name = "bloqade-tsim", marker = "extra == 'sim'", specifier = "~=0.1.3" },
     { name = "clifft", marker = "python_full_version >= '3.12' and extra == 'clifft'" },
     { name = "clifft", marker = "python_full_version >= '3.12' and extra == 'msd-reprod'" },
@@ -463,8 +465,6 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.9.4" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = ">=5.24.0,<8" },
-    { name = "ppvm", marker = "extra == 'ppvm'", git = "https://github.com/QuEraComputing/ppvm.git?subdirectory=ppvm-python" },
-    { name = "ppvm", marker = "extra == 'sim'", git = "https://github.com/QuEraComputing/ppvm.git?subdirectory=ppvm-python" },
     { name = "pyqt5", marker = "sys_platform == 'darwin' and extra == 'visualization'", specifier = ">=5.15.11" },
     { name = "pyqt5", marker = "sys_platform == 'linux' and extra == 'visualization'", specifier = ">=5.15.11" },
     { name = "qbraid-qir", extras = ["squin"], marker = "sys_platform != 'win32' and extra == 'cudaq'", specifier = ">=0.5.1" },
@@ -508,6 +508,25 @@ doc = [
     { name = "mkdocs-material", specifier = ">=9.5.44" },
     { name = "mkdocs-minify-plugin", specifier = ">=0.8.0" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27.0" },
+]
+
+[[package]]
+name = "bloqade-ppvm"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bloqade-circuit" },
+    { name = "kirin-toolchain" },
+    { name = "numpy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/13/777c34616dabf9d35342ef214aecf6a41240ee863fc4ee1ef38124c9a2c9/bloqade_ppvm-0.1.2.tar.gz", hash = "sha256:a7f4cc891affd6a88ce949c1965e41b050a61b3f3c9b182dd270b9fbbd3bb924", size = 570605, upload-time = "2026-11-04T13:51:16Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/d1/88c7f3f521681cf157c971c95e3866fa09afc285c4a0fa9d1fb3f642cd41/bloqade_ppvm-0.1.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:538f1da6d556de87e6716104bfe849b03476f776576b7f1175ebf0ad12206355", size = 4651435, upload-time = "2026-11-04T13:51:02.155Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/99/9de845c707c104a2a4f08cb21b460ad7d89921832ac6f14181deffbaa205/bloqade_ppvm-0.1.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:038a74816154787e2800b755e1e5475541f1772b934eb75bf8293740533ed5d6", size = 4604831, upload-time = "2026-11-04T13:51:04.924Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/da/fa20dc51a5e91f19a0bb4fcc968d63151f47178d528b5feb989a14ef61cd/bloqade_ppvm-0.1.2-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:bc739d08a8ea66593acc92c1ce36e7a6fe11fb2b6896ed052ec63b33c106909a", size = 18444643, upload-time = "2026-11-04T13:51:07.6Z" },
+    { url = "https://files.pythonhosted.org/packages/37/64/0ecb36836d9884b40b0118a41118200a566b765f9dee2630ec7474801e34/bloqade_ppvm-0.1.2-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e00968d06e1a5773668891e41a0e1b02302507039e1612f77f11c13689a5923c", size = 19570323, upload-time = "2026-11-04T13:51:11.482Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/e9/3750655e8761234a2394989be84c97f3109881af1f8065cdd85201f06043/bloqade_ppvm-0.1.2-cp310-abi3-win_amd64.whl", hash = "sha256:dba505526d3b794e14a9e0a37891c623700baf0f5942d21a8cc0038ce121a420", size = 4857697, upload-time = "2026-11-04T13:51:14.274Z" },
 ]
 
 [[package]]
@@ -4255,15 +4274,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/06/8f/d741afb1dcd1848161189e017d27972e7e78556d8dce66b94d4235093706/polars_runtime_32-1.44.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:c4a09fb14aad711526346efc0cb2015c2fd0555ce4118b6524e5debbaea65ff5", size = 49887654, upload-time = "2026-09-09T07:40:37.455Z" },
     { url = "https://files.pythonhosted.org/packages/ba/e7/c61c1c7eea37705920fe7c1302d1dd80d1165db2b928f0da3eae6d1ebb75/polars_runtime_32-1.44.2-cp310-abi3-win_amd64.whl", hash = "sha256:8598e7a20efba70bb74978c7df7af7c606ff4d79b9b48fdd808250b189bc9a13", size = 51297967, upload-time = "2026-09-09T07:40:41.993Z" },
     { url = "https://files.pythonhosted.org/packages/e7/a0/d0dd0d2ec95fa328dd47055905fae53ba3cd79f11c8973326ebe75a49e4c/polars_runtime_32-1.44.2-cp310-abi3-win_arm64.whl", hash = "sha256:d51040d3ab40157f6db3c62be59cab5b80fb3c8d158924769c4982a1c8eef730", size = 44303345, upload-time = "2026-09-09T07:40:47.081Z" },
-]
-
-[[package]]
-name = "ppvm"
-version = "0.1.0"
-source = { git = "https://github.com/QuEraComputing/ppvm.git?subdirectory=ppvm-python#731e59fc98489f206767822f8dc8798ba23a5551" }
-dependencies = [
-    { name = "bloqade-circuit" },
-    { name = "kirin-toolchain" },
 ]
 
 [[package]]

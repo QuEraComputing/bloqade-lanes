@@ -255,7 +255,7 @@ def _ppvm() -> Any:
         import ppvm  # type: ignore[reportMissingImports]
     except ImportError as exc:
         raise ImportError(
-            "PPVM simulation requires the optional `ppvm` dependency. "
+            "PPVM simulation requires the optional `bloqade-ppvm` dependency. "
             "Install it with `bloqade-lanes[ppvm,sim]`."
         ) from exc
 
