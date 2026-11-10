@@ -2,7 +2,9 @@ import math
 
 import bloqade.squin as squin
 import pytest
+from kirin import ir, types
 from kirin.dialects import func, ilist, py
+from kirin.exception import StaticCheckError
 from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
@@ -11,10 +13,11 @@ from bloqade.gemini.logical.dialects import extensions
 from bloqade.gemini.logical.dialects.extensions.stmts import StarRx
 from bloqade.gemini.star import VALID_STEANE_STAR_SUPPORTS
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.rewrite.transversal import steane_star_theta
 from bloqade.lanes.transform import LogicalPipeline
+from bloqade.lanes.types import StateType
 
 
 def test_star_rx_public_api_uses_radians_and_default_support():
@@ -188,3 +191,39 @@ def test_star_rx_is_rejected_by_hardware_validation():
         for errors in result.errors.values()
         for error in errors
     )
+
+
+@pytest.mark.parametrize("stage", ["place", "move"])
+@pytest.mark.parametrize("support", sorted(VALID_STEANE_STAR_SUPPORTS))
+def test_star_rx_lowered_ir_accepts_valid_support(stage, support):
+    state = ir.TestValue(type=StateType)
+    angle = ir.TestValue(type=types.Float)
+    if stage == "place":
+        stmt = place.StarRx(state, angle, qubits=(0,), qubit_indices=support)
+    else:
+        stmt = move.StarRx(
+            state,
+            angle,
+            location_addresses=(LocationAddress(0, 0),),
+            qubit_indices=support,
+        )
+    stmt.check()
+    assert stmt.qubit_indices == support
+
+
+@pytest.mark.parametrize("stage", ["place", "move"])
+@pytest.mark.parametrize("support", [(0, 1, 2), (4, 4, 6), (4, 5, 7)])
+def test_star_rx_lowered_ir_rejects_invalid_support(stage, support):
+    state = ir.TestValue(type=StateType)
+    angle = ir.TestValue(type=types.Float)
+    if stage == "place":
+        stmt = place.StarRx(state, angle, qubits=(0,), qubit_indices=support)
+    else:
+        stmt = move.StarRx(
+            state,
+            angle,
+            location_addresses=(LocationAddress(0, 0),),
+            qubit_indices=support,
+        )
+    with pytest.raises(StaticCheckError, match="qubit_indices"):
+        stmt.check()

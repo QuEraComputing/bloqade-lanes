@@ -1,7 +1,8 @@
 """Definition-time validation for STAR-X and Rz-producing logical gates."""
 
 import pytest
-from kirin.dialects import func, ilist
+from kirin import ir
+from kirin.dialects import func, ilist, py
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
@@ -194,3 +195,42 @@ def test_verify_false_skips_star_rx_gate_validation():
         logical.terminal_measure(q)
 
     assert main is not None
+
+
+@pytest.mark.parametrize("known_callee", [True, False])
+def test_star_rx_validation_resolves_constant_indirect_calls(known_callee):
+    @logical.kernel(verify=False)
+    def rotate(q: types.Qubit):
+        squin.h(q)
+
+    @logical.kernel(aggressive_unroll=False, inline=False, fold=False, verify=False)
+    def main(callback: ir.Method):
+        q = squin.qalloc(1)
+        rotate(q[0])
+        rotate(q[0])
+        logical.extensions.star_rx(0.125, q[0])
+        logical.terminal_measure(q)
+
+    calls = [
+        stmt
+        for stmt in main.callable_region.walk()
+        if isinstance(stmt, func.Invoke) and stmt.callee is rotate
+    ]
+    assert len(calls) == 2
+    # Exercise indirect calls without depending on frontend call folding.
+    # Repeated references must visit the helper only once.
+    callee = py.Constant(rotate)
+    callee.insert_before(calls[0])
+    target = callee.result if known_callee else main.callable_region.blocks[0].args[1]
+    for call in calls:
+        call.replace_by(func.Call(target, call.inputs, ()))
+
+    result = ValidationSuite([StarRxRzGateValidation]).validate(main)
+    if known_callee:
+        assert not result.is_valid
+        (error,) = result.errors["Gemini Logical StarRx Rz Gate Validation"]
+        assert "StarRx" in error.args[0] and "H" in error.args[0]
+    else:
+        # This pass only checks statically reachable gates. Dynamic-call
+        # legality is the responsibility of the other kernel validators.
+        assert result.is_valid

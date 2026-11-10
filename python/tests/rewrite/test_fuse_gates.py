@@ -8,6 +8,7 @@ All test IR is hand-built using kirin.ir primitives; no upstream lowering
 is involved.
 """
 
+import pytest
 from kirin import ir, rewrite, types as kirin_types
 from kirin.rewrite.abc import RewriteResult
 
@@ -521,3 +522,69 @@ def test_no_fusable_groups_is_unchanged():
     assert not result.has_done_something
     body_stmts = _body_stmts(sp)
     assert body_stmts == [init, em]
+
+
+def test_star_rx_fusion_preserves_support_order_and_state_chain():
+    body, entry = _new_body_block()
+    angle = ir.TestValue(type=kirin_types.Float)
+    support = (0, 2, 4)
+    first = place.StarRx(entry, angle, qubits=(2,), qubit_indices=support)
+    second = place.StarRx(
+        first.state_after, angle, qubits=(0, 1), qubit_indices=support
+    )
+    body.stmts.extend([first, second])
+    sp, outer = _wrap_in_static_placement(body)
+
+    assert _run(outer).has_done_something
+    (merged,) = _body_stmts(sp)
+    assert isinstance(merged, place.StarRx)
+    assert merged.qubits == (2, 0, 1)
+    assert merged.qubit_indices == support
+    assert merged.rotation_angle is angle
+    assert merged.state_before is entry
+    terminator = body.last_stmt
+    assert isinstance(terminator, place.Yield)
+    assert terminator.args[0] is merged.state_after
+    assert not _run(outer).has_done_something
+
+
+@pytest.mark.parametrize("difference", ["angle", "support", "overlap", "state"])
+def test_incompatible_star_rx_gates_do_not_fuse(difference):
+    body, entry = _new_body_block()
+    angle = ir.TestValue(type=kirin_types.Float)
+    first = place.StarRx(entry, angle, qubits=(0,), qubit_indices=(4, 5, 6))
+    second = place.StarRx(
+        entry if difference == "state" else first.state_after,
+        ir.TestValue(type=kirin_types.Float) if difference == "angle" else angle,
+        qubits=(0,) if difference == "overlap" else (1,),
+        qubit_indices=(0, 2, 4) if difference == "support" else (4, 5, 6),
+    )
+    body.stmts.extend([first, second])
+    sp, outer = _wrap_in_static_placement(body)
+
+    assert not _run(outer).has_done_something
+    assert _body_stmts(sp) == [first, second]
+
+
+@pytest.mark.parametrize("preceding_gate", [place.StarRx, place.StarRz])
+def test_star_rx_flushes_preceding_fusable_group(preceding_gate):
+    body, entry = _new_body_block()
+    angle = ir.TestValue(type=kirin_types.Float)
+    first = preceding_gate(entry, angle, qubits=(0,), qubit_indices=(4, 5, 6))
+    second = preceding_gate(
+        first.state_after, angle, qubits=(1,), qubit_indices=(4, 5, 6)
+    )
+    following = place.StarRx(
+        second.state_after, angle, qubits=(2,), qubit_indices=(0, 2, 4)
+    )
+    body.stmts.extend([first, second, following])
+    sp, outer = _wrap_in_static_placement(body)
+
+    assert _run(outer).has_done_something
+    merged, remaining = _body_stmts(sp)
+    assert isinstance(merged, preceding_gate)
+    assert isinstance(merged, (place.StarRx, place.StarRz))
+    assert merged.qubits == (0, 1)
+    assert merged.qubit_indices == (4, 5, 6)
+    assert remaining is following
+    assert following.state_before is merged.state_after
