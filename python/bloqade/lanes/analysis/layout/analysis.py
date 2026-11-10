@@ -88,11 +88,11 @@ class CodeBlockLayoutHeuristicABC(LayoutHeuristicABC):
         pinned: dict[int, LocationAddress],
         code_blocks: tuple[CodeBlock, ...],
     ) -> tuple[LocationAddress, ...]:
-        """Compute an initial layout in which every block has the block shape.
+        """Compute an initial layout preserving pins and unpinned block shapes.
 
-        Each block in ``code_blocks`` must land on contiguous sites of a single
-        word with position ``p`` at site ``offset + p``. Pinned qubits keep their
-        pins; a fully pinned block already has the shape. Raises
+        Each unpinned block must land on contiguous sites of a single word with
+        position ``p`` at site ``offset + p``. Fully pinned blocks may span words
+        and zones, and every member must keep its pin. Raises
         ``CodeBlockPlacementError`` when the blocks cannot all be placed.
         Contract otherwise as for ``compute_layout``.
         """
@@ -158,6 +158,15 @@ class LayoutAnalysis(Forward):
         )
         sites_per_word = len(self.heuristic.arch_spec.words[0].site_indices)
         for block in blocks:
+            if all(qid in self.location_addresses for qid in block.qids):
+                if any(
+                    layout[qid] != self.location_addresses[qid] for qid in block.qids
+                ):
+                    raise RuntimeError(
+                        f"{type(self.heuristic).__name__} moved pinned code block "
+                        f"{block.block_id}"
+                    )
+                continue
             reason = block_shape_error(
                 [layout[qid] for qid in block.qids], sites_per_word
             )

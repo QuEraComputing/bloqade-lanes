@@ -11,9 +11,9 @@ from .stmts import Register
 def register(qubits: ilist.IList[Qubit, Any]) -> None:
     """Register ``qubits`` as one code block, positions in list order.
 
-    Physical pipeline only. The block's initial layout is a contiguous run of
-    sites in one word, with ``qubits[p]`` at site ``offset + p``. A block must
-    fit in a word, and its qubits must be either all pinned (with ``new_at``) or
-    all unpinned. Has no runtime effect.
+    Physical pipeline only. Qubits must be either all pinned (with ``new_at``)
+    or all unpinned. Pinned blocks preserve arbitrary initial addresses.
+    Unpinned blocks must fit in a word and receive contiguous sites, with
+    ``qubits[p]`` at site ``offset + p``. Has no runtime effect.
     """
     ...

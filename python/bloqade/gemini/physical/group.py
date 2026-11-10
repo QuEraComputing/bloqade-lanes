@@ -22,6 +22,8 @@ from bloqade.gemini.common.validation.terminal_measure import (
 )
 from bloqade.lanes.dialects import arch as arch_dialect, code_block
 
+from . import qubit as physical_qubit
+
 
 @ir.dialect_group(
     structural_no_opt.union(
@@ -33,6 +35,7 @@ from bloqade.lanes.dialects import arch as arch_dialect, code_block
             gemini_common.dialects.arrange,
             arch_dialect,
             code_block,
+            physical_qubit,
             debug,
         ]
     )
@@ -44,7 +47,8 @@ def kernel(self):
     ``squin.broadcast.measure`` that consumes every allocated qubit. They may
     also use ``new_at``, ``arrange.move_to`` / ``arrange.permute``,
     architecture-location primitives such as ``loc`` and ``cz_partner``, and
-    ``code_block.register`` to declare code blocks.
+    ``code_block.register`` to declare code blocks. ``physical.qubit.qalloc_at``
+    selects code-block slots supplied later to ``PhysicalPipeline(slots=...)``.
     """
 
     def run_pass(
@@ -108,6 +112,12 @@ def kernel(self):
         check_call_graph(mt)
 
         if verify:
+            # Slot allocation has unknown block widths until the compiler binds
+            # slots. Qubit-address analyses cannot validate its consumers yet.
+            # PhysicalNativeToPlace repeats these checks after expansion.
+            if physical_qubit.has_slot_allocations(mt):
+                mt.verify()
+                return
             validator = ValidationSuite(
                 [
                     FlatKernelNoCloningValidation,

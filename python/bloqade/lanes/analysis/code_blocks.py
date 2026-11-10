@@ -7,8 +7,8 @@ onto each member's ``place.NewPinnedQubit``; ``LayoutAnalysis`` groups the tags
 into ``CodeBlock``s for the layout heuristic; ``PlacementAnalysis`` hands them to
 placement strategies as ``LocalCodeBlock``s on ``ConcreteState``.
 
-Every block's initial layout is a contiguous, position-ordered run of sites in a
-single word: position ``p`` sits at site ``offset + p``.
+Unpinned blocks receive a contiguous, position-ordered run in a single word.
+Fully pinned blocks preserve arbitrary initial addresses and member order.
 """
 
 from __future__ import annotations

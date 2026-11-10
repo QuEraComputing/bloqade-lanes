@@ -9,7 +9,6 @@ import kahip
 from bloqade.lanes.analysis.code_blocks import (
     CodeBlock,
     CodeBlockPlacementError,
-    block_shape_error,
 )
 from bloqade.lanes.analysis.layout import CodeBlockLayoutHeuristicABC
 from bloqade.lanes.arch.gemini.physical import (
@@ -589,30 +588,26 @@ class _BlockLayout:
 
         self.free_blocks: list[CodeBlock] = []
         for block in code_blocks:
-            if len(block) > self.spw:
-                raise CodeBlockPlacementError(
-                    f"code block {block.block_id} has {len(block)} qubits but a "
-                    f"word has only {self.spw} sites"
-                )
             pinned_members = [q for q in block.qids if q in pinned]
             if pinned_members and len(pinned_members) != len(block):
                 raise CodeBlockPlacementError(
                     f"code block {block.block_id} is partly pinned; pin all of "
                     "its qubits or none"
                 )
-            if pinned_members:
-                reason = block_shape_error([pinned[q] for q in block.qids])
-                if reason is not None:
+            if not pinned_members:
+                if len(block) > self.spw:
                     raise CodeBlockPlacementError(
-                        f"pinned code block {block.block_id}: {reason}"
+                        f"code block {block.block_id} has {len(block)} qubits but a "
+                        f"word has only {self.spw} sites"
                     )
-            else:
                 self.free_blocks.append(block)
         self.block_qids = {q for block in code_blocks for q in block.qids}
         self.unblocked = tuple(
             q for q in qubits if q not in pinned and q not in self.block_qids
         )
-        self.pinned_sites = {(loc.word_id, loc.site_id) for loc in pinned.values()}
+        self.pinned_sites = {
+            (loc.zone_id, loc.word_id, loc.site_id) for loc in pinned.values()
+        }
         home = heuristic.home_word_ids
         limit = len(home) if heuristic.max_words is None else heuristic.max_words
         self.home = home[: min(limit, len(home))]
@@ -622,7 +617,8 @@ class _BlockLayout:
     def _free(self, k: int, taken: set[tuple[int, int]]) -> list[list[bool]]:
         return [
             [
-                (self.home[w], site) not in self.pinned_sites
+                (self.zone_of[self.home[w]], self.home[w], site)
+                not in self.pinned_sites
                 and (self.home[w], site) not in taken
                 for site in range(self.spw)
             ]

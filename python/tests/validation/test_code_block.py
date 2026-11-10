@@ -120,9 +120,6 @@ def test_every_error_is_reported_at_once():
     expected = [
         "a word has only 8 sites",
         "some qubits in the block are pinned",
-        "got sites [0, 2]",
-        "got sites [1, 0]",
-        "spans several words",
         "already in another code block",
     ]
     assert len(messages) == len(expected), messages

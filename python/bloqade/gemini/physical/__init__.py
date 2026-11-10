@@ -1,5 +1,6 @@
 from bloqade.cirq_registry import register_cirq_loader as _register_cirq_loader
 
+from . import qubit as qubit
 from .group import kernel as kernel
 
 

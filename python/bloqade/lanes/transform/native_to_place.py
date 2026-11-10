@@ -36,6 +36,7 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place, clifford2native
+from bloqade.lanes.rewrite.allocate_slots import AllocateSlots
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
 from bloqade.lanes.rewrite.normalize_axis_angles import NormalizeGateAxisAngles
 from bloqade.lanes.rewrite.resolve_code_blocks import (
@@ -248,12 +249,25 @@ class PhysicalNativeToPlace(NativeToPlaceBase):
     use_code_blocks: bool = True
     """Honor ``code_block.register``. With False, registrations are dropped with
     one ``CodeBlockWarning`` and compilation matches a kernel without them."""
+    slots: list[list[tuple[int, int, int]]] | None = None
+
+    def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
+        from bloqade.gemini.physical.qubit import has_slot_allocations
+
+        # Inline helpers and expose constant slot lists before expansion. Later
+        # unrolling resolves Loc and all indexing into the nested qubit lists.
+        if has_slot_allocations(out):
+            AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
+            rewrite.Walk(AllocateSlots(self.slots, self.arch_spec)).rewrite(out.code)
+        return out
 
     def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
         self._validate_code_blocks(out, no_raise)
         if no_raise:
             return
-        suite = ValidationSuite([PhysicalTerminalMeasurementValidation])
+        suite = ValidationSuite(
+            [FlatKernelNoCloningValidation, PhysicalTerminalMeasurementValidation]
+        )
         suite.validate(out).raise_if_invalid()
 
     def _validate_code_blocks(self, out: Method, no_raise: bool) -> None:

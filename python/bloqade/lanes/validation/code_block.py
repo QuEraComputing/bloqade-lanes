@@ -4,10 +4,8 @@ Runs in the post-unroll window of ``PhysicalNativeToPlace``, where every qubit
 allocation is still a ``qubit.stmts.New`` or ``gemini.common.NewAt`` and every
 register operand is a ``py.ilist.new`` of them. Each ``Register`` must name a
 fixed list of distinct allocations, no qubit may belong to two blocks, a block
-must fit in a word, and its qubits must be either all pinned or all unpinned. A
-fully pinned block's pins must already have the block shape (one word,
-contiguous, ``site = offset + position``): pins are authoritative, so the
-compiler never moves one to repair a block.
+must be either all pinned or all unpinned. Unpinned blocks must fit in a word.
+Fully pinned blocks can have arbitrary shapes: pins are authoritative.
 
 Every violation is reported in one pass.
 """
@@ -23,9 +21,7 @@ from kirin.validation import ValidationPass
 
 from bloqade import qubit
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
-from bloqade.lanes.analysis.code_blocks import block_shape_error
 from bloqade.lanes.dialects.code_block import Register
-from bloqade.lanes.rewrite.circuit2place import _resolve_location_from_new_at
 
 _Allocation = qubit.stmts.New | gemini_common_stmts.NewAt
 
@@ -94,7 +90,12 @@ def _check_registers(
             )
         for v in values:
             block_of.setdefault(v, block_idx)
-        if sites_per_word is not None and len(values) > sites_per_word:
+        pinned = [isinstance(a, gemini_common_stmts.NewAt) for a in allocations]
+        if (
+            not any(pinned)
+            and sites_per_word is not None
+            and len(values) > sites_per_word
+        ):
             errors.append(
                 ir.ValidationError(
                     reg,
@@ -104,7 +105,6 @@ def _check_registers(
                 )
             )
 
-        pinned = [isinstance(a, gemini_common_stmts.NewAt) for a in allocations]
         if any(pinned) and not all(pinned):
             errors.append(
                 ir.ValidationError(
@@ -113,25 +113,6 @@ def _check_registers(
                     "with new_at and some are not. Pin all of them or none.",
                 )
             )
-        elif all(pinned):
-            locations = [
-                _resolve_location_from_new_at(a)
-                for a in allocations
-                if isinstance(a, gemini_common_stmts.NewAt)
-            ]
-            # Non-constant new_at arguments are reported by the address validators.
-            resolved = [loc for loc in locations if loc is not None]
-            if len(resolved) == len(locations):
-                # Size is reported above, so check only word and contiguity here.
-                reason = block_shape_error(resolved)
-                if reason is not None:
-                    errors.append(
-                        ir.ValidationError(
-                            reg,
-                            "code_block.register: the pins do not form a code "
-                            f"block: {reason}.",
-                        )
-                    )
     return errors
 
 
