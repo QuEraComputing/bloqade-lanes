@@ -1,0 +1,134 @@
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
+
+from bloqade.analysis.address import Address, AddressAnalysis, AddressReg
+from bloqade.squin import gate
+from kirin import ir
+from kirin.analysis import Forward, ForwardFrame
+from kirin.dialects import scf
+from kirin.lattice import EmptyLattice
+from kirin.validation import ValidationPass
+
+from bloqade import qubit, squin
+from bloqade.lanes.dialects import arch
+from bloqade.lanes.dialects.steane713 import extensions
+from bloqade.lanes.validation._method_tables import require_method_tables
+from bloqade.lanes.validation.static_call import (
+    NoStaticCallValidation,
+)
+
+
+@dataclass
+class _SteaneLogicalValidationAnalysis(Forward[EmptyLattice]):
+    keys = ("lanes.validate.logical",)
+
+    lattice = EmptyLattice
+    addr_frame: ForwardFrame[Address]
+
+    first_gates: dict[int, bool] = field(init=False, default_factory=dict)
+
+    # Gemini capacity policy, not an intrinsic limit of the Steane code.
+    max_qubits: ClassVar[int] = 10
+
+    def eval_fallback(self, frame: ForwardFrame, node: ir.Statement):
+        if isinstance(node, squin.gate.stmts.Gate):
+            # NOTE: report instead of raising so an unsupported gate is listed
+            # alongside every other validation error rather than aborting the run
+            self.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"Gate {node.name} is not supported in logical Gemini programs!",
+                ),
+            )
+
+        return tuple(self.lattice.bottom() for _ in range(len(node.results)))
+
+    def check_first_gate(self, qubits: ir.SSAValue) -> bool:
+        address = self.addr_frame.get(qubits)
+
+        if not isinstance(address, AddressReg):
+            # NOTE: we should have a flat kernel with simple address analysis, so in case we don't
+            # get concrete addresses, we might as well error here since something's wrong
+            return False
+
+        is_first = True
+        for addr_int in address.data:
+            is_first = is_first and self.first_gates.get(addr_int, True)
+            self.first_gates[addr_int] = False
+
+        return is_first
+
+    def method_self(self, method: ir.Method) -> EmptyLattice:
+        return self.lattice.bottom()
+
+
+@dataclass
+class SteaneLogicalValidation(ValidationPass):
+    """Validate a flattened Steane logical program under Gemini capacity limits.
+
+    Unresolved calls are reported by delegating to ``NoStaticCallValidation``
+    rather than by an impl in ``impls.py``. A ``func.Invoke`` impl only sees the
+    statements this ``Forward`` analysis reaches, and the ``scf.For`` impl
+    returns bottom without descending into the loop body -- so a call nested in a
+    loop was never visited. The delegate is a syntactic ``walk()`` and sees all
+    of them.
+
+    Delegating rather than composing the two passes side by side in every suite
+    keeps this pass a drop-in for callers who assemble their own
+    ``ValidationSuite``, and stops a single unresolved call being counted twice.
+    """
+
+    def name(self) -> str:
+        return "Gemini Logical Validation"
+
+    def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
+        require_method_tables(
+            method,
+            [
+                (qubit.dialect, "lanes.validate.logical"),
+                (gate.dialect, "lanes.validate.logical"),
+                (scf.dialect, "lanes.validate.logical"),
+                (extensions.dialect, "lanes.validate.logical"),
+                (arch.dialect, "qubit.address"),
+            ],
+        )
+        address_analysis = AddressAnalysis(method.dialects)
+        addr_frame, _ = address_analysis.run(method)
+
+        analysis = _SteaneLogicalValidationAnalysis(
+            method.dialects, addr_frame=addr_frame
+        )
+
+        # Before the walk, so an unresolved call leads the report: the other
+        # violations are often a consequence of the program not being flat.
+        # `_validation_errors` is keyed by node and ordered by first insertion,
+        # so seeding it here puts these errors first.
+        _, call_errors = NoStaticCallValidation().run(method)
+        for error in call_errors:
+            analysis.add_validation_error(error.node, error)
+
+        frame, _ = analysis.run(method)
+
+        # NOTE: applies to sub-kernels too. One that is handed its qubits rather
+        # than allocating them opts out with `verify=False`; it is re-validated
+        # as part of its caller once inlined.
+        if address_analysis.qubit_count < 1:
+            analysis.add_validation_error(
+                method.code,
+                ir.ValidationError(
+                    method.code,
+                    "kernel allocates no qubits; at least 1 is required",
+                ),
+            )
+        elif address_analysis.qubit_count > analysis.max_qubits:
+            analysis.add_validation_error(
+                method.code,
+                ir.ValidationError(
+                    method.code,
+                    f"kernel allocates {address_analysis.qubit_count} qubits, "
+                    f"exceeding the maximum of {analysis.max_qubits}",
+                ),
+            )
+
+        return frame, analysis.get_validation_errors()

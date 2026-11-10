@@ -15,7 +15,7 @@ from . import (
     stmts as stmts,
 )
 from ._dialect import dialect as dialect
-from ._interface import cz_partner as cz_partner, loc as loc
+from ._interface import cz_partner as cz_partner, loc as loc, new_at as new_at
 from .rewrite import (
     BindArchSpec as BindArchSpec,
     RewriteLocationAttr as RewriteLocationAttr,
@@ -25,6 +25,7 @@ from .stmts import (
     CzPartner as CzPartner,
     Loc as Loc,
     LocationAddressType as LocationAddressType,
+    NewAt as NewAt,
     SiteId as SiteId,
     WordId as WordId,
     ZoneId as ZoneId,

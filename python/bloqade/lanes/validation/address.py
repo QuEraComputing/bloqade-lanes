@@ -9,7 +9,8 @@ from kirin.validation import ValidationPass
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
-from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects import arch, arrange, move
+from bloqade.lanes.validation._method_tables import require_method_tables
 
 
 @dataclass
@@ -123,6 +124,13 @@ def get_validation(arch_spec: ArchSpec) -> type[ValidationPass]:
             return "lanes.address.validation"
 
         def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
+            require_method_tables(
+                method,
+                [
+                    (arch.dialect, "move.address.validation"),
+                    (arrange.dialect, "move.address.validation"),
+                ],
+            )
             analysis = _ValidationAnalysis(
                 method.dialects,
                 arch_spec=self.ARCH_SPEC,

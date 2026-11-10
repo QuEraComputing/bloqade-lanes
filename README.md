@@ -21,6 +21,12 @@ Bloqade-lanes provides the core components for compiling neutral atom quantum ci
 uv add bloqade-lanes
 ```
 
+The user-facing `bloqade.gemini` package (kernel decorators, devices,
+simulation, and decoding) is provided by `bloqade`. Install `bloqade` when
+running Gemini applications or the Gemini demos in this repository. Lanes
+itself owns the compiler and does not depend on Gemini. See the
+[package migration notes](docs/refactoring/gemini-package-split.md).
+
 ## Documentation
 
 The documentation is available at [https://bloqade.quera.com/latest/](https://bloqade.quera.com/latest/). We are at an early stage of completing the documentation with more details and examples, so comments and contributions are most welcome!
