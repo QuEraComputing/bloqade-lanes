@@ -2,8 +2,8 @@ from bloqade.lanes.heuristics.logical.layout import (
     LogicalLayoutHeuristic,
     LogicalLayoutHeuristicRecencyWeighted,
 )
-from bloqade.lanes.heuristics.logical.min_move_depth import (
-    LogicalLayoutHeuristicMinMoveDepth,
+from bloqade.lanes.heuristics.logical.min_move_time import (
+    LogicalLayoutHeuristicMinMoveTime,
 )
 from bloqade.lanes.heuristics.logical.placement import (
     LogicalPlacementMethods,
@@ -13,7 +13,7 @@ from bloqade.lanes.heuristics.logical.placement import (
 
 __all__ = [
     "LogicalLayoutHeuristic",
-    "LogicalLayoutHeuristicMinMoveDepth",
+    "LogicalLayoutHeuristicMinMoveTime",
     "LogicalLayoutHeuristicRecencyWeighted",
     "LogicalPlacementMethods",
     "LogicalPlacementStrategy",

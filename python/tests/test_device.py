@@ -36,8 +36,8 @@ from bloqade.gemini.device.simulator import (
 from bloqade.gemini.device.simulator_backend import _PyQrackSimulatorBackend
 from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics.logical.min_move_depth import (
-    LogicalLayoutHeuristicMinMoveDepth,
+from bloqade.lanes.heuristics.logical.min_move_time import (
+    LogicalLayoutHeuristicMinMoveTime,
 )
 from bloqade.lanes.noise_model import generate_logical_noise_model
 
@@ -99,7 +99,7 @@ def test_logical_simulator_uses_configured_layout_heuristic(monkeypatch):
         squin.cz(reg[0], reg[1])
         return gemini_logical.terminal_measure(reg)
 
-    heuristic = LogicalLayoutHeuristicMinMoveDepth()
+    heuristic = LogicalLayoutHeuristicMinMoveTime()
     compute_layout = heuristic.compute_layout
     calls = []
 
