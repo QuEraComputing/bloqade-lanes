@@ -30,3 +30,28 @@ Proposal for the roadmap and feature requests are welcome!
 ## License
 
 Apache License 2.0 with LLVM Exceptions
+
+
+### Serializing compiled Move IR
+
+Move programs support Kirin's standard JSON serialization APIs. The Lanes
+address attributes (`LocationAddress`, `ZoneAddress`, `LaneAddress`,
+`SiteLaneAddress`, and `WordLaneAddress`) preserve their concrete type and
+address fields; no custom serializer is required.
+
+```python
+from kirin.serialization import JSONSerializer
+
+# execution_program is the ir.Method returned by LogicalPipeline.emit(...).
+serializer = JSONSerializer()
+payload = serializer.encode(
+    execution_program.dialects.encode(execution_program, version="1.0.0")
+)
+restored = execution_program.dialects.decode(serializer.decode(payload))
+restored.verify()
+```
+
+Lane move types and directions are encoded by name inside lane addresses.
+This supports compiled Move artifacts; it does not add generic serialization
+for arbitrary native Rust values, standalone `Direction`/`MoveType` constants,
+or bound `ArchSpec` objects on intermediate architecture statements.
