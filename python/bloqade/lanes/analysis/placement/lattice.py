@@ -66,8 +66,8 @@ class ConcreteState(AtomState):
 
     Metadata for placement strategies: excluded from equality, and re-attached
     by ``PlacementAnalysis`` around every strategy call, so a strategy that
-    builds a new state without it does not lose it. Each block starts on
-    contiguous sites of one word; later moves may separate it."""
+    builds a new state without it does not lose it. Pinned blocks can have
+    arbitrary initial shapes; later moves may separate any block."""
 
     def __post_init__(self):
         assert self.occupied.isdisjoint(

@@ -558,6 +558,7 @@ def make_physical_placement_strategy(
     arch_spec: ArchSpec | None = None,
     return_moves: bool = True,
     mover_selection: MoverSelection | None = None,
+    code_block_candidates: int = 8,
 ) -> PlacementStrategyABC:
     """Build a physical placement strategy from user-facing search knobs.
 
@@ -571,6 +572,11 @@ def make_physical_placement_strategy(
     NoHome's default, ``RANKED``.  ``lambda_lookahead`` is fixed at ``0`` because
     palindrome return always moves atoms back to their original home position,
     so future-layer proximity penalties carry no signal.
+
+    ``code_block_candidates`` compares up to this many coordinated inter-block
+    CZ targets against ordinary routing (default 8; 0 disables it). Only
+    participating atoms receive the preference. Alternatives share one extra
+    ``search_budget``; unregistered and intra-block-only layers are unchanged.
 
     ``return_moves`` also selects mirrored solving: it wraps the strategy in
     :class:`~bloqade.lanes.analysis.placement.PalindromePlacementStrategy`
@@ -609,6 +615,7 @@ def make_physical_placement_strategy(
         max_expansions=search_budget,
         k_candidates=move_solutions_per_layer,
         lambda_lookahead=0.0,
+        code_block_candidates=code_block_candidates,
         # Mirrored solving is only sound as an *optimisation* when the target
         # is reliably the more constrained endpoint, and palindrome is what
         # guarantees that: it restores the pre-CZ home layout before every
