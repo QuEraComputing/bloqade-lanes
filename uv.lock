@@ -316,7 +316,7 @@ tsim = [
 
 [[package]]
 name = "bloqade-core"
-version = "0.6.14"
+version = "0.6.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kirin-toolchain" },
@@ -324,9 +324,9 @@ dependencies = [
     { name = "qlam-core" },
     { name = "semver" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/47/fd2bb4042796ad9dd8043696120ccab0ef3784e8ac088691e9498e191961/bloqade_core-0.6.14.tar.gz", hash = "sha256:03f6c1f18eef36da6f188b2d69e28584b27bb8d7da92720aafc20402dfccaca0", size = 268179, upload-time = "2026-10-23T09:26:30.95Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/b0/f5c3eea4e28384d6597a66ed3bc8f843fdfa96264478c31dc9afb88697b3/bloqade_core-0.6.15.tar.gz", hash = "sha256:84aafacc632ad06188cb74130764ab1430a606f48fa92688a99bbab55dfa6f06", size = 272017, upload-time = "2026-11-10T08:01:21.469Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/b9/b7f512854c2a5139872f2bec9147778969e9b2d885e77faa3f4715c670a6/bloqade_core-0.6.14-py3-none-any.whl", hash = "sha256:c0f4c5794eb1f393ff5cde69e31e6007f6beebe81504abf1945c764f56cf5f48", size = 55309, upload-time = "2026-10-23T09:26:29.489Z" },
+    { url = "https://files.pythonhosted.org/packages/98/f1/e6b233a29edc89251f35ffcb20cbd305b6c9f476985d1d291d5eeb4f2630/bloqade_core-0.6.15-py3-none-any.whl", hash = "sha256:1e7beef2c0eab42c63dcea28311858659f6432bf635535d03ebf7bf19020bad7", size = 56758, upload-time = "2026-11-10T08:01:20.061Z" },
 ]
 
 [[package]]
@@ -449,7 +449,7 @@ doc = [
 requires-dist = [
     { name = "bloqade-circuit", extras = ["cirq", "tsim"], marker = "extra == 'sim'", specifier = "~=0.15.1" },
     { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.3" },
-    { name = "bloqade-core", specifier = "~=0.6.8" },
+    { name = "bloqade-core", specifier = "~=0.6.15" },
     { name = "bloqade-decoders", extras = ["mle", "mld"], marker = "extra == 'decoding'", specifier = ">=0.6.0" },
     { name = "bloqade-lanes", extras = ["decoding"], marker = "extra == 'msd-reprod'" },
     { name = "bloqade-ppvm", marker = "extra == 'ppvm'", specifier = "~=0.1.1" },
