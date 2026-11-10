@@ -179,7 +179,7 @@ def debugger(
     if ax is None:
         fig, ax = plt.subplots(figsize=(14, 8))
     else:
-        fig = cast(Figure, ax.get_figure(root=True))
+        fig = cast(Figure, ax.figure)
 
     fig.subplots_adjust(bottom=0.2)
 
@@ -234,7 +234,7 @@ def animated_debugger(
     if ax is None:
         fig, ax = plt.subplots(figsize=(14, 8))
     else:
-        fig = cast(Figure, ax.get_figure(root=True))
+        fig = cast(Figure, ax.figure)
 
     fig.subplots_adjust(bottom=0.2)
 
