@@ -33,6 +33,7 @@ def test_movement_kernel_has_only_physical_source_dialects():
                 gemini.common.dialects.arrange,
                 arch_dialect,
                 code_block,
+                gemini.physical.qubit,
                 debug,
             ]
         ).data
