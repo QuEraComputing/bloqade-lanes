@@ -45,6 +45,9 @@ __kirincache__/
 *.py[cod]
 *$py.class
 
+# Kirin compilation cache
+__kirincache__/
+
 # C extensions / Rust shared libraries
 *.so
 *.dylib
