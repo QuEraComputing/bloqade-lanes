@@ -167,6 +167,12 @@ def _logical_arbitrary_order():
 )
 def test_logical_permutation(kernel, expected_m0):
     task = GeminiLogicalSimulator().task(kernel)
+    measurements = [
+        stmt
+        for stmt in task.noiseless_physical_squin_kernel.callable_region.walk()
+        if isinstance(stmt, qubit.stmts.Measure)
+    ]
+    assert len(measurements) == 1
     dets, obs = _assert_postprocessed_matches_native(task)
 
     assert all(row == [expected_m0] for row in dets)

@@ -10,7 +10,12 @@ const source = readFileSync(path.join(
   __dirname, '../../bloqade/lanes/visualize/_arch_interactive.js'
 ), 'utf8');
 
-function fixture(occupied) {
+function fixture(occupied, debuggerOptions = {}) {
+  const {
+    frameNames = ['step-0'],
+    hasSlider = false,
+    activeStep = 0
+  } = debuggerOptions;
   class Element {
     constructor() {
       this.style = {};
@@ -32,6 +37,7 @@ function fixture(occupied) {
   const siteData = [0, 0, 0, 0, 0];
   const atomData = [7, ...siteData, ''];
   const plot = new Element();
+  plot.focus = () => { plot.focused = true; };
   plot.clientWidth = 600;
   plot.clientHeight = 400;
   plot.layout = {font: {color: 'black'}, meta: {
@@ -41,8 +47,11 @@ function fixture(occupied) {
     archVisualizerSiteLanePaths: [{
       exactX: [0, 1], exactY: [0, 0], color: 'red', dash: 'dash'
     }],
-    bloqadePlotlyDebugger: {frameNames: ['step-0']}
+    bloqadePlotlyDebugger: {frameNames}
   }};
+  if (hasSlider) {
+    plot.layout.sliders = [{active: activeStep}];
+  }
   plot.data = [{x: [0], y: [0], customdata: [siteData]}];
   if (occupied) {
     plot.data.push({meta: {bloqadeTraceKind: 'atom'}, customdata: [atomData]});
@@ -65,24 +74,218 @@ function fixture(occupied) {
     (domOptions[name] ??= []).push(options);
   };
   plot.getBoundingClientRect = () => ({left: 0, top: 0});
+  const animateCalls = [];
+  const relayoutCalls = [];
   vm.runInNewContext(source, {
     document: {
       getElementById: () => plot,
       createElement: () => new Element(),
       createElementNS: () => new Element()
     },
-    window: {setTimeout: (callback) => callback()}
+    window: {
+      setTimeout: (callback) => callback(),
+      Plotly: {
+        animate: (_plot, frames, options) => {
+          animateCalls.push({frames, options});
+          return Promise.resolve();
+        },
+        relayout: (_plot, update) => {
+          relayoutCalls.push(update);
+          if (plot.layout.sliders && 'sliders[0].active' in update) {
+            plot.layout.sliders[0].active = update['sliders[0].active'];
+          }
+          return Promise.resolve();
+        }
+      }
+    }
   });
   return {
-    plot, siteData, atomData, domEvents, domOptions,
+    plot, siteData, atomData, domEvents, domOptions, animateCalls, relayoutCalls,
     emit: (name, event) => events[name].forEach((handler) => handler(event)),
     move: (event) => domEvents.mousemove.forEach((handler) => handler(event)),
     leave: () => domEvents.mouseleave.forEach((handler) => handler()),
+    click: (target) => domEvents.click.forEach((handler) => handler({target})),
+    keydown: (event) => domEvents.keydown.forEach((handler) => handler(event)),
     lanes: () => overlay.children.filter((element) =>
       element.isConnected && 'data-arch-visualizer-site-lane' in element.attributes
     )
   };
 }
+
+function keyEvent(key, target) {
+  return {
+    key,
+    target,
+    prevented: false,
+    preventDefault() { this.prevented = true; }
+  };
+}
+
+test('interactive multi-frame debugger makes only the plot focusable', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1'], hasSlider: true
+  });
+
+  assert.equal(f.plot.attributes.tabindex, '0');
+  assert.equal(f.domEvents.keydown.length, 1);
+});
+
+test('clicking the debugger plot gives arrow keys figure focus', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1'], hasSlider: true
+  });
+  f.click({closest: () => null});
+
+  assert.equal(f.plot.focused, true);
+});
+
+test('clicking a nested bus control does not take its keyboard focus', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1'], hasSlider: true
+  });
+  f.click({closest: (selector) => selector.includes('input') ? {} : null});
+
+  assert.equal(f.plot.focused, undefined);
+});
+
+test('debugger arrow keys navigate every previous and next mapping', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true, activeStep: 1
+  });
+  const expectedFrameForKey = {
+    ArrowLeft: 'step-0', ArrowUp: 'step-0',
+    ArrowRight: 'step-2', ArrowDown: 'step-2'
+  };
+
+  for (const [key, frameName] of Object.entries(expectedFrameForKey)) {
+    f.animateCalls.length = 0;
+    f.plot.layout.sliders[0].active = 1;
+    f.emit('plotly_animatingframe', {name: 'step-1'});
+    const event = keyEvent(key, f.plot);
+    f.keydown(event);
+    assert.equal(f.animateCalls.length, 1, key);
+    assert.deepEqual(plain(f.animateCalls[0].frames), [frameName], key);
+    assert.equal(event.prevented, true, key);
+  }
+});
+
+test('debugger arrow navigation starts at the active slider step', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true, activeStep: 1
+  });
+  const event = keyEvent('ArrowRight', f.plot);
+
+  f.keydown(event);
+
+  assert.deepEqual(plain(f.animateCalls[0].frames), ['step-2']);
+  assert.deepEqual(plain(f.relayoutCalls), [{'sliders[0].active': 2}]);
+});
+
+test('debugger arrow navigation clamps at both ends and prevents scrolling', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1'], hasSlider: true
+  });
+
+  const first = keyEvent('ArrowLeft', f.plot);
+  f.keydown(first);
+  const last = keyEvent('ArrowRight', f.plot);
+  f.keydown(last);
+  const beyondLast = keyEvent('ArrowDown', f.plot);
+  f.keydown(beyondLast);
+
+  assert.deepEqual(
+    f.animateCalls.map((call) => plain(call.frames)),
+    [['step-0'], ['step-1'], ['step-1']]
+  );
+  assert.equal(first.prevented, true);
+  assert.equal(last.prevented, true);
+  assert.equal(beyondLast.prevented, true);
+});
+
+test('debugger arrow navigation ignores nested controls without preventing default', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1'], hasSlider: true
+  });
+  const event = keyEvent('ArrowRight', {});
+
+  f.keydown(event);
+
+  assert.equal(f.animateCalls.length, 0);
+  assert.equal(event.prevented, false);
+});
+
+test('single-frame and autoplay debuggers remain unfocusable and inactive', () => {
+  const singleFrame = fixture(false, {
+    frameNames: ['step-0'], hasSlider: true
+  });
+  const autoplay = fixture(false, {
+    frameNames: ['step-0', 'step-1']
+  });
+
+  for (const f of [singleFrame, autoplay]) {
+    assert.equal(f.plot.attributes.tabindex, undefined);
+    assert.equal(f.domEvents.keydown, undefined);
+  }
+});
+
+test('direct frame animation synchronizes the debugger arrow navigation state', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true
+  });
+  f.emit('plotly_animatingframe', {name: 'step-2'});
+  const event = keyEvent('ArrowUp', f.plot);
+
+  f.keydown(event);
+
+  assert.deepEqual(plain(f.animateCalls[0].frames), ['step-1']);
+  assert.deepEqual(plain(f.relayoutCalls[0]), {'sliders[0].active': 2});
+});
+
+test('Play steps refreshes the slider after Plotly updates its active value', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true
+  });
+
+  // Plotly can update the layout value before the external frame listener runs.
+  // The visible slider still needs the relayout request for this frame.
+  f.plot.layout.sliders[0].active = 1;
+  f.emit('plotly_animatingframe', {name: 'step-1'});
+
+  assert.deepEqual(plain(f.relayoutCalls), [{'sliders[0].active': 1}]);
+});
+
+test('Play steps refreshes after a jump whose frame event did not arrive', async () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2'], hasSlider: true
+  });
+  f.keydown(keyEvent('ArrowRight', f.plot));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  f.plot.layout.sliders[0].active = 0;
+  f.emit('plotly_animatingframe', {name: 'step-1'});
+
+  assert.deepEqual(plain(f.relayoutCalls), [
+    {'sliders[0].active': 1},
+    {'sliders[0].active': 1}
+  ]);
+});
+
+test('click-to-jump updates the debugger arrow navigation state', () => {
+  const f = fixture(false, {
+    frameNames: ['step-0', 'step-1', 'step-2', 'step-3'], hasSlider: true
+  });
+  f.plot.data.push({meta: {bloqadeTraceKind: 'circuitGate'}});
+  f.emit('plotly_click', {points: [{curveNumber: 1, customdata: [2]}]});
+  const event = keyEvent('ArrowRight', f.plot);
+
+  f.keydown(event);
+
+  assert.deepEqual(
+    f.animateCalls.map((call) => plain(call.frames)),
+    [['step-2'], ['step-3']]
+  );
+});
 
 test('pointer proximity previews a site even when another overlay captures hover', () => {
   const f = fixture(true);
