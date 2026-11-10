@@ -73,6 +73,9 @@ injected_mld_exp = PostSelectionExperiment(
 
 # %%
 tsim_simulator = GeminiLogicalSimulator(backend=TsimSimulatorBackend(seed=10))
+# Factory postselection retains only a small fraction of the simulated shots.
+# Use enough samples to leave data in every tomography basis.
+NUM_SHOTS = 1_000
 
 # %%
 msd_mld_exp.kernels(num_logical_qubits=5)
@@ -80,7 +83,7 @@ msd_mld_exp.dem_circuits()
 msd_mld_exp.dems()
 msd_mld_exp.initialize_decoders()
 msd_mld_exp.make_tasks(device=tsim_simulator)
-msd_mld_exp.get_samples(num_shots=100)
+msd_mld_exp.get_samples(num_shots=NUM_SHOTS)
 msd_mld_exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
 
 # %%
@@ -90,7 +93,7 @@ msd_mle_exp.dem_circuits()
 msd_mle_exp.dems()
 msd_mle_exp.initialize_decoders()
 msd_mle_exp.make_tasks(device=tsim_simulator)
-msd_mle_exp.get_samples(num_shots=100)
+msd_mle_exp.get_samples(num_shots=NUM_SHOTS)
 msd_mle_exp.decode_and_postselect(np.array([[1, 0, 1, 1]]))
 
 # %%
@@ -101,7 +104,7 @@ injected_mld_exp.dem_circuits()
 injected_mld_exp.dems()
 injected_mld_exp.initialize_decoders()
 injected_mld_exp.make_tasks(device=tsim_simulator)
-injected_mld_exp.get_samples(num_shots=100)
+injected_mld_exp.get_samples(num_shots=NUM_SHOTS)
 injected_mld_exp.decode_and_postselect(np.array([[]]))
 
 # %% [markdown]
@@ -110,13 +113,18 @@ injected_mld_exp.decode_and_postselect(np.array([[]]))
 # > `accepted_fraction` is the fraction of shots you want to retain *after* the postselection criteria on the distillation circuit has been applied.
 #
 # > For example, say that you ran 1,000,000 shots for each basis. After decoding and postselection, we may only have 100,000 shots remaining in each basis. If you set `accepted_fraction` = 0.5, then you would accept around 150,000 shots across all three bases (note that the number of shots accepted in each basis may differ).
+#
+# Tomography needs surviving shots in every basis after the global confidence
+# cut. The larger sample above helps retain coverage when accepting the most
+# confident 50% of factory-postselected shots. If a basis is empty, collect more
+# shots or increase the accepted fraction as indicated by the error.
 
 # %%
 # The bloch vector to compute fidelity to (for MSD, we want to compute fidelity to the (1, 1, 1) state.)
 TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 tomo_result = msd_mld_exp.tomography_result(
-    accepted_fraction=0.50,
+    accepted_fraction=0.5,
 )
 tomo_result.fidelity_bloch(TARGET_BLOCH)
 

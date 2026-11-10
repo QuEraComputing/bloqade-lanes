@@ -476,6 +476,13 @@ class PostSelectionExperiment:
         Returns:
             TomographyResult: Single-qubit tomography with a one-dimensional
                 shot array per basis, selected using the accepted fraction.
+
+        Raises:
+            ValueError: If any tomography basis has no selected shots. The
+                confidence cut is global, so a positive accepted fraction does
+                not guarantee coverage of every basis. Increase the fraction
+                if the cut removes a basis, or collect more shots if a basis
+                has no shots after factory postselection.
         """
 
         decoded_results = self._postselection_exp_cache.decoded_results
@@ -490,6 +497,29 @@ class PostSelectionExperiment:
             accepted_fraction,
             basis_labels=basis_labels,
         )
+        empty_bases = [
+            basis for basis, shots in shots_by_basis.items() if not len(shots)
+        ]
+        if empty_bases:
+            selected_counts = {
+                basis: len(shots) for basis, shots in shots_by_basis.items()
+            }
+            postselected_counts = {
+                basis: len(result.observables)
+                for basis, result in decoded_results.items()
+            }
+            advice = (
+                "Collect more shots or review the factory postselection criteria."
+                if any(postselected_counts[basis] == 0 for basis in empty_bases)
+                else "Increase accepted_fraction to retain shots in every basis."
+            )
+            raise ValueError(
+                "Cannot estimate tomography without shots in every basis; "
+                f"empty bases: {', '.join(empty_bases)}. "
+                f"Selected counts: {selected_counts}; "
+                f"postselected counts before the confidence cut: {postselected_counts}. "
+                + advice
+            )
         return TomographyResult(
             {basis: shots[:, 0] for basis, shots in shots_by_basis.items()}
         )

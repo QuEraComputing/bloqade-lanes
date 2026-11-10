@@ -249,6 +249,52 @@ def test_postselection_experiment_decode_and_tomography_result_with_cached_data(
     )
 
 
+@pytest.mark.parametrize("accepted_fraction", [0.0, 0.5])
+@pytest.mark.parametrize("z_confidence", [0.1, 0.9])
+def test_tomography_reports_basis_removed_by_global_confidence_cut(
+    accepted_fraction, z_confidence
+):
+    exp = object.__new__(PostSelectionExperiment)
+    exp._postselection_exp_cache = _PostSelectionExperimentCache()
+    exp._postselection_exp_cache.decoded_results = {
+        basis: _DecodedPostselectionResult(
+            observables=np.array([[0], [1], [0], [1]], dtype=np.uint8),
+            confidence=np.full(4, z_confidence if basis == "Z" else 0.9),
+        )
+        for basis in ("X", "Y", "Z")
+    }
+
+    # A global top-k cut may exclude Z even when all confidence scores tie.
+    with pytest.raises(ValueError, match="Increase accepted_fraction") as exc_info:
+        exp.tomography_result(accepted_fraction)
+    assert "Selected counts:" in str(exc_info.value)
+    assert "'Z': 0" in str(exc_info.value)
+    assert "postselected counts before the confidence cut:" in str(exc_info.value)
+
+    # Keeping all postselected shots restores coverage without inventing data.
+    result = exp.tomography_result(1.0)
+    assert all(shots.size == 4 for shots in result.shots_by_basis.values())
+    np.testing.assert_allclose(result.density_matrix, np.eye(2) / 2)
+
+
+@pytest.mark.parametrize("accepted_fraction", [0.5, 1.0])
+def test_tomography_reports_basis_missing_before_confidence_cut(accepted_fraction):
+    exp = object.__new__(PostSelectionExperiment)
+    exp._postselection_exp_cache = _PostSelectionExperimentCache()
+    exp._postselection_exp_cache.decoded_results = {
+        basis: _DecodedPostselectionResult(
+            observables=np.zeros((0 if basis == "Z" else 4, 1), dtype=np.uint8),
+            confidence=np.ones(0 if basis == "Z" else 4),
+        )
+        for basis in ("X", "Y", "Z")
+    }
+
+    with pytest.raises(ValueError, match="Collect more shots") as exc_info:
+        exp.tomography_result(accepted_fraction)
+    assert "'Z': 0" in str(exc_info.value)
+    assert "Increase accepted_fraction" not in str(exc_info.value)
+
+
 def test_postselection_experiment_decode_progress_label_true_uses_decoder_class_name(
     monkeypatch,
 ):
