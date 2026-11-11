@@ -8,17 +8,12 @@ from kirin.dialects import ilist
 from kirin.serialization import JSONSerializer
 
 from bloqade.gemini import logical
-from bloqade.gemini.common.dialects.qubit import new_at
-from bloqade.gemini.common.dialects.qubit.stmts import NewAt
-from bloqade.gemini.logical.dialects.operations.stmts import TerminalLogicalMeasurement
 from bloqade.lanes.dialects import arch, steane713
 from bloqade.lanes.dialects.steane713 import extensions
 
 
-def test_compatibility_aliases_keep_identity():
-    assert new_at is arch.new_at
-    assert NewAt is arch.NewAt
-    assert TerminalLogicalMeasurement is steane713.stmts.TerminalLogicalMeasurement
+def test_gemini_frontend_reexports_lanes_definitions():
+    assert logical.loc is arch.loc
     assert logical.terminal_measure is steane713.terminal_measure
     assert extensions.dialect is not steane713.dialect
 

@@ -37,12 +37,12 @@ from matplotlib.patches import Rectangle
 
 from bloqade import squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.device import GeminiLogicalSimulator
 
 # Define logical arch spec
 from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
 from bloqade.lanes.bytecode.encoding import ZoneAddress
+from bloqade.lanes.dialects.arch import new_at
 
 
 # We define a helper function that visualizes an architecture specification.

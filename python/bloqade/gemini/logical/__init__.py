@@ -29,7 +29,6 @@ from bloqade.squin.stdlib.simple import (
 from kirin.dialects import ilist as ilist
 
 from bloqade.gemini.logical import (
-    dialects as dialects,
     extensions as extensions,
     impl as impl,
     validation as validation,
@@ -63,7 +62,6 @@ __all__ = [
     "cy",
     "cz",
     "default_post_processing",
-    "dialects",
     "extensions",
     "h",
     "ilist",

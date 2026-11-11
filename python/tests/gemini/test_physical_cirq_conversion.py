@@ -75,7 +75,7 @@ def test_physical_new_at_emits_without_importing_logical_converter(tmp_path):
             from bloqade import squin
             from bloqade.cirq_utils import emit_circuit
             from bloqade.gemini import physical
-            from bloqade.gemini.common.dialects.qubit import new_at
+            from bloqade.lanes.dialects.arch import new_at
 
             @physical.kernel()
             def program():

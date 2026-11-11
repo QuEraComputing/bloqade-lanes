@@ -3,8 +3,10 @@
 Both `bloqade.lanes` and `bloqade.gemini` continue to ship in the
 `bloqade-lanes` distribution, from `python/bloqade`. This refactor separates
 compiler and frontend responsibilities inside this repository; it does not
-move the Gemini package to another distribution. Existing Gemini Python
-import paths and installation instructions remain unchanged.
+move the Gemini package to another distribution, and installation instructions
+are unchanged. Gemini's frontend API (`bloqade.gemini.logical`,
+`bloqade.gemini.physical`, devices, simulation, decoding) keeps its import paths;
+the relocated compiler modules below do not.
 
 Compiler definitions belong to `bloqade.lanes`:
 
@@ -18,10 +20,10 @@ Compiler definitions belong to `bloqade.lanes`:
 | `GeminiLogicalValidation` | `lanes.validation.steane.SteaneLogicalValidation` |
 | `GeminiTerminalMeasurementValidation` | `lanes.validation.terminal_measurement.SteaneTerminalMeasurementValidation` |
 
-The Gemini package retains deprecated Python re-exports for the relocated
-modules. These refer to the same class and dialect objects; they do not define
-or register duplicate statements. The old `common` compatibility namespace is
-therefore retained for now. New code should use the canonical lanes paths.
+This is a breaking change: the previous module paths are removed, with no
+deprecated re-exports. Import these definitions from their lanes paths. The
+frontend re-exports that are part of the kernel API (for example
+`bloqade.gemini.logical.terminal_measure`, `loc` and `move_to`) remain.
 Device-only extension rejection and kernel argument policies remain in Gemini.
 The experimental STAR dialect remains separate from the ordinary Steane dialect.
 
@@ -47,8 +49,7 @@ wheel and update bloqade's dependency and lockfile together.
 
 ## Saved IR and backend compatibility
 
-Python aliases preserve imports, not the old serialized IR protocol. Statement
-module paths and dialect names changed (`lanes.arch`, `lanes.arrange`,
+Statement module paths and dialect names changed (`lanes.arch`, `lanes.arrange`,
 `lanes.steane713`, and `lanes.steane713.extensions`). Recompile saved kernels from
 source. Producers and consumers of serialized pre-lowering IR must upgrade
 together; old serialized kernels are not promised to load. Compiled move/bytecode
