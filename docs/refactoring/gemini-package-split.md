@@ -1,12 +1,12 @@
 # Gemini namespace ownership
 
-Both `bloqade.lanes` and `bloqade.gemini` continue to ship in the
-`bloqade-lanes` distribution, from `python/bloqade`. This refactor separates
-compiler and frontend responsibilities inside this repository; it does not
-move the Gemini package to another distribution, and installation instructions
-are unchanged. Gemini's frontend API (`bloqade.gemini.logical`,
-`bloqade.gemini.physical`, devices, simulation, decoding) keeps its import paths;
-the relocated compiler modules below do not.
+The `bloqade-lanes` distribution now ships only `bloqade.lanes`, from
+`python/bloqade/lanes`. The Gemini frontend is moving to `src/bloqade/gemini`
+in the `bloqade` repository ([PR #392](https://github.com/QuEraComputing/bloqade/pull/392)).
+Install the corresponding bloqade release to use `bloqade.gemini.logical`,
+`bloqade.gemini.physical`, devices, simulation, and decoding. Their public
+import paths are unchanged by the distribution move; installing lanes alone
+no longer supplies them.
 
 Compiler definitions belong to `bloqade.lanes`:
 
@@ -29,24 +29,31 @@ The experimental STAR dialect remains separate from the ordinary Steane dialect.
 
 ## Method-table registration
 
-Lanes owns every method table its analyses, validators, and pipelines need,
-and registers each when the module that owns it loads. Dialect-level tables
-(`NewAt` address analysis on `lanes.arch`; type inference and measurement IDs on
-`lanes.steane713`) load with their dialect package. Validation tables live in
-the same module as the validator that consumes them. Lanes therefore compiles in
-a fresh process without importing Gemini, and lanes never imports Gemini.
-Gemini keeps only policy it alone enables, such as the device-submission
-extension rejection. Registration attaches tables to the shared lanes/Kirin
-dialect objects; it is process-wide, not per kernel group.
+Lanes owns the analysis and validation drivers. Gemini supplies and registers
+the method tables for `NewAt` address analysis, allocation/movement validation,
+Steane terminal-measurement type inference and measurement IDs, logical gate
+validation, and physical/logical terminal-measurement validation. These tables
+already exist in bloqade PR #392 and are removed from lanes to avoid duplicate
+registration. Importing `bloqade.gemini` loads them before its kernel groups run.
 
-## Packaging and a future distribution split
+Lanes retains its other method tables, including architecture constant folding
+and concrete evaluation, Move validation, and compiler analyses. Lanes never
+imports Gemini. Generic lanes compilation remains independent; callers using
+Gemini-specific validation must load the frontend first. Registration attaches
+tables to shared lanes/Kirin dialect objects and is process-wide.
 
-The lanes wheel includes both namespaces and excludes generated caches. No
-coordinated bloqade release or local path dependency is needed for this refactor.
-The prepared Gemini relocation in the bloqade repository is a separate future
-change. Do not release that copy alongside this lanes wheel: both distributions
-would own `bloqade.gemini`. A future split must remove Gemini from the lanes
-wheel and update bloqade's dependency and lockfile together.
+## Packaging and release coordination
+
+The lanes wheel excludes `bloqade.gemini` and generated caches. Gemini tests
+belong with the frontend in the bloqade repository; lanes retains compiler-only
+tests, including compilation without importing Gemini. Lanes CI no longer runs
+Gemini demos or the MSD numerical regression. The retained Gemini demo scripts
+require a separately installed compatible bloqade frontend.
+
+Publish a compatible lanes release before the bloqade frontend release, then
+update bloqade's dependency and lockfile. Do not combine the new bloqade frontend
+with an older lanes wheel that also ships `bloqade.gemini`: both distributions
+would own the same files.
 
 ## Saved IR and backend compatibility
 

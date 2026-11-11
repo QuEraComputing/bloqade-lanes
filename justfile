@@ -8,7 +8,7 @@ default:
 # ── Python ──────────────────────────────────────────────────────────
 
 coverage-run:
-    uv run --locked pytest python/tests --cov --cov-report= -n auto -m "not msd_numerical_regression"
+    uv run --locked pytest python/tests --cov --cov-report= -n auto
 
 coverage-xml: coverage-run
     uv run --locked coverage xml
@@ -51,6 +51,8 @@ coverage-all: coverage-run coverage-xml coverage-rust
 coverage-all-open: coverage-all
     open htmlcov-all/index.html
 
+# Gemini frontend demos require the separate bloqade distribution.
+# They are excluded from the lanes-only demo target used in CI.
 demo-msd:
     uv run --locked --no-sync python demo/msd.py
 
@@ -93,7 +95,8 @@ demo-extend-site-buses:
 demo-arch-cust-vis:
     uv run --locked --no-sync python demo/arch_cust_vis_demo.py
 
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at demo-extend-site-buses demo-arch-cust-vis
+# Demos runnable with bloqade-lanes alone.
+demo: demo-extend-site-buses demo-arch-cust-vis
 
 # Install mdBook at the pinned version
 install-mdbook:

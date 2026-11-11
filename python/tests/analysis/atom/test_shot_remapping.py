@@ -11,11 +11,7 @@ ids on purpose.
 """
 
 import pytest
-from kirin.dialects import ilist
 
-from bloqade import squin
-from bloqade.gemini import logical
-from bloqade.gemini.post_processing import build_post_processing
 from bloqade.lanes.analysis.atom import (
     AtomInterpreter,
     AtomPosition,
@@ -26,7 +22,6 @@ from bloqade.lanes.analysis.atom import (
     ShotRemappingOk,
 )
 from bloqade.lanes.analysis.atom._shot_remapping import get_shot_remapping
-from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
@@ -39,7 +34,6 @@ from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.bytecode.word import Word
 from bloqade.lanes.dialects import move
 from bloqade.lanes.prelude import kernel
-from bloqade.lanes.transform import LogicalPipeline
 
 
 def _atom(measurement_id: int | None, frame_index: int | None, site: int = 0):
@@ -261,105 +255,3 @@ def test_unresolvable_location_still_raises_when_no_raise_is_false():
     interp = AtomInterpreter(kernel, arch_spec=_tiny_arch())
     with pytest.raises(ValueError, match="Invalid location address"):
         interp.get_shot_remapping(_fills_an_address_outside_the_arch, no_raise=False)
-
-
-# ── Integration: the reproductions from issue #967 ───────────────
-
-
-def _mapping_for(kernel_method):
-    arch_spec = physical.get_arch_spec()
-    physical_move = LogicalPipeline(transversal_rewrite=True).emit(kernel_method)
-    interp = AtomInterpreter(physical_move.dialects, arch_spec=arch_spec)
-    result = interp.get_shot_remapping(physical_move)
-    assert isinstance(
-        result, ShotRemappingOk
-    ), f"unexpected diagnostic: {getattr(result, 'diagnostic', None)}"
-    return result, interp, physical_move
-
-
-@pytest.mark.slow
-def test_full_return_maps_every_record():
-    @logical.kernel(aggressive_unroll=True)
-    def main():
-        q = logical.qalloc_at(ilist.IList([4, 5]))
-        squin.h(q[0])
-        return logical.terminal_measure(q)
-
-    result, _, _ = _mapping_for(main)
-    # 2 logical qubits x 7 physical.
-    assert len(result.mapping) == 14
-    assert len(set(result.mapping)) == 14
-    assert all(0 <= idx < result.frame_size for idx in result.mapping)
-
-
-@pytest.mark.slow
-def test_subset_return_still_maps_every_record():
-    """Returning one logical block used to yield a 7-entry mapping while
-    post-processing read indices 7..13, raising IndexError."""
-
-    @logical.kernel(aggressive_unroll=True)
-    def main():
-        q = logical.qalloc_at(ilist.IList([4, 5]))
-        squin.h(q[0])
-        m = logical.terminal_measure(q)
-        return ilist.IList([m[1]])
-
-    subset, _, _ = _mapping_for(main)
-
-    @logical.kernel(aggressive_unroll=True)
-    def full():
-        q = logical.qalloc_at(ilist.IList([4, 5]))
-        squin.h(q[0])
-        return logical.terminal_measure(q)
-
-    every, _, _ = _mapping_for(full)
-    assert len(subset.mapping) == 14
-    assert subset.mapping == every.mapping
-
-
-@pytest.mark.slow
-def test_permuted_return_does_not_permute_the_mapping():
-    """Returning the blocks swapped used to swap the mapping too, so
-    post-processing re-applied the permutation and silently returned the
-    logical blocks in the wrong order."""
-
-    @logical.kernel(aggressive_unroll=True)
-    def permuted():
-        q = logical.qalloc_at(ilist.IList([4, 5]))
-        squin.h(q[0])
-        m = logical.terminal_measure(q)
-        return ilist.IList([m[1], m[0]])
-
-    @logical.kernel(aggressive_unroll=True)
-    def full():
-        q = logical.qalloc_at(ilist.IList([4, 5]))
-        squin.h(q[0])
-        return logical.terminal_measure(q)
-
-    assert _mapping_for(permuted)[0].mapping == _mapping_for(full)[0].mapping
-
-
-@pytest.mark.slow
-def test_permuted_return_round_trips_through_post_processing():
-    """The end-to-end silent-corruption case: set only the second
-    logical block's frame bits and check the values come back attached
-    to the block that was actually measured."""
-
-    @logical.kernel(aggressive_unroll=True)
-    def permuted():
-        q = logical.qalloc_at(ilist.IList([4, 5]))
-        squin.h(q[0])
-        m = logical.terminal_measure(q)
-        return ilist.IList([m[1], m[0]])
-
-    result, _, _ = _mapping_for(permuted)
-    post_processing = build_post_processing(permuted)
-
-    # mapping[7:] are the frame slots of the second logical block.
-    hot = set(result.mapping[7:])
-    frame = [[slot in hot for slot in range(result.frame_size)]]
-    projected = [[shot[slot] for slot in result.mapping] for shot in frame]
-
-    first, second = next(iter(post_processing.emit_return(projected)))
-    assert all(first), "m[1] was measured, so it must come back all True"
-    assert not any(second), "m[0] was not measured, so it must be all False"

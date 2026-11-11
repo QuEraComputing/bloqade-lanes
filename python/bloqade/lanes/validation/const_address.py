@@ -5,11 +5,10 @@ have to be known at compile time. Nothing in ``verify()`` says so -- the
 statement signature is satisfied by any ``int`` SSA value, including a kernel
 block argument whose value only ever exists at runtime.
 
-This is the arch-independent half of the check in :mod:`.new_at`, split out so
-it can run at kernel-decoration time. Const-foldability needs only the
-const-prop hints the unroll/fold passes have already attached; the in-range
-half needs an ``ArchSpec``, which the gemini kernel groups do not have, and so
-stays in :mod:`.new_at` for ``NativeToPlace.emit`` to run against a real spec.
+Gemini registers the per-statement method tables for this analysis in
+``bloqade.gemini.common.impl.const_address``. The corresponding in-range
+check uses ``ArchSpec`` during compilation and is registered by
+``bloqade.gemini.common.impl.new_at``.
 
 Rejecting an entry kernel's own argument loses nothing: a parameter scan
 compiles one program and binds arguments at runtime, so an entry argument can
@@ -23,12 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from kirin import interp, ir
+from kirin import ir
 from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
-
-from bloqade.lanes.dialects import arch
 
 
 @dataclass
@@ -45,7 +42,7 @@ class _ConstAddressValidationAnalysis(Forward[EmptyLattice]):
 
 @dataclass
 class ConstAddressValidation(ValidationPass):
-    """Report every ``gemini.common.NewAt`` address argument that is not a
+    """Report every ``lanes.arch.NewAt`` address argument that is not a
     compile-time constant.
     """
 
@@ -79,21 +76,3 @@ def _expect_const_int(
             ),
         )
     return data
-
-
-@arch.dialect.register(key="lanes.arch.const_address")
-class _NewAtConstAddressMethods(interp.MethodTable):
-    @interp.impl(arch.stmts.NewAt)
-    def check_const_address(
-        self,
-        _interp: _ConstAddressValidationAnalysis,
-        frame: ForwardFrame[EmptyLattice],
-        node: arch.stmts.NewAt,
-    ):
-        # Every arg is checked, not just the first bad one, so a kernel that
-        # gets two of the three wrong hears about both in one pass.
-        _expect_const_int(node.zone_id, "zone_id", node, _interp)
-        _expect_const_int(node.word_id, "word_id", node, _interp)
-        _expect_const_int(node.site_id, "site_id", node, _interp)
-
-        return (EmptyLattice.bottom(),)

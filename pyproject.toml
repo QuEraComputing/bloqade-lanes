@@ -69,7 +69,7 @@ ppvm = [
 manifest-path = "crates/bloqade-lanes-bytecode-python/Cargo.toml"
 module-name = "bloqade.lanes.bytecode._native"
 python-source = "python"
-python-packages = ["bloqade.lanes", "bloqade.gemini"]
+python-packages = ["bloqade.lanes"]
 exclude = ["**/__kirincache__/**", "**/__pycache__/**"]
 
 
@@ -192,9 +192,6 @@ exclude_also = [
 
 [tool.pytest.ini_options]
 testpaths = "python/tests/"
-markers = [
-    "msd_numerical_regression: optional long-running, environment-specific MSD numerical regression",
-]
 
 [tool.uv]
 constraint-dependencies = [
