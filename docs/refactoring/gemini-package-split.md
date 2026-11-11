@@ -47,8 +47,8 @@ tables to shared lanes/Kirin dialect objects and is process-wide.
 The lanes wheel excludes `bloqade.gemini` and generated caches. Gemini tests
 belong with the frontend in the bloqade repository; lanes retains compiler-only
 tests, including compilation without importing Gemini. Lanes CI no longer runs
-Gemini demos or the MSD numerical regression. The retained Gemini demo scripts
-require a separately installed compatible bloqade frontend.
+Gemini demos or the MSD numerical regression. Only the architecture demos run
+by lanes CI are retained.
 
 Publish a compatible lanes release before the bloqade frontend release, then
 update bloqade's dependency and lockfile. Do not combine the new bloqade frontend
