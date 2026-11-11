@@ -9,6 +9,7 @@ policies, simulation, and decoding here. A deferred lanes import must have a
 comment explaining a real optional-dependency or type-only requirement;
 working around a lanes-to-Gemini cycle is not acceptable.
 
-Gemini owns its frontend method tables, including validation implementations.
-Import them before constructing kernel groups. Validation passes/analyses remain
-in lanes; generic lanes move/place and arch evaluation tables stay there.
+Method tables that lanes analyses and pipelines need live in lanes and register
+when their lanes module loads; do not duplicate or re-register them here. Keep
+Gemini-only policy tables (for example the device-submission extension
+rejection) in Gemini.

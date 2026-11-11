@@ -30,7 +30,6 @@ from kirin.dialects import ilist as ilist
 
 from bloqade.gemini.logical import (
     extensions as extensions,
-    impl as impl,
     validation as validation,
 )
 from bloqade.gemini.logical.group import kernel as kernel
@@ -65,7 +64,6 @@ __all__ = [
     "extensions",
     "h",
     "ilist",
-    "impl",
     "kernel",
     "loc",
     "move_to",

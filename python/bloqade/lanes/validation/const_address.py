@@ -23,13 +23,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from kirin import ir
+from kirin import interp, ir
 from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
 from bloqade.lanes.dialects import arch
-from bloqade.lanes.validation._method_tables import require_method_tables
 
 
 @dataclass
@@ -54,12 +53,6 @@ class ConstAddressValidation(ValidationPass):
         return "lanes.arch.const_address"
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
-        require_method_tables(
-            method,
-            [
-                (arch.dialect, "lanes.arch.const_address"),
-            ],
-        )
         analysis = _ConstAddressValidationAnalysis(method.dialects)
         frame, _ = analysis.run(method)
         return frame, analysis.get_validation_errors()
@@ -86,3 +79,21 @@ def _expect_const_int(
             ),
         )
     return data
+
+
+@arch.dialect.register(key="lanes.arch.const_address")
+class _NewAtConstAddressMethods(interp.MethodTable):
+    @interp.impl(arch.stmts.NewAt)
+    def check_const_address(
+        self,
+        _interp: _ConstAddressValidationAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        node: arch.stmts.NewAt,
+    ):
+        # Every arg is checked, not just the first bad one, so a kernel that
+        # gets two of the three wrong hears about both in one pass.
+        _expect_const_int(node.zone_id, "zone_id", node, _interp)
+        _expect_const_int(node.word_id, "word_id", node, _interp)
+        _expect_const_int(node.site_id, "site_id", node, _interp)
+
+        return (EmptyLattice.bottom(),)

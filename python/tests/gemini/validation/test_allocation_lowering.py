@@ -4,7 +4,6 @@ import pytest
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import squin
-from bloqade.gemini.common import impl as _common_impl  # noqa: F401
 from bloqade.lanes.dialects import arch, place
 from bloqade.lanes.transform.native_to_place import NativeToPlace, PhysicalNativeToPlace
 

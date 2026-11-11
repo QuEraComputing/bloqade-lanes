@@ -1,10 +1,13 @@
+from bloqade.analysis.address.analysis import AddressAnalysis
+from bloqade.analysis.address.lattice import Address, AddressQubit
 from kirin import interp
+from kirin.analysis import ForwardFrame
 from kirin.interp import Frame
 
 from bloqade.lanes.bytecode.encoding import LocationAddress
 
 from ._dialect import dialect
-from .stmts import CzPartner, Loc, SiteId, WordId, ZoneId
+from .stmts import CzPartner, Loc, NewAt, SiteId, WordId, ZoneId
 
 
 @dialect.register
@@ -74,3 +77,17 @@ class _ArchInterpreter(interp.MethodTable):
                 f"cz_partner: no CZ partner for {address!r} in the architecture spec."
             )
         return (partner,)
+
+
+@dialect.register(key="qubit.address")
+class _GeminiCommonAddressMethods(interp.MethodTable):
+    @interp.impl(NewAt)
+    def new_at(
+        self,
+        interp_: AddressAnalysis,
+        frame: ForwardFrame[Address],
+        stmt: NewAt,
+    ):
+        addr = AddressQubit(interp_.next_address)
+        interp_.next_address += 1
+        return (addr,)

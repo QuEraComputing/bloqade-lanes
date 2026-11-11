@@ -6,7 +6,6 @@ from kirin.dialects import func, ilist
 from kirin.prelude import structural_no_opt
 
 from bloqade import types as bloqade_types
-from bloqade.gemini.common import impl as _common_impl  # noqa: F401
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects.arch import Loc, dialect as arch_dialect

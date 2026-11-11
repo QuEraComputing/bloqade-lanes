@@ -5,7 +5,6 @@ from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
 from kirin.dialects import ilist
 
-from bloqade.gemini.common import impl as _common_impl  # noqa: F401
 from bloqade.lanes.validation.terminal_measure import (
     PhysicalTerminalMeasurementValidation,
 )

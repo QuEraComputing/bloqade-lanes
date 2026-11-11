@@ -16,7 +16,7 @@ from kirin.rewrite.abc import RewriteRule
 from kirin.validation import ValidationPass, ValidationSuite
 
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects import arch, place, steane713
+from bloqade.lanes.dialects import place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place, clifford2native
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
@@ -26,7 +26,6 @@ from bloqade.lanes.rewrite.steane_transversal import (
     RewriteSteaneTransversalCliffordAdjoints,
 )
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
-from bloqade.lanes.validation._method_tables import require_method_tables
 from bloqade.lanes.validation.address import get_validation
 from bloqade.lanes.validation.const_address import ConstAddressValidation
 from bloqade.lanes.validation.duplicate_address import DuplicateAddressValidation
@@ -128,14 +127,6 @@ class NativeToPlaceBase:
         raise NotImplementedError
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
-        require_method_tables(
-            mt,
-            [
-                (arch.dialect, "qubit.address"),
-                (steane713.dialect, "typeinfer"),
-                (steane713.dialect, "measure_id"),
-            ],
-        )
         out = mt.similar(mt.dialects.add(place))
         out = self._pre_native_rewrites(mt, out, no_raise)
 

@@ -29,14 +29,15 @@ The experimental STAR dialect remains separate from the ordinary Steane dialect.
 
 ## Method-table registration
 
-Gemini owns its qubit-address, Steane type-inference/measurement, and validation
-method tables. Importing its logical or physical kernel groups loads these
-implementations before constructing the groups. Registration attaches them to
-the shared lanes/Kirin dialect objects; it is process-wide, not per kernel group.
-Validation passes and analysis classes remain in lanes, which never imports
-Gemini. Direct compiler callers must first load their frontend's tables;
-missing required registrations raise a clear error. Generic move/place and
-architecture evaluation/constant-propagation tables remain in lanes.
+Lanes owns every method table its analyses, validators, and pipelines need,
+and registers each when the module that owns it loads. Dialect-level tables
+(`NewAt` address analysis on `lanes.arch`; type inference and measurement IDs on
+`lanes.steane713`) load with their dialect package. Validation tables live in
+the same module as the validator that consumes them. Lanes therefore compiles in
+a fresh process without importing Gemini, and lanes never imports Gemini.
+Gemini keeps only policy it alone enables, such as the device-submission
+extension rejection. Registration attaches tables to the shared lanes/Kirin
+dialect objects; it is process-wide, not per kernel group.
 
 ## Packaging and a future distribution split
 

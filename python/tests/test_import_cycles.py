@@ -69,7 +69,7 @@ def test_no_lanes_to_gemini_imports():
     assert not violations, "Lanes must not depend on Gemini: " + ", ".join(violations)
 
 
-def test_missing_frontend_tables_fail_clearly():
+def test_lanes_compiles_without_gemini():
     result = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("_independent_compilation.py"))],
         capture_output=True,

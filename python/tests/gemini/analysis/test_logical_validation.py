@@ -467,7 +467,7 @@ def test_dynamic_call_through_parameter_does_not_crash_validation():
     """
     from bloqade.analysis.address.impls import Func as AddressFuncMethodTable
 
-    from bloqade.gemini.logical.impl.measurement import (
+    from bloqade.lanes.validation.terminal_measurement import (
         Func as MeasurementFuncMethodTable,
     )
 

@@ -19,8 +19,6 @@ from kirin import ir
 from kirin.validation import ValidationPass
 
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects import arch, arrange
-from bloqade.lanes.validation._method_tables import require_method_tables
 from bloqade.lanes.validation.address import _ValidationAnalysis
 
 
@@ -34,13 +32,6 @@ class MoveToValidation(ValidationPass):
         return "lanes.move_to.validation"
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
-        require_method_tables(
-            method,
-            [
-                (arch.dialect, "move.address.validation"),
-                (arrange.dialect, "move.address.validation"),
-            ],
-        )
 
         analysis = _ValidationAnalysis(
             method.dialects,

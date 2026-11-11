@@ -22,14 +22,12 @@ from typing import Any
 
 from bloqade.analysis import address
 from bloqade.analysis.address.lattice import AddressQubit, AddressReg, PartialIList
-from kirin import ir
+from kirin import interp as _interp, ir
 from kirin.analysis import Forward, ForwardFrame
 from kirin.lattice import EmptyLattice
 from kirin.validation import ValidationPass
 
 from bloqade import qubit
-from bloqade.lanes.dialects import arch
-from bloqade.lanes.validation._method_tables import require_method_tables
 
 MAX_PHYSICAL_QUBITS = 80
 
@@ -82,13 +80,6 @@ class PhysicalTerminalMeasurementValidation(ValidationPass):
         return "Physical Terminal Measurement Validation"
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
-        require_method_tables(
-            method,
-            [
-                (qubit.dialect, "lanes.validate.physical.terminal_measure"),
-                (arch.dialect, "qubit.address"),
-            ],
-        )
         addr_analysis = address.AddressAnalysis(dialects=method.dialects)
         address_frame, _ = addr_analysis.run(method)
         total_qubits = addr_analysis.qubit_count
@@ -127,3 +118,38 @@ class PhysicalTerminalMeasurementValidation(ValidationPass):
             )
 
         return frame, errors
+
+
+@qubit.dialect.register(key="lanes.validate.physical.terminal_measure")
+class _PhysicalMeasureValidation(_interp.MethodTable):
+    @_interp.impl(qubit.stmts.Measure)
+    def measure(
+        self,
+        interp: _PhysicalTerminalMeasurementAnalysis,
+        frame: ForwardFrame,
+        stmt: qubit.stmts.Measure,
+    ):
+        if interp.measure_count > 0:
+            interp.add_validation_error(
+                stmt,
+                ir.ValidationError(
+                    stmt,
+                    "Multiple terminal measurements are not allowed in physical circuits; "
+                    "only one qubit.stmts.Measure is permitted.",
+                ),
+            )
+        else:
+            measured_ids = _collect_qubit_ids(interp.address_frame.get(stmt.qubits))
+            expected_ids = set(range(interp.total_qubits))
+            if measured_ids != expected_ids:
+                interp.add_validation_error(
+                    stmt,
+                    ir.ValidationError(
+                        stmt,
+                        f"Terminal measure covers {len(measured_ids)} qubit(s) but "
+                        f"{interp.total_qubits} were allocated; all qubits must be measured.",
+                    ),
+                )
+
+        interp.measure_count += 1
+        return (interp.lattice.bottom(),)

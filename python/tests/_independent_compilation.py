@@ -10,11 +10,14 @@ class NoGemini(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, NoGemini())
 
-from kirin.ir.exception import ValidationErrorGroup
+from bloqade.rewrite.passes import AggressiveUnroll
+from kirin import rewrite
+from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.lanes.dialects import arch, steane713
 from bloqade.lanes.dialects.steane713 import extensions
+from bloqade.lanes.rewrite.qubit_count import InsertQubitCount
 from bloqade.lanes.transform import LogicalPipeline, PhysicalPipeline
 
 kernel = squin.kernel.add(arch).add(steane713).add(extensions)
@@ -28,12 +31,13 @@ def logical():
     return steane713.terminal_measure(q)
 
 
-try:
-    LogicalPipeline().emit(logical, no_raise=False)
-except (ValueError, ValidationErrorGroup) as exc:
-    assert "Missing compiler method tables" in str(exc), str(exc)
-else:
-    raise AssertionError("Logical compilation silently accepted missing tables")
+# Compiler method tables are registered by lanes, so specialized pipelines
+# compile without a frontend having been imported first. Prepare the logical
+# kernel the way a frontend decorator would: flatten it and record the Steane
+# [[7,1,3]] physical width on its terminal measurement.
+AggressiveUnroll(logical.dialects, no_raise=False).fixpoint(logical)
+rewrite.Walk(InsertQubitCount(7)).rewrite(logical.code)
+LogicalPipeline().emit(logical, no_raise=False)
 
 
 @squin.kernel
@@ -42,6 +46,23 @@ def physical():
     squin.h(q[0])
     squin.cx(q[0], q[1])
     return squin.broadcast.measure(q)
+
+
+PhysicalPipeline().emit(physical, no_raise=False)
+
+pinned = squin.kernel.add(arch)
+
+
+@pinned
+def physical_pinned():
+    a = arch.new_at(0, 0, 0)
+    b = arch.new_at(0, 0, 1)
+    squin.h(a)
+    squin.cx(a, b)
+    return squin.broadcast.measure(ilist.IList([a, b]))
+
+
+PhysicalPipeline().emit(physical_pinned, no_raise=False)
 
 
 from bloqade.lanes.transform.native_to_place import NativeToPlace
@@ -55,11 +76,15 @@ def generic():
 
 
 NativeToPlace().emit(generic, no_raise=False)
-try:
-    PhysicalPipeline().emit(physical, no_raise=False)
-except (ValueError, ValidationErrorGroup) as exc:
-    assert "Missing compiler method tables" in str(exc), str(exc)
-else:
-    raise AssertionError("Physical validation silently accepted missing tables")
+
+
+@pinned
+def location_only():
+    q = squin.qalloc(1)
+    squin.h(q[0])
+    return arch.loc(0, 0, 0)
+
+
+NativeToPlace().emit(location_only, no_raise=False)
 assert not any(n.startswith("bloqade.gemini") for n in sys.modules)
-print("Generic lowering works; specialized pipelines require frontend tables")
+print("Lanes compiles independently of Gemini")

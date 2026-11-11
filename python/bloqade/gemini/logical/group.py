@@ -13,9 +13,6 @@ from kirin.prelude import structural_no_opt
 from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
-# Load method tables before constructing the dialect group and its analyses.
-from bloqade.gemini.common import impl as _common_impl  # noqa: F401
-from bloqade.gemini.logical import impl as _logical_impl  # noqa: F401
 from bloqade.gemini.steane_defaults import STEANE7_PHYSICAL_QUBITS
 from bloqade.lanes.dialects import arch, steane713 as operations
 from bloqade.lanes.dialects.steane713 import extensions as extensions

@@ -12,8 +12,6 @@ from kirin.prelude import structural_no_opt
 from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
-# Load method tables before constructing the dialect group and its analyses.
-from bloqade.gemini.common import impl as _common_impl  # noqa: F401
 from bloqade.lanes.dialects import arch, arrange
 from bloqade.lanes.validation.call_site import InlineOrigins
 from bloqade.lanes.validation.const_address import ConstAddressValidation
