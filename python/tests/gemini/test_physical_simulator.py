@@ -13,7 +13,6 @@ from kirin.decl import info, statement
 from kirin.dialects import func, ilist, ssacfg
 
 from bloqade import squin, types as bloqade_types
-from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.compile.task import _find_qubit_ssas
 from bloqade.gemini.device import (
     BackendSample,
@@ -39,7 +38,7 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.bytecode.encoding import Direction, SiteLaneAddress
-from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects import arch as gemini_qubit, move
 from bloqade.lanes.prelude import kernel as move_kernel
 
 _HAS_CLIFFT = importlib.util.find_spec("clifft") is not None
@@ -281,7 +280,7 @@ def test_task_base_does_not_expose_cached_samplers(attribute):
 
 
 def test_physical_simulator_task_passes_placement_strategy(monkeypatch):
-    import bloqade.lanes.transform as pipeline_module
+    import bloqade.gemini.device.physical_simulator as pipeline_module
 
     captured = {}
     move_kernel = MagicMock()
@@ -462,7 +461,7 @@ def test_physical_simulator_constructor_rejects_measurement_matrices(kwargs):
 
 
 def test_physical_simulator_task_rejects_non_squin_before_pipeline(monkeypatch):
-    import bloqade.lanes.transform as pipeline_module
+    import bloqade.gemini.device.physical_simulator as pipeline_module
 
     physical_pipeline = MagicMock()
     monkeypatch.setattr(pipeline_module, "PhysicalPipeline", physical_pipeline)

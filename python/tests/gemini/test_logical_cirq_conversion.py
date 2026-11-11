@@ -16,17 +16,15 @@ from bloqade.gemini.common.cirq_conversion import (
     GeminiQubit,
     _GeminiQubitCirqMethods,
 )
-from bloqade.gemini.common.dialects.qubit import new_at
-from bloqade.gemini.common.dialects.qubit.stmts import NewAt
 from bloqade.gemini.device import GeminiLogicalSimulator
 from bloqade.gemini.logical.cirq_conversion import (
     GeminiLogicalQubit,
     _LogicalCirqMethods,
 )
-from bloqade.gemini.logical.dialects.operations import stmts as logical_ops
-from bloqade.gemini.logical.dialects.operations.stmts import (
-    TerminalLogicalMeasurement,
-)
+from bloqade.lanes.dialects.arch import new_at
+from bloqade.lanes.dialects.arch.stmts import NewAt
+from bloqade.lanes.dialects.steane713 import stmts as logical_ops
+from bloqade.lanes.dialects.steane713.stmts import TerminalLogicalMeasurement
 
 
 def test_load_plain_cirq_as_logical_kernel():

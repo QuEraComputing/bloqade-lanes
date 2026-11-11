@@ -7,9 +7,9 @@ from kirin.dialects import ilist
 
 import bloqade.gemini as gemini
 from bloqade.gemini.logical import kernel
-from bloqade.gemini.logical.rewrite.qubit_count import InsertQubitCount
 from bloqade.gemini.post_processing import build_post_processing
 from bloqade.lanes.analysis import atom
+from bloqade.lanes.rewrite.qubit_count import InsertQubitCount
 
 Params = ParamSpec("Params")
 ReturnType = TypeVar("ReturnType")

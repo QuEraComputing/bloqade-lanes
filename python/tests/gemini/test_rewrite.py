@@ -7,15 +7,13 @@ from kirin.dialects import func, ilist, py
 
 from bloqade import squin
 from bloqade.gemini import logical
-from bloqade.gemini.logical.dialects.operations.stmts import (
+from bloqade.lanes.dialects.steane713.stmts import (
     Initialize,
     TerminalLogicalMeasurement,
 )
-from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
-from bloqade.gemini.logical.rewrite.remove_postprocessing import (
-    RemovePostProcessing,
-)
-from bloqade.gemini.logical.rewrite.steane_transversal import (
+from bloqade.lanes.rewrite.initialize import _RewriteU3ToInitialize
+from bloqade.lanes.rewrite.remove_postprocessing import RemovePostProcessing
+from bloqade.lanes.rewrite.steane_transversal import (
     RewriteSteaneTransversalCliffordAdjoints,
 )
 

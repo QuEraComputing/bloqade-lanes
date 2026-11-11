@@ -10,7 +10,7 @@ from kirin import lowering
 from kirin.dialects import py
 
 from bloqade.gemini import physical
-from bloqade.gemini.common.dialects.qubit.stmts import NewAt
+from bloqade.lanes.dialects.arch.stmts import NewAt
 
 
 def test_physical_pinned_qubit_round_trip():
@@ -75,7 +75,7 @@ def test_physical_new_at_emits_without_importing_logical_converter(tmp_path):
             from bloqade import squin
             from bloqade.cirq_utils import emit_circuit
             from bloqade.gemini import physical
-            from bloqade.gemini.common.dialects.qubit import new_at
+            from bloqade.lanes.dialects.arch import new_at
 
             @physical.kernel()
             def program():

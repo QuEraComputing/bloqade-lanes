@@ -12,9 +12,7 @@ from kirin.validation import ValidationSuite
 from bloqade import squin
 from bloqade.gemini import GeminiLogicalDevice, logical
 from bloqade.gemini.compile import run_squin_kernel_validation
-from bloqade.gemini.logical.validation.arguments import (
-    GeminiLogicalArgumentValidation,
-)
+from bloqade.gemini.logical.validation.arguments import GeminiLogicalArgumentValidation
 
 
 def _validate(method):

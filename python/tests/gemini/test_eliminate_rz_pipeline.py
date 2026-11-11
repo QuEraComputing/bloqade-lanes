@@ -15,11 +15,11 @@ from bloqade.gemini import (
     physical as gemini_physical,
 )
 from bloqade.gemini.logical import default_post_processing
-from bloqade.gemini.logical.rewrite.remove_postprocessing import RemovePostProcessing
 from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_spec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.passes import ASAPPlacePass
+from bloqade.lanes.rewrite.remove_postprocessing import RemovePostProcessing
 from bloqade.lanes.rewrite.transversal import steane_star_theta
 from bloqade.lanes.transform import (
     LogicalPipeline,

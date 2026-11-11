@@ -6,10 +6,10 @@ from dataclasses import dataclass
 import numpy as np
 from bloqade.decoders import BaseDecoder
 
-from .confidence import ConfidenceDecoder
-from .layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
-from .sampling import _BasisDataset
-from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
+from bloqade.gemini.decoding.confidence import ConfidenceDecoder
+from bloqade.gemini.decoding.layout import _DEFAULT_SYNDROME_LAYOUT, _split_factory_bits
+from bloqade.gemini.decoding.sampling import _BasisDataset
+from bloqade.gemini.decoding.tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
 
 _DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
 _ProgressLabel = str | bool

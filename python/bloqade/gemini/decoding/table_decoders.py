@@ -8,13 +8,16 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import stim
 
-from .confidence import ConfidenceDecoder, _validate_detector_bits
+from bloqade.gemini.decoding.confidence import (
+    ConfidenceDecoder,
+    _validate_detector_bits,
+)
 
 # NOTE: We will plan to move this code to bloqade-decoders.
 
 _TABLE_DECODER_MISSING_MSG = (
     "Table confidence decoding requires the optional table decoder. Install it "
-    "with `bloqade-lanes[decoding]`."
+    "with `bloqade[decoding]`."
 )
 
 if TYPE_CHECKING:

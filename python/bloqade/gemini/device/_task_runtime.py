@@ -18,15 +18,17 @@ from bloqade.analysis.fidelity import FidelityAnalysis
 from kirin import ir
 from stim import DetectorErrorModel
 
-from .simulator_backend import (
+from bloqade.gemini.device.simulator_backend import (
     AbstractSimulatorBackend,
     _get_tsim_circuit,
 )
+from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.metrics import MoveMetricCalculator
+from bloqade.lanes.dialects import move
 
 if TYPE_CHECKING:
     import tsim as tsim_backend  # type: ignore[reportMissingImports]
 
-    from bloqade.lanes.analysis import atom
     from bloqade.lanes.arch.spec import ArchSpec
 
 RetType = TypeVar("RetType")
@@ -255,9 +257,6 @@ class _SimulatorTaskBase(Generic[RetType]):
     @cached_property
     def _move_program_metrics(self) -> _MoveProgramMetrics:
         """Compute metrics shared by the public move-program properties."""
-        from bloqade.lanes.analysis import atom
-        from bloqade.lanes.arch.metrics import MoveMetricCalculator
-        from bloqade.lanes.dialects import move
 
         move_depth = 0
         cz_pulse_count = 0
@@ -348,6 +347,7 @@ class _SimulatorTaskBase(Generic[RetType]):
             arch_vis (bool): Whether to use the interactive plotly debugger to visualize the architecture. Defaults to False.
 
         """
+        # Visualization dependencies are optional; load them only on demand.
         from bloqade.lanes.visualize import animated_debugger, debugger, plotly_debugger
 
         if arch_vis:

@@ -12,8 +12,8 @@ from kirin import ir, rewrite, types as kirin_types
 from kirin.dialects import ilist, py
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
-from bloqade.gemini.logical.dialects.extensions import stmts as extensions
-from bloqade.gemini.logical.dialects.operations import stmts as operations
+from bloqade.lanes.dialects.steane713 import stmts as operations
+from bloqade.lanes.dialects.steane713.extensions import stmts as extensions
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz, EliminateRzError
 
 QUBIT = bloqade_types.QubitType
@@ -500,10 +500,10 @@ def test_rewrite_is_idempotent():
 REGISTERED_STATEMENTS = {
     "bloqade.decoders.dialects.annotate.stmts.SetDetector",
     "bloqade.decoders.dialects.annotate.stmts.SetObservable",
-    "bloqade.gemini.common.dialects.qubit.stmts.NewAt",
-    "bloqade.gemini.logical.dialects.extensions.stmts.StarRz",
-    "bloqade.gemini.logical.dialects.operations.stmts.Initialize",
-    "bloqade.gemini.logical.dialects.operations.stmts.TerminalLogicalMeasurement",
+    "bloqade.lanes.dialects.arch.stmts.NewAt",
+    "bloqade.lanes.dialects.steane713.extensions.stmts.StarRz",
+    "bloqade.lanes.dialects.steane713.stmts.Initialize",
+    "bloqade.lanes.dialects.steane713.stmts.TerminalLogicalMeasurement",
     "bloqade.native.dialects.gate.stmts.CZ",
     "bloqade.native.dialects.gate.stmts.R",
     "bloqade.native.dialects.gate.stmts.Rz",

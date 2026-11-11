@@ -34,7 +34,7 @@ labelled by the integer n = 4*x + 2*y + z:
 
 Gadgets implemented
 -------------------
-  * allocator + |000>_L init      : arch.loc-addressed qubit.new_at (each block
+  * allocator + |000>_L init      : arch.loc-addressed new_at (each block
                                     on a 2x4 grid rectangle) + GHZ preparation.
   * transversal CX (two blocks)   : CX^{(x)8} == logical CX-bar on all 3 logical
                                     pairs (CSS transversality).
@@ -59,8 +59,8 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import physical
-from bloqade.gemini.common.dialects import arrange, qubit
-from bloqade.lanes.dialects.arch import loc
+from bloqade.lanes.dialects import arrange
+from bloqade.lanes.dialects.arch import loc, new_at
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.passes import ASAPPlacePass
 from bloqade.lanes.transform import PhysicalPipeline
@@ -142,7 +142,7 @@ def eight_three_two_allocator():
     layout convenience, not a correctness concern.
 
     ``loc`` returns a ``LocationAddress`` whose ``.zone_id`` / ``.word_id`` /
-    ``.site_id`` attribute reads fold to the constants ``qubit.new_at`` needs —
+    ``.site_id`` attribute reads fold to the constants ``new_at`` needs —
     exercising the ``loc`` + location-attribute API end to end.
     """
     # 2x4-rectangle origins: rows {0,1} for slots 0-3, rows {3,4} for slots 4-7.
@@ -160,7 +160,7 @@ def eight_three_two_allocator():
             # vertex n -> grid (base_row + n // 4, base_col + 2 * (n % 4)) in
             # zone 0; the column stride of 2 lands on home positions only.
             addr = loc(0, base_row + n // 4, base_col + 2 * (n % 4))
-            return qubit.new_at(addr.zone_id, addr.word_id, addr.site_id)
+            return new_at(addr.zone_id, addr.word_id, addr.site_id)
 
         reg = ilist.map(_alloc_vertex, ilist.range(8))
         init_logical_zero(reg)

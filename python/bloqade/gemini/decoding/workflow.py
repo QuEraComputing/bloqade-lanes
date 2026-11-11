@@ -5,7 +5,7 @@ from typing import cast
 
 import numpy as np
 
-from .postselection import PostselectionCurveData
+from bloqade.gemini.decoding.postselection import PostselectionCurveData
 
 
 def _plot_decoder_curves(

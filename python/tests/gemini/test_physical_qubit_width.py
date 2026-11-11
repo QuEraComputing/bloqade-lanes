@@ -12,8 +12,8 @@ import pytest
 from bloqade.squin import qubit
 
 from bloqade.gemini import logical
-from bloqade.gemini.logical.dialects.operations.stmts import TerminalLogicalMeasurement
 from bloqade.gemini.steane_defaults import STEANE7_PHYSICAL_QUBITS
+from bloqade.lanes.dialects.steane713.stmts import TerminalLogicalMeasurement
 
 
 def test_terminal_measurement_is_stamped_with_the_steane_width():

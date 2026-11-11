@@ -4,10 +4,9 @@ from bloqade.squin.stdlib.broadcast.gate import _radian_to_turn
 from kirin.dialects import ilist
 
 from bloqade import types
-from bloqade.gemini.star import DEFAULT_STEANE_STAR_SUPPORT
-
-from ..dialects import extensions
-from ..group import kernel
+from bloqade.gemini.logical.group import kernel
+from bloqade.lanes.dialects.steane713 import extensions as extensions
+from bloqade.lanes.dialects.steane713.star import DEFAULT_STEANE_STAR_SUPPORT
 
 
 @kernel(aggressive_unroll=True, verify=False)

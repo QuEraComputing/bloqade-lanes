@@ -28,30 +28,67 @@ from bloqade.squin.stdlib.simple import (
 )
 from kirin.dialects import ilist as ilist
 
-from bloqade.gemini.common.dialects.arrange import move_to as move_to
-from bloqade.lanes.dialects.arch import loc as loc
-
-from . import (
-    dialects as dialects,
+from bloqade.gemini.logical import (
     extensions as extensions,
-    impl as impl,
     validation as validation,
 )
-from .dialects.operations import terminal_measure as terminal_measure
-from .group import kernel as kernel
-from .stdlib import (
+from bloqade.gemini.logical.group import kernel as kernel
+from bloqade.gemini.logical.stdlib import (
     broadcast as broadcast,
     default_post_processing as default_post_processing,
     qalloc_at as qalloc_at,
 )
-from .studio import to_studio_url as to_studio_url
+from bloqade.gemini.logical.studio import to_studio_url as to_studio_url
+from bloqade.lanes.dialects.arch import loc as loc
+from bloqade.lanes.dialects.arrange import move_to as move_to
+from bloqade.lanes.dialects.steane713 import terminal_measure as terminal_measure
 
 
 def _get_cirq_loader():
-    from .cirq_conversion import GeminiLogicalCirqLowerer
+    from bloqade.gemini.logical.cirq_conversion import GeminiLogicalCirqLowerer
 
     return GeminiLogicalCirqLowerer
 
 
 # Keep Cirq optional: load its Gemini integration only when conversion is used.
 _register_cirq_loader(dialects=kernel, factory=_get_cirq_loader)
+
+__all__ = [
+    "_register_cirq_loader",
+    "broadcast",
+    "cnot",
+    "cx",
+    "cy",
+    "cz",
+    "default_post_processing",
+    "extensions",
+    "h",
+    "ilist",
+    "kernel",
+    "loc",
+    "move_to",
+    "qalloc",
+    "qalloc_at",
+    "rx",
+    "ry",
+    "rz",
+    "s",
+    "s_adj",
+    "shift",
+    "sqrt_x",
+    "sqrt_x_adj",
+    "sqrt_y",
+    "sqrt_y_adj",
+    "sqrt_z",
+    "sqrt_z_adj",
+    "swap",
+    "t",
+    "t_adj",
+    "terminal_measure",
+    "to_studio_url",
+    "u3",
+    "validation",
+    "x",
+    "y",
+    "z",
+]

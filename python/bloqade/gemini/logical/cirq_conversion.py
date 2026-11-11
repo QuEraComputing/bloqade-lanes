@@ -15,17 +15,12 @@ from bloqade.cirq_utils.emit.base import EmitCirq, EmitCirqFrame
 from kirin import interp, ir, lowering
 from kirin.dialects import func
 
-from bloqade.gemini.common.cirq_conversion import (
-    GeminiCirqLowerer,
-    GeminiQubit,
-)
-from bloqade.gemini.logical.dialects.extensions import stmts as logical_extensions
-from bloqade.gemini.logical.dialects.extensions._dialect import (
+from bloqade.gemini.common.cirq_conversion import GeminiCirqLowerer, GeminiQubit
+from bloqade.lanes.dialects.steane713 import stmts as logical_ops
+from bloqade.lanes.dialects.steane713._dialect import dialect as logical_dialect
+from bloqade.lanes.dialects.steane713.extensions import stmts as logical_extensions
+from bloqade.lanes.dialects.steane713.extensions._dialect import (
     dialect as logical_extensions_dialect,
-)
-from bloqade.gemini.logical.dialects.operations import stmts as logical_ops
-from bloqade.gemini.logical.dialects.operations._dialect import (
-    dialect as logical_dialect,
 )
 
 GeminiLogicalQubit = GeminiQubit

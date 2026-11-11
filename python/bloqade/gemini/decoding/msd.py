@@ -7,8 +7,7 @@ from kirin import ir
 from kirin.dialects import ilist
 
 from bloqade import squin
-
-from .kernels import (
+from bloqade.gemini.decoding.kernels import (
     _build_tomography_primitives,
     _DecoderPrimitiveSet,
     _LogicalTomographyReturn,

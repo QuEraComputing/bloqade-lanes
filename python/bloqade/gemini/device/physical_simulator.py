@@ -15,14 +15,20 @@ from kirin import ir, passes
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
-from bloqade.gemini.post_processing import build_post_processing
-
-from ._task_runtime import (
+from bloqade.gemini.device._task_runtime import (
     DetectorResult as DetectorResult,
     Result as Result,
     _SimulatorTaskBase,
 )
-from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
+from bloqade.gemini.device.simulator_backend import (
+    AbstractSimulatorBackend,
+    TsimSimulatorBackend,
+)
+from bloqade.gemini.post_processing import build_post_processing
+from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.transform import MoveToSquinPhysical, PhysicalPipeline
 
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
@@ -35,13 +41,11 @@ PhysicalResult = Result
 
 
 def _default_noise_model() -> NoiseModelABC:
-    from bloqade.lanes.noise_model import generate_simple_noise_model
 
     return generate_simple_noise_model()
 
 
 def _default_arch_spec() -> ArchSpec:
-    from bloqade.lanes.arch.gemini.physical import get_arch_spec
 
     return get_arch_spec()
 
@@ -176,7 +180,6 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical SQuIn kernel with noise channels."""
-        from bloqade.lanes.transform import MoveToSquinPhysical
 
         return MoveToSquinPhysical(
             arch_spec=self.physical_arch_spec,
@@ -186,7 +189,6 @@ class PhysicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     @cached_property
     def noiseless_physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical SQuIn kernel without noise channels."""
-        from bloqade.lanes.transform import MoveToSquinPhysical
 
         return MoveToSquinPhysical(
             arch_spec=self.physical_arch_spec,
@@ -228,9 +230,6 @@ class GeminiPhysicalSimulator:
         """
         if not isinstance(physical_kernel, ir.Method):
             raise TypeError("GeminiPhysicalSimulator.task() requires a Squin ir.Method")
-
-        from bloqade.lanes.passes import SequentialPlacePass
-        from bloqade.lanes.transform import PhysicalPipeline
 
         # Physical compilation mutates its input. Keep the method supplied by
         # the caller reusable.

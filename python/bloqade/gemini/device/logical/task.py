@@ -7,7 +7,7 @@ from bloqade.core.device.task import (
     SingleKernelTask,
 )
 
-from .future import GeminiLogicalFuture
+from bloqade.gemini.device.logical.future import GeminiLogicalFuture
 
 _bloqade_version = version("bloqade-circuit")
 

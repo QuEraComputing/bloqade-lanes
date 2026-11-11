@@ -17,9 +17,7 @@ from kirin.validation import ValidationSuite
 from bloqade import squin, types
 from bloqade.gemini import GeminiLogicalDevice, logical
 from bloqade.gemini.compile import run_squin_kernel_validation
-from bloqade.gemini.logical.validation.extensions import (
-    NoLogicalExtensionsValidation,
-)
+from bloqade.gemini.logical.validation.extensions import NoLogicalExtensionsValidation
 
 THETA = math.pi / 16
 
@@ -66,7 +64,7 @@ def test_the_message_names_the_statement():
     result = _validate(_program_using_star_rz())
     (error,) = result.errors["Gemini Logical Extensions Validation"]
 
-    assert "gemini.logical.extensions.star_rz" in error.args[0]
+    assert "lanes.steane713.extensions.star_rz" in error.args[0]
 
 
 def test_every_use_is_reported_rather_than_just_the_first():
@@ -101,7 +99,7 @@ def test_a_use_inside_an_inlined_sub_kernel_is_caught():
     result = _validate(main)
     (error,) = result.errors["Gemini Logical Extensions Validation"]
 
-    assert "gemini.logical.extensions.star_rz" in error.args[0]
+    assert "lanes.steane713.extensions.star_rz" in error.args[0]
 
 
 # --- across the call graph ----------------------------------------------------
@@ -145,7 +143,7 @@ def test_a_use_two_hops_down_is_caught():
     result = _validate(main)
     (error,) = result.errors["Gemini Logical Extensions Validation"]
 
-    assert "gemini.logical.extensions.star_rz" in error.args[0]
+    assert "lanes.steane713.extensions.star_rz" in error.args[0]
 
 
 def test_a_clean_call_graph_is_valid():
@@ -199,7 +197,7 @@ def test_the_device_suite_rejects_a_program_using_star_rz():
 
     assert not result.is_valid
     assert any(
-        "gemini.logical.extensions.star_rz" in error.args[0]
+        "lanes.steane713.extensions.star_rz" in error.args[0]
         for errors in result.errors.values()
         for error in errors
     )
@@ -226,7 +224,7 @@ def _dry_run(method):
 
 def test_submitting_a_program_using_star_rz_is_rejected():
     """End to end: the guard fires where a user meets it, not only in a suite."""
-    with pytest.raises(TaskFinalizeError, match="gemini.logical.extensions.star_rz"):
+    with pytest.raises(TaskFinalizeError, match="lanes.steane713.extensions.star_rz"):
         _dry_run(_program_using_star_rz())
 
 

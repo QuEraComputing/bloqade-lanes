@@ -10,12 +10,7 @@ from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
 from bloqade.gemini.cudaq import cudaq_to_squin, is_cudaq_kernel
-from bloqade.gemini.logical.dialects.operations.stmts import TerminalLogicalMeasurement
 from bloqade.gemini.logical.validation.arguments import GeminiLogicalArgumentValidation
-from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
-from bloqade.gemini.logical.validation.measurement.analysis import (
-    GeminiTerminalMeasurementValidation,
-)
 from bloqade.gemini.post_processing import build_post_processing
 from bloqade.gemini.steane_defaults import (
     STEANE7_PHYSICAL_QUBITS,
@@ -23,7 +18,12 @@ from bloqade.gemini.steane_defaults import (
     steane7_m2obs,
 )
 from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.dialects.steane713.stmts import TerminalLogicalMeasurement
 from bloqade.lanes.transform import LogicalPipeline
+from bloqade.lanes.validation.steane import SteaneLogicalValidation
+from bloqade.lanes.validation.terminal_measurement import (
+    SteaneTerminalMeasurementValidation,
+)
 
 __all__ = [
     "_find_qubit_ssas",
@@ -51,8 +51,8 @@ def run_squin_kernel_validation(mt: ir.Method):
     """
     validator = ValidationSuite(
         [
-            GeminiLogicalValidation,
-            GeminiTerminalMeasurementValidation,
+            SteaneLogicalValidation,
+            SteaneTerminalMeasurementValidation,
             FlatKernelNoCloningValidation,
             # NOTE: not redundant with the `@logical.kernel` decorator. A method
             # reaching `compile_task` need never have been decorated -- the

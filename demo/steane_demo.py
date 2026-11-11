@@ -7,14 +7,14 @@ from kirin.dialects import ilist
 from kirin.dialects.ilist import IList
 
 from bloqade import squin
-from bloqade.gemini.common.dialects import qubit
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.dialects import arch
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.passes import ASAPPlacePass
 from bloqade.lanes.transform import MoveToSquinPhysical, PhysicalPipeline
 
-kernel = squin.kernel.add(qubit)
+kernel = squin.kernel.add(arch)
 kernel.run_pass = squin.kernel.run_pass
 
 
@@ -42,7 +42,7 @@ def steane_slot_allocator():
         slot_index: int, theta: float, phi: float, lam: float
     ) -> LogicalQubit:
         def allocate_at(address: tuple[int, int, int]):
-            return qubit.new_at(address[0], address[1], address[2])
+            return arch.new_at(address[0], address[1], address[2])
 
         addresses = slots[slot_index]
 

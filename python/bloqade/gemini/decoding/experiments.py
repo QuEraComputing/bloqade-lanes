@@ -9,33 +9,35 @@ import stim
 from bloqade.decoders import BaseDecoder
 from kirin import ir
 
-from bloqade.gemini.device import (
-    GeminiLogicalSimulator,
-    GeminiLogicalSimulatorTask,
-    SimulatorResult,
-    TsimSimulatorBackend,
-)
-
-from .confidence import ConfidenceDecoder
-from .dem import _sub_detector_error_model
-from .kernels import (
+from bloqade.gemini.decoding.confidence import ConfidenceDecoder
+from bloqade.gemini.decoding.dem import _sub_detector_error_model
+from bloqade.gemini.decoding.kernels import (
     _build_tomography_primitives,
     _DecoderPrimitiveSet,
     _LogicalTomographyReturn,
 )
-from .layout import _DEFAULT_SYNDROME_LAYOUT
-from .msd import _build_decoder_kernel_bundle, _build_msd_primitives
-from .postselection import (
+from bloqade.gemini.decoding.layout import _DEFAULT_SYNDROME_LAYOUT
+from bloqade.gemini.decoding.msd import (
+    _build_decoder_kernel_bundle,
+    _build_msd_primitives,
+)
+from bloqade.gemini.decoding.postselection import (
     PostselectionCurveData,
     _build_generic_threshold_tables,
     _DecodedPostselectionResult,
     _evaluate_cached_threshold_curve,
     _shots_at_accepted_fraction,
 )
-from .sampling import _BasisDataset
-from .special_tasks import _apply_special_tsim_circuit_strategy
-from .tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
-from .workflow import _plot_decoder_curves
+from bloqade.gemini.decoding.sampling import _BasisDataset
+from bloqade.gemini.decoding.special_tasks import _apply_special_tsim_circuit_strategy
+from bloqade.gemini.decoding.tomography import _DEFAULT_TARGET_BLOCH, TomographyResult
+from bloqade.gemini.decoding.workflow import _plot_decoder_curves
+from bloqade.gemini.device import (
+    GeminiLogicalSimulator,
+    GeminiLogicalSimulatorTask,
+    SimulatorResult,
+    TsimSimulatorBackend,
+)
 
 if TYPE_CHECKING:
     import tsim as tsim_backend  # type: ignore[reportMissingImports]

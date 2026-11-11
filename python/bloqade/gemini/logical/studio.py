@@ -17,8 +17,8 @@ from kirin import ir
 from kirin.analysis import const
 from kirin.dialects import func, ilist, py
 
-from bloqade.gemini.common.dialects.qubit import stmts as common_qubit_stmts
-from bloqade.gemini.logical.dialects.operations import stmts as logical_stmts
+from bloqade.lanes.dialects.arch import stmts as common_qubit_stmts
+from bloqade.lanes.dialects.steane713 import stmts as logical_stmts
 
 _STUDIO_URL = "https://bloqade.quera.com/studio/gemini/"
 # Studio accepts v13 links in both the current deployment and newer builds.

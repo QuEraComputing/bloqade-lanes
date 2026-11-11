@@ -1,6 +1,6 @@
 """Reject the experimental extension statements on paths that cannot support them.
 
-The statements in :mod:`bloqade.gemini.logical.dialects.extensions` are part of
+The statements in :mod:`bloqade.lanes.dialects.steane713.extensions` are part of
 the ``@gemini.logical.kernel`` dialect group, so they lower and compile like any
 other logical statement. What sets them apart is that they are *not* logical
 operations: ``StarRz`` puts physical Z rotations on the three qubits of a
@@ -25,7 +25,7 @@ with inlining turned off, and a guard that assumes a compilation shape fails
 open exactly when the assumption breaks.
 
 The traversal is kirin's abstract interpreter, the same mechanism
-``GeminiTerminalMeasurementValidation`` next door uses: ``impls.Func`` gives this
+``SteaneTerminalMeasurementValidation`` next door uses: ``impls.Func`` gives this
 analysis a ``func.Invoke`` impl, so descending into a statically resolved callee
 is the interpreter's own behaviour rather than something this pass arranges. It
 inherits that machinery's one limitation -- a callee reached only through a
@@ -56,7 +56,7 @@ from kirin.analysis import Forward, ForwardFrame
 from kirin.lattice import EmptyLattice
 from kirin.validation import ValidationPass
 
-from ...dialects.extensions import dialect as extensions_dialect
+from bloqade.lanes.dialects.steane713.extensions import dialect as extensions_dialect
 
 EXPERIMENTAL_HELP = (
     "this is an experimental gadget that acts on the physical qubits inside a "
@@ -68,7 +68,7 @@ EXPERIMENTAL_HELP = (
 
 @dataclass
 class _NoLogicalExtensionsAnalysis(Forward[EmptyLattice]):
-    keys = ("gemini.validate.no_extensions",)
+    keys = ("lanes.validate.no_extensions",)
 
     lattice = EmptyLattice
 
@@ -109,7 +109,7 @@ class _NoLogicalExtensionsAnalysis(Forward[EmptyLattice]):
         kernel containing a dynamic call dies with an ``AttributeError``.
 
         Dynamic callees are deliberately not descended into, matching
-        ``GeminiTerminalMeasurementValidation``: ``EmptyLattice`` carries no
+        ``SteaneTerminalMeasurementValidation``: ``EmptyLattice`` carries no
         information, so there is nothing to resolve the callee with. A Gemini
         program cannot reach a device with an unresolved call still in it --
         ``NoStaticCallValidation`` rejects one, and it runs in the same suites

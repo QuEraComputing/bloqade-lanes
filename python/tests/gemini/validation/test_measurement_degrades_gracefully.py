@@ -29,15 +29,15 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.validation.measurement.analysis import (
-    GeminiTerminalMeasurementValidation,
+from bloqade.lanes.validation.terminal_measurement import (
+    SteaneTerminalMeasurementValidation,
 )
 
 NO_RESULTS = "Measurement ID Analysis failed to produce the necessary results"
 
 
 def _run(method):
-    return ValidationSuite([GeminiTerminalMeasurementValidation]).validate(method)
+    return ValidationSuite([SteaneTerminalMeasurementValidation]).validate(method)
 
 
 def _messages(result):

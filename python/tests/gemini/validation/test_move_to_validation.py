@@ -6,12 +6,12 @@ from kirin.dialects import func, ilist
 from kirin.prelude import structural_no_opt
 
 from bloqade import types as bloqade_types
-from bloqade.gemini.common.dialects.arrange import dialect as arrange_dialect
-from bloqade.gemini.common.dialects.arrange.stmts import MoveTo
-from bloqade.gemini.common.validation.move_to import MoveToValidation
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects.arch import Loc, dialect as arch_dialect
+from bloqade.lanes.dialects.arrange import dialect as arrange_dialect
+from bloqade.lanes.dialects.arrange.stmts import MoveTo
+from bloqade.lanes.validation.move_to import MoveToValidation
 
 # ---------------------------------------------------------------------------
 # Helpers

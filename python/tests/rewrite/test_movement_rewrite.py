@@ -6,14 +6,13 @@ from kirin import ir, rewrite
 from kirin.analysis import const
 from kirin.dialects import ilist, py
 
-from bloqade.gemini.common.dialects import arrange
 from bloqade.lanes.analysis.placement.lattice import (
     AtomState,
     ConcreteState,
     UserMoved,
 )
 from bloqade.lanes.bytecode.encoding import Direction, LocationAddress, SiteLaneAddress
-from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects import arrange as arrange, place
 from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
 
 _loc = lambda z, w, s: LocationAddress(zone_id=z, word_id=w, site_id=s)

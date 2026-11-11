@@ -41,6 +41,7 @@ Thumbs.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+__kirincache__/
 *.py[cod]
 *$py.class
 

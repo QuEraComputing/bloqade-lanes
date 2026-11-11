@@ -8,5 +8,7 @@ post-selection scheme (e.g. Steane error-correction checks) that discards the
 shots where the state left the code space.
 """
 
-from . import broadcast as broadcast
-from .star import star_rz as star_rz
+from bloqade.gemini.logical.extensions import broadcast as broadcast
+from bloqade.gemini.logical.extensions.star import star_rz as star_rz
+
+__all__ = ["broadcast", "star_rz"]

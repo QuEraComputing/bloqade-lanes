@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from kirin import ir, types
 from kirin.dialects import py
+from kirin.ir.nodes.base import IRNode
 from kirin.rewrite import Walk
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
@@ -33,11 +34,15 @@ class RewriteLocationAttr(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-# Registered wrapped in Walk: PostInference applies registered rules as
-# `rule.rewrite(mt.code)` on the top function node only (no recursion), so a
-# bare rule would never reach nested GetAttr statements. See QuEraComputing/
-# kirin#676.
-dialect.rules.inference.append(Walk(RewriteLocationAttr()))
+class _RewriteLocationAttrs(RewriteRule):
+    def rewrite(self, node: IRNode) -> RewriteResult:
+        # PostInference invokes a shared registered rule on the function root.
+        # Walk owns a mutable worklist, so each invocation needs its own walker
+        # when different kernels are compiled concurrently (e.g. simulator tasks).
+        return Walk(RewriteLocationAttr()).rewrite(node)
+
+
+dialect.rules.inference.append(_RewriteLocationAttrs())
 
 
 @dataclass

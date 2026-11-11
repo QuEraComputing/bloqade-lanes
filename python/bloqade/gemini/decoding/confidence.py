@@ -10,7 +10,7 @@ import numpy.typing as npt
 
 _GUROBI_MISSING_MSG = (
     "Gurobi confidence decoding requires the optional Gurobi decoder. Install "
-    "it with `bloqade-lanes[decoding]` (which pulls in `bloqade-decoders[mle]` "
+    "it with `bloqade[decoding]` (which pulls in `bloqade-decoders[mle]` "
     "and `gurobipy`)."
 )
 

@@ -11,18 +11,23 @@ from bloqade.core.device.task import (
 from kirin import ir
 from kirin.validation import ValidationSuite
 
-from bloqade.gemini.logical.group import kernel as logical_kernel
-
-from ...common.validation.const_address import ConstAddressValidation
-from ...common.validation.duplicate_address import DuplicateAddressValidation
-from ...logical.validation.arguments import GeminiLogicalArgumentValidation
-from ...logical.validation.clifford.analysis import GeminiLogicalValidation
-from ...logical.validation.extensions.analysis import NoLogicalExtensionsValidation
-from ...logical.validation.measurement.analysis import (
-    GeminiTerminalMeasurementValidation,
+from bloqade.gemini.device.logical.future import GeminiLogicalFuture
+from bloqade.gemini.device.logical.task import (
+    GeminiKernelBatchTask,
+    GeminiParameterScanTask,
+    GeminiSingleKernelTask,
 )
-from .future import GeminiLogicalFuture
-from .task import GeminiKernelBatchTask, GeminiParameterScanTask, GeminiSingleKernelTask
+from bloqade.gemini.logical.group import kernel as logical_kernel
+from bloqade.gemini.logical.validation.arguments import GeminiLogicalArgumentValidation
+from bloqade.gemini.logical.validation.extensions.analysis import (
+    NoLogicalExtensionsValidation,
+)
+from bloqade.lanes.validation.const_address import ConstAddressValidation
+from bloqade.lanes.validation.duplicate_address import DuplicateAddressValidation
+from bloqade.lanes.validation.steane import SteaneLogicalValidation
+from bloqade.lanes.validation.terminal_measurement import (
+    SteaneTerminalMeasurementValidation,
+)
 
 _bloqade_version = version("bloqade-circuit")
 
@@ -40,8 +45,8 @@ class GeminiLogicalDevice(Device[GeminiLogicalFuture]):
     validation_suite: ValidationSuite | None = field(
         default_factory=lambda: ValidationSuite(
             [
-                GeminiLogicalValidation,
-                GeminiTerminalMeasurementValidation,
+                SteaneLogicalValidation,
+                SteaneTerminalMeasurementValidation,
                 FlatKernelNoCloningValidation,
                 ConstAddressValidation,
                 DuplicateAddressValidation,

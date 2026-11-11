@@ -6,14 +6,14 @@ from kirin.dialects import func, ilist, py
 from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.dialects import extensions
-from bloqade.gemini.logical.dialects.extensions.stmts import StarRz
-from bloqade.gemini.star import (
+from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects.steane713 import extensions as extensions
+from bloqade.lanes.dialects.steane713.extensions.stmts import StarRz
+from bloqade.lanes.dialects.steane713.star import (
     VALID_STEANE_STAR_SUPPORTS,
     validate_steane_star_support,
 )
-from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.rewrite.transversal import steane_star_theta
 from bloqade.lanes.transform import LogicalPipeline

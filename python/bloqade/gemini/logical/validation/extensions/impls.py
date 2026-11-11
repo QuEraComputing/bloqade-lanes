@@ -2,7 +2,7 @@ from bloqade.analysis.address.impls import Func as AddressFuncMethodTable
 from kirin.dialects import func
 
 
-@func.dialect.register(key="gemini.validate.no_extensions")
+@func.dialect.register(key="lanes.validate.no_extensions")
 class Func(AddressFuncMethodTable):
     """Give the analysis the address analysis' ``func`` impls.
 
@@ -12,5 +12,5 @@ class Func(AddressFuncMethodTable):
     an un-inlined callee would go unreported.
 
     Reusing the address analysis' table rather than writing one is the same
-    choice ``gemini.validate.terminal_measurement`` makes next door.
+    choice ``lanes.validate.terminal_measurement`` makes next door.
     """

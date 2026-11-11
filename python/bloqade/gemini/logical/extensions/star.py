@@ -1,9 +1,8 @@
 from kirin.dialects import ilist
 
 from bloqade import types
-
-from ..group import kernel
-from . import broadcast
+from bloqade.gemini.logical.extensions import broadcast
+from bloqade.gemini.logical.group import kernel
 
 
 @kernel(aggressive_unroll=True, verify=False)

@@ -10,11 +10,11 @@ from kirin.lowering.exception import BuildError
 from kirin.prelude import structural_no_opt
 
 import bloqade.gemini as gemini
-from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.logical import loc, move_to, terminal_measure
 from bloqade.gemini.physical import kernel as movement_kernel
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import arch as arch_dialect
+from bloqade.lanes.dialects import arch as arch_dialect, arrange as arrange_dialect
+from bloqade.lanes.dialects.arch import new_at
 
 
 def test_movement_kernel_exists():
@@ -29,8 +29,7 @@ def test_movement_kernel_has_only_physical_source_dialects():
                 qubit,
                 gate,
                 annotate,
-                gemini.common.dialects.qubit,
-                gemini.common.dialects.arrange,
+                arrange_dialect,
                 arch_dialect,
                 debug,
             ]
@@ -104,7 +103,7 @@ def test_movement_kernel_accepts_terminal_measurement_of_all_qubits():
 def test_movement_kernel_rejects_logical_terminal_measurement():
     """Logical result/postprocessing operations are not physical source IR."""
 
-    with pytest.raises(BuildError, match="unsupported dialect `logical`"):
+    with pytest.raises(BuildError, match="unsupported dialect `lanes.steane713`"):
 
         @movement_kernel
         def k():

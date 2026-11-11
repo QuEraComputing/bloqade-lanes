@@ -11,12 +11,17 @@ from typing import (
 
 from kirin import ir
 
-from ._task_runtime import (
+from bloqade.gemini.device._task_runtime import (
     DetectorResult as DetectorResult,
     Result as Result,
     _SimulatorTaskBase,
 )
-from .simulator_backend import AbstractSimulatorBackend, TsimSimulatorBackend
+from bloqade.gemini.device.simulator_backend import (
+    AbstractSimulatorBackend,
+    TsimSimulatorBackend,
+)
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.transform import MoveToSquinLogical
 
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
@@ -27,7 +32,6 @@ RetType = TypeVar("RetType")
 
 
 def _default_noise_model() -> LogicalNoiseModelABC:
-    from bloqade.lanes.noise_model import generate_logical_noise_model
 
     return generate_logical_noise_model()
 
@@ -60,7 +64,6 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical squin kernel with noise channels."""
-        from bloqade.lanes.transform import MoveToSquinLogical
 
         return MoveToSquinLogical(
             arch_spec=self.physical_arch_spec,
@@ -71,7 +74,6 @@ class GeminiLogicalSimulatorTask(_SimulatorTaskBase[RetType], Generic[RetType]):
     @cached_property
     def noiseless_physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical squin kernel without noise channels."""
-        from bloqade.lanes.transform import MoveToSquinLogical
 
         return MoveToSquinLogical(
             arch_spec=self.physical_arch_spec,

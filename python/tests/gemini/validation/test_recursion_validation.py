@@ -22,15 +22,15 @@ from kirin.lowering.exception import BuildError
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
-from bloqade.gemini.common.dialects.qubit import new_at
-from bloqade.gemini.common.validation.recursion import (
+from bloqade.gemini.logical.stdlib import default_post_processing
+from bloqade.lanes.dialects.arch import new_at
+from bloqade.lanes.validation.recursion import (
     CallGraph,
     NoOpaqueCallValidation,
     NoRecursionValidation,
     check_call_graph,
     format_cycle,
 )
-from bloqade.gemini.logical.stdlib import default_post_processing
 
 # Generous enough to absorb a slow CI box, tight enough that the pre-fix
 # behaviour (effectively unbounded) cannot pass.

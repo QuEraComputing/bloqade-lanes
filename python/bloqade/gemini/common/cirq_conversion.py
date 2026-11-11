@@ -13,10 +13,8 @@ from kirin import interp, ir, lowering
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
-from bloqade.gemini.common.dialects.qubit import stmts as gemini_qubit
-from bloqade.gemini.common.dialects.qubit._dialect import (
-    dialect as gemini_qubit_dialect,
-)
+from bloqade.lanes.dialects.arch import stmts as gemini_qubit
+from bloqade.lanes.dialects.arch._dialect import dialect as gemini_qubit_dialect
 
 
 @dataclass(frozen=True, eq=False, repr=False)

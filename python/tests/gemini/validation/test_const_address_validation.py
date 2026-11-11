@@ -12,9 +12,9 @@ from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 import bloqade.gemini as gemini
-from bloqade.gemini.common.dialects.qubit import new_at
-from bloqade.gemini.common.validation.const_address import ConstAddressValidation
 from bloqade.gemini.physical import kernel as movement_kernel
+from bloqade.lanes.dialects.arch import new_at
+from bloqade.lanes.validation.const_address import ConstAddressValidation
 
 # ---------------------------------------------------------------------------
 # The pass in isolation

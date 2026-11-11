@@ -3,9 +3,8 @@ from typing import Any
 from kirin.dialects import ilist
 
 from bloqade import squin, types
-
-from ..dialects import operations
-from ..group import kernel
+from bloqade.gemini.logical.group import kernel
+from bloqade.lanes.dialects import steane713 as operations
 
 
 @kernel(aggressive_unroll=True, verify=False)

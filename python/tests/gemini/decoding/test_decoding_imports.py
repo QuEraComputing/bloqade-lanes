@@ -29,7 +29,7 @@ def test_gemini_imports_without_table_decoder():
         try:
             TableDecoderWithConfidence(stim.DetectorErrorModel(""), num_shots=0)
         except ImportError as exc:
-            assert "bloqade-lanes[decoding]" in str(exc)
+            assert "bloqade[decoding]" in str(exc)
         else:
             raise AssertionError("expected the optional-dependency error")
     """
@@ -62,7 +62,7 @@ def test_gemini_imports_without_gurobi_decoder():
         try:
             GurobiDecoderWithConfidence()
         except ImportError as exc:
-            assert "bloqade-lanes[decoding]" in str(exc)
+            assert "bloqade[decoding]" in str(exc)
         else:
             raise AssertionError("expected the optional-dependency error")
     """

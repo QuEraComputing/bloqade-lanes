@@ -85,7 +85,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         # Import lazily: the mapping helper imports the Lanes transform stack.
         # This result class is imported while the public Gemini package is
         # initialized, which can itself happen during Lanes analysis imports.
-        from .utils import get_slm_mapping_postprocessing
+        from bloqade.gemini.device.logical.utils import get_slm_mapping_postprocessing
 
         postprocessing_functions = {}
         for idx, kernel_json in self._program_contents_by_index().items():
@@ -121,7 +121,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
         True indicates a projective measurement of the |1> state or atom loss; False indicates a projective measurement of the |0> state.
         > To be specific, True means that the atom was not detected, meaning that it could be lost or in an excited state. False means the atom was detected, so it was in the ground state.
         """
-        from .utils import shot_results_for_subtasks
+        from bloqade.gemini.device.logical.utils import shot_results_for_subtasks
 
         ret_vals: list[list[list[bool]]] = []
         # TODO: OK to set verify=True?
@@ -191,7 +191,9 @@ class GeminiLogicalResult(Result, Generic[RetType]):
 
         True indicates that the atom was present in the sorted frame; False indicates that the atom was not present in the sorted frame.
         """
-        from .utils import aligned_detected_and_sorted_shots_for_subtasks
+        from bloqade.gemini.device.logical.utils import (
+            aligned_detected_and_sorted_shots_for_subtasks,
+        )
 
         ret_vals: list[list[list[bool]]] = []
         subtasks = self.subtasks(verify=True)
@@ -206,7 +208,7 @@ class GeminiLogicalResult(Result, Generic[RetType]):
             func = postprocessing_functions[subtask["program_index"]][0]
             ret_vals.append(func(shot_result, invert=False))
 
-        # TOOD: can do validation later on sorted/detected frames
+        # TODO: can do validation later on sorted/detected frames
         return ret_vals
 
     def postselect_on_fully_filled(self) -> GeminiLogicalResult[RetType]:

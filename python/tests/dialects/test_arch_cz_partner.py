@@ -7,10 +7,14 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import physical
-from bloqade.gemini.common.dialects import arrange, qubit
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import arch, move as move_dialect
+from bloqade.lanes.dialects import (
+    arch,
+    arch as qubit,
+    arrange as arrange,
+    move as move_dialect,
+)
 from bloqade.lanes.dialects.arch import CzPartner
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.transform import PhysicalPipeline

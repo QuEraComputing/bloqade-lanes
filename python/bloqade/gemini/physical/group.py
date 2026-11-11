@@ -12,15 +12,14 @@ from kirin.prelude import structural_no_opt
 from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
-from bloqade.gemini import common as gemini_common
-from bloqade.gemini.common.validation.const_address import ConstAddressValidation
-from bloqade.gemini.common.validation.duplicate_address import (
-    DuplicateAddressValidation,
-)
-from bloqade.gemini.common.validation.terminal_measure import (
+from bloqade.lanes.dialects import arch, arrange
+from bloqade.lanes.validation.call_site import InlineOrigins
+from bloqade.lanes.validation.const_address import ConstAddressValidation
+from bloqade.lanes.validation.duplicate_address import DuplicateAddressValidation
+from bloqade.lanes.validation.recursion import check_call_graph
+from bloqade.lanes.validation.terminal_measure import (
     PhysicalTerminalMeasurementValidation,
 )
-from bloqade.lanes.dialects import arch as arch_dialect
 
 
 @ir.dialect_group(
@@ -29,9 +28,8 @@ from bloqade.lanes.dialects import arch as arch_dialect
             qubit,
             gate,
             annotate,
-            gemini_common.dialects.qubit,
-            gemini_common.dialects.arrange,
-            arch_dialect,
+            arch,
+            arrange,
             debug,
         ]
     )
@@ -70,9 +68,6 @@ def kernel(self):
     ) -> None:
         # Reject recursive call graphs up front so a physical kernel cannot
         # defer an unbounded unroll to the compiler.
-        from bloqade.gemini.common.validation.recursion import check_call_graph
-
-        from ..common.validation.call_site import InlineOrigins
 
         check_call_graph(mt)
 

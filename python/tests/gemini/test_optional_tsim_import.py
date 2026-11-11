@@ -135,7 +135,7 @@ def test_composed_backends_fail_before_sampling_with_specific_tsim_guidance():
             except ImportError as exc:
                 message = str(exc)
                 assert label in message
-                assert "bloqade-lanes[sim]" in message
+                assert "bloqade[sim]" in message
             else:
                 raise AssertionError("expected missing-Tsim failure")
             backend.sample.assert_not_called()

@@ -7,17 +7,16 @@ from kirin.dialects import func, ilist, py
 from kirin.prelude import structural_no_opt
 
 from bloqade.gemini import physical
-from bloqade.gemini.common.dialects import arrange
-from bloqade.gemini.common.dialects.arrange import dialect as arrange_dialect
-from bloqade.gemini.common.dialects.arrange.stmts import Permute
-from bloqade.gemini.common.validation.move_to import MoveToValidation
 from bloqade.lanes.analysis.placement.strategy import _resolve_permute_locations
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import move as move_dialect, place
+from bloqade.lanes.dialects import arrange as arrange, move as move_dialect, place
+from bloqade.lanes.dialects.arrange import dialect as arrange_dialect
+from bloqade.lanes.dialects.arrange.stmts import Permute
 from bloqade.lanes.heuristics.physical import make_physical_placement_strategy
 from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
 from bloqade.lanes.transform import PhysicalPipeline
+from bloqade.lanes.validation.move_to import MoveToValidation
 
 
 def test_permute_statement_shape():

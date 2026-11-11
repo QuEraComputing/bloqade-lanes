@@ -7,13 +7,13 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.validation.clifford.analysis import (
-    GeminiLogicalValidation,
-    _GeminiLogicalValidationAnalysis,
+from bloqade.lanes.validation.steane import (
+    SteaneLogicalValidation,
+    _SteaneLogicalValidationAnalysis,
 )
-from bloqade.gemini.logical.validation.measurement.analysis import (
-    GeminiTerminalMeasurementValidation,
-    _GeminiTerminalMeasurementValidationAnalysis,
+from bloqade.lanes.validation.terminal_measurement import (
+    SteaneTerminalMeasurementValidation,
+    _SteaneTerminalMeasurementValidationAnalysis,
 )
 
 
@@ -40,13 +40,13 @@ def test_if_stmt_invalid():
             squin.y(q[2])
 
     addr_frame, _ = AddressAnalysis(main.dialects).run(main)
-    frame, _ = _GeminiLogicalValidationAnalysis(
+    frame, _ = _SteaneLogicalValidationAnalysis(
         main.dialects, addr_frame=addr_frame
     ).run_no_raise(main)
 
     main.print(analysis=frame.entries)
 
-    validator = ValidationSuite([GeminiLogicalValidation])
+    validator = ValidationSuite([SteaneLogicalValidation])
     validation_result = validator.validate(main)
 
     with pytest.raises(ValidationErrorGroup):
@@ -135,7 +135,7 @@ def test_clifford_gates():
         invalid.print(hint="address")
 
         addr_frame, _ = AddressAnalysis(invalid.dialects).run(invalid)
-        frame, _ = _GeminiLogicalValidationAnalysis(
+        frame, _ = _SteaneLogicalValidationAnalysis(
             invalid.dialects, addr_frame=addr_frame
         ).run_no_raise(invalid)
 
@@ -150,7 +150,7 @@ def test_swap_is_clifford():
         squin.swap(q[0], q[1])
         gemini.logical.terminal_measure(q)
 
-    validator = ValidationSuite([GeminiLogicalValidation])
+    validator = ValidationSuite([SteaneLogicalValidation])
     validator.validate(valid).raise_if_invalid()
 
     # NOTE: swap marks both operands as acted on, so a following non-clifford
@@ -182,7 +182,7 @@ def test_star_rz_marks_qubit_as_acted_on_without_rejecting_mid_circuit_use():
         gemini.logical.extensions.star_rz(0.125, q[0])
         gemini.logical.terminal_measure(q)
 
-    validator = ValidationSuite([GeminiLogicalValidation])
+    validator = ValidationSuite([SteaneLogicalValidation])
     validator.validate(valid).raise_if_invalid()
 
     with pytest.raises(ValidationErrorGroup):
@@ -200,7 +200,7 @@ def test_qalloc_and_terminal_measure_type_valid():
         q = squin.qalloc(3)
         gemini.logical.terminal_measure(q)
 
-    validator = ValidationSuite([GeminiTerminalMeasurementValidation])
+    validator = ValidationSuite([SteaneTerminalMeasurementValidation])
     validation_result = validator.validate(main)
 
     validation_result.raise_if_invalid()
@@ -212,7 +212,7 @@ def test_missing_terminal_measurement_is_invalid():
         q = squin.qalloc(1)
         squin.x(q[0])
 
-    validator = ValidationSuite([GeminiTerminalMeasurementValidation])
+    validator = ValidationSuite([SteaneTerminalMeasurementValidation])
 
     with pytest.raises(
         ValidationErrorGroup,
@@ -231,7 +231,7 @@ def test_terminal_measurement():
         tm = gemini.logical.terminal_measure(sub_qs)
         return tm
 
-    validator = ValidationSuite([GeminiTerminalMeasurementValidation])
+    validator = ValidationSuite([SteaneTerminalMeasurementValidation])
     validation_result = validator.validate(not_all_qubits_consumed)
 
     with pytest.raises(ValidationErrorGroup):
@@ -250,7 +250,7 @@ def test_terminal_measurement():
         m = terminal_measure_kernel(sub_qs)
         return m
 
-    validator = ValidationSuite([GeminiTerminalMeasurementValidation])
+    validator = ValidationSuite([SteaneTerminalMeasurementValidation])
     validation_result = validator.validate(terminal_measure_in_kernel)
 
     with pytest.raises(ValidationErrorGroup):
@@ -348,7 +348,7 @@ def test_allocation():
             squin.cx(reg[0], reg[1])
 
 
-MAX_QUBITS = _GeminiLogicalValidationAnalysis.max_qubits
+MAX_QUBITS = _SteaneLogicalValidationAnalysis.max_qubits
 
 
 def _error_messages(err: ValidationErrorGroup) -> list[str]:
@@ -397,7 +397,7 @@ def test_allocation_at_limit_is_valid():
         squin.h(reg[0])
         gemini.logical.terminal_measure(reg)
 
-    validator = ValidationSuite([GeminiLogicalValidation])
+    validator = ValidationSuite([SteaneLogicalValidation])
     validator.validate(main).raise_if_invalid()
 
 
@@ -454,7 +454,7 @@ def test_dynamic_call_through_parameter_does_not_crash_validation():
     `measurement.impls.Func` subclasses the address analysis' `func` method
     table, so the measurement analysis *inherits* a `func.Call` impl that calls
     `run_lattice` on the interpreter. Without the override on
-    `_GeminiTerminalMeasurementValidationAnalysis`, a kernel carrying a dynamic
+    `_SteaneTerminalMeasurementValidationAnalysis`, a kernel carrying a dynamic
     call into this pass fails with
     `AttributeError: ... has no attribute 'run_lattice'`.
 
@@ -467,7 +467,7 @@ def test_dynamic_call_through_parameter_does_not_crash_validation():
     """
     from bloqade.analysis.address.impls import Func as AddressFuncMethodTable
 
-    from bloqade.gemini.logical.validation.measurement.impls import (
+    from bloqade.lanes.validation.terminal_measurement import (
         Func as MeasurementFuncMethodTable,
     )
 
@@ -483,7 +483,7 @@ def test_dynamic_call_through_parameter_does_not_crash_validation():
     # pass, which is silently lost if lowering ever folds this one away.
     assert any(isinstance(stmt, func.Call) for stmt in higher_order.code.walk())
 
-    validator = ValidationSuite([GeminiTerminalMeasurementValidation])
+    validator = ValidationSuite([SteaneTerminalMeasurementValidation])
     validator.validate(higher_order).raise_if_invalid()
 
 
@@ -509,7 +509,7 @@ def test_every_gate_after_terminal_measurement_is_reported():
         squin.cz(q[0], q[1])
         gemini.logical.extensions.star_rz(0.125, q[1])
 
-    validation_result = ValidationSuite([GeminiTerminalMeasurementValidation]).validate(
+    validation_result = ValidationSuite([SteaneTerminalMeasurementValidation]).validate(
         main
     )
     errors = [str(e) for errs in validation_result.errors.values() for e in errs]
@@ -535,7 +535,7 @@ def test_gate_after_terminal_measurement_in_non_inlined_callee_is_invalid():
     assert any(isinstance(stmt, func.Invoke) for stmt in main.code.walk())
 
     with pytest.raises(ValidationErrorGroup, match="Gate x is applied after"):
-        ValidationSuite([GeminiTerminalMeasurementValidation]).validate(
+        ValidationSuite([SteaneTerminalMeasurementValidation]).validate(
             main
         ).raise_if_invalid()
 
@@ -545,7 +545,7 @@ def test_every_gate_statement_is_checked_after_terminal_measurement():
     from bloqade.squin import gate
 
     registry = gemini.logical.kernel.registry.interpreter(
-        keys=_GeminiTerminalMeasurementValidationAnalysis.keys
+        keys=_SteaneTerminalMeasurementValidationAnalysis.keys
     )
     covered = {sig.head for sig in registry}
     missing = {stmt.__name__ for stmt in gate.dialect.stmts if stmt not in covered}
@@ -560,10 +560,10 @@ def test_every_extension_statement_is_checked_after_terminal_measurement():
     so the sweep above does not reach them. Without this, a second extension
     would be silently accepted after the measurement.
     """
-    from bloqade.gemini.logical.dialects import extensions
+    from bloqade.lanes.dialects.steane713 import extensions as extensions
 
     registry = gemini.logical.kernel.registry.interpreter(
-        keys=_GeminiTerminalMeasurementValidationAnalysis.keys
+        keys=_SteaneTerminalMeasurementValidationAnalysis.keys
     )
     covered = {sig.head for sig in registry}
     missing = {

@@ -1,10 +1,10 @@
-from . import (
+from bloqade.gemini import (
     common as common,
     decoding as decoding,
     logical as logical,
     physical as physical,
 )
-from .device import (
+from bloqade.gemini.device import (
     AbstractSimulatorBackend as AbstractSimulatorBackend,
     BackendSample as BackendSample,
     CliffTSimulatorBackend as CliffTSimulatorBackend,
@@ -23,3 +23,27 @@ from .device import (
     SimulatorResult as SimulatorResult,
     TsimSimulatorBackend as TsimSimulatorBackend,
 )
+
+__all__ = [
+    "AbstractSimulatorBackend",
+    "BackendSample",
+    "CliffTSimulatorBackend",
+    "DetectorResult",
+    "GeminiLogicalDevice",
+    "GeminiLogicalFuture",
+    "GeminiLogicalResult",
+    "GeminiLogicalSimulator",
+    "GeminiLogicalSimulatorTask",
+    "GeminiPhysicalSimulator",
+    "PPVMSimulatorBackend",
+    "PhysicalResult",
+    "PhysicalSimulator",
+    "PhysicalSimulatorTask",
+    "Result",
+    "SimulatorResult",
+    "TsimSimulatorBackend",
+    "common",
+    "decoding",
+    "logical",
+    "physical",
+]

@@ -13,16 +13,22 @@ from kirin.prelude import structural_no_opt
 from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
-from bloqade.gemini import common as gemini_common
 from bloqade.gemini.steane_defaults import STEANE7_PHYSICAL_QUBITS
-
-from .dialects import extensions, operations
+from bloqade.lanes.dialects import arch, steane713 as operations
+from bloqade.lanes.dialects.steane713 import extensions as extensions
+from bloqade.lanes.rewrite.qubit_count import InsertQubitCount
+from bloqade.lanes.validation.call_site import InlineOrigins
+from bloqade.lanes.validation.const_address import ConstAddressValidation
+from bloqade.lanes.validation.duplicate_address import DuplicateAddressValidation
+from bloqade.lanes.validation.recursion import check_call_graph
+from bloqade.lanes.validation.steane import SteaneLogicalValidation
+from bloqade.lanes.validation.terminal_measurement import (
+    SteaneTerminalMeasurementValidation,
+)
 
 
 @ir.dialect_group(
-    structural_no_opt.union(
-        [gate, qubit, operations, extensions, annotate, gemini_common.dialects.qubit]
-    )
+    structural_no_opt.union([gate, qubit, operations, extensions, annotate, arch])
 )
 def kernel(self):
     """Compile a function to a Gemini logical kernel.
@@ -62,10 +68,6 @@ def kernel(self):
         ] = True,
         no_raise: Annotated[bool, Doc("do not raise exception during analysis")] = True,
     ) -> None:
-        # stop circular import problems
-        from ..common.validation.call_site import InlineOrigins
-        from ..common.validation.recursion import check_call_graph
-        from .rewrite.qubit_count import InsertQubitCount
 
         # NOTE: ahead of every other pass, and deliberately not gated on
         # `verify` -- see `check_call_graph` for why skipping it reintroduces a
@@ -122,23 +124,14 @@ def kernel(self):
         ).rewrite(mt.code)
 
         if verify:
-            # stop circular import problems
-            from ..common.validation.const_address import ConstAddressValidation
-            from ..common.validation.duplicate_address import (
-                DuplicateAddressValidation,
-            )
-            from .validation.arguments import GeminiLogicalArgumentValidation
-            from .validation.clifford.analysis import (
-                GeminiLogicalValidation,
-            )
-            from .validation.measurement.analysis import (
-                GeminiTerminalMeasurementValidation,
+            from bloqade.gemini.logical.validation.arguments import (
+                GeminiLogicalArgumentValidation,
             )
 
             validator = ValidationSuite(
                 [
-                    GeminiLogicalValidation,
-                    GeminiTerminalMeasurementValidation,
+                    SteaneLogicalValidation,
+                    SteaneTerminalMeasurementValidation,
                     FlatKernelNoCloningValidation,
                     # Before DuplicateAddressValidation: it is that pass's
                     # precondition, and reporting the precondition first reads

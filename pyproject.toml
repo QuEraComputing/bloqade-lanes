@@ -69,7 +69,8 @@ ppvm = [
 manifest-path = "crates/bloqade-lanes-bytecode-python/Cargo.toml"
 module-name = "bloqade.lanes.bytecode._native"
 python-source = "python"
-python-packages = ["bloqade"]
+python-packages = ["bloqade.lanes", "bloqade.gemini"]
+exclude = ["**/__kirincache__/**", "**/__pycache__/**"]
 
 
 [dependency-groups]

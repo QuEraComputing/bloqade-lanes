@@ -47,7 +47,6 @@ from kirin.dialects.ilist import IList
 from matplotlib.patches import FancyArrowPatch, Rectangle
 
 from bloqade import squin
-from bloqade.gemini.common.dialects import qubit
 
 # Define simulator and compilation passes
 from bloqade.gemini.device import PhysicalSimulator
@@ -56,6 +55,7 @@ from bloqade.lanes.arch.gemini.logical import steane7_initialize
 # Define physical architecture
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.bytecode.encoding import ZoneAddress
+from bloqade.lanes.dialects import arch
 from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
 from bloqade.lanes.passes import ALAPPlacePass, ASAPPlacePass
 
@@ -409,7 +409,7 @@ plot_physical_arch_buses(physical_arch_spec, cols=4)
 # > Although this might seem initially redundant, programming at the physical level gives you flexibility to customize logical-to-physical implementations based on your use case.
 
 # %%
-kernel = squin.kernel.add(qubit)
+kernel = squin.kernel.add(arch)
 kernel.run_pass = squin.kernel.run_pass
 
 # %%
@@ -443,7 +443,7 @@ def steane_slot_allocator():
         slot_index: int, theta: float, phi: float, lam: float
     ) -> LogicalQubit:
         def allocate_at(address: tuple[int, int, int]):
-            return qubit.new_at(address[0], address[1], address[2])
+            return arch.new_at(address[0], address[1], address[2])
 
         addresses = slots[slot_index]
 

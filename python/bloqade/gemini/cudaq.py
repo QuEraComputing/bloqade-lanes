@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import import_module
 from typing import Any
 
 from kirin import ir
@@ -30,7 +31,7 @@ def cudaq_to_squin(kernel: Callable[..., Any]) -> ir.Method:
     Returns:
         The squin ``ir.Method`` corresponding to *kernel*.
     """
-    import cudaq as cudaq_module  # type: ignore[reportMissingImports]
+    cudaq_module = import_module("cudaq")
     from qbraid_qir.squin import load  # type: ignore[reportMissingImports]
 
     qir_str = cudaq_module.translate(kernel, format="qir-base")

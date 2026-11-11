@@ -5,12 +5,10 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
-from bloqade.gemini.common.dialects.qubit import new_at
-from bloqade.gemini.common.validation.duplicate_address import (
-    DuplicateAddressValidation,
-)
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
+from bloqade.lanes.dialects.arch import new_at
 from bloqade.lanes.validation.address import get_validation
+from bloqade.lanes.validation.duplicate_address import DuplicateAddressValidation
 
 # ---------------------------------------------------------------------------
 # Validator fixture

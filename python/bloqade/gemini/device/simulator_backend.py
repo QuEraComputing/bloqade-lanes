@@ -12,6 +12,8 @@ import numpy as np
 from kirin import ir, rewrite
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
+from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+
 if TYPE_CHECKING:
     from stim import Circuit as StimCircuit, DetectorErrorModel
     from tsim import Circuit as TsimCircuit  # type: ignore[reportMissingImports]
@@ -98,7 +100,7 @@ def _tsim() -> Any:
     except ImportError as exc:
         raise ImportError(
             "Tsim simulation requires the optional `sim` extra. "
-            "Install it with `bloqade-lanes[sim]` or `uv sync --extra sim`."
+            "Install it with `bloqade[sim]` or `uv sync --extra sim`."
         ) from exc
 
     return tsim
@@ -128,7 +130,6 @@ class TsimSimulatorBackend(AbstractSimulatorBackend):
 
     def _tsim_circuit(self, physical_squin_kernel: ir.Method) -> TsimCircuit:
         """Convert a physical SQuIn kernel to a cached Tsim circuit."""
-        from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 
         try:
             return self._circuits[physical_squin_kernel]
@@ -243,7 +244,7 @@ def _clifft() -> Any:
     except ImportError as exc:
         raise ImportError(
             "CliffT simulation requires the optional `clifft` dependency. "
-            "Install it with `bloqade-lanes[msd-reprod]` or include `clifft` "
+            "Install it with `bloqade[sim]` or include `clifft` "
             "in your environment."
         ) from exc
 
@@ -256,7 +257,7 @@ def _ppvm() -> Any:
     except ImportError as exc:
         raise ImportError(
             "PPVM simulation requires the optional `bloqade-ppvm` dependency. "
-            "Install it with `bloqade-lanes[sim]`."
+            "Install it with `bloqade[sim]`."
         ) from exc
 
     return ppvm
@@ -264,7 +265,7 @@ def _ppvm() -> Any:
 
 def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
     return ImportError(
-        "CliffT simulation also requires `bloqade-lanes[sim]`: Tsim performs "
+        "CliffT simulation also requires `bloqade[sim]`: Tsim performs "
         "physical SQuIn conversion and detector error model generation even "
         "when CliffT is selected for sampling."
     )
@@ -272,7 +273,7 @@ def _clifft_tsim_import_error(exc: ImportError) -> ImportError:
 
 def _ppvm_tsim_import_error(exc: ImportError) -> ImportError:
     return ImportError(
-        "PPVM simulation also requires `bloqade-lanes[sim]`: Tsim performs "
+        "PPVM simulation also requires `bloqade[sim]`: Tsim performs "
         "physical SQuIn conversion and detector error model generation even "
         "when CliffT is selected for sampling."
     )
@@ -349,7 +350,7 @@ class CliffTSimulatorBackend(AbstractSimulatorBackend):
 
 def _pyqrack_tsim_import_error(exc: ImportError) -> ImportError:
     return ImportError(
-        "PyQrack simulation also requires `bloqade-lanes[sim]`: Tsim provides "
+        "PyQrack simulation also requires `bloqade[sim]`: Tsim provides "
         "the guaranteed detector error model even when PyQrack is selected "
         "for sampling."
     )

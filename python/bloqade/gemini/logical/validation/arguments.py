@@ -25,7 +25,7 @@ pattern by name (``test_passing_a_parameter_to_a_subkernel_is_allowed``,
 ``test_non_recursive_subkernel_calls_are_unaffected``).
 
 **The discriminator is qubit allocation**, which is not a new idea here:
-``GeminiTerminalMeasurementValidation`` next door already decides "is this a
+``SteaneTerminalMeasurementValidation`` next door already decides "is this a
 program?" exactly this way, requiring a terminal measurement only of kernels
 whose ``AddressAnalysis`` qubit count is non-zero. Reusing it keeps one meaning
 of "program" across the suite -- the same kernels that must terminal-measure

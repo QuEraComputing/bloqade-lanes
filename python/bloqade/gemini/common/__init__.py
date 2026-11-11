@@ -1,1 +1,1 @@
-from . import dialects as dialects, impl as impl, validation as validation
+"""Gemini frontend components shared by the logical and physical kernels."""

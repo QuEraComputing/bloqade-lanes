@@ -4,7 +4,7 @@ Two related failures, both about the boundary a call draws through a kernel:
 
 - A static call still standing when the ``verify`` suite runs means the program
   is not flat, and nothing downstream will say so. ``NoStaticCallValidation``
-  reports it, and ``GeminiLogicalValidation`` delegates to it. This used to be a
+  reports it, and ``SteaneLogicalValidation`` delegates to it. This used to be a
   ``func.Invoke`` impl instead; a call nested inside an ``scf.For`` was invisible
   there, because that analysis' ``scf.For`` impl returns bottom without walking
   the loop body. The nested case below is what a dataflow check cannot see.
@@ -21,10 +21,10 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
-from bloqade.gemini.common.validation.call_site import CallSite, InlineOrigins
-from bloqade.gemini.common.validation.static_call import NoStaticCallValidation
 from bloqade.gemini.logical.stdlib import default_post_processing
-from bloqade.gemini.logical.validation.clifford import GeminiLogicalValidation
+from bloqade.lanes.validation.call_site import CallSite, InlineOrigins
+from bloqade.lanes.validation.static_call import NoStaticCallValidation
+from bloqade.lanes.validation.steane import SteaneLogicalValidation
 
 
 def _messages(err: ValidationErrorGroup) -> list[str]:
@@ -91,9 +91,9 @@ def test_flat_kernel_has_no_errors():
 
 
 def test_gemini_logical_validation_still_reports_calls_on_its_own():
-    """`GeminiLogicalValidation` is public; composing it alone must still work.
+    """`SteaneLogicalValidation` is public; composing it alone must still work.
 
-    It is re-exported from `bloqade.gemini.logical.validation.clifford`, so a
+    It is exported from `bloqade.lanes.validation.steane`, so a
     caller can assemble their own suite from it. Moving the call check out to
     `NoStaticCallValidation` must not quietly narrow what they get -- this pins
     the delegation so the pass stays a drop-in.
@@ -104,7 +104,7 @@ def test_gemini_logical_validation_still_reports_calls_on_its_own():
         q = squin.qalloc(1)
         _helper(q[0])
 
-    _, errors = GeminiLogicalValidation().run(caller)
+    _, errors = SteaneLogicalValidation().run(caller)
     assert any("_helper" in str(e) and "was not inlined" in str(e) for e in errors)
 
 
@@ -121,7 +121,7 @@ def test_delegated_call_check_reaches_into_loop_bodies():
         for i in range(len(q)):
             _helper(q[i])
 
-    _, errors = GeminiLogicalValidation().run(caller)
+    _, errors = SteaneLogicalValidation().run(caller)
     assert any("_helper" in str(e) for e in errors)
 
 
@@ -133,7 +133,7 @@ def test_a_single_unresolved_call_is_reported_once():
         q = squin.qalloc(1)
         _helper(q[0])
 
-    result = ValidationSuite([GeminiLogicalValidation]).validate(caller)
+    result = ValidationSuite([SteaneLogicalValidation]).validate(caller)
     reported = [
         e
         for errors in result.errors.values()
@@ -275,7 +275,7 @@ def test_unroll_hint_is_dropped_when_the_kernel_already_unrolls():
         origins = InlineOrigins.collect(caller)
         InlinePass(caller.dialects).fixpoint(caller)
         origins.snapshot(caller)
-        result = ValidationSuite([GeminiLogicalValidation]).validate(caller)
+        result = ValidationSuite([SteaneLogicalValidation]).validate(caller)
         return caller, origins, result
 
     def loop_messages(result):

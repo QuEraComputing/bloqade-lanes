@@ -5,9 +5,8 @@ from kirin import types
 from kirin.dialects import ilist
 
 from bloqade import qubit
-from bloqade.gemini.common.dialects.qubit import new_at
-
-from .. import kernel
+from bloqade.gemini.logical import kernel
+from bloqade.lanes.dialects.arch import new_at
 
 N = TypeVar("N")
 

@@ -6,17 +6,15 @@ from kirin.dialects import func
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.gemini.compile.task import (
     _find_qubit_ssas,
     _find_return_stmt,
     append_measurements_and_annotations,
     compile_task,
 )
-from bloqade.gemini.logical.dialects.operations.stmts import (
-    TerminalLogicalMeasurement,
-)
 from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
+from bloqade.lanes.dialects.arch import new_at
+from bloqade.lanes.dialects.steane713.stmts import TerminalLogicalMeasurement
 
 # Every kernel annotated below allocates a single logical qubit, and
 # ``append_measurements_and_annotations`` inserts Steane [[7,1,3]] annotations,

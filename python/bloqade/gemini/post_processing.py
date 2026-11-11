@@ -9,8 +9,7 @@ from kirin import ir, types
 from kirin.interp.exceptions import InterpreterError
 from kirin.passes import HintConst
 
-if typing.TYPE_CHECKING:
-    from bloqade.lanes.analysis.atom import PostProcessing
+from bloqade.lanes.analysis.atom import PostProcessing
 
 T = typing.TypeVar("T")
 
@@ -160,6 +159,5 @@ def build_post_processing(
     # imports ``bloqade.gemini``, so an atom-first import reaches this module
     # while ``bloqade.lanes.analysis.atom`` is still initialising. Same
     # lazy-import treatment as #985.
-    from bloqade.lanes.analysis.atom import PostProcessing
 
     return PostProcessing(emit_return, emit_detectors, emit_observables)
