@@ -21,7 +21,7 @@ import json
 import random
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
@@ -87,7 +87,7 @@ def infer_mock_measurement_mode(program_content: object) -> str:
 
 def utc_now() -> str:
     """Return a JSON-friendly aware timestamp."""
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def parse_positive_int(value: str | None, default: int) -> int:
