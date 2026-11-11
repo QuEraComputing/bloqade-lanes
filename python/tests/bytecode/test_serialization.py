@@ -124,9 +124,9 @@ def test_compiled_move_program_roundtrip(simulation):
     payload = serializer.encode(program.dialects.encode(program, version="1.0.0"))
     restored = program.dialects.decode(serializer.decode(payload))
     restored.verify()
-    # Deserialization may intern equal type attributes, changing JSON reference
-    # IDs without changing the IR. Compare the decoded program structurally.
-    assert program.code.is_structurally_equal(restored.code)
+    # Decoding interns equal type attributes, so JSON reference IDs and sharing
+    # can change even when the restored IR is identical.
+    assert program.callable_region.is_structurally_equal(restored.callable_region)
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_spec
 
