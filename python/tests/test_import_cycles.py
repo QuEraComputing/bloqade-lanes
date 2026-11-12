@@ -53,7 +53,7 @@ def test_no_lanes_to_gemini_imports():
     root = Path(__file__).parents[1] / "bloqade" / "lanes"
     violations = []
     for path in root.rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
