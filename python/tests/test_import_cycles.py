@@ -1,4 +1,4 @@
-"""Compiler imports are independent; frontend tables are explicitly required."""
+"""Compiler imports are independent; Gemini supplies its own method tables."""
 
 import ast
 import subprocess
@@ -72,6 +72,50 @@ def test_no_lanes_to_gemini_imports():
 def test_lanes_compiles_without_gemini():
     result = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("_independent_compilation.py"))],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_lanes_leaves_gemini_method_tables_unregistered():
+    # A fresh process ensures test import order cannot hide duplicate frontend
+    # registrations. These tables are supplied by the separate Gemini package.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from bloqade.lanes.dialects import arch, steane713, arrange
+from bloqade.lanes.dialects.steane713 import extensions
+from bloqade.lanes.validation import (
+    address, const_address, duplicate_address, steane, terminal_measure,
+    terminal_measurement,
+)
+from bloqade import qubit
+from bloqade.squin import gate
+from kirin.dialects import func, scf
+requirements = [
+    (arch.dialect, 'qubit.address'),
+    (arch.dialect, 'lanes.arch.const_address'),
+    (arch.dialect, 'lanes.arch.duplicates'),
+    (arch.dialect, 'move.address.validation'),
+    (arrange.dialect, 'move.address.validation'),
+    (qubit.dialect, 'lanes.validate.physical.terminal_measure'),
+    (steane713.dialect, 'typeinfer'),
+    (steane713.dialect, 'measure_id'),
+]
+requirements += [(d, 'lanes.validate.logical') for d in
+    (qubit.dialect, gate.dialect, scf.dialect, extensions.dialect)]
+requirements += [(d, 'lanes.validate.terminal_measurement') for d in
+    (qubit.dialect, gate.dialect, func.dialect, steane713.dialect, extensions.dialect)]
+for dialect, key in requirements:
+    assert key not in dialect.interps, (dialect.name, key)
+assert not any(n.startswith('bloqade.gemini') for n in sys.modules)
+""",
+        ],
         capture_output=True,
         text=True,
         check=False,

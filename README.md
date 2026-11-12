@@ -21,11 +21,13 @@ Bloqade-lanes provides the core components for compiling neutral atom quantum ci
 uv add bloqade-lanes
 ```
 
-This distribution includes both `bloqade.lanes` compiler infrastructure and
-`bloqade.gemini` kernel decorators, devices, simulation, and decoding. The
-namespaces have separate responsibilities: Gemini imports lanes compiler
-components, while lanes does not import Gemini. See the
-[namespace refactoring notes](docs/refactoring/gemini-package-split.md).
+This distribution provides the `bloqade.lanes` compiler infrastructure.
+The `bloqade.gemini` frontend (kernel decorators, devices, simulation, and
+decoding) is moving to the `bloqade` distribution in
+[QuEraComputing/bloqade#392](https://github.com/QuEraComputing/bloqade/pull/392).
+Gemini users need the corresponding bloqade release; installing lanes alone
+no longer provides `bloqade.gemini`. See the
+[namespace migration notes](docs/refactoring/gemini-package-split.md).
 
 ## Documentation
 
