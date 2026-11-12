@@ -64,9 +64,9 @@ from kirin.dialects.py.binop import stmts as py_binop
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade import qubit as squin_qubit, types as bloqade_types
-from bloqade.gemini.common.dialects import qubit as gemini_qubit
-from bloqade.gemini.logical.dialects.extensions import stmts as extensions
-from bloqade.gemini.logical.dialects.operations import stmts as operations
+from bloqade.lanes.dialects import arch as gemini_qubit
+from bloqade.lanes.dialects.steane713 import stmts as operations
+from bloqade.lanes.dialects.steane713.extensions import stmts as extensions
 from bloqade.lanes.utils import constant_float
 
 __all__ = ["EliminateRz", "EliminateRzError"]
