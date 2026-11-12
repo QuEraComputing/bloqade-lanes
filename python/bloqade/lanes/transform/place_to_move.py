@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 from bloqade.analysis import address
@@ -69,7 +70,17 @@ class PlaceToMove:
             self.placement_strategy,
         )
         if no_raise:
-            placement_frame, _ = placement_analysis.run_no_raise(out)
+            # `run_no_raise`, but saying why: it discards the exception, which
+            # leaves a failed placement visible only as unlowered gates.
+            try:
+                placement_frame, _ = placement_analysis.run(out)
+            except Exception as exc:  # noqa: BLE001  # what run_no_raise catches
+                warnings.warn(
+                    f"placement analysis failed, so its gates stay unlowered: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                placement_frame = placement_analysis.initialize_frame(out.code)
         else:
             placement_frame, _ = placement_analysis.run(out)
 
