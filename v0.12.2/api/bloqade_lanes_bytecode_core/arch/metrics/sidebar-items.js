@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FLAIR_MAX_ACCEL_UM_PER_US2","FLAIR_MAX_JERK_UM_PER_US3","FLAIR_MAX_RAMP_US"],"struct":["MotionModel"]};

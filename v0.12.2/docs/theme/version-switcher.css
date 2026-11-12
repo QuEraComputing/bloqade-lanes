@@ -1,0 +1,21 @@
+#version-switcher-wrapper {
+  display: inline-flex;
+  align-items: center;
+}
+
+#version-switcher-label {
+  font-size: 0.85rem;
+  color: var(--sidebar-fg);
+  margin-right: 0.25rem;
+}
+
+#version-switcher {
+  margin-left: 1rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--sidebar-fg);
+  background: var(--sidebar-bg);
+  color: var(--sidebar-fg);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
