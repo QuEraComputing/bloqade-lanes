@@ -1,7 +1,7 @@
 """Eager per-statement validation for ``arrange.MoveTo`` (failures 1-5 from spec §4).
 
-Gemini registers the method table against the lanes validation interpreter key
-(``move.address.validation``) when ``bloqade.gemini`` is imported.
+The method table is registered by ``bloqade.lanes.validation.address``,
+alongside the interpreter, under ``move.address.validation``.
 The impl checks:
 
 1. ``len(qubits) == len(locations)``
