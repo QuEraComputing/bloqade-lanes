@@ -225,3 +225,72 @@ def test_every_extension_statement_is_checked_after_terminal_measurement():
         stmt.__name__ for stmt in extensions.dialect.stmts if stmt not in covered
     }
     assert not missing, f"extensions without a post-measurement check: {missing}"
+
+
+@pytest.mark.parametrize("prior_operation", ["none", "h", "swap", "star_rz"])
+def test_non_clifford_allowed_only_for_initial_preparation(prior_operation):
+    @steane_kernel
+    def main():
+        q = squin.qalloc(2)
+        if prior_operation == "h":
+            squin.h(q[1])
+        elif prior_operation == "swap":
+            squin.swap(q[0], q[1])
+        elif prior_operation == "star_rz":
+            extensions.star_rz(0.125, ilist.IList([q[1]]))
+        squin.u3(0.1, 0.2, 0.3, q[1])
+        steane713.terminal_measure(q)
+
+    _, errors = SteaneLogicalValidation().run(main)
+    if prior_operation == "none":
+        assert errors == []
+    else:
+        assert len(errors) == 1
+        assert "Non-clifford gate u3" in str(errors[0])
+
+
+def test_dynamic_loop_is_reported():
+    @steane_kernel(unroll=False)
+    def main(n: int):
+        q = squin.qalloc(1)
+        for _ in range(n):
+            squin.x(q[0])
+        steane713.terminal_measure(q)
+
+    _, errors = SteaneLogicalValidation().run(main)
+    assert any("Non-constant iterable" in str(error) for error in errors)
+
+
+def test_allocation_over_capacity_is_reported():
+    @steane_kernel
+    def main():
+        q = squin.qalloc(11)
+        steane713.terminal_measure(q)
+
+    _, errors = SteaneLogicalValidation().run(main)
+    assert any("Qubit allocations exceeded 10" in str(error) for error in errors)
+    assert any("kernel allocates 11 qubits" in str(error) for error in errors)
+
+
+def test_repeated_terminal_measurement_is_reported():
+    @steane_kernel
+    def main():
+        q = squin.qalloc(1)
+        steane713.terminal_measure(q)
+        return steane713.terminal_measure(q)
+
+    result = ValidationSuite([SteaneTerminalMeasurementValidation]).validate(main)
+    with pytest.raises(ValidationErrorGroup, match="Multiple terminal measurements"):
+        result.raise_if_invalid()
+
+
+def test_non_terminal_measurement_is_reported():
+    @steane_kernel
+    def main():
+        q = squin.qalloc(1)
+        squin.measure(q[0])
+        return steane713.terminal_measure(q)
+
+    result = ValidationSuite([SteaneTerminalMeasurementValidation]).validate(main)
+    with pytest.raises(ValidationErrorGroup, match="Non-terminal measurements"):
+        result.raise_if_invalid()

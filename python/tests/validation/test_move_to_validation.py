@@ -1,8 +1,9 @@
 """Tests for MoveToValidation — eager per-statement validation (failures 1-5)."""
 
+import pytest
 from kirin import ir, types
 from kirin.analysis import const
-from kirin.dialects import func, ilist
+from kirin.dialects import func, ilist, py
 from kirin.prelude import structural_no_opt
 
 from bloqade import types as bloqade_types
@@ -10,7 +11,7 @@ from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects.arch import Loc, dialect as arch_dialect
 from bloqade.lanes.dialects.arrange import dialect as arrange_dialect
-from bloqade.lanes.dialects.arrange.stmts import MoveTo
+from bloqade.lanes.dialects.arrange.stmts import MoveTo, Permute
 from bloqade.lanes.validation.move_to import MoveToValidation
 
 # ---------------------------------------------------------------------------
@@ -269,3 +270,51 @@ def test_loc_valid_coords_no_error():
 
     _, errors = _validator().run(method)
     assert errors == []
+
+
+@pytest.mark.parametrize("statement", [MoveTo, Permute])
+@pytest.mark.parametrize("qubits_kind", ["parameter", "constant"])
+def test_movement_requires_literal_qubit_list(statement, qubits_kind):
+    # A block argument and a constant result are both SSA values, but neither
+    # provides the ilist.New elements required by address validation.
+    constant = py.Constant(ilist.IList([]))
+    qubits = ir.TestValue() if qubits_kind == "parameter" else constant.result
+    destinations = ilist.New(values=())
+    destinations.result.hints["const"] = const.Value(())
+    method = _build_test_method(
+        [constant, destinations, statement(qubits, destinations.result)]
+    )
+
+    _, errors = _validator().run(method)
+    assert len(errors) == 1
+    assert "qubits must be a literal list" in str(errors[0])
+
+
+@pytest.mark.parametrize(
+    "permutation, duplicate_qubit, expected_error",
+    [
+        (None, False, "perm must be compile-time constants"),
+        ((0,), False, "len(qubits)=2 != len(perm)=1"),
+        ((0, 0), False, "perm must be a permutation"),
+        ((0, 2), False, "perm must be a permutation"),
+        ((-1, 0), False, "perm must be a permutation"),
+        ((1, 0), True, "same Qubit SSA value"),
+        ((0, 1), False, None),
+        ((1, 0), False, None),
+    ],
+)
+def test_permutation_validation(permutation, duplicate_qubit, expected_error):
+    q0 = ir.TestValue(type=bloqade_types.QubitType)
+    q1 = q0 if duplicate_qubit else ir.TestValue(type=bloqade_types.QubitType)
+    qubits = ilist.New(values=(q0, q1))
+    perm = ilist.New(values=())
+    if permutation is not None:
+        perm.result.hints["const"] = const.Value(permutation)
+    method = _build_test_method([qubits, perm, Permute(qubits.result, perm.result)])
+
+    _, errors = _validator().run(method)
+    if expected_error is None:
+        assert errors == []
+    else:
+        assert len(errors) == 1
+        assert expected_error in str(errors[0])
