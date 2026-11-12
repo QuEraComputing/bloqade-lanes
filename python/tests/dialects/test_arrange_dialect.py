@@ -1,7 +1,7 @@
 from kirin import lowering
 
-from bloqade.gemini.common.dialects import arrange
-from bloqade.gemini.common.dialects.arrange.stmts import MoveTo
+from bloqade.lanes.dialects import arrange as arrange
+from bloqade.lanes.dialects.arrange.stmts import MoveTo
 
 
 def test_move_to_in_arrange_dialect():
