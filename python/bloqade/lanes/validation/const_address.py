@@ -5,10 +5,9 @@ have to be known at compile time. Nothing in ``verify()`` says so -- the
 statement signature is satisfied by any ``int`` SSA value, including a kernel
 block argument whose value only ever exists at runtime.
 
-Gemini registers the per-statement method tables for this analysis in
-``bloqade.gemini.common.impl.const_address``. The corresponding in-range
-check uses ``ArchSpec`` during compilation and is registered by
-``bloqade.gemini.common.impl.new_at``.
+The per-statement method table is registered in this module. The corresponding
+in-range check uses ``ArchSpec`` during compilation and is registered in
+``bloqade.lanes.validation.address``.
 
 Rejecting an entry kernel's own argument loses nothing: a parameter scan
 compiles one program and binds arguments at runtime, so an entry argument can
@@ -22,10 +21,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from kirin import ir
+from kirin import interp, ir
 from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
+
+from bloqade.lanes.dialects import arch as qubit
 
 
 @dataclass
@@ -76,3 +77,21 @@ def _expect_const_int(
             ),
         )
     return data
+
+
+@qubit.dialect.register(key="lanes.arch.const_address")
+class _NewAtConstAddressMethods(interp.MethodTable):
+    @interp.impl(qubit.stmts.NewAt)
+    def check_const_address(
+        self,
+        _interp: _ConstAddressValidationAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        node: qubit.stmts.NewAt,
+    ):
+        # Every arg is checked, not just the first bad one, so a kernel that
+        # gets two of the three wrong hears about both in one pass.
+        _expect_const_int(node.zone_id, "zone_id", node, _interp)
+        _expect_const_int(node.word_id, "word_id", node, _interp)
+        _expect_const_int(node.site_id, "site_id", node, _interp)
+
+        return (EmptyLattice.bottom(),)
