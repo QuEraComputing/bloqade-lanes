@@ -1,15 +1,20 @@
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from bloqade.analysis import address
 from bloqade.analysis.address import Address, AddressAnalysis, AddressReg
-from kirin import ir
-from kirin.analysis import Forward, ForwardFrame
+from bloqade.squin import gate
+from kirin import interp as _interp, ir
+from kirin.analysis import Forward, ForwardFrame, const
+from kirin.dialects import scf
 from kirin.lattice import EmptyLattice
 from kirin.validation import ValidationPass
 
-from bloqade import squin
+from bloqade import qubit, squin
+from bloqade.lanes.dialects.steane713 import extensions as extensions
 from bloqade.lanes.validation.static_call import (
     NoStaticCallValidation,
+    UnrollFixableError,
 )
 
 
@@ -39,13 +44,19 @@ class _SteaneLogicalValidationAnalysis(Forward[EmptyLattice]):
 
         return tuple(self.lattice.bottom() for _ in range(len(node.results)))
 
-    def check_first_gate(self, qubits: ir.SSAValue) -> bool:
+    def check_first_gate(self, stmt: ir.Statement, qubits: ir.SSAValue) -> bool | None:
+        """Mark a register as acted on; return None for a reported invalid operand."""
         address = self.addr_frame.get(qubits)
 
         if not isinstance(address, AddressReg):
-            # NOTE: we should have a flat kernel with simple address analysis, so in case we don't
-            # get concrete addresses, we might as well error here since something's wrong
-            return False
+            self.add_validation_error(
+                stmt,
+                ir.ValidationError(
+                    stmt,
+                    f"Gate {stmt.name} requires a qubit register with known addresses.",
+                ),
+            )
+            return None
 
         is_first = True
         for addr_int in address.data:
@@ -117,3 +128,147 @@ class SteaneLogicalValidation(ValidationPass):
             )
 
         return frame, analysis.get_validation_errors()
+
+
+@scf.dialect.register(key="lanes.validate.logical")
+class __ScfSteaneLogicalValidation(_interp.MethodTable):
+    @_interp.impl(scf.IfElse)
+    def if_else(
+        self,
+        interp: _SteaneLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: scf.IfElse,
+    ):
+        interp.add_validation_error(
+            stmt,
+            ir.ValidationError(
+                stmt, "If statements are not supported in logical Gemini programs!"
+            ),
+        )
+        return (interp.lattice.bottom(),)
+
+    @_interp.impl(scf.For)
+    def for_loop(
+        self,
+        interp: _SteaneLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: scf.For,
+    ):
+        if not isinstance(stmt.iterable.hints.get("const"), const.Value):
+            interp.add_validation_error(
+                stmt,
+                UnrollFixableError(
+                    stmt,
+                    "Non-constant iterable in for loop is not supported in Gemini logical programs!",
+                ),
+            )
+
+        return (interp.lattice.bottom(),)
+
+
+@gate.dialect.register(key="lanes.validate.logical")
+class __GateSteaneLogicalValidation(_interp.MethodTable):
+    @_interp.impl(gate.stmts.U3)
+    @_interp.impl(gate.stmts.T)
+    @_interp.impl(gate.stmts.Rx)
+    @_interp.impl(gate.stmts.Ry)
+    @_interp.impl(gate.stmts.Rz)
+    def non_clifford(
+        self,
+        interp: _SteaneLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: gate.stmts.SingleQubitGate | gate.stmts.RotationGate,
+    ):
+        # An invalid operand already has a diagnostic; it does not establish
+        # whether this is the first gate on the qubits.
+        if interp.check_first_gate(stmt, stmt.qubits) is not False:
+            return ()
+
+        interp.add_validation_error(
+            stmt,
+            ir.ValidationError(
+                stmt,
+                f"Non-clifford gate {stmt.name} can only be used for initial state preparation, i.e. as the first gate!",
+            ),
+        )
+        return ()
+
+    @_interp.impl(gate.stmts.X)
+    @_interp.impl(gate.stmts.Y)
+    @_interp.impl(gate.stmts.SqrtX)
+    @_interp.impl(gate.stmts.SqrtY)
+    @_interp.impl(gate.stmts.Z)
+    @_interp.impl(gate.stmts.H)
+    @_interp.impl(gate.stmts.S)
+    def clifford(
+        self,
+        interp: _SteaneLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: gate.stmts.SingleQubitGate,
+    ):
+        # NOTE: ignore result, but make sure the first gate flag is set to False
+        interp.check_first_gate(stmt, stmt.qubits)
+
+        return ()
+
+    @_interp.impl(gate.stmts.CX)
+    @_interp.impl(gate.stmts.CY)
+    @_interp.impl(gate.stmts.CZ)
+    @_interp.impl(gate.stmts.Swap)
+    def two_qubit_gate(
+        self,
+        interp: _SteaneLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: gate.stmts.ControlledGate | gate.stmts.TwoQubitGate,
+    ):
+        # NOTE: both register operands are acted on; iterate over `args` so this
+        # covers the (controls, targets) and (qubits1, qubits2) spellings alike
+        for qubits in stmt.args:
+            interp.check_first_gate(stmt, qubits)
+
+        return ()
+
+
+@extensions.dialect.register(key="lanes.validate.logical")
+class __ExtensionsSteaneLogicalValidation(_interp.MethodTable):
+    @_interp.impl(extensions.stmts.StarRz)
+    def star_rz(
+        self,
+        interp: _SteaneLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: extensions.stmts.StarRz,
+    ):
+        interp.check_first_gate(stmt, stmt.qubits)
+        return ()
+
+
+@qubit.dialect.register(key="lanes.validate.logical")
+class QubitMethods(_interp.MethodTable):
+    @_interp.impl(qubit.stmts.New)
+    def check_qubit_allocation(
+        self,
+        interp: _SteaneLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: qubit.stmts.New,
+    ):
+        qubit_val = interp.addr_frame.get(stmt.result)
+        if not isinstance(qubit_val, address.AddressQubit):
+            interp.add_validation_error(
+                stmt,
+                ir.ValidationError(
+                    stmt,
+                    "Cannot determine qubit address location.",
+                ),
+            )
+            return (interp.lattice.bottom(),)
+
+        if qubit_val.data >= interp.max_qubits:
+            interp.add_validation_error(
+                stmt,
+                ir.ValidationError(
+                    stmt,
+                    f"Qubit allocations exceeded {interp.max_qubits}.",
+                ),
+            )
+
+        return (interp.lattice.bottom(),)

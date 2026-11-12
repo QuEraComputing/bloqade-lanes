@@ -1,4 +1,4 @@
-"""Compiler imports are independent; Gemini supplies its own method tables."""
+"""Compiler imports and method-table registration are independent of Gemini."""
 
 import ast
 import subprocess
@@ -16,6 +16,11 @@ import pytest
         "bloqade.lanes.dialects.steane713",
         "bloqade.lanes.prelude",
         "bloqade.lanes.validation.address",
+        "bloqade.lanes.validation.steane",
+        "bloqade.lanes.validation.terminal_measurement",
+        "bloqade.lanes.validation.terminal_measure",
+        "bloqade.lanes.validation.const_address",
+        "bloqade.lanes.validation.duplicate_address",
         "bloqade.lanes.transform",
     ],
 )
@@ -79,9 +84,8 @@ def test_lanes_compiles_without_gemini():
     assert result.returncode == 0, result.stderr
 
 
-def test_lanes_leaves_gemini_method_tables_unregistered():
-    # A fresh process ensures test import order cannot hide duplicate frontend
-    # registrations. These tables are supplied by the separate Gemini package.
+def test_lanes_registers_its_method_tables():
+    # A fresh process ensures frontend imports cannot supply missing tables.
     result = subprocess.run(
         [
             sys.executable,
@@ -112,7 +116,7 @@ requirements += [(d, 'lanes.validate.logical') for d in
 requirements += [(d, 'lanes.validate.terminal_measurement') for d in
     (qubit.dialect, gate.dialect, func.dialect, steane713.dialect, extensions.dialect)]
 for dialect, key in requirements:
-    assert key not in dialect.interps, (dialect.name, key)
+    assert key in dialect.interps, (dialect.name, key)
 assert not any(n.startswith('bloqade.gemini') for n in sys.modules)
 """,
         ],
