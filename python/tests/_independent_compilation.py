@@ -10,6 +10,8 @@ class NoGemini(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, NoGemini())
 
+import pytest
+
 from bloqade import squin
 from bloqade.lanes.dialects import arch
 from bloqade.lanes.transform.native_to_place import NativeToPlace
@@ -40,6 +42,7 @@ from bloqade.rewrite.passes import AggressiveUnroll
 # Exercise the actual pipelines, including their validation and analysis
 # dispatch. NativeToPlace alone did not cover the missing Steane tables.
 from kirin.dialects import ilist
+from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade.lanes.dialects import move, steane713
 from bloqade.lanes.transform import LogicalPipeline, PhysicalPipeline
@@ -78,6 +81,33 @@ for source, pipeline in (
     compiled.verify()
     assert any(stmt.dialect is move.dialect for stmt in compiled.code.walk())
 
+
+# Valid programs alone cannot detect validation handlers silently falling back.
+# Match the intended diagnostics so a different rejection cannot hide a missing
+# table (e.g. "Gate t is not supported" instead of the state-preparation rule).
+@squin.kernel.add(steane713)
+def logical_late_t():
+    q = squin.qalloc(1)
+    squin.h(q[0])
+    squin.t(q[0])
+    return steane713.terminal_measure(q)
+
+
+@squin.kernel.add(arch)
+def physical_duplicate():
+    a = arch.new_at(0, 0, 0)
+    b = arch.new_at(0, 0, 0)
+    return squin.broadcast.measure(ilist.IList([a, b]))
+
+
+for source, pipeline, diagnostic in (
+    (logical_late_t, LogicalPipeline(), "Non-clifford gate t"),
+    (physical_duplicate, PhysicalPipeline(), "pinned by two"),
+):
+    AggressiveUnroll(source.dialects).fixpoint(source)
+    with pytest.raises(ValidationErrorGroup, match=diagnostic):
+        pipeline.emit(source, no_raise=False)
+
 assert not any(n.startswith("bloqade.gemini") for n in sys.modules)
 
-print("Lanes compiles independently of Gemini")
+print("Lanes compiles and validates independently of Gemini")
