@@ -11,6 +11,7 @@ dialect, which consumes ``LocationAddress`` values these produce.
 from . import (
     constprop as constprop,
     impl as impl,
+    qubit_address as qubit_address,
     rewrite as rewrite,
     stmts as stmts,
 )
