@@ -40,7 +40,7 @@ visualization = [
 manifest-path = "crates/bloqade-lanes-bytecode-python/Cargo.toml"
 module-name = "bloqade.lanes.bytecode._native"
 python-source = "python"
-python-packages = ["bloqade.lanes"]
+python-packages = ["bloqade"]
 exclude = ["**/__kirincache__/**", "**/__pycache__/**"]
 
 
