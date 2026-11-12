@@ -2,6 +2,7 @@ import bloqade.squin as squin
 import pytest
 from bloqade.analysis.address import AddressAnalysis
 from bloqade.types import Qubit
+from kirin import ir
 from kirin.dialects import func, ilist
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
@@ -294,3 +295,64 @@ def test_non_terminal_measurement_is_reported():
     result = ValidationSuite([SteaneTerminalMeasurementValidation]).validate(main)
     with pytest.raises(ValidationErrorGroup, match="Non-terminal measurements"):
         result.raise_if_invalid()
+
+
+@pytest.mark.parametrize(
+    "operation", ["h", "rx", "cz_controls", "cz_targets", "star_rz"]
+)
+@pytest.mark.parametrize("bare_qubit", [False, True])
+def test_gate_operands_must_resolve_to_registers(operation, bare_qubit):
+    @steane_kernel
+    def main():
+        q = squin.qalloc(2)
+        if operation == "h":
+            squin.h(q[0])
+        elif operation == "rx":
+            squin.rx(0.125, q[0])
+        elif operation == "cz_controls" or operation == "cz_targets":
+            squin.cz(q[0], q[1])
+        else:
+            extensions.star_rz(0.125, ilist.IList([q[0]]))
+        return steane713.terminal_measure(q)
+
+    # The scalar squin frontends correctly wrap qubits in registers. Substitute
+    # a bare qubit in the IR to test malformed inputs reaching the validator,
+    # without depending on type-checking or a missing terminal measurement.
+    gate = next(
+        stmt
+        for stmt in main.code.walk()
+        if isinstance(
+            stmt,
+            (
+                squin.gate.stmts.H,
+                squin.gate.stmts.Rx,
+                squin.gate.stmts.CZ,
+                extensions.stmts.StarRz,
+            ),
+        )
+    )
+    if bare_qubit:
+        if isinstance(gate, squin.gate.stmts.CZ):
+            register = gate.targets if operation == "cz_targets" else gate.controls
+        else:
+            register = gate.qubits
+        assert isinstance(register, ir.ResultValue)
+        assert isinstance(register.owner, ilist.New)
+        qubit = register.owner.values[0]
+        if isinstance(gate, squin.gate.stmts.CZ):
+            if operation == "cz_targets":
+                gate.targets = qubit
+            else:
+                gate.controls = qubit
+        else:
+            gate.qubits = qubit
+
+    _, errors = SteaneLogicalValidation().run(main)
+    if bare_qubit:
+        assert len(errors) == 1
+        assert errors[0].node is gate
+        assert str(errors[0]) == (
+            f"Gate {gate.name} requires a qubit register with known addresses."
+        )
+    else:
+        assert errors == []

@@ -44,13 +44,19 @@ class _SteaneLogicalValidationAnalysis(Forward[EmptyLattice]):
 
         return tuple(self.lattice.bottom() for _ in range(len(node.results)))
 
-    def check_first_gate(self, qubits: ir.SSAValue) -> bool:
+    def check_first_gate(self, stmt: ir.Statement, qubits: ir.SSAValue) -> bool | None:
+        """Mark a register as acted on; return None for a reported invalid operand."""
         address = self.addr_frame.get(qubits)
 
         if not isinstance(address, AddressReg):
-            # NOTE: we should have a flat kernel with simple address analysis, so in case we don't
-            # get concrete addresses, we might as well error here since something's wrong
-            return False
+            self.add_validation_error(
+                stmt,
+                ir.ValidationError(
+                    stmt,
+                    f"Gate {stmt.name} requires a qubit register with known addresses.",
+                ),
+            )
+            return None
 
         is_first = True
         for addr_int in address.data:
@@ -173,7 +179,9 @@ class __GateSteaneLogicalValidation(_interp.MethodTable):
         frame: ForwardFrame,
         stmt: gate.stmts.SingleQubitGate | gate.stmts.RotationGate,
     ):
-        if interp.check_first_gate(stmt.qubits):
+        # An invalid operand already has a diagnostic; it does not establish
+        # whether this is the first gate on the qubits.
+        if interp.check_first_gate(stmt, stmt.qubits) is not False:
             return ()
 
         interp.add_validation_error(
@@ -199,7 +207,7 @@ class __GateSteaneLogicalValidation(_interp.MethodTable):
         stmt: gate.stmts.SingleQubitGate,
     ):
         # NOTE: ignore result, but make sure the first gate flag is set to False
-        interp.check_first_gate(stmt.qubits)
+        interp.check_first_gate(stmt, stmt.qubits)
 
         return ()
 
@@ -216,7 +224,7 @@ class __GateSteaneLogicalValidation(_interp.MethodTable):
         # NOTE: both register operands are acted on; iterate over `args` so this
         # covers the (controls, targets) and (qubits1, qubits2) spellings alike
         for qubits in stmt.args:
-            interp.check_first_gate(qubits)
+            interp.check_first_gate(stmt, qubits)
 
         return ()
 
@@ -230,7 +238,7 @@ class __ExtensionsSteaneLogicalValidation(_interp.MethodTable):
         frame: ForwardFrame,
         stmt: extensions.stmts.StarRz,
     ):
-        interp.check_first_gate(stmt.qubits)
+        interp.check_first_gate(stmt, stmt.qubits)
         return ()
 
 
