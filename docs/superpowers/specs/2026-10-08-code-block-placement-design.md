@@ -1,8 +1,35 @@
 # Code-Block-Aware Physical Placement — Design
 
-- **Status:** Draft for review
+- **Status:** Original design, with implementation updates below
 - **Date:** 2026-10-08
 - **Scope:** Physical pipeline (`PhysicalPipeline` → `PhysicalNativeToPlace` → `PlaceToMove`)
+
+## Current implementation and package ownership
+
+The compiler implementation now lives entirely in lanes. Both `Register` and
+`QallocAt` belong to `bloqade.lanes.dialects.code_block`; the public lanes
+interfaces are `code_block.register` and `code_block.qalloc_at`.
+`PhysicalPipeline(slots=...)` binds slot indices to lists of `(zone, row, col)`
+coordinates, expands allocations, and validates the resulting physical program.
+`has_slot_allocations` lives in `bloqade.lanes.rewrite.allocate_slots`.
+
+The original design below predates two implemented extensions:
+
+- Fully pinned blocks preserve arbitrary addresses and member order, including
+  noncontiguous sites and multiple words. The size/shape rules below apply only
+  to unpinned blocks; partial pinning is still rejected.
+- No-return physical routing uses block membership as a soft coordination
+  preference for inter-block CZ participants. It compares legal coordinated
+  routes with the ordinary route; it does not impose rigid block shapes during
+  movement or change the Rust solver.
+
+Gemini frontend integration is a follow-up in the **bloqade** repository:
+add this dialect to `physical.kernel`, expose `physical.qubit.qalloc_at` as a
+wrapper/re-export of the lanes interface, and defer address-dependent frontend
+validation until slot expansion. The pipeline repeats those checks after
+expansion. Do not recreate the statement or compiler method tables in Gemini.
+Lanes-only callers can use `squin.kernel.add(code_block)` today
+(and add `arch` for explicit pins).
 
 ## Problem
 
@@ -32,7 +59,7 @@ because it does not know which qubits form a block.
 
 - Code blocks in the logical pipeline (`LogicalNativeToPlace`) or the generic
   `NativeToPlace`.
-- Blocks that span several words. A block must fit in one word.
+- Unpinned blocks that span several words. An unpinned block must fit in one word.
 - Keeping blocks together after the initial layout. Placement strategies receive
   block membership and may use it, but no strategy is required to preserve the
   block shape across moves in this iteration.
@@ -42,14 +69,14 @@ because it does not know which qubits form a block.
 
 These are hard rules. Breaking any of them is an error, not a warning.
 
-1. **Size.** A block has between 1 and `sites_per_word` qubits. A word may hold
+1. **Size.** An unpinned block has between 1 and `sites_per_word` qubits. A word may hold
    several blocks.
-2. **Shape.** A block's initial layout is a contiguous run of sites in a single
+2. **Shape.** An unpinned block's initial layout is a contiguous run of sites in a single
    word, and position `p` sits at site `offset + p`.
 3. **Pins are authoritative, and all-or-nothing.** Either every qubit in a block
-   is pinned (with `gemini.common.new_at`, lowered from `NewAt`) or none is.
-   - A fully pinned block must satisfy rules 1–2 through its pins alone; the
-     compiler never moves a pinned qubit to repair a block.
+   is pinned (with `bloqade.lanes.dialects.arch.new_at`, lowered from `NewAt`) or none is.
+   - A fully pinned block is exempt from rules 1–2 and preserves its addresses
+     and member order; the compiler never rearranges its pins.
    - A partly pinned block is an error.
 4. **Membership.** A qubit belongs to at most one block. Qubits in no block are
    allowed and are placed as today.
@@ -61,7 +88,7 @@ These are hard rules. Breaking any of them is an error, not a warning.
 
 ### The `code_block` dialect
 
-New dialect `bloqade.lanes.dialects.code_block` with one statement:
+The `bloqade.lanes.dialects.code_block` dialect includes the registration statement:
 
 ```python
 @statement(dialect=dialect)
@@ -73,8 +100,10 @@ class Register(ir.Statement):
 and a user-facing wrapper:
 
 ```python
-from bloqade.gemini.physical import kernel
+from bloqade import squin
 from bloqade.lanes import code_block
+
+kernel = squin.kernel.add(code_block)
 
 @kernel
 def main():
@@ -89,20 +118,20 @@ def main():
 example a `new_steane_block()` allocator) is the intended pattern: every call
 produces its own `Register` statement after inlining.
 
-`code_block` is a physical-only dialect. It is part of the physical kernel
-group, `bloqade.gemini.physical.kernel`, next to `new_at` and the `arch`
-dialect; other kernels may add it explicitly (`squin.kernel.add(code_block)`).
+`code_block` is a physical-only dialect. A follow-up in bloqade will add it to
+`bloqade.gemini.physical.kernel`; compiler callers add it explicitly with
+`squin.kernel.add(code_block)`.
 The logical kernel group does not include it, so logical kernels cannot call
 `register`. Only `PhysicalNativeToPlace` lowers it. The generic `NativeToPlace`
 (used by the physical benchmark harness) deletes `Register` statements with one
-`CodeBlockWarning`; because the dialect is in the physical group, the
-dialect-group check would not catch a leftover `Register`.
+`CodeBlockWarning`; simply including the dialect in a source group would not
+make the dialect-group check catch a leftover `Register`.
 
 ### `CodeBlockValidation`
 
 A Kirin validation pass that runs in `PhysicalNativeToPlace._post_unroll_validation`,
 after `AggressiveUnroll` and before `_lower_qubits`. At that point qubit
-allocations are still `qubit.stmts.New` / `gemini.common.NewAt`, and pin
+allocations are still `qubit.stmts.New` / `lanes.arch.NewAt`, and pin
 addresses are compile-time constants.
 
 It reports **every** error in one pass, like the other validation suites:
@@ -113,9 +142,8 @@ It reports **every** error in one pass, like the other validation suites:
 | `EmptyCodeBlock` | The block has no qubits. |
 | `DuplicateQubitInCodeBlock` | The same qubit appears twice in one block. |
 | `QubitInMultipleCodeBlocks` | A qubit is registered in two blocks. |
-| `CodeBlockTooLarge` | The block has more qubits than `arch_spec` has sites per word. |
+| `CodeBlockTooLarge` | The unpinned block has more qubits than `arch_spec` has sites per word. |
 | `PartiallyPinnedCodeBlock` | Some, but not all, members are pinned. |
-| `PinnedCodeBlockShape` | A fully pinned block's pins span several words, are not contiguous, or do not satisfy `site = offset + position`. |
 
 Under `no_raise=True` the pass follows the existing convention for the
 post-unroll rules: if validation fails, no block is registered, all `Register`
@@ -335,11 +363,10 @@ in `latest_physical.csv` / `latest_logical.csv` must not change.
 
 ## Section 5 — Benchmark baseline: [[4,2,2]], two blocks per word
 
-This change adds a **routing baseline** only. No block-aware placement strategy
-exists yet (see Non-goals), so there is nothing to compare against today. The
-case pins its initial layout, so its rows measure placement and routing alone.
-A future block-aware strategy can be benchmarked against these rows on the same
-initial layout.
+This benchmark adds a **routing baseline** without registering blocks. The
+case pins its initial layout, so its rows measure ordinary placement and routing
+alone. Soft block-coordination routing is exercised separately by tests; a
+registered-block benchmark can compare against these rows on the same pins.
 
 A [[4,2,2]] block has 4 qubits and a Gemini physical word has 8 sites, so two
 blocks fill a word exactly, at offsets 0 and 4.

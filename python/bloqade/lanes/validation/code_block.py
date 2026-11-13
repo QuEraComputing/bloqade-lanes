@@ -1,7 +1,7 @@
 """Validate ``code_block.register`` statements after unrolling.
 
 Runs in the post-unroll window of ``PhysicalNativeToPlace``, where every qubit
-allocation is still a ``qubit.stmts.New`` or ``gemini.common.NewAt`` and every
+allocation is still a ``qubit.stmts.New`` or ``lanes.arch.NewAt`` and every
 register operand is a ``py.ilist.new`` of them. Each ``Register`` must name a
 fixed list of distinct allocations, no qubit may belong to two blocks, a block
 must be either all pinned or all unpinned. Unpinned blocks must fit in a word.
@@ -20,15 +20,15 @@ from kirin.dialects import ilist
 from kirin.validation import ValidationPass
 
 from bloqade import qubit
-from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
+from bloqade.lanes.dialects.arch import stmts as arch_stmts
 from bloqade.lanes.dialects.code_block import Register
 
-_Allocation = qubit.stmts.New | gemini_common_stmts.NewAt
+_Allocation = qubit.stmts.New | arch_stmts.NewAt
 
 
 def _allocation(value: ir.SSAValue) -> _Allocation | None:
     if isinstance(value, ir.ResultValue) and isinstance(
-        value.owner, (qubit.stmts.New, gemini_common_stmts.NewAt)
+        value.owner, (qubit.stmts.New, arch_stmts.NewAt)
     ):
         return value.owner
     return None
@@ -90,7 +90,7 @@ def _check_registers(
             )
         for v in values:
             block_of.setdefault(v, block_idx)
-        pinned = [isinstance(a, gemini_common_stmts.NewAt) for a in allocations]
+        pinned = [isinstance(a, arch_stmts.NewAt) for a in allocations]
         if (
             not any(pinned)
             and sites_per_word is not None

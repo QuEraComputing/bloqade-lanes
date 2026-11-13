@@ -18,3 +18,14 @@ class Register(ir.Statement):
     name = "register"
     traits = frozenset({lowering.FromPythonCall()})
     qubits: ir.SSAValue = info.argument(ilist.IListType[QubitType, types.Any])
+
+
+@statement(dialect=dialect)
+class QallocAt(ir.Statement):
+    """Allocate one physical code block for each selected slot, in list order."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    slots: ir.SSAValue = info.argument(ilist.IListType[types.Int, types.Any])
+    result: ir.ResultValue = info.result(
+        ilist.IListType[ilist.IListType[QubitType, types.Any], types.Any]
+    )

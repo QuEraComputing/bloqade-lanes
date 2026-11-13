@@ -7,17 +7,18 @@ from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import squin
-from bloqade.gemini.common.dialects.qubit import new_at
-from bloqade.gemini.physical import kernel
 from bloqade.lanes import code_block
 from bloqade.lanes.analysis.code_blocks import CodeBlockTag, CodeBlockWarning
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects.arch import new_at
 from bloqade.lanes.dialects.code_block import Register
 from bloqade.lanes.transform.native_to_place import (
     NativeToPlace,
     PhysicalNativeToPlace,
 )
+
+from .._code_block_kernel import kernel
 
 
 def _tags(mt) -> list[CodeBlockTag | None]:

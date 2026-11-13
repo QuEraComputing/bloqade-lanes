@@ -4,7 +4,6 @@ import pytest
 from bloqade.analysis import address
 
 from bloqade import squin
-from bloqade.gemini.physical import kernel
 from bloqade.lanes import code_block
 from bloqade.lanes.analysis.code_blocks import (
     CodeBlock,
@@ -28,6 +27,8 @@ from bloqade.lanes.heuristics.physical.movement import (
 from bloqade.lanes.heuristics.simple_layout import PhysicalLayoutHeuristicFixed
 from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.transform.native_to_place import PhysicalNativeToPlace
+
+from ..._code_block_kernel import kernel
 
 
 @kernel

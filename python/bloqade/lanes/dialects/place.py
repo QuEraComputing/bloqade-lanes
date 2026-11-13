@@ -6,7 +6,6 @@ from kirin.dialects import ilist
 from kirin.lattice.empty import EmptyLattice
 
 from bloqade import types as bloqade_types
-from bloqade.gemini.star import validate_steane_star_support
 from bloqade.lanes.analysis.code_blocks import CodeBlockTag
 from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.placement import (
@@ -18,6 +17,7 @@ from bloqade.lanes.analysis.placement import (
     PlacementError,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.dialects.steane713.star import validate_steane_star_support
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")

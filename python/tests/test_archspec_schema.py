@@ -29,7 +29,7 @@ SPEC_PATHS = sorted(
 
 @pytest.fixture(scope="module")
 def validator() -> Draft202012Validator:
-    schema = json.loads(SCHEMA_PATH.read_text())
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     return Draft202012Validator(schema)
 
@@ -43,7 +43,7 @@ def test_spec_files_found():
 def test_spec_validates_against_schema(
     validator: Draft202012Validator, spec_path: Path
 ):
-    spec = json.loads(spec_path.read_text())
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
     errors = [
         f"{'/'.join(map(str, e.path))}: {e.message}"
         for e in validator.iter_errors(spec)

@@ -2,7 +2,8 @@
 
 Spec: `docs/superpowers/specs/2026-10-08-code-block-placement-design.md`.
 
-Each task ends with its tests passing and is committed on its own.
+Historical implementation plan. See the spec’s current-implementation section
+for slot allocation, soft routing coordination, and the Gemini follow-up split.
 
 1. **Types.** `analysis/code_blocks.py`: `CodeBlockTag`, `CodeBlock`,
    `LocalCodeBlock`, `CodeBlockWarning`, `CodeBlockPlacementError`, and a

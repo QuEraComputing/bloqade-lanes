@@ -3,11 +3,12 @@
 import pytest
 
 from bloqade import squin
-from bloqade.gemini.physical import kernel
 from bloqade.lanes import code_block
 from bloqade.lanes.analysis.code_blocks import CodeBlockWarning, block_shape_error
 from bloqade.lanes.dialects import move
 from bloqade.lanes.transform import PhysicalPipeline
+
+from .._code_block_kernel import kernel
 
 
 @kernel

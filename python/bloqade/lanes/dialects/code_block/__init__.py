@@ -8,5 +8,5 @@ layout heuristic and the placement strategies. See
 
 from . import impl as impl, stmts as stmts
 from ._dialect import dialect as dialect
-from ._interface import register as register
-from .stmts import Register as Register
+from ._interface import qalloc_at as qalloc_at, register as register
+from .stmts import QallocAt as QallocAt, Register as Register

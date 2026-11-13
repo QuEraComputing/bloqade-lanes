@@ -7,11 +7,11 @@ from kirin.analysis import const
 from kirin.dialects import ilist, py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
-from bloqade.gemini.common.dialects.qubit.stmts import NewAt
-from bloqade.gemini.physical.qubit import QallocAt
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects.arch import Loc, SiteId, WordId, ZoneId
-from bloqade.lanes.dialects.code_block import Register
+from bloqade.lanes.dialects.arch.stmts import NewAt
+from bloqade.lanes.dialects.code_block import QallocAt, Register
+from bloqade.lanes.validation.recursion import CallGraph
 
 
 @dataclass
@@ -73,3 +73,16 @@ class AllocateSlots(RewriteRule):
             blocks.append(block.result)
         node.replace_by(ilist.New(tuple(blocks)))
         return RewriteResult(has_done_something=True)
+
+
+def has_slot_allocations(method: ir.Method) -> bool:
+    """Include helper kernels that the frontend has not inlined yet."""
+    graph = CallGraph(method)
+    methods = {method, *graph.edges}
+    for callees in graph.edges.values():
+        methods.update(callees)
+    return any(
+        isinstance(stmt, QallocAt)
+        for callee in methods
+        for stmt in callee.callable_region.walk()
+    )

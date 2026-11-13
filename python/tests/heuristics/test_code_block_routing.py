@@ -278,13 +278,15 @@ def test_physical_pipeline_passes_membership_to_successive_routes(monkeypatch):
     from kirin.dialects import ilist
 
     from bloqade import squin
-    from bloqade.gemini.physical import kernel, qubit
+    from bloqade.lanes.dialects import code_block
     from bloqade.lanes.heuristics.physical._no_return_base import NoReturnStrategyBase
     from bloqade.lanes.transform import PhysicalPipeline
 
+    from .._code_block_kernel import kernel
+
     @kernel
     def program():
-        blocks = qubit.qalloc_at(ilist.IList([0, 1]))
+        blocks = code_block.qalloc_at(ilist.IList([0, 1]))
         squin.broadcast.cz(
             ilist.IList([blocks[0][0], blocks[1][1]]),
             ilist.IList([blocks[1][0], blocks[0][1]]),

@@ -14,41 +14,39 @@ from kirin import passes, rewrite
 from kirin.dialects.scf import scf2cf
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
-from kirin.validation import ValidationSuite
+from kirin.validation import ValidationPass, ValidationSuite
 
-from bloqade.gemini.common.dialects import qubit as gemini_qubit
-from bloqade.gemini.common.validation.duplicate_address import (
-    DuplicateAddressValidation,
-)
-from bloqade.gemini.common.validation.terminal_measure import (
-    PhysicalTerminalMeasurementValidation,
-)
-from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
-from bloqade.gemini.logical.rewrite.steane_transversal import (
-    RewriteSteaneTransversalCliffordAdjoints,
-)
-from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
-from bloqade.gemini.logical.validation.measurement.analysis import (
-    GeminiTerminalMeasurementValidation,
-)
 from bloqade.lanes.analysis.code_blocks import CodeBlockWarning
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects import arch, place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place, clifford2native
-from bloqade.lanes.rewrite.allocate_slots import AllocateSlots
+from bloqade.lanes.rewrite.allocate_slots import AllocateSlots, has_slot_allocations
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
+from bloqade.lanes.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.rewrite.normalize_axis_angles import NormalizeGateAxisAngles
 from bloqade.lanes.rewrite.resolve_code_blocks import (
     has_code_blocks,
     resolve_code_blocks,
     strip_code_blocks,
 )
+from bloqade.lanes.rewrite.steane_transversal import (
+    RewriteSteaneTransversalCliffordAdjoints,
+)
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
 from bloqade.lanes.validation.code_block import get_code_block_validation
+from bloqade.lanes.validation.const_address import ConstAddressValidation
+from bloqade.lanes.validation.duplicate_address import DuplicateAddressValidation
 from bloqade.lanes.validation.flat_block import FlatBlockValidation
 from bloqade.lanes.validation.qubit_register import QubitRegisterValidation
+from bloqade.lanes.validation.steane import SteaneLogicalValidation
+from bloqade.lanes.validation.terminal_measure import (
+    PhysicalTerminalMeasurementValidation,
+)
+from bloqade.lanes.validation.terminal_measurement import (
+    SteaneTerminalMeasurementValidation,
+)
 
 
 @dataclass
@@ -90,7 +88,8 @@ class NativeToPlaceBase:
     ``arch_spec`` (defaulting to their respective Gemini arch specs), so this
     validation is unconditional for both pipelines.  Set ``arch_spec=None``
     only when constructing a ``NativeToPlaceBase`` subclass directly and
-    you explicitly want to skip address validation.
+    you want to skip architecture-specific address validation. Constant-address
+    validation always runs before lowering.
     """
 
     arch_spec: ArchSpec | None = field(default=None)
@@ -160,11 +159,13 @@ class NativeToPlaceBase:
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
+        # NewAt must be lowerable even without an architecture or decorator validation.
+        validators: list[type[ValidationPass]] = [ConstAddressValidation]
         if self.arch_spec is not None:
-            suite = ValidationSuite(
+            validators.extend(
                 [DuplicateAddressValidation, get_validation(self.arch_spec)]
             )
-            suite.validate(out).raise_if_invalid()
+        ValidationSuite(validators).validate(out).raise_if_invalid()
 
         # After every validator, so a kernel that is invalid for some unrelated
         # reason still reports that reason rather than whatever these rules
@@ -204,9 +205,7 @@ class NativeToPlaceBase:
                 rewrite.CommonSubexpressionElimination(),
             )
         ).rewrite(out.code)
-        out = out.similar(
-            out.dialects.discard(native_gate).discard(gemini_qubit).discard(squin_qubit)
-        )
+        out = out.similar(out.dialects.discard(native_gate).discard(squin_qubit))
         passes.TypeInfer(out.dialects, no_raise=no_raise)(out)
 
         if not no_raise:
@@ -252,11 +251,11 @@ class PhysicalNativeToPlace(NativeToPlaceBase):
     slots: list[list[tuple[int, int, int]]] | None = None
 
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
-        from bloqade.gemini.physical.qubit import has_slot_allocations
-
         # Inline helpers and expose constant slot lists before expansion. Later
         # unrolling resolves Loc and all indexing into the nested qubit lists.
         if has_slot_allocations(out):
+            # Slot expansion introduces architecture queries and pinned allocations.
+            out = out.similar(out.dialects.add(arch))
             AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
             rewrite.Walk(AllocateSlots(self.slots, self.arch_spec)).rewrite(out.code)
         return out
@@ -325,8 +324,8 @@ class LogicalNativeToPlace(NativeToPlaceBase):
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
         validator = ValidationSuite(
             [
-                GeminiLogicalValidation,
-                GeminiTerminalMeasurementValidation,
+                SteaneLogicalValidation,
+                SteaneTerminalMeasurementValidation,
                 FlatKernelNoCloningValidation,
             ]
         )

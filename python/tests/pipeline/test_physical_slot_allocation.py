@@ -7,16 +7,18 @@ from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import squin
-from bloqade.gemini.physical import kernel, qubit
 from bloqade.lanes.analysis.code_blocks import CodeBlockTag
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
-from bloqade.lanes.dialects import move, place
+from bloqade.lanes.dialects import code_block, move, place
+from bloqade.lanes.rewrite.allocate_slots import has_slot_allocations
 from bloqade.lanes.transform import PhysicalNativeToPlace, PhysicalPipeline
+
+from .._code_block_kernel import kernel
 
 
 @kernel
 def two_blocks():
-    blocks = qubit.qalloc_at(ilist.IList([1, 0]))
+    blocks = code_block.qalloc_at(ilist.IList([1, 0]))
     squin.h(blocks[0][0])
     return squin.broadcast.measure(blocks[0] + blocks[1])
 
@@ -56,7 +58,7 @@ def test_missing_slots_is_an_error():
 
 @kernel
 def one_block():
-    blocks = qubit.qalloc_at(ilist.IList([0]))
+    blocks = code_block.qalloc_at(ilist.IList([0]))
     return squin.broadcast.measure(blocks[0])
 
 
@@ -102,22 +104,22 @@ def test_kernel_can_be_recompiled_with_different_slots():
         out = PhysicalPipeline(slots=[slot]).emit(one_block.similar(), no_raise=False)
         fill = next(s for s in out.callable_region.walk() if isinstance(s, move.Fill))
         assert len(fill.location_addresses) == len(slot)
-    assert qubit.has_slot_allocations(one_block)
+    assert has_slot_allocations(one_block)
 
 
 def test_helper_allocation_and_nested_list_iteration():
-    @kernel(verify=False)
+    @kernel
     def allocate():
-        return qubit.qalloc_at(ilist.IList([1, 0]))
+        return code_block.qalloc_at(ilist.IList([1, 0]))
 
-    @kernel(inline=False)
+    @kernel(fold=False)
     def program():
         blocks = allocate()
         ilist.for_each(squin.broadcast.x, blocks)
         return squin.broadcast.measure(blocks[0] + blocks[1])
 
     out = PhysicalPipeline(slots=SLOTS).emit(program, no_raise=False)
-    assert not qubit.has_slot_allocations(out)
+    assert not has_slot_allocations(out)
 
 
 @pytest.mark.parametrize("indices", [[-1], [2], [True]])
@@ -126,7 +128,7 @@ def test_invalid_slot_indices(indices):
 
     @kernel
     def program():
-        blocks = qubit.qalloc_at(ids)
+        blocks = code_block.qalloc_at(ids)
         return squin.broadcast.measure(blocks[0])
 
     with pytest.raises(ValueError, match="out of range"):
@@ -136,7 +138,7 @@ def test_invalid_slot_indices(indices):
 def test_runtime_slot_indices_are_rejected():
     @kernel
     def program(indices: ilist.IList[int, Any]):
-        blocks = qubit.qalloc_at(indices)
+        blocks = code_block.qalloc_at(indices)
         return squin.broadcast.measure(blocks[0])
 
     with pytest.raises(TypeError, match="compile-time constant IList"):
@@ -146,7 +148,7 @@ def test_runtime_slot_indices_are_rejected():
 def test_terminal_validation_runs_after_expansion():
     @kernel
     def partial_measure():
-        blocks = qubit.qalloc_at(ilist.IList([0, 1]))
+        blocks = code_block.qalloc_at(ilist.IList([0, 1]))
         return squin.broadcast.measure(blocks[0])
 
     with pytest.raises(ValidationErrorGroup, match="all qubits must be measured"):
@@ -156,7 +158,7 @@ def test_terminal_validation_runs_after_expansion():
 def test_repeated_slot_is_rejected():
     @kernel
     def program():
-        blocks = qubit.qalloc_at(ilist.IList([0, 0]))
+        blocks = code_block.qalloc_at(ilist.IList([0, 0]))
         return squin.broadcast.measure(blocks[0] + blocks[1])
 
     with pytest.raises(ValidationErrorGroup, match="pinned by two"):
@@ -166,4 +168,4 @@ def test_repeated_slot_is_rejected():
 def test_serialized_kernel_resolves_slots_when_compiled():
     decoded = kernel.decode_json(kernel.encode_json(one_block))
     out = PhysicalPipeline(slots=[SLOTS[0]]).emit(decoded, no_raise=False)
-    assert not qubit.has_slot_allocations(out)
+    assert not has_slot_allocations(out)

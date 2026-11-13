@@ -14,10 +14,10 @@ the same blocks on the same pins and be compared against these rows.
 from kirin.dialects import ilist
 
 from bloqade import squin
-from bloqade.gemini.common.dialects import qubit
-from bloqade.gemini.common.dialects.qubit import new_at
+from bloqade.lanes.dialects import arch
+from bloqade.lanes.dialects.arch import new_at
 
-pinned_kernel = squin.kernel.add(qubit)
+pinned_kernel = squin.kernel.add(arch)
 
 
 @pinned_kernel(typeinfer=True, fold=True)

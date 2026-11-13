@@ -14,9 +14,10 @@ from bloqade.lanes.bytecode._native import (
 from bloqade.lanes.bytecode._wrapper import KirinRustWrapper
 
 if TYPE_CHECKING:
+    from typing import Self
+
     from kirin.serialization.base.deserializer import Deserializer
     from kirin.serialization.base.serializer import Serializer
-    from typing_extensions import Self
 
 
 def _address_unit(
