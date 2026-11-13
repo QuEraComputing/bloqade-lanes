@@ -108,6 +108,23 @@ for source, pipeline, diagnostic in (
     with pytest.raises(ValidationErrorGroup, match=diagnostic):
         pipeline.emit(source, no_raise=False)
 
+from bloqade.lanes import code_block
+from bloqade.lanes.rewrite.allocate_slots import has_slot_allocations
+
+
+@squin.kernel.add(code_block)
+def slotted():
+    blocks = code_block.qalloc_at(ilist.IList([0]))
+    squin.x(blocks[0][0])
+    return squin.broadcast.measure(blocks[0])
+
+
+assert has_slot_allocations(slotted)
+compiled = PhysicalPipeline(slots=[[(0, 0, 0), (0, 0, 4)]]).emit(
+    slotted, no_raise=False
+)
+assert not has_slot_allocations(compiled)
+compiled.verify()
 assert not any(n.startswith("bloqade.gemini") for n in sys.modules)
 
 print("Lanes compiles and validates independently of Gemini")

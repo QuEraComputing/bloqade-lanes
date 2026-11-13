@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import bloqade.qubit as squin_qubit
@@ -15,18 +16,26 @@ from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
 from kirin.validation import ValidationPass, ValidationSuite
 
+from bloqade.lanes.analysis.code_blocks import CodeBlockWarning
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects import arch, place
 from bloqade.lanes.dialects.arch import BindArchSpec
 from bloqade.lanes.rewrite import circuit2place, clifford2native
+from bloqade.lanes.rewrite.allocate_slots import AllocateSlots, has_slot_allocations
 from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
 from bloqade.lanes.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.rewrite.normalize_axis_angles import NormalizeGateAxisAngles
+from bloqade.lanes.rewrite.resolve_code_blocks import (
+    has_code_blocks,
+    resolve_code_blocks,
+    strip_code_blocks,
+)
 from bloqade.lanes.rewrite.steane_transversal import (
     RewriteSteaneTransversalCliffordAdjoints,
 )
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
 from bloqade.lanes.validation.address import get_validation
+from bloqade.lanes.validation.code_block import get_code_block_validation
 from bloqade.lanes.validation.const_address import ConstAddressValidation
 from bloqade.lanes.validation.duplicate_address import DuplicateAddressValidation
 from bloqade.lanes.validation.flat_block import FlatBlockValidation
@@ -223,20 +232,89 @@ class NativeToPlace(NativeToPlaceBase):
     """
 
     def _lower_qubits(self, out: Method) -> None:
+        if count := strip_code_blocks(out):
+            warnings.warn(
+                f"{type(self).__name__} does not support code blocks; ignoring "
+                f"{count} code_block.register call(s). Use PhysicalNativeToPlace "
+                "(PhysicalPipeline) to honor them.",
+                CodeBlockWarning,
+                stacklevel=2,
+            )
         rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
 
 
 @dataclass
 class PhysicalNativeToPlace(NativeToPlaceBase):
+    use_code_blocks: bool = True
+    """Honor ``code_block.register``. With False, registrations are dropped with
+    one ``CodeBlockWarning`` and compilation matches a kernel without them."""
+    slots: list[list[tuple[int, int, int]]] | None = None
+
+    def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
+        # Inline helpers and expose constant slot lists before expansion. Later
+        # unrolling resolves Loc and all indexing into the nested qubit lists.
+        if has_slot_allocations(out):
+            # Slot expansion introduces architecture queries and pinned allocations.
+            out = out.similar(out.dialects.add(arch))
+            AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
+            rewrite.Walk(AllocateSlots(self.slots, self.arch_spec)).rewrite(out.code)
+        return out
+
     def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
+        self._validate_code_blocks(out, no_raise)
         if no_raise:
             return
-        suite = ValidationSuite([PhysicalTerminalMeasurementValidation])
+        suite = ValidationSuite(
+            [FlatKernelNoCloningValidation, PhysicalTerminalMeasurementValidation]
+        )
         suite.validate(out).raise_if_invalid()
+
+    def _validate_code_blocks(self, out: Method, no_raise: bool) -> None:
+        """Validate registrations, or drop them all with one warning.
+
+        Runs before ``_lower_qubits``, while allocations are still
+        ``qubit.new`` / ``new_at`` and pins are compile-time constants. Under
+        ``no_raise`` an invalid registration drops every block rather than
+        failing: an unblocked layout is better than a wrongly blocked one.
+        """
+        if not has_code_blocks(out):
+            return
+        if not self.use_code_blocks:
+            count = strip_code_blocks(out)
+            warnings.warn(
+                f"use_code_blocks=False: ignoring {count} code_block.register "
+                "call(s).",
+                CodeBlockWarning,
+                stacklevel=3,
+            )
+            return
+        sites_per_word = (
+            None
+            if self.arch_spec is None
+            else len(self.arch_spec.words[0].site_indices)
+        )
+        result = ValidationSuite([get_code_block_validation(sites_per_word)]).validate(
+            out
+        )
+        if result.is_valid:
+            return
+        if not no_raise:
+            result.raise_if_invalid()
+        reasons = "; ".join(
+            str(err.args[0]) for errs in result.errors.values() for err in errs
+        )
+        count = strip_code_blocks(out)
+        warnings.warn(
+            f"invalid code blocks, ignoring all {count} code_block.register "
+            f"call(s): {reasons}",
+            CodeBlockWarning,
+            stacklevel=3,
+        )
 
     def _lower_qubits(self, out: Method) -> None:
         rewrite.Walk(circuit2place.RewriteQubitsToPinnedQubits()).rewrite(out.code)
         rewrite.Walk(circuit2place.RewritePhysicalMeasure()).rewrite(out.code)
+        resolve_code_blocks(out)
 
 
 @dataclass
