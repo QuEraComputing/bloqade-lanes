@@ -41,10 +41,12 @@ Thumbs.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
-# Kirin compiled-kernel caches
 __kirincache__/
 *.py[cod]
 *$py.class
+
+# Kirin compilation cache
+__kirincache__/
 
 # C extensions / Rust shared libraries
 *.so

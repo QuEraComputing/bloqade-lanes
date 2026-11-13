@@ -6,20 +6,21 @@ from math import fsum, inf
 
 import bloqade.squin as squin
 import pytest
-from kirin import interp
+from bloqade.rewrite.passes import AggressiveUnroll
+from kirin import interp, rewrite
 
-import bloqade.gemini as gemini
 from bloqade.lanes.analysis.atom.atom_state_data import AtomStateData
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import MotionModel
 from bloqade.lanes.bytecode._native import ArchSpec as RustArchSpec
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects import move, steane713
 from bloqade.lanes.heuristics.logical import (
     LogicalLayoutHeuristic,
     LogicalLayoutHeuristicMinMoveTime,
 )
+from bloqade.lanes.rewrite.qubit_count import InsertQubitCount
 from bloqade.lanes.transform.pipeline import LogicalPipeline
 
 
@@ -322,11 +323,14 @@ def test_opt_in_heuristic_and_pipeline_default():
 
 
 def test_opt_in_pipeline_compiles_a_logical_cz():
-    @gemini.logical.kernel(aggressive_unroll=True)
+    @squin.kernel.add(steane713)
     def kernel():
         reg = squin.qalloc(2)
         squin.cz(reg[0], reg[1])
-        gemini.logical.terminal_measure(reg)
+        steane713.terminal_measure(reg)
+
+    AggressiveUnroll(kernel.dialects).fixpoint(kernel)
+    rewrite.Walk(InsertQubitCount(7)).rewrite(kernel.code)
 
     out = LogicalPipeline(layout_heuristic=LogicalLayoutHeuristicMinMoveTime()).emit(
         kernel
