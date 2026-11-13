@@ -232,11 +232,12 @@ class __GateSteaneLogicalValidation(_interp.MethodTable):
 @extensions.dialect.register(key="lanes.validate.logical")
 class __ExtensionsSteaneLogicalValidation(_interp.MethodTable):
     @_interp.impl(extensions.stmts.StarRz)
-    def star_rz(
+    @_interp.impl(extensions.stmts.StarRx)
+    def star_rotation(
         self,
         interp: _SteaneLogicalValidationAnalysis,
         frame: ForwardFrame,
-        stmt: extensions.stmts.StarRz,
+        stmt: extensions.stmts.StarRz | extensions.stmts.StarRx,
     ):
         interp.check_first_gate(stmt, stmt.qubits)
         return ()

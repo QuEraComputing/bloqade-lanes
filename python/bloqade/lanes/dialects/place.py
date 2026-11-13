@@ -151,6 +151,19 @@ class StarRz(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class StarRx(QuantumStmt):
+    qubits: tuple[int, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
+
+
+@statement(dialect=dialect)
 class MoveTo(QuantumStmt):
     """User-directed atom placement directive at the place layer.
 
@@ -361,12 +374,13 @@ class PlacementMethods(interp.MethodTable):
 
     @interp.impl(R)
     @interp.impl(Rz)
+    @interp.impl(StarRx)
     @interp.impl(StarRz)
     def impl_single_qubit_gate(
         self,
         _interp: PlacementAnalysis,
         frame: ForwardFrame[AtomState],
-        stmt: R | Rz | StarRz,
+        stmt: R | Rz | StarRx | StarRz,
     ):
         return (
             _interp.placement_strategy.sq_placements(

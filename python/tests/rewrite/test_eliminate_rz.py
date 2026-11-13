@@ -502,6 +502,7 @@ REGISTERED_STATEMENTS = {
     "bloqade.decoders.dialects.annotate.stmts.SetObservable",
     "bloqade.lanes.dialects.arch.stmts.NewAt",
     "bloqade.lanes.dialects.steane713.extensions.stmts.StarRz",
+    "bloqade.lanes.dialects.steane713.extensions.stmts.StarRx",
     "bloqade.lanes.dialects.steane713.stmts.Initialize",
     "bloqade.lanes.dialects.steane713.stmts.TerminalLogicalMeasurement",
     "bloqade.native.dialects.gate.stmts.CZ",
@@ -701,6 +702,24 @@ def test_star_rz_is_left_alone_silently(recwarn):
 
     assert star in list(block.stmts)
     assert not recwarn.list
+
+
+def test_star_rx_flushes_pending_z_frame():
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    angle = py.Constant(0.03)
+    phase = native_gate.stmts.Rz(angle.result, reg.result)
+    star = extensions.StarRx(angle.result, reg.result)
+    block = ir.Block([q, reg, angle, phase, star])
+
+    rewrite.Walk(EliminateRz()).rewrite(block)
+
+    statements = list(block.stmts)
+    assert phase not in statements
+    assert star in statements
+    emitted_rz = [stmt for stmt in statements if isinstance(stmt, native_gate.stmts.Rz)]
+    assert len(emitted_rz) == 1
+    assert statements.index(emitted_rz[0]) < statements.index(star)
 
 
 @pytest.mark.parametrize(

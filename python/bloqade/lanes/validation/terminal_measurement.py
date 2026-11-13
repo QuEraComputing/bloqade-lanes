@@ -191,11 +191,12 @@ class __GeminiLogicalMeasurementValidation(_interp.MethodTable):
 @extensions.dialect.register(key="lanes.validate.terminal_measurement")
 class __GeminiLogicalExtensionsMeasurementValidation(_interp.MethodTable):
     @_interp.impl(extensions.stmts.StarRz)
-    def star_rz(
+    @_interp.impl(extensions.stmts.StarRx)
+    def star_rotation(
         self,
         interp: _SteaneTerminalMeasurementValidationAnalysis,
         frame: ForwardFrame,
-        stmt: extensions.stmts.StarRz,
+        stmt: extensions.stmts.StarRz | extensions.stmts.StarRx,
     ):
         interp.check_gate_after_measurement(stmt)
         return ()

@@ -82,6 +82,7 @@ class Move(interp.MethodTable):
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
     @interp.impl(move.StarRz)
+    @interp.impl(move.StarRx)
     @interp.impl(move.GlobalR)
     @interp.impl(move.GlobalRz)
     @interp.impl(move.LogicalInitialize)

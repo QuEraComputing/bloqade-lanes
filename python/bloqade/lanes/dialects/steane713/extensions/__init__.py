@@ -10,4 +10,7 @@ that the distinction is visible in the import path -- see
 
 from bloqade.lanes.dialects.steane713.extensions import stmts as stmts
 from bloqade.lanes.dialects.steane713.extensions._dialect import dialect as dialect
-from bloqade.lanes.dialects.steane713.extensions._interface import star_rz as star_rz
+from bloqade.lanes.dialects.steane713.extensions._interface import (
+    star_rx as star_rx,
+    star_rz as star_rz,
+)

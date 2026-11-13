@@ -164,16 +164,18 @@ def test_every_gate_after_terminal_measurement_is_reported():
         squin.x(q[0])
         squin.cz(q[0], q[1])
         extensions.star_rz(0.125, ilist.IList([q[1]]))
+        extensions.star_rx(0.125, ilist.IList([q[1]]))
 
     validation_result = ValidationSuite([SteaneTerminalMeasurementValidation]).validate(
         main
     )
     errors = [str(e) for errs in validation_result.errors.values() for e in errs]
-    assert len(errors) == 3, errors
+    assert len(errors) == 4, errors
     assert all("after the terminal measurement" in e for e in errors)
     assert any("Gate x " in e for e in errors)
     assert any("Gate cz " in e for e in errors)
     assert any("Gate star_rz " in e for e in errors)
+    assert any("Gate star_rx " in e for e in errors)
 
 
 def test_gate_after_terminal_measurement_in_non_inlined_callee_is_invalid():
@@ -228,7 +230,7 @@ def test_every_extension_statement_is_checked_after_terminal_measurement():
     assert not missing, f"extensions without a post-measurement check: {missing}"
 
 
-@pytest.mark.parametrize("prior_operation", ["none", "h", "swap", "star_rz"])
+@pytest.mark.parametrize("prior_operation", ["none", "h", "swap", "star_rz", "star_rx"])
 def test_non_clifford_allowed_only_for_initial_preparation(prior_operation):
     @steane_kernel
     def main():
@@ -239,6 +241,8 @@ def test_non_clifford_allowed_only_for_initial_preparation(prior_operation):
             squin.swap(q[0], q[1])
         elif prior_operation == "star_rz":
             extensions.star_rz(0.125, ilist.IList([q[1]]))
+        elif prior_operation == "star_rx":
+            extensions.star_rx(0.125, ilist.IList([q[1]]))
         squin.u3(0.1, 0.2, 0.3, q[1])
         steane713.terminal_measure(q)
 

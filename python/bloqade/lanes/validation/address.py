@@ -72,6 +72,7 @@ class _MoveMethods(interp.MethodTable):
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
     @interp.impl(move.StarRz)
+    @interp.impl(move.StarRx)
     @interp.impl(move.Fill)
     def location_checker(
         self,
@@ -82,6 +83,7 @@ class _MoveMethods(interp.MethodTable):
             | move.LocalR
             | move.LocalRz
             | move.StarRz
+            | move.StarRx
             | move.Fill
         ),
     ):
