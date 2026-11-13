@@ -21,6 +21,14 @@ Bloqade-lanes provides the core components for compiling neutral atom quantum ci
 uv add bloqade-lanes
 ```
 
+This distribution provides the `bloqade.lanes` compiler infrastructure.
+The `bloqade.gemini` frontend (kernel decorators, devices, simulation, and
+decoding) is moving to the `bloqade` distribution in
+[QuEraComputing/bloqade#392](https://github.com/QuEraComputing/bloqade/pull/392).
+Gemini users need the corresponding bloqade release; installing lanes alone
+no longer provides `bloqade.gemini`. See the
+[namespace migration notes](docs/refactoring/gemini-package-split.md).
+
 ## Documentation
 
 The documentation is available at [https://bloqade.quera.com/latest/](https://bloqade.quera.com/latest/). We are at an early stage of completing the documentation with more details and examples, so comments and contributions are most welcome!
@@ -30,3 +38,28 @@ Proposal for the roadmap and feature requests are welcome!
 ## License
 
 Apache License 2.0 with LLVM Exceptions
+
+
+### Serializing compiled Move IR
+
+Move programs support Kirin's standard JSON serialization APIs. The Lanes
+address attributes (`LocationAddress`, `ZoneAddress`, `LaneAddress`,
+`SiteLaneAddress`, and `WordLaneAddress`) preserve their concrete type and
+address fields; no custom serializer is required.
+
+```python
+from kirin.serialization import JSONSerializer
+
+# execution_program is the ir.Method returned by LogicalPipeline.emit(...).
+serializer = JSONSerializer()
+payload = serializer.encode(
+    execution_program.dialects.encode(execution_program, version="1.0.0")
+)
+restored = execution_program.dialects.decode(serializer.decode(payload))
+restored.verify()
+```
+
+Lane move types and directions are encoded by name inside lane addresses.
+This supports compiled Move artifacts; it does not add generic serialization
+for arbitrary native Rust values, standalone `Direction`/`MoveType` constants,
+or bound `ArchSpec` objects on intermediate architecture statements.

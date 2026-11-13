@@ -7,12 +7,12 @@ from kirin.analysis import const
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
-from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
-from bloqade.gemini.logical.dialects.extensions import stmts as gemini_extension_stmts
-from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects.arch import stmts as gemini_common_stmts
+from bloqade.lanes.dialects.steane713 import stmts as gemini_stmts
+from bloqade.lanes.dialects.steane713.extensions import stmts as gemini_extension_stmts
 from bloqade.lanes.rewrite.circuit2place import MergeStaticPlacement  # new
 from bloqade.lanes.rewrite.circuit2place import always_merge  # new
 from bloqade.lanes.rewrite.circuit2place import gate_only_merge  # new
