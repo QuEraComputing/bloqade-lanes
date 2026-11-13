@@ -586,9 +586,8 @@ class ArchVisualizer:
 
         A lane that stays within one column pair (its x change is no wider
         than the pair spacing) is shown as a direct line. Any lane that
-        crosses column pairs, whatever its bus type, uses a curved arch like
-        the diagrams in ``demo/physical_arch_customization.py`` so that
-        collinear hops of different lengths do not collapse onto each other.
+        crosses column pairs, whatever its bus type, uses a curved arch so that collinear hops
+        of different lengths do not collapse onto each other.
         Zone buses are always arched to distinguish inter-zone motion.
         """
         src, dst = self.arch_spec.get_endpoints(lane)

@@ -1,6 +1,8 @@
+from bloqade.types import Qubit
 from kirin import lowering
 
 from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.dialects.arch.stmts import NewAt
 
 from .stmts import CzPartner, Loc
 
@@ -30,5 +32,15 @@ def cz_partner(address: LocationAddress) -> LocationAddress:
 
     ``address`` must resolve to a compile-time-constant location (the partner
     is looked up in the architecture spec during compilation).
+    """
+    ...
+
+
+@lowering.wraps(NewAt)
+def new_at(zone_id: int, word_id: int, site_id: int) -> Qubit:
+    """Allocate a qubit pinned to (zone_id, word_id, site_id).
+
+    All three arguments must be compile-time constants. Use of non-constant
+    values raises a validation error before lowering.
     """
     ...

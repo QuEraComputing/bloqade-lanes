@@ -4,15 +4,17 @@
 
 Reject a Gemini logical kernel at definition time when it combines `StarRx`
 with a SQUIN gate that can produce a logical native `Rz`. This is an intentionally
-conservative compatibility check. It replaces the proposed compilation-time,
-same-qubit, before-`StarRx` check; no change to `EliminateRz` is required.
+conservative compatibility check. The compiler pass lives in lanes; definition-time integration into the Gemini
+frontend is a follow-up in the bloqade repository. Independently, `EliminateRz`
+flushes any pending Z frame before `StarRx` so low-level rewriting preserves
+the operation order.
 
 ## Rule
 
-When `@logical.kernel` runs with its normal `verify=True`, reject a program if
+The validation pass rejects a program if
 both of these occur anywhere in the reachable logical program:
 
-1. A `gemini.logical.extensions.StarRx` statement.
+1. A `bloqade.lanes.dialects.steane713.extensions.stmts.StarRx` statement.
 2. One of `squin.rz`, `squin.z`, `squin.s` (including its adjoint), or `squin.h`.
 
 The validator does not compare qubits or gate order. It also rejects a first-gate
@@ -26,12 +28,15 @@ documented lowering begins generating logical native `Rz` for them.
 
 ## Placement and behavior
 
-Implement a dedicated `ValidationPass` in the Gemini logical validation
-package. Add it to the suite in `python/bloqade/gemini/logical/group.py`, after
-the existing inlining/unrolling step and alongside the other logical checks.
-This makes failure visible when defining `@logical.kernel`, rather than when
-creating a simulator task or lowering to place/move. `verify=False` retains its
-existing meaning and skips the validation suite.
+The dedicated `StarRxRzGateValidation` pass lives in
+`bloqade.lanes.validation.star_rx_rz`. Its tests invoke it directly on kernels
+built from lanes dialects, without importing Gemini.
+
+A follow-up PR in bloqade must add the pass to the suite in
+`src/bloqade/gemini/logical/group.py`, after inlining/unrolling and alongside the
+other logical checks. That will make failure visible when defining
+`@logical.kernel`; `verify=False` will continue to skip the validation suite.
+This PR does not change the validation defaults of `LogicalPipeline`.
 
 The pass inspects the reachable logical program, including statically resolved
 helper calls when they have not been inlined. It reports an actionable error

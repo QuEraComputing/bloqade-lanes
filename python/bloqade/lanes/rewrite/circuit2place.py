@@ -9,12 +9,11 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
-from bloqade.gemini.common.dialects import arrange as arrange_dialect
-from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
-from bloqade.gemini.logical.dialects.extensions import stmts as gemini_extension_stmts
-from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects import arrange as arrange_dialect, place
+from bloqade.lanes.dialects.arch import stmts as gemini_common_stmts
+from bloqade.lanes.dialects.steane713 import stmts as gemini_stmts
+from bloqade.lanes.dialects.steane713.extensions import stmts as gemini_extension_stmts
 from bloqade.lanes.types import StateType
 
 
