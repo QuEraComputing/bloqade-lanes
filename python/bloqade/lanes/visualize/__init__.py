@@ -1,2 +1,7 @@
-from .debug import animated_debugger as animated_debugger, debugger as debugger
-from .plotly_debug import plotly_debugger as plotly_debugger
+"""Architecture drawing and the entropy-tree search viewer.
+
+The step-by-step debuggers for move programs (``debugger``,
+``animated_debugger``, ``plotly_debugger``) live in ``bloqade.gemini.visualize``,
+in the ``bloqade`` distribution. They build on :mod:`bloqade.lanes.visualize.arch`
+and :mod:`bloqade.lanes.visualize.app`.
+"""
