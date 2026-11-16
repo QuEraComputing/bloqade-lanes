@@ -51,15 +51,6 @@ coverage-all: coverage-run coverage-xml coverage-rust
 coverage-all-open: coverage-all
     open htmlcov-all/index.html
 
-demo-extend-site-buses:
-    uv run --locked --no-sync python demo/extend_gemini_site_buses.py
-
-demo-arch-cust-vis:
-    uv run --locked --no-sync python demo/arch_cust_vis_demo.py
-
-# Demos runnable with bloqade-lanes alone.
-demo: demo-extend-site-buses demo-arch-cust-vis
-
 # Install mdBook at the pinned version
 install-mdbook:
     cargo install mdbook@{{ mdbook_version }}
