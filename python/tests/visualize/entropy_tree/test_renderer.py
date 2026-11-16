@@ -130,19 +130,19 @@ def test_layout_handles_deep_single_child_tree_without_recursion_error():
     assert positions[4999][1] < positions[0][1]
 
 
-def test_stable_focus_bounds_uses_arch_visualizer(monkeypatch):
+def test_stable_focus_bounds_uses_arch_sites(monkeypatch):
     class _ArchSpec:
         def get_position(self, loc):
             return loc
 
-    class _ArchVisualizer:
+    class _ArchSites:
         def __init__(self, arch_spec):
             self.arch_spec = arch_spec
 
         def path_bounds(self):
             return (0.0, 10.0, 0.0, 10.0)
 
-    monkeypatch.setattr(renderer_module, "ArchVisualizer", _ArchVisualizer)
+    monkeypatch.setattr(renderer_module, "ArchSites", _ArchSites)
 
     bounds = _stable_focus_bounds(
         arch_spec=_ArchSpec(),
@@ -153,18 +153,18 @@ def test_stable_focus_bounds_uses_arch_visualizer(monkeypatch):
     assert bounds == (-0.6, 10.6, -0.8, 10.8)
 
 
-def test_apply_view_bounds_uses_arch_visualizer_for_full_bounds(monkeypatch):
+def test_apply_view_bounds_uses_arch_sites_for_full_bounds(monkeypatch):
     class _ArchSpec:
         pass
 
-    class _ArchVisualizer:
+    class _ArchSites:
         def __init__(self, arch_spec):
             self.arch_spec = arch_spec
 
         def path_bounds(self):
             return (1.0, 3.0, 2.0, 6.0)
 
-    monkeypatch.setattr(renderer_module, "ArchVisualizer", _ArchVisualizer)
+    monkeypatch.setattr(renderer_module, "ArchSites", _ArchSites)
     fig, ax = plt.subplots()
     try:
         _apply_view_bounds(
@@ -179,20 +179,20 @@ def test_apply_view_bounds_uses_arch_visualizer_for_full_bounds(monkeypatch):
         plt.close(fig)
 
 
-def test_draw_architecture_background_uses_arch_visualizer(monkeypatch):
+def test_draw_architecture_background_uses_arch_sites(monkeypatch):
     class _ArchSpec:
         words = (object(), object())
 
     calls = []
 
-    class _ArchVisualizer:
+    class _ArchSites:
         def __init__(self, arch_spec):
             self.arch_spec = arch_spec
 
         def plot(self, **kwargs):
             calls.append(kwargs)
 
-    monkeypatch.setattr(renderer_module, "ArchVisualizer", _ArchVisualizer)
+    monkeypatch.setattr(renderer_module, "ArchSites", _ArchSites)
     fig, ax = plt.subplots()
     try:
         _draw_architecture_background(ax, _ArchSpec())
