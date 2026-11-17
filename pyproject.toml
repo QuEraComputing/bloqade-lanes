@@ -16,7 +16,11 @@ dependencies = [
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.14",
     "numpy>=2.2.6",
-    "kahip>=3.25",
+    # kahip's wheels are built with -march=native. The 3.26/3.27 x86_64 Linux
+    # wheels contain AVX-512 code that runs at load time, so `import kahip`
+    # dies with SIGILL on CPUs without AVX-512. Lift the cap once upstream
+    # ships portable wheels (and drop the matching dependabot ignore).
+    "kahip>=3.25,<3.26",
     "rustworkx>=0.17.1",
     "scipy>=1.15.3",
 ]
