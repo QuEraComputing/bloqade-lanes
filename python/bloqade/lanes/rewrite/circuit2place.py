@@ -191,7 +191,7 @@ class RewritePlaceOperations(abc.RewriteRule):
                 gemini_stmts.TerminalLogicalMeasurement,
                 gemini_stmts.Initialize,
                 gemini_extension_stmts.StarRz,
-                gemini_extension_stmts.StarRx,
+                gemini_extension_stmts.StarR,
                 gate.CZ,
                 gate.R,
                 gate.Rz,
@@ -369,13 +369,14 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         return abc.RewriteResult(has_done_something=True)
 
-    def rewrite_StarRx(self, node: gemini_extension_stmts.StarRx) -> abc.RewriteResult:
+    def rewrite_StarR(self, node: gemini_extension_stmts.StarR) -> abc.RewriteResult:
         if not isinstance(args_list := node.qubits.owner, ilist.New):
             return abc.RewriteResult()
 
         body, block, entry_state = self.prep_region()
-        gate_stmt = place.StarRx(
+        gate_stmt = place.StarR(
             entry_state,
+            node.axis_angle,
             node.rotation_angle,
             qubits=tuple(range(len(args_list.values))),
             qubit_indices=node.qubit_indices,
@@ -624,7 +625,7 @@ class MergePlacementRegions(abc.RewriteRule):
                     place.R,
                     place.Rz,
                     place.StarRz,
-                    place.StarRx,
+                    place.StarR,
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
@@ -635,7 +636,7 @@ class MergePlacementRegions(abc.RewriteRule):
                 attributes: dict[str, ir.Attribute] = {
                     "qubits": ir.PyAttr(tuple(new_input_map[i] for i in stmt.qubits))
                 }
-                if isinstance(stmt, (place.StarRz, place.StarRx)):
+                if isinstance(stmt, (place.StarRz, place.StarR)):
                     attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
                 if isinstance(stmt, place.MoveTo):
                     attributes["locations"] = ir.PyAttr(stmt.locations)
@@ -689,13 +690,13 @@ _GATE_STMT_TYPES = (
     place.R,
     place.Rz,
     place.StarRz,
-    place.StarRx,
+    place.StarR,
     place.CZ,
     place.Yield,
     place.MoveTo,
     place.Permute,
 )
-_SQ_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.StarRx, place.Yield)
+_SQ_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.StarR, place.Yield)
 
 
 def _is_pure_gate_block(sp: place.StaticPlacement) -> bool:
@@ -768,7 +769,7 @@ class MergeStaticPlacement(abc.RewriteRule):
                     place.R,
                     place.Rz,
                     place.StarRz,
-                    place.StarRx,
+                    place.StarR,
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
@@ -779,7 +780,7 @@ class MergeStaticPlacement(abc.RewriteRule):
                 attributes: dict[str, ir.Attribute] = {
                     "qubits": ir.PyAttr(tuple(new_input_map[i] for i in stmt.qubits))
                 }
-                if isinstance(stmt, (place.StarRz, place.StarRx)):
+                if isinstance(stmt, (place.StarRz, place.StarR)):
                     attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
                 if isinstance(stmt, place.MoveTo):
                     attributes["locations"] = ir.PyAttr(stmt.locations)

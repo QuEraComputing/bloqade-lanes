@@ -35,14 +35,24 @@ class StarRz(ir.Statement):
 
 
 @statement(dialect=dialect)
-class StarRx(ir.Statement):
-    """STAR/TMR logical-X rotation injection primitive.
+class StarR(ir.Statement):
+    """STAR/TMR logical XY-plane rotation injection primitive.
 
-    The angle is in SQuIn IR turns. The physical lowering applies the
-    corresponding local X rotations on the selected Steane support.
+    Mirrors native ``R``: ``axis_angle`` is the rotation axis in the XY plane
+    and ``rotation_angle`` the target logical angle, both in SQuIn IR turns.
+    STAR-X is ``axis_angle == 0``. The physical lowering applies local
+    ``R(axis, theta*)`` rotations on the selected Steane support.
+
+    Any axis is allowed. At a quarter turn (0, 1/4, 1/2, 3/4) the physical
+    gadget is ``R(-axis, steane_star_theta(rotation_angle))``. At any other
+    axis, ``RewriteStarR`` pre-distorts both the physical axis and the angle so
+    that the post-selected logical gate is still the requested rotation (see
+    ``steane_star_r_physical``); the acceptance probability then depends on the
+    axis. ``EliminateRz`` shifts the axis to absorb a pending Z frame.
     """
 
     traits = frozenset({lowering.FromPythonCall()})
+    axis_angle: ir.SSAValue = info.argument(types.Float)
     rotation_angle: ir.SSAValue = info.argument(types.Float)
     qubits: ir.SSAValue = info.argument(ilist.IListType[QubitType, types.Any])
     qubit_indices: tuple[int, int, int] = info.attribute(

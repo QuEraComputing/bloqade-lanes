@@ -39,7 +39,7 @@ class ReorderStaticPlacement(abc.RewriteRule):
             place.R,
             place.Rz,
             place.StarRz,
-            place.StarRx,
+            place.StarR,
             place.CZ,
             place.Initialize,
             place.EndMeasure,

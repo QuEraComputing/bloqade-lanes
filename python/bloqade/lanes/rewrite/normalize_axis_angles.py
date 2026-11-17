@@ -47,13 +47,18 @@ from kirin import ir
 from kirin.dialects import py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
+from bloqade.lanes.dialects.steane713.extensions import stmts as extensions
 from bloqade.lanes.utils import constant_float
 
 __all__ = ["NormalizeGateAxisAngles"]
 
 
 class NormalizeGateAxisAngles(RewriteRule):
-    """Rewrite each ``R`` axis angle to a representative in [0, 1).
+    """Rewrite each ``R`` and ``StarR`` axis angle to a representative in [0, 1).
+
+    ``StarR`` is included because ``EliminateRz`` grows its axis exactly as it
+    does ``R``'s, and fusion compares axes by SSA identity: without this, a
+    ``-0.25`` and a ``0.75`` axis would never fuse.
 
     A constant is reduced now, by the compiler. Anything else gets a
     ``py.Mod`` and is reduced by whoever runs the program.
@@ -72,7 +77,7 @@ class NormalizeGateAxisAngles(RewriteRule):
     """
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, native_gate.stmts.R):
+        if not isinstance(node, (native_gate.stmts.R, extensions.StarR)):
             return RewriteResult()
 
         axis = node.axis_angle

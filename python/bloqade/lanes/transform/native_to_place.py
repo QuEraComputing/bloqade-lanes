@@ -23,6 +23,7 @@ from bloqade.lanes.rewrite.eliminate_rz import EliminateRz
 from bloqade.lanes.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.rewrite.normalize_axis_angles import NormalizeGateAxisAngles
 from bloqade.lanes.rewrite.steane_transversal import (
+    RewriteSteaneStarRAxisConvention,
     RewriteSteaneTransversalCliffordAdjoints,
 )
 from bloqade.lanes.utils import raise_if_statements_outside_dialect_group
@@ -274,6 +275,10 @@ class LogicalNativeToPlace(NativeToPlaceBase):
             # leaves logical CY as Zbar(control) . CY
             # (QuEraComputing/bloqade-internal#404).
             rules.append(rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()))
+            # StarR's axis is logical; EliminateRz shifts it in the physical
+            # frame convention the line above establishes. Negating it here
+            # puts it in that convention (see the rule's docstring).
+            rules.append(rewrite.Walk(RewriteSteaneStarRAxisConvention()))
         return rules
 
     def _post_unroll_rules(self, no_raise: bool) -> list[RewriteRule]:

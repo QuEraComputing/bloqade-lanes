@@ -151,9 +151,10 @@ class StarRz(QuantumStmt):
 
 
 @statement(dialect=dialect)
-class StarRx(QuantumStmt):
+class StarR(QuantumStmt):
     qubits: tuple[int, ...] = info.attribute()
     qubit_indices: tuple[int, int, int] = info.attribute()
+    axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
     def check(self) -> None:
@@ -374,13 +375,13 @@ class PlacementMethods(interp.MethodTable):
 
     @interp.impl(R)
     @interp.impl(Rz)
-    @interp.impl(StarRx)
+    @interp.impl(StarR)
     @interp.impl(StarRz)
     def impl_single_qubit_gate(
         self,
         _interp: PlacementAnalysis,
         frame: ForwardFrame[AtomState],
-        stmt: R | Rz | StarRx | StarRz,
+        stmt: R | Rz | StarR | StarRz,
     ):
         return (
             _interp.placement_strategy.sq_placements(

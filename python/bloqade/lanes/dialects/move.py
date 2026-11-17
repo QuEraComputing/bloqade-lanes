@@ -139,9 +139,10 @@ class StarRz(StatefulStatement):
 
 
 @statement(dialect=dialect)
-class StarRx(StatefulStatement):
+class StarR(StatefulStatement):
     location_addresses: tuple[LocationAddress, ...] = info.attribute()
     qubit_indices: tuple[int, int, int] = info.attribute()
+    axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
     def check(self) -> None:
@@ -275,9 +276,10 @@ def star_rz(
 ) -> State: ...
 
 
-@wraps(StarRx)
-def star_rx(
+@wraps(StarR)
+def star_r(
     current_state: State,
+    axis_angle: float,
     rotation_angle: float,
     *,
     location_addresses: tuple[LocationAddress, ...],

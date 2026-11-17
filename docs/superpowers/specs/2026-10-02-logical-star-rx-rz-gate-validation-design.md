@@ -1,5 +1,10 @@
 # Logical STAR-X and Rz-producing gate validation
 
+> **Superseded.** `StarRx` is now `StarR(axis_angle, rotation_angle)`, and
+> `EliminateRz` absorbs a pending Z frame into its axis (as it does for `R`)
+> instead of draining it. No `Rz` is emitted around STAR-R, so
+> `StarRxRzGateValidation` was removed. Kept for history.
+
 ## Goal
 
 Reject a Gemini logical kernel at definition time when it combines `StarRx`

@@ -2,9 +2,9 @@
 
 Scans a flat block in order carrying a per-qubit phase *frame*. Each ``Rz`` is
 absorbed into the frame and deleted; each ``R`` has its axis angle shifted by the
-frame of the qubits it addresses; ``CZ`` and ``StarRz`` are diagonal and pass
-through untouched; ``StarRx`` flushes the pending frame before its non-diagonal
-physical gadget. Whatever frame remains when the block ends is discarded --
+frame of the qubits it addresses, and so does each ``StarR``, whose physical
+gadget is a local ``R`` on part of each block (the same identity holds atom by
+atom); ``CZ`` and ``StarRz`` are diagonal and pass through untouched. Whatever frame remains when the block ends is discarded --
 sound because the residual is diagonal and the device's readout is in the Z
 basis. ``flush_residual`` writes it back out instead, which makes the emitted
 program exactly equal the input; see that field's docstring for why a test
@@ -271,12 +271,6 @@ class EliminateRz(RewriteRule):
         # the emitted program -- see the class docstring.
         return RewriteResult()
 
-    @_rewrite.register(extensions.StarRx)
-    def _(self, stmt: extensions.StarRx) -> RewriteResult:
-        # A fixed-axis X rotation does not commute with a pending Z frame.
-        # Restore the phase before the physical STAR-X gadget.
-        return RewriteResult(has_done_something=self._drain(stmt))
-
     # --- the actual work ---
 
     @_rewrite.register(native_gate.stmts.Rz)
@@ -293,7 +287,13 @@ class EliminateRz(RewriteRule):
         return RewriteResult(has_done_something=True)
 
     @_rewrite.register(native_gate.stmts.R)
-    def _(self, stmt: native_gate.stmts.R) -> RewriteResult:
+    # STAR-R's physical gadget is LocalR(axis, theta*) on its support atoms, so
+    # R(phi) . Rz(alpha) = Rz(alpha) . R(phi - alpha) holds on every atom it
+    # touches and trivially on the rest: shift its axis and keep the frame
+    # pending, exactly as for R. Its axis is physical by now (see
+    # RewriteStarRToPhysicalAxis), which is the domain this identity is in.
+    @_rewrite.register(extensions.StarR)
+    def _(self, stmt: native_gate.stmts.R | extensions.StarR) -> RewriteResult:
         source: ilist.New = stmt.qubits.owner  # type: ignore[reportAssignmentType]
 
         groups: dict[ir.SSAValue | None, list[ir.SSAValue]] = {}
@@ -324,10 +324,13 @@ class EliminateRz(RewriteRule):
             )
             register = ilist.New(values=tuple(group), elem_type=source.elem_type)
             register.insert_before(stmt)
-            native_gate.stmts.R(
-                axis_angle=axis,
-                rotation_angle=stmt.rotation_angle,
-                qubits=register.result,
+            # Rebuild with the statement's own type and attributes, so a split
+            # StarR stays a StarR (with its qubit_indices) rather than coming
+            # back as a transversal R. Both take (axis, rotation, qubits).
+            type(stmt).from_stmt(
+                stmt,
+                args=(axis, stmt.rotation_angle, register.result),
+                attributes=dict(stmt.attributes),
             ).insert_before(stmt)
 
         stmt.delete()

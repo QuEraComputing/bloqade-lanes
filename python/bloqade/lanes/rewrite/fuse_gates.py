@@ -19,7 +19,7 @@ from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import place
 
-T = TypeVar("T", place.R, place.Rz, place.StarRz, place.StarRx, place.CZ)
+T = TypeVar("T", place.R, place.Rz, place.StarRz, place.StarR, place.CZ)
 
 
 class GateGroup(ABC, Generic[T]):
@@ -122,20 +122,22 @@ class StarRzGroup(GateGroup[place.StarRz]):
         )
 
 
-class StarRxGroup(GateGroup[place.StarRx]):
-    def can_extend(self, stmt: place.StarRx) -> bool:
+class StarRGroup(GateGroup[place.StarR]):
+    def can_extend(self, stmt: place.StarR) -> bool:
         head = self.statements[0]
         return (
             self._state_chain_ok(stmt)
             and self._qubits_disjoint(stmt)
+            and stmt.axis_angle is head.axis_angle
             and stmt.rotation_angle is head.rotation_angle
             and stmt.qubit_indices == head.qubit_indices
         )
 
-    def _build_merged(self) -> place.StarRx:
+    def _build_merged(self) -> place.StarR:
         head = self.statements[0]
-        return place.StarRx(
+        return place.StarR(
             head.state_before,
+            head.axis_angle,
             head.rotation_angle,
             qubits=tuple(q for s in self.statements for q in s.qubits),
             qubit_indices=head.qubit_indices,
@@ -196,13 +198,13 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
                     changed = True
                 group = StarRzGroup()
                 group.append(stmt)
-            elif isinstance(stmt, place.StarRx):
-                if isinstance(group, StarRxGroup) and group.can_extend(stmt):
+            elif isinstance(stmt, place.StarR):
+                if isinstance(group, StarRGroup) and group.can_extend(stmt):
                     group.append(stmt)
                     continue
                 if group is not None and group.merge_in_place():
                     changed = True
-                group = StarRxGroup()
+                group = StarRGroup()
                 group.append(stmt)
             elif isinstance(stmt, place.CZ):
                 if isinstance(group, CZGroup) and group.can_extend(stmt):

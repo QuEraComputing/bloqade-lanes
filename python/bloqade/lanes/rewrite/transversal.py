@@ -1,3 +1,4 @@
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import chain
@@ -9,7 +10,7 @@ from kirin.rewrite import abc as rewrite_abc
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.prelude import kernel
-from bloqade.lanes.utils import no_none_elements
+from bloqade.lanes.utils import constant_float, no_none_elements
 
 
 @kernel(verify=False)
@@ -17,6 +18,77 @@ def steane_star_theta(theta_turns: float) -> float:
     theta = theta_turns * kmath.tau
     theta_star = -kmath.copysign(
         2 * kmath.atan(kmath.fabs(kmath.tan(theta / 2)) ** (1 / 3)),
+        theta,
+    )
+    return theta_star / kmath.tau
+
+
+# --- STAR-R at an arbitrary axis ------------------------------------------
+#
+# Post-selected on a trivial syndrome, physical LocalR(phi_p, t) on a weight-3
+# Steane support acts on the code space as
+#
+#     c^3 + i s^3 (cos^3(phi_p) Xbar - sin^3(phi_p) Ybar),   c, s = cos, sin(t/2)
+#
+# (mixed X/Y terms leave the code space; Y_L = -Ybar). That is a logical
+# rotation about atan2(-sin^3 phi_p, cos^3 phi_p) with
+# tan(theta_L / 2) = -r tan^3(t / 2), r = sqrt(cos^6 phi_p + sin^6 phi_p).
+# Inverting it gives the physical axis and angle for a logical target. At
+# quarter turns r = 1 and the physical axis is -phi_L, so the gadget reduces
+# to steane_star_theta on the negated axis.
+#
+# These take the axis in EliminateRz's convention: ``axis_turns`` is the
+# *negated* logical axis (see RewriteSteaneStarRAxisConvention).
+
+
+def _is_quarter_turn(axis_turns: float) -> bool:
+    return abs(4 * axis_turns - round(4 * axis_turns)) < 1e-12
+
+
+def steane_star_r_physical(
+    axis_turns: float, theta_turns: float
+) -> tuple[float, float]:
+    """Physical (axis, angle) in turns for a STAR-R gadget, at compile time.
+
+    ``axis_turns`` is the negated logical axis. Quarter turns are snapped
+    exactly: the cube root would otherwise turn ``cos(pi/2) ~ 6e-17`` into an
+    axis error of ~1e-6.
+    """
+    theta = theta_turns * math.tau
+    if _is_quarter_turn(axis_turns):
+        return (
+            axis_turns % 1.0,
+            -math.copysign(2 * math.atan(abs(math.tan(theta / 2)) ** (1 / 3)), theta)
+            / math.tau,
+        )
+    phi_l = -axis_turns * math.tau
+    phi_p = math.atan2(-math.cbrt(math.sin(phi_l)), math.cbrt(math.cos(phi_l)))
+    r = math.hypot(math.cos(phi_p) ** 3, math.sin(phi_p) ** 3)
+    theta_p = -math.copysign(
+        2 * math.atan((abs(math.tan(theta / 2)) / r) ** (1 / 3)), theta
+    )
+    return (phi_p / math.tau) % 1.0, theta_p / math.tau
+
+
+@kernel(verify=False)
+def steane_star_physical_axis(axis_turns: float) -> float:
+    phi_l = -axis_turns * kmath.tau
+    c = kmath.cos(phi_l)
+    s = kmath.sin(phi_l)
+    c3 = kmath.copysign(kmath.fabs(c) ** (1 / 3), c)
+    s3 = kmath.copysign(kmath.fabs(s) ** (1 / 3), s)
+    return kmath.atan2(-s3, c3) / kmath.tau
+
+
+@kernel(verify=False)
+def steane_star_physical_theta(physical_axis_turns: float, theta_turns: float) -> float:
+    phi_p = physical_axis_turns * kmath.tau
+    theta = theta_turns * kmath.tau
+    c = kmath.cos(phi_p)
+    s = kmath.sin(phi_p)
+    r = kmath.sqrt(c**6 + s**6)
+    theta_star = -kmath.copysign(
+        2 * kmath.atan((kmath.fabs(kmath.tan(theta / 2)) / r) ** (1 / 3)),
         theta,
     )
     return theta_star / kmath.tau
@@ -104,7 +176,7 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
 
     transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
-    def _theta_star_ir(self, node: move.StarRz | move.StarRx) -> ir.SSAValue:
+    def _theta_star_ir(self, node: move.StarRz | move.StarR) -> ir.SSAValue:
         theta_star = func.Invoke((node.rotation_angle,), callee=steane_star_theta)
         theta_star.insert_before(node)
         return theta_star.result
@@ -145,11 +217,44 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
 
 
 @dataclass
-class RewriteStarRx(RewriteStarRz):
-    """Lower logical STAR-X to physical local X rotations on its support."""
+class RewriteStarR(RewriteStarRz):
+    """Lower STAR-R to physical local ``R(axis, theta*)`` rotations on its support.
+
+    By this point the axis is physical: under ``transversal_rewrite`` the
+    user's logical axis and angle were pre-distorted by
+    ``RewriteStarRToPhysicalAxis`` before ``EliminateRz`` shifted the axis to
+    absorb any pending Z frame. So the axis passes through unchanged, and the
+    usual k=3 STAR angle transform applies to ``rotation_angle``.
+
+    At a quarter-turn axis the gadget is ``LocalR(axis, steane_star_theta)``.
+    At any other axis both the axis and the angle are pre-distorted (see
+    ``steane_star_r_physical``) so the post-selected logical gate is the
+    requested one. Constants are folded here; symbolic operands go through
+    the ``steane_star_physical_*`` kernels.
+    """
+
+    def _physical_axis_and_theta(
+        self, node: move.StarR
+    ) -> tuple[ir.SSAValue, ir.SSAValue]:
+        axis = constant_float(node.axis_angle)
+        theta = constant_float(node.rotation_angle)
+        if axis is not None and _is_quarter_turn(axis):
+            return node.axis_angle, self._theta_star_ir(node)
+        if axis is not None and theta is not None:
+            phi_p, theta_p = steane_star_r_physical(axis, theta)
+            (axis_stmt := py.Constant(phi_p)).insert_before(node)
+            (theta_stmt := py.Constant(theta_p)).insert_before(node)
+            return axis_stmt.result, theta_stmt.result
+        phi_p_stmt = func.Invoke((node.axis_angle,), callee=steane_star_physical_axis)
+        phi_p_stmt.insert_before(node)
+        theta_p_stmt = func.Invoke(
+            (phi_p_stmt.result, node.rotation_angle), callee=steane_star_physical_theta
+        )
+        theta_p_stmt.insert_before(node)
+        return phi_p_stmt.result, theta_p_stmt.result
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, move.StarRx):
+        if not isinstance(node, move.StarR):
             return rewrite_abc.RewriteResult()
 
         supports = [
@@ -159,12 +264,11 @@ class RewriteStarRx(RewriteStarRz):
         if not no_none_elements(supports):
             return rewrite_abc.RewriteResult()
 
-        theta_star = self._theta_star_ir(node)
-        (zero := py.Constant(0.0)).insert_before(node)
+        axis, theta_star = self._physical_axis_and_theta(node)
         node.replace_by(
             move.LocalR(
                 node.current_state,
-                zero.result,
+                axis,
                 theta_star,
                 location_addresses=tuple(chain.from_iterable(supports)),
             )
