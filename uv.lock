@@ -369,7 +369,7 @@ requires-dist = [
     { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.5" },
     { name = "bloqade-core", specifier = "~=0.6.8" },
     { name = "deprecated", specifier = ">=1.3.1" },
-    { name = "kahip", specifier = ">=3.25" },
+    { name = "kahip", specifier = ">=3.25,<3.26" },
     { name = "kirin-toolchain", specifier = "~=0.22.14" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.9.4" },
     { name = "numpy", specifier = ">=2.2.6" },

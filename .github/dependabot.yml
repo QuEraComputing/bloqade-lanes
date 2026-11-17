@@ -33,3 +33,9 @@ updates:
     commit-message:
       prefix: "build(deps)"
       prefix-development: "build(deps-dev)"
+    # kahip >= 3.26 ships x86_64 Linux wheels built with -march=native on an
+    # AVX-512 host; importing them is SIGILL on CPUs without AVX-512. Kept in
+    # step with the `kahip<3.26` cap in pyproject.toml; remove both together.
+    ignore:
+      - dependency-name: "kahip"
+        versions: [">=3.26"]
