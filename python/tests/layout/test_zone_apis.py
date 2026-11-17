@@ -2,51 +2,25 @@
 
 import pytest
 from bloqade.geometry.dialects.grid import Grid as GeoGrid
+from tests._arch_fixtures import gate_zone_arch, load_arch
 
-from bloqade.lanes.arch import (
-    ArchBlueprint,
-    DeviceLayout,
-    HypercubeSiteTopology,
-    HypercubeWordTopology,
-    MatchingTopology,
-    ZoneSpec,
-    build_arch,
-)
 from bloqade.lanes.arch.geometry import ArchSpecGeometry, BusDescriptor
 from bloqade.lanes.bytecode.encoding import Direction, MoveType
 
 
 def _single_zone_arch():
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=2,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            ),
-        },
-        layout=DeviceLayout(sites_per_word=4),
+    return gate_zone_arch(
+        num_rows=2,
+        num_cols=2,
+        sites_per_word=4,
+        word_topology="hypercube",
+        site_topology="hypercube",
     )
-    return build_arch(bp).arch
 
 
 def _two_zone_arch():
-    bp = ArchBlueprint(
-        zones={
-            "proc": ZoneSpec(
-                num_rows=2,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            ),
-            "mem": ZoneSpec(num_rows=2, num_cols=2),
-        },
-        layout=DeviceLayout(sites_per_word=4),
-    )
-    return build_arch(bp, connections={("proc", "mem"): MatchingTopology()}).arch
+    """An entangling ``proc`` zone matched to a bus-less ``mem`` zone."""
+    return load_arch("proc_mem_two_zone")
 
 
 # ── get_zone_grid ──

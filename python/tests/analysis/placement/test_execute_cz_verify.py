@@ -1,5 +1,7 @@
 """Tests for ExecuteCZ.verify() — blockade-radius validation of CZ placements."""
 
+from tests._arch_fixtures import gate_zone_arch
+
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.spec import ArchSpec
@@ -112,31 +114,14 @@ def test_verify_no_czs():
 
 
 def test_verify_custom_large_arch():
-    """Verify works with multiword ArchSpec using the builder."""
-    from bloqade.lanes.arch.build.blueprint import (
-        ArchBlueprint,
-        DeviceLayout,
-        ZoneSpec,
-        build_arch,
+    """Verify works with a multiword ArchSpec."""
+    arch_spec = gate_zone_arch(
+        num_rows=2,
+        num_cols=2,
+        sites_per_word=4,
+        word_topology="hypercube",
+        site_topology="hypercube",
     )
-    from bloqade.lanes.arch.build.topology import (
-        HypercubeSiteTopology,
-        HypercubeWordTopology,
-    )
-
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=2,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=4),
-    )
-    arch_spec = build_arch(bp).arch
 
     # Place qubits at paired locations
     state = _make_execute_cz(
