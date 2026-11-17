@@ -73,6 +73,12 @@ def steane_star_r_physical(
 # The bodies of these two kernels run in Kirin's interpreter, never as Python,
 # so line coverage cannot see them. They are exercised against the
 # constant-folding path in test_symbolic_star_r_kernels_match_compile_time_folding.
+#
+# Precision: unlike steane_star_r_physical, these do not snap quarter turns. A
+# symbolic axis that is a quarter turn at runtime goes through the cube root,
+# which turns e.g. cos(pi/2) ~ 6e-17 into ~4e-6, so the physical axis comes out
+# ~6e-7 to 9e-7 turns off at logical 1/4, 1/2, 3/4 (exact at 0). Constant
+# axes are snapped exactly in RewriteStarR before these are ever used.
 @kernel(verify=False)  # pragma: no cover
 def steane_star_physical_axis(axis_turns: float) -> float:
     phi_l = -axis_turns * kmath.tau
@@ -223,17 +229,30 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
 class RewriteStarR(RewriteStarRz):
     """Lower STAR-R to physical local ``R(axis, theta*)`` rotations on its support.
 
-    By this point the axis is physical: under ``transversal_rewrite`` the
-    user's logical axis and angle were pre-distorted by
-    ``RewriteStarRToPhysicalAxis`` before ``EliminateRz`` shifted the axis to
-    absorb any pending Z frame. So the axis passes through unchanged, and the
-    usual k=3 STAR angle transform applies to ``rotation_angle``.
+    The axis arriving here is the *negated* logical axis: under
+    ``transversal_rewrite``, ``RewriteSteaneStarRAxisConvention`` negates it
+    before ``EliminateRz``, and ``EliminateRz`` then shifts it to absorb any
+    pending Z frame. Nothing is pre-distorted before this point; this rule
+    does it.
 
-    At a quarter-turn axis the gadget is ``LocalR(axis, steane_star_theta)``.
-    At any other axis both the axis and the angle are pre-distorted (see
+    At a quarter-turn axis the negated axis already *is* the physical axis, so
+    it passes through unchanged and the gadget is
+    ``LocalR(axis, steane_star_theta(rotation_angle))``. At any other axis both
+    the axis and the angle are pre-distorted here (see
     ``steane_star_r_physical``) so the post-selected logical gate is the
-    requested one. Constants are folded here; symbolic operands go through
-    the ``steane_star_physical_*`` kernels.
+    requested one. Constants are folded at compile time; symbolic operands go
+    through the ``steane_star_physical_*`` kernels.
+
+    **Assumes every frame ``EliminateRz`` absorbed into the axis was a quarter
+    turn.** The pre-distortion is nonlinear and commutes only with
+    quarter-turn shifts, so shifting before it (as the pipeline does) equals
+    shifting the physical axis only then. Validated logical programs satisfy
+    this: ``SteaneLogicalValidation`` rejects mid-circuit ``Rz``/``T``/``U3``/
+    ``Rx``/``Ry``, so frames come only from ``Z``/``S``/``S_adj``/``H``. That
+    validation is not enforced under ``no_raise=True`` (``LogicalPipeline``'s
+    default); a non-quarter-turn frame there silently gives a misaligned
+    gadget. Plain transversal ``R`` has the same limitation: transversal
+    ``Rz(alpha)`` is a logical operation only for quarter-turn ``alpha``.
     """
 
     def _physical_axis_and_theta(
