@@ -70,7 +70,10 @@ def steane_star_r_physical(
     return (phi_p / math.tau) % 1.0, theta_p / math.tau
 
 
-@kernel(verify=False)
+# The bodies of these two kernels run in Kirin's interpreter, never as Python,
+# so line coverage cannot see them. They are exercised against the
+# constant-folding path in test_symbolic_star_r_kernels_match_compile_time_folding.
+@kernel(verify=False)  # pragma: no cover
 def steane_star_physical_axis(axis_turns: float) -> float:
     phi_l = -axis_turns * kmath.tau
     c = kmath.cos(phi_l)
@@ -80,7 +83,7 @@ def steane_star_physical_axis(axis_turns: float) -> float:
     return kmath.atan2(-s3, c3) / kmath.tau
 
 
-@kernel(verify=False)
+@kernel(verify=False)  # pragma: no cover
 def steane_star_physical_theta(physical_axis_turns: float, theta_turns: float) -> float:
     phi_p = physical_axis_turns * kmath.tau
     theta = theta_turns * kmath.tau
