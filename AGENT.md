@@ -42,7 +42,6 @@ All tasks use `just` (rust-just):
 just coverage          # Run Python tests with coverage + generate XML report
 just coverage-run      # Run Python tests only
 just coverage-html     # Generate HTML coverage report
-just demo              # Run all demo scripts
 just doc               # Build and open documentation site in browser
 just doc-all           # Build documentation site (book + Rust API)
 just doc-book          # Build mdBook only

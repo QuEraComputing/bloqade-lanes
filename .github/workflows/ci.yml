@@ -127,38 +127,6 @@ jobs:
           path: coverage.xml
           retention-days: 2
 
-  demo:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.13.5"
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-      - name: Set up Python ${{ matrix.python-version }}
-        # `uv python pin` overrides the committed .python-version (3.12) so the
-        # venv and test run actually use the matrix interpreter — otherwise every
-        # matrix job silently runs on 3.12.
-        run: |
-          uv python install ${{ matrix.python-version }}
-          uv python pin ${{ matrix.python-version }}
-      - name: Install the project
-        run: uv sync --locked --all-extras --dev
-      - name: Run demos
-        run: uv run just demo
-
   benchmarks:
     name: benchmarks (${{ matrix.architecture }})
     runs-on: ubuntu-latest

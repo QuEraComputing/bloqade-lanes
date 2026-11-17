@@ -1,11 +1,5 @@
-from bloqade.lanes.arch import (
-    ArchBlueprint,
-    DeviceLayout,
-    DiagonalWordTopology,
-    HypercubeSiteTopology,
-    ZoneSpec,
-    build_arch,
-)
+from tests._arch_fixtures import gate_zone_arch
+
 from bloqade.lanes.heuristics.physical import layout as physical_layout_module
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
@@ -23,19 +17,13 @@ def _weighted_stages(
 
 
 def _make_arch(num_rows: int = 4, sites_per_word: int = 4):
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=num_rows,
-                num_cols=2,
-                entangling=True,
-                word_topology=DiagonalWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=sites_per_word),
+    return gate_zone_arch(
+        num_rows=num_rows,
+        num_cols=2,
+        sites_per_word=sites_per_word,
+        word_topology="diagonal",
+        site_topology="hypercube",
     )
-    return build_arch(bp).arch
 
 
 def _layout_affinity_cost(

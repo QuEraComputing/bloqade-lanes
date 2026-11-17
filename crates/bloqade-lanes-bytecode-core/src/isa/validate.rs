@@ -959,8 +959,13 @@ fn successors(inst: &M, pc: usize, span: &Span) -> ([Option<usize>; 2], bool) {
 fn leaders(program: &Program, span: &Span) -> Vec<bool> {
     let mut leaders = vec![false; span.end - span.start];
     leaders[0] = true;
-    for pc in span.start..span.end {
-        let inst = &program.code[pc];
+    for (pc, inst) in program
+        .code
+        .iter()
+        .enumerate()
+        .take(span.end)
+        .skip(span.start)
+    {
         if matches!(inst, M::Cpu(C::Branch(_) | C::ConditionalBranch(..))) {
             for target in successors(inst, pc, span).0.into_iter().flatten() {
                 leaders[target - span.start] = true;
