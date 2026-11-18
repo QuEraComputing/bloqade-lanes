@@ -127,15 +127,23 @@ def _logical_squin_to_move(
     *,
     layout_heuristic: LayoutHeuristicABC,
     placement_strategy: PlacementStrategyABC,
+    transversal_rewrite: bool = False,
 ) -> ir.Method:
     """Compile a logical squin kernel to the move dialect via the canonical stages.
 
     Mirrors the removed ``upstream.squin_to_move`` logical path: the heuristic's
     ``arch_spec`` is forwarded to the native stage so the post-unroll address and
     duplicate-address validation runs, then place-optimize and lower to moves.
+
+    Pass ``transversal_rewrite=True`` when the result will go through
+    ``transversal_rewrites``, as ``LogicalPipeline`` does. That lowering
+    assumes the Steane conventions this flag applies at the native stage (the
+    ``S``/``SqrtX`` adjoint swap and the ``StarR`` axis negation); without it
+    the physical program implements a different logical circuit.
     """
     place = LogicalNativeToPlace(
-        arch_spec=getattr(layout_heuristic, "arch_spec", None)
+        arch_spec=getattr(layout_heuristic, "arch_spec", None),
+        transversal_rewrite=transversal_rewrite,
     ).emit(mt)
     SequentialPlacePass(place.dialects)(place)
     return PlaceToMove(
@@ -181,6 +189,7 @@ class Metrics:
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
+            transversal_rewrite=True,
         )
         move_mt = transversal_rewrites(move_mt)
         # Post-transversal move IR is physically addressed (the Steane

@@ -108,6 +108,9 @@ def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
     assert fidelity == pytest.approx(expected_fidelity)
     squin_to_move_kwargs = cast(dict[str, object], calls["squin_to_move_kwargs"])
     assert squin_to_move_kwargs["logical_initialize"] is True
+    # The move program goes through transversal_rewrites, which assumes the
+    # native stage applied the Steane conventions.
+    assert squin_to_move_kwargs["transversal_rewrite"] is True
     assert "insert_return_moves" not in squin_to_move_kwargs
     assert calls["transversal_input"] is fake_move_mt
     assert calls["emit_move_mt"] is fake_move_mt

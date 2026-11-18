@@ -13,7 +13,7 @@ from bloqade.lanes.bytecode._native import (
     LocationAddress as NativeLocationAddress,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.visualize.arch import ArchVisualizer
+from bloqade.lanes.visualize.entropy_tree._arch_sites import ArchSites
 from bloqade.lanes.visualize.entropy_tree.state import NodeState, TreeFrameState
 
 _DEPTH_Y_STEP = 0.34
@@ -62,7 +62,7 @@ def _configuration_to_native(
 
 
 def _path_bounds(arch_spec) -> tuple[float, float, float, float]:  # type: ignore[no-untyped-def]
-    return ArchVisualizer(arch_spec).path_bounds()
+    return ArchSites(arch_spec).path_bounds()
 
 
 def _stable_focus_bounds(
@@ -320,7 +320,7 @@ def draw_tree_frame(ax, frame: TreeFrameState) -> None:  # type: ignore[no-untyp
 def _draw_architecture_background(ax, arch_spec) -> None:  # type: ignore[no-untyped-def]
     """Plot the architecture's site lattice as the hardware panel background."""
     word_ids = list(range(len(arch_spec.words)))
-    ArchVisualizer(arch_spec).plot(
+    ArchSites(arch_spec).plot(
         ax=ax,
         show_words=word_ids,
         facecolors="none",
