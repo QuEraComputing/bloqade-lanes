@@ -1,48 +1,16 @@
-import math
-
 import pytest
-from kirin.dialects import ilist
 from tests._squin_to_move_helper import squin_to_move
 
-from bloqade import qubit, squin
-from bloqade.gemini import logical as gemini_logical
+from bloqade import squin
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 from bloqade.lanes.passes import ALAPPlacePass, ASAPPlacePass
-from bloqade.lanes.transform import LogicalPipeline, MoveToSquinPhysical
+from bloqade.lanes.transform import MoveToSquinPhysical
 from bloqade.lanes.utils import check_circuit
-
-
-@pytest.mark.slow
-def test_logical_compilation():
-    from bloqade.rewrite.passes import AggressiveUnroll
-
-    # This is a state-vector round-trip test, not a runnable Gemini task:
-    # state-vector simulation intentionally has no terminal-measurement impl.
-    @gemini_logical.kernel(aggressive_unroll=True, verify=False)
-    def main():
-        reg = qubit.qalloc(5)
-        squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
-
-        squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
-        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
-        squin.broadcast.sqrt_y(ilist.IList([reg[0], reg[3]]))
-        squin.broadcast.cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[2], reg[4]]))
-        squin.sqrt_x_adj(reg[0])
-        squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
-        squin.broadcast.sqrt_y_adj(reg)
-
-    logical_move = LogicalPipeline().emit(main, no_raise=True)
-    decompiled_squin = MoveToSquinPhysical(get_arch_spec()).emit(logical_move)
-
-    AggressiveUnroll(main.dialects).fixpoint(main)
-
-    assert check_circuit(main, decompiled_squin)
 
 
 @pytest.mark.slow

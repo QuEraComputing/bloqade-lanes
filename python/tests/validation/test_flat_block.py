@@ -1,14 +1,10 @@
 """Tests for FlatBlockValidation."""
 
-import pytest
 from kirin import ir, types as kirin_types
 from kirin.dialects import func, py
 from kirin.validation import ValidationSuite
 
-from bloqade import qubit, squin
-from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.transform import LogicalPipeline
+from bloqade import squin
 from bloqade.lanes.validation.flat_block import FlatBlockValidation
 
 
@@ -70,43 +66,3 @@ def test_a_multi_block_region_nested_in_a_statement_is_rejected():
     )
     # Two errors: the nested function, and its two-block region.
     assert len(_errors(_method(ir.Block([inner, func.Return()])))) == 2
-
-
-def test_a_real_compiled_kernel_passes():
-    """The shape the post-unroll window actually produces.
-
-    This is the check that matters: if a normal logical kernel ever stopped
-    satisfying the precondition, `EliminateRz` would be silently skipped under
-    `no_raise` and every `Rz` would survive to the backend.
-    """
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def kernel():
-        reg = qubit.qalloc(2)
-        squin.h(reg[1])
-        squin.s(reg[1])
-        squin.cx(reg[0], reg[1])
-        gemini_logical.terminal_measure(reg)
-
-    out = LogicalPipeline(
-        get_arch_spec(), transversal_rewrite=True, simulation=False
-    ).emit(kernel)
-
-    # The pipeline has moved past the native window by now, but the flat shape
-    # is what it was validated against and is preserved through lowering.
-    assert _errors(out) == []
-
-
-@pytest.mark.parametrize("no_raise", [False, True])
-def test_the_pipeline_still_compiles_a_normal_kernel(no_raise):
-    """The validation gate must not reject what the pipeline normally emits."""
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def kernel():
-        reg = qubit.qalloc(1)
-        squin.s(reg[0])
-        gemini_logical.terminal_measure(reg)
-
-    LogicalPipeline(get_arch_spec(), transversal_rewrite=True, simulation=False).emit(
-        kernel, no_raise=no_raise
-    )

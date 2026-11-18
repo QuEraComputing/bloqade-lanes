@@ -7,12 +7,12 @@ from kirin.analysis import const
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
-from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
-from bloqade.gemini.logical.dialects.extensions import stmts as gemini_extension_stmts
-from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects.arch import stmts as gemini_common_stmts
+from bloqade.lanes.dialects.steane713 import stmts as gemini_stmts
+from bloqade.lanes.dialects.steane713.extensions import stmts as gemini_extension_stmts
 from bloqade.lanes.rewrite.circuit2place import MergeStaticPlacement  # new
 from bloqade.lanes.rewrite.circuit2place import always_merge  # new
 from bloqade.lanes.rewrite.circuit2place import gate_only_merge  # new
@@ -820,3 +820,62 @@ def test_merge_placement_regions_preserves_move_to_and_permute_attrs():
     assert permutes[0].insert_moves is True
     assert permutes[1].perm == (0,)
     assert permutes[1].insert_moves is False
+
+
+def test_star_r():
+    axis_angle = ir.TestValue()
+    rotation_angle = ir.TestValue()
+    test_block = ir.Block(
+        [
+            qubits := ilist.New(values=(q0 := ir.TestValue(), q1 := ir.TestValue())),
+            cast(Any, gemini_extension_stmts.StarR)(
+                axis_angle=axis_angle,
+                rotation_angle=rotation_angle,
+                qubits=qubits.result,
+                qubit_indices=(0, 2, 4),
+            ),
+        ],
+    )
+
+    expected_block = ir.Block(
+        [
+            qubits := ilist.New(values=(q0, q1)),
+            place.StaticPlacement(qubits=(q0, q1), body=ir.Region(block := ir.Block())),
+        ]
+    )
+
+    entry_state = block.args.append_from(types.StateType, name="entry_state")
+    block.stmts.append(
+        gate_stmt := place.StarR(
+            entry_state,
+            axis_angle,
+            rotation_angle,
+            qubits=(0, 1),
+            qubit_indices=(0, 2, 4),
+        )
+    )
+    block.stmts.append(place.Yield(gate_stmt.state_after))
+
+    rewrite.Walk(RewritePlaceOperations()).rewrite(test_block)
+
+    assert_nodes(test_block, expected_block)
+
+
+def test_star_r_noop_when_qubits_are_not_an_ilist_new():
+    """Without an ilist.New register the addressed qubits are unknown, so the
+    statement is left for validation to report rather than lowered."""
+    from kirin import types as kirin_types
+
+    test_block = ir.Block()
+    register = test_block.args.append_from(kirin_types.Any, name="register")
+    star = cast(Any, gemini_extension_stmts.StarR)(
+        axis_angle=ir.TestValue(),
+        rotation_angle=ir.TestValue(),
+        qubits=register,
+    )
+    test_block.stmts.append(star)
+
+    result = rewrite.Walk(RewritePlaceOperations()).rewrite(test_block)
+
+    assert not result.has_done_something
+    assert list(test_block.stmts) == [star]

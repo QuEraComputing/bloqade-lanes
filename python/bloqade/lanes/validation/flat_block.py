@@ -27,7 +27,7 @@ frame it would need to report is already gone.
 
 **Why a direct walk and not a ``Forward`` analysis**, unlike the
 analysis-backed validations next door (``lanes.address.validation``,
-``gemini.common.qubit.duplicates``). Those resolve *values* and need the
+``lanes.arch.duplicates``). Those resolve *values* and need the
 interpreter. This is a structural property of the IR, and a ``Forward`` pass
 only visits reachable code -- an unreachable second block would slip through
 the very check that exists to reject it. ``gemini.no_recursion`` is the

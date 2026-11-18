@@ -1,13 +1,6 @@
 import pytest
+from tests._arch_fixtures import gate_zone_arch, load_arch
 
-from bloqade.lanes.arch import (
-    ArchBlueprint,
-    DeviceLayout,
-    DiagonalWordTopology,
-    HypercubeSiteTopology,
-    ZoneSpec,
-    build_arch,
-)
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
@@ -17,19 +10,13 @@ pymetis = pytest.importorskip("pymetis")
 
 
 def _make_arch(num_rows: int = 5, sites_per_word: int = 16):
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=num_rows,
-                num_cols=2,
-                entangling=True,
-                word_topology=DiagonalWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=sites_per_word),
+    return gate_zone_arch(
+        num_rows=num_rows,
+        num_cols=2,
+        sites_per_word=sites_per_word,
+        word_topology="diagonal",
+        site_topology="hypercube",
     )
-    return build_arch(bp).arch
 
 
 def _weighted_stages(
@@ -271,26 +258,7 @@ def test_fixed_baseline_fill_order():
 
 
 def test_single_zone_assumption_is_explicit():
-    bp = ArchBlueprint(
-        zones={
-            "zone_a": ZoneSpec(
-                num_rows=2,
-                num_cols=2,
-                entangling=True,
-                word_topology=DiagonalWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            ),
-            "zone_b": ZoneSpec(
-                num_rows=2,
-                num_cols=2,
-                entangling=True,
-                word_topology=DiagonalWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            ),
-        },
-        layout=DeviceLayout(sites_per_word=16),
-    )
-    arch = build_arch(bp).arch
+    arch = load_arch("two_entangling_zones")
 
     with pytest.raises(ValueError, match="expects exactly one entangling zone"):
         _ = PhysicalLayoutHeuristicGraphPartitionCenterOut(arch_spec=arch).home_word_ids

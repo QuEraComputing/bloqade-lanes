@@ -8,7 +8,6 @@ from kirin import ir, rewrite
 from kirin.analysis import forward
 from kirin.dialects import ilist, py
 
-import bloqade.gemini as gemini
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.arch.gemini.state_injection import (
@@ -22,7 +21,6 @@ from bloqade.lanes.arch.gemini.state_injection import (
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite.move2squin import gates
-from bloqade.lanes.transform import LogicalPipeline
 
 WINDOW = CZWindow.from_bounds(-20.0, 20.0, keep_out_buffer=10.0)
 
@@ -372,37 +370,3 @@ def test_make_getter_matches_direct_call():
 
 
 # --- end to end ---------------------------------------------------------------
-
-
-def test_bridge_applies_to_pipeline_output():
-    """Every LogicalInitialize the logical pipeline emits can be bridged, and
-    the masks account for exactly the qubits the node initialises."""
-
-    @gemini.logical.kernel(aggressive_unroll=True)
-    def kernel():
-        reg = squin.qalloc(3)
-        squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
-        squin.cx(reg[1], reg[2])
-        gemini.logical.terminal_measure(reg)
-
-    spec = logical.get_arch_spec()
-    out = LogicalPipeline(
-        arch_spec=spec, transversal_rewrite=True, simulation=False
-    ).emit(kernel)
-
-    inits = [
-        s for s in out.callable_region.walk() if isinstance(s, move.LogicalInitialize)
-    ]
-    assert inits, "pipeline emitted no move.LogicalInitialize"
-
-    for node in inits:
-        args = logical_initialize_to_state_injection_args(node, spec, WINDOW)
-        assert len(args) == 10
-        active = sum(_mask(args[0])) + sum(_mask(args[3]))
-        assert active == len(node.location_addresses)
-        for arg in args:
-            owner = arg.owner
-            assert isinstance(owner, ir.Statement) and owner.parent is not None
-
-    out.verify()

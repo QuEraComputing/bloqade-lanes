@@ -49,11 +49,23 @@ def _squin_to_move(
     layout_heuristic: LayoutHeuristicABC,
     placement_strategy: PlacementStrategyABC,
     logical_initialize: bool,
+    transversal_rewrite: bool = False,
 ) -> ir.Method:
-    NativeStage = LogicalNativeToPlace if logical_initialize else NativeToPlace
-    place_mt = NativeStage(arch_spec=getattr(layout_heuristic, "arch_spec", None)).emit(
-        mt
-    )
+    """Lower a kernel to the move dialect through the logical or generic stage.
+
+    Pass ``transversal_rewrite=True`` (logical only) when the result will go
+    through ``transversal_rewrites``: that lowering assumes the Steane
+    conventions the flag applies at the native stage.
+    """
+    arch_spec = getattr(layout_heuristic, "arch_spec", None)
+    if logical_initialize:
+        place_mt = LogicalNativeToPlace(
+            arch_spec=arch_spec, transversal_rewrite=transversal_rewrite
+        ).emit(mt)
+    else:
+        if transversal_rewrite:
+            raise ValueError("transversal_rewrite requires logical_initialize=True")
+        place_mt = NativeToPlace(arch_spec=arch_spec).emit(mt)
     SequentialPlacePass(place_mt.dialects)(place_mt)
     return PlaceToMove(
         layout_heuristic=layout_heuristic,
@@ -263,6 +275,7 @@ class BenchmarkRunner:
                 layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
                 placement_strategy=placement_strategy,
                 logical_initialize=True,
+                transversal_rewrite=True,
             )
             move_mt = transversal_rewrites(move_mt)
             # aggressive_unroll is required so the broadcasted state-prep loops

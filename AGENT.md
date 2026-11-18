@@ -10,7 +10,7 @@ This is a hybrid Rust + Python package. The Rust crates provide a bytecode forma
 
 - **Package manager**: `uv` (Python) + `cargo` (Rust)
 - **Build backend**: Maturin (PyO3 bindings for Rust → Python)
-- **Python**: >= 3.10 (tested on 3.10, 3.11, 3.12)
+- **Python**: >= 3.11 (tested on 3.11, 3.12, 3.13, 3.14)
 - **Rust**: stable toolchain
 - **Source layout**: `python/bloqade/lanes/` (Python), `crates/` (Rust)
 - **Key Python deps**: kirin-toolchain (IR framework), bloqade-circuit, bloqade-geometry, rustworkx, numpy, scipy
@@ -42,7 +42,6 @@ All tasks use `just` (rust-just):
 just coverage          # Run Python tests with coverage + generate XML report
 just coverage-run      # Run Python tests only
 just coverage-html     # Generate HTML coverage report
-just demo              # Run all demo scripts
 just doc               # Build and open documentation site in browser
 just doc-all           # Build documentation site (book + Rust API)
 just doc-book          # Build mdBook only

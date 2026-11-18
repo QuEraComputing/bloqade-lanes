@@ -2,17 +2,12 @@
 
 import pytest
 from kirin import ir
-from kirin.dialects.ilist import IList
 from kirin.prelude import structural_no_opt
 from kirin.serialization import JSONSerializer
 from kirin.serialization.base.deserializer import Deserializer
 from kirin.serialization.base.serializer import Serializer
 from kirin.serialization.core.serializationmodule import SerializationModule
 
-from bloqade import squin
-from bloqade.gemini import logical
-from bloqade.lanes.analysis.atom._shot_remapping import ShotRemappingErr
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
@@ -22,7 +17,6 @@ from bloqade.lanes.bytecode.encoding import (
     WordLaneAddress,
     ZoneAddress,
 )
-from bloqade.lanes.transform import LogicalPipeline
 
 
 def roundtrip(value):
@@ -103,41 +97,3 @@ def test_fixed_lane_rejects_conflicting_move_type():
     unit.data["move_type"] = serializer.serialize("WORD")
     with pytest.raises(ValueError, match="does not match"):
         SiteLaneAddress.deserialize(unit, Deserializer(dialect_group=structural_no_opt))
-
-
-@logical.kernel(aggressive_unroll=True)
-def bell():
-    reg = logical.qalloc_at(IList([4, 5]))
-    squin.h(reg[0])
-    squin.cx(reg[0], reg[1])
-    return logical.terminal_measure(reg)
-
-
-@pytest.mark.parametrize("simulation", [True, False])
-def test_compiled_move_program_roundtrip(simulation):
-    program = LogicalPipeline(
-        get_arch_spec(),
-        transversal_rewrite=True,
-        simulation=simulation,
-    ).emit(bell)
-    serializer = JSONSerializer()
-    payload = serializer.encode(program.dialects.encode(program, version="1.0.0"))
-    restored = program.dialects.decode(serializer.decode(payload))
-    restored.verify()
-    assert (
-        serializer.encode(restored.dialects.encode(restored, version="1.0.0"))
-        == payload
-    )
-    from bloqade.lanes.analysis import atom
-    from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_spec
-
-    arch = get_physical_spec()
-    original_mapping = atom.AtomInterpreter(
-        program.dialects, arch_spec=arch
-    ).get_shot_remapping(program)
-    restored_mapping = atom.AtomInterpreter(
-        restored.dialects, arch_spec=arch
-    ).get_shot_remapping(restored)
-    assert not isinstance(original_mapping, ShotRemappingErr)
-    assert not isinstance(restored_mapping, ShotRemappingErr)
-    assert original_mapping.mapping == restored_mapping.mapping

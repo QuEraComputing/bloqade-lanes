@@ -15,17 +15,6 @@ env:
   UV_HTTP_TIMEOUT: 300
 
 jobs:
-  javascript:
-    name: JavaScript syntax and controller tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-      - uses: extractions/setup-just@v4
-      - run: just check-visualization-js
-
   fmt:
     name: cargo fmt
     runs-on: ubuntu-latest

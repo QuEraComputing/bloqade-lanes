@@ -8,7 +8,7 @@ default:
 # ── Python ──────────────────────────────────────────────────────────
 
 coverage-run:
-    uv run --locked pytest python/tests --cov --cov-report= -n auto -m "not msd_numerical_regression"
+    uv run --locked pytest python/tests --cov --cov-report= -n auto
 
 coverage-xml: coverage-run
     uv run --locked coverage xml
@@ -23,13 +23,6 @@ coverage-open: coverage-html
     open htmlcov/index.html
 
 coverage: coverage-run coverage-xml coverage-report
-
-# Parse-check the packaged Plotly interaction controller. The ``{plot_id}``
-# token is inside a JavaScript string literal, so it is valid before Plotly
-# substitutes the concrete div ID during HTML generation.
-check-visualization-js:
-    node --check python/bloqade/lanes/visualize/_arch_interactive.js
-    node --test python/tests/visualize/test_arch_interactive.cjs
 
 # ── Rust Coverage ───────────────────────────────────────────────────
 
@@ -50,50 +43,6 @@ coverage-all: coverage-run coverage-xml coverage-rust
 # Open combined coverage HTML report
 coverage-all-open: coverage-all
     open htmlcov-all/index.html
-
-demo-msd:
-    uv run --locked --no-sync python demo/msd.py
-
-demo-pipeline:
-    uv run --locked --no-sync python demo/pipeline_demo.py
-
-pipeline-details:
-    uv run --locked --no-sync python demo/pipeline_details.py
-
-simulator-device-demo:
-    uv run --locked --no-sync python demo/simulator_device_demo.py
-
-demo-explicit-allocation:
-    uv run --locked --no-sync python demo/explicit_allocation.py
-
-demo-logical-dialect:
-    uv run --locked --no-sync python demo/logical_dialect_demo.py
-
-demo-logical-new-at:
-    uv run --locked --no-sync python demo/logical_new_at_demo.py
-
-demo-msd-postselection-experiment:
-    uv run --locked --no-sync python demo/msd_postselection_experiment.py
-
-demo-phys-arch-customization:
-    uv run --locked --no-sync python demo/physical_arch_customization.py
-
-demo-star-logical-demo:
-    uv run --locked --no-sync python demo/star_logical_demo.py
-
-demo-simulators:
-    uv run --locked --no-sync python demo/simulators_demo.py
-
-demo-qalloc-at:
-    uv run --locked --no-sync python demo/logical_qalloc_at_demo.py
-
-demo-extend-site-buses:
-    uv run --locked --no-sync python demo/extend_gemini_site_buses.py
-
-demo-arch-cust-vis:
-    uv run --locked --no-sync python demo/arch_cust_vis_demo.py
-
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation demo-logical-dialect demo-logical-new-at demo-msd-postselection-experiment demo-phys-arch-customization demo-star-logical-demo demo-qalloc-at demo-extend-site-buses demo-arch-cust-vis
 
 # Install mdBook at the pinned version
 install-mdbook:

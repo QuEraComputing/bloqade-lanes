@@ -211,6 +211,25 @@ class RewriteGates(RewriteRule):
             move.Store(mid_state.result),
         ]
 
+    @stmts_to_insert.register(place.StarR)
+    def _(self, node: place.StarR, state_after: placement.AtomState):
+        if not isinstance(state_after, placement.ConcreteState):
+            return None
+
+        location_addresses = tuple(state_after.layout[i] for i in node.qubits)
+        current_state = move.Load()
+        return [
+            current_state,
+            mid_state := move.StarR(
+                current_state.result,
+                node.axis_angle,
+                node.rotation_angle,
+                location_addresses=location_addresses,
+                qubit_indices=node.qubit_indices,
+            ),
+            move.Store(mid_state.result),
+        ]
+
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, place.QuantumStmt):
             return RewriteResult()
