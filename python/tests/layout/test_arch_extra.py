@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from bloqade.lanes.arch.spec import ArchSpec
@@ -22,7 +20,6 @@ from bloqade.lanes.bytecode.encoding import (
     ZoneAddress,
 )
 from bloqade.lanes.bytecode.word import Word
-from bloqade.lanes.visualize.arch import ArchVisualizer
 
 word = Word(sites=((0, 0), (1, 0)))
 
@@ -54,25 +51,6 @@ arch_spec = ArchSpec.from_components(
 )
 
 
-def test_show_with_mocked_pyplot():
-    """``ArchSpec.show`` delegates to ``ArchVisualizer.show``; the existing
-    API must still drive matplotlib and call ``plt.show``."""
-    with (
-        patch("matplotlib.pyplot.gca") as mock_gca,
-        patch("matplotlib.pyplot.show") as mock_show,
-        patch("matplotlib.pyplot.plot") as mock_plot,
-    ):
-        mock_ax = MagicMock()
-        mock_gca.return_value = mock_ax
-        ArchVisualizer(arch_spec).show(
-            ax=mock_ax, show_words=[0], show_intra=[0], show_inter=[0]
-        )
-        # Check that plot was called (either on ax or pyplot)
-        assert mock_ax.plot.called or mock_plot.called
-        # Check that plt.show was called
-        assert mock_show.called
-
-
 def test_max_qubits():
     assert arch_spec.max_qubits == 2 * 2 // 2
 
@@ -91,17 +69,6 @@ def test_get_path_and_position():
     src, _dst = arch_spec.get_endpoints(lane)
     pos_src = arch_spec.get_position(src)
     assert isinstance(pos_src, tuple)
-
-
-def test_path_bounds_x_y_bounds():
-    viz = ArchVisualizer(arch_spec)
-    x_min, x_max, y_min, y_max = viz.path_bounds()
-    assert x_min <= x_max
-    assert y_min <= y_max
-    x_min2, x_max2 = viz.x_bounds
-    y_min2, y_max2 = viz.y_bounds
-    assert x_min2 <= x_max2
-    assert y_min2 <= y_max2
 
 
 def test_get_endpoints_word_and_site():

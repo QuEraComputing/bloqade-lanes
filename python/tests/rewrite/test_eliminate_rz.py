@@ -502,6 +502,7 @@ REGISTERED_STATEMENTS = {
     "bloqade.decoders.dialects.annotate.stmts.SetObservable",
     "bloqade.lanes.dialects.arch.stmts.NewAt",
     "bloqade.lanes.dialects.steane713.extensions.stmts.StarRz",
+    "bloqade.lanes.dialects.steane713.extensions.stmts.StarR",
     "bloqade.lanes.dialects.steane713.stmts.Initialize",
     "bloqade.lanes.dialects.steane713.stmts.TerminalLogicalMeasurement",
     "bloqade.native.dialects.gate.stmts.CZ",
@@ -701,6 +702,65 @@ def test_star_rz_is_left_alone_silently(recwarn):
 
     assert star in list(block.stmts)
     assert not recwarn.list
+
+
+def _const_of(value: ir.SSAValue) -> float:
+    owner = value.owner
+    assert isinstance(owner, py.Constant)
+    return float(owner.value.unwrap())
+
+
+def test_star_r_absorbs_pending_z_frame_into_its_axis():
+    """STAR-R's gadget is a local R on its support, so the frame shifts its
+    axis exactly as it does R's -- no Rz is written back, and the frame stays
+    pending for the next non-diagonal gate."""
+    q = squin_qubit.stmts.New()
+    reg = ilist.New(values=(q.result,), elem_type=QUBIT)
+    phase_angle = py.Constant(0.25)
+    phase = native_gate.stmts.Rz(phase_angle.result, reg.result)
+    axis = py.Constant(0.0)
+    theta = py.Constant(0.03)
+    star = extensions.StarR(axis.result, theta.result, reg.result)
+    later_axis = py.Constant(0.0)
+    later = native_gate.stmts.R(later_axis.result, theta.result, reg.result)
+    block = ir.Block([q, reg, phase_angle, phase, axis, theta, star, later_axis, later])
+
+    rewrite.Walk(EliminateRz()).rewrite(block)
+
+    statements = list(block.stmts)
+    assert not any(isinstance(s, native_gate.stmts.Rz) for s in statements)
+    assert star in statements
+    assert _const_of(star.axis_angle) == pytest.approx(-0.25)
+    assert star.rotation_angle is theta.result
+    # the frame was left pending, so the later R is shifted too
+    assert _const_of(later.axis_angle) == pytest.approx(-0.25)
+
+
+def test_star_r_split_by_frame_group_stays_star_r():
+    """When the qubits' frames differ, the R handler splits the gate. A split
+    StarR must come back as StarR with its qubit_indices, not as a plain R."""
+    q0, q1 = squin_qubit.stmts.New(), squin_qubit.stmts.New()
+    only_q0 = ilist.New(values=(q0.result,), elem_type=QUBIT)
+    both = ilist.New(values=(q0.result, q1.result), elem_type=QUBIT)
+    phase_angle = py.Constant(0.25)
+    phase = native_gate.stmts.Rz(phase_angle.result, only_q0.result)
+    axis = py.Constant(0.0)
+    theta = py.Constant(0.03)
+    star = extensions.StarR(
+        axis.result, theta.result, both.result, qubit_indices=(0, 2, 4)
+    )
+    block = ir.Block([q0, q1, only_q0, both, phase_angle, phase, axis, theta, star])
+
+    rewrite.Walk(EliminateRz()).rewrite(block)
+
+    statements = list(block.stmts)
+    assert star not in statements
+    split = [s for s in statements if isinstance(s, extensions.StarR)]
+    assert len(split) == 2
+    assert not any(type(s) is native_gate.stmts.R for s in statements)
+    assert {s.qubit_indices for s in split} == {(0, 2, 4)}
+    axes = sorted(_const_of(s.axis_angle) for s in split)
+    assert axes == pytest.approx([-0.25, 0.0])
 
 
 @pytest.mark.parametrize(

@@ -189,10 +189,10 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         This is metadata — when present, it indicates the radius
         associated with the architecture and is typically used to
         interpret the entangling pairs.  It is **not** independently
-        verified at the ArchSpec level; use
-        :meth:`ZoneBuilder.set_blockade_radius` /
-        :meth:`ArchBuilder.set_blockade_radius` if you want the pair
-        list to be derived from and checked against a radius.
+        verified at the ArchSpec level; build the architecture with
+        ``ZoneBuilder.set_blockade_radius`` / ``ArchBuilder.set_blockade_radius``
+        (in ``bloqade.gemini.arch``) if you want the pair list to be derived
+        from and checked against a radius.
         """
         return self._inner.blockade_radius
 

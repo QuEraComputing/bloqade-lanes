@@ -1,4 +1,4 @@
-"""FuseAdjacentGates: fuse adjacent same-op same-params R/Rz/StarRz/CZ statements.
+"""FuseAdjacentGates: fuse adjacent same-op same-params R/Rz/STAR/CZ statements.
 
 A place-dialect → place-dialect rewrite that operates on the body of a
 ``place.StaticPlacement``. Within that body, runs of textually-adjacent
@@ -19,7 +19,7 @@ from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import place
 
-T = TypeVar("T", place.R, place.Rz, place.StarRz, place.CZ)
+T = TypeVar("T", place.R, place.Rz, place.StarRz, place.StarR, place.CZ)
 
 
 class GateGroup(ABC, Generic[T]):
@@ -122,6 +122,28 @@ class StarRzGroup(GateGroup[place.StarRz]):
         )
 
 
+class StarRGroup(GateGroup[place.StarR]):
+    def can_extend(self, stmt: place.StarR) -> bool:
+        head = self.statements[0]
+        return (
+            self._state_chain_ok(stmt)
+            and self._qubits_disjoint(stmt)
+            and stmt.axis_angle is head.axis_angle
+            and stmt.rotation_angle is head.rotation_angle
+            and stmt.qubit_indices == head.qubit_indices
+        )
+
+    def _build_merged(self) -> place.StarR:
+        head = self.statements[0]
+        return place.StarR(
+            head.state_before,
+            head.axis_angle,
+            head.rotation_angle,
+            qubits=tuple(q for s in self.statements for q in s.qubits),
+            qubit_indices=head.qubit_indices,
+        )
+
+
 class CZGroup(GateGroup[place.CZ]):
     def can_extend(self, stmt: place.CZ) -> bool:
         # CZ has no non-qubit SSA args.
@@ -138,7 +160,7 @@ class CZGroup(GateGroup[place.CZ]):
 
 @dataclass
 class FuseAdjacentGates(rewrite_abc.RewriteRule):
-    """Fuse adjacent same-op same-params R/Rz/CZ statements with disjoint qubits."""
+    """Fuse adjacent same-op same-params gates with disjoint qubits."""
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not isinstance(node, place.StaticPlacement):
@@ -175,6 +197,14 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
                 if group is not None and group.merge_in_place():
                     changed = True
                 group = StarRzGroup()
+                group.append(stmt)
+            elif isinstance(stmt, place.StarR):
+                if isinstance(group, StarRGroup) and group.can_extend(stmt):
+                    group.append(stmt)
+                    continue
+                if group is not None and group.merge_in_place():
+                    changed = True
+                group = StarRGroup()
                 group.append(stmt)
             elif isinstance(stmt, place.CZ):
                 if isinstance(group, CZGroup) and group.can_extend(stmt):

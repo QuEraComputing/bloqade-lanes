@@ -262,3 +262,47 @@ def test_pass_rewrite_star_rz():
 
     assert result.has_done_something
     assert_nodes(method.callable_region.blocks[0], expected_block)
+
+
+def test_rewrite_star_r_noop_for_already_physical_location():
+    test_block = ir.Block()
+    test_block.stmts.append(axis_angle := py.Constant(0.25))
+    test_block.stmts.append(rotation_angle := py.Constant(0.5))
+    test_block.stmts.append(
+        move.StarR(
+            current_state := ir.TestValue(),
+            axis_angle.result,
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 4),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    expected_block = ir.Block()
+    expected_block.stmts.append(axis_angle := py.Constant(0.25))
+    expected_block.stmts.append(rotation_angle := py.Constant(0.5))
+    expected_block.stmts.append(
+        move.StarR(
+            current_state,
+            axis_angle.result,
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 4),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    result = rewrite.Walk(transversal.RewriteStarR(star_map)).rewrite(test_block)
+
+    assert not result.has_done_something
+    assert_nodes(test_block, expected_block)
+
+
+@pytest.mark.parametrize("axis", [0.0, -0.25, 0.25, 0.5, 0.75, -0.75])
+def test_steane_star_r_physical_snaps_quarter_turns_exactly(axis):
+    """At a quarter turn the helper returns the axis itself (mod 1) and the
+    plain STAR angle, with no cube-root rounding."""
+    theta = 0.07
+    physical_axis, physical_theta = transversal.steane_star_r_physical(axis, theta)
+
+    assert physical_axis == axis % 1.0
+    assert physical_theta == pytest.approx(transversal.steane_star_theta(theta))

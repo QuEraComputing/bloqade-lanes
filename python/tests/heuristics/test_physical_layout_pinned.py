@@ -1,15 +1,8 @@
 """Tests for PhysicalLayoutHeuristicGraphPartitionCenterOut.compute_layout with pinned addresses."""
 
 import pytest
+from tests._arch_fixtures import gate_zone_arch
 
-from bloqade.lanes.arch import (
-    ArchBlueprint,
-    DeviceLayout,
-    DiagonalWordTopology,
-    HypercubeSiteTopology,
-    ZoneSpec,
-    build_arch,
-)
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
@@ -17,19 +10,13 @@ from bloqade.lanes.heuristics.physical.layout import (
 
 
 def _make_arch(num_rows: int = 5, sites_per_word: int = 16):
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=num_rows,
-                num_cols=2,
-                entangling=True,
-                word_topology=DiagonalWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=sites_per_word),
+    return gate_zone_arch(
+        num_rows=num_rows,
+        num_cols=2,
+        sites_per_word=sites_per_word,
+        word_topology="diagonal",
+        site_topology="hypercube",
     )
-    return build_arch(bp).arch
 
 
 def _empty_stages() -> list[tuple[tuple[int, int], ...]]:

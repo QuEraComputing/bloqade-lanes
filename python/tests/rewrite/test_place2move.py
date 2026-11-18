@@ -655,3 +655,75 @@ def test_insert_initialize_none_location_address_is_noop():
     assert not result.has_done_something
     # No move.LogicalInitialize should have been inserted
     assert not any(isinstance(s, move.LogicalInitialize) for s in test_block.walk())
+
+
+def test_star_r():
+    state_before = ir.TestValue()
+
+    placement_analysis: dict[ir.SSAValue, AtomState] = {}
+
+    rule = rewrite.Walk(place2move.RewriteGates(placement_analysis))
+    test_block = ir.Block(
+        [
+            axis_angle := py.Constant(0.25),
+            rotation_angle := py.Constant(0.5),
+            stmt := place.StarR(
+                state_before,
+                axis_angle.result,
+                rotation_angle.result,
+                qubits=(0,),
+                qubit_indices=(0, 2, 4),
+            ),
+        ]
+    )
+
+    placement_analysis[stmt.results[0]] = ConcreteState(
+        frozenset(), (LocationAddress(0, 1),), (0,)
+    )
+
+    expected_block = ir.Block(
+        [
+            axis_angle := py.Constant(0.25),
+            rotation_angle := py.Constant(0.5),
+            current_state := move.Load(),
+            (
+                current_state := move.StarR(
+                    current_state.result,
+                    axis_angle.result,
+                    rotation_angle.result,
+                    location_addresses=(LocationAddress(0, 1),),
+                    qubit_indices=(0, 2, 4),
+                )
+            ),
+            move.Store(current_state.result),
+        ],
+    )
+
+    rule.rewrite(test_block)
+    assert_nodes(test_block, expected_block)
+
+
+def test_star_r_no_op_without_a_concrete_placement():
+    state_before = ir.TestValue()
+
+    placement_analysis: dict[ir.SSAValue, AtomState] = {}
+
+    rule = rewrite.Walk(place2move.RewriteGates(placement_analysis))
+    test_block = ir.Block(
+        [
+            axis_angle := py.Constant(0.25),
+            rotation_angle := py.Constant(0.5),
+            stmt := place.StarR(
+                state_before,
+                axis_angle.result,
+                rotation_angle.result,
+                qubits=(0,),
+                qubit_indices=(0, 2, 4),
+            ),
+        ]
+    )
+
+    placement_analysis[stmt.results[0]] = AtomState.top()
+
+    result = rule.rewrite(test_block)
+    assert not result.has_done_something

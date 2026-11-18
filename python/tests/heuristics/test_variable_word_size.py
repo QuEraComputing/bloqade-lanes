@@ -1,17 +1,10 @@
 """Tests for heuristics with varying word sizes (n_rows != 5)."""
 
 import pytest
+from tests._arch_fixtures import gate_zone_arch
 
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
-from bloqade.lanes.arch import (
-    AllToAllSiteTopology,
-    ArchBlueprint,
-    DeviceLayout,
-    HypercubeWordTopology,
-    ZoneSpec,
-    build_arch,
-)
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.logical.placement import (
@@ -22,19 +15,13 @@ from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to
 
 
 def _make_arch(word_size_y: int) -> ArchSpec:
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=1,
-                num_cols=4,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=AllToAllSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=word_size_y),
+    return gate_zone_arch(
+        num_rows=1,
+        num_cols=4,
+        sites_per_word=word_size_y,
+        word_topology="hypercube",
+        site_topology="all_to_all",
     )
-    return build_arch(bp).arch
 
 
 def _make_placement_methods(word_size_y: int) -> LogicalPlacementMethods:
