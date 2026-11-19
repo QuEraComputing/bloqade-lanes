@@ -25,8 +25,8 @@ from bloqade.lanes.bytecode.encoding import (
     WordLaneAddress,
 )
 from bloqade.lanes.bytecode.exceptions import (
+    ArchSpecBusError,
     ArchSpecError,
-    LaneGroupAODConstraintViolationError,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -195,19 +195,27 @@ _TWO_BY_TWO_JSON = """
 """
 
 
+def _two_by_two_json(site_map: dict) -> str:
+    return _TWO_BY_TWO_JSON.replace("SITE_MAP", json.dumps(site_map))
+
+
 def _two_by_two(site_map: dict) -> ArchSpec:
-    raw = _TWO_BY_TWO_JSON.replace("SITE_MAP", json.dumps(site_map))
-    return ArchSpec(RustArchSpec.from_json_validated(raw))
+    return ArchSpec(RustArchSpec.from_json_validated(_two_by_two_json(site_map)))
 
 
-@pytest.mark.parametrize("direction", [Direction.FORWARD, Direction.BACKWARD])
-def test_lane_group_landing_off_grid_is_an_aod_violation(direction):
-    # The bottom row lands on (15, 0) and (10, 3): a diagonal, not a grid.
-    arch = _two_by_two({"src": [0, 1], "dst": [1, 2]})
-    lanes = [WordLaneAddress(0, s, 0, direction, 0) for s in (0, 1)]
-    errors = arch.check_lane_group(lanes)
-    assert [type(e) for e in errors] == [LaneGroupAODConstraintViolationError]
-    assert "lane destinations" in str(errors[0])
+def test_crossing_site_map_is_rejected():
+    # The bottom row would land on (15, 0) and (10, 3), a diagonal: its y tone
+    # would have to split in two, which no AOD can do. (The lane-group check
+    # that also catches this shot is a backstop for specs that skip
+    # validation; the Python ``ArchSpec`` always validates, so it is pinned
+    # in the Rust tests.)
+    with pytest.raises(ArchSpecError) as excinfo:
+        RustArchSpec.from_json_validated(
+            _two_by_two_json({"src": [0, 1], "dst": [1, 2]})
+        )
+    errors = excinfo.value.errors
+    assert [type(e) for e in errors] == [ArchSpecBusError]
+    assert str(errors[0]).startswith("zone 0, word_bus 0: ")
 
 
 @pytest.mark.parametrize("direction", [Direction.FORWARD, Direction.BACKWARD])

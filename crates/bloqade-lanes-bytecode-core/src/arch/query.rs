@@ -965,10 +965,11 @@ impl ArchSpec {
     /// Checking both forward ends covers both directions: a backward group
     /// picks up at the forward destinations and drops at the forward sources.
     ///
-    /// On a separable bus (destination x a function of source x alone, and
-    /// likewise y) a source grid always lands on a grid, so the destination
-    /// check only bites on non-separable buses — which a word-bus site map
-    /// can easily create. When some lane does not resolve (an invalid lane,
+    /// [`validate`](Self::validate) requires every bus to be separable and
+    /// order-preserving (`ArchSpecError::AodTransport`), and on such a bus a
+    /// source grid always lands on a grid. So on a validated spec the
+    /// destination check cannot fire; it is a backstop for specs that skipped
+    /// validation. When some lane does not resolve (an invalid lane,
     /// reported by [`check_lane`](Self::check_lane)), the destination check is
     /// skipped rather than reported twice.
     pub fn check_lane_group_geometry(&self, lanes: &[LaneAddr]) -> Vec<String> {
@@ -1407,6 +1408,10 @@ mod tests {
     /// One zone, two 2×2 words side by side; word bus 0 → 1 over all four
     /// sites with the given site map. Site order within a word:
     /// 0 = (left, bottom), 1 = (right, bottom), 2 = (left, top), 3 = (right, top).
+    ///
+    /// Not validated: a crossing map is rejected by [`ArchSpec::validate`], and
+    /// the geometry tests below also need such a spec to exercise the lane-group
+    /// check on its own.
     fn two_by_two_word_bus_spec(map_src: &[u16], map_dst: &[u16]) -> ArchSpec {
         let json = r#"{
             "version": "2.0",
@@ -1430,8 +1435,18 @@ mod tests {
             src: map_src.iter().copied().map(SiteRef).collect(),
             dst: map_dst.iter().copied().map(SiteRef).collect(),
         });
-        spec.validate().expect("fixture spec should validate");
         spec
+    }
+
+    fn assert_rejected_as_crossing(spec: &ArchSpec) {
+        let errs = spec
+            .validate()
+            .expect_err("a crossing site map must not validate");
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, crate::arch::ArchSpecError::AodTransport(_))),
+            "{errs:?}"
+        );
     }
 
     fn word_lanes(sites: &[u32], direction: Direction) -> Vec<LaneAddr> {
@@ -1451,8 +1466,11 @@ mod tests {
     #[test]
     fn test_geometry_rejects_site_map_landing_off_grid() {
         // The bottom row (sites 0, 1) lands on sites 1 and 2 of word 1:
-        // (15, 0) and (10, 3), a diagonal pair rather than a grid.
+        // (15, 0) and (10, 3), a diagonal pair rather than a grid. Its y tone
+        // would split, so validation rejects the bus outright; the lane-group check
+        // still catches the shot on a spec that skipped validation.
         let spec = two_by_two_word_bus_spec(&[0, 1], &[1, 2]);
+        assert_rejected_as_crossing(&spec);
         for direction in [Direction::Forward, Direction::Backward] {
             let lanes = word_lanes(&[0, 1], direction);
             let errs = spec.check_lane_group_geometry(&lanes);
@@ -1473,6 +1491,8 @@ mod tests {
     fn test_geometry_accepts_site_map_landing_on_grid() {
         // Bottom row → top row of word 1: (10, 3), (15, 3).
         let spec = two_by_two_word_bus_spec(&[0, 1], &[2, 3]);
+        spec.validate()
+            .expect("a separable, order-preserving map validates");
         for direction in [Direction::Forward, Direction::Backward] {
             let lanes = word_lanes(&[0, 1], direction);
             assert!(spec.check_lanes(&lanes).is_empty(), "{direction:?}");
@@ -1482,8 +1502,10 @@ mod tests {
     #[test]
     fn test_geometry_still_rejects_off_grid_sources() {
         // Sources 0 and 3 are diagonal; the destination check adds nothing
-        // new, it just agrees.
+        // new, it just agrees. (The map's x tones swap, so it does not
+        // validate either.)
         let spec = two_by_two_word_bus_spec(&[0, 3], &[1, 2]);
+        assert_rejected_as_crossing(&spec);
         let errs = spec.check_lane_group_geometry(&word_lanes(&[0, 3], Direction::Forward));
         assert!(
             errs.iter()

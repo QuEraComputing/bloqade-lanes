@@ -259,11 +259,10 @@ fn solve_with_engine_impl(
         // grid at both forward ends of the group — the lanes' raw
         // `(zone_id, word_id, site_id)` (the forward sources) and their
         // forward destinations via `lane_endpoints` — so a lane group and its
-        // inverse always get the same verdict. (On a separable bus, where dst
-        // x is a function of src x alone and dst y of src y, the source grid
-        // already implies the destination grid; the destination check is what
-        // catches non-separable buses, e.g. a word bus whose `site_map` sends
-        // a row onto a diagonal.)
+        // inverse always get the same verdict. (`ArchSpec::validate`, which
+        // `SearchEngine` runs on construction, requires every bus to be
+        // separable and order-preserving, so the source grid already implies
+        // the destination grid; the destination check is a backstop.)
         //
         // Note this is the *second* replay a mirrored plan goes through: the
         // mirror's own plan was already verified inside `run_with_components`
