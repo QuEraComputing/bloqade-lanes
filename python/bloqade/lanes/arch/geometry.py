@@ -143,11 +143,18 @@ class ArchSpecGeometry:
         move_type: MoveType,
         direction: Direction,
     ) -> tuple[GeoGrid, GeoGrid]:
-        """Get start and end grids for a bus move at full occupancy.
+        """Get start and end tone grids for a bus move at full occupancy.
 
-        Returns two ``bloqade.geometry.Grid`` objects representing the
-        source and destination positions for all lanes in the specified
-        bus group.
+        Returns two ``bloqade.geometry.Grid`` objects: the AOD tone lattice
+        the bus group uses, at its source and at its destination. Each grid
+        is the Cartesian product of the distinct x and y coordinates of the
+        group's lane endpoints. A bus whose lanes do not cover a full
+        rectangle (a sparse site bus, ``sites_with_word_buses`` or word-bus
+        ``site_map``) therefore yields a grid with crossings no lane starts
+        or lands on; the grid indexes tones (e.g. to build x/y masks for a
+        lane group), it does not enumerate lanes. Validation requires every
+        bus to be separable and order-preserving, so the i-th x (y) tone of
+        ``src_grid`` moves to the i-th x (y) tone of ``dst_grid``.
 
         Args:
             zone_id: Zone index.
@@ -156,8 +163,9 @@ class ArchSpecGeometry:
             direction: FORWARD or BACKWARD.
 
         Returns:
-            ``(src_grid, dst_grid)`` where each grid contains the physical
-            positions of all source/destination sites for this bus.
+            ``(src_grid, dst_grid)``: the bus's source and destination tone
+            grids. Every lane endpoint is a grid point, but not every grid
+            point need be a lane endpoint.
 
         Raises:
             ValueError: If zone_id or bus_id is out of range, or
