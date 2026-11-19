@@ -123,7 +123,7 @@ class ArchSpecGeometry:
                 )
 
         for bus_id, bus in enumerate(zone.word_buses):
-            n = len(bus.src) * len(zone.sites_with_word_buses)
+            n = len(bus.src) * len(zone.word_bus_site_pairs(bus_id))
             for direction in (Direction.FORWARD, Direction.BACKWARD):
                 result.append(
                     BusDescriptor(
@@ -210,7 +210,7 @@ class ArchSpecGeometry:
                 )
             bus = zone.word_buses[bus_id]
             for src_word, _dst_word in zip(bus.src, bus.dst, strict=True):
-                for site_id in zone.sites_with_word_buses:
+                for site_id, _dst_site in zone.word_bus_site_pairs(bus_id):
                     lane = LaneAddress(
                         move_type, src_word, site_id, bus_id, direction, zone_id
                     )

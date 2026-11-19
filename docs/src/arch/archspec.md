@@ -86,7 +86,7 @@ A **zone** is a logical region owning a coordinate grid and the transport buses 
 | `name` | string | *(optional, default `""`)* Human-readable zone name. |
 | `grid` | Grid | Coordinate grid for all words in this zone. |
 | `site_buses` | Bus[] | Site buses moving atoms between sites within words of this zone. |
-| `word_buses` | Bus[] | Word buses moving atoms between words within this zone. |
+| `word_buses` | WordBus[] | Word buses moving atoms between words within this zone (optionally relabelling sites via `site_map`). |
 | `words_with_site_buses` | integer[] | Word IDs with site-bus transport capability in this zone. |
 | `sites_with_word_buses` | integer[] | Site indices serving as landing pads for word-bus moves. |
 | `entangling_pairs` | [w_a, w_b][] | *(optional, default `[]`)* Word pairs at blockade radius for CZ gates. |
@@ -134,7 +134,16 @@ A **word bus** moves atoms between *different words within a zone*. The `src` an
 { "src": [0], "dst": [1] }
 ```
 
-The specific sites involved in inter-word transport are those listed in the zone's `sites_with_word_buses` — the "landing pad" positions within each word.
+The specific sites involved in inter-word transport are those listed in the zone's `sites_with_word_buses` — the "landing pad" positions within each word. By default a word-bus move keeps the site index: an atom at site `s` of word `src[i]` lands on site `s` of word `dst[i]`.
+
+A word bus can also change the site index by giving an optional `site_map`, a `src`/`dst` pair of site-index arrays. The same site map applies to every word pair of the bus, so an atom at site `site_map.src[j]` of word `src[i]` lands on site `site_map.dst[j]` of word `dst[i]`:
+
+```jsonc
+// Word 0 -> word 1, and site 0 -> site 2, site 1 -> site 3.
+{ "src": [0], "dst": [1], "site_map": { "src": [0, 1], "dst": [2, 3] } }
+```
+
+With a site map, only its `src` sites are valid word-bus lane sources (a lane address still encodes the forward source word and site). Every site the map lists, source or destination, must appear in `sites_with_word_buses`. Omitting `site_map` is the identity mapping on `sites_with_word_buses`.
 
 ### Zone Bus
 
@@ -267,6 +276,8 @@ The `ArchSpec::validate()` method checks all structural rules in a single pass, 
 | All site bus indices in `src` and `dst` must be < `sites_per_word` | `ZoneBus` |
 | Word bus `src` and `dst` must have equal length | `ZoneBus` |
 | All word bus IDs in `src` and `dst` must be valid word IDs | `ZoneBus` |
+| Word bus `site_map.src` and `site_map.dst` must have equal length | `ZoneBus` |
+| All word bus `site_map` indices must be < `sites_per_word` and listed in `sites_with_word_buses` | `ZoneBus` |
 
 ### Inter-Zone Bus Rules
 
@@ -279,8 +290,8 @@ The `ArchSpec::validate()` method checks all structural rules in a single pass, 
 ### Bus Well-Formedness Rules (all bus kinds)
 
 A bus is a set of explicit edge transports executed simultaneously as one AOD
-operation — never a permutation. These rules apply to site buses, word buses,
-and zone buses alike:
+operation — never a permutation. These rules apply to site buses, word buses
+(and a word bus's `site_map`), and zone buses alike:
 
 | Rule | Error |
 |---|---|

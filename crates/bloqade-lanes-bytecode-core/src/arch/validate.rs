@@ -76,7 +76,7 @@ impl ArchSpec {
             check_zone_words_with_site_buses(zone_idx, zone, num_words, &mut errors);
             check_zone_sites_with_word_buses(zone_idx, zone, sites_per_word, &mut errors);
             check_zone_site_buses(zone_idx, zone, sites_per_word, &mut errors);
-            check_zone_word_buses(zone_idx, zone, num_words, &mut errors);
+            check_zone_word_buses(zone_idx, zone, num_words, sites_per_word, &mut errors);
             check_zone_entangling_pairs(zone_idx, zone, num_words, &mut errors);
         }
 
@@ -200,7 +200,7 @@ fn check_word_site_indices(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
 
 // --- Per-zone bus validation ---
 
-use super::types::Zone;
+use super::types::{SiteMap, Zone};
 
 /// `words_with_site_buses` entries must be < number of words.
 fn check_zone_words_with_site_buses(
@@ -280,11 +280,13 @@ fn check_zone_site_buses(
     }
 }
 
-/// Word bus src/dst must have same length and WordRef values < number of words.
+/// Word bus src/dst must have same length and WordRef values < number of words,
+/// and an optional `site_map` must be well formed.
 fn check_zone_word_buses(
     zone_idx: usize,
     zone: &Zone,
     num_words: usize,
+    sites_per_word: usize,
     errors: &mut Vec<ArchSpecError>,
 ) {
     for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
@@ -321,7 +323,61 @@ fn check_zone_word_buses(
             ArchSpecError::ZoneBus,
             errors,
         );
+        if let Some(map) = &bus.site_map {
+            check_word_bus_site_map(zone_idx, bus_idx, zone, map, sites_per_word, errors);
+        }
     }
+}
+
+/// A word bus's `site_map` obeys the same rules as a site bus, plus a
+/// membership rule.
+///
+/// `src`/`dst` must have equal length, every entry must be `< sites_per_word`
+/// and listed in the zone's `sites_with_word_buses` (the word-bus landing
+/// pads), and the src→dst relation must be well formed exactly like a site
+/// bus's ([`check_bus_relation`]): unique sources, unique destinations, and no
+/// cycles — the site map is part of the same AOD operation, so a rotation of
+/// sites is rejected even though the word relation already prevents a
+/// `(word, site)` location from mapping onto itself.
+fn check_word_bus_site_map(
+    zone_idx: usize,
+    bus_idx: usize,
+    zone: &Zone,
+    map: &SiteMap,
+    sites_per_word: usize,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    let label = format!("zone {zone_idx}, word_bus {bus_idx} site_map");
+    if map.src.len() != map.dst.len() {
+        errors.push(ArchSpecError::ZoneBus(format!(
+            "{label}: src length ({}) != dst length ({})",
+            map.src.len(),
+            map.dst.len()
+        )));
+    }
+    for (side, refs) in [("src", &map.src), ("dst", &map.dst)] {
+        for (i, sref) in refs.iter().enumerate() {
+            if sref.0 as usize >= sites_per_word {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "{label}: {side}[{i}] SiteRef({}) >= sites_per_word ({sites_per_word})",
+                    sref.0
+                )));
+            } else if !zone.sites_with_word_buses.contains(&(sref.0 as u32)) {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "{label}: {side}[{i}] site {} is not in zone {zone_idx} sites_with_word_buses",
+                    sref.0
+                )));
+            }
+        }
+    }
+    check_bus_relation(
+        &map.src,
+        &map.dst,
+        &label,
+        |s| s.0.to_string(),
+        ArchSpecError::ZoneBus,
+        errors,
+    );
 }
 
 // --- Inter-zone bus validation ---
@@ -676,7 +732,7 @@ fn check_zone_overlap(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
 mod tests {
     use super::*;
     use crate::arch::addr::{SiteRef, WordRef, ZonedWordRef};
-    use crate::arch::types::{Bus, Grid, Mode, Word, Zone};
+    use crate::arch::types::{Bus, Grid, Mode, Word, WordBus, Zone};
     use crate::version::Version;
 
     /// Create a valid two-zone arch spec for testing.
@@ -703,9 +759,10 @@ mod tests {
                         src: vec![SiteRef(0)],
                         dst: vec![SiteRef(1)],
                     }],
-                    word_buses: vec![Bus {
+                    word_buses: vec![WordBus {
                         src: vec![WordRef(0)],
                         dst: vec![WordRef(1)],
+                        site_map: None,
                     }],
                     words_with_site_buses: vec![0, 1],
                     sites_with_word_buses: vec![0],
@@ -807,9 +864,10 @@ mod tests {
         let mut spec = make_valid_two_zone_spec();
         add_third_word(&mut spec);
         // Conveyor chain 0→1, 1→2: dst set overlaps src set, no cycle.
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0), WordRef(1)],
             dst: vec![WordRef(1), WordRef(2)],
+            site_map: None,
         }];
         assert!(spec.validate().is_ok());
     }
@@ -846,9 +904,10 @@ mod tests {
         let mut spec = make_valid_two_zone_spec();
         add_third_word(&mut spec);
         // Duplicate src 0; acyclic and dst-unique so only the src rule fires.
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0), WordRef(0)],
             dst: vec![WordRef(1), WordRef(2)],
+            site_map: None,
         }];
         assert!(matches!(
             spec.validate(),
@@ -863,9 +922,10 @@ mod tests {
         let mut spec = make_valid_two_zone_spec();
         add_third_word(&mut spec);
         // Duplicate dst 1; acyclic and src-unique so only the dst rule fires.
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0), WordRef(2)],
             dst: vec![WordRef(1), WordRef(1)],
+            site_map: None,
         }];
         assert!(matches!(
             spec.validate(),
@@ -1005,12 +1065,96 @@ mod tests {
         ));
     }
 
+    fn site_mapped(src: &[u16], dst: &[u16]) -> ArchSpec {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].sites_with_word_buses = vec![0, 1];
+        spec.zones[0].word_buses = vec![WordBus::with_site_map(
+            vec![WordRef(0)],
+            vec![WordRef(1)],
+            Bus {
+                src: src.iter().copied().map(SiteRef).collect(),
+                dst: dst.iter().copied().map(SiteRef).collect(),
+            },
+        )];
+        spec
+    }
+
+    fn zone_bus_errors(spec: &ArchSpec) -> Vec<String> {
+        match spec.validate() {
+            Ok(()) => vec![],
+            Err(errs) => errs.into_iter().map(|e| e.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_valid() {
+        assert!(site_mapped(&[0], &[1]).validate().is_ok());
+        assert!(site_mapped(&[1], &[0]).validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_out_of_range() {
+        let errs = zone_bus_errors(&site_mapped(&[0], &[9]));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("site_map: dst[0] SiteRef(9)")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_not_a_landing_pad() {
+        let mut spec = site_mapped(&[0], &[1]);
+        spec.zones[0].sites_with_word_buses = vec![0];
+        let errs = zone_bus_errors(&spec);
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("site 1 is not in zone 0 sites_with_word_buses")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_length_mismatch() {
+        let errs = zone_bus_errors(&site_mapped(&[0, 1], &[1]));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("site_map: src length (2) != dst length (1)")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_duplicate_dst() {
+        let errs = zone_bus_errors(&site_mapped(&[0, 1], &[1, 1]));
+        assert!(
+            errs.iter().any(|e| e.contains("site_map: duplicate dst 1")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_cycle_rejected() {
+        // A site permutation is a rotation, rejected like a cyclic site bus.
+        let result = site_mapped(&[0, 1], &[1, 0]).validate();
+        assert!(
+            matches!(result, Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::CyclicBus(msg) if msg.contains("site_map")))),
+            "{result:?}"
+        );
+        let result = site_mapped(&[0], &[0]).validate();
+        assert!(
+            matches!(result, Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::CyclicBus(_)))),
+            "{result:?}"
+        );
+    }
+
     #[test]
     fn test_validate_word_bus_invalid_word_ref() {
         let mut spec = make_valid_two_zone_spec();
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0)],
             dst: vec![WordRef(99)],
+            site_map: None,
         }];
         assert!(matches!(
             spec.validate(),

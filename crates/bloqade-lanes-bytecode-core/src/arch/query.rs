@@ -6,8 +6,8 @@ use std::fmt;
 
 use thiserror::Error;
 
-use super::addr::{Direction, LaneAddr, LocationAddr, MoveType, SiteRef, WordRef, ZonedWordRef};
-use super::types::{ArchSpec, Bus, Word, Zone};
+use super::addr::{Direction, LaneAddr, LocationAddr, MoveType, SiteRef, ZonedWordRef};
+use super::types::{ArchSpec, Bus, Word, WordBus, Zone};
 use super::validate::ArchSpecError;
 
 /// Error returned when loading an arch spec from JSON fails.
@@ -140,7 +140,7 @@ impl Bus<SiteRef> {
     }
 }
 
-impl Bus<WordRef> {
+impl WordBus {
     /// Given a source word, return the destination word (forward move).
     pub fn resolve_forward(&self, src: u16) -> Option<u16> {
         self.src
@@ -155,6 +155,53 @@ impl Bus<WordRef> {
             .iter()
             .position(|d| d.0 == dst)
             .and_then(|i| self.src.get(i).map(|s| s.0))
+    }
+
+    /// Map a source site to the site it lands on (forward move).
+    ///
+    /// Without a site map this is the identity. It does not check the
+    /// zone's `sites_with_word_buses`; use [`Zone::word_bus_site_pairs`] or
+    /// [`ArchSpec::check_lane`] for the full membership rule.
+    pub fn resolve_site_forward(&self, src: u16) -> Option<u16> {
+        match &self.site_map {
+            Some(map) => map.resolve_forward(src),
+            None => Some(src),
+        }
+    }
+
+    /// Map a landing site back to its source site (backward move).
+    ///
+    /// Without a site map this is the identity; see
+    /// [`resolve_site_forward`](Self::resolve_site_forward).
+    pub fn resolve_site_backward(&self, dst: u16) -> Option<u16> {
+        match &self.site_map {
+            Some(map) => map.resolve_backward(dst),
+            None => Some(dst),
+        }
+    }
+}
+
+impl Zone {
+    /// The `(src_site, dst_site)` pairs word bus `bus_id` transports, the
+    /// same for every word pair of the bus.
+    ///
+    /// With a site map these are the map's pairs; without one, every site in
+    /// `sites_with_word_buses` paired with itself. Returns an empty list for
+    /// an unknown `bus_id`. A word-bus lane's `site_id` is always one of the
+    /// returned source sites.
+    pub fn word_bus_site_pairs(&self, bus_id: usize) -> Vec<(u32, u32)> {
+        let Some(bus) = self.word_buses.get(bus_id) else {
+            return Vec::new();
+        };
+        match &bus.site_map {
+            Some(map) => map
+                .src
+                .iter()
+                .zip(map.dst.iter())
+                .map(|(s, d)| (s.0 as u32, d.0 as u32))
+                .collect(),
+            None => self.sites_with_word_buses.iter().map(|&s| (s, s)).collect(),
+        }
     }
 }
 
@@ -498,10 +545,11 @@ impl ArchSpec {
             MoveType::WordBus => {
                 let bus = zone.word_buses.get(lane.bus_id as usize)?;
                 let dst_word = bus.resolve_forward(lane.word_id as u16)?;
+                let dst_site = bus.resolve_site_forward(lane.site_id as u16)?;
                 LocationAddr {
                     zone_id: lane.zone_id,
                     word_id: dst_word as u32,
-                    site_id: lane.site_id,
+                    site_id: dst_site as u32,
                 }
             }
             MoveType::ZoneBus => {
@@ -693,6 +741,13 @@ impl ArchSpec {
                         errors.push(format!(
                             "word_id {} is not a valid source for zone {} word_bus {}",
                             addr.word_id, addr.zone_id, addr.bus_id
+                        ));
+                    }
+                    if errors.is_empty() && bus.resolve_site_forward(addr.site_id as u16).is_none()
+                    {
+                        errors.push(format!(
+                            "site_id {} is not a source of the site_map of zone {} word_bus {}",
+                            addr.site_id, addr.zone_id, addr.bus_id
                         ));
                     }
                 } else {
@@ -899,11 +954,24 @@ impl ArchSpec {
         errors
     }
 
-    /// Check AOD grid constraint: lane positions must form a complete grid
-    /// (Cartesian product of unique X and Y values).
+    /// Check AOD grid constraint: the group's positions must form a complete
+    /// grid (Cartesian product of unique X and Y values) on *both* ends of
+    /// the move.
+    ///
+    /// A lane address encodes its forward source, so the first check is on
+    /// those raw `(zone_id, word_id, site_id)` positions. The second check is
+    /// on the forward destinations, resolved through [`lane_endpoints`]
+    /// (Self::lane_endpoints) — for a word bus that includes its `site_map`.
+    /// Checking both forward ends covers both directions: a backward group
+    /// picks up at the forward destinations and drops at the forward sources.
+    ///
+    /// On a separable bus (destination x a function of source x alone, and
+    /// likewise y) a source grid always lands on a grid, so the destination
+    /// check only bites on non-separable buses — which a word-bus site map
+    /// can easily create. When some lane does not resolve (an invalid lane,
+    /// reported by [`check_lane`](Self::check_lane)), the destination check is
+    /// skipped rather than reported twice.
     pub fn check_lane_group_geometry(&self, lanes: &[LaneAddr]) -> Vec<String> {
-        use std::collections::BTreeSet;
-
         let positions: Vec<(f64, f64)> = lanes
             .iter()
             .filter_map(|lane| {
@@ -920,31 +988,60 @@ impl ArchSpec {
             return vec!["some lane positions could not be resolved".to_string()];
         }
 
-        let unique_x: BTreeSet<u64> = positions.iter().map(|(x, _)| x.to_bits()).collect();
-        let unique_y: BTreeSet<u64> = positions.iter().map(|(_, y)| y.to_bits()).collect();
-
-        let expected: BTreeSet<(u64, u64)> = unique_x
-            .iter()
-            .flat_map(|x| unique_y.iter().map(move |y| (*x, *y)))
-            .collect();
-
-        let actual: BTreeSet<(u64, u64)> = positions
-            .iter()
-            .map(|(x, y)| (x.to_bits(), y.to_bits()))
-            .collect();
-
-        if actual != expected {
-            vec![format!(
-                "lanes do not form a complete grid: expected {} positions ({}x * {}y), got {} unique positions",
-                expected.len(),
-                unique_x.len(),
-                unique_y.len(),
-                actual.len()
-            )]
-        } else {
-            vec![]
+        let mut errors = Vec::new();
+        if let Some(msg) = grid_violation(&positions) {
+            errors.push(format!("lanes do not form a complete grid: {msg}"));
         }
+
+        let destinations: Option<Vec<(f64, f64)>> = lanes
+            .iter()
+            .map(|lane| {
+                let (src, dst) = self.lane_endpoints(lane)?;
+                let fwd_dst = match lane.direction {
+                    Direction::Forward => dst,
+                    Direction::Backward => src,
+                };
+                self.location_position(&fwd_dst)
+            })
+            .collect();
+        if let Some(destinations) = destinations
+            && let Some(msg) = grid_violation(&destinations)
+        {
+            errors.push(format!(
+                "lane destinations do not form a complete grid: {msg}"
+            ));
+        }
+        errors
     }
+}
+
+/// `None` when `positions` is a complete grid (the Cartesian product of its
+/// unique x and y values); otherwise a description of the mismatch.
+fn grid_violation(positions: &[(f64, f64)]) -> Option<String> {
+    use std::collections::BTreeSet;
+
+    let unique_x: BTreeSet<u64> = positions.iter().map(|(x, _)| x.to_bits()).collect();
+    let unique_y: BTreeSet<u64> = positions.iter().map(|(_, y)| y.to_bits()).collect();
+
+    let expected: BTreeSet<(u64, u64)> = unique_x
+        .iter()
+        .flat_map(|x| unique_y.iter().map(move |y| (*x, *y)))
+        .collect();
+
+    let actual: BTreeSet<(u64, u64)> = positions
+        .iter()
+        .map(|(x, y)| (x.to_bits(), y.to_bits()))
+        .collect();
+
+    (actual != expected).then(|| {
+        format!(
+            "expected {} positions ({}x * {}y), got {} unique positions",
+            expected.len(),
+            unique_x.len(),
+            unique_y.len(),
+            actual.len()
+        )
+    })
 }
 
 #[cfg(test)]
@@ -981,9 +1078,10 @@ mod tests {
                         src: vec![SiteRef(0)],
                         dst: vec![SiteRef(1)],
                     }],
-                    word_buses: vec![Bus {
+                    word_buses: vec![WordBus {
                         src: vec![WordRef(0)],
                         dst: vec![WordRef(1)],
+                        site_map: None,
                     }],
                     words_with_site_buses: vec![0, 1],
                     sites_with_word_buses: vec![0],
@@ -1208,6 +1306,189 @@ mod tests {
                 word_id: 0,
                 site_id: 0,
             }
+        );
+    }
+
+    /// Two-zone spec whose zone-0 word bus also relabels site 0 → site 1.
+    fn make_site_mapped_word_bus_spec() -> ArchSpec {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].sites_with_word_buses = vec![0, 1];
+        spec.zones[0].word_buses = vec![WordBus::with_site_map(
+            vec![WordRef(0)],
+            vec![WordRef(1)],
+            Bus {
+                src: vec![SiteRef(0)],
+                dst: vec![SiteRef(1)],
+            },
+        )];
+        spec.validate().expect("site-mapped spec should validate");
+        spec
+    }
+
+    fn loc(zone_id: u32, word_id: u32, site_id: u32) -> LocationAddr {
+        LocationAddr {
+            zone_id,
+            word_id,
+            site_id,
+        }
+    }
+
+    fn word_lane(site_id: u32, direction: Direction) -> LaneAddr {
+        LaneAddr {
+            direction,
+            move_type: MoveType::WordBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id,
+            bus_id: 0,
+        }
+    }
+
+    #[test]
+    fn test_lane_endpoints_word_bus_site_map() {
+        let spec = make_site_mapped_word_bus_spec();
+        assert_eq!(
+            spec.lane_endpoints(&word_lane(0, Direction::Forward)),
+            Some((loc(0, 0, 0), loc(0, 1, 1)))
+        );
+        assert_eq!(
+            spec.lane_endpoints(&word_lane(0, Direction::Backward)),
+            Some((loc(0, 1, 1), loc(0, 0, 0)))
+        );
+    }
+
+    #[test]
+    fn test_check_lane_word_bus_site_not_in_site_map() {
+        let spec = make_site_mapped_word_bus_spec();
+        // Site 1 is a landing pad but not a source of the site map.
+        let errs = spec.check_lane(&word_lane(1, Direction::Forward));
+        assert!(
+            errs.iter().any(|e| e.contains("site_map")),
+            "unexpected errors: {errs:?}"
+        );
+        assert_eq!(spec.lane_endpoints(&word_lane(1, Direction::Forward)), None);
+    }
+
+    #[test]
+    fn test_lane_for_endpoints_word_bus_site_map() {
+        let spec = make_site_mapped_word_bus_spec();
+        assert_eq!(
+            spec.lane_for_endpoints(&loc(0, 0, 0), &loc(0, 1, 1)),
+            Some(word_lane(0, Direction::Forward))
+        );
+        assert_eq!(
+            spec.lane_for_endpoints(&loc(0, 1, 1), &loc(0, 0, 0)),
+            Some(word_lane(0, Direction::Backward))
+        );
+        // The site-preserving move no longer exists on this bus.
+        assert_eq!(spec.lane_for_endpoints(&loc(0, 0, 0), &loc(0, 1, 0)), None);
+    }
+
+    #[test]
+    fn test_word_bus_site_pairs() {
+        let identity = make_valid_two_zone_spec();
+        assert_eq!(identity.zones[0].word_bus_site_pairs(0), vec![(0, 0)]);
+        let mapped = make_site_mapped_word_bus_spec();
+        assert_eq!(mapped.zones[0].word_bus_site_pairs(0), vec![(0, 1)]);
+        assert!(mapped.zones[0].word_bus_site_pairs(7).is_empty());
+    }
+
+    #[test]
+    fn test_word_bus_site_map_json_round_trip() {
+        let spec = make_site_mapped_word_bus_spec();
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains("\"site_map\":{\"src\":[0],\"dst\":[1]}"));
+        assert_eq!(ArchSpec::from_json(&json).unwrap(), spec);
+        // No site map → the key is omitted, so existing JSON stays byte-stable.
+        let plain = serde_json::to_string(&make_valid_two_zone_spec()).unwrap();
+        assert!(!plain.contains("site_map"));
+    }
+
+    /// One zone, two 2×2 words side by side; word bus 0 → 1 over all four
+    /// sites with the given site map. Site order within a word:
+    /// 0 = (left, bottom), 1 = (right, bottom), 2 = (left, top), 3 = (right, top).
+    fn two_by_two_word_bus_spec(map_src: &[u16], map_dst: &[u16]) -> ArchSpec {
+        let json = r#"{
+            "version": "2.0",
+            "words": [
+                { "sites": [[0, 0], [1, 0], [0, 1], [1, 1]] },
+                { "sites": [[2, 0], [3, 0], [2, 1], [3, 1]] }
+            ],
+            "zones": [{
+                "grid": { "x_start": 0.0, "y_start": 0.0,
+                          "x_spacing": [5.0, 5.0, 5.0], "y_spacing": [3.0] },
+                "site_buses": [],
+                "word_buses": [{ "src": [0], "dst": [1] }],
+                "words_with_site_buses": [],
+                "sites_with_word_buses": [0, 1, 2, 3]
+            }],
+            "zone_buses": [],
+            "modes": [{ "name": "all", "zones": [0], "bitstring_order": [] }]
+        }"#;
+        let mut spec = ArchSpec::from_json(json).unwrap();
+        spec.zones[0].word_buses[0].site_map = Some(Bus {
+            src: map_src.iter().copied().map(SiteRef).collect(),
+            dst: map_dst.iter().copied().map(SiteRef).collect(),
+        });
+        spec.validate().expect("fixture spec should validate");
+        spec
+    }
+
+    fn word_lanes(sites: &[u32], direction: Direction) -> Vec<LaneAddr> {
+        sites
+            .iter()
+            .map(|&site_id| LaneAddr {
+                direction,
+                move_type: MoveType::WordBus,
+                zone_id: 0,
+                word_id: 0,
+                site_id,
+                bus_id: 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_geometry_rejects_site_map_landing_off_grid() {
+        // The bottom row (sites 0, 1) lands on sites 1 and 2 of word 1:
+        // (15, 0) and (10, 3), a diagonal pair rather than a grid.
+        let spec = two_by_two_word_bus_spec(&[0, 1], &[1, 2]);
+        for direction in [Direction::Forward, Direction::Backward] {
+            let lanes = word_lanes(&[0, 1], direction);
+            let errs = spec.check_lane_group_geometry(&lanes);
+            assert_eq!(errs.len(), 1, "{direction:?}: {errs:?}");
+            assert!(
+                errs[0].starts_with("lane destinations do not form a complete grid"),
+                "{errs:?}"
+            );
+            assert!(
+                spec.check_lanes(&lanes)
+                    .iter()
+                    .any(|e| matches!(e, LaneGroupError::AODConstraintViolation { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_geometry_accepts_site_map_landing_on_grid() {
+        // Bottom row → top row of word 1: (10, 3), (15, 3).
+        let spec = two_by_two_word_bus_spec(&[0, 1], &[2, 3]);
+        for direction in [Direction::Forward, Direction::Backward] {
+            let lanes = word_lanes(&[0, 1], direction);
+            assert!(spec.check_lanes(&lanes).is_empty(), "{direction:?}");
+        }
+    }
+
+    #[test]
+    fn test_geometry_still_rejects_off_grid_sources() {
+        // Sources 0 and 3 are diagonal; the destination check adds nothing
+        // new, it just agrees.
+        let spec = two_by_two_word_bus_spec(&[0, 3], &[1, 2]);
+        let errs = spec.check_lane_group_geometry(&word_lanes(&[0, 3], Direction::Forward));
+        assert!(
+            errs.iter()
+                .any(|e| e.starts_with("lanes do not form a complete grid")),
+            "{errs:?}"
         );
     }
 

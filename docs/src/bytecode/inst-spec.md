@@ -441,7 +441,7 @@ When an `ArchSpec` is provided, the validator checks the group of lanes as a who
 
 **Bus membership** — for site-bus moves, every lane's `word_id` must be in `words_with_site_buses`. For word-bus moves, every lane's `site_id` must be in `sites_with_word_buses`.
 
-**Grid constraint** — the physical positions of the lane sources must form a complete grid (Cartesian product of unique X and Y coordinates). An AOD addresses rows and columns independently, so it cannot select an arbitrary subset of positions — it must address every intersection of the selected rows and columns.
+**Grid constraint** — the physical positions of the lane sources must form a complete grid (Cartesian product of unique X and Y coordinates), and so must the positions the lanes land on. An AOD addresses rows and columns independently, so it cannot select an arbitrary subset of positions — it must address every intersection of the selected rows and columns, and the rows and columns keep that shape while they move. Both forward ends are checked (forward sources from the lane addresses, forward destinations resolved through the bus, including a word bus's `site_map`), which covers either direction.
 
 For example, if a move group contains lanes at positions `(0,0)`, `(0,1)`, `(1,0)`, and `(1,1)`, this is a valid 2x2 grid. But `(0,0)`, `(0,1)`, `(1,0)` alone is invalid — the AOD would also address `(1,1)`, so the group must include it.
 
@@ -450,7 +450,7 @@ For example, if a move group contains lanes at positions `(0,0)`, `(0,1)`, `(1,0
 | All lanes share `move_type`, `bus_id`, `direction` | `Inconsistent` |
 | Site-bus lane `word_id` in `words_with_site_buses` | `WordNotInSiteBusList` |
 | Word-bus lane `site_id` in `sites_with_word_buses` | `SiteNotInWordBusList` |
-| Lane positions form a complete grid | `AODConstraintViolation` |
+| Lane source and destination positions each form a complete grid | `AODConstraintViolation` |
 
 ### Quantum gates
 

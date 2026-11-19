@@ -395,12 +395,57 @@ class WordBus:
     The ``src`` and ``dst`` lists are parallel arrays of word indices:
     ``src[i]`` maps to ``dst[i]``.
 
+    A word bus may also change the site index. ``site_map`` relabels sites the
+    same way on every word pair of the bus: an atom at ``(src[i], s)`` lands on
+    ``(dst[i], site_map.resolve_forward(s))``. Without a site map, every site in
+    the zone's ``sites_with_word_buses`` maps to itself. The site map obeys the
+    same well-formedness rules as a site bus (unique sources, unique
+    destinations, acyclic), and every site it touches must be listed in the
+    zone's ``sites_with_word_buses``.
+
     Args:
         src (list[int]): Source word indices.
         dst (list[int]): Destination word indices.
+        site_map (Optional[SiteBus]): Site relabelling applied on every word
+            pair. Default = None (each atom keeps its site index).
     """
 
-    def __init__(self, src: list[int], dst: list[int]) -> None: ...
+    def __init__(
+        self, src: list[int], dst: list[int], site_map: Optional[SiteBus] = None
+    ) -> None: ...
+    @property
+    def site_map(self) -> Optional[SiteBus]:
+        """The site relabelling, or None when the bus keeps site indices."""
+        ...
+
+    def resolve_site_forward(self, src: int) -> Optional[int]:
+        """Map a source site to the site it lands on.
+
+        Identity when the bus has no site map.
+
+        Args:
+            src (int): Source site index.
+
+        Returns:
+            int: The destination site index, or None if ``src`` is not a source
+                of the site map.
+        """
+        ...
+
+    def resolve_site_backward(self, dst: int) -> Optional[int]:
+        """Map a landing site back to its source site.
+
+        Identity when the bus has no site map.
+
+        Args:
+            dst (int): Destination site index.
+
+        Returns:
+            int: The source site index, or None if ``dst`` is not a destination
+                of the site map.
+        """
+        ...
+
     @property
     def src(self) -> list[int]:
         """Source word indices."""
@@ -521,7 +566,26 @@ class Zone:
 
     @property
     def sites_with_word_buses(self) -> list[int]:
-        """Site indices that participate in word-bus transport."""
+        """Site indices that participate in word-bus transport.
+
+        These are the word-bus landing pads: every source or destination site
+        of any word bus in the zone.
+        """
+        ...
+
+    def word_bus_site_pairs(self, bus_id: int) -> list[tuple[int, int]]:
+        """The ``(src_site, dst_site)`` pairs a word bus transports.
+
+        The same pairs apply on every word pair of the bus: the bus's site map,
+        or each ``sites_with_word_buses`` entry paired with itself when it has
+        none. A word-bus lane's ``site_id`` is always one of the source sites.
+
+        Args:
+            bus_id (int): Index into ``word_buses``.
+
+        Returns:
+            list[tuple[int, int]]: The site pairs; empty for an unknown bus.
+        """
         ...
 
     @property
