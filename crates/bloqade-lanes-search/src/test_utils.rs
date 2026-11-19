@@ -268,11 +268,15 @@ pub fn two_zone_aligned_site_bus_arch_json() -> &'static str {
 /// Sites 0–3 are the source block `{0,1} × {0,1}` and sites 4–7 the
 /// destination block `{2,3} × {0,1}`, but the bus pairs them with a twist:
 /// `(0,0)→(2,0), (1,0)→(3,1), (0,1)→(2,1), (1,1)→(3,0)`. The full source and
-/// destination sets are both rectangles, so build-time validation accepts the
-/// spec, yet the source row `{(0,0),(1,0)}` maps to `{(2,0),(3,1)}`, which is
-/// not a rectangle. A shot's sources can therefore form a complete grid while
-/// its lane-address locations — what the validator's geometry check looks at
-/// for a backward lane — do not.
+/// destination sets are both rectangles, yet the source row `{(0,0),(1,0)}`
+/// maps to `{(2,0),(3,1)}`, which is not a rectangle. A shot's sources can
+/// therefore form a complete grid while its destinations do not.
+///
+/// The AOD tones of this bus would cross, so `ArchSpec::validate` rejects it
+/// (`ArchSpecError::AodTransport`). It stays as the input for the runtime
+/// guards that see specs which skipped validation, such as the exhaustive
+/// generator's P2 precondition; load it with `serde_json`, not
+/// `from_json_validated`.
 #[allow(dead_code)]
 pub fn non_separable_bus_arch_json() -> &'static str {
     r#"{
@@ -395,12 +399,12 @@ mod tests {
         serde_json::from_str(json).expect("fixture json parses")
     }
 
-    /// Every fixture is a spec `validate()` accepts — including the two
-    /// negatives, whose whole point is that build-time validation lets them
-    /// through.
+    /// Every fixture is a spec `validate()` accepts — including the P1
+    /// negative, whose whole point is that validation lets it through — except
+    /// the P2 negative, whose crossing bus validation now rejects.
     #[test]
     fn every_fixture_is_a_valid_spec() {
-        let fixtures: [(&str, String); 8] = [
+        let fixtures: [(&str, String); 7] = [
             ("example", example_arch_json().to_string()),
             ("full (P1 negative)", full_arch_json().to_string()),
             ("chain", chain_arch_json()),
@@ -414,10 +418,6 @@ mod tests {
                 "two-zone aligned site buses",
                 two_zone_aligned_site_bus_arch_json().to_string(),
             ),
-            (
-                "non-separable bus (P2 negative)",
-                non_separable_bus_arch_json().to_string(),
-            ),
         ];
         for (name, json) in &fixtures {
             let spec = parse(json);
@@ -430,6 +430,18 @@ mod tests {
         // Built with its own validation assert; parse it once more here so a
         // serialization round-trip is covered too.
         assert!(parse(&asymmetric_duration_arch_json()).validate().is_ok());
+
+        let crossing = parse(non_separable_bus_arch_json()).validate();
+        assert!(
+            matches!(
+                crossing,
+                Err(ref errs) if errs.iter().any(|e| matches!(
+                    e,
+                    bloqade_lanes_bytecode_core::arch::ArchSpecError::AodTransport(_)
+                ))
+            ),
+            "the P2 negative is a crossing bus: {crossing:?}"
+        );
     }
 
     /// The cross-zone lane set is a complete grid on positions (S5 passes)
