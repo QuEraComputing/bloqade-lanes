@@ -89,7 +89,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
                                 zone_id,
                             )
             for bus_id, bus in enumerate(zone.word_buses):
-                for site_id in zone.sites_with_word_buses:
+                for site_id, _dst_site in zone.word_bus_site_pairs(bus_id):
                     for word_id in bus.src:
                         for direction in (Direction.FORWARD, Direction.BACKWARD):
                             yield LaneAddress(

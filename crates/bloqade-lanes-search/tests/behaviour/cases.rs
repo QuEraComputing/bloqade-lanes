@@ -6,9 +6,9 @@
 //!
 //! Group prefixes in the case names:
 //! - `route/`: fixed-target routing, every strategy on every instance. The
-//!   instances span the Gemini specs and six synthetic topologies (conveyor
+//!   instances span the Gemini specs and seven synthetic topologies (conveyor
 //!   chains, a blocked chain head, a zone bus, zones with aligned site buses,
-//!   asymmetric lane durations).
+//!   asymmetric lane durations, a word bus with a `site_map`).
 //! - `fallback/`, `mirror/`, `bound/`, `edge/`: the routing paths the
 //!   benchmark gate covers weakly or not at all.
 //! - `knobs/`: solver options no other group sets (AOD capacity, restarts,
@@ -266,6 +266,30 @@ fn instances() -> Vec<Instance> {
                 (4, zloc(0, 0, 1)),
                 (5, zloc(0, 0, 2)),
             ]),
+        },
+        // ── A word bus with a site map (bottom row of word 0 -> top row of
+        // word 1) ──
+        // Both atoms ride the mapped bus together: one two-lane shot.
+        Instance {
+            name: "site_map_two_forward",
+            arch: Arch::SiteMappedWordBus,
+            initial: placed(&[(0, loc(0, 0)), (1, loc(0, 1))]),
+            target: placed(&[(0, loc(1, 2)), (1, loc(1, 3))]),
+        },
+        // The same shot backward: word 1's top row onto word 0's bottom row.
+        Instance {
+            name: "site_map_two_backward",
+            arch: Arch::SiteMappedWordBus,
+            initial: placed(&[(0, loc(1, 2)), (1, loc(1, 3))]),
+            target: placed(&[(0, loc(0, 0)), (1, loc(0, 1))]),
+        },
+        // Word 0's top row cannot board the bus: drop to the bottom row on
+        // the site bus first, then ride the map. Two shots.
+        Instance {
+            name: "site_map_two_via_site_hop",
+            arch: Arch::SiteMappedWordBus,
+            initial: placed(&[(0, loc(0, 2)), (1, loc(0, 3))]),
+            target: placed(&[(0, loc(1, 2)), (1, loc(1, 3))]),
         },
     ]
 }
@@ -851,6 +875,9 @@ fn hand_verified(instance: &str, strategy: Strategy) -> Option<Expect> {
         // word-bus hop: three.
         "asymmetric_swap" => 3,
         "zoned_one_atom_up" | "zoned_one_atom_down" => 7,
+        // One two-lane shot on the mapped bus; with a site hop first, two.
+        "site_map_two_forward" | "site_map_two_backward" => 1,
+        "site_map_two_via_site_hop" => 2,
         _ => return None,
     };
     matches!(strategy, Strategy::AStar | Strategy::Bfs).then(|| solved_in(optimum))

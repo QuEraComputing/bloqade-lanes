@@ -589,17 +589,24 @@ impl PySiteBus {
 )]
 #[derive(Clone)]
 pub struct PyWordBus {
-    pub(crate) inner: rs::Bus<rs_addr::WordRef>,
+    pub(crate) inner: rs::WordBus,
 }
 
 #[pymethods]
 impl PyWordBus {
+    /// A word bus moving atoms `src[i] -> dst[i]` between words.
+    ///
+    /// `site_map`, when given, relabels the site index on every word pair of
+    /// the bus (an atom at `(src[i], s)` lands on `(dst[i], m(s))`). Without
+    /// it, each site in the zone's `sites_with_word_buses` maps to itself.
     #[new]
-    fn new(src: Vec<u16>, dst: Vec<u16>) -> Self {
+    #[pyo3(signature = (src, dst, site_map=None))]
+    fn new(src: Vec<u16>, dst: Vec<u16>, site_map: Option<PyRef<'_, PySiteBus>>) -> Self {
         Self {
-            inner: rs::Bus {
+            inner: rs::WordBus {
                 src: src.into_iter().map(rs_addr::WordRef).collect(),
                 dst: dst.into_iter().map(rs_addr::WordRef).collect(),
+                site_map: site_map.map(|m| m.inner.clone()),
             },
         }
     }
@@ -614,6 +621,16 @@ impl PyWordBus {
         self.inner.dst.iter().map(|d| d.0).collect()
     }
 
+    /// The site relabelling, as a `SiteBus` (`src[i] -> dst[i]`), or None
+    /// when the bus keeps each atom's site index.
+    #[getter]
+    fn site_map(&self) -> Option<PySiteBus> {
+        self.inner
+            .site_map
+            .as_ref()
+            .map(|m| PySiteBus { inner: m.clone() })
+    }
+
     /// Map a source value to its destination (forward move).
     /// Returns None if not found.
     fn resolve_forward(&self, src: u16) -> Option<u16> {
@@ -626,10 +643,32 @@ impl PyWordBus {
         self.inner.resolve_backward(dst)
     }
 
+    /// Map a source site to the site it lands on (identity without a site
+    /// map). Returns None if the site is not a source of the site map.
+    fn resolve_site_forward(&self, src: u16) -> Option<u16> {
+        self.inner.resolve_site_forward(src)
+    }
+
+    /// Map a landing site back to its source site (identity without a site
+    /// map). Returns None if the site is not a destination of the site map.
+    fn resolve_site_backward(&self, dst: u16) -> Option<u16> {
+        self.inner.resolve_site_backward(dst)
+    }
+
     fn __repr__(&self) -> String {
         let src: Vec<u16> = self.inner.src.iter().map(|s| s.0).collect();
         let dst: Vec<u16> = self.inner.dst.iter().map(|d| d.0).collect();
-        format!("WordBus(src={:?}, dst={:?})", src, dst)
+        match &self.inner.site_map {
+            None => format!("WordBus(src={:?}, dst={:?})", src, dst),
+            Some(m) => {
+                let ms: Vec<u16> = m.src.iter().map(|s| s.0).collect();
+                let md: Vec<u16> = m.dst.iter().map(|d| d.0).collect();
+                format!(
+                    "WordBus(src={:?}, dst={:?}, site_map=SiteBus(src={:?}, dst={:?}))",
+                    src, dst, ms, md
+                )
+            }
+        }
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -811,6 +850,14 @@ impl PyZone {
     #[getter]
     fn sites_with_word_buses(&self) -> Vec<u32> {
         self.inner.sites_with_word_buses.clone()
+    }
+
+    /// The `(src_site, dst_site)` pairs word bus `bus_id` transports, shared
+    /// by every word pair of the bus: the bus's site map, or each
+    /// `sites_with_word_buses` entry paired with itself. Empty for an unknown
+    /// `bus_id`.
+    fn word_bus_site_pairs(&self, bus_id: usize) -> Vec<(u32, u32)> {
+        self.inner.word_bus_site_pairs(bus_id)
     }
 
     #[getter]
