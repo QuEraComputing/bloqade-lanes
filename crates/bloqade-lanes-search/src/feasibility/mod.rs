@@ -394,15 +394,17 @@ mod tests {
     }
 
     /// The example arch with site bus 0 turned into a conveyor chain
-    /// (0→1, 1→2, 2→3, 3→4, 4→5): the destination set overlaps the source
-    /// set on {1,2,3,4}, but the relation is acyclic and endpoint-unique, so
-    /// it is a legal bus (#874) and a legal input to the reduction (#866).
+    /// (0→1, 1→2, 2→3, 3→4) along one row: the destination set overlaps the
+    /// source set on {1,2,3}, but the relation is acyclic and endpoint-unique,
+    /// so it is a legal bus (#874) and a legal input to the reduction (#866).
+    /// (Extending it with 4→5 would wrap onto the next row, which no AOD can
+    /// do, and `validate()` rejects.)
     fn overlapping_chain_arch_json() -> String {
         let mut spec: ArchSpec =
             serde_json::from_str(example_arch_json()).expect("arch json parses");
         let bus = &mut spec.zones[0].site_buses[0];
-        bus.src = (0..5).map(SiteRef).collect();
-        bus.dst = (1..6).map(SiteRef).collect();
+        bus.src = (0..4).map(SiteRef).collect();
+        bus.dst = (1..5).map(SiteRef).collect();
         let validation = spec.validate();
         assert!(
             validation.is_ok(),

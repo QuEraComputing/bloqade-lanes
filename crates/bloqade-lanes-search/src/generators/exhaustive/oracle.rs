@@ -732,6 +732,13 @@ pub(super) fn load(json: &str) -> (Oracle, LaneIndex) {
     (Oracle::new(spec.clone()), LaneIndex::new(spec))
 }
 
+/// [`load`] without the validation assert, for the P2 negative fixture, whose
+/// crossing bus `validate()` rejects but a `LaneIndex` still accepts.
+fn load_unvalidated(json: &str) -> (Oracle, LaneIndex) {
+    let spec: ArchSpec = serde_json::from_str(json).expect("spec json parses");
+    (Oracle::new(spec.clone()), LaneIndex::new(spec))
+}
+
 /// The fixtures small enough for the power set, by name.
 pub(super) fn small_fixtures() -> Vec<(&'static str, String)> {
     use crate::test_utils::*;
@@ -787,7 +794,11 @@ mod tests {
             crate::test_utils::non_separable_bus_arch_json().to_string(),
         ));
         for (name, json) in specs {
-            let (oracle, index) = load(&json);
+            let (oracle, index) = if name == "non-separable" {
+                load_unvalidated(&json)
+            } else {
+                load(&json)
+            };
             let from_index: BTreeMap<Group, BTreeSet<u64>> = index
                 .bus_groups()
                 .map(|(mt, bus_id, zone_id, dir)| {
