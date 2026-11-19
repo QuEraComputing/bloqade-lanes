@@ -250,7 +250,7 @@
 <tr><td><code>name</code></td><td>string</td><td><em>(optional, default <code>&quot;&quot;</code>)</em> Human-readable zone name.</td></tr>
 <tr><td><code>grid</code></td><td>Grid</td><td>Coordinate grid for all words in this zone.</td></tr>
 <tr><td><code>site_buses</code></td><td>Bus[]</td><td>Site buses moving atoms between sites within words of this zone.</td></tr>
-<tr><td><code>word_buses</code></td><td>Bus[]</td><td>Word buses moving atoms between words within this zone.</td></tr>
+<tr><td><code>word_buses</code></td><td>WordBus[]</td><td>Word buses moving atoms between words within this zone (optionally relabelling sites via <code>site_map</code>).</td></tr>
 <tr><td><code>words_with_site_buses</code></td><td>integer[]</td><td>Word IDs with site-bus transport capability in this zone.</td></tr>
 <tr><td><code>sites_with_word_buses</code></td><td>integer[]</td><td>Site indices serving as landing pads for word-bus moves.</td></tr>
 <tr><td><code>entangling_pairs</code></td><td>[w_a, w_b][]</td><td><em>(optional, default <code>[]</code>)</em> Word pairs at blockade radius for CZ gates.</td></tr>
@@ -281,7 +281,12 @@
 <p>A <strong>word bus</strong> moves atoms between <em>different words within a zone</em>. The <code>src</code> and <code>dst</code> arrays contain word IDs (not site indices). A word bus's ID is its index in the owning zone's <code>word_buses</code> array.</p>
 <pre><code class="language-jsonc">{ &quot;src&quot;: [0], &quot;dst&quot;: [1] }
 </code></pre>
-<p>The specific sites involved in inter-word transport are those listed in the zone's <code>sites_with_word_buses</code> — the &quot;landing pad&quot; positions within each word.</p>
+<p>The specific sites involved in inter-word transport are those listed in the zone's <code>sites_with_word_buses</code> — the &quot;landing pad&quot; positions within each word. By default a word-bus move keeps the site index: an atom at site <code>s</code> of word <code>src[i]</code> lands on site <code>s</code> of word <code>dst[i]</code>.</p>
+<p>A word bus can also change the site index by giving an optional <code>site_map</code>, a <code>src</code>/<code>dst</code> pair of site-index arrays. The same site map applies to every word pair of the bus, so an atom at site <code>site_map.src[j]</code> of word <code>src[i]</code> lands on site <code>site_map.dst[j]</code> of word <code>dst[i]</code>:</p>
+<pre><code class="language-jsonc">// Word 0 -&gt; word 1, and site 0 -&gt; site 2, site 1 -&gt; site 3.
+{ &quot;src&quot;: [0], &quot;dst&quot;: [1], &quot;site_map&quot;: { &quot;src&quot;: [0, 1], &quot;dst&quot;: [2, 3] } }
+</code></pre>
+<p>With a site map, only its <code>src</code> sites are valid word-bus lane sources (a lane address still encodes the forward source word and site). Every site the map lists, source or destination, must appear in <code>sites_with_word_buses</code>. Omitting <code>site_map</code> is the identity mapping on <code>sites_with_word_buses</code>. Like every bus, a site-mapped word bus must be one AOD operation (see <a href="#bus-well-formedness">Bus Well-Formedness</a>): its <code>src</code> sites must form a complete grid within the word, and the map may shift rows and columns but cannot send one row onto a diagonal or reorder columns.</p>
 <h3 id="zone-bus"><a class="header" href="#zone-bus">Zone Bus</a></h3>
 <p>A <strong>zone bus</strong> (top-level <code>zone_buses</code>) moves words <em>across zone boundaries</em>. Entries are zone-qualified word references, and every <code>(src[i], dst[i])</code> pair must have different <code>zone_id</code>s.</p>
 <pre><code class="language-jsonc">{
@@ -290,7 +295,8 @@
 }
 </code></pre>
 <h3 id="bus-well-formedness"><a class="header" href="#bus-well-formedness">Bus Well-Formedness</a></h3>
-<p>For every bus kind, the <code>src</code>→<code>dst</code> relation must be well-formed: <code>src</code> entries unique, <code>dst</code> entries unique, and <strong>acyclic</strong> (no rotations, including self-loops) — a bus is a set of explicit transports, never a permutation. Overlapping-but-acyclic relations (conveyor chains such as <code>0→1, 1→2</code>) are legal. See <a href="#validation-rules">Validation Rules</a>.</p>
+<p>For every bus kind, the <code>src</code>→<code>dst</code> relation must be well-formed: <code>src</code> entries unique, <code>dst</code> entries unique, and <strong>acyclic</strong> (no rotations, including self-loops) — a bus is a set of explicit transports, never a permutation. Overlapping-but-acyclic relations (conveyor chains such as <code>0→1, 1→2</code>) are legal.</p>
+<p>Every bus must also be <strong>one AOD operation</strong>. An AOD traps atoms at the crossings of its x and y tones and sweeps each tone independently; tones cannot cross, merge or split mid-transport. So, over every lane the bus can fire together, each atom's landing x must depend only on its source column, and its landing y only on its source row, and the sorted source tones must land on the sorted destination tones. The AOD also traps at every crossing of its tones, so the bus's sources must form a <strong>complete grid</strong>. A bus that sends a row onto a diagonal, swaps the order of two columns, or starts from a diagonal (for example sites 0 and 4 of a 3×2 word) is rejected. On a valid bus the full set of sources and the full set of destinations are each a complete grid, and any rectangle of sources lands on a rectangle. See <a href="#validation-rules">Validation Rules</a>.</p>
 <hr />
 <h2 id="modes"><a class="header" href="#modes">Modes</a></h2>
 <p>A <strong>mode</strong> is a named operational configuration: a subset of zones plus the bitstring ordering used for measurement results.</p>
@@ -351,7 +357,7 @@
 <p>The <code>ArchSpec::validate()</code> method checks all structural rules in a single pass, collecting every error rather than failing fast. Errors are grouped into coarse <code>ArchSpecError</code> categories, each carrying a descriptive message; the <strong>Error</strong> column below names the category (Rust enum variant). Through the Python bindings the categories map onto exception classes:</p>
 <div class="table-wrapper"><table><thead><tr><th><code>ArchSpecError</code> variant</th><th>Python exception</th></tr></thead><tbody>
 <tr><td><code>Structure</code></td><td><code>ArchSpecGeometryError</code></td></tr>
-<tr><td><code>ZoneBus</code>, <code>InterZoneBus</code>, <code>CyclicBus</code></td><td><code>ArchSpecBusError</code></td></tr>
+<tr><td><code>ZoneBus</code>, <code>InterZoneBus</code>, <code>CyclicBus</code>, <code>AodTransport</code></td><td><code>ArchSpecBusError</code></td></tr>
 <tr><td><code>EntanglingPair</code>, <code>Mode</code></td><td><code>ArchSpecZoneError</code></td></tr>
 <tr><td><code>Path</code></td><td><code>ArchSpecPathError</code></td></tr>
 </tbody></table>
@@ -374,6 +380,8 @@
 <tr><td>All site bus indices in <code>src</code> and <code>dst</code> must be &lt; <code>sites_per_word</code></td><td><code>ZoneBus</code></td></tr>
 <tr><td>Word bus <code>src</code> and <code>dst</code> must have equal length</td><td><code>ZoneBus</code></td></tr>
 <tr><td>All word bus IDs in <code>src</code> and <code>dst</code> must be valid word IDs</td><td><code>ZoneBus</code></td></tr>
+<tr><td>Word bus <code>site_map.src</code> and <code>site_map.dst</code> must have equal length</td><td><code>ZoneBus</code></td></tr>
+<tr><td>All word bus <code>site_map</code> indices must be &lt; <code>sites_per_word</code> and listed in <code>sites_with_word_buses</code></td><td><code>ZoneBus</code></td></tr>
 </tbody></table>
 </div>
 <h3 id="inter-zone-bus-rules"><a class="header" href="#inter-zone-bus-rules">Inter-Zone Bus Rules</a></h3>
@@ -385,12 +393,13 @@
 </div>
 <h3 id="bus-well-formedness-rules-all-bus-kinds"><a class="header" href="#bus-well-formedness-rules-all-bus-kinds">Bus Well-Formedness Rules (all bus kinds)</a></h3>
 <p>A bus is a set of explicit edge transports executed simultaneously as one AOD
-operation — never a permutation. These rules apply to site buses, word buses,
-and zone buses alike:</p>
+operation — never a permutation. These rules apply to site buses, word buses
+(and a word bus's <code>site_map</code>), and zone buses alike:</p>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
 <tr><td><code>src</code> entries must be unique (endpoint resolution is positional first-match, so a duplicated source silently shadows later pairs)</td><td><code>ZoneBus</code> / <code>InterZoneBus</code></td></tr>
 <tr><td><code>dst</code> entries must be unique (two simultaneous transports into one site cannot both complete)</td><td><code>ZoneBus</code> / <code>InterZoneBus</code></td></tr>
 <tr><td>The <code>src</code>→<code>dst</code> relation must be acyclic, including self-loops — a cycle would rotate a fully-occupied set of atoms with no empty site, which AOD hardware cannot do. Overlapping-but-acyclic relations (conveyor chains such as <code>0→1, 1→2</code>) are legal.</td><td><code>CyclicBus</code></td></tr>
+<tr><td>The bus must be one AOD operation. A site or word bus is checked over all of its lanes in its zone (a word bus resolves sites through its <code>site_map</code>); a zone bus is checked per source zone. The source positions must form a complete grid, and the move must be separable and order-preserving: landing x depends only on source x, landing y only on source y, the source and destination have the same number of distinct x and y values, and their order is kept.</td><td><code>AodTransport</code></td></tr>
 </tbody></table>
 </div>
 <h3 id="entangling-pair-rules"><a class="header" href="#entangling-pair-rules">Entangling Pair Rules</a></h3>
