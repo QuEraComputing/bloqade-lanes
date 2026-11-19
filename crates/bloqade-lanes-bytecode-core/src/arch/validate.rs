@@ -49,12 +49,14 @@ pub enum ArchSpecError {
     /// **separable and order-preserving**: an atom's landing x is decided by
     /// its column alone and its landing y by its row alone, and the sorted
     /// source tones land on the sorted destination tones, because two tones
-    /// cannot cross, merge or split. A bus that would send one row onto a
-    /// diagonal, or reverse the order of two columns, is rejected.
+    /// cannot cross, merge or split. The sources must also form a complete
+    /// grid, since the AOD traps at every crossing of its tones. A bus that
+    /// would send one row onto a diagonal, reverse the order of two columns,
+    /// or start from a diagonal, is rejected.
     ///
     /// On a bus that passes, any rectangle of its sources lands on a
     /// rectangle, which is what lets the router build shots from source
-    /// positions alone.
+    /// positions alone, and the full bus is one rectangle at each end.
     #[error("{0}")]
     AodTransport(String),
 
@@ -491,8 +493,10 @@ type Transport = Vec<TransportPair>;
 /// so it is skipped here rather than reported twice.
 ///
 /// This is the rule the Python architecture builder enforced in
-/// `check_aod_transport` for the specs it built. Specs loaded from JSON never
-/// went through it, and a word bus `site_map` cannot be built there at all.
+/// `check_aod_transport` for the specs it built, made stricter: the builder
+/// let a bus's sources skip a tone crossing that held no atom, and here they
+/// must cover every crossing. Specs loaded from JSON never went through the
+/// builder, and a word bus `site_map` cannot be built there at all.
 fn check_aod_transports(spec: &ArchSpec, sites_per_word: usize, errors: &mut Vec<ArchSpecError>) {
     let position = |zone_id: u32, word_id: u32, site_id: u32| {
         spec.location_position(&LocationAddr {
@@ -588,8 +592,9 @@ fn report_aod_transport(
 }
 
 /// `None` when `pairs` is one AOD operation: the sorted source tones map onto
-/// the sorted destination tones, and every atom lands where its own column
-/// and row land. Otherwise a description of the first violation.
+/// the sorted destination tones, every atom lands where its own column and
+/// row land, and the sources cover every crossing of their tones. Otherwise
+/// a description of the first violation.
 fn aod_transport_violation(pairs: &[TransportPair]) -> Option<String> {
     let tones = |pick: fn(&TransportPair) -> f64| -> Vec<f64> {
         let mut tones: Vec<f64> = pairs.iter().map(pick).collect();
@@ -628,6 +633,31 @@ fn aod_transport_violation(pairs: &[TransportPair]) -> Option<String> {
                  cannot cross or trade places, so every atom must stay on its own tones"
             ));
         }
+    }
+
+    // Completeness: the AOD traps at every crossing of its tones, so every
+    // crossing must be one of the bus's sources. (On a separable,
+    // order-preserving bus the destinations are then a complete grid too.)
+    let sources: HashSet<(u64, u64)> = pairs
+        .iter()
+        .map(|((x, y), _)| (x.to_bits(), y.to_bits()))
+        .collect();
+    if sources.len() != src_x.len() * src_y.len() {
+        let missing = src_y
+            .iter()
+            .flat_map(|&y| src_x.iter().map(move |&x| (x, y)))
+            .find(|(x, y)| !sources.contains(&(x.to_bits(), y.to_bits())))
+            .expect("fewer sources than crossings leaves a crossing uncovered");
+        return Some(format!(
+            "the bus sources span {}x{} tones but cover only {} of their {} crossings \
+             ({:?} is not a source); an AOD traps at every crossing of its tones, so \
+             the sources of a bus must form a complete grid",
+            src_x.len(),
+            src_y.len(),
+            sources.len(),
+            src_x.len() * src_y.len(),
+            missing
+        ));
     }
     None
 }
@@ -1428,6 +1458,39 @@ mod tests {
         let errs = aod_errors(&spec);
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(errs[0].contains("cannot add, drop or merge"), "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_sparse_site_bus_rejected() {
+        // Sites 0 and 4 are a diagonal of a 3x2 word: a translation, but its
+        // tones also cross at the unused sites 1 and 3.
+        let mut spec = aod_spec(1, 3, 2);
+        spec.zones[0].site_buses = vec![site_bus(&[0, 4], &[1, 5])];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("complete grid"), "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_sparse_word_bus_sites_rejected() {
+        let mut spec = aod_spec(2, 3, 2);
+        // Without a map the bus runs on `sites_with_word_buses`, a diagonal.
+        spec.zones[0].sites_with_word_buses = vec![0, 4];
+        spec.zones[0].word_buses = vec![WordBus::new(vec![WordRef(0)], vec![WordRef(1)])];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("complete grid"), "{errs:?}");
+
+        // With a full pad set, a diagonal map domain is just as sparse.
+        spec.zones[0].sites_with_word_buses = (0..6).collect();
+        spec.zones[0].word_buses[0].site_map = Some(site_bus(&[0, 4], &[1, 5]));
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("complete grid"), "{errs:?}");
+
+        // A whole row is a complete grid.
+        spec.zones[0].word_buses[0].site_map = Some(site_bus(&[0, 1], &[4, 5]));
+        assert_eq!(spec.validate(), Ok(()));
     }
 
     #[test]

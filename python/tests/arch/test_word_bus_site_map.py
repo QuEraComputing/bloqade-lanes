@@ -249,19 +249,12 @@ _THREE_BY_TWO_JSON = """
 """
 
 
-def test_sparse_site_map_grid_endpoints_are_tone_grids():
-    # A diagonal map domain: (0, 0) -> (20, 0) and (5, 3) -> (25, 3). It is
-    # separable and order-preserving, so it validates, but the two lanes can
-    # never fire together. The grids are the tone lattices at each end,
-    # including the two crossings at each end that no lane uses.
-    arch = ArchSpec(RustArchSpec.from_json_validated(_THREE_BY_TWO_JSON))
-    src_grid, dst_grid = ArchSpecGeometry(arch).get_grid_endpoints(
-        0, 0, MoveType.WORD, Direction.FORWARD
-    )
-    assert tuple(src_grid.x_positions) == (0.0, 5.0)
-    assert tuple(src_grid.y_positions) == (0.0, 3.0)
-    assert tuple(dst_grid.x_positions) == (20.0, 25.0)
-    assert tuple(dst_grid.y_positions) == (0.0, 3.0)
-
-    lanes = [WordLaneAddress(0, s, 0, Direction.FORWARD, 0) for s in (0, 4)]
-    assert arch.check_lane_group(lanes), "a diagonal pair is not one AOD shot"
+def test_sparse_site_map_is_rejected():
+    # A diagonal map domain, (0, 0) -> (20, 0) and (5, 3) -> (25, 3), is
+    # separable and order-preserving, but its tones also cross at (0, 3) and
+    # (5, 0), which it does not carry: its sources are not a complete grid.
+    with pytest.raises(ArchSpecError) as excinfo:
+        RustArchSpec.from_json_validated(_THREE_BY_TWO_JSON)
+    errors = excinfo.value.errors
+    assert [type(e) for e in errors] == [ArchSpecBusError]
+    assert "complete grid" in str(errors[0])
