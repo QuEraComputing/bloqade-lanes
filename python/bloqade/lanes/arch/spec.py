@@ -190,7 +190,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         associated with the architecture and is typically used to
         interpret the entangling pairs.  It is **not** independently
         verified at the ArchSpec level; build the architecture with
-        ``ZoneBuilder.set_blockade_radius`` / ``ArchBuilder.set_blockade_radius``
+        ``ArchBuilder.set_blockade_radius``
         (in ``bloqade.gemini.arch``) if you want the pair list to be derived
         from and checked against a radius.
         """

@@ -6,7 +6,7 @@ architecture builder lives in ``bloqade.gemini.arch`` (the ``bloqade``
 distribution), which lanes cannot depend on. This script is the record of how
 each snapshot was built. It is not run by the test suite.
 
-Run it from the repository root with ``bloqade`` installed::
+Run it from the repository root with Bloqade 0.38.0 installed::
 
     python python/tests/fixtures/arch/generate.py           # write every snapshot
     python python/tests/fixtures/arch/generate.py --check   # fail if any differs
@@ -24,20 +24,16 @@ from pathlib import Path
 
 from bloqade.gemini.arch import (
     AllToAllSiteTopology,
-    ArchBlueprint,
     ArchBuilder,
-    DeviceLayout,
+    SiteTopology,
+    WordTopology,
     DiagonalWordTopology,
     HypercubeSiteTopology,
     HypercubeWordTopology,
-    MatchingTopology,
-    ZoneBuilder,
-    ZoneSpec,
-    build_arch,
+    create_zone_words,
 )
 
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode._native import Grid as _RustGrid
 
 FIXTURE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE_DIR.parents[1]))
@@ -59,6 +55,51 @@ _SITE_TOPOLOGIES = {
 }
 
 
+def _fixture_arch(
+    num_rows: int,
+    num_cols: int,
+    sites_per_word: int,
+    zones: Sequence[tuple[str, bool, WordTopology | None, SiteTopology | None]],
+    connections: Sequence[tuple[str, str]] = (),
+) -> ArchSpec:
+    """Build interleaved words on a 10 µm grid with zones stacked 20 µm apart."""
+    grid = create_zone_words(
+        num_rows=num_rows, num_cols=num_cols, sites_per_word=sites_per_word
+    )
+    columns = [10.0 * i for i in range(num_cols * sites_per_word)]
+    builder = ArchBuilder(
+        grid_shape=(num_rows, len(columns)), word_shape=(1, sites_per_word)
+    )
+    for word in grid.words:
+        builder.add_word(
+            rows=word.site_indices[0][1], columns=[x for x, _ in word.site_indices]
+        )
+    for i, (name, entangling, word_topology, site_topology) in enumerate(zones):
+        builder.add_zone(
+            name,
+            rows=[20.0 * (i * num_rows + row) for row in range(num_rows)],
+            columns=columns,
+            x_clearance=3.0,
+            y_clearance=3.0,
+        )
+        if site_topology is not None:
+            for bus in site_topology.generate_site_buses(sites_per_word):
+                builder.add_site_bus(name, bus.src, bus.dst)
+        if word_topology is not None:
+            for bus in word_topology.generate_word_buses(grid):
+                builder.add_word_bus(name, bus.src, bus.dst)
+        if entangling:
+            left, right = zip(*grid.cz_pairs())
+            builder.add_entangling_pairs(name, left, right)
+    for source, destination in connections:
+        builder.connect((source, grid.all_word_ids), (destination, grid.all_word_ids))
+    names = [zone[0] for zone in zones]
+    builder.add_mode("all", names)
+    for name in names:
+        builder.add_mode(name, [name])
+    return builder.build()
+
+
 def _gate_zone(
     num_rows: int,
     num_cols: int,
@@ -66,19 +107,19 @@ def _gate_zone(
     word_topology: WordTopologyName,
     site_topology: SiteTopologyName,
 ) -> ArchSpec:
-    blueprint = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=num_rows,
-                num_cols=num_cols,
-                entangling=True,
-                word_topology=_WORD_TOPOLOGIES[word_topology](),
-                site_topology=_SITE_TOPOLOGIES[site_topology](),
+    return _fixture_arch(
+        num_rows,
+        num_cols,
+        sites_per_word,
+        [
+            (
+                "gate",
+                True,
+                _WORD_TOPOLOGIES[word_topology](),
+                _SITE_TOPOLOGIES[site_topology](),
             )
-        },
-        layout=DeviceLayout(sites_per_word=sites_per_word),
+        ],
     )
-    return build_arch(blueprint).arch
 
 
 def _custom_one_site_words(
@@ -110,20 +151,16 @@ def _custom_one_site_words(
     x_index = {v: i for i, v in enumerate(xs)}
     y_index = {v: i for i, v in enumerate(ys)}
 
-    grid = _RustGrid.from_positions([float(x) for x in xs], [float(y) for y in ys])
-    zone = ZoneBuilder(
-        name, grid, (1, 1), x_clearance=x_clearance, y_clearance=y_clearance
-    )
+    builder = ArchBuilder(grid_shape=(len(ys), len(xs)), word_shape=(1, 1))
     for x, y in positions:
-        zone.add_word([x_index[x]], [y_index[y]])
+        builder.add_word(rows=y_index[y], columns=x_index[x])
+    builder.add_zone(
+        name, rows=ys, columns=xs, x_clearance=x_clearance, y_clearance=y_clearance
+    )
     for src, dst in word_buses:
-        zone.add_word_bus([src], [dst])
-    pairs = list(entangling)
-    if pairs:
-        zone.add_entangling_pairs([a for a, _ in pairs], [b for _, b in pairs])
-
-    builder = ArchBuilder()
-    builder.add_zone(zone)
+        builder.add_word_bus(name, [src], [dst])
+    for a, b in entangling:
+        builder.add_entangling_pairs(name, [a], [b])
     builder.add_mode("all", [name])
     return builder.build()
 
@@ -182,59 +219,43 @@ def _congestion_bridge() -> ArchSpec:
 
 def _proc_mem_two_zone() -> ArchSpec:
     """An entangling ``proc`` zone matched to a bus-less ``mem`` zone."""
-    blueprint = ArchBlueprint(
-        zones={
-            "proc": ZoneSpec(
-                num_rows=2,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            ),
-            "mem": ZoneSpec(num_rows=2, num_cols=2),
-        },
-        layout=DeviceLayout(sites_per_word=4),
+    return _fixture_arch(
+        2,
+        2,
+        4,
+        [
+            ("proc", True, HypercubeWordTopology(), HypercubeSiteTopology()),
+            ("mem", False, None, None),
+        ],
+        [("proc", "mem")],
     )
-    return build_arch(blueprint, connections={("proc", "mem"): MatchingTopology()}).arch
 
 
 def _site_bus_scoping_two_zone() -> ArchSpec:
     """Zone ``a`` has site buses; zone ``b`` has none."""
-    blueprint = ArchBlueprint(
-        zones={
-            "a": ZoneSpec(
-                num_rows=1,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=AllToAllSiteTopology(),
-            ),
-            "b": ZoneSpec(
-                num_rows=1,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-            ),
-        },
-        layout=DeviceLayout(sites_per_word=4),
+    return _fixture_arch(
+        1,
+        2,
+        4,
+        [
+            ("a", True, HypercubeWordTopology(), AllToAllSiteTopology()),
+            ("b", True, HypercubeWordTopology(), None),
+        ],
+        [("a", "b")],
     )
-    return build_arch(blueprint, connections={("a", "b"): MatchingTopology()}).arch
 
 
 def _two_entangling_zones() -> ArchSpec:
     """Two entangling zones, for heuristics that require exactly one."""
-    zone = ZoneSpec(
-        num_rows=2,
-        num_cols=2,
-        entangling=True,
-        word_topology=DiagonalWordTopology(),
-        site_topology=HypercubeSiteTopology(),
+    return _fixture_arch(
+        2,
+        2,
+        16,
+        [
+            ("zone_a", True, DiagonalWordTopology(), HypercubeSiteTopology()),
+            ("zone_b", True, DiagonalWordTopology(), HypercubeSiteTopology()),
+        ],
     )
-    blueprint = ArchBlueprint(
-        zones={"zone_a": zone, "zone_b": zone},
-        layout=DeviceLayout(sites_per_word=16),
-    )
-    return build_arch(blueprint).arch
 
 
 CUSTOM_FIXTURES: dict[str, Callable[[], ArchSpec]] = {
