@@ -389,4 +389,4 @@ Breaking changes map to SemVer MAJOR.
 
 - Tag PRs with the `category: breaking change` label when they contain breaking changes. A Conventional Commit title (`feat!:` / `fix!:` or a `BREAKING CHANGE` footer) applies this label automatically via the PR labeler workflow.
 - The PR labeler mirrors a Conventional Commit title prefix into the matching `category:` label (`feat:` → `category: feature`, `fix:` → `category: bug`, `perf:` → `performance: optimization`, `docs:` → `category: documentation`, `deps` scope → `category: dependencies`, `ci:`/`build:`/`chore:` → `devops: core`). These labels drive the release-notes sections defined in `.github/release.yml`; add them by hand when a title doesn't follow the convention.
-- Tag non-breaking PRs with the appropriate `status: backport` label for cherry-picking into the current release branch (`release-0-11`).
+- Tag non-breaking PRs with the appropriate `status: backport` label for cherry-picking into the current release branch (`release-0-13`).
