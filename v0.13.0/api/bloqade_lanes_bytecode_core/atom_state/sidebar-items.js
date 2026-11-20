@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MoveValidationError"],"struct":["AtomStateData","ValidatedMoves"]};
