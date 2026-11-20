@@ -608,7 +608,7 @@ impl Default for AtomStateData {
 mod tests {
     use super::*;
     use crate::arch::addr::{SiteRef, WordRef, ZonedWordRef};
-    use crate::arch::types::{Bus, Grid, Mode, Word, Zone};
+    use crate::arch::types::{Bus, Grid, Mode, Word, WordBus, Zone};
     use crate::version::Version;
 
     /// Build the same two-zone spec used by the arch module tests.
@@ -636,9 +636,10 @@ mod tests {
                         src: vec![SiteRef(0)],
                         dst: vec![SiteRef(1)],
                     }],
-                    word_buses: vec![Bus {
+                    word_buses: vec![WordBus {
                         src: vec![WordRef(0)],
                         dst: vec![WordRef(1)],
+                        site_map: None,
                     }],
                     words_with_site_buses: vec![0, 1],
                     sites_with_word_buses: vec![0],
@@ -1299,9 +1300,10 @@ mod tests {
                     name: String::new(),
                     grid: grid0,
                     site_buses: vec![],
-                    word_buses: vec![Bus {
+                    word_buses: vec![WordBus {
                         src: vec![WordRef(0), WordRef(1), WordRef(2)],
                         dst: vec![WordRef(1), WordRef(2), WordRef(3)],
+                        site_map: None,
                     }],
                     words_with_site_buses: vec![],
                     sites_with_word_buses: vec![0],
@@ -1505,9 +1507,10 @@ mod tests {
         // `validate_moves` never sees `ArchSpec::validate()`, so it must
         // catch the contested landing itself.
         let mut spec = make_chain_spec();
-        spec.zones[0].word_buses[0] = Bus {
+        spec.zones[0].word_buses[0] = WordBus {
             src: vec![WordRef(0), WordRef(2)],
             dst: vec![WordRef(1), WordRef(1)],
+            site_map: None,
         };
         let state = AtomStateData::from_locations(&[(0, word_loc(0)), (1, word_loc(2))]);
         let lanes = [chain_lane(0), chain_lane(2)];

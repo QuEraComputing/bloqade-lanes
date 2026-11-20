@@ -3,10 +3,11 @@
 //! Validates all structural rules in a single pass, collecting every error
 //! rather than failing fast. See [`ArchSpec::validate`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use thiserror::Error;
 
+use super::addr::LocationAddr;
 use super::types::ArchSpec;
 
 /// Error categories for arch spec structural validation.
@@ -40,6 +41,24 @@ pub enum ArchSpecError {
     /// overlapping-but-acyclic buses remain legal.
     #[error("{0}")]
     CyclicBus(String),
+
+    /// A bus describes no single AOD operation.
+    ///
+    /// An AOD traps at the Cartesian product of its x and y tones and sweeps
+    /// each tone independently, so the lanes a bus fires together must be
+    /// **separable and order-preserving**: an atom's landing x is decided by
+    /// its column alone and its landing y by its row alone, and the sorted
+    /// source tones land on the sorted destination tones, because two tones
+    /// cannot cross, merge or split. The sources must also form a complete
+    /// grid, since the AOD traps at every crossing of its tones. A bus that
+    /// would send one row onto a diagonal, reverse the order of two columns,
+    /// or start from a diagonal, is rejected.
+    ///
+    /// On a bus that passes, any rectangle of its sources lands on a
+    /// rectangle, which is what lets the router build shots from source
+    /// positions alone, and the full bus is one rectangle at each end.
+    #[error("{0}")]
+    AodTransport(String),
 
     /// Entangling zone pair validation error.
     #[error("{0}")]
@@ -76,12 +95,15 @@ impl ArchSpec {
             check_zone_words_with_site_buses(zone_idx, zone, num_words, &mut errors);
             check_zone_sites_with_word_buses(zone_idx, zone, sites_per_word, &mut errors);
             check_zone_site_buses(zone_idx, zone, sites_per_word, &mut errors);
-            check_zone_word_buses(zone_idx, zone, num_words, &mut errors);
+            check_zone_word_buses(zone_idx, zone, num_words, sites_per_word, &mut errors);
             check_zone_entangling_pairs(zone_idx, zone, num_words, &mut errors);
         }
 
         // Inter-zone bus validation
         check_zone_buses(self, num_zones, num_words, &mut errors);
+
+        // Every bus must be one AOD operation
+        check_aod_transports(self, sites_per_word, &mut errors);
 
         // Mode validation
         check_modes(self, num_zones, num_words, sites_per_word, &mut errors);
@@ -200,7 +222,7 @@ fn check_word_site_indices(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
 
 // --- Per-zone bus validation ---
 
-use super::types::Zone;
+use super::types::{SiteMap, Zone};
 
 /// `words_with_site_buses` entries must be < number of words.
 fn check_zone_words_with_site_buses(
@@ -280,11 +302,13 @@ fn check_zone_site_buses(
     }
 }
 
-/// Word bus src/dst must have same length and WordRef values < number of words.
+/// Word bus src/dst must have same length and WordRef values < number of words,
+/// and an optional `site_map` must be well formed.
 fn check_zone_word_buses(
     zone_idx: usize,
     zone: &Zone,
     num_words: usize,
+    sites_per_word: usize,
     errors: &mut Vec<ArchSpecError>,
 ) {
     for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
@@ -321,7 +345,61 @@ fn check_zone_word_buses(
             ArchSpecError::ZoneBus,
             errors,
         );
+        if let Some(map) = &bus.site_map {
+            check_word_bus_site_map(zone_idx, bus_idx, zone, map, sites_per_word, errors);
+        }
     }
+}
+
+/// A word bus's `site_map` obeys the same rules as a site bus, plus a
+/// membership rule.
+///
+/// `src`/`dst` must have equal length, every entry must be `< sites_per_word`
+/// and listed in the zone's `sites_with_word_buses` (the word-bus landing
+/// pads), and the src→dst relation must be well formed exactly like a site
+/// bus's ([`check_bus_relation`]): unique sources, unique destinations, and no
+/// cycles — the site map is part of the same AOD operation, so a rotation of
+/// sites is rejected even though the word relation already prevents a
+/// `(word, site)` location from mapping onto itself.
+fn check_word_bus_site_map(
+    zone_idx: usize,
+    bus_idx: usize,
+    zone: &Zone,
+    map: &SiteMap,
+    sites_per_word: usize,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    let label = format!("zone {zone_idx}, word_bus {bus_idx} site_map");
+    if map.src.len() != map.dst.len() {
+        errors.push(ArchSpecError::ZoneBus(format!(
+            "{label}: src length ({}) != dst length ({})",
+            map.src.len(),
+            map.dst.len()
+        )));
+    }
+    for (side, refs) in [("src", &map.src), ("dst", &map.dst)] {
+        for (i, sref) in refs.iter().enumerate() {
+            if sref.0 as usize >= sites_per_word {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "{label}: {side}[{i}] SiteRef({}) >= sites_per_word ({sites_per_word})",
+                    sref.0
+                )));
+            } else if !zone.sites_with_word_buses.contains(&(sref.0 as u32)) {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "{label}: {side}[{i}] site {} is not in zone {zone_idx} sites_with_word_buses",
+                    sref.0
+                )));
+            }
+        }
+    }
+    check_bus_relation(
+        &map.src,
+        &map.dst,
+        &label,
+        |s| s.0.to_string(),
+        ArchSpecError::ZoneBus,
+        errors,
+    );
 }
 
 // --- Inter-zone bus validation ---
@@ -395,6 +473,193 @@ fn check_zone_buses(
             errors,
         );
     }
+}
+
+// --- AOD realizability ---
+
+/// One lane's `(source, destination)` physical positions.
+type TransportPair = ((f64, f64), (f64, f64));
+
+/// One bus transport: one [`TransportPair`] per lane fired together.
+type Transport = Vec<TransportPair>;
+
+/// Every bus must be one AOD operation — see [`ArchSpecError::AodTransport`].
+///
+/// A transport is every lane that can fire in one shot, which is the key
+/// `check_lane_group_consistency` groups on: a site or word bus is one
+/// transport in its zone, and a zone bus is one transport per forward source
+/// zone, since its lanes carry that zone's id. A bus with an endpoint whose
+/// position does not resolve was already reported by the structural checks,
+/// so it is skipped here rather than reported twice.
+///
+/// This is the rule the Python architecture builder enforced in
+/// `check_aod_transport` for the specs it built, made stricter: the builder
+/// let a bus's sources skip a tone crossing that held no atom, and here they
+/// must cover every crossing. Specs loaded from JSON never went through the
+/// builder, and a word bus `site_map` cannot be built there at all.
+fn check_aod_transports(spec: &ArchSpec, sites_per_word: usize, errors: &mut Vec<ArchSpecError>) {
+    let position = |zone_id: u32, word_id: u32, site_id: u32| {
+        spec.location_position(&LocationAddr {
+            zone_id,
+            word_id,
+            site_id,
+        })
+    };
+
+    for (zone_idx, zone) in spec.zones.iter().enumerate() {
+        let z = zone_idx as u32;
+        for (bus_idx, bus) in zone.site_buses.iter().enumerate() {
+            let transport: Option<Transport> = zone
+                .words_with_site_buses
+                .iter()
+                .flat_map(|&w| {
+                    bus.src
+                        .iter()
+                        .zip(&bus.dst)
+                        .map(move |(s, d)| (w, u32::from(s.0), u32::from(d.0)))
+                })
+                .map(|(w, s, d)| Some((position(z, w, s)?, position(z, w, d)?)))
+                .collect();
+            report_aod_transport(
+                transport,
+                &format!("zone {zone_idx}, site_bus {bus_idx}"),
+                errors,
+            );
+        }
+        for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
+            let sites = zone.word_bus_site_pairs(bus_idx);
+            let transport: Option<Transport> = bus
+                .src
+                .iter()
+                .zip(&bus.dst)
+                .flat_map(|(sw, dw)| {
+                    sites
+                        .iter()
+                        .map(move |&(s, d)| (u32::from(sw.0), u32::from(dw.0), s, d))
+                })
+                .map(|(sw, dw, s, d)| Some((position(z, sw, s)?, position(z, dw, d)?)))
+                .collect();
+            report_aod_transport(
+                transport,
+                &format!("zone {zone_idx}, word_bus {bus_idx}"),
+                errors,
+            );
+        }
+    }
+
+    for (bus_idx, bus) in spec.zone_buses.iter().enumerate() {
+        let mut by_source_zone: BTreeMap<u8, Option<Transport>> = BTreeMap::new();
+        for (s, d) in bus.src.iter().zip(&bus.dst) {
+            let entry = by_source_zone
+                .entry(s.zone_id)
+                .or_insert_with(|| Some(Vec::new()));
+            for site in 0..sites_per_word as u32 {
+                let pair = position(s.zone_id.into(), s.word_id.into(), site).zip(position(
+                    d.zone_id.into(),
+                    d.word_id.into(),
+                    site,
+                ));
+                match pair {
+                    Some(p) => {
+                        if let Some(transport) = entry {
+                            transport.push(p);
+                        }
+                    }
+                    None => *entry = None,
+                }
+            }
+        }
+        for (zone_id, transport) in by_source_zone {
+            report_aod_transport(
+                transport,
+                &format!("zone_bus {bus_idx} (lanes from zone {zone_id})"),
+                errors,
+            );
+        }
+    }
+}
+
+fn report_aod_transport(
+    transport: Option<Transport>,
+    label: &str,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    if let Some(pairs) = transport
+        && let Some(msg) = aod_transport_violation(&pairs)
+    {
+        errors.push(ArchSpecError::AodTransport(format!("{label}: {msg}")));
+    }
+}
+
+/// `None` when `pairs` is one AOD operation: the sorted source tones map onto
+/// the sorted destination tones, every atom lands where its own column and
+/// row land, and the sources cover every crossing of their tones. Otherwise
+/// a description of the first violation.
+fn aod_transport_violation(pairs: &[TransportPair]) -> Option<String> {
+    let tones = |pick: fn(&TransportPair) -> f64| -> Vec<f64> {
+        let mut tones: Vec<f64> = pairs.iter().map(pick).collect();
+        tones.sort_by(f64::total_cmp);
+        tones.dedup_by(|a, b| a.to_bits() == b.to_bits());
+        tones
+    };
+    let src_x = tones(|p| p.0.0);
+    let src_y = tones(|p| p.0.1);
+    let dst_x = tones(|p| p.1.0);
+    let dst_y = tones(|p| p.1.1);
+
+    if src_x.len() != dst_x.len() || src_y.len() != dst_y.len() {
+        return Some(format!(
+            "the bus spans a {}x{} grid of tones at its source but {}x{} at its \
+             destination; an AOD cannot add, drop or merge a tone mid-transport",
+            src_x.len(),
+            src_y.len(),
+            dst_x.len(),
+            dst_y.len()
+        ));
+    }
+
+    let tone_index = |tones: &[f64], v: f64| {
+        tones
+            .binary_search_by(|t| t.total_cmp(&v))
+            .expect("every coordinate is one of its own side's tones")
+    };
+    for &((sx, sy), (dx, dy)) in pairs {
+        let wx = dst_x[tone_index(&src_x, sx)];
+        let wy = dst_y[tone_index(&src_y, sy)];
+        if dx.to_bits() != wx.to_bits() || dy.to_bits() != wy.to_bits() {
+            return Some(format!(
+                "the atom at ({sx}, {sy}) is sent to ({dx}, {dy}), but its column and \
+                 row land at ({wx}, {wy}); an AOD sweeps whole x and y tones, which \
+                 cannot cross or trade places, so every atom must stay on its own tones"
+            ));
+        }
+    }
+
+    // Completeness: the AOD traps at every crossing of its tones, so every
+    // crossing must be one of the bus's sources. (On a separable,
+    // order-preserving bus the destinations are then a complete grid too.)
+    let sources: HashSet<(u64, u64)> = pairs
+        .iter()
+        .map(|((x, y), _)| (x.to_bits(), y.to_bits()))
+        .collect();
+    if sources.len() != src_x.len() * src_y.len() {
+        let missing = src_y
+            .iter()
+            .flat_map(|&y| src_x.iter().map(move |&x| (x, y)))
+            .find(|(x, y)| !sources.contains(&(x.to_bits(), y.to_bits())))
+            .expect("fewer sources than crossings leaves a crossing uncovered");
+        return Some(format!(
+            "the bus sources span {}x{} tones but cover only {} of their {} crossings \
+             ({:?} is not a source); an AOD traps at every crossing of its tones, so \
+             the sources of a bus must form a complete grid",
+            src_x.len(),
+            src_y.len(),
+            sources.len(),
+            src_x.len() * src_y.len(),
+            missing
+        ));
+    }
+    None
 }
 
 // --- Bus src→dst relation well-formedness ---
@@ -676,7 +941,7 @@ fn check_zone_overlap(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
 mod tests {
     use super::*;
     use crate::arch::addr::{SiteRef, WordRef, ZonedWordRef};
-    use crate::arch::types::{Bus, Grid, Mode, Word, Zone};
+    use crate::arch::types::{Bus, Grid, Mode, Word, WordBus, Zone};
     use crate::version::Version;
 
     /// Create a valid two-zone arch spec for testing.
@@ -703,9 +968,10 @@ mod tests {
                         src: vec![SiteRef(0)],
                         dst: vec![SiteRef(1)],
                     }],
-                    word_buses: vec![Bus {
+                    word_buses: vec![WordBus {
                         src: vec![WordRef(0)],
                         dst: vec![WordRef(1)],
+                        site_map: None,
                     }],
                     words_with_site_buses: vec![0, 1],
                     sites_with_word_buses: vec![0],
@@ -807,9 +1073,10 @@ mod tests {
         let mut spec = make_valid_two_zone_spec();
         add_third_word(&mut spec);
         // Conveyor chain 0→1, 1→2: dst set overlaps src set, no cycle.
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0), WordRef(1)],
             dst: vec![WordRef(1), WordRef(2)],
+            site_map: None,
         }];
         assert!(spec.validate().is_ok());
     }
@@ -846,9 +1113,10 @@ mod tests {
         let mut spec = make_valid_two_zone_spec();
         add_third_word(&mut spec);
         // Duplicate src 0; acyclic and dst-unique so only the src rule fires.
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0), WordRef(0)],
             dst: vec![WordRef(1), WordRef(2)],
+            site_map: None,
         }];
         assert!(matches!(
             spec.validate(),
@@ -863,9 +1131,10 @@ mod tests {
         let mut spec = make_valid_two_zone_spec();
         add_third_word(&mut spec);
         // Duplicate dst 1; acyclic and src-unique so only the dst rule fires.
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0), WordRef(2)],
             dst: vec![WordRef(1), WordRef(1)],
+            site_map: None,
         }];
         assert!(matches!(
             spec.validate(),
@@ -1005,12 +1274,324 @@ mod tests {
         ));
     }
 
+    fn site_mapped(src: &[u16], dst: &[u16]) -> ArchSpec {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].sites_with_word_buses = vec![0, 1];
+        spec.zones[0].word_buses = vec![WordBus::with_site_map(
+            vec![WordRef(0)],
+            vec![WordRef(1)],
+            Bus {
+                src: src.iter().copied().map(SiteRef).collect(),
+                dst: dst.iter().copied().map(SiteRef).collect(),
+            },
+        )];
+        spec
+    }
+
+    fn zone_bus_errors(spec: &ArchSpec) -> Vec<String> {
+        match spec.validate() {
+            Ok(()) => vec![],
+            Err(errs) => errs.into_iter().map(|e| e.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_valid() {
+        assert!(site_mapped(&[0], &[1]).validate().is_ok());
+        assert!(site_mapped(&[1], &[0]).validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_out_of_range() {
+        let errs = zone_bus_errors(&site_mapped(&[0], &[9]));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("site_map: dst[0] SiteRef(9)")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_not_a_landing_pad() {
+        let mut spec = site_mapped(&[0], &[1]);
+        spec.zones[0].sites_with_word_buses = vec![0];
+        let errs = zone_bus_errors(&spec);
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("site 1 is not in zone 0 sites_with_word_buses")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_length_mismatch() {
+        let errs = zone_bus_errors(&site_mapped(&[0, 1], &[1]));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("site_map: src length (2) != dst length (1)")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_duplicate_dst() {
+        let errs = zone_bus_errors(&site_mapped(&[0, 1], &[1, 1]));
+        assert!(
+            errs.iter().any(|e| e.contains("site_map: duplicate dst 1")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_word_bus_site_map_cycle_rejected() {
+        // A site permutation is a rotation, rejected like a cyclic site bus.
+        let result = site_mapped(&[0, 1], &[1, 0]).validate();
+        assert!(
+            matches!(result, Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::CyclicBus(msg) if msg.contains("site_map")))),
+            "{result:?}"
+        );
+        let result = site_mapped(&[0], &[0]).validate();
+        assert!(
+            matches!(result, Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::CyclicBus(_)))),
+            "{result:?}"
+        );
+    }
+
+    // --- AOD transport ---
+
+    /// One zone on a 5 µm × 3 µm grid with `words.len()` words, each
+    /// `nx × ny` sites laid out row-major (site `i` at column `i % nx`, row
+    /// `i / nx`), placed side by side along x. Every site is a word-bus
+    /// landing pad and every word has site buses; the buses start empty.
+    fn aod_spec(num_words: u32, nx: u32, ny: u32) -> ArchSpec {
+        let xs: Vec<f64> = (0..num_words * nx).map(|i| f64::from(i) * 5.0).collect();
+        let ys: Vec<f64> = (0..ny).map(|j| f64::from(j) * 3.0).collect();
+        let words = (0..num_words)
+            .map(|w| Word {
+                sites: (0..nx * ny).map(|i| [w * nx + i % nx, i / nx]).collect(),
+            })
+            .collect();
+        ArchSpec {
+            version: Version::new(2, 0),
+            words,
+            zones: vec![Zone {
+                name: String::new(),
+                grid: Grid::from_positions(&xs, &ys),
+                site_buses: vec![],
+                word_buses: vec![],
+                words_with_site_buses: (0..num_words).collect(),
+                sites_with_word_buses: (0..nx * ny).collect(),
+                entangling_pairs: vec![],
+            }],
+            zone_buses: vec![],
+            modes: vec![Mode {
+                name: "all".to_string(),
+                zones: vec![0],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: None,
+            aod_capacity: None,
+        }
+    }
+
+    fn site_bus(src: &[u16], dst: &[u16]) -> Bus<SiteRef> {
+        Bus {
+            src: src.iter().copied().map(SiteRef).collect(),
+            dst: dst.iter().copied().map(SiteRef).collect(),
+        }
+    }
+
+    fn aod_errors(spec: &ArchSpec) -> Vec<String> {
+        match spec.validate() {
+            Ok(()) => vec![],
+            Err(errs) => errs
+                .into_iter()
+                .filter_map(|e| match e {
+                    ArchSpecError::AodTransport(msg) => Some(msg),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_aod_site_bus_translation_and_conveyor_accepted() {
+        let mut spec = aod_spec(1, 3, 2);
+        // A diagonal translation of a whole row, and a conveyor chain 0→1→2.
+        spec.zones[0].site_buses = vec![site_bus(&[0, 1], &[4, 5]), site_bus(&[0, 1], &[1, 2])];
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn test_aod_site_bus_row_onto_diagonal_rejected() {
+        // Sites 0 and 1 share a row but land in different rows: one y tone
+        // would have to split in two.
+        let mut spec = aod_spec(1, 3, 2);
+        spec.zones[0].site_buses = vec![site_bus(&[0, 1], &[2, 3])];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].starts_with("zone 0, site_bus 0: "), "{errs:?}");
+        assert!(
+            errs[0].contains("2x1 grid of tones at its source but 2x2"),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_aod_site_bus_crossing_columns_rejected() {
+        // Columns 0 and 1 land on columns 2 and 1: the x tones would cross.
+        let mut spec = aod_spec(1, 3, 2);
+        spec.zones[0].site_buses = vec![site_bus(&[0, 1], &[5, 4])];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("cannot cross"), "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_site_bus_merging_rows_rejected() {
+        // Rows 0 and 1 both land on row 0: two y tones would merge.
+        let mut spec = aod_spec(1, 3, 2);
+        spec.zones[0].site_buses = vec![site_bus(&[0, 4], &[1, 2])];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("cannot add, drop or merge"), "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_sparse_site_bus_rejected() {
+        // Sites 0 and 4 are a diagonal of a 3x2 word: a translation, but its
+        // tones also cross at the unused sites 1 and 3.
+        let mut spec = aod_spec(1, 3, 2);
+        spec.zones[0].site_buses = vec![site_bus(&[0, 4], &[1, 5])];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("complete grid"), "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_sparse_word_bus_sites_rejected() {
+        let mut spec = aod_spec(2, 3, 2);
+        // Without a map the bus runs on `sites_with_word_buses`, a diagonal.
+        spec.zones[0].sites_with_word_buses = vec![0, 4];
+        spec.zones[0].word_buses = vec![WordBus::new(vec![WordRef(0)], vec![WordRef(1)])];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("complete grid"), "{errs:?}");
+
+        // With a full pad set, a diagonal map domain is just as sparse.
+        spec.zones[0].sites_with_word_buses = (0..6).collect();
+        spec.zones[0].word_buses[0].site_map = Some(site_bus(&[0, 4], &[1, 5]));
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("complete grid"), "{errs:?}");
+
+        // A whole row is a complete grid.
+        spec.zones[0].word_buses[0].site_map = Some(site_bus(&[0, 1], &[4, 5]));
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn test_aod_site_map_follows_the_map() {
+        let mut spec = aod_spec(2, 2, 2);
+        // Bottom row of word 0 onto the top row of word 1: a translation.
+        spec.zones[0].word_buses = vec![WordBus::with_site_map(
+            vec![WordRef(0)],
+            vec![WordRef(1)],
+            site_bus(&[0, 1], &[2, 3]),
+        )];
+        assert_eq!(spec.validate(), Ok(()));
+
+        // Bottom row onto a diagonal of word 1.
+        spec.zones[0].word_buses[0].site_map = Some(site_bus(&[0, 1], &[1, 2]));
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].starts_with("zone 0, word_bus 0: "), "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_site_map_twist_rejected() {
+        // The 2x2 block {0, 1, 4, 5} lands on the 2x2 block {2, 3, 6, 7}, so
+        // both ends are complete grids, but sites 0 and 1 share a row and land
+        // in different rows. A destination-grid check alone accepts this.
+        let mut spec = aod_spec(2, 4, 2);
+        spec.zones[0].word_buses = vec![WordBus::with_site_map(
+            vec![WordRef(0)],
+            vec![WordRef(1)],
+            site_bus(&[0, 1, 4, 5], &[2, 7, 6, 3]),
+        )];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("cannot cross"), "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_word_bus_word_pairs_must_not_cross() {
+        // Words 0, 1 → 2, 1 is fine (a chain); 0, 1 → 2, 0 would send word 1's
+        // column left past word 0's.
+        let mut spec = aod_spec(3, 1, 2);
+        spec.zones[0].word_buses = vec![WordBus::new(
+            vec![WordRef(0), WordRef(1)],
+            vec![WordRef(1), WordRef(2)],
+        )];
+        assert_eq!(spec.validate(), Ok(()));
+
+        spec.zones[0].word_buses = vec![WordBus::new(
+            vec![WordRef(0), WordRef(1)],
+            vec![WordRef(2), WordRef(0)],
+        )];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+    }
+
+    #[test]
+    fn test_aod_zone_bus_crossing_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        // Zone 0 words 0, 1 sit at x = 0, 5; zone 1 words 1, 0 sit at
+        // x = 27.5, 20, so the two columns would cross.
+        spec.zone_buses = vec![Bus {
+            src: vec![
+                ZonedWordRef {
+                    zone_id: 0,
+                    word_id: 0,
+                },
+                ZonedWordRef {
+                    zone_id: 0,
+                    word_id: 1,
+                },
+            ],
+            dst: vec![
+                ZonedWordRef {
+                    zone_id: 1,
+                    word_id: 1,
+                },
+                ZonedWordRef {
+                    zone_id: 1,
+                    word_id: 0,
+                },
+            ],
+        }];
+        let errs = aod_errors(&spec);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].starts_with("zone_bus 0 (lanes from zone 0): "),
+            "{errs:?}"
+        );
+
+        // In order, the same pairs are one transport.
+        spec.zone_buses[0].dst.swap(0, 1);
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
     #[test]
     fn test_validate_word_bus_invalid_word_ref() {
         let mut spec = make_valid_two_zone_spec();
-        spec.zones[0].word_buses = vec![Bus {
+        spec.zones[0].word_buses = vec![WordBus {
             src: vec![WordRef(0)],
             dst: vec![WordRef(99)],
+            site_map: None,
         }];
         assert!(matches!(
             spec.validate(),

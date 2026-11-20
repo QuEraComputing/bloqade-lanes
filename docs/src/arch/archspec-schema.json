@@ -160,6 +160,35 @@
         }
       }
     },
+    "WordBus": {
+      "title": "WordBus",
+      "description": "A word bus mapping source words to destination words via parallel arrays: src[i] -> dst[i]. Subject to the same well-formedness rules as Bus on the word IDs. An optional site_map relabels the site index the same way on every word pair of the bus: an atom at (src[i], s) lands on (dst[i], m(s)). Without a site_map, every site in the zone's sites_with_word_buses maps to itself.",
+      "type": "object",
+      "required": ["src", "dst"],
+      "additionalProperties": false,
+      "properties": {
+        "src": {
+          "description": "Source word IDs.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "dst": {
+          "description": "Destination word IDs. Must be the same length as src.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "site_map": {
+          "description": "Optional site relabelling shared by every word pair of the bus: site src[i] lands on site dst[i]. Validated like a site bus (unique src entries, unique dst entries, acyclic), and every site it lists must be in the zone's sites_with_word_buses. Only its src sites are valid word-bus lane sources. Omit for the identity mapping.",
+          "$ref": "#/$defs/Bus"
+        }
+      }
+    },
     "InterZoneBus": {
       "title": "InterZoneBus",
       "description": "An inter-zone word bus mapping zone-qualified words via parallel arrays: src[i] -> dst[i]. Every pair must cross a zone boundary (src[i].zone_id != dst[i].zone_id). Subject to the same well-formedness rules as Bus (unique src entries, unique dst entries, acyclic src->dst relation).",
@@ -236,7 +265,7 @@
           "description": "Word buses that move atoms between words within this zone. A bus's ID is its index in this array.",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Bus"
+            "$ref": "#/$defs/WordBus"
           }
         },
         "words_with_site_buses": {
@@ -248,7 +277,7 @@
           }
         },
         "sites_with_word_buses": {
-          "description": "Site indices that participate in word-bus transport within this zone. These are the 'landing pad' positions within each word where atoms arrive/depart during word-bus moves. Every entry must be less than sites_per_word.",
+          "description": "Site indices that participate in word-bus transport within this zone. These are the 'landing pad' positions within each word where atoms arrive/depart during word-bus moves: every source or destination site of any word bus in the zone. A word bus without a site_map uses all of them, each mapped to itself. Every entry must be less than sites_per_word.",
           "type": "array",
           "items": {
             "type": "integer",
