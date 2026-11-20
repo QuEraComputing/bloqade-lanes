@@ -127,11 +127,20 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
     # stable. Tolerated because no in-repo caller constructs these strategies
     # positionally.
     backwards_search: bool = False
+    code_block_candidates: int = field(default=8, kw_only=True)
+    """Maximum coordinated inter-block targets to compare; zero disables it.
+
+    Alternatives share one additional ``max_expansions`` budget. The score is
+    move layers plus participating block members split from their block's
+    majority bus action. Intra-block-only layers use ordinary routing.
+    """
 
     _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.code_block_candidates < 0:
+            raise ValueError("code_block_candidates must be >= 0")
         assert_single_cz_zone(self.arch_spec, type(self).__name__)
 
     @property
@@ -230,6 +239,64 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
                 return True
         return False
 
+    def _prefer_code_block_route(
+        self,
+        state: ConcreteState,
+        pairs: list[tuple[int, int]],
+        ordinary: _native.SolveResult,
+    ) -> _native.SolveResult:
+        from bloqade.lanes.heuristics.physical.code_block_routing import (
+            coordinated_targets,
+            inter_block_groups,
+            route_score,
+            valid_cz_goal,
+        )
+
+        if not self.code_block_candidates or not state.code_blocks:
+            return ordinary
+        _, groups = inter_block_groups(state, pairs)
+        if not groups:
+            return ordinary
+        goal = {
+            q: LocationAddress.from_inner(loc)
+            for q, loc in ordinary.goal_config.items()
+        }
+        best_score = None
+        if ordinary.status == SolveStatus.SOLVED and valid_cz_goal(
+            self.arch_spec, state, pairs, goal
+        ):
+            best_score = route_score(self.arch_spec, state, groups, ordinary)
+            # Already perfectly coordinated; avoid paying for another search.
+            if best_score is not None and best_score[0] == best_score[1]:
+                return ordinary
+        best = ordinary
+        solver = _native.TargetSolver(self._get_engine(), self._build_move_search())
+        initial = {q: loc._inner for q, loc in enumerate(state.layout)}
+        blocked = [loc._inner for loc in state.occupied]
+        remaining = self.max_expansions
+        for candidate in coordinated_targets(
+            self.arch_spec, state, pairs, goal, self.code_block_candidates
+        ):
+            if remaining is not None and remaining <= 0:
+                break
+            if not valid_cz_goal(self.arch_spec, state, pairs, candidate):
+                continue
+            routed = solver.solve(
+                initial,
+                {q: loc._inner for q, loc in candidate.items()},
+                blocked,
+                max_expansions=remaining,
+            )
+            self._rust_nodes_expanded_total += routed.nodes_expanded
+            if remaining is not None:
+                remaining -= routed.nodes_expanded
+            if routed.status != SolveStatus.SOLVED:
+                continue
+            score = route_score(self.arch_spec, state, groups, routed)
+            if score is not None and (best_score is None or score < best_score):
+                best, best_score = routed, score
+        return best
+
     def cz_placements(
         self,
         state: AtomState,
@@ -269,6 +336,7 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
                 move_count=state.move_count,
                 active_cz_zones=self.arch_spec.cz_zone_addresses,
                 move_layers=(),
+                code_blocks=state.code_blocks,
             )
 
         engine = self._get_engine()
@@ -287,6 +355,7 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
             engine, move_search, initial, cz_pairs, blocked, future
         )
         self._rust_nodes_expanded_total += int(result.nodes_expanded)
+        result = self._prefer_code_block_route(state, cz_pairs, result)
 
         if result.status != SolveStatus.SOLVED:
             raise PlacementError(
@@ -329,6 +398,7 @@ class NoReturnStrategyBase(MoveToPlacementStrategyABC):
             move_count=move_count,
             active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_layers,
+            code_blocks=state.code_blocks,
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:

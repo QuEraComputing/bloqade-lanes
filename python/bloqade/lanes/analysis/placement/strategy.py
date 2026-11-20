@@ -122,7 +122,7 @@ class PlacementStrategyABC(abc.ABC):
         Despite the name, this strips the extra metadata of *any* ConcreteState
         subclass — UserMoved's ``accumulated_move_layers``/``pre_user_layout`` as
         well as ExecuteCZ/ExecuteCZReturn's move/CZ metadata — keeping only
-        ``occupied``/``layout``/``move_count``. Non-palindrome strategies call
+        ``occupied``/``layout``/``move_count`` and block membership. Non-palindrome strategies call
         this in sq_placements so that metadata (only needed for the palindrome
         return at the next CZ) does not leak past SQ gates.
         PalindromePlacementStrategy.sq_placements bypasses this so that UserMoved
@@ -133,6 +133,7 @@ class PlacementStrategyABC(abc.ABC):
                 occupied=state.occupied,
                 layout=state.layout,
                 move_count=state.move_count,
+                code_blocks=state.code_blocks,
             )
         return state
 
@@ -150,6 +151,7 @@ class PlacementStrategyABC(abc.ABC):
                 occupied=state.occupied,
                 layout=state.initial_layout,
                 move_count=state.move_count,
+                code_blocks=state.code_blocks,
             )
         return state
 
@@ -436,6 +438,7 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
                 occupied=state.occupied,
                 layout=state.initial_layout,
                 move_count=state.move_count,
+                code_blocks=state.code_blocks,
             )
         return state
 
@@ -467,6 +470,7 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
                 move_layers=result.move_layers,
                 user_move_layers=home.accumulated_move_layers,
                 initial_layout=home.pre_user_layout,
+                code_blocks=home.code_blocks,
             )
 
         return ExecuteCZReturn(
@@ -476,6 +480,7 @@ class PalindromePlacementStrategy(MoveToPlacementStrategyABC):
             active_cz_zones=result.active_cz_zones,
             move_layers=result.move_layers,
             initial_layout=home.layout,
+            code_blocks=home.code_blocks,
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
