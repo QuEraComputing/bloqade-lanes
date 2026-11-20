@@ -55,6 +55,9 @@ const ASYMMETRIC_DURATION: &str =
     include_str!("../fixtures/behaviour/arch/asymmetric_duration.json");
 // Hand-written for the behaviour net, not a unit-test snapshot.
 const TWO_ZONE_GRID: &str = include_str!("../fixtures/behaviour/arch/two_zone_grid.json");
+// Hand-written for the behaviour net: a word bus with a `site_map`.
+const SITE_MAPPED_WORD_BUS: &str =
+    include_str!("../fixtures/behaviour/arch/site_mapped_word_bus.json");
 
 /// Run one case on a fresh engine. Never panics: a panic inside the crate
 /// becomes [`Outcome::Panicked`].
@@ -104,6 +107,7 @@ fn arch_json(arch: Arch) -> &'static str {
         Arch::TwoZoneAlignedSiteBus => TWO_ZONE_ALIGNED_SITE_BUS,
         Arch::AsymmetricDuration => ASYMMETRIC_DURATION,
         Arch::TwoZoneGrid => TWO_ZONE_GRID,
+        Arch::SiteMappedWordBus => SITE_MAPPED_WORD_BUS,
     }
 }
 

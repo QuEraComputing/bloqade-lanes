@@ -89,7 +89,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
                                 zone_id,
                             )
             for bus_id, bus in enumerate(zone.word_buses):
-                for site_id in zone.sites_with_word_buses:
+                for site_id, _dst_site in zone.word_bus_site_pairs(bus_id):
                     for word_id in bus.src:
                         for direction in (Direction.FORWARD, Direction.BACKWARD):
                             yield LaneAddress(
@@ -189,10 +189,10 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         This is metadata — when present, it indicates the radius
         associated with the architecture and is typically used to
         interpret the entangling pairs.  It is **not** independently
-        verified at the ArchSpec level; use
-        :meth:`ZoneBuilder.set_blockade_radius` /
-        :meth:`ArchBuilder.set_blockade_radius` if you want the pair
-        list to be derived from and checked against a radius.
+        verified at the ArchSpec level; build the architecture with
+        ``ZoneBuilder.set_blockade_radius`` / ``ArchBuilder.set_blockade_radius``
+        (in ``bloqade.gemini.arch``) if you want the pair list to be derived
+        from and checked against a radius.
         """
         return self._inner.blockade_radius
 

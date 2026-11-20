@@ -77,13 +77,16 @@ class PathFinder:
                         self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
 
             for bus_id, bus in enumerate(zone.word_buses):
+                # A word bus may relabel sites (its site map); the pairs are
+                # shared by every word pair of the bus.
+                site_pairs = zone.word_bus_site_pairs(bus_id)
                 for src_word, dst_word in zip(bus.src, bus.dst):
-                    for site in zone.sites_with_word_buses:
-                        src_site = LocationAddress(src_word, site, zone_id)
-                        dst_site = LocationAddress(dst_word, site, zone_id)
+                    for src_s, dst_s in site_pairs:
+                        src_site = LocationAddress(src_word, src_s, zone_id)
+                        dst_site = LocationAddress(dst_word, dst_s, zone_id)
                         lane_addr = WordLaneAddress(
                             src_word,
-                            site,
+                            src_s,
                             bus_id,
                             Direction.FORWARD,
                             zone_id,

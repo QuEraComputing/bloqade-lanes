@@ -147,13 +147,16 @@ impl LaneIndex {
                 }
             }
 
-            // Word buses: iterate (bus_id, word_id from bus.src, site_id from zone.sites_with_word_buses).
+            // Word buses: iterate (bus_id, word_id from bus.src, site_id from
+            // the bus's source sites — its site map's sources, or every
+            // `sites_with_word_buses` entry when the bus keeps the site index).
             for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
                 let bus_id = bus_idx as u32;
+                let site_pairs = zone.word_bus_site_pairs(bus_idx);
                 for direction in [Direction::Forward, Direction::Backward] {
                     for src_ref in &bus.src {
                         let word_id = src_ref.0 as u32;
-                        for &site_id in &zone.sites_with_word_buses {
+                        for &(site_id, _) in &site_pairs {
                             let lane = LaneAddr {
                                 move_type: MoveType::WordBus,
                                 zone_id,

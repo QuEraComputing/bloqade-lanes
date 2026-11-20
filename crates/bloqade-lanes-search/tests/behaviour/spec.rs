@@ -47,6 +47,12 @@ pub enum Arch {
     /// (word 4), and only the gate zone has CZ pairs (words 4 & 5, 6 & 7).
     /// Every inter-zone move funnels through that one bus.
     TwoZoneGrid,
+    /// Two 2x2 words side by side (site `i` at column `i % 2`, row `i / 2`).
+    /// A site bus in each word lifts the bottom row (sites 0, 1) onto the top
+    /// row (2, 3); the one word bus, 0 -> 1, has a `site_map` 0 -> 2, 1 -> 3,
+    /// so it carries word 0's bottom row onto word 1's top row. Only sites 0
+    /// and 1 of word 0 can board it.
+    SiteMappedWordBus,
 }
 
 /// A location. Zone 0 unless built with [`zloc`].

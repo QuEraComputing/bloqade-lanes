@@ -14,10 +14,12 @@
 //!
 //! The generator's model lays each bus group's lanes out as cells on the
 //! group's source grid. That model is well defined only under two properties
-//! of the architecture that `ArchSpec::validate` does not enforce:
-//! [`ExhaustivePrecondition::PositionCollision`] (P1) and
-//! [`ExhaustivePrecondition::NonSeparable`] (P2). [`ExhaustiveGenerator::for_solve`]
-//! checks them and refuses a spec that violates either, rather than
+//! of the architecture: [`ExhaustivePrecondition::PositionCollision`] (P1),
+//! which `ArchSpec::validate` does not enforce, and
+//! [`ExhaustivePrecondition::NonSeparable`] (P2), which it implies (every bus
+//! must be one AOD operation) but which a `LaneIndex` built from an
+//! unvalidated spec can still violate. [`ExhaustiveGenerator::for_solve`]
+//! checks both and refuses a spec that violates either, rather than
 //! enumerate a model that does not fit it.
 //!
 //! Two knobs give nested families of shot sets and are the levels a widening

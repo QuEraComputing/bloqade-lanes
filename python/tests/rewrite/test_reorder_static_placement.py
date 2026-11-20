@@ -308,3 +308,22 @@ def test_move_to_does_not_bail_and_schedules_before_segment():
     assert len(stmts) == 4
     assert isinstance(stmts[1], place.R) and stmts[1].qubits == (2,)  # type: ignore[union-attr]
     assert isinstance(stmts[3], place.MoveTo)
+
+
+def test_group_key_separates_star_r_by_axis():
+    """Gates the reorderer clusters must be fusable, and StarR gates only fuse
+    with an identical axis, so the axis is part of the key."""
+    from bloqade.lanes.rewrite.reorder_static_placement.common import _group_key
+
+    _, entry = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    other_axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    def star(axis_value):
+        return place.StarR(
+            entry, axis_value, angle, qubits=(0,), qubit_indices=(4, 5, 6)
+        )
+
+    assert _group_key(star(axis)) == _group_key(star(axis))
+    assert _group_key(star(axis)) != _group_key(star(other_axis))

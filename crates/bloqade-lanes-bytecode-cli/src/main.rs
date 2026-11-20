@@ -326,10 +326,16 @@ fn print_arch_spec(spec: &ArchSpec) {
             );
         }
         for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
-            println!(
-                "    Word bus {}: src={:?} dst={:?}",
-                bus_idx, bus.src, bus.dst
-            );
+            match &bus.site_map {
+                None => println!(
+                    "    Word bus {}: src={:?} dst={:?}",
+                    bus_idx, bus.src, bus.dst
+                ),
+                Some(map) => println!(
+                    "    Word bus {}: src={:?} dst={:?} site_map: src={:?} dst={:?}",
+                    bus_idx, bus.src, bus.dst, map.src, map.dst
+                ),
+            }
         }
         if !zone.words_with_site_buses.is_empty() {
             println!(

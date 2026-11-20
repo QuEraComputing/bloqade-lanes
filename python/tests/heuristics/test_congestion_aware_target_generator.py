@@ -4,6 +4,7 @@ import math
 from collections import Counter
 
 import pytest
+from tests._arch_fixtures import load_arch
 
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
@@ -338,7 +339,7 @@ def test_sort_longest_first_orders_by_descending_uncongested_min_cost(gate_arch)
     ), f"longest-first expected (2,3) first, got {sorted_pairs}"
 
 
-def test_target_direction_chosen_when_target_path_cheaper(arch_builder):
+def test_target_direction_chosen_when_target_path_cheaper():
     """When moving the target is cheaper than moving the control, the
     target-direction candidate wins.
 
@@ -354,19 +355,7 @@ def test_target_direction_chosen_when_target_path_cheaper(arch_builder):
     #   |          |
     #   w5 ------- w6       (control detour)
     #   CZ pairs (w0,w1) and (w2,w3); target route w2 - w7 - w1
-    positions = [
-        (0.0, 0.0),  # 0: w0  control start (X)
-        (30.0, 200.0),  # 1: w1  partner(X)
-        (0.0, 200.0),  # 2: w2  target start (Y)
-        (20.0, 0.0),  # 3: w3  partner(Y)
-        (10.0, 0.0),  # 4: w4  hub (blocker site)
-        (0.0, 100.0),  # 5: w5  detour waypoint
-        (20.0, 100.0),  # 6: w6  detour waypoint
-        (15.0, 200.0),  # 7: w7  target-route midpoint
-    ]
-    buses = [(0, 4), (4, 3), (0, 5), (5, 6), (6, 3), (2, 7), (7, 1)]
-    entangling = [(0, 1), (2, 3)]
-    arch = arch_builder(positions, buses, entangling)
+    arch = load_arch("congestion_hub_detour")
 
     x = LocationAddress(0, 0, 0)
     y = LocationAddress(2, 0, 0)
@@ -414,7 +403,7 @@ def test_neutral_factors_reproduce_default_on_symmetric_stage(gate_arch):
     )
 
 
-def test_multi_pair_avoids_opposite_direction_reuse(arch_builder):
+def test_multi_pair_avoids_opposite_direction_reuse():
     """A small ``direction_factor`` makes the second-committed pair avoid
     reusing a lane in the opposite direction.
 
@@ -432,32 +421,7 @@ def test_multi_pair_avoids_opposite_direction_reuse(arch_builder):
     direction more expensive than its target direction, so B flips to the
     L-avoiding target direction.
     """
-    positions = [
-        (0.0, 70.0),  # 0  ctrl A (left)
-        (0.0, 0.0),  # 1  L0  (bridge left end)
-        (60.0, 0.0),  # 2  R0  (bridge right end); L = (w1, w2)
-        (60.0, 70.0),  # 3  partner(tgtA); A-ctrl destination (right)
-        (60.0, -60.0),  # 4  ctrl B (right)
-        (0.0, -60.0),  # 5  partner(tgtB); B-ctrl destination (left)
-        (0.0, 140.0),  # 6  tgt A (partner of w3)
-        (60.0, 140.0),  # 7  partner(ctrlA); A-tgt dest (isolated)
-        (0.0, -140.0),  # 8  tgt B (partner of w5)
-        (195.0, -140.0),  # 9  partner(ctrlB); B-tgt destination
-        (65.0, -140.0),  # 10 B-tgt route waypoint
-        (130.0, -140.0),  # 11 B-tgt route waypoint
-    ]
-    buses = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (2, 4),
-        (1, 5),
-        (8, 10),
-        (10, 11),
-        (11, 9),
-    ]
-    entangling = [(0, 7), (3, 6), (5, 8), (4, 9)]
-    arch = arch_builder(positions, buses, entangling)
+    arch = load_arch("congestion_bridge")
 
     layout = (
         LocationAddress(0, 0, 0),  # q0 ctrl A

@@ -1,4 +1,5 @@
 import pytest
+from tests._arch_fixtures import gate_zone_arch
 
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementError
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
@@ -415,30 +416,13 @@ def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.parametrize("sites_per_word", [2, 4])
 def test_initial_layout_variable_sites_per_word(sites_per_word):
-    from bloqade.lanes.arch.build.blueprint import (
-        ArchBlueprint,
-        DeviceLayout,
-        ZoneSpec,
-        build_arch,
+    arch_spec = gate_zone_arch(
+        num_rows=4,
+        num_cols=2,
+        sites_per_word=sites_per_word,
+        word_topology="hypercube",
+        site_topology="hypercube",
     )
-    from bloqade.lanes.arch.build.topology import (
-        HypercubeSiteTopology,
-        HypercubeWordTopology,
-    )
-
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=4,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=sites_per_word),
-    )
-    arch_spec = build_arch(bp).arch
     layout_heuristic = logical_layout.LogicalLayoutHeuristic()
     layout_heuristic.arch_spec = arch_spec
 

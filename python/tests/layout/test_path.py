@@ -2,34 +2,23 @@ import itertools
 from collections.abc import Callable
 
 import pytest
+from tests._arch_fixtures import gate_zone_arch, load_arch
 
-from bloqade.lanes.arch import (
-    AllToAllSiteTopology,
-    ArchBlueprint,
-    DeviceLayout,
-    HypercubeWordTopology,
-    ZoneSpec,
-    build_arch,
-)
 from bloqade.lanes.arch.path import PathFinder
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 
 
 def _build_pathfinder() -> PathFinder:
     # 8 words with 3-dimensional hypercube word buses gives multiple route choices.
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=1,
-                num_cols=8,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=AllToAllSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=10),
+    return PathFinder(
+        gate_zone_arch(
+            num_rows=1,
+            num_cols=8,
+            sites_per_word=10,
+            word_topology="hypercube",
+            site_topology="all_to_all",
+        )
     )
-    return PathFinder(build_arch(bp).arch)
 
 
 def _path_duration(
@@ -185,39 +174,17 @@ def test_find_path_returns_none_when_intermediate_nodes_block_all_routes():
 
 def test_find_path_respects_per_bus_word_scoping():
     """Site buses scoped to specific words should not be used by other words."""
-    # Build a 2-zone arch: zone A has site buses, zone B has none.
-    bp = ArchBlueprint(
-        zones={
-            "a": ZoneSpec(
-                num_rows=1,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=AllToAllSiteTopology(),
-            ),
-            "b": ZoneSpec(
-                num_rows=1,
-                num_cols=2,
-                entangling=True,
-                word_topology=HypercubeWordTopology(),
-                # No site_topology: zone B has no site buses
-            ),
-        },
-        layout=DeviceLayout(sites_per_word=4),
-    )
-    from bloqade.lanes.arch.build.topology import MatchingTopology
-
-    result = build_arch(bp, connections={("a", "b"): MatchingTopology()})
-    arch = result.arch
+    # A 2-zone arch: zone A has site buses, zone B has none.
+    arch = load_arch("site_bus_scoping_two_zone")
 
     # Zone B has no site topology, so its OWN words_with_site_buses must be
     # empty. Under the shared template, word IDs are zone-local and reused
     # across zones, so site-bus scoping is only meaningful per zone — a bare
     # union of word IDs across zones can no longer distinguish "zone A word 0"
     # from "zone B word 0".
-    b_zone_id = result.zone_indices["b"]
+    b_zone_id = next(i for i, zone in enumerate(arch.zones) if zone.name == "b")
     assert arch.zones[b_zone_id].words_with_site_buses == []
-    zone_b_words = set(result.zone_grids["b"].all_word_ids)
+    zone_b_words = set(arch._zone_word_ids(b_zone_id))
 
     # Attempting an intra-word site move in zone B should fail (no site bus)
     b_word = min(zone_b_words)
