@@ -10,8 +10,6 @@ Strategies are defined once in a shared pool and experiments are views
 into that pool, so each strategy is only benchmarked once even if it
 appears in multiple experiments.
 
-Requires Bloqade 0.38.0 for architecture construction.
-
 Usage:
     uv run python .benchmarking/routing_benchmark.py                     # all experiments
     uv run python .benchmarking/routing_benchmark.py exp1a exp3          # specific experiments
@@ -30,13 +28,13 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from bloqade.gemini.arch import (
-    ArchBuilder,
+from bloqade.lanes.arch.builder import build_arch
+from bloqade.lanes.arch.topology import (
     DiagonalWordTopology,
     HypercubeSiteTopology,
     HypercubeWordTopology,
-    create_zone_words,
 )
+from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 from bloqade.lanes.bytecode._native import (
     DeadlockPolicy,
     EntropyOptions,
@@ -44,11 +42,10 @@ from bloqade.lanes.bytecode._native import (
     SearchEngine,
     SearchStrategy,
     SolveOptions,
-    SolveStatus,
     TargetSolver,
 )
-from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.layout import LocationAddress
+from bloqade.lanes.layout.arch import ArchSpec
 
 # ── Architecture ────────────────────────────────────────────────────
 
@@ -60,33 +57,19 @@ def make_arch(num_rows: int, num_cols: int = 2, sites_per_word: int = 16) -> Arc
     else:
         word_topo = HypercubeWordTopology()
 
-    grid = create_zone_words(
-        num_rows=num_rows, num_cols=num_cols, sites_per_word=sites_per_word
+    bp = ArchBlueprint(
+        zones={
+            "gate": ZoneSpec(
+                num_rows=num_rows,
+                num_cols=num_cols,
+                entangling=True,
+                word_topology=word_topo,
+                site_topology=HypercubeSiteTopology(),
+            )
+        },
+        layout=DeviceLayout(sites_per_word=sites_per_word),
     )
-    columns = [10.0 * i for i in range(num_cols * sites_per_word)]
-    builder = ArchBuilder(
-        grid_shape=(num_rows, len(columns)), word_shape=(1, sites_per_word)
-    )
-    for word in grid.words:
-        builder.add_word(
-            rows=word.site_indices[0][1], columns=[x for x, _ in word.site_indices]
-        )
-    builder.add_zone(
-        "gate",
-        rows=[20.0 * r for r in range(num_rows)],
-        columns=columns,
-        x_clearance=3.0,
-        y_clearance=3.0,
-    )
-    for bus in HypercubeSiteTopology().generate_site_buses(sites_per_word):
-        builder.add_site_bus("gate", bus.src, bus.dst)
-    for bus in word_topo.generate_word_buses(grid):
-        builder.add_word_bus("gate", bus.src, bus.dst)
-    left, right = zip(*grid.cz_pairs())
-    builder.add_entangling_pairs("gate", left, right)
-    builder.add_mode("all", ["gate"])
-    builder.add_mode("gate", ["gate"])
-    return builder.build()
+    return build_arch(bp).arch
 
 
 # ── Problem generation ──────────────────────────────────────────────
@@ -135,7 +118,7 @@ def generate_problem(
         if len(cz_controls) >= n_cz_pairs:
             break
         c, t = qubit_ids[i], qubit_ids[i + 1]
-        partner = arch.get_cz_partner(placement[t])
+        partner = arch.get_blockaded_location(placement[t])
         if partner is None:
             continue
         partner_key = (partner.word_id, partner.site_id)
@@ -160,7 +143,7 @@ def generate_problem(
 
     target_config = dict(placement)
     for c_qid, t_qid in zip(cz_controls, cz_targets):
-        partner = arch.get_cz_partner(placement[t_qid])
+        partner = arch.get_blockaded_location(placement[t_qid])
         if partner is not None:
             target_config[c_qid] = partner
 
@@ -237,14 +220,14 @@ def solve_rust(
 
     t0 = time.perf_counter()
     result = solver.solve(
-        {q: loc._inner for q, loc in problem.initial.items()},
-        {q: loc._inner for q, loc in problem.target.items()},
-        [loc._inner for loc in problem.blocked],
+        problem.initial,
+        problem.target,
+        list(problem.blocked),
         strat.max_expansions,
     )
     dt = time.perf_counter() - t0
 
-    if result.status == SolveStatus.SOLVED:
+    if result.status == "solved":
         n_atom_moves = sum(len(layer) for layer in result.move_layers)
         return SolveResult(
             solved=True,
@@ -253,7 +236,7 @@ def solve_rust(
             n_atom_moves=n_atom_moves,
             status="solved",
         )
-    return SolveResult(solved=False, time_s=dt, status=result.status.name.lower())
+    return SolveResult(solved=False, time_s=dt, status=result.status)
 
 
 # ── Strategy & Experiment definitions ───────────────────────────────
