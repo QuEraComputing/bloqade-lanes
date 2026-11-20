@@ -5,9 +5,10 @@ architecture builder lives in ``bloqade.gemini.arch``, in the ``bloqade``
 distribution, which lanes cannot depend on. Tests that need a small synthetic
 architecture therefore load one of the snapshots in ``fixtures/arch/``.
 
-Each snapshot is produced by ``fixtures/arch/generate.py``, which records how it
-was built. To add one, add a recipe there (or a parameter set to
-:data:`GATE_ZONE_FIXTURES`) and run that script with ``bloqade`` installed.
+The snapshots are plain test data. Each one is validated when it is loaded
+(``ArchSpec.from_json_validated``). To add one, write the JSON by hand or build
+it with any tool, then commit it here. Single-zone entangling snapshots are
+named by :func:`gate_zone_name`.
 """
 
 from __future__ import annotations
@@ -22,29 +23,6 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "arch"
 
 WordTopologyName = Literal["hypercube", "diagonal"]
 SiteTopologyName = Literal["hypercube", "all_to_all"]
-
-GateZoneParameters = tuple[int, int, int, WordTopologyName, SiteTopologyName]
-"""``(num_rows, num_cols, sites_per_word, word_topology, site_topology)``."""
-
-GATE_ZONE_FIXTURES: tuple[GateZoneParameters, ...] = (
-    (1, 4, 1, "hypercube", "all_to_all"),
-    (1, 8, 1, "hypercube", "all_to_all"),
-    (1, 4, 3, "hypercube", "all_to_all"),
-    (1, 4, 5, "hypercube", "all_to_all"),
-    (1, 4, 7, "hypercube", "all_to_all"),
-    (1, 4, 10, "hypercube", "all_to_all"),
-    (1, 8, 10, "hypercube", "all_to_all"),
-    (2, 2, 4, "hypercube", "hypercube"),
-    (4, 2, 2, "hypercube", "hypercube"),
-    (4, 2, 4, "hypercube", "hypercube"),
-    (1, 2, 4, "diagonal", "hypercube"),
-    (4, 2, 4, "diagonal", "hypercube"),
-    (1, 2, 16, "diagonal", "hypercube"),
-    (4, 2, 16, "diagonal", "hypercube"),
-    (5, 2, 16, "diagonal", "hypercube"),
-    (8, 2, 16, "diagonal", "hypercube"),
-)
-"""Every single-zone entangling architecture available to :func:`gate_zone_arch`."""
 
 
 def gate_zone_name(
@@ -66,8 +44,8 @@ def load_arch(name: str) -> ArchSpec:
     path = FIXTURE_DIR / f"{name}.json"
     if not path.is_file():
         raise FileNotFoundError(
-            f"no architecture snapshot {path.name!r} in {FIXTURE_DIR}; add a "
-            "recipe to fixtures/arch/generate.py and run it with bloqade installed"
+            f"no architecture snapshot {path.name!r} in {FIXTURE_DIR}; add the "
+            "ArchSpec JSON there"
         )
     return ArchSpec(_RustArchSpec.from_json_validated(path.read_text(encoding="utf-8")))
 
