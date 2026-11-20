@@ -18,6 +18,8 @@ def test_make_physical_placement_strategy_defaults_match_physical_pipeline():
     assert inner.k_candidates == 3
     assert inner.max_expansions == 300
     assert inner.lambda_lookahead == 0.0
+    assert inner.bus_reward_rho == 1
+    assert inner.top_bus_signatures == 6
 
 
 def test_make_physical_placement_strategy_threads_user_knobs():
@@ -25,6 +27,9 @@ def test_make_physical_placement_strategy_threads_user_knobs():
         move_solutions_per_layer=8,
         search_budget=10_000,
         strategy="astar",
+        lambda_lookahead=0.75,
+        bus_reward_rho=2,
+        top_bus_signatures=8,
     )
 
     assert isinstance(strategy, PalindromePlacementStrategy)
@@ -33,7 +38,24 @@ def test_make_physical_placement_strategy_threads_user_knobs():
     assert inner.strategy == SearchStrategy.ASTAR
     assert inner.k_candidates == 8
     assert inner.max_expansions == 10_000
-    assert inner.lambda_lookahead == 0.0
+    assert inner.lambda_lookahead == 0.75
+    assert inner.bus_reward_rho == 2
+    assert inner.top_bus_signatures == 8
+
+
+def test_make_physical_placement_strategy_threads_nohome_options():
+    strategy = make_physical_placement_strategy(
+        return_moves=False,
+        lambda_lookahead=0.25,
+        bus_reward_rho=3,
+        top_bus_signatures=9,
+    )
+
+    assert isinstance(strategy, NoHomePlacementStrategy)
+    options = strategy._build_nohome_options()
+    assert options.lambda_lookahead == 0.25
+    assert options.bus_reward_rho == 3
+    assert options.top_bus_signatures == 9
 
 
 def test_make_physical_placement_strategy_can_disable_return_moves():
