@@ -171,22 +171,6 @@ wheels = [
 ]
 
 [[package]]
-name = "beliefmatching"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "ldpc" },
-    { name = "numpy" },
-    { name = "pymatching" },
-    { name = "sinter" },
-    { name = "stim" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/43/e4/5b5cc731a4507c7243a90c786390041ceb69dbe304ee17debd589049b6a0/beliefmatching-0.2.0.tar.gz", hash = "sha256:915175fc6ab4b73cfb948774ef06d71abc045a189dfb21cdf3dbd69389b111cc", size = 13472, upload-time = "2025-06-28T21:19:44.485Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/48/49f5bc2a7ac44226d07381ac553f44966bcee1f4c17d3688d960023ac228/beliefmatching-0.2.0-py3-none-any.whl", hash = "sha256:601e5511e34acd00daad6f421a229aa60f3ff58a1c8800f416b2ffa236c7a22a", size = 12740, upload-time = "2025-06-28T21:19:43.487Z" },
-]
-
-[[package]]
 name = "binapy"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -237,7 +221,7 @@ wheels = [
 
 [[package]]
 name = "bloqade-circuit"
-version = "0.15.5"
+version = "0.15.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bloqade-decoders" },
@@ -250,9 +234,9 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/6b/30ee9d1362aadef38f4fb0ddf4a2f8016d0ef9f8c9ad25083039350494a4/bloqade_circuit-0.15.5.tar.gz", hash = "sha256:4fb3ddf3640885c31bd28dc79b4aa0e282ae3ceb0bb78399efb1af7eacf5c7ff", size = 529109, upload-time = "2026-10-28T08:45:19.483Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/3c/9d88cd82578d36c016bec38eba09ae6db78f01012eb920fe8b6ee4ac0a95/bloqade_circuit-0.15.6.tar.gz", hash = "sha256:4c1aa6c8c98d01a5e0a84374cac2bffbf1dc2a3595a28817feba3849d36aa52c", size = 529640, upload-time = "2026-11-12T19:02:37.503Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/e0/2732ac06eb9bb89ca36d82554d93ed8594e9c645420d2a67e1fd2ea093c5/bloqade_circuit-0.15.5-py3-none-any.whl", hash = "sha256:75395639951c6cdaa3911e79b2ff147ce94d892439dd086b5dd8e707afd892c5", size = 321939, upload-time = "2026-10-28T08:45:17.723Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/4b/97172eae31d37af4413b1dae48ad9d0733adc94a5972f57a6a63b99834c1/bloqade_circuit-0.15.6-py3-none-any.whl", hash = "sha256:7225e72ae87b946cdfa11960eb42033648165a44d9feed924a128b00e5d8662e", size = 322743, upload-time = "2026-11-12T19:02:35.776Z" },
 ]
 
 [package.optional-dependencies]
@@ -281,23 +265,24 @@ wheels = [
 
 [[package]]
 name = "bloqade-decoders"
-version = "0.6.1"
+version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "beliefmatching" },
     { name = "kirin-toolchain" },
     { name = "ldpc" },
     { name = "numpy" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "stim" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/f4/0690bb769df64802373c1def476cdb3d57d2c9bd526e655944d917d4eab8/bloqade_decoders-0.6.1.tar.gz", hash = "sha256:a4b410724410fbe28800d8ab40e60da6913112d0b234f75122a68d1e07c74366", size = 153096, upload-time = "2026-09-09T18:30:35.423Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/85/e4651e5317af8e3faeb8d1cef62b1dfa8b645dcbb902e3890eb4514f9f6b/bloqade_decoders-0.7.1.tar.gz", hash = "sha256:d0dab1bbceef1304f701d0f75c5d2cb425527a7b297401c8cb1db32300582ee8", size = 203609, upload-time = "2026-11-19T15:34:34.768Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/1f/3fb130617eb023d3a575c3665f50d93b07fe7cbceed44bb012c09b6ab2b6/bloqade_decoders-0.6.1-py3-none-any.whl", hash = "sha256:fd65fb936966b187a384d186ca823e6ce669eda91f1687a30c9a551a0b47dd73", size = 26406, upload-time = "2026-09-09T18:30:34.012Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/d9/58567b31734871f8909106e849708f36fdfb94f71817b5f9a4310876b972/bloqade_decoders-0.7.1-py3-none-any.whl", hash = "sha256:6fa14e7f5714f288df189d3f362805d72dfb2f04085826c2f906d49acd3015df", size = 39764, upload-time = "2026-11-19T15:34:33.562Z" },
 ]
 
 [[package]]
 name = "bloqade-lanes"
-version = "0.13.0.dev0"
+version = "0.14.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "bloqade-circuit", extra = ["qasm2"] },
@@ -359,8 +344,8 @@ doc = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bloqade-circuit", extras = ["cirq"], marker = "extra == 'sim'", specifier = "~=0.15.5" },
-    { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.5" },
+    { name = "bloqade-circuit", extras = ["cirq"], marker = "extra == 'sim'", specifier = "~=0.15.6" },
+    { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.15.6" },
     { name = "bloqade-core", specifier = "~=0.6.8" },
     { name = "deprecated", specifier = ">=1.3.1" },
     { name = "kahip", specifier = ">=3.25,<3.26" },

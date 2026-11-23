@@ -15,8 +15,7 @@ topology from ``tests/fixtures/arch``:
 * ``congestion_hub_detour`` and ``congestion_bridge`` — single-zone,
   one-site-per-word layouts with explicit word positions, word buses and
   entangling pairs, loaded with ``load_arch``. Their move-cost landscapes
-  are described in the tests that use them and in the recipes in
-  ``tests/fixtures/arch/generate.py``.
+  are described in the tests that use them.
 """
 
 from __future__ import annotations

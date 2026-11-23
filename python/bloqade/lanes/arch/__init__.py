@@ -1,8 +1,7 @@
 """Architecture specifications and the geometry, path and metric helpers on them.
 
-Building an architecture is not part of lanes: the arch builders
-(``ArchBuilder``, ``ZoneBuilder``, ``build_arch``, the topologies) live in
-``bloqade.gemini.arch``, in the ``bloqade`` distribution. They produce the
+The architecture builder in Bloqade 0.38.0,
+``bloqade.gemini.arch.ArchBuilder``, produces the
 :class:`ArchSpec` that lanes compiles against.
 """
 

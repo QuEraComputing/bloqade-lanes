@@ -21,8 +21,9 @@ fn canonical_f64_bits(v: f64) -> u64 {
 /// The `src` and `dst` lists are parallel arrays: `src[i]` maps to `dst[i]`.
 /// The type parameter `T` determines the address type used for bus entries:
 /// - `Bus<SiteRef>` — site buses within a zone
-/// - `Bus<WordRef>` — word buses within a zone
 /// - `Bus<ZonedWordRef>` — inter-zone word buses
+///
+/// Word buses within a zone use [`WordBus`], which adds an optional site map.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(bound = "T: Serialize + for<'de2> Deserialize<'de2>")]
 pub struct Bus<T> {
@@ -30,6 +31,57 @@ pub struct Bus<T> {
     pub src: Vec<T>,
     /// Destination indices (same length as `src`).
     pub dst: Vec<T>,
+}
+
+/// The site relabelling a [`WordBus`] applies: `src[i]` maps to `dst[i]`.
+///
+/// Stored as parallel arrays, and validated by the same rules as a site bus:
+/// unique sources, unique destinations (so the map can be inverted for
+/// backward moves), and no cycles — a site rotation such as `0→1, 1→0` is
+/// rejected because the site map is part of the same AOD operation.
+pub type SiteMap = Bus<SiteRef>;
+
+/// A word bus: moves atoms between words within a zone, optionally also
+/// changing their site index.
+///
+/// `src[i]` maps to `dst[i]` at the word level. The site an atom lands on is
+/// given by `site_map`, which is shared by every word pair of the bus: an
+/// atom at `(src[i], s)` moves to `(dst[i], m(s))`.
+///
+/// When `site_map` is `None`, every site in the zone's
+/// `sites_with_word_buses` maps to itself, i.e. the atom keeps its site
+/// index. When it is `Some`, only the map's source sites can be lane sources,
+/// and every site the map touches (source or destination) must be listed in
+/// `sites_with_word_buses`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WordBus {
+    /// Source word IDs.
+    pub src: Vec<WordRef>,
+    /// Destination word IDs (same length as `src`).
+    pub dst: Vec<WordRef>,
+    /// Site relabelling applied on every word pair. `None` = identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_map: Option<SiteMap>,
+}
+
+impl WordBus {
+    /// A word bus that keeps each atom's site index (no site map).
+    pub fn new(src: Vec<WordRef>, dst: Vec<WordRef>) -> Self {
+        Self {
+            src,
+            dst,
+            site_map: None,
+        }
+    }
+
+    /// A word bus that relabels sites through `site_map`.
+    pub fn with_site_map(src: Vec<WordRef>, dst: Vec<WordRef>, site_map: SiteMap) -> Self {
+        Self {
+            src,
+            dst,
+            site_map: Some(site_map),
+        }
+    }
 }
 
 /// A group of atom sites that share a coordinate grid.
@@ -59,10 +111,13 @@ pub struct Zone {
     /// Site buses that move atoms between sites within words of this zone.
     pub site_buses: Vec<Bus<SiteRef>>,
     /// Word buses that move atoms between words within this zone.
-    pub word_buses: Vec<Bus<WordRef>>,
+    pub word_buses: Vec<WordBus>,
     /// Word IDs (within this zone) that have site-bus transport capability.
     pub words_with_site_buses: Vec<u32>,
-    /// Site indices that participate in word-bus transport within this zone.
+    /// Site indices that participate in word-bus transport within this zone:
+    /// the landing pads, i.e. every source or destination site of any word
+    /// bus here. A word bus without a site map uses all of them, each mapped
+    /// to itself.
     pub sites_with_word_buses: Vec<u32>,
     /// Word pairs within this zone that are at blockade radius for CZ gates.
     /// A zone with empty `entangling_pairs` is a storage/low-connectivity zone.

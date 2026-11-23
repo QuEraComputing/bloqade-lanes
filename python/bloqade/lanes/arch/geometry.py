@@ -123,7 +123,7 @@ class ArchSpecGeometry:
                 )
 
         for bus_id, bus in enumerate(zone.word_buses):
-            n = len(bus.src) * len(zone.sites_with_word_buses)
+            n = len(bus.src) * len(zone.word_bus_site_pairs(bus_id))
             for direction in (Direction.FORWARD, Direction.BACKWARD):
                 result.append(
                     BusDescriptor(
@@ -145,9 +145,14 @@ class ArchSpecGeometry:
     ) -> tuple[GeoGrid, GeoGrid]:
         """Get start and end grids for a bus move at full occupancy.
 
-        Returns two ``bloqade.geometry.Grid`` objects representing the
-        source and destination positions for all lanes in the specified
-        bus group.
+        Returns two ``bloqade.geometry.Grid`` objects: the source and
+        destination positions of every lane in the bus group, as the
+        Cartesian product of their distinct x and y coordinates. Validation
+        requires every bus to be one AOD operation, so its sources form a
+        complete grid, and it is separable and order-preserving, so its
+        destinations do too. Each grid therefore has exactly one point per
+        lane endpoint, and the i-th x (y) tone of ``src_grid`` moves to the
+        i-th x (y) tone of ``dst_grid``.
 
         Args:
             zone_id: Zone index.
@@ -210,7 +215,7 @@ class ArchSpecGeometry:
                 )
             bus = zone.word_buses[bus_id]
             for src_word, _dst_word in zip(bus.src, bus.dst, strict=True):
-                for site_id in zone.sites_with_word_buses:
+                for site_id, _dst_site in zone.word_bus_site_pairs(bus_id):
                     lane = LaneAddress(
                         move_type, src_word, site_id, bus_id, direction, zone_id
                     )
