@@ -10,7 +10,10 @@ from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
 # Grid: x=[0,2,10,12,20,22,...] (alternating 2/8 spacing), y=[0,10,20,30,40]
 #
 # Site buses: 3D hypercube on 8 sites (3 buses)
-# Word buses: 9 merged column-pair shifts + 1 cross-gap (10 buses)
+# Word buses 0–18 are the original same-site transfers. Buses 19–22 implement
+# state_prep0 through state_prep3, each moving both column groups together.
+# Each maps home sites to partner-word sites on the same row. The return
+# moves use the same lanes backwards, via the same inter-row midpoint.
 # Entangling pairs: [[0,1],[2,3],...,[18,19]]
 
 

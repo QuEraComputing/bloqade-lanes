@@ -109,13 +109,9 @@ def test_receding_horizon_exposes_rust_nodes_expanded():
 def test_receding_horizon_defaults_budget_allows_more_than_one_stage():
     """Default construction solves a layer that needs two stages.
 
-    This is the fifth CZ layer of the ``adder_4`` physical benchmark. Its
-    first stage costs 261 expansions (two of the five rollouts fall back from
-    the beam to IDS) and commits three tier-1 layers without reaching the
-    goal; the second stage finishes in six more. The budget is checked
-    between stages, so the ``max_expansions=100`` the strategy used to inherit
-    from ``NoReturnStrategyBase`` returned ``budget_exceeded`` just before
-    that second stage, and the benchmark failed.
+    Use the CZ pairs from the fifth layer of the adder_4 benchmark, placed
+    on sites that still require a second stage with the state-prep buses.
+    The previous default of 100 expansions runs out between stages.
     """
     strategy = RecedingHorizonNoReturnPlacementStrategy(
         arch_spec=physical.get_arch_spec(),
@@ -123,10 +119,10 @@ def test_receding_horizon_defaults_budget_allows_more_than_one_stage():
     state = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(0, 3),
-            LocationAddress(1, 3),
-            LocationAddress(3, 2),
-            LocationAddress(2, 2),
+            LocationAddress(0, 1),
+            LocationAddress(1, 1),
+            LocationAddress(3, 3),
+            LocationAddress(2, 3),
         ),
         move_count=(0, 0, 0, 0),
     )

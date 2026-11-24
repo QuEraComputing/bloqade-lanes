@@ -4,6 +4,7 @@ from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import (
     LocationAddress,
+    WordLaneAddress,
 )
 
 
@@ -24,9 +25,55 @@ def test_physical_architecture():
     assert len(arch.words[0].site_indices) == 8
     zone = arch._inner.zones[0]
     assert len(zone.site_buses) == 3  # 3D hypercube on 8 sites
-    assert len(zone.word_buses) == 19  # 19 individual word buses
+    assert len(zone.word_buses) == 23
     assert len(zone.entangling_pairs) == 10
     assert arch.max_qubits == 80  # 20 words × 8 sites // 2
+
+
+@pytest.mark.parametrize(
+    ("step", "site_pairs", "dx"),
+    [
+        (0, [(2, 1), (4, 3), (6, 5)], -18),
+        (1, [(0, 3), (2, 5)], 62),
+        (2, [(4, 6)], 42),
+        (3, [(0, 1), (2, 3), (4, 5)], 22),
+    ],
+)
+def test_physical_state_prep_bus(step, site_pairs, dx):
+    arch = physical.get_arch_spec()
+    bus_id = 19 + step
+    zone = arch.zones[0]
+    bus = zone.word_buses[bus_id]
+    home_words = list(range(0, 20, 2))
+    assert bus.src == home_words
+    assert bus.dst == [word + 1 for word in home_words]
+    assert zone.word_bus_site_pairs(bus_id) == site_pairs
+
+    lanes = []
+    for word in home_words:
+        for source, target in site_pairs:
+            start = LocationAddress(word, source)
+            end = LocationAddress(word + 1, target)
+            lane = WordLaneAddress(word, source, bus_id)
+            assert arch.get_lane_address(start, end) == lane
+            assert arch.get_lane_address(end, start) == lane.reverse()
+            assert arch.get_endpoints(lane.reverse()) == (end, start)
+
+            # QLUE extracts to the inter-row midpoint, translates, then deposits.
+            x, y = arch.get_position(start)
+            path = ((x, y), (x, y + 5), (x + dx, y + 5), (x + dx, y))
+            assert arch.get_position(end) == path[-1]
+            assert arch.paths[lane] == path
+            assert arch.paths[lane.reverse()] == path[::-1]
+            lanes.append(lane)
+
+    # Both interleaved copies of the hardware experiment occupy the center row.
+    center_row = [lane for lane in lanes if lane.word_id in (8, 10)]
+    assert len(center_row) == 2 * len(site_pairs)
+    assert not arch.check_lane_group(center_row)
+    assert not arch.check_lane_group([lane.reverse() for lane in center_row])
+    assert not arch.check_lane_group(lanes)
+    assert not arch.check_lane_group([lane.reverse() for lane in lanes])
 
 
 def test_entangling_pairs():
