@@ -69,6 +69,10 @@ class PhysicalPipeline:
     layout_heuristic: layout.LayoutHeuristicABC | None = None
     placement_strategy: placement.PlacementStrategyABC | None = None
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
+    use_code_blocks: bool = True
+    """Honor ``code_block.register`` (see ``PhysicalNativeToPlace``)."""
+    slots: list[list[tuple[int, int, int]]] | None = None
+    """Code-block slots, each containing ordered (zone, row, col) coordinates."""
 
     @property
     def resolved_layout_heuristic(self) -> layout.LayoutHeuristicABC:
@@ -112,9 +116,11 @@ class PhysicalPipeline:
         return self.placement_strategy
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
-        out = PhysicalNativeToPlace(arch_spec=self.arch_spec).emit(
-            mt, no_raise=no_raise
-        )
+        out = PhysicalNativeToPlace(
+            arch_spec=self.arch_spec,
+            use_code_blocks=self.use_code_blocks,
+            slots=self.slots,
+        ).emit(mt, no_raise=no_raise)
         # Source kernels may contain debug.Info, but no placement strategy
         # should carry those statements into the move program.
         rewrite.Walk(RemoveDebugStatements()).rewrite(out.code)
