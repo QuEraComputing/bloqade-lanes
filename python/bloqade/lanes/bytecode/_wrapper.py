@@ -24,10 +24,11 @@ See issue #466 for design rationale.
 
 from __future__ import annotations
 
-from typing import Generic, Self, TypeVar
+from typing import Generic, TypeVar
 
 from kirin import ir, types
 from kirin.print import Printer
+from typing_extensions import Self
 
 R = TypeVar("R")
 

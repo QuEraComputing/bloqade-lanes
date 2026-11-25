@@ -8,6 +8,7 @@ from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
 
 
 def _load_spec_json() -> str:
+    assert __package__ is not None  # always set for modules inside packages
     ref = importlib.resources.files(__package__) / "_logical_spec.json"
     return ref.read_text(encoding="utf-8")
 
