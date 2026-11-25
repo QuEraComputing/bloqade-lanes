@@ -141,6 +141,12 @@ class LogicalPipeline:
     ``emit`` using ``self.arch_spec``, guaranteeing consistency.  Pass explicit
     instances only when you need a fully custom heuristic or strategy; in that
     case the caller is responsible for arch-spec consistency.
+
+    For exhaustive Gemini Logical initial placement, opt in with
+    ``LogicalPipeline(layout_heuristic=LogicalLayoutHeuristicMinMoveTime())``.
+    This minimizes a greedy estimate of transport time, including pickup/drop
+    and palindrome returns, using minimum-time paths and legal parallel batches;
+    it may take substantially longer than the default greedy layout.
     """
 
     arch_spec: ArchSpec = field(default_factory=get_logical_arch_spec)
