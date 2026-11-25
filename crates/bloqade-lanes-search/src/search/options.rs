@@ -286,6 +286,12 @@ pub enum BoundKind {
     /// (CZ-pair) solves, where the assigned targets are one arbitrary way to
     /// satisfy the goal rather than a requirement — see `restarts.rs`.
     WeightedDistance,
+    /// `max(h0, |R|)`, where `R` is the set of bus groups some unresolved atom
+    /// cannot reach its target without. See [`BusCutBound`](crate::BusCutBound).
+    ///
+    /// Same goal restriction as [`BoundKind::WeightedDistance`]. Selects the
+    /// bound for the entropy stage and for a cascade's A* refinement alike.
+    BusCut,
 }
 
 impl Default for EntropyOptions {
