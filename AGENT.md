@@ -33,6 +33,28 @@ For Python extension only:
 just develop-python
 ```
 
+### Supporting the 3.10 floor
+
+`requires-python` is `>= 3.10`, but `.python-version` pins 3.12, so most local
+work never touches the floor. Three things keep it honest:
+
+- **Lockfile forks.** 3.10 resolves to a separate, older fork of the dependency
+  graph, roughly the declared lower bounds: numpy 2.2.6, scipy 1.15.3, networkx
+  3.4.2, cirq-core 1.5.0, quimb 1.11.2, matplotlib 3.10.9. Every other matrix
+  job runs the newest resolution. So `build (3.10)` is the only job exercising
+  the lower bounds — valuable coverage, but a 3.10-only failure may be the
+  older dependency rather than the interpreter. Raising a lower bound means
+  checking it still resolves on 3.10.
+- **Ruff** targets `py310`, so its autofixes cannot "modernize" code into
+  3.11+-only constructs.
+- **Pyright** is pinned to `pythonVersion = "3.10"`. Without it, a 3.11-only
+  symbol reintroduced behind `if TYPE_CHECKING` (`typing.Self`,
+  `datetime.UTC`) would pass lint *and* the 3.10 test job, since it is never
+  imported at runtime. `typing.Self` must come from `typing_extensions`.
+
+`just develop` and `just build-wheel` run `scripts/patch_pyproject_data.py`,
+which needs a TOML reader; it falls back to `tomli` below 3.11.
+
 ## Common Commands
 
 All tasks use `just` (rust-just):

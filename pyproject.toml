@@ -78,6 +78,12 @@ dev = [
     "pytest>=8.3.3",
     "ruff>=0.7.3",
     "rust-just>=1.36.0",
+    # Backport of the 3.11+ stdlib tomllib, for scripts/patch_pyproject_data.py
+    # on the 3.10 floor. Deliberately unmarkered: pyright is pinned to 3.10
+    # (see [tool.pyright]) but resolves imports against the .python-version
+    # venv, so a `; python_version < '3.11'` marker would leave the fallback
+    # import unresolved and fail the lint job on 3.12.
+    "tomli>=2.0.1",
     "ipykernel>=7.2.0",
     "pytest-mock>=3.15.1",
 ]
@@ -90,6 +96,14 @@ src_paths = ["python/bloqade"]
 
 [tool.black]
 line-length = 88
+
+[tool.pyright]
+# Match requires-python (>= 3.10) rather than the 3.12 in .python-version, which
+# is what both the CI lint job and the pre-commit hook otherwise resolve to.
+# Without this pin, a 3.11-only symbol reintroduced behind `if TYPE_CHECKING`
+# (typing.Self, datetime.UTC) type-checks clean and never fails the 3.10 test
+# job either, because it is never imported at runtime.
+pythonVersion = "3.10"
 
 [tool.ruff]
 # Match requires-python (>= 3.10): a py312 target makes ruff "modernize" code to
