@@ -12,8 +12,15 @@ Usage:
 
 import shutil
 import sys
-import tomllib
 from pathlib import Path
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    # tomllib is new in 3.11; tomli is the backport it was adopted from, so the
+    # `loads` call below is identical. Keeps this script runnable on the 3.10
+    # floor in requires-python, not just the 3.12 in .python-version.
+    import tomli as tomllib
 
 PYPROJECT = Path("pyproject.toml")
 BACKUP = Path("pyproject.toml.bak")
