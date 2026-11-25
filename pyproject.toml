@@ -23,9 +23,10 @@ dependencies = [
     "kahip>=3.25,<3.26",
     "rustworkx>=0.17.1",
     "scipy>=1.15.3",
+    "typing-extensions>=4.12",
 ]
 license = { file = "LICENSE" }
-requires-python = ">= 3.11"
+requires-python = ">= 3.10"
 
 [project.optional-dependencies]
 sim = [
@@ -91,10 +92,10 @@ src_paths = ["python/bloqade"]
 line-length = 88
 
 [tool.ruff]
-# Match requires-python (>= 3.11): a py312 target makes ruff "modernize" code to
-# 3.12-only constructs (PEP 695 generics, `type` statements) that break on the
-# 3.11 the project still supports.
-target-version = "py311"
+# Match requires-python (>= 3.10): a py312 target makes ruff "modernize" code to
+# 3.11/3.12-only constructs (datetime.UTC, typing.Self, PEP 695 generics) that
+# break on the 3.10/3.11 the project still supports.
+target-version = "py310"
 # Hand-maintained type stub mirroring the Rust _native extension; it trips a
 # large number of PYI/PIE rules that do not apply to a generated-style stub.
 extend-exclude = ["python/bloqade/lanes/bytecode/_native.pyi"]

@@ -1,4 +1,5 @@
 import math
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import chain
@@ -41,6 +42,15 @@ def steane_star_theta(theta_turns: float) -> float:
 # *negated* logical axis (see RewriteSteaneStarRAxisConvention).
 
 
+if sys.version_info >= (3, 11):
+    _cbrt = math.cbrt
+else:
+
+    def _cbrt(x: float) -> float:
+        """Real cube root; ``math.cbrt`` is new in Python 3.11."""
+        return math.copysign(abs(x) ** (1 / 3), x)
+
+
 def _is_quarter_turn(axis_turns: float) -> bool:
     return abs(4 * axis_turns - round(4 * axis_turns)) < 1e-12
 
@@ -62,7 +72,7 @@ def steane_star_r_physical(
             / math.tau,
         )
     phi_l = -axis_turns * math.tau
-    phi_p = math.atan2(-math.cbrt(math.sin(phi_l)), math.cbrt(math.cos(phi_l)))
+    phi_p = math.atan2(-_cbrt(math.sin(phi_l)), _cbrt(math.cos(phi_l)))
     r = math.hypot(math.cos(phi_p) ** 3, math.sin(phi_p) ** 3)
     theta_p = -math.copysign(
         2 * math.atan((abs(math.tan(theta / 2)) / r) ** (1 / 3)), theta
