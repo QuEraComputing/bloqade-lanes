@@ -441,7 +441,10 @@ class PhysicalPlacementStrategy(MoveToPlacementStrategyABC):
                 blocked_native,
                 remaining,
             )
-            statuses.append(result.status.name)
+            # On this branch `status` is already a lowercase label, not the
+            # `SolveStatus` enum `main` has; upper-case it so the message reads
+            # the same on both.
+            statuses.append(result.status.upper())
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             self._accumulate_bound_stats(result.bound_stats)
             if result.proven:
